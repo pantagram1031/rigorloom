@@ -76,6 +76,7 @@ exit 0: rendered.  exit 2: usage/input error.  exit 3: Pillow unavailable.
 from __future__ import annotations
 
 import argparse
+import bisect
 import copy
 import io
 import json
@@ -160,9 +161,54 @@ LAYOUT_REFERENCE_PX = 1024
 # the last glyph's ink.
 LINE_BOX_END = "visible_advance"
 
-# U+FFFC OBJECT REPLACEMENT CHARACTER: the single textpos slot an
-# inline object occupies in a paragraph character stream.
+# U+FFFC OBJECT REPLACEMENT CHARACTER: the slot an inline object occupies in
+# a paragraph character stream.  ONE slot, whatever ``textpos`` counts for it
+# (see ``TEXTPOS_CELLS_*``): the drawing side wants one item per object, and
+# the two streams are lined up by ``Paragraph.cell_start`` instead.
 OBJECT_SLOT = "\ufffc"
+
+# --------------------------------------------------------------------------
+# What ``hp:lineseg@textpos`` counts
+# --------------------------------------------------------------------------
+# ``textpos`` indexes the paragraph's TEXT STREAM, which is not the same list
+# as ``Paragraph.chars``: an inline control occupies cells in it even when it
+# draws no glyph, and a control that occupies several occupies all of them.
+# The stream is the one KS X 6101 / the HWP 5.0 record describe, where a
+# paragraph's text is WCHARs and a control character is either a "char"
+# control worth 1 cell or an inline/extended control worth 8.
+#
+# Measured on the corpus, from the cache alone (see own-render-notes.md,
+# "textpos counts cells"): a control's width is pinned by two facts that hold
+# for every paragraph carrying an ``hp:linesegarray`` -- the last cached line
+# must still have a cell to hold (so the widths have to REACH the largest
+# ``textpos``), and a cached line can only START where an element starts (so
+# they must not overshoot it either).
+CELL_PER_CHAR = 1
+CELL_PER_CONTROL = 8
+
+# Char-type controls: one cell each (HWP 5.0 control characters 10, 24, 30,
+# 31).  ``hp:lineBreak`` is the one the corpus measures -- 20 paragraphs, all
+# of them multi-line by construction -- and it admits only 0 or 1 there, with
+# 1 the value that makes the cached split equal the PDF's.
+TEXTPOS_CELLS_CHAR = frozenset({
+    "lineBreak", "hyphen", "nbSpace", "fwSpace",
+})
+
+# HWPX-only span markers: a begin/end pair that decorates the text it wraps
+# and has no control character behind it, so it takes no cell.
+TEXTPOS_CELLS_MARK = frozenset({
+    "markpenBegin", "markpenEnd", "titleMark",
+    "insertBegin", "insertEnd", "deleteBegin", "deleteEnd",
+})
+
+
+def textpos_cells(name):
+    """How many ``textpos`` cells the inline element ``name`` occupies."""
+    if name in TEXTPOS_CELLS_MARK:
+        return 0
+    if name in TEXTPOS_CELLS_CHAR:
+        return CELL_PER_CHAR
+    return CELL_PER_CONTROL
 # Internal note kind -> the OWPML element name, so every declared skip names
 # the tag a reader can grep the file for.
 _NOTE_TAG = {"footnote": "footNote", "endnote": "endNote"}
@@ -1568,9 +1614,23 @@ class Paragraph:
     """One ``<hp:p>`` reduced to what the renderer needs.
 
     ``chars`` is the paragraph's character stream as ``(char, charPrIDRef)``
-    pairs; inline objects occupy exactly one slot, matching how ``textpos``
-    counts them.  ``objects`` records those slots so a placeholder or nested
+    pairs; inline objects occupy exactly one slot, which is what the drawing
+    side wants.  ``objects`` records those slots so a placeholder or nested
     table can be positioned at the right line.
+
+    ``cell_start`` is the SECOND stream, the one ``hp:lineseg@textpos``
+    indexes: ``cell_start[i]`` is the cell the ``i``-th character of ``chars``
+    begins at, and ``cell_count`` is how many cells the whole paragraph holds.
+    The two streams differ wherever the paragraph carries an inline control —
+    a ``<hp:lineBreak/>`` inside ``<hp:t>`` draws nothing and so is not in
+    ``chars`` at all, while ``textpos`` counts it — so a ``textpos`` must be
+    put through :meth:`char_of_cell` before it can slice ``chars``.  See
+    ``textpos_cells`` for the widths and where they were measured.
+
+    ``empty_runs`` is ``[(char_index, charPrIDRef)]`` for every ``<hp:run>``
+    that puts nothing into that stream.  A run with an empty ``<hp:t>`` draws
+    no glyph but still declares a character shape, and the line it sits on is
+    as tall as that shape — see ``_line_metrics``.
     """
 
     def __init__(self, el, para_pr):
@@ -1580,36 +1640,65 @@ class Paragraph:
         self.chars = []
         self.objects = []      # [(char_index, element_local_name, element, charpr)]
         self.object_at = {}    # char_index -> (name, element, charpr, floating)
+        self.empty_runs = []   # [(char_index, charPrIDRef)]
         self.tabs = 0
+        # ``cell_start[i]`` -- the textpos cell chars[i] begins at.  Kept in
+        # step with ``chars`` below: every append to one appends to the other.
+        self.cell_start = []
+        cells = 0
+
+        def take_char(ch):
+            nonlocal cells
+            self.cell_start.append(cells)
+            self.chars.append((ch, charpr))
+            cells += CELL_PER_CHAR
+
+        def scan_t(node):
+            """``<hp:t>``: its text, and the controls sitting inside it.
+
+            ``itertext`` walks straight past ``<hp:tab/>``, ``<hp:lineBreak/>``
+            and their kind, so the character order below has to be the order
+            ``itertext`` would produce — text, then each child's own text,
+            then that child's tail — with each control's CELLS counted where
+            it sits.  It draws nothing here: what the control does to the line
+            is the drawing side's business and is unchanged.
+            """
+            nonlocal cells
+            for ch in node.text or "":
+                take_char(ch)
+            for sub in node:
+                sub_name = _local(sub.tag)
+                if sub_name == "tab":
+                    self.tabs += 1
+                cells += textpos_cells(sub_name)
+                scan_t(sub)
+                for ch in sub.tail or "":
+                    take_char(ch)
+
         for run in _kids(el, "run"):
             charpr = run.get("charPrIDRef")
+            before = len(self.chars)
             for child in run:
                 name = _local(child.tag)
                 if name == "t":
-                    for piece in child.itertext():
-                        for ch in piece:
-                            self.chars.append((ch, charpr))
-                    # <hp:tab/> and friends sit inside <hp:t>; itertext skips
-                    # them, so count them here to keep textpos honest.
-                    for sub in child.iter():
-                        if _local(sub.tag) == "tab":
-                            self.tabs += 1
+                    scan_t(child)
                 elif name == "ctrl":
                     # hp:footNote / hp:endNote sit inside an hp:ctrl, and
                     # their position in the run stream IS the reference
-                    # position.  The note occupies ONE character cell, which
-                    # is this renderer's reading of how hp:lineseg@textpos
-                    # counts a note control; it is declared in the sidecar,
-                    # not measured, because no document in reach carries one.
-                    for note in child:
-                        note_name = _local(note.tag)
-                        if note_name not in ("footNote", "endNote"):
-                            continue
-                        index = len(self.chars)
-                        self.objects.append((index, note_name, note, charpr))
-                        self.object_at[index] = (note_name, note, charpr,
-                                                 False)
-                        self.chars.append((OBJECT_SLOT, charpr))
+                    # position.  The note takes ONE slot in ``chars`` because
+                    # it draws one reference mark; how many textpos CELLS it
+                    # takes is ``textpos_cells``' business.
+                    for held in child:
+                        held_name = _local(held.tag)
+                        if held_name in ("footNote", "endNote"):
+                            index = len(self.chars)
+                            self.objects.append(
+                                (index, held_name, held, charpr))
+                            self.object_at[index] = (held_name, held, charpr,
+                                                     False)
+                            self.cell_start.append(cells)
+                            self.chars.append((OBJECT_SLOT, charpr))
+                        cells += textpos_cells(held_name)
                 elif name in ("tbl", "equation", "pic", "ole", "chart",
                               "container", "rect", "ellipse", "line", "arc",
                               "polygon", "curve", "connectLine", "textart",
@@ -1623,7 +1712,16 @@ class Paragraph:
                     index = len(self.chars)
                     self.objects.append((index, name, child, charpr))
                     self.object_at[index] = (name, child, charpr, floating)
+                    self.cell_start.append(cells)
                     self.chars.append((OBJECT_SLOT, charpr))
+                    cells += textpos_cells(name)
+                else:
+                    # <hp:secPr> and anything else a run may hold: no glyph,
+                    # but the authoring engine's textpos counted it.
+                    cells += textpos_cells(name)
+            if len(self.chars) == before:
+                self.empty_runs.append((before, charpr))
+        self.cell_count = cells
         self.linesegs = []
         la = _kid(el, "linesegarray")
         if la is not None:
@@ -1632,6 +1730,38 @@ class Paragraph:
         # paragraph the cache carries across a page break; ``None`` — every
         # corpus paragraph — when it is the whole paragraph.
         self.rows = None
+
+    def char_of_cell(self, cell):
+        """The ``chars`` index a ``hp:lineseg@textpos`` of ``cell`` names.
+
+        The first character at or after that cell — which is the character
+        itself when the cell holds one, and the next character when the cell
+        belongs to a control that draws nothing.  A ``textpos`` past the end
+        of the stream lands on ``len(chars)``, so a slice taken with it is
+        empty rather than wrong.
+        """
+        return bisect.bisect_left(self.cell_start, cell)
+
+    def cell_of_char(self, index):
+        """The ``textpos`` cell ``chars[index]`` begins at."""
+        if index < len(self.cell_start):
+            return self.cell_start[index]
+        return self.cell_count
+
+    def char_span(self, first_cell, last_cell):
+        """``(lo, hi)`` into ``chars`` for the cells ``[first, last)``."""
+        return (self.char_of_cell(first_cell),
+                len(self.chars) if last_cell is None
+                else self.char_of_cell(last_cell))
+
+    def lineseg_spans(self):
+        """``[(lo, hi)]`` into ``chars``, one per cached ``hp:lineseg``."""
+        positions = [_iattr(seg, "textpos") for seg in self.linesegs]
+        spans = []
+        for i, start in enumerate(positions):
+            spans.append(self.char_span(
+                start, positions[i + 1] if i + 1 < len(positions) else None))
+        return spans
 
     def page_runs(self):
         """``[(first, last), ...]`` — this paragraph's linesegs split wherever
@@ -2537,6 +2667,9 @@ class OwnRenderer:
         ``vertpos + vertsize`` refuses 3 of 47 corpus pages Hancom itself
         renders past that point — the descender below ``baseline`` may cross
         the margin, so ``extent`` here is ``baseline``, not ``vertsize``.
+
+        A paragraph with no characters is ONE line all the same — see the
+        empty-paragraph branch below.
         """
         index = self.paragraph_index.get(id(para.el))
         mode, _reason = self.line_layout_mode(para, column_hwp, index)
@@ -2553,11 +2686,35 @@ class OwnRenderer:
                     "table": table,
                 })
             return mode, rows
-        positions = [_iattr(seg, "textpos") for seg in para.linesegs]
+        if not para.chars and not para.linesegs:
+            # An EMPTY paragraph with nothing cached to fall back on.  It
+            # still occupies one line: the paragraph mark has to be
+            # somewhere, and it is as tall as the shape the paragraph's runs
+            # declare.  Without this the block is measured 0 high and the
+            # paragraph's own charPr height and lineSpacing do nothing —
+            # which is every empty paragraph in a package this repo wrote,
+            # because only Hancom's own save carries hp:lineseg.
+            #
+            # ``_line_metrics(para, 0, 0)`` IS the rule: the empty-run pass
+            # it grew for #247 owns a run sitting at the end of the character
+            # stream, and for a paragraph with no characters at all that is
+            # every run it has.  Measured against the authoring engine's own
+            # cache over the 101 empty top-level paragraphs of the ten
+            # converted corpus forms: ``vertsize`` exact on 101 of 101 and
+            # ``spacing`` on 91, every one of the 10 misses inside 2 HWPUNIT
+            # — the same PERCENT rounding residual #247 measured on 883 of
+            # the corpus' 2370 TEXT lines, not a second rule.
+            _textheight, vertsize, baseline, spacing = self._line_metrics(
+                para, 0, 0)
+            rows.append({
+                "advance": vertsize + spacing,
+                "extent": self._row_extent(baseline, vertsize, None),
+                "start": 0, "end": 0, "table": None,
+            })
+            return mode, rows
+        spans = para.lineseg_spans()
         for i, seg in enumerate(para.linesegs):
-            start = positions[i]
-            end = (positions[i + 1] if i + 1 < len(positions)
-                   else len(para.chars))
+            start, end = spans[i]
             vertsize = _iattr(seg, "vertsize")
             baseline = _iattr(seg, "baseline") or int(round(
                 BASELINE_RATIO * vertsize))
@@ -2626,6 +2783,28 @@ class OwnRenderer:
         68032 HWPUNIT further down.  Ignoring the object scores 49 of that
         form's 165 top-level blocks on the right page; reserving its extent
         scores 142 of 145 adjacent pairs exactly.
+
+        The extent is the object's SLOT, not its box: ``hp:outMargin`` is the
+        gap outside the box (schema: ``DevDoc/OWPML SCHEMA/ParaList XML
+        schema.xml``, on every ``ShapeObject``), the declared ``hp:pos``
+        offset names the slot's top, and ``_object_origin`` already draws the
+        box ``outMargin@top`` down inside it.  So the room the object takes
+        below the block's top is ``vertOffset + top + height + bottom``, and
+        the two other places this renderer reads the same tag agree:
+        ``_object_extent`` widens an inline slot by ``left + right`` and
+        ``_line_metrics`` grows an inline object's LINE by ``top + bottom``.
+        This path is the anchored sibling of that rule and it was the one
+        place the outer margin was dropped.
+
+        Measured against the authoring engine's own cached seats, exactly, on
+        every corpus anchored object that reserves room:
+
+            nrf paragraph 0    outMargin 138, height 63674, vertOffset 0
+                               the cache seats paragraph 33 at 63950
+                               = 0 + 138 + 63674 + 138
+            kstartup para 148  outMargin 140, height 69352, vertOffset 0
+                               the cache seats paragraph 160 at 69632
+                               = 0 + 140 + 69352 + 140
         """
         extent = 0
         for char_index, _name, el, _charpr in para.objects:
@@ -2638,15 +2817,17 @@ class OwnRenderer:
             pos = _kid(el, "pos")
             size = _kid(el, "sz")
             height = _iattr(size, "height") if size is not None else 0
+            _left, top, _right, bottom_margin = self._object_out_margin(el)
+            slot = top + height + bottom_margin
             offset = _iattr(pos, "vertOffset")
             vrel = ((pos.get("vertRelTo") or "PARA").upper()
                     if pos is not None else "PARA")
             if vrel in ("PAGE", "PAPER"):
                 # A page-relative anchor is measured from the sheet, and the
                 # flow cursor is measured from the body box.
-                bottom = offset + height - body_top
+                bottom = offset + slot - body_top
             else:
-                bottom = offset + height
+                bottom = offset + slot
             extent = max(extent, bottom)
         return extent
 
@@ -3896,10 +4077,33 @@ class OwnRenderer:
         worst residual 0.019 pt).  Reading ``PERCENT`` against the face's own
         ascent+descent, or against a fixed 1.2 line, misses by 2.1 to 12.0 pt
         and is rejected.
+
+        A run that puts **no character** on the line still declares one.  An
+        ``<hp:run charPrIDRef="…"><hp:t></hp:t></hp:run>`` draws nothing, but
+        ``hh:charPr@height`` is a property of the run and the authoring engine
+        sizes the line by it — the paragraph mark has to be somewhere, and it
+        is as tall as the shape the last run declares.  Measured over the
+        2370 cached lines of the ten corpus forms: reading the empty runs
+        makes ``vertsize`` exact on **2370 of 2370** against 2365 without
+        them, and moves no line the other way.  The line it costs otherwise
+        is admrul's inline table: the table's own box is 6618 HWPUNIT tall
+        and the run holding it is 14 pt, but the paragraph's second run is an
+        empty 24 pt one, and 24 pt is what the cached 200% ``spacing`` of
+        2400 is a percentage of.  Ignoring it left every block below that
+        table 1000 HWPUNIT (10 pt) too high under computed layout.
         """
         pr = para.para_pr
         heights = []
         pitch = []
+        for index, cid in para.empty_runs:
+            # The last line owns an empty run sitting at the very end of the
+            # character stream; every other one belongs to the line its
+            # position falls inside.
+            if start <= index < end or (index == end == len(para.chars)):
+                height = (self._charpr(cid).get("height_pt") or 10.0) \
+                    * HWPUNIT_PER_PT
+                heights.append(height)
+                pitch.append(height)
         for offset, (ch, cid) in enumerate(para.chars[start:end]):
             char_height = (self._charpr(cid).get("height_pt") or 10.0) \
                 * HWPUNIT_PER_PT
@@ -4140,10 +4344,10 @@ class OwnRenderer:
         """Why this paragraph's cache cannot be READ, never mind trusted.
 
         ``cache_absent``     — no ``hp:linesegarray`` at all.
-        ``textpos_past_end`` — a cached line starts past the end of the
-                               character stream this reader built, so there is
-                               no character range for that line box to
-                               describe and it cannot be drawn from.
+        ``textpos_past_end`` — a cached line starts past the end of the CELL
+                               stream this reader built, so there is no range
+                               for that line box to describe and it cannot be
+                               drawn from.
 
         Not a staleness inference, and deliberately not treated as one: the
         renderer simply has nothing to index.  ``lineseg_agreement`` already
@@ -4151,17 +4355,18 @@ class OwnRenderer:
         "absent, or a textpos past the end of the character stream" from the
         measurement rather than scoring it wrong.
 
-        PRE-EXISTING, NOT FIXED HERE, and load-bearing on the reading above:
-        ``textpos_past_end`` fires on exactly one paragraph of each of three
-        UNEDITED corpus forms (moel-2013 #159, saeopja #321, kstartup #264).
-        All three carry an ``hp:ctrl`` this reader gives no character cell —
-        a HYPERLINK ``hp:fieldBegin``/``fieldEnd`` pair, an ``hp:colPr`` —
-        while the authoring engine's ``textpos`` counted one.  So the
-        condition means "this reader cannot line up its character stream with
-        the cache", which is exactly a cache it must not draw from, and NOT
-        "somebody edited this document".
+        The comparison is against ``cell_count``, not ``len(chars)``.  It used
+        to be against ``len(chars)``, and that fired on exactly one paragraph
+        of each of three UNEDITED corpus forms (moel-2013 #159, saeopja #321,
+        kstartup #264) whose caches are in fact perfectly readable: all three
+        carry a control this reader was giving no cell — a HYPERLINK
+        ``hp:fieldBegin``/``fieldEnd`` pair, an ``hp:colPr``, a pair of inline
+        ``hp:tbl`` — and counting those cells reaches every one of their
+        cached ``textpos``.  What is left is the honest condition: a cache
+        whose lines start past the end of the paragraph, which no width for
+        any control can explain and which the renderer must not draw from.
         """
-        count = len(para.chars)
+        count = para.cell_count
         if not para.linesegs:
             return "cache_absent"
         positions = [_iattr(seg, "textpos") for seg in para.linesegs]
@@ -4191,11 +4396,9 @@ class OwnRenderer:
         at once (:func:`resolve_layout_policy`).  Being sound, a hit still
         FALSIFIES a cache policy — see ``_scan_stale_cache``.
         """
-        count = len(para.chars)
-        positions = [_iattr(seg, "textpos") for seg in para.linesegs]
+        spans = para.lineseg_spans()
         for i, seg in enumerate(para.linesegs):
-            first = positions[i]
-            last = positions[i + 1] if i + 1 < len(positions) else count
+            first, last = spans[i]
             horzsize = _iattr(seg, "horzsize") or column_hwp
             if horzsize <= 0:
                 continue
@@ -4888,7 +5091,10 @@ class OwnRenderer:
         and rebasing would slam it against the top margin instead.
         """
         ox, oy = origin_hwp
-        positions = [_iattr(s, "textpos") for s in para.linesegs]
+        # ``textpos`` counts CELLS, and a control occupies cells ``chars`` has
+        # no entry for, so every cached line's range is put through the
+        # paragraph's own cell map before it slices anything.
+        spans = para.lineseg_spans()
         first, last = rows if rows is not None else (0, len(para.linesegs))
         if rows is not None and rebase and first < len(para.linesegs):
             oy -= _iattr(para.linesegs[first], "vertpos")
@@ -4897,8 +5103,7 @@ class OwnRenderer:
         for i, seg in enumerate(para.linesegs):
             if not (first <= i < last):
                 continue
-            start = positions[i]
-            end = positions[i + 1] if i + 1 < len(positions) else len(para.chars)
+            start, end = spans[i]
             chunk = para.chars[start:end]
             if not chunk:
                 continue
@@ -4991,10 +5196,15 @@ class OwnRenderer:
 
     # -- anchored (non-inline) objects -----------------------------------
     def _object_line(self, para, char_index):
-        """The cached line box an object anchored at ``char_index`` sits on."""
+        """The cached line box an object anchored at ``char_index`` sits on.
+
+        ``char_index`` indexes ``chars``; ``textpos`` counts cells, so the
+        anchor is converted before the two are compared.
+        """
+        cell = para.cell_of_char(char_index)
         chosen = None
         for seg in para.linesegs:
-            if _iattr(seg, "textpos") <= char_index:
+            if _iattr(seg, "textpos") <= cell:
                 chosen = seg
             else:
                 break
@@ -7948,8 +8158,9 @@ class OwnRenderer:
         "read and not acted on: a footnote block always sets on the body "
         "box's bottom edge, spanning the full page width even in a "
         "multi-column section, never reserved per column",
-        "the reference mark's own character cell is this renderer's reading "
-        "of how hp:lineseg@textpos counts a note control, not a measurement — "
+        "the reference mark draws in one slot of the character stream and "
+        "the note control is given one control's worth of hp:lineseg@textpos "
+        "cells (textpos_cells) — a reading of the format, not a measurement: "
         "no document in reach of this repo carries a note to measure it on",
         "hp:endNotePr/hp:placement@place — END_OF_DOCUMENT sets every "
         "section's notes after the LAST section's last page, in spine order; "
@@ -8134,11 +8345,12 @@ def lineseg_agreement(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
         if not para.linesegs:
             totals["paragraphs_excluded"] += 1
             continue
-        cached = [_iattr(seg, "textpos") for seg in para.linesegs]
-        if max(cached) > len(para.chars) or (
-                len(cached) > 1 and max(cached) >= len(para.chars)):
+        if renderer.unusable_cache_reason(para):
             totals["paragraphs_excluded"] += 1
             continue
+        # The breaker works in ``chars``; ``textpos`` counts cells.  Compare
+        # the two in the breaker's own index space.
+        cached = [lo for lo, _hi in para.lineseg_spans()]
         first = para.linesegs[0]
         column = (_iattr(first, "horzpos") + _iattr(first, "horzsize")
                   + max(0, para.para_pr.get("margin_right", 0)))

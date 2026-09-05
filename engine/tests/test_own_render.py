@@ -1479,6 +1479,217 @@ def test_fixed_line_spacing_advances_by_the_declared_length(typo_probe):
     assert vertsize + spacing == 2400          # 24.00 pt, measured 23.974
 
 
+def _paragraph_with_a_trailing_empty_run(renderer, cid, text, empty_cid,
+                                         value=160):
+    """``text`` under ``cid``, then an ``<hp:t></hp:t>`` run under
+    ``empty_cid`` — the shape admrul's inline-table paragraph has."""
+    from xml.etree import ElementTree as ET
+    pid = "__lm_empty_%s__" % value
+    renderer.defs["para_pr"][pid] = dict(
+        renderer.defs["para_pr"].get("__lm_PERCENT_%s__" % value)
+        or {"align": "LEFT", "break_latin": "KEEP_WORD",
+            "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+            "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+            "page_break_before": 0, "condense": 0, "font_line_height": 0,
+            "snap_to_grid": 1, "tab_pr": None,
+            "line_spacing_type": "PERCENT", "line_spacing_value": value,
+            "line_spacing_unit": "HWPUNIT", "margin_left": 0,
+            "margin_right": 0, "indent": 0, "margin_prev": 0,
+            "margin_next": 0})
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="%s"><hp:t>%s</hp:t></hp:run>'
+           '<hp:run charPrIDRef="%s"><hp:t></hp:t></hp:run></hp:p>'
+           % (pid, cid, text, empty_cid))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+def test_an_empty_run_still_declares_its_lines_character_height(typo_probe):
+    """A run that draws nothing still sizes the line it sits on.
+
+    ``<hp:run charPrIDRef="…"><hp:t></hp:t></hp:run>`` puts no glyph down,
+    but ``hh:charPr@height`` is a property of the RUN and the paragraph mark
+    is as tall as the shape the run declares.  MEASURED against the authoring
+    engine's own cached ``hp:lineseg`` over every line of the ten corpus
+    forms: reading the empty runs makes ``vertsize`` exact on all of them,
+    and moves no line the other way.  admrul is where it is worth 10 pt — its
+    inline table sits in a 14 pt run beside an empty 24 pt one, and the
+    cached 200% ``spacing`` of 2400 is a percentage of the 24, not the 14.
+    """
+    renderer, _image, _draw = typo_probe
+    small = _synthetic_charpr(renderer, "__er_small__", height=1000)
+    tall = _synthetic_charpr(renderer, "__er_tall__", height=2400)
+
+    alone = _metrics_paragraph(renderer, small, "가나다", value=160)
+    plain_height, plain_vs, _bl, plain_sp = renderer._line_metrics(
+        alone, 0, len(alone.chars))
+    assert plain_height == 1000
+    assert plain_vs + plain_sp == round(1000 * 160 / 100)
+
+    para = _paragraph_with_a_trailing_empty_run(renderer, small, "가나다",
+                                                tall, value=160)
+    height, vertsize, _bl, spacing = renderer._line_metrics(
+        para, 0, len(para.chars))
+    assert para.empty_runs                     # the run is seen at all
+    assert height == 2400                      # the tall shape wins the box
+    assert vertsize + spacing == round(2400 * 160 / 100)
+
+
+def test_a_taller_empty_run_only_sizes_the_line_it_sits_on(typo_probe):
+    """The rule is per line, not per paragraph.
+
+    An empty run at the very end of the character stream belongs to the LAST
+    line; an earlier line must be measured without it, or a two-line
+    paragraph would get the tall pitch on both of its lines.
+    """
+    renderer, _image, _draw = typo_probe
+    small = _synthetic_charpr(renderer, "__er2_small__", height=1000)
+    tall = _synthetic_charpr(renderer, "__er2_tall__", height=2400)
+    para = _paragraph_with_a_trailing_empty_run(renderer, small, "가나다라",
+                                                tall, value=160)
+    cut = 2
+    first_height, _vs, _bl, _sp = renderer._line_metrics(para, 0, cut)
+    last_height, _vs2, _bl2, _sp2 = renderer._line_metrics(
+        para, cut, len(para.chars))
+    assert first_height == 1000
+    assert last_height == 2400
+
+
+def _empty_paragraph(renderer, cid, line_type="PERCENT", value=160):
+    """An ``<hp:t/>`` run and nothing else — no characters, no lineseg.
+
+    The shape every empty paragraph of a package this repo WRITES has: the
+    authoring engine's cached ``hp:linesegarray`` is what a Hancom save
+    carries, and there is none here to fall back on.
+    """
+    from xml.etree import ElementTree as ET
+    pid = "__ep_%s_%s__" % (line_type, value)
+    renderer.defs["para_pr"][pid] = {
+        "align": "LEFT", "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 1, "tab_pr": None,
+        "line_spacing_type": line_type, "line_spacing_value": value,
+        "line_spacing_unit": "HWPUNIT", "margin_left": 0, "margin_right": 0,
+        "indent": 0, "margin_prev": 0, "margin_next": 0,
+    }
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="%s"><hp:t/></hp:run></hp:p>' % (pid, cid))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+@pytest.mark.parametrize("line_type,value,advance_of", [
+    ("PERCENT", 160, lambda h: round(h * 160 / 100)),
+    ("PERCENT", 180, lambda h: round(h * 180 / 100)),
+    ("PERCENT", 200, lambda h: round(h * 200 / 100)),
+    ("FIXED", 2400, lambda h: 2400),
+    ("BETWEEN_LINES", 600, lambda h: h + 600),
+])
+@pytest.mark.parametrize("height", [1000, 1200, 1500])
+def test_an_empty_paragraph_with_no_cache_is_one_line_of_its_own_shape(
+        typo_probe, line_type, value, advance_of, height):
+    """An empty paragraph occupies one line, sized by its run and its spacing.
+
+    ``_flow_lines`` used to take the computed branch only for a paragraph
+    that has CHARACTERS, so an empty one fell through to its cached
+    ``hp:lineseg`` — and a package this repo wrote has none, which left the
+    block 0 high and made the paragraph's own ``hh:charPr@height`` and
+    ``hh:lineSpacing`` do nothing at all.
+
+    The rule is the one the authoring engine's own cache states, measured
+    over the 101 empty top-level paragraphs of the ten converted corpus
+    forms: ``vertsize`` is the tallest shape the paragraph's runs declare
+    (exact on 101 of 101) and the advance follows ``hh:lineSpacing`` from it
+    exactly as a text line's does (exact on 91, every miss inside the ±2
+    HWPUNIT PERCENT rounding residual #247 already measured on text lines).
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__ep_%d__" % height, height=height)
+    para = _empty_paragraph(renderer, cid, line_type=line_type, value=value)
+    assert not para.chars and not para.linesegs      # the path under test
+
+    _mode, rows = renderer._flow_lines(draw, para, 40000)
+    assert len(rows) == 1
+    assert rows[0]["advance"] == advance_of(height)
+    # The paragraph mark draws no glyph, so the block spans no characters.
+    assert rows[0]["start"] == rows[0]["end"] == 0
+    assert rows[0]["table"] is None
+
+
+def test_an_empty_paragraph_keeps_its_cached_line_when_it_has_one(typo_probe):
+    """The cache still wins where the authoring engine left one.
+
+    Every empty paragraph in the ten corpus forms carries a lineseg, and the
+    rule above reproduces it rather than replacing it: the seat a Hancom save
+    declares is read, not recomputed, so a cached document renders exactly as
+    it did.
+    """
+    from xml.etree import ElementTree as ET
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__epc__", height=1000)
+    para = _empty_paragraph(renderer, cid, value=160)
+    para.linesegs = ET.fromstring(
+        '<hp:linesegarray xmlns:hp="urn:x">'
+        '<hp:lineseg textpos="0" vertpos="0" vertsize="1700" textheight="1700"'
+        ' baseline="1445" spacing="1020" horzpos="0" horzsize="40000"'
+        ' flags="393216"/></hp:linesegarray>').findall(
+            "{urn:x}lineseg")
+
+    _mode, rows = renderer._flow_lines(draw, para, 40000)
+    assert len(rows) == 1
+    assert rows[0]["advance"] == 1700 + 1020        # the cache, not the rule
+
+
+def test_the_corpus_line_boxes_are_the_ones_the_authoring_engine_cached():
+    """Every cached ``hp:lineseg@vertsize`` of the corpus is reproduced.
+
+    The channel the empty-run rule was decided on.  Stated as "no line
+    disagrees" rather than as a count, so a corpus that grows a form cannot
+    make this test wrong for the wrong reason; the floor below keeps it from
+    passing over an empty scan.
+    """
+    import glob
+
+    scored = 0
+    misses = []
+    for path in sorted(glob.glob(os.path.join(CORPUS, "*.hwpx"))):
+        renderer = own_render.OwnRenderer(
+            path, dpi=144, layout_policy=own_render.LAYOUT_POLICY_CACHE)
+        renderer._quiet += 1
+        try:
+            for root in renderer.sections:
+                for element in root.iter():
+                    if own_render._local(element.tag) != "p":
+                        continue
+                    para = own_render.Paragraph(element,
+                                                renderer.defs["para_pr"])
+                    if not para.chars or not para.linesegs:
+                        continue
+                    positions = [own_render._iattr(seg, "textpos")
+                                 for seg in para.linesegs]
+                    if positions[-1] > len(para.chars):
+                        continue
+                    for i, seg in enumerate(para.linesegs):
+                        start = positions[i]
+                        end = (positions[i + 1] if i + 1 < len(positions)
+                               else len(para.chars))
+                        _th, vertsize, _bl, _sp = renderer._line_metrics(
+                            para, start, end)
+                        scored += 1
+                        cached = own_render._iattr(seg, "vertsize")
+                        if vertsize != cached:
+                            misses.append((os.path.basename(path),
+                                           renderer.paragraph_index.get(
+                                               id(element)), i,
+                                           cached, vertsize))
+        finally:
+            renderer._quiet -= 1
+    if not scored:
+        pytest.skip("corpus fixtures missing")
+    assert scored >= 1000, f"scan collapsed: only {scored} cached lines"
+    assert not misses, f"line box disagrees with the cache: {misses[:5]}"
+
+
 def test_the_character_metrics_stay_out_of_the_line_height(typo_probe):
     """relSz / ratio / offset must not change what a line advances by.
 
@@ -2212,6 +2423,143 @@ def test_render_cached_lines_never_narrows_a_box_wider_than_its_container():
                                            abs=0.5)
 
 
+# --------------------------------------- textpos counts cells, not characters
+#
+# ``hp:lineseg@textpos`` indexes the paragraph's TEXT STREAM, in which an
+# inline control occupies cells even though it draws no glyph.  Slicing
+# ``Paragraph.chars`` at a raw ``textpos`` therefore runs late by whatever the
+# controls before the cut are worth, and puts characters on the wrong side of
+# a line break.  Every fixture below is synthetic and asserts where a
+# character lands, never how many of anything the corpus holds.
+
+
+def _cell_paragraph(inner, textpos, para_pr=None):
+    """A synthetic ``hp:p`` with the given run content and cached seats."""
+    from xml.etree import ElementTree as ET
+
+    segs = "".join(
+        f'<hp:lineseg textpos="{pos}" vertpos="{i * 2000}" vertsize="1000" '
+        f'textheight="1000" baseline="850" spacing="0" horzpos="0" '
+        f'horzsize="20000" flags="0"/>'
+        for i, pos in enumerate(textpos))
+    xml = (f'<hp:p xmlns:hp="urn:x" paraPrIDRef="0">{inner}'
+           f'<hp:linesegarray>{segs}</hp:linesegarray></hp:p>')
+    return own_render.Paragraph(ET.fromstring(xml), para_pr or {})
+
+
+def _lines(para):
+    """The text each cached line holds, as the renderer would slice it."""
+    return ["".join(ch for ch, _cid in para.chars[lo:hi])
+            for lo, hi in para.lineseg_spans()]
+
+
+def test_a_line_break_takes_a_cell_the_character_stream_does_not():
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>주소:<hp:lineBreak/>연락처:'
+        '</hp:t></hp:run>', [0, 4])
+    # Four characters before the second line starts, and the fourth of them
+    # is the break itself, which draws nothing.
+    assert para.text == "주소:연락처:"
+    assert para.cell_count == len(para.chars) + own_render.CELL_PER_CHAR
+    assert _lines(para) == ["주소:", "연락처:"]
+
+
+def test_a_tab_before_a_break_is_worth_a_whole_control():
+    width = own_render.CELL_PER_CONTROL
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가나<hp:tab/>다라</hp:t></hp:run>',
+        [0, 2 + width])
+    assert para.cell_count == 4 + width
+    assert _lines(para) == ["가나", "다라"]
+
+
+def test_a_full_width_space_is_one_cell_like_any_other_space():
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가<hp:fwSpace/>나다</hp:t></hp:run>',
+        [0, 2])
+    assert para.cell_count == len(para.chars) + own_render.CELL_PER_CHAR
+    assert _lines(para) == ["가", "나다"]
+
+
+def test_a_ctrl_before_a_break_is_counted_and_the_cache_stays_readable():
+    """The shape three unedited corpus forms carry, and used to lose.
+
+    A paragraph opening with an ``hp:ctrl`` puts its whole text after that
+    control's cells.  Counting the control keeps the cached seats inside the
+    stream — the cache is READABLE — and puts the break where the authoring
+    engine put it.
+    """
+    width = own_render.CELL_PER_CONTROL
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:ctrl><hp:colPr id="" type="NEWSPAPER"/>'
+        '</hp:ctrl></hp:run>'
+        '<hp:run charPrIDRef="0"><hp:t>가나다라마바사아</hp:t></hp:run>',
+        [0, width + 6])
+    assert own_render.OwnRenderer.unusable_cache_reason(para) is None
+    assert _lines(para) == ["가나다라마바", "사아"]
+
+
+def test_a_formatting_mark_takes_no_cell_and_moves_no_character():
+    plain = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가나다라</hp:t></hp:run>', [0, 2])
+    marked = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가<hp:markpenBegin/>나'
+        '<hp:markpenEnd/>다라</hp:t></hp:run>', [0, 2])
+    assert marked.cell_count == plain.cell_count
+    assert _lines(marked) == _lines(plain)
+
+
+def test_a_cache_that_really_does_start_past_the_end_is_still_refused():
+    """The condition keeps its teeth: no width for any control explains a
+    seat past the end of the paragraph."""
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가나<hp:lineBreak/>다라'
+        '</hp:t></hp:run>', [0, 999])
+    assert (own_render.OwnRenderer.unusable_cache_reason(para)
+            == "textpos_past_end")
+
+
+def test_an_inline_object_keeps_one_slot_in_the_character_stream():
+    """``chars`` gets one slot per object however many cells it counts for:
+    the drawing side places one object, the cell map does the arithmetic."""
+    para = _cell_paragraph(
+        '<hp:run charPrIDRef="0"><hp:t>가나</hp:t>'
+        '<hp:tbl rowCnt="1" colCnt="1"/><hp:t>다라</hp:t></hp:run>', [0])
+    assert len(para.chars) == 5
+    assert para.chars[2][0] == own_render.OBJECT_SLOT
+    assert para.cell_count == 4 + own_render.CELL_PER_CONTROL
+    # The object's own cell is where the cache will look for it.
+    assert para.cell_of_char(2) == 2
+    assert para.char_of_cell(2 + own_render.CELL_PER_CONTROL) == 3
+
+
+def test_the_renderer_draws_the_cached_split_the_cell_map_says():
+    """End to end through ``_render_cached_lines``: what reaches the page."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    canvas = renderer.Image.new("RGB", (2000, 400), (255, 255, 255))
+    renderer._image = canvas
+    draw = renderer.ImageDraw.Draw(canvas)
+    cid = _synthetic_charpr(renderer, "__cellsplit__", height=1000)
+    renderer.defs["para_pr"]["__cellpara__"] = dict(
+        renderer.defs["para_pr"][next(iter(renderer.defs["para_pr"]))],
+        align="LEFT")
+    para = _cell_paragraph(
+        f'<hp:run charPrIDRef="{cid}"><hp:t>주소:<hp:lineBreak/>연락처:'
+        '</hp:t></hp:run>', [0, 4], renderer.defs["para_pr"])
+
+    drawn = []
+    original = renderer._line_items
+
+    def spy(para_, chars, base_index):
+        drawn.append("".join(ch for ch, _cid in chars))
+        return original(para_, chars, base_index)
+
+    renderer._line_items = spy
+    renderer.line_boxes = []
+    renderer._render_cached_lines(draw, para, (0, 0), 40000)
+    assert drawn == ["주소:", "연락처:"]
+
+
 # ------------------------------------------------- line breaking (E2.1)
 #
 # The breaker is graded twice over.  Its *mechanics* — which positions the
@@ -2433,16 +2781,16 @@ def test_a_tab_advances_to_the_paragraphs_next_declared_stop(typo_probe):
 LINESEG_AGREEMENT = {
     # form: (scored, line_count_exact, sequence_exact, multiline_scored,
     #        multiline_line_count_exact, cached_break_positions, matched)
-    "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 21, 2, 2, 2, 1),
+    "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 22, 2, 2, 2, 2),
     "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
     "jumin-deungchobon-sinchengseo": (133, 132, 117, 27, 26, 36, 14),
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (453, 450, 432, 29, 28, 44, 16),
-    "moel-pyojun-geunrogyeyakseo-2013": (263, 258, 243, 34, 30, 49, 23),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 12),
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 451, 432, 30, 29, 45, 16),
+    "moel-pyojun-geunrogyeyakseo-2013": (264, 259, 244, 35, 31, 50, 24),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 7),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (764, 758, 749, 17, 14, 24, 9),
+    "saeopja-deungnok-sinchengseo": (765, 759, 750, 18, 15, 25, 11),
 }
 
 
@@ -2619,7 +2967,19 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # moel-2025 (301 -> 297 line counts) and saeopja (8 -> 9); the other
     # seven are unchanged there because their declared sizes already landed
     # on integer pixels at 144.
-    assert totals == [2148, 2116, 2030, 158, 139, 216, 80], totals
+    #
+    # 2148 -> 2151, 2116 -> 2119, 2030 -> 2033, 158 -> 161, 139 -> 142,
+    # 216 -> 219 and 80 -> 79 on the textpos-cells slice.  ``textpos`` counts
+    # CELLS, so a cached break is converted to a character index before it is
+    # compared with the breaker's own, and three paragraphs whose caches were
+    # unreadable only because their controls had been given no cells join the
+    # measurement.  The one column that fell is the break-position one, and it
+    # fell for a reason worth keeping: the corpus's forced breaks are
+    # ``<hp:lineBreak/>``, whose cached break now sits at the character the
+    # control precedes rather than one past it, and ``compute_lines`` has no
+    # notion of a forced break at all -- it breaks on width.  Some of the old
+    # agreement at those positions was the two errors cancelling.
+    assert totals == [2151, 2119, 2033, 161, 142, 219, 79], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -5593,3 +5953,87 @@ def test_render_check_01_pages_match_the_reference_count():
     boxes = [b for b in sidecar["line_boxes"] if b["mode"] == "endnote"]
     assert boxes and min(b["page"] for b in boxes) == 9, [
         b["page"] for b in boxes]
+
+
+# --------------------------------------------- an anchored object's own slot
+
+def _anchored_object_paragraph(renderer, height, out_v, vert_offset=0,
+                               vert_rel_to="PARA", wrap="TOP_AND_BOTTOM"):
+    """A paragraph whose only content is ONE anchored table.
+
+    ``treatAsChar="0"`` is what makes it anchored: it does not sit on a line,
+    it reserves its own slot from the paragraph's seat down.
+    """
+    from xml.etree import ElementTree as ET
+    pid = "__anchor__"
+    renderer.defs["para_pr"].setdefault(pid, {
+        "align": "LEFT", "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 1, "tab_pr": None,
+        "line_spacing_type": "PERCENT", "line_spacing_value": 160,
+        "line_spacing_unit": "HWPUNIT", "margin_left": 0, "margin_right": 0,
+        "indent": 0, "margin_prev": 0, "margin_next": 0,
+    })
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="0">'
+           '<hp:tbl rowCnt="1" colCnt="1" textWrap="%s">'
+           '<hp:sz width="20000" height="%d"/>'
+           '<hp:pos treatAsChar="0" vertRelTo="%s" vertOffset="%d"/>'
+           '<hp:outMargin left="0" right="0" top="%d" bottom="%d"/>'
+           '</hp:tbl>'
+           '<hp:t/></hp:run></hp:p>'
+           % (pid, wrap, height, vert_rel_to, vert_offset, out_v, out_v))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+def test_an_anchored_objects_reserved_extent_includes_its_own_out_margin(
+        typo_probe):
+    """``hp:outMargin`` is the gap OUTSIDE the box, so the slot the anchor
+    reserves is ``vertOffset + top + height + bottom``.
+
+    The same reading the renderer already applies everywhere else it touches
+    the tag: ``_object_origin`` draws the box ``top`` down inside the slot,
+    ``_object_extent`` widens an inline slot by ``left + right``, and
+    ``_line_metrics`` grows an INLINE object's line by ``top + bottom``.
+
+    MEASURED against the authoring engine's own cached seats.  nrf's
+    paragraph 0 anchors a table of ``hh:sz@height=63674`` with
+    ``outMargin=138`` at ``vertOffset=0``, and the cache seats the next
+    top-level paragraph at 63950 = 0 + 138 + 63674 + 138; kstartup's
+    paragraph 148 anchors 69352 with ``outMargin=140`` and its successor is
+    cached at 69632.  The box height alone misses both by exactly
+    ``top + bottom``.
+    """
+    renderer, _image, _draw = typo_probe
+    for out_v in (0, 138, 140, 283):
+        para = _anchored_object_paragraph(renderer, 63674, out_v)
+        assert renderer._anchor_extent(para, body_top=0) == \
+            63674 + 2 * out_v, out_v
+
+
+def test_an_anchored_objects_slot_starts_at_its_declared_offset(typo_probe):
+    renderer, _image, _draw = typo_probe
+    para = _anchored_object_paragraph(renderer, 10000, 141, vert_offset=2000)
+    assert renderer._anchor_extent(para, body_top=0) == 2000 + 141 + 10000 + 141
+
+
+def test_a_page_relative_anchor_measures_its_slot_from_the_body_box(
+        typo_probe):
+    """The offset is measured from the sheet and the flow cursor from the
+    body box, so the body top comes off the slot bottom — and the outer
+    margin is still inside it."""
+    renderer, _image, _draw = typo_probe
+    para = _anchored_object_paragraph(renderer, 10000, 141, vert_offset=5000,
+                                      vert_rel_to="PAGE")
+    assert renderer._anchor_extent(para, body_top=4000) == \
+        5000 + 141 + 10000 + 141 - 4000
+
+
+def test_an_anchor_that_reserves_no_room_still_reserves_none(typo_probe):
+    """``BEHIND_TEXT`` takes the text with it, so there is no slot to widen."""
+    renderer, _image, _draw = typo_probe
+    para = _anchored_object_paragraph(renderer, 10000, 283,
+                                      wrap="BEHIND_TEXT")
+    assert renderer._anchor_extent(para, body_top=0) == 0
