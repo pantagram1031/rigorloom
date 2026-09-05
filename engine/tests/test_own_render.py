@@ -4652,6 +4652,145 @@ def test_row_heights_sum_to_the_tables_own_declared_height(tmp_path):
     assert sum(heights) == total
 
 
+# ------------------------------------------------------------- column grid
+
+def _multirow_table(rows, declared_width, col_cnt):
+    """A synthetic table whose rows are ``[[(colAddr, colSpan, width), ...]]``.
+
+    Only the attributes ``_table_tracks`` reads on the column axis are
+    present, and the declared table width is passed separately from the
+    rows' own totals so a test can make the two disagree — which is the
+    whole question the grid answers.
+    """
+    from xml.etree import ElementTree as ET
+
+    body = ""
+    for index, row in enumerate(rows):
+        cells = "".join(
+            '<hp:tc><hp:cellAddr colAddr="%d" rowAddr="%d"/>'
+            '<hp:cellSpan colSpan="%d" rowSpan="1"/>'
+            '<hp:cellSz width="%d" height="1200"/>'
+            '<hp:subList vertAlign="TOP"/></hp:tc>'
+            % (col, index, span, width) for col, span, width in row)
+        body += "<hp:tr>%s</hp:tr>" % cells
+    return ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="%d" colCnt="%d" cellSpacing="0">'
+        '<hp:sz width="%d" height="%d"/>'
+        '<hp:inMargin left="0" right="0" top="0" bottom="0"/>%s</hp:tbl>'
+        % (len(rows), col_cnt, declared_width, 1200 * len(rows), body))
+
+
+def test_a_row_that_agrees_with_its_table_gets_its_own_widths_back():
+    """The common case has to be a no-op, or nothing below is readable."""
+    xs = own_render.column_grid(3, [(0, 1, 1000), (1, 1, 2000), (2, 1, 3000)],
+                                declared_total=6000)
+    assert xs == [0, 1000, 3000, 6000]
+
+
+def test_the_row_that_claims_more_writes_the_boundary():
+    """Two rows contradict each other; the grid is the envelope of both.
+
+    Row 0 says the first column ends at 1000 and row 1 says 900.  Under the
+    grid the boundary is 1000 and row 1's first cell is stretched to it,
+    while row 0 is untouched — which is what the cache shows on saeopja's
+    47757-wide table, where a row ten rows below the one that set the
+    boundary is measured at the earlier row's width and not its own.
+    """
+    xs = own_render.column_grid(
+        2, [(0, 1, 1000), (1, 1, 3000), (0, 1, 900), (1, 1, 3000)],
+        declared_total=4000)
+    assert xs == [0, 1000, 4000]
+
+
+def test_the_grid_does_not_depend_on_the_order_the_cells_arrive_in():
+    """A maximum has no first and no last, and that is the point.
+
+    ``gridfirst`` and ``gridlast`` — the same grid resolved by document
+    order, forwards and backwards — disagree with each other on the corpus,
+    so a rule that reads the order has to justify which way it reads it.
+    This one does not read the order at all.
+    """
+    forward = own_render.column_grid(
+        2, [(0, 1, 1000), (1, 1, 3000), (0, 1, 900)], declared_total=4000)
+    backward = own_render.column_grid(
+        2, [(0, 1, 900), (1, 1, 3000), (0, 1, 1000)], declared_total=4000)
+    assert forward == backward == [0, 1000, 4000]
+
+
+def test_a_merged_cell_claims_only_its_far_boundary():
+    """``cellSz@width`` on a colSpan cell is the whole merged width.
+
+    So it constrains the distance from its own column to the one past its
+    span and says nothing about the columns inside it, which the row below
+    is then free to state.
+    """
+    xs = own_render.column_grid(
+        3, [(0, 3, 6000), (0, 1, 1000), (1, 1, 2000), (2, 1, 3000)],
+        declared_total=6000)
+    assert xs == [0, 1000, 3000, 6000]
+
+
+def test_a_later_row_fills_a_boundary_no_earlier_row_reaches():
+    """Row 0 is one merged cell, so the interior is row 1's to state.
+
+    This is the shape every contradictory corpus table starts with: a
+    header row spanning the whole table, and the columns declared further
+    down.
+    """
+    xs = own_render.column_grid(
+        2, [(0, 2, 5000), (0, 1, 2000), (1, 1, 3000)], declared_total=5000)
+    assert xs == [0, 2000, 5000]
+
+
+def test_a_boundary_no_cell_claims_is_split_between_its_neighbours():
+    """A grid the file does not determine still has to be drawable.
+
+    No cell here ends at column 1, so nothing states where it is; the gap
+    between the two boundaries that ARE determined is divided evenly, which
+    is the fallback ``solve_tracks`` uses for an unknown track.
+    """
+    xs = own_render.column_grid(3, [(0, 2, 2000), (2, 1, 1000)],
+                                declared_total=3000)
+    assert xs == [0, 1000, 2000, 3000]
+
+
+def test_the_grid_closes_on_the_declared_width_and_never_runs_backwards():
+    """A row that overflows its table is clamped, not folded over itself.
+
+    No corpus row overflows by enough to say whether Hancom shrinks the
+    overflowing cell or clamps it, so this pins only the invariant every
+    reading has to satisfy: the boundaries are non-decreasing and the last
+    one is the table's own box.
+    """
+    xs = own_render.column_grid(2, [(0, 1, 9000), (1, 1, 9000)],
+                                declared_total=4000)
+    assert xs == [0, 4000, 4000]
+    assert xs == sorted(xs)
+
+
+def test_the_table_tracks_column_axis_reads_the_grid():
+    """The wiring: ``_table_tracks`` has to place cells on these boundaries.
+
+    Row 0 declares 1000 + 3000 against a table of 4000 and row 1 declares
+    900 + 3000, which is 100 short.  The old solve rescaled both rows into
+    one compromise; the grid gives row 1's first cell the boundary row 0
+    wrote.
+    """
+    from collections import Counter
+
+    renderer = object.__new__(own_render.OwnRenderer)
+    renderer.counts = Counter()
+    renderer.skipped = []
+    renderer.defs = {"para_pr": {}}
+    renderer._table_natural_height = set()
+    renderer._paragraph_block_extent = lambda draw, paras, width: 0
+    tbl = _multirow_table([[(0, 1, 1000), (1, 1, 3000)],
+                           [(0, 1, 900), (1, 1, 3000)]], 4000, 2)
+    xs, _ys, cells = renderer._table_tracks(None, tbl)
+    assert xs == [0, 1000, 4000]
+    assert len(cells) == 4
+
+
 # ---------------------------------------------------------------- ink probe
 
 def _table_zero_geometry(path, dpi=144):
