@@ -1240,8 +1240,11 @@ def test_a_trailing_space_leaves_the_geometry_box_but_not_the_caret_box(
     carries it, because that is where a caret goes; ``x1`` does not, because
     the reference PDFs' own boxes were measured to stop at the last piece
     that draws ink.  The gap is the half-width space cell at that run's
-    declared size — 7.020 px and 8.667 px on the two lines the edited
-    paragraph owns, at the fixture's 96 dpi.
+    declared size: 7.333 px is half of an 11 pt cell and 8.667 px half of a
+    13 pt one, at the fixture's 96 dpi.  (The 7.020 px this test pinned
+    before the measured HFT advance table landed was a line whose break
+    moved; the mechanism it demonstrated is unchanged and two other sizes
+    demonstrate it.)
 
     Since the provenance policy, an edit sends the *whole* document
     computed, so other paragraphs' trailing spaces hang too; the two
@@ -1253,7 +1256,7 @@ def test_a_trailing_space_leaves_the_geometry_box_but_not_the_caret_box(
     hangs = sorted(round(b["x1_advance"] - b["x1"], 3) for b in boxes
                    if b["x1_advance"] - b["x1"] > 0.01)
     assert hangs, "no computed line ends in a space"
-    assert {7.02, 8.667} <= set(hangs), hangs
+    assert {7.333, 8.667} <= set(hangs), hangs
     for box in boxes:
         assert box["x1"] == box["x1_visible_advance"]
         if box["x1_advance"] > box["x1"]:
@@ -2880,8 +2883,16 @@ LINESEG_AGREEMENT = {
     # positions them by.  Every scored paragraph of this form now reproduces
     # the cached line count.  Nothing else on the row moved.
     "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 454, 435, 30, 30, 45, 19),
-    "moel-pyojun-geunrogyeyakseo-2013": (264, 259, 247, 35, 31, 50, 29),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 297, 277, 37, 27, 47, 7),
+    # 259 -> 262, 247 -> 253, 31 -> 33 and 29 -> 34 on moel-2013, and
+    # 297 -> 300, 277 -> 284, 7 -> 11 on moel-2025, from the MEASURED HFT
+    # advance table.  These are the two forms whose punctuation Hancom drew
+    # from its own HFT faces, which are not TrueType files and have no metric
+    # on any machine; the table is read out of the export's own Type 3
+    # /Widths.  Both of the corpus's remaining text_rebreak:width carriers --
+    # moel-2013 ¶118 and ¶141 -- now break exactly where the cache broke
+    # them.  Every column that moved went up.
+    "moel-pyojun-geunrogyeyakseo-2013": (264, 262, 253, 35, 33, 50, 34),
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 300, 284, 37, 27, 47, 11),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
     "saeopja-deungnok-sinchengseo": (765, 760, 750, 18, 16, 25, 8),
 }
@@ -3098,7 +3109,21 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # to 10.56.  The rasters agree on both policies (cache ssim +0.0017,
     # inked +0.0142, line IoU +0.0003; computed +0.0019 / +0.0143 / +0.0008,
     # means over the corpus) and no break position was lost.
-    assert totals == [2151, 2121, 2039, 161, 142, 219, 82], totals
+    #
+    # 2121 -> 2127, 2039 -> 2052, 142 -> 144 and 82 -> 91 on the measured-HFT
+    # slice.  #288 established that the anonymous Type 3 fonts in the
+    # reference exports are HWP's own HFT faces, which are not TrueType files
+    # and whose advances no face on any machine reproduces; this reads them
+    # out of the export's own ``/Widths`` and meters an HFT-declared run off
+    # that table.  All of the movement is moel-2013 and moel-2025, the two
+    # forms whose punctuation Hancom drew that way, and both of the corpus's
+    # remaining ``text_rebreak:width`` carriers close: the root falls 165 ->
+    # 100 and the corpus's proven over-measurements 49 -> 30.  Installed-face
+    # paragraphs are the control and do not move at all (48 / 113 cached
+    # break agreements before and after).  The rasters agree on the computed
+    # policy, which is the one that grades the breaker (line IoU +0.0192,
+    # ssim +0.0045, inked +0.0074, means over the corpus).
+    assert totals == [2151, 2127, 2052, 161, 144, 219, 91], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -6929,8 +6954,16 @@ def _bold_metric_probe(tmp_path, both_cuts=True):
     for table in renderer.defs["fontfaces"].values():
         for name in table.values():
             renderer.font_index.families[name] = dict(entry)
+    # The fiction this fixture rests on is that every declared face is an
+    # INSTALLED TrueType one, so the header has to say so too: gianmun
+    # declares real HFT names, and an HFT run is metered off the measured
+    # table rather than off any face this machine can plant.
+    for table in renderer.defs["fontface_types"].values():
+        for fid, (name, _type) in list(table.items()):
+            table[fid] = (name, "TTF")
     renderer._face_cache.clear()
     renderer._metric_face_cache.clear()
+    renderer._hft_face_cache.clear()
     return renderer
 
 
@@ -7037,3 +7070,155 @@ def test_no_automatic_space_is_opened_between_hangul_and_latin(tmp_path):
         apart = (renderer._measure_hwp(None, left, cid)
                  + renderer._measure_hwp(None, right, cid))
         assert pair == pytest.approx(apart, rel=1e-6), (left, right)
+
+
+# -- the measured HFT advance table ---------------------------------------
+
+#: A face name no document and no machine has, so nothing can resolve it and
+#: no installed metric can accidentally agree with the table below.
+_HFT_FACE = "SYNTHETIC-HFT"
+
+#: Deliberately not any real face's advance for these characters, and not a
+#: round fraction of the em either: an assertion that passes here cannot be
+#: passing because the resolved face happened to say the same thing.
+_HFT_WIDTHS = {"(": 0.317, "1": 0.4193}
+
+#: The code point the table does NOT carry, whose advance must stay exactly
+#: what it was.
+_HFT_UNCOVERED = ")"
+
+
+def _write_hft_table(tmp_path, face, widths):
+    """A table file in the layout ``HftWidthTable`` reads, loaded through it."""
+    path = pathlib.Path(tmp_path) / own_render.HFT_WIDTH_TABLE_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "declaration": {"status": "MEASURED", "measured_on": "test"},
+        "faces": {face: {"widths": {
+            f"U+{ord(ch):04X}": {"char": ch, "advance_em": em}
+            for ch, em in widths.items()}}},
+    }), encoding="utf-8")
+    return own_render.HftWidthTable(pathlib.Path(tmp_path))
+
+
+def _hft_probe(tmp_path, declared_type="HFT", slots=None):
+    """A renderer whose declared faces are one synthetic face of ``type``.
+
+    Only the header's face-TYPE table is rewritten, never the resolution: the
+    run still draws in whatever this machine gave it, which is the whole
+    point — an HFT face is one no machine has a metric for, and the table is
+    the metric.  ``slots`` names the language slots that get the synthetic
+    HFT face; every other slot is forced to a synthetic TrueType one, so the
+    slot an advance is read off is separated from the slot the glyph is
+    drawn from.
+    """
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=96)
+    for lang, table in renderer.defs["fontface_types"].items():
+        if slots is None or lang.lower() in slots:
+            entry = (_HFT_FACE, declared_type)
+        else:
+            # gianmun declares real HFT names of its own; forcing every other
+            # slot to TrueType keeps them from answering for the slot under
+            # test.
+            entry = ("SYNTHETIC-TTF", "TTF")
+        for fid in list(table):
+            table[fid] = entry
+    renderer._hft_face_cache.clear()
+    renderer.hft_widths = _write_hft_table(tmp_path, _HFT_FACE, _HFT_WIDTHS)
+    return renderer
+
+
+def _any_cid(renderer):
+    for cid, cp in renderer.defs["char_pr"].items():
+        if cp.get("font_ids"):
+            return cid
+    return None
+
+
+def test_an_hft_run_is_advanced_by_the_measured_table(tmp_path):
+    """A run whose declared face is HFT is metered off the measured widths.
+
+    #288 measured that no face on this machine reproduces an HFT face's
+    advances, and that no fixed fraction of the em per character class does
+    either, so the only available metric for these runs is the one Hancom's
+    own PDF output states.  Here the table says something no font would and
+    the advance follows the table.
+    """
+    renderer = _hft_probe(tmp_path)
+    cid = _any_cid(renderer)
+    assert cid is not None, "the fixture has no hh:fontRef"
+    cell = _cell_hwp(renderer, cid)
+    for ch, em in _HFT_WIDTHS.items():
+        got = renderer._measure_hwp(None, ch, cid)
+        assert got == pytest.approx(em * cell, rel=1e-6), ch
+
+
+def test_an_uncovered_code_point_keeps_the_face_metric(tmp_path):
+    """The table covers what it covers; everything else is untouched.
+
+    The comparison is against the SAME renderer with the table taken away,
+    so it cannot pass by agreeing with some other rule.
+    """
+    renderer = _hft_probe(tmp_path)
+    cid = _any_cid(renderer)
+    with_table = renderer._measure_hwp(None, _HFT_UNCOVERED, cid)
+    covered = renderer._measure_hwp(None, "(", cid)
+    renderer.hft_widths = None
+    renderer._em_cache.clear()
+    assert with_table == pytest.approx(
+        renderer._measure_hwp(None, _HFT_UNCOVERED, cid), rel=1e-9)
+    # and the fixture is not vacuous: a covered code point DOES move.
+    assert covered != pytest.approx(renderer._measure_hwp(None, "(", cid),
+                                    rel=1e-6)
+
+
+def test_a_ttf_run_is_never_metered_off_the_hft_table(tmp_path):
+    """The gate is ``hh:font@type``, and a TrueType face has its own metric."""
+    hft = _hft_probe(tmp_path, declared_type="HFT")
+    ttf = _hft_probe(tmp_path, declared_type="TTF")
+    cid = _any_cid(ttf)
+    assert ttf._declared_hft_face(cid, "(") is None
+    assert hft._declared_hft_face(cid, "(") == _HFT_FACE
+    advance = ttf._measure_hwp(None, "(", cid)
+    ttf.hft_widths = None
+    ttf._em_cache.clear()
+    assert advance == pytest.approx(ttf._measure_hwp(None, "(", cid),
+                                    rel=1e-9)
+
+
+def test_ascii_punctuation_is_metered_off_the_latin_slot(tmp_path):
+    """#288's slot correction, pinned where the two slots disagree.
+
+    ``script_slot`` files ``(`` under ``symbol``; HWP meters it off
+    ``latin``, and on the 22 corpus characters whose ``hh:charPr`` names a
+    different face for the two slots Hancom drew all 22 from the ``latin``
+    one.  A document declaring HFT for ``latin`` alone must therefore be
+    metered by the table, and one declaring it for ``symbol`` alone must not.
+    """
+    latin_only = _hft_probe(tmp_path, slots={"latin"})
+    symbol_only = _hft_probe(tmp_path, slots={"symbol"})
+    cid = _any_cid(latin_only)
+    assert latin_only._declared_hft_face(cid, "(") == _HFT_FACE
+    assert symbol_only._declared_hft_face(cid, "(") is None
+    cell = _cell_hwp(latin_only, cid)
+    assert latin_only._measure_hwp(None, "(", cid) == pytest.approx(
+        _HFT_WIDTHS["("] * cell, rel=1e-6)
+
+
+def test_the_renderer_runs_without_a_table_at_all(tmp_path):
+    """A checkout with no table file renders exactly as it did before it.
+
+    The table is a reference file, not a dependency: an absent one is falsy
+    and every advance falls back to the face metric.
+    """
+    empty = own_render.HftWidthTable(pathlib.Path(tmp_path) / "nowhere")
+    assert not empty
+    assert empty.advance_em(_HFT_FACE, "(") is None
+    renderer = _hft_probe(tmp_path)
+    cid = _any_cid(renderer)
+    renderer.hft_widths = empty
+    with_empty = renderer._measure_hwp(None, "(", cid)
+    renderer.hft_widths = None
+    renderer._em_cache.clear()
+    assert with_empty == pytest.approx(renderer._measure_hwp(None, "(", cid),
+                                       rel=1e-9)
