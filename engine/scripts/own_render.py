@@ -1580,6 +1580,38 @@ class FontBook:
 # Track (column / row) solving
 # --------------------------------------------------------------------------
 
+def cell_inset(tc, tbl):
+    """The four margins that inset ``tc``'s content, in HWPUNIT.
+
+    ``hp:tc@hasMargin`` — 셀 여백 사용 — is the override flag, and it decides
+    which of the two margins the file carries is the live one.  With it set,
+    the cell's own ``hp:cellMargin`` applies; without it (``"0"``, or the
+    attribute absent) the inset is the TABLE's ``hp:inMargin``, the default
+    the HWP 5.0 table record stores for every cell it owns, and the cell's
+    stored ``hp:cellMargin`` is a value the editor left behind rather than
+    one that is in force.
+
+    Reading ``hp:cellMargin`` unconditionally — which is what this renderer
+    did — is therefore wrong wherever the two differ and the flag is clear,
+    and on this corpus they differ often: 1553 of 1609 cells declare
+    ``hasMargin="0"``, and on ``jumin`` the cell holding paragraph 46 stores
+    ``cellMargin`` 510/510 while its table's ``inMargin`` is 283/510, so its
+    text column came out 227 HWPUNIT too narrow before anything else went
+    wrong with it (``engine/scripts/cell_column_probe.py``).
+
+    A table that declares no ``hp:inMargin`` at all leaves the cell's own
+    margin as the only statement there is, and it is kept.
+    """
+    own = _kid(tc, "cellMargin")
+    table_default = _kid(tbl, "inMargin") if tbl is not None else None
+    if tc.get("hasMargin") == "1":
+        source = own if own is not None else table_default
+    else:
+        source = table_default if table_default is not None else own
+    return {side: _iattr(source, side)
+            for side in ("left", "right", "top", "bottom")}
+
+
 def solve_tracks(count: int, constraints, declared_total=None):
     """Recover per-column widths / per-row heights from span constraints.
 
@@ -6297,7 +6329,7 @@ class OwnRenderer:
                 addr = _kid(tc, "cellAddr")
                 span = _kid(tc, "cellSpan")
                 size = _kid(tc, "cellSz")
-                cmargin = _kid(tc, "cellMargin")
+                margin = cell_inset(tc, tbl)
                 if addr is None or size is None:
                     self._skip("hp:tc", "cell without cellAddr/cellSz skipped")
                     continue
@@ -6307,8 +6339,6 @@ class OwnRenderer:
                 cspan = max(1, _iattr(span, "colSpan", 1))
                 width = _iattr(size, "width")
                 height = _iattr(size, "height")
-                mt = _iattr(cmargin, "top")
-                mb = _iattr(cmargin, "bottom")
                 paras = [Paragraph(p, self.defs["para_pr"])
                          for p in own_paragraphs(tc)]
                 col_cons.append((col, cspan, width))
@@ -6316,11 +6346,7 @@ class OwnRenderer:
                     "tc": tc, "row": row, "col": col,
                     "rspan": rspan, "cspan": cspan,
                     "declared_height": height,
-                    "margin": {
-                        "left": _iattr(cmargin, "left"),
-                        "right": _iattr(cmargin, "right"),
-                        "top": mt, "bottom": mb,
-                    },
+                    "margin": margin,
                     "paras": paras,
                 })
         if natural_rows:
