@@ -4582,6 +4582,120 @@ def test_row_heights_sum_to_the_tables_own_declared_height(tmp_path):
     assert sum(heights) == total
 
 
+# ------------------------------------------- row heights (a declared floor)
+
+def _row_table(rows, declared_total=None, in_margin=(0, 0, 200, 300)):
+    """A one-column table whose every row states its declared height and its
+    cached content height.
+
+    ``rows`` is ``[(declared cellSz height, cached content height or None,
+    rowSpan)]``.  A cell whose content height is ``None`` holds no paragraph
+    at all -- the empty-cell case.  Every paragraph authored here has an
+    ``hp:linesegarray`` and no characters, so ``_paragraph_block_extent``
+    takes the cached branch whatever the fonts on the machine resolve to and
+    the content height is exactly the number the fixture states.
+    """
+    from xml.etree import ElementTree as ET
+
+    inner = ('<hp:inMargin left="%d" right="%d" top="%d" bottom="%d"/>'
+             % in_margin)
+    body = []
+    row = 0
+    for declared, content, span in rows:
+        para = ""
+        if content is not None:
+            para = ('<hp:subList vertAlign="TOP"><hp:p><hp:run/>'
+                    '<hp:linesegarray><hp:lineseg vertpos="0" vertsize="%d" '
+                    'textheight="%d" baseline="%d" spacing="%d" horzpos="0" '
+                    'horzsize="10000"/></hp:linesegarray></hp:p></hp:subList>'
+                    % (content, content, content * 85 // 100, content))
+        body.append(
+            '<hp:tr><hp:tc><hp:cellAddr colAddr="0" rowAddr="%d"/>'
+            '<hp:cellSpan colSpan="1" rowSpan="%d"/>'
+            '<hp:cellSz width="10000" height="%d"/>%s</hp:tc></hp:tr>'
+            % (row, span, declared, para))
+        row += span
+    height = (sum(d for d, _c, _s in rows) if declared_total is None
+              else declared_total)
+    return ET.fromstring(
+        '<hp:tbl xmlns:hp="urn:x" rowCnt="%d" colCnt="1" cellSpacing="0">'
+        '<hp:sz width="10000" height="%d"/>%s%s</hp:tbl>'
+        % (row, height, inner, "".join(body)))
+
+
+def _solve_rows(tbl):
+    """``_table_tracks``' row boundaries for a synthetic table."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN), dpi=144)
+    canvas = renderer.Image.new("RGB", (8, 8), (255, 255, 255))
+    renderer._image = canvas
+    _xs, ys, _cells = renderer._table_tracks(
+        renderer.ImageDraw.Draw(canvas), tbl)
+    return [ys[i + 1] - ys[i] for i in range(len(ys) - 1)]
+
+
+def test_a_row_is_as_tall_as_its_content_plus_the_cells_inset():
+    """cellSz@height is a minimum, and the inset is on both sides of it.
+
+    The first row's content overflows its declared height and takes the row
+    with it; the second row's fits and leaves the declared height standing.
+    ``row_height_probe.py --corpus`` scores that reading -- max(declared,
+    content + top inset + bottom inset) -- at 70 of 70 corpus tables whose
+    rows sum exactly to the height the file declares for the table.
+    """
+    tbl = _row_table([(1200, 3000, 1), (4000, 900, 1)],
+                     declared_total=3500 + 4000)
+    assert _solve_rows(tbl) == [3000 + 200 + 300, 4000]
+
+
+def test_an_empty_cell_is_as_tall_as_it_declares():
+    """A cell holding no paragraph contributes no content, not a zero row."""
+    tbl = _row_table([(1500, None, 1)])
+    assert _solve_rows(tbl) == [1500]
+
+
+def test_a_rowspan_cell_constrains_the_rows_it_spans_together():
+    """A cell spanning two rows states what the PAIR must add up to.
+
+    Charging its whole height to either row on its own would double the
+    table; the corpus says so too -- dropping every rowSpan constraint
+    changes no corpus row, because the unspanned cells already determine
+    every one of them.
+    """
+    tall = _row_table([(1000, None, 1), (1000, None, 1)])
+    spanning = _row_table([(1000, None, 1), (5000, None, 2)])
+    assert _solve_rows(tall) == [1000, 1000]
+    assert sum(_solve_rows(spanning)) == 1000 + 5000
+
+
+def test_the_declared_table_height_is_a_floor_on_the_rows_not_a_ceiling():
+    """A table whose content overflows grows; its other rows do not shrink.
+
+    This is the whole of the change #271 makes.  The old reading rescaled
+    every row proportionally to keep the table at its declared height, which
+    on the corpus moved 50 rows to pay for the 8 cells whose computed content
+    is taller than the cache's.  Nothing licenses that: on the height the
+    cache states, the max rule already sums to the declared height on 70 of
+    70 tables, so the rescale never fires on a Hancom save at all.
+    """
+    overflowing = _row_table([(1000, None, 1), (1000, 4000, 1)],
+                             declared_total=2000)
+    heights = _solve_rows(overflowing)
+    assert heights[0] == 1000, "an innocent row was shrunk to pay for row 1"
+    assert heights[1] == 4000 + 200 + 300
+    assert sum(heights) > 2000
+
+
+def test_a_table_whose_rows_fall_short_still_reaches_its_declared_height():
+    """The other direction is unchanged and has no corpus witness either way.
+
+    No corpus table's rows fall short of its declared hp:sz@height, so this
+    pins the behaviour that was there rather than a measurement.
+    """
+    short = _row_table([(1000, None, 1), (1000, None, 1)],
+                       declared_total=4000)
+    assert sum(_solve_rows(short)) == 4000
+
+
 # ---------------------------------------------------------------- ink probe
 
 def _table_zero_geometry(path, dpi=144):
