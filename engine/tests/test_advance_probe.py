@@ -7,7 +7,7 @@ the probe has to move a named term rather than a corpus tally.  Nothing below
 counts corpus characters, lines, forms or faces: every fixture is built in the
 test.
 
-Five things:
+Six things:
 
   * an advance is the distance to the NEXT character's origin, and only
     inside one text-showing run — across a run boundary the distance is
@@ -20,7 +20,10 @@ Five things:
     onto it and an advance truncated onto it — and the arithmetic of that is
     pinned against sizes read off the reference, not against a corpus tally;
   * a Korean face name that reached the PDF as CP949 read for Latin-1 is put
-    back together, and a genuinely Latin name is left alone.
+    back together, and a genuinely Latin name is left alone;
+  * the candidate advance rules for a face the renderer SUBSTITUTED are
+    arithmetic on the declared cell, an installed face is untouched by all of
+    them, and the mean of Hancom's advances is not their mode.
 """
 from __future__ import annotations
 
@@ -69,9 +72,15 @@ class Metrics:
             "declared": "declared", "resolved": "resolved.ttf",
             "source": "installed",
             "slot": "hangul", "bold": False, "size_pt": 13.0,
+            "cell_hwp": 13.0 * AP.HWPUNIT_PER_PT,
             "spacing": 0, "ratio": 100, "class": AP.char_class(ch),
             "advance_hwp": advance, "gap_hwp": self.gap,
             "grid_advance_hwp": advance, "grid_gap_hwp": self.gap,
+            # An installed face is untouched by every candidate rule, which
+            # is what the real ``OurMetrics`` does for ``source ==
+            # "installed"`` too.
+            "rule_advance_hwp": dict.fromkeys(AP.FALLBACK_RULES, advance),
+            "rule_gap_hwp": dict.fromkeys(AP.FALLBACK_RULES, self.gap),
         }
 
 
@@ -263,3 +272,112 @@ def test_the_pdf_size_table_says_which_sizes_sit_on_the_grid():
     assert rows["Batang"]["grid_pt"] == pytest.approx(12.96)
     assert rows["Batang"]["on_grid"] is True
     assert rows["Other"]["on_grid"] is False
+
+
+# --------------------------------------------------------------------------
+# 6 · the candidate advance rules for a face that was SUBSTITUTED (#280)
+
+
+def test_east_asian_width_is_what_decides_a_full_cell():
+    # The rule has to know which characters occupy a whole cell without
+    # asking the stand-in face, because the stand-in is the thing in doubt.
+    assert AP.is_full_width("가") is True
+    assert AP.is_full_width("漢") is True
+    assert AP.is_full_width("（") is True
+    assert AP.is_full_width("A") is False
+    assert AP.is_full_width("7") is False
+    assert AP.is_full_width("(") is False
+    assert AP.is_full_width(" ") is False
+
+
+def test_a_full_width_glyph_advances_by_the_declared_cell():
+    # 13 pt is 1300 HWPUNIT.  The stand-in measures 1235; the rule ignores it.
+    cell = 13.0 * PT
+    assert AP.rule_advance("cell", 1235.0, "가", cell) == pytest.approx(cell)
+    # On the grid the cell goes to the nearest whole 1/600 inch first, which
+    # at 13 pt is 108 units and not 108.33.
+    assert AP.rule_advance("cell+grid:round", 1235.0, "가", cell) == \
+        pytest.approx(108 * AP.DEVICE_GRID_HWP)
+
+
+def test_the_rule_leaves_the_measurement_alone_where_it_has_no_opinion():
+    # ``current`` is the control every table is read against.
+    cell = 13.0 * PT
+    assert AP.rule_advance("current", 1235.0, "가", cell) == 1235.0
+    # Latin keeps the stand-in's own outlines under the ungridded rule: there
+    # is no cell to put a proportional glyph in.
+    assert AP.rule_advance("cell", 700.0, "A", cell) == 700.0
+
+
+def test_a_space_is_half_the_cell_and_the_variants_differ_only_there():
+    # 15 pt: the cell is 125 whole units, its half is 62.5, and the floor
+    # variant is the one that gives Hancom's 62 units = 744 HWPUNIT.
+    cell = 15.0 * PT
+    half = AP.rule_advance("cell", 750.0, " ", cell)
+    assert half == pytest.approx(cell * own_render.SPACE_CELL_FRACTION)
+    floored = AP.rule_advance("cell+grid, space floor", 750.0, " ", cell)
+    assert floored == pytest.approx(62 * AP.DEVICE_GRID_HWP)
+    ceiled = AP.rule_advance("cell+grid:ceil", 750.0, " ", cell)
+    assert ceiled == pytest.approx(63 * AP.DEVICE_GRID_HWP)
+    # Exactly half a unit is where round and floor stop being distinguishable:
+    # Python rounds half to EVEN, so 62.5 units goes to 62 and the round
+    # variant agrees with the floor one at this size by accident, not by rule.
+    assert AP.rule_advance("cell+grid:round", 750.0, " ", cell) == \
+        pytest.approx(62 * AP.DEVICE_GRID_HWP)
+    # A cell of an even number of units has an exact half and every variant
+    # agrees: 13 pt rounds to 108 units, whose half is a whole 54.
+    cell13 = 13.0 * PT
+    for name in ("cell+grid:round", "cell+grid:floor", "cell+grid:ceil",
+                 "cell+grid, space floor"):
+        assert AP.rule_advance(name, 650.0, " ", cell13) == \
+            pytest.approx(54 * AP.DEVICE_GRID_HWP)
+
+
+def test_latin_takes_the_oracle_only_where_the_rule_asks_for_it():
+    cell = 13.0 * PT
+    grid = AP.quantise_grid(cell, "round")
+    assert AP.rule_advance("cell+grid, space floor, latin oracle",
+                           700.0, "7", cell, 0.5) == pytest.approx(grid * 0.5)
+    # The same oracle is ignored by every rule that does not name it.
+    assert AP.rule_advance("cell+grid:round", 700.0, "7", cell, 0.5) == \
+        pytest.approx(AP.quantise_grid(700.0 / cell * grid, "round"))
+
+
+def test_the_grid_variants_round_floor_and_ceil_as_they_say():
+    value = 5.5 * AP.DEVICE_GRID_HWP
+    assert AP.quantise_grid(value, "floor") == pytest.approx(
+        5 * AP.DEVICE_GRID_HWP)
+    assert AP.quantise_grid(value, "ceil") == pytest.approx(
+        6 * AP.DEVICE_GRID_HWP)
+    assert AP.quantise_grid(4.2 * AP.DEVICE_GRID_HWP, "round") == \
+        pytest.approx(4 * AP.DEVICE_GRID_HWP)
+
+
+def test_a_line_carries_the_source_of_every_face_on_it():
+    # The split the whole report rests on: one substituted character makes
+    # the line a treatment line, and a line with none is the control.
+    assert AP.line_source({"segments": [{"sources": ["installed"]}]}) == \
+        "installed"
+    assert AP.line_source({"segments": [{"sources": ["installed"]},
+                                        {"sources": ["bundled"]}]}) == \
+        "substituted"
+
+
+def test_the_full_width_table_separates_the_mean_from_the_mode():
+    # Two thirds of the advances at 108 units and one third at 109 is the
+    # 13 pt case: the MODE is 1296 and the MEAN is the declared 1300, and
+    # reading the mode for the advance is the error #267 made.
+    def entry(units):
+        return {"class": "hangul", "spacing": 0, "size_pt": 13.0,
+                "cell_hwp": 1300.0, "source": "bundled", "pdf_font": "휴먼명조",
+                "hancom_hwp": units * AP.DEVICE_GRID_HWP}
+
+    chars = [entry(108)] * 40 + [entry(109)] * 20
+    rows = AP.fullwidth_cell_table(
+        [{"paragraphs": [{"lines": [{"chars": chars}]}]}])
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["median_hwp"] == pytest.approx(1296.0)
+    assert row["mean_hwp"] == pytest.approx(1300.0)
+    assert row["mean_over_cell"] == pytest.approx(1.0)
+    assert row["units"] == {108: 40, 109: 20}
