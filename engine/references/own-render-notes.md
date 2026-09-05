@@ -6374,3 +6374,252 @@ Worker: Opus; orchestrator: Fable.
 - **The PDF rule oracle measures recall of drawn strokes**, so a form whose
   cells declare no borders contributes nothing to it, and a stroke that is
   not a table rule counts against every model equally.
+
+## A row's shortfall is not shared out — it is a boundary already written — measured, 2026-09-05
+
+#270 found that Hancom tiles each table row from its own cells' declared
+`cellSz@width` and closes the row at `hp:tbl/hp:sz@width`, and left one
+question standing: WHICH cell takes the difference. `stretch` answered "the
+last cell the row lists", reached 1495 of 1599 measurable cells on the
+cache's 4-HWPUNIT grid, and could not explain 37 `saeopja` cells where a
+128-HWPUNIT shortfall splits +26 / +98 between two cells.
+
+This run put nine more models beside it. The answer is that the question was
+wrong: there is no shortfall to share out. Hancom keeps one column grid per
+table, and a row that does not add up does not choose a victim — it lands
+wherever the grid already disagrees with it, which can be two cells, in
+amounts that are neither equal nor proportional.
+
+### The instrument
+
+`engine/scripts/track_probe.py FORM.hwpx [--corpus] [--pdf] [--rows]
+[--heights] [--models LIST] [--json]` — #270's probe, with nine models added
+and `--models` to name a subset. `--rows` now prints every cell of every row
+that does not add up, with the box the CACHE gave it beside each model's
+residual, so the measurement and the guesses are in the same table.
+
+Six models tile the row exactly as `stretch` does and differ only in who
+pays: `prop4` (proportional to declared widths, each share floored onto the
+4-HWPUNIT grid, remainder to the last cell), `prop_round` (rounded,
+remainder to the last), `prop_widest` (remainder to the widest), `quanta`
+(4 HWPUNIT at a time, left to right, until spent), `colspan` (the largest
+`colSpan` takes it all) and `stretch` itself.
+
+Three do not compute a shortfall at all. They build one column grid and let
+a cell's box be the distance between the two boundaries it sits between:
+
+| model | who may write a boundary |
+| --- | --- |
+| `firstrow` | row 0 only — the task's "the first row's tracks" reading |
+| `gridfirst` | the first cell, in document order, whose width reaches it |
+| `gridlast` | a later row overwrites an earlier one — the control |
+
+All three seed `x[0] = 0` and `x[colCnt] = hp:tbl/hp:sz@width`, which is
+#270's row-closing term restated as a boundary rather than as an allocation.
+
+### What the corpus says
+
+1599 measurable cells, of which the models place 828 identically and 771
+differently. Only the second population is evidence about columns.
+
+| model | exact | on the grid | % | of the 771 | regressions vs `global` | vs `stretch` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `global` — the renderer today | 165 | 905 | 56.6 | 143 | 0 | 590 |
+| `literal` | 322 | 1401 | 87.6 | 639 | 40 | 99 |
+| `addr` | 322 | 1401 | 87.6 | 639 | 40 | 99 |
+| `stretch` — #270's best | 324 | 1495 | 93.5 | 733 | 0 | 0 |
+| `prop4` | 265 | 1218 | 76.2 | 456 | 7 | 277 |
+| `prop_round` | 255 | 1144 | 71.5 | 382 | 12 | 356 |
+| `prop_widest` | 250 | 1144 | 71.5 | 382 | 12 | 356 |
+| `quanta` | 250 | 1130 | 70.7 | 368 | 42 | 365 |
+| `colspan` | 296 | 1395 | 87.2 | 633 | 2 | 102 |
+| `firstrow` | 326 | 1497 | 93.6 | 735 | 0 | 0 |
+| **`gridfirst`** | **326** | **1518** | **94.9** | **756** | **0** | **1** |
+| `gridlast` | 326 | 1497 | 93.6 | 735 | 0 | 0 |
+
+Every model that shares a shortfall out among a row's own cells loses to the
+one that hands it all to the last cell, and loses badly: the best of them,
+`prop4`, gives back 277 of the cells `stretch` has. Proportionality is not
+what Hancom does, and neither is any rounding of it. `colspan` — the reading
+that a merged cell absorbs — is the best of the allocation family at 1395,
+still 100 short of `stretch`.
+
+`gridlast` scores exactly what `firstrow` does and 21 below `gridfirst`,
+which is what says "first" is doing the work rather than "a grid" doing it.
+
+### The +26 / +98, and where the two numbers come from
+
+`saeopja`'s 47996-wide table, 43 rows, 18 columns. Row 7 lists six cells
+totalling 47896; rows 8 and 9 list six totalling 47868, 128 short. The cache
+gives +26 to the `colSpan=3` cell at column 10 and +98 to the `colSpan=1`
+cell at column 17.
+
+Under `gridfirst` those are not two allocations. They are two boundaries,
+and neither was written by row 8:
+
+| written by | boundary | value |
+| --- | --- | ---: |
+| the table's own `hp:sz@width` | `x[18]` | 47996 |
+| row 3, `c0+1` … `c16+2`, a full partition | `x[1]`, `x[3]`, `x[5]`, `x[7]`, `x[9]`, `x[11]`, `x[12]`, `x[14]`, `x[16]` | 3234 … 43961 |
+| row 7, `c4+2` at 11448 + 2935 | `x[6]` | 14383 |
+| row 7, `c6+7` at 14383 + 19010 | `x[13]` | **33393** |
+| row 8, `c6+2` and `c8+2` | `x[8]`, `x[10]` | 20429, **26433** |
+
+Row 8's `c10+3` starts at `x[10]` = 26433 and reaches `x[13]` = 33393, so
+its box is 6960 against a declared 6932: **+28**, which the cache's
+quantiser saves as +26. Its `c17+1` starts at `x[17]` = 44144 and reaches
+`x[18]` = 47996, so its box is 3852 against a declared 3752: **+100**, saved
+as +98. The declared widths that produce them are row 7's 19010 at column 6
+and the table's own 47996 — not row 8's own widths at all, which is why no
+function of row 8 was ever going to find them. Row 7 itself is 100 short and
+gives all 100 to its last cell, because at row 7 no interior boundary to its
+right had been written yet; `stretch` and `gridfirst` agree there and
+disagree one row later.
+
+### The row that pays its shortfall to its FIRST cell
+
+The 47996 table is where the model was found, so it does not test it.
+`saeopja`'s 47757-wide table does, and it is the one row on the corpus that
+tells `stretch` and `gridfirst` apart in the opposite direction.
+
+Row 4 totals 47757 exactly and lists `c0+3` at 9890, writing `x[3]` = 9890.
+Ten rows later row 14 lists `c0+3` at 9759 and `c3+5` at 37867, totalling
+47626 — 131 short. `gridfirst` gives `c0+3` the boundary row 4 wrote, so its
+box is 9890, **+131 on the FIRST cell**, and `c3+5` then runs 9890 → 47757
+for a box of 37867, exactly its declared width and +0. The cache measures
+9890 and 37866. `stretch` has it backwards on both cells, and `firstrow`
+and `gridlast` miss it too, because the boundary was written by row 4 and
+neither of those lets row 4 write it.
+
+Two cells is thin, but they are the only two on the corpus that `gridfirst`
+gets right and that were not in view when it was written.
+
+`jumin` table 1 reads the same way. `x[3]` = 29386 is written by the first
+row that lists a `colSpan=3` cell at column 0, and rows 33/34/38 then break
+their second cell at 50897 − 29386 = 21511 rather than at its declared
+18681, exactly as #270 measured — except that #270 had to call it "the last
+cell absorbs" and here it is just `x[5]` = `hp:sz@width`.
+
+### The rule
+
+**A table has one column grid. `x[0]` is 0, `x[colCnt]` is
+`hp:tbl/hp:sz@width`, and every interior boundary is written by the first
+cell, in document order, whose declared `cellSz@width` reaches it. A cell
+that reaches a boundary already written is stretched or shrunk to it and
+writes nothing. A cell's box is the distance between its two boundaries.**
+
+The grid is a global column set after all — #270 was wrong to call the
+global solve our invention in kind, and right to call it wrong in method.
+What `solve_tracks` gets wrong is not that it solves globally but that it
+rescales: it treats contradictory rows as a system to be reconciled, and
+Hancom treats the first statement as binding and every later one as
+something to be fitted to it.
+
+### Not implemented, and why
+
+The gate was 99% of cells on the grid with 0 regressions and the remaining
+misses explained. `gridfirst` is 1518 of 1599 — **94.9%**, well short of it
+on the denominator #270's headline used. Three separate things would have to
+close first, and this run closed one of them:
+
+- **The 66 cells every model places identically** are unchanged from #268
+  and are not a column question: `kstartup` −156 on 60 cells, `gianmun-1ho`
+  −874 on 2 and −1157 on 1, `jumin` +503 and +502, `saeopja` +602. Excluding
+  them `gridfirst` is 1518 of 1533, **99.0%** — the first model to cross 99
+  on that population, and `stretch` was 97.5%.
+- **15 contested cells stay off the grid**, and only three of them have an
+  account. Eight are near-misses of one grid step: six at −1 and two at +4,
+  all inside the 8-HWPUNIT near band, and `near` improves 1502 → 1526. Four
+  are rows 7 and 8 of `saeopja`'s 48027-wide table, where a 19-HWPUNIT
+  shortfall goes to the row's FIRST cell (`c0+3` measured at 12018 against a
+  declared 12002) while row 4 of the same table gives its 19 to the last
+  cell; `gridfirst` writes `x[3]` = 12002 from row 7's own first cell and
+  the cache writes 12021, and nothing measured here says where 12021 comes
+  from. A per-column width vector consistent with every cached box in that
+  table does exist — `w0` = 5660, `w2` = 100, `w9` = 262 and so on — but it
+  was solved from the cache's answers, so it predicts nothing. The last
+  three are `jumin` row 31 at +500 and two `saeopja` cells whose cached
+  horzsize is WIDER than their declared `cellSz@width` (`r3 c6+3` declares
+  1062 and the cache breaks it at 2006; `r9 c0+12` declares 48008 and the
+  cache breaks it at 47426), which no tiling of their rows can produce.
+- **x still has no oracle, and this run made that worse rather than
+  better.** The PDF vertical-stroke recall at 50 HWPUNIT is `global` 263,
+  `addr` 283, `literal` 305, `stretch` 305, `firstrow` 305, `gridlast` 305,
+  **`gridfirst` 303** — two BELOW `stretch`, out of 1643 drawn strokes.
+  `gridfirst` wins the width oracle by 23 cells and loses the x oracle by 2
+  strokes, and the model moves where every cell in every table is drawn. A
+  change to `solve_tracks` moves every table rule on the corpus, and 1643
+  strokes that cannot separate the two candidates do not license it.
+
+So `own_render.py` is byte for byte what #268 left, for the second run
+running. The rule is recorded and the instrument that found it is in the
+tree; what it needs before it ships is an absolute-x oracle, which this
+corpus does not contain.
+
+### The row-height question, first look
+
+`--heights` reports the shape of #265's root rather than solving it.
+`hp:tr` carries no height in OWPML, so a row's height has to come from its
+cells' `cellSz@height`. Over the corpus's 81 tables and 514 rows:
+
+- **500 of 514 rows** have every `rowSpan=1` cell declaring one identical
+  height, so "the tallest cell" and "any cell" are the same answer and the
+  question does not arise. No row lists zero `rowSpan=1` cells. The 14 that
+  disagree spread by 283 HWPUNIT on 5 rows, 100 on 2, and then singletons at
+  45, 434, 1300, 1308 and 1345.
+- **202 of 212 `rowSpan` cells** declare a height exactly equal to the sum
+  of the unit heights of the rows they cover, so the merge adds no
+  constraint and no simultaneous solve is needed. The 10 that do not are all
+  singletons and all large — +2662, +3562, +3127, +4300, +435, +384, −566.
+- **50 of 81 tables** have row heights summing exactly to
+  `hp:tbl/hp:sz@height`. The 31 that do not are short by 700 on 2 tables,
+  3959 on 2, and then singletons up to 10195.
+
+The reading this supports is that row heights are the max of the row's own
+`rowSpan=1` cell heights and that a rowSpan-aware solve buys 10 cells out of
+212 — but the 31 tables whose rows do not sum to the declared table height
+are a third of the corpus and are not explained by either reading, so this
+is a shape and not a rule.
+
+### Nothing moved, and that is measured
+
+`own_render.py` is untouched, and every channel confirms it rather than
+assuming it. `render_scoreboard.py --corpus --dpi 144` gives `cache` 0.8420
+ssim / 0.3283 inked / 0.6729 line IoU with 52 candidate pages against 53
+reference (`kstartup` 21/22), and `computed` 0.8336 / 0.3246 / 0.6595 with
+53/53 — both identical to #270 to four places, in both directions.
+`lineseg_vs_pdf.py --corpus` is 411/411 paragraphs with 8566/8566
+characters. `cell_column_probe.py --corpus` is 322 exact / 1406 near of 1599.
+`layout_divergence.py --corpus` is agreement 1350, class A 118, class B 350,
+class C 243. `render_check.py` on `render-check-01` is 6 match / 37 close /
+6 differ / 2 unsupported at 96 dpi and 14 / 31 / 4 / 2 at 144, 9 pages on
+both.
+
+Worker: Opus; orchestrator: Fable.
+
+### Not proven
+
+- **Which cell writes a boundary when two rows reach it at once** is
+  `gridfirst`'s one free choice, and document order is what the corpus says.
+  `gridlast` — the same grid resolved the other way — scores 21 cells worse,
+  which distinguishes the two but does not establish that Hancom's rule is
+  ordinal rather than, say, "the widest span wins" (untested; on this corpus
+  the earlier row is also usually the wider span).
+- **The four `saeopja` 48027 cells contradict document order outright.** Row
+  7's first cell is measured 19 HWPUNIT wider than it declares, and the only
+  boundary that could do it is one no earlier row writes. Either the grid is
+  not built in document order, or something outside `cellSz` writes `x[3]`.
+- **A row that overflows its table** is still untested as a separate case,
+  unchanged from #270: no corpus row overflows by enough to separate
+  shrinking the last cell from clamping it.
+- **The corpus is the training set**, and it is the same training set #270
+  used — 81 tables from ten government forms, with the whole grid term
+  resting on the 7 whose rows disagree. `gridfirst` was designed after
+  looking at `saeopja` rows 8/9, so those 37 cells are fitted, not
+  predicted. Of the 21 cells it gains over `firstrow` and `gridlast`, 20 are
+  in that same fitted table and 2 are the 47757 table's row 14, against 1
+  lost; those 2 are the whole of its held-out evidence.
+- **The row-height numbers are counts of the declaration, not of the
+  render.** There is no cached row height to score against, so nothing above
+  says what Hancom actually did with those heights — only what the file
+  gives it to work with.
