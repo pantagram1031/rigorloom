@@ -132,6 +132,72 @@ keyed on ``(anchor kind, empty text, line spacing type)``, and
 ``dominant_kind`` is its tallest bar — the one number that says what kind of
 paragraph the drift starts under.
 
+THE SEAT PASS
+-------------
+The predecessor pass still reads the two renders through their LINE boxes, so
+a run of paragraphs that draws no line at all is one opaque step: #252 found
+every first-drift predecessor to be inkless, its own height exactly the
+cache's (``height_delta_hwp`` 0), and the drifting paragraph below it already
+3600 or 5400 HWPUNIT low — the divergence had begun somewhere above, inside
+paragraphs the line-box pairing cannot see.  The seat pass leaves the line
+domain entirely.
+
+For EVERY top-level ``hp:p`` of every section, in document order, it records
+the paragraph's SEAT under both policies:
+
+* under ``cache``, the page ``_render_paragraphs`` drew it on and the
+  ``hp:lineseg@vertpos`` of its first cached line, which is the authoring
+  engine's own statement of where the paragraph starts, measured from the
+  body top;
+* under ``computed``, the page and ``top`` of the flow-pass placement
+  (``_render_flow_page``'s records), which is the same quantity in the same
+  units;
+
+together with each side's advance (cache: the sum of the paragraph's lineseg
+``vertsize + spacing``; computed: the flow record's ``height``), its drawn
+line count, and the static properties that could explain a difference: every
+empty ``hp:run`` with its ``hh:charPr@height``, every inline and anchored
+object with its extent, out-margins, ``treatAsChar``, ``flowWithText`` and
+``vertRelTo``, and the paragraph's own ``hh:paraPr`` — line spacing type and
+value, ``hh:margin/prev`` and ``/next``, ``pageBreakBefore``, ``keepWithNext``,
+``keepLines``, ``widowOrphan`` — plus its section, its ``columnBreak`` and
+that section's column count.
+
+An inkless paragraph has a seat under both policies, so the pass sees it.
+
+THE DECOMPOSITION
+-----------------
+Per page (keyed on the CACHE page, which is the reading order the cache
+declares), the first paragraph whose seat differs — a different page, or
+``|Δtop| > --seat-tol`` HWPUNIT — is reported in full together with the
+paragraph immediately before it in document order, and the delta is split
+into the three terms it is made of:
+
+    Δtop(this) = Δtop(prev) + Δadvance(prev) + Δgap
+
+where ``gap`` is ``this.top − (prev.top + prev.advance)`` measured separately
+under each policy.  The identity is exact by construction — it is the same
+number written two ways — and that is the point: it says WHICH of the three
+places the height entered.  ``d_prev_top`` means the divergence is older than
+this pair and the pass will have reported it higher up the page (or it came
+across a page boundary); ``d_prev_advance`` means the predecessor's own height
+is measured differently; ``d_gap`` means the space BETWEEN the two paragraphs
+is different, which is the inter-paragraph margin channel and nothing else.
+
+``carrier`` is the term with the largest magnitude among those over the
+tolerance, and ``single_term`` says whether the other two are both under it,
+so a genuinely mixed row is visible rather than rounded to its biggest half.
+A pair the terms cannot be computed for is named instead of guessed:
+``page_top`` (the page's first seated paragraph is the one that differs),
+``page_move`` (the two policies put one of the pair on different pages), or
+``no_seat`` (one side never seated it).
+
+``first_seat_divergences.kinds`` is a histogram keyed on
+``(predecessor kind, this paragraph's kind, carrier)`` where a kind is the
+same ``anchor/empty/lineSpacing`` label the predecessor pass uses.  It is the
+one table that says what shape of paragraph pair the divergence starts at and
+which term it enters through.
+
 ATTRIBUTING CLASS A
 -------------------
 For each class-A paragraph the report names its first divergent line's break
@@ -322,6 +388,11 @@ class TracingRenderer(own_render.OwnRenderer):
         #: ``_render_flow_page`` both ``continue`` on ``not para.chars`` — so
         #: its flow seat is the only place its computed height is stated.
         self.flow_seats = {}
+        #: ``{address: {page, ...}}`` for every paragraph the CACHE path drew,
+        #: including one that drew no line.  ``_paginate`` decides the page
+        #: under that policy and nothing else records it, so the seat pass
+        #: would otherwise have no cache-side page for an inkless paragraph.
+        self.cache_seats = {}
 
     def _render_cached_lines(self, draw, para, *args, **kwargs):
         outer, self._tracing_para = self._tracing_para, para
@@ -363,6 +434,32 @@ class TracingRenderer(own_render.OwnRenderer):
         return super()._render_flow_page(draw, records, origin_hwp,
                                          avail_w_hwp)
 
+    def _render_paragraphs(self, draw, paragraphs, origin_hwp, avail_w_hwp,
+                           block_offset_hwp=0):
+        """Record which page the CACHE path put each paragraph on.
+
+        Called for table cells and footnote bodies as well as for the page's
+        own paragraph list, so the seat pass filters on ``top_level`` rather
+        than on this hook: a cell paragraph's ``vertpos`` is measured from its
+        cell, not from the body box, and comparing it against a flow seat
+        would be comparing two different origins.
+
+        A paragraph the cache carries across a page break arrives here once
+        per page; ``setdefault`` keeps the first, which is the page its seat
+        is on.
+        """
+        for para in paragraphs:
+            address = self.paragraph_index.get(id(para.el))
+            if address is None:
+                continue
+            self.cache_seats.setdefault(address, {
+                "address": address,
+                "page": self._page,
+                "drawn_pages": 0,
+            })["drawn_pages"] += 1
+        return super()._render_paragraphs(draw, paragraphs, origin_hwp,
+                                          avail_w_hwp, block_offset_hwp)
+
     def _line_items(self, para, chars, base_index):
         self._tracing_line = (self._tracing_metrics or {}).get(base_index)
         return super()._line_items(para, chars, base_index)
@@ -399,17 +496,38 @@ class TracingRenderer(own_render.OwnRenderer):
         states them "under both policies" without re-implementing the rule.
         """
         facts = {}
-        for section in self.sections:
+        for index, section in enumerate(self.sections):
+            top_level = {id(el) for el in own_render._kids(section, "p")}
             for el in section.iter():
                 if own_render._local(el.tag) != "p":
                     continue
                 address = self.paragraph_index.get(id(el))
                 if address is None:
                     continue
-                facts[address] = self._paragraph_fact(el, address)
+                facts[address] = self._paragraph_fact(
+                    el, address, section=index,
+                    top_level=id(el) in top_level)
         return facts
 
-    def _paragraph_fact(self, el, address):
+    def section_columns(self):
+        """``{section index: colCount}`` — the seat pass's column channel.
+
+        Read after the render, with ``_current_section`` saved and put back:
+        ``column_geometry`` answers for whichever section is current, and the
+        renderer leaves the last one selected.
+        """
+        saved = self._current_section
+        out = {}
+        try:
+            for index in range(len(self.sections)):
+                self._current_section = index
+                geo = self.page_geometry()
+                out[index] = self.column_geometry(geo)[2]
+        finally:
+            self._current_section = saved
+        return out
+
+    def _paragraph_fact(self, el, address, section=0, top_level=True):
         para = own_render.Paragraph(el, self.defs["para_pr"])
         pr = para.para_pr
         objects = []
@@ -417,14 +535,19 @@ class TracingRenderer(own_render.OwnRenderer):
             record = para.object_at.get(char_index)
             pos = own_render._kid(obj, "pos")
             width, height = self._object_extent(obj)
-            _l, top, _r, bottom = self._object_out_margin(obj)
+            left, top, right, bottom = self._object_out_margin(obj)
             objects.append({
                 "kind": name,
                 "treat_as_char": not (record[3] if record else False),
                 "width_hwp": width,
                 "height_hwp": height,
+                "out_margin_left_hwp": left,
+                "out_margin_right_hwp": right,
                 "out_margin_top_hwp": top,
                 "out_margin_bottom_hwp": bottom,
+                "text_wrap": obj.get("textWrap"),
+                "vert_offset_hwp": (own_render._iattr(pos, "vertOffset")
+                                    if pos is not None else None),
                 "vert_rel_to": (pos.get("vertRelTo") if pos is not None
                                 else None),
                 "horz_rel_to": (pos.get("horzRelTo") if pos is not None
@@ -440,16 +563,44 @@ class TracingRenderer(own_render.OwnRenderer):
             "vertsize": own_render._iattr(seg, "vertsize"),
             "spacing": own_render._iattr(seg, "spacing"),
         } for seg in para.linesegs]
+        # hh:charPr@height is a property of the RUN, not of the characters in
+        # it (#247): a run that emits no text still declares the height of the
+        # line its paragraph mark sits on, and that is the one channel by
+        # which an INKLESS paragraph can be a different height under the two
+        # policies without anything else about it differing.
+        empty_runs = []
+        for char_index, cid in getattr(para, "empty_runs", ()):
+            height_pt = self._charpr(cid).get("height_pt")
+            empty_runs.append({
+                "char_index": char_index,
+                "charpr": cid,
+                "height_pt": height_pt,
+                "height_hwp": (None if height_pt is None else
+                               int(round(height_pt
+                                         * own_render.HWPUNIT_PER_PT))),
+            })
         return {
             "address": address,
+            "section": section,
+            "top_level": bool(top_level),
             "empty_text": not text.strip(),
             "characters": len(para.chars),
             "objects": objects,
             "anchor_kind": anchor_kind(objects),
+            "empty_runs": empty_runs,
             "line_spacing_type": pr.get("line_spacing_type"),
             "line_spacing_value": pr.get("line_spacing_value"),
             "margin_prev_hwp": pr.get("margin_prev", 0),
             "margin_next_hwp": pr.get("margin_next", 0),
+            # Both spellings of "break here", the way _flow_blocks reads them:
+            # hp:p@pageBreak is the instruction on the paragraph and
+            # hh:breakSetting@pageBreakBefore the one carried by its shape.
+            "page_break_before": bool(own_render._iattr(el, "pageBreak")
+                                      or pr.get("page_break_before")),
+            "column_break": bool(own_render._iattr(el, "columnBreak")),
+            "keep_with_next": bool(pr.get("keep_with_next")),
+            "keep_lines": bool(pr.get("keep_lines")),
+            "widow_orphan": bool(pr.get("widow_orphan")),
             "linesegs": linesegs,
             "cache_advance_hwp": sum(seg["vertsize"] + seg["spacing"]
                                      for seg in linesegs),
@@ -520,6 +671,8 @@ def trace_lines(hwpx_path, policy, dpi=own_render.DEFAULT_DPI, repo_root=None):
         # pass has run.
         "facts": renderer.paragraph_facts(),
         "flow_seats": dict(renderer.flow_seats),
+        "cache_seats": dict(renderer.cache_seats),
+        "section_columns": renderer.section_columns(),
         "px_per_hwp": dpi / own_render.HWPUNIT_PER_INCH,
         # Section 0's body box.  A multi-section document can page differently
         # per section and this does not follow that; it is here to be read
@@ -1200,9 +1353,321 @@ def first_drift_predecessors(cache_paras, computed_paras, facts, seats,
     }
 
 
+#: A seat difference under this many HWPUNIT is the same seat.  Both policies
+#: state a seat as an integer HWPUNIT measured from the body top, so half a
+#: unit means "any difference at all"; it is stated in HWPUNIT and not in
+#: pixels because the seat pass never leaves the units the layout was made in.
+DEFAULT_SEAT_TOL_HWP = 0.5
+
+SEAT_RULE = (
+    "for every top-level hp:p in document order, the seat under each policy: "
+    "cache = the page _render_paragraphs drew it on plus its first "
+    "hp:lineseg@vertpos, computed = the page and top of its flow-pass "
+    "placement, both measured from the body top in HWPUNIT. Per cache page, "
+    "the FIRST paragraph whose seat differs (different page, or |delta top| > "
+    "seat_tol) is reported with the paragraph before it and the delta split "
+    "as delta_top(this) = d_prev_top + d_prev_advance + d_gap, where gap is "
+    "this.top - (prev.top + prev.advance) under each policy. The carrier is "
+    "the largest of the three terms that is over the tolerance; single_term "
+    "says the other two are both under it.")
+
+SEAT_KEY_FIELDS = ("prev_kind", "kind", "carrier")
+
+#: The three ways a pair cannot be decomposed, named rather than guessed at.
+SEAT_NON_TERMS = ("page_top", "page_move", "no_seat")
+
+
+def kind_label(fact):
+    """``anchor/empty=N/SPACING`` — the predecessor pass's key, as one string."""
+    anchor, empty, spacing = predecessor_key(fact or {})
+    return f"{anchor}/empty={int(empty)}/{spacing}"
+
+
+def _flow_seats_by_address(flow_seats):
+    """``{address: [seat, ...]}`` in page order over the flow placements."""
+    grouped = {}
+    for (address, _page), seat in (flow_seats or {}).items():
+        grouped.setdefault(address, []).append(seat)
+    for seats in grouped.values():
+        seats.sort(key=lambda seat: (seat.get("page") is None,
+                                     seat.get("page")))
+    return grouped
+
+
+def _computed_seat(seats):
+    """One paragraph's computed seat: its first page's top, its total height.
+
+    A paragraph the flow pass carried across a page boundary leaves one record
+    per page.  Its SEAT is where it starts — the first record's ``top`` on the
+    first record's page — and its advance is what the whole block consumed,
+    which is the sum, because that is the quantity the next paragraph's seat
+    is measured after.
+    """
+    if not seats:
+        return None
+    first = seats[0]
+    return {
+        "page": first.get("page"),
+        "top_hwp": first.get("top_hwp"),
+        "advance_hwp": sum(seat.get("height_hwp") or 0 for seat in seats),
+        "records": len(seats),
+    }
+
+
+def _cache_seat(fact, cache_seats, address):
+    """One paragraph's cache seat: the page it drew on, its first ``vertpos``.
+
+    ``advance_hwp`` is the sum of the paragraph's lineseg ``vertsize +
+    spacing`` — the same reading ``_flow_lines`` sums into a block height, so
+    the two sides' advances are the same quantity.  A paragraph with no
+    cached lineseg at all (a package this repo wrote has none) has no cache
+    seat, and the pass says so rather than inventing a zero.
+    """
+    drawn = (cache_seats or {}).get(address)
+    linesegs = (fact or {}).get("linesegs") or []
+    if drawn is None or not linesegs:
+        return None
+    return {
+        "page": drawn.get("page"),
+        "top_hwp": linesegs[0]["vertpos"],
+        "advance_hwp": (fact or {}).get("cache_advance_hwp"),
+        "records": drawn.get("drawn_pages", 1),
+    }
+
+
+def seat_rows(facts, cache_seats, flow_seats, cache_paras, computed_paras,
+              px_per_hwp, section_columns=None):
+    """One seat record per TOP-LEVEL paragraph, in document order.
+
+    Takes plain dicts, like the predecessor pass, so the rule can be exercised
+    on synthetic input without rendering anything.
+
+    Top-level only.  A paragraph inside a table cell has a ``vertpos``
+    measured from its own cell and no flow seat at all, so putting it beside a
+    body-box seat would be comparing two origins; ``top_level`` on the fact
+    is what separates them.
+    """
+    grouped = _flow_seats_by_address(flow_seats)
+    rows = []
+    for address in sorted(facts or ()):
+        fact = facts[address]
+        if not fact.get("top_level", True):
+            continue
+        cache = _cache_seat(fact, cache_seats, address)
+        computed = _computed_seat(grouped.get(address))
+        for side, boxes in (("cache", cache_paras), ("computed",
+                                                     computed_paras)):
+            seat = cache if side == "cache" else computed
+            if seat is not None:
+                seat["text_lines"] = len((boxes or {}).get(address) or [])
+        delta = None
+        if cache is not None and computed is not None:
+            top = _sub(computed["top_hwp"], cache["top_hwp"])
+            advance = _sub(computed["advance_hwp"], cache["advance_hwp"])
+            delta = {
+                "page": _sub(computed["page"], cache["page"]),
+                "top_hwp": top,
+                "top_px": (None if top is None
+                           else round(top * px_per_hwp, 3)),
+                "advance_hwp": advance,
+                "advance_px": (None if advance is None
+                               else round(advance * px_per_hwp, 3)),
+                "text_lines": _sub(computed.get("text_lines"),
+                                   cache.get("text_lines")),
+            }
+        rows.append({
+            "address": address,
+            "section": fact.get("section"),
+            "column_count": (section_columns or {}).get(fact.get("section")),
+            "kind": kind_label(fact),
+            "cache": cache,
+            "computed": computed,
+            "delta": delta,
+            "empty_text": bool(fact.get("empty_text")),
+            "characters": fact.get("characters"),
+            "cached_linesegs": len(fact.get("linesegs") or []),
+            "empty_runs": fact.get("empty_runs") or [],
+            "objects": fact.get("objects") or [],
+            "anchor_kind": fact.get("anchor_kind", "none"),
+            "para_pr": {
+                "line_spacing_type": fact.get("line_spacing_type"),
+                "line_spacing_value": fact.get("line_spacing_value"),
+                "margin_prev_hwp": fact.get("margin_prev_hwp"),
+                "margin_next_hwp": fact.get("margin_next_hwp"),
+                "page_break_before": fact.get("page_break_before"),
+                "column_break": fact.get("column_break"),
+                "keep_with_next": fact.get("keep_with_next"),
+                "keep_lines": fact.get("keep_lines"),
+                "widow_orphan": fact.get("widow_orphan"),
+            },
+        })
+    return rows
+
+
+def _sub(left, right):
+    return None if left is None or right is None else left - right
+
+
+def _seat_gap(prev, row, side):
+    """``this.top - (prev.top + prev.advance)`` under one policy."""
+    a, b = prev.get(side), row.get(side)
+    if a is None or b is None:
+        return None
+    if a.get("top_hwp") is None or b.get("top_hwp") is None:
+        return None
+    return b["top_hwp"] - (a["top_hwp"] + (a.get("advance_hwp") or 0))
+
+
+def decompose_seat_delta(prev, row, tol=DEFAULT_SEAT_TOL_HWP):
+    """Split one pair's seat delta into its three terms, or name why not.
+
+    ``delta_top(this) = d_prev_top + d_prev_advance + d_gap`` is an identity,
+    not a model: the same number written two ways.  What it buys is WHERE the
+    height entered — the predecessor's own seat (older, reported further up),
+    the predecessor's own height, or the space between the two paragraphs.
+    ``identity_ok`` re-checks the arithmetic rather than asserting it.
+    """
+    if prev is None:
+        return {"carrier": "page_top", "terms": None, "single_term": None,
+                "note": "the first seated paragraph on this page is the one "
+                        "whose seat differs"}
+    if prev.get("cache") is None or prev.get("computed") is None:
+        return {"carrier": "no_seat", "terms": None, "single_term": None,
+                "note": "the paragraph above has no seat under one policy"}
+    if row["delta"].get("page"):
+        return {"carrier": "page_move", "terms": None, "single_term": None,
+                "note": "the two policies put this paragraph on different "
+                        "pages, so its tops are measured from different "
+                        "page tops"}
+    same_page = (prev["cache"]["page"] == row["cache"]["page"]
+                 and prev["computed"]["page"] == row["computed"]["page"])
+    if not same_page:
+        return {"carrier": "page_top", "terms": None, "single_term": None,
+                "note": "the paragraph above sits on another page, so there "
+                        "is no gap between the two to measure"}
+    gap_cache = _seat_gap(prev, row, "cache")
+    gap_computed = _seat_gap(prev, row, "computed")
+    terms = {
+        "d_prev_top_hwp": _sub(prev["computed"]["top_hwp"],
+                               prev["cache"]["top_hwp"]),
+        "d_prev_advance_hwp": _sub(prev["computed"].get("advance_hwp"),
+                                   prev["cache"].get("advance_hwp")),
+        "d_gap_hwp": _sub(gap_computed, gap_cache),
+    }
+    terms["gap_cache_hwp"] = gap_cache
+    terms["gap_computed_hwp"] = gap_computed
+    named = ("d_prev_top_hwp", "d_prev_advance_hwp", "d_gap_hwp")
+    if any(terms[key] is None for key in named):
+        return {"carrier": "no_seat", "terms": terms, "single_term": None,
+                "note": "a term could not be measured"}
+    total = sum(terms[key] for key in named)
+    significant = [key for key in named if abs(terms[key]) > tol]
+    if not significant:
+        carrier = "none"
+    else:
+        carrier = max(significant, key=lambda key: abs(terms[key]))
+    return {
+        "carrier": carrier,
+        "terms": terms,
+        "single_term": (None if not significant else len(significant) == 1),
+        "identity_ok": abs(total - (row["delta"]["top_hwp"] or 0)) <= tol,
+        "identity_sum_hwp": total,
+    }
+
+
+def first_seat_divergences(rows, tol=DEFAULT_SEAT_TOL_HWP, px_per_hwp=None):
+    """Per cache page, the first paragraph whose seat differs, decomposed.
+
+    Pages are keyed on the CACHE page because that is the reading order the
+    document itself declares; a paragraph the computed pass moved to another
+    page is still reported on the page the cache put it, with ``page_move``
+    as its carrier.
+    """
+    comparable = [row for row in rows if row.get("delta") is not None]
+    pages = {}
+    for index, row in enumerate(comparable):
+        pages.setdefault(row["cache"]["page"], []).append(index)
+
+    reported = []
+    kinds = Counter()
+    carriers = Counter()
+    for page in sorted(pages, key=lambda value: (value is None, value)):
+        for index in pages[page]:
+            row = comparable[index]
+            delta = row["delta"]
+            if not delta.get("page") and abs(delta.get("top_hwp") or 0) <= tol:
+                continue
+            prev = comparable[index - 1] if index else None
+            split = decompose_seat_delta(prev, row, tol=tol)
+            record = {
+                "page": page,
+                "paragraph": row["address"],
+                "delta_top_hwp": delta["top_hwp"],
+                "delta_top_px": delta["top_px"],
+                "delta_page": delta["page"],
+                "carrier": split["carrier"],
+                "single_term": split.get("single_term"),
+                "identity_ok": split.get("identity_ok"),
+                "terms_hwp": split.get("terms"),
+                "note": split.get("note"),
+                "section_changed": (
+                    None if prev is None
+                    else prev.get("section") != row.get("section")),
+                "this": row,
+                "previous": prev,
+            }
+            if px_per_hwp is not None and split.get("terms"):
+                record["terms_px"] = {
+                    key: round(value * px_per_hwp, 3)
+                    for key, value in split["terms"].items()
+                    if value is not None}
+            reported.append(record)
+            kinds[(kind_label_of(prev), row["kind"], split["carrier"])] += 1
+            carriers[split["carrier"]] += 1
+            break
+
+    histogram = [
+        {"prev_kind": key[0], "kind": key[1], "carrier": key[2],
+         "pages": count}
+        for key, count in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    total = sum(kinds.values())
+    dominant = None
+    if histogram:
+        top = histogram[0]
+        dominant = {
+            "kind": f"{top['prev_kind']} -> {top['kind']} [{top['carrier']}]",
+            "carrier": top["carrier"],
+            "pages": top["pages"],
+            "share": round(top["pages"] / total, 6) if total else None,
+        }
+    return {
+        "rule": SEAT_RULE,
+        "key_fields": list(SEAT_KEY_FIELDS),
+        "seat_tolerance_hwp": tol,
+        "paragraphs_seated_both": len(comparable),
+        "paragraphs_seated_neither_or_one": len(rows) - len(comparable),
+        "paragraphs_with_a_seat_delta": sum(
+            1 for row in comparable
+            if row["delta"].get("page")
+            or abs(row["delta"].get("top_hwp") or 0) > tol),
+        "pages_with_a_seat_divergence": len(reported),
+        "carriers": dict(sorted(carriers.items())),
+        "kinds": histogram,
+        "dominant_kind": dominant,
+        "pages": reported,
+    }
+
+
+def kind_label_of(row):
+    """A seat row's kind, or ``page_top`` when there is no row."""
+    return "page_top" if row is None else row["kind"]
+
+
 def divergence_report(hwpx_path, dpi=own_render.DEFAULT_DPI,
                       y_tol=DEFAULT_Y_TOL, include_text=True,
-                      repo_root=None, attribution_tol=DEFAULT_ATTRIBUTION_TOL):
+                      repo_root=None, attribution_tol=DEFAULT_ATTRIBUTION_TOL,
+                      seat_tol=DEFAULT_SEAT_TOL_HWP, include_seat_rows=False):
     """Classify every line of one document across the two layout policies."""
     hwpx_path = Path(hwpx_path)
     cache = trace_lines(hwpx_path, own_render.LAYOUT_POLICY_CACHE, dpi=dpi,
@@ -1214,17 +1679,26 @@ def divergence_report(hwpx_path, dpi=own_render.DEFAULT_DPI,
     walk = walk_paragraphs(cache_paras, computed_paras,
                            y_tol=y_tol, include_text=include_text,
                            attribution_tol=attribution_tol)
+    facts = merge_facts(cache["facts"], computed["facts"])
     walk["first_drift_predecessors"] = first_drift_predecessors(
-        cache_paras, computed_paras,
-        merge_facts(cache["facts"], computed["facts"]),
+        cache_paras, computed_paras, facts,
         computed["flow_seats"], computed["px_per_hwp"], y_tol=y_tol,
         usable_height_hwp=cache["usable_height_hwp"])
+    rows = seat_rows(facts, cache["cache_seats"], computed["flow_seats"],
+                     cache_paras, computed_paras, computed["px_per_hwp"],
+                     section_columns=computed["section_columns"])
+    seats = first_seat_divergences(rows, tol=seat_tol,
+                                   px_per_hwp=computed["px_per_hwp"])
+    if include_seat_rows:
+        seats["seat_rows"] = rows
+    walk["first_seat_divergences"] = seats
 
     report = {
         "tool": "layout_divergence",
         "source": hwpx_path.name,
         "dpi": dpi,
         "y_tolerance_px": y_tol,
+        "seat_tolerance_hwp": seat_tol,
         "text_included": include_text,
         "rule": RULE,
         "class_meaning": CLASS_MEANING,
@@ -1302,10 +1776,17 @@ def summary_line(stem, report):
         f"; first-drift predecessor {dominant_kind['kind']} "
         f"{dominant_kind['pages']}/{predecessors['pages_with_a_predecessor']}"
         if dominant_kind else "")
+    seats = report.get("first_seat_divergences") or {}
+    seat_dominant = seats.get("dominant_kind")
+    seat_text = (
+        f"; first seat divergence {seat_dominant['kind']} "
+        f"{seat_dominant['pages']}/{seats['pages_with_a_seat_divergence']}"
+        if seat_dominant else "")
     return (f"{stem}: paragraphs agree {paras['agree']} / A {paras['A']} / "
             f"B {paras['B']} / C {paras['C']} (A&B {paras['A_and_B']}); "
             f"lines agree {lines['agree']} / A {lines['A']} / B {lines['B']} "
-            f"/ C {lines['C']}{dominant}{split_text}{iou_text}{pred_text}")
+            f"/ C {lines['C']}{dominant}{split_text}{iou_text}{pred_text}"
+            f"{seat_text}")
 
 
 def corpus_forms(repo_root):
@@ -1385,6 +1866,41 @@ def corpus_table(rows):
     return "\n".join(out)
 
 
+def seat_table(rows):
+    """The seat pass's own per-form table: the FIRST seat divergence.
+
+    One row per form, and the columns are the question the pass was opened
+    on: where the document's first seat difference is, how big it is, and
+    which of the three terms carries it.
+    """
+    width = max([len(name) for name, _ in rows] + [4])
+    head = (f"{'form':<{width}}  {'seats':>6} {'differ':>6} {'pages':>5} "
+            f"{'1st pg':>6} {'1st para':>8} {'delta top':>10} "
+            f"{'carrier':<20} {'prev -> this'}")
+    out = [head, "-" * len(head)]
+    for name, report in rows:
+        seats = report.get("first_seat_divergences") or {}
+        pages = seats.get("pages") or []
+        first = pages[0] if pages else None
+        if first is None:
+            out.append(f"{name:<{width}}  "
+                       f"{seats.get('paragraphs_seated_both', 0):>6} "
+                       f"{seats.get('paragraphs_with_a_seat_delta', 0):>6} "
+                       f"{0:>5} {'-':>6} {'-':>8} {'-':>10} "
+                       f"{'-':<20} -")
+            continue
+        delta = ("page" if first["delta_top_hwp"] is None
+                 else f"{first['delta_top_hwp']:+d}")
+        pair = f"{kind_label_of(first['previous'])} -> {first['this']['kind']}"
+        out.append(f"{name:<{width}}  "
+                   f"{seats.get('paragraphs_seated_both', 0):>6} "
+                   f"{seats.get('paragraphs_with_a_seat_delta', 0):>6} "
+                   f"{len(pages):>5} {str(first['page']):>6} "
+                   f"{first['paragraph']:>8} {delta:>10} "
+                   f"{first['carrier']:<20} {pair}")
+    return "\n".join(out)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="layout_divergence.py",
@@ -1402,6 +1918,16 @@ def build_parser():
                         help="how far a class-B paragraph's drift may sit "
                              "from what the re-breaks above it predict and "
                              "still be called inherited (default 1.0 px)")
+    parser.add_argument("--seat-tol", type=float,
+                        default=DEFAULT_SEAT_TOL_HWP,
+                        help="a paragraph seat difference at or under this "
+                             "many HWPUNIT is the same seat (default 0.5, "
+                             "i.e. any difference at all — seats are "
+                             "integers)")
+    parser.add_argument("--seat-rows", action="store_true",
+                        help="also write the seat record of EVERY top-level "
+                             "paragraph, not just the reported pairs; large, "
+                             "and off by default")
     parser.add_argument("--no-text", action="store_true",
                         help="omit line text from the JSON entirely")
     parser.add_argument("--corpus", action="store_true",
@@ -1417,7 +1943,9 @@ def build_parser():
 def _one(hwpx, pdf, args):
     report = divergence_report(hwpx, dpi=args.dpi, y_tol=args.y_tol,
                                include_text=not args.no_text,
-                               attribution_tol=args.attribution_tol)
+                               attribution_tol=args.attribution_tol,
+                               seat_tol=args.seat_tol,
+                               include_seat_rows=args.seat_rows)
     if args.iou:
         if pdf is None:
             report["iou_note"] = ("--iou asked for but no reference PDF was "
@@ -1443,6 +1971,8 @@ def main(argv=None):
             print(summary_line(labels[hwpx.stem], report))
         print()
         print(corpus_table(rows))
+        print()
+        print(seat_table(rows))
         return 0
 
     if not args.input:
