@@ -3527,6 +3527,136 @@ def test_the_cached_line_geometry_relations_hold_across_the_corpus():
     assert chain_exact == 219
 
 
+# ------------------------------------------------- PERCENT spacing arithmetic
+#
+# ``percent_leading`` is a FIT to the authoring engine's cache, so what these
+# tests pin is the arithmetic on its boundary cases, not a tally.  The corpus
+# check below asserts an empty mismatch list with a non-vacuity floor rather
+# than a line count, because the count is inventory and the emptiness is the
+# claim.
+
+
+def test_the_percent_leading_grid_is_what_the_constant_says():
+    """Every leading the rule can produce sits on the measured grid."""
+    q = own_render.LEADING_QUANTUM
+    off_grid = [(h, v) for h in range(100, 3001, 100)
+                for v in range(0, 301)
+                if own_render.percent_leading(h, v) % q]
+    assert off_grid == []
+
+
+def test_the_percent_leading_never_leaves_the_nominal_by_half_a_quantum():
+    """It is a rounding of the nominal leading, not a different quantity."""
+    q = own_render.LEADING_QUANTUM
+    worst = max(abs(own_render.percent_leading(h, v) - h * (v - 100) / 100.0)
+                for h in range(100, 3001, 100) for v in range(0, 301))
+    assert worst <= q / 2.0
+
+
+def test_a_percent_leading_already_on_the_grid_passes_through():
+    """No rounding happens where none is needed."""
+    assert own_render.percent_leading(1000, 160) == 600
+    assert own_render.percent_leading(1200, 180) == 960
+    assert own_render.percent_leading(800, 130) == 240
+    # 100% is no leading at all, and 0% is a line of exactly zero advance —
+    # admrul paragraph 2 is that case in the corpus.
+    assert own_render.percent_leading(1300, 100) == 0
+    assert own_render.percent_leading(400, 0) == -400
+
+
+def test_a_percent_leading_off_the_grid_goes_to_the_nearer_multiple():
+    """A quarter and three quarters of a quantum, both directions."""
+    # 1100 at 135%: nominal 385, a quarter of a quantum above 384.
+    assert own_render.percent_leading(1100, 135) == 384
+    # 1300 at 103%: nominal 39, three quarters of a quantum above 36.
+    assert own_render.percent_leading(1300, 103) == 40
+    # 700 at 143%: nominal 301, a quarter above 300.
+    assert own_render.percent_leading(700, 143) == 300
+    # 1300 at 107%: nominal 91, three quarters above 88.
+    assert own_render.percent_leading(1300, 107) == 92
+
+
+def test_a_percent_leading_exactly_on_a_tie_goes_away_from_zero():
+    """The tie rule, and it is the one thing the corpus pins hardest.
+
+    Halves away from zero is what separates the shipped rule from two
+    readings that are otherwise exact on 3209 of the corpus' 3214 cached
+    lines.  The five lines that separate them all declare ``value < 100``,
+    where the leading is negative:
+
+    * quantising the total ADVANCE instead of the leading, and
+    * rounding halves toward +infinity,
+
+    both answer ``-148`` where Hancom's own cache says ``-152``.
+    """
+    # Positive ties round up, which the two rivals also do.
+    assert own_render.percent_leading(900, 110) == 92     # nominal 90
+    assert own_render.percent_leading(1300, 150) == 652   # nominal 650
+    assert own_render.percent_leading(900, 102) == 20     # nominal 18
+    # Negative ties round DOWN, which is where the rivals part company.
+    assert own_render.percent_leading(900, 90) == -92     # nominal -90
+    assert own_render.percent_leading(1500, 90) == -152   # nominal -150
+    assert own_render.percent_leading(300, 50) == -152    # nominal -150
+
+
+def test_the_percent_leading_is_symmetric_about_a_hundred_percent():
+    """Away-from-zero makes the rule odd about 100%, which is the point."""
+    for height in (300, 700, 900, 1100, 1300, 1500):
+        for delta in range(0, 101):
+            assert (own_render.percent_leading(height, 100 + delta)
+                    == -own_render.percent_leading(height, 100 - delta))
+
+
+def test_line_metrics_puts_the_quantised_leading_on_a_real_paragraph():
+    """End to end, not just the helper: a 9 pt line at 110% advances 992."""
+    renderer = own_render.OwnRenderer(_need(GIANMUN))
+    for section in range(len(renderer.sections)):
+        renderer._current_section = section
+        for el in renderer.sections[section].iter():
+            if own_render._local(el.tag) != "p":
+                continue
+            para = own_render.Paragraph(el, renderer.defs["para_pr"])
+            if not para.linesegs:
+                continue
+            spans = para.lineseg_spans()
+            for index, seg in enumerate(para.linesegs):
+                start, end = spans[index]
+                _th, vertsize, _bl, spacing = renderer._line_metrics(
+                    para, start, end)
+                assert vertsize == own_render._iattr(seg, "vertsize")
+                assert spacing == own_render._iattr(seg, "spacing")
+
+
+def test_the_percent_rule_reproduces_every_cached_spacing_in_the_corpus():
+    """The fit, re-measured against the oracle it was fitted to.
+
+    A mismatch LIST rather than a match count: the claim is that there is no
+    counter-example, and a count would pin corpus inventory into a core
+    relation.  The floor keeps the scan from passing over an empty corpus.
+    """
+    import spacing_residual_probe as probe
+
+    reports = [probe.probe_document(os.path.join(CORPUS, name + ".hwpx"),
+                                    repo_root=pathlib.Path(ROOT))
+               for name in sorted(LINESEG_AGREEMENT)]
+    scored = 0
+    mismatches = []
+    for report in reports:
+        for fact in report["lines"]:
+            if fact["spacing_type"] != "PERCENT":
+                continue
+            scored += 1
+            want = own_render.percent_leading(fact["pitch_height"],
+                                              fact["spacing_value"])
+            if fact["cached_spacing"] != want:
+                mismatches.append((report["form"], fact["paragraph"],
+                                   fact["line"], fact["pitch_height"],
+                                   fact["spacing_value"],
+                                   fact["cached_spacing"], want))
+    assert scored >= 3000, "the corpus scan found almost nothing to score"
+    assert mismatches == []
+
+
 # ---------------------------------------------------------------- determinism
 
 def test_two_renders_are_byte_identical(tmp_path):
