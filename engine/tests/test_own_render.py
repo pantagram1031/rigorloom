@@ -1554,6 +1554,92 @@ def test_a_taller_empty_run_only_sizes_the_line_it_sits_on(typo_probe):
     assert last_height == 2400
 
 
+def _empty_paragraph(renderer, cid, line_type="PERCENT", value=160):
+    """An ``<hp:t/>`` run and nothing else — no characters, no lineseg.
+
+    The shape every empty paragraph of a package this repo WRITES has: the
+    authoring engine's cached ``hp:linesegarray`` is what a Hancom save
+    carries, and there is none here to fall back on.
+    """
+    from xml.etree import ElementTree as ET
+    pid = "__ep_%s_%s__" % (line_type, value)
+    renderer.defs["para_pr"][pid] = {
+        "align": "LEFT", "break_latin": "KEEP_WORD",
+        "break_non_latin": "KEEP_WORD", "line_wrap": "BREAK",
+        "widow_orphan": 0, "keep_with_next": 0, "keep_lines": 0,
+        "page_break_before": 0, "condense": 0, "font_line_height": 0,
+        "snap_to_grid": 1, "tab_pr": None,
+        "line_spacing_type": line_type, "line_spacing_value": value,
+        "line_spacing_unit": "HWPUNIT", "margin_left": 0, "margin_right": 0,
+        "indent": 0, "margin_prev": 0, "margin_next": 0,
+    }
+    xml = ('<hp:p xmlns:hp="urn:x" paraPrIDRef="%s">'
+           '<hp:run charPrIDRef="%s"><hp:t/></hp:run></hp:p>' % (pid, cid))
+    return own_render.Paragraph(ET.fromstring(xml), renderer.defs["para_pr"])
+
+
+@pytest.mark.parametrize("line_type,value,advance_of", [
+    ("PERCENT", 160, lambda h: round(h * 160 / 100)),
+    ("PERCENT", 180, lambda h: round(h * 180 / 100)),
+    ("PERCENT", 200, lambda h: round(h * 200 / 100)),
+    ("FIXED", 2400, lambda h: 2400),
+    ("BETWEEN_LINES", 600, lambda h: h + 600),
+])
+@pytest.mark.parametrize("height", [1000, 1200, 1500])
+def test_an_empty_paragraph_with_no_cache_is_one_line_of_its_own_shape(
+        typo_probe, line_type, value, advance_of, height):
+    """An empty paragraph occupies one line, sized by its run and its spacing.
+
+    ``_flow_lines`` used to take the computed branch only for a paragraph
+    that has CHARACTERS, so an empty one fell through to its cached
+    ``hp:lineseg`` — and a package this repo wrote has none, which left the
+    block 0 high and made the paragraph's own ``hh:charPr@height`` and
+    ``hh:lineSpacing`` do nothing at all.
+
+    The rule is the one the authoring engine's own cache states, measured
+    over the 101 empty top-level paragraphs of the ten converted corpus
+    forms: ``vertsize`` is the tallest shape the paragraph's runs declare
+    (exact on 101 of 101) and the advance follows ``hh:lineSpacing`` from it
+    exactly as a text line's does (exact on 91, every miss inside the ±2
+    HWPUNIT PERCENT rounding residual #247 already measured on text lines).
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__ep_%d__" % height, height=height)
+    para = _empty_paragraph(renderer, cid, line_type=line_type, value=value)
+    assert not para.chars and not para.linesegs      # the path under test
+
+    _mode, rows = renderer._flow_lines(draw, para, 40000)
+    assert len(rows) == 1
+    assert rows[0]["advance"] == advance_of(height)
+    # The paragraph mark draws no glyph, so the block spans no characters.
+    assert rows[0]["start"] == rows[0]["end"] == 0
+    assert rows[0]["table"] is None
+
+
+def test_an_empty_paragraph_keeps_its_cached_line_when_it_has_one(typo_probe):
+    """The cache still wins where the authoring engine left one.
+
+    Every empty paragraph in the ten corpus forms carries a lineseg, and the
+    rule above reproduces it rather than replacing it: the seat a Hancom save
+    declares is read, not recomputed, so a cached document renders exactly as
+    it did.
+    """
+    from xml.etree import ElementTree as ET
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__epc__", height=1000)
+    para = _empty_paragraph(renderer, cid, value=160)
+    para.linesegs = ET.fromstring(
+        '<hp:linesegarray xmlns:hp="urn:x">'
+        '<hp:lineseg textpos="0" vertpos="0" vertsize="1700" textheight="1700"'
+        ' baseline="1445" spacing="1020" horzpos="0" horzsize="40000"'
+        ' flags="393216"/></hp:linesegarray>').findall(
+            "{urn:x}lineseg")
+
+    _mode, rows = renderer._flow_lines(draw, para, 40000)
+    assert len(rows) == 1
+    assert rows[0]["advance"] == 1700 + 1020        # the cache, not the rule
+
+
 def test_the_corpus_line_boxes_are_the_ones_the_authoring_engine_cached():
     """Every cached ``hp:lineseg@vertsize`` of the corpus is reproduced.
 

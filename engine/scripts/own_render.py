@@ -2632,6 +2632,9 @@ class OwnRenderer:
         ``vertpos + vertsize`` refuses 3 of 47 corpus pages Hancom itself
         renders past that point — the descender below ``baseline`` may cross
         the margin, so ``extent`` here is ``baseline``, not ``vertsize``.
+
+        A paragraph with no characters is ONE line all the same — see the
+        empty-paragraph branch below.
         """
         index = self.paragraph_index.get(id(para.el))
         mode, _reason = self.line_layout_mode(para, column_hwp, index)
@@ -2647,6 +2650,32 @@ class OwnRenderer:
                     "start": line["start"], "end": line["end"],
                     "table": table,
                 })
+            return mode, rows
+        if not para.chars and not para.linesegs:
+            # An EMPTY paragraph with nothing cached to fall back on.  It
+            # still occupies one line: the paragraph mark has to be
+            # somewhere, and it is as tall as the shape the paragraph's runs
+            # declare.  Without this the block is measured 0 high and the
+            # paragraph's own charPr height and lineSpacing do nothing —
+            # which is every empty paragraph in a package this repo wrote,
+            # because only Hancom's own save carries hp:lineseg.
+            #
+            # ``_line_metrics(para, 0, 0)`` IS the rule: the empty-run pass
+            # it grew for #247 owns a run sitting at the end of the character
+            # stream, and for a paragraph with no characters at all that is
+            # every run it has.  Measured against the authoring engine's own
+            # cache over the 101 empty top-level paragraphs of the ten
+            # converted corpus forms: ``vertsize`` exact on 101 of 101 and
+            # ``spacing`` on 91, every one of the 10 misses inside 2 HWPUNIT
+            # — the same PERCENT rounding residual #247 measured on 883 of
+            # the corpus' 2370 TEXT lines, not a second rule.
+            _textheight, vertsize, baseline, spacing = self._line_metrics(
+                para, 0, 0)
+            rows.append({
+                "advance": vertsize + spacing,
+                "extent": self._row_extent(baseline, vertsize, None),
+                "start": 0, "end": 0, "table": None,
+            })
             return mode, rows
         spans = para.lineseg_spans()
         for i, seg in enumerate(para.linesegs):
