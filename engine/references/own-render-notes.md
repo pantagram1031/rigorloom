@@ -3743,3 +3743,251 @@ every verdict is unchanged.  `render_check` on `render-check-01` is unchanged:
   was not opened.  `--corpus --no-text` is what the operator runs on it; the
   predecessor section carries paragraph addresses, HWPUNIT measurements and
   declared style values, and no document text under any flag.
+
+
+## The first seat difference, and which term carries it — measured, 2026-09-05
+
+#252 could see that the drift starts under an inkless paragraph and could not
+see any further: a paragraph that draws no line box is invisible to a
+line-box pairing, so a whole run of them is one opaque step and the report
+could only say "the divergence began above here".  The question this slice
+was sent to answer is the obvious next one — at the first paragraph boundary
+where the two policies disagree, WHICH height or gap is added or removed —
+and answering it needs a channel that does not go through ink.
+
+### The instrument
+
+`layout_divergence.py` now has a seat pass.  For every top-level `hp:p` of
+every section, in document order, it records the paragraph's SEAT under both
+policies:
+
+* under `cache`, the page `_render_paragraphs` drew it on and the
+  `hp:lineseg@vertpos` of its first cached line — the authoring engine's own
+  statement of where the paragraph starts, measured from the body top;
+* under `computed`, the page and `top` of its flow-pass placement, the same
+  quantity in the same units;
+
+with each side's advance (cache: the sum of the paragraph's lineseg
+`vertsize + spacing`; computed: the flow record's `height`), its drawn line
+count, and everything that could explain a difference: every empty `hp:run`
+with its `hh:charPr@height`, every object with extent, out-margins,
+`treatAsChar`, `flowWithText` and `vertRelTo`, the paragraph's own
+`hh:paraPr` — line spacing, `hh:margin/prev` and `/next`, both spellings of
+page-break-before, `keepWithNext`, `keepLines`, `widowOrphan` — and its
+section, `columnBreak` and column count.  **An inkless paragraph has a seat
+under both policies**, which is the whole point: the pass sees the population
+the classification cannot.
+
+Per page the first paragraph whose seat differs is reported with the one
+before it and the delta split three ways:
+
+    Δtop(this) = Δ(prev seat top) + Δ(prev advance) + Δ(gap)
+
+where `gap` is `this.top − (prev.top + prev.advance)` under each policy.  The
+identity is exact by construction and `identity_ok` re-checks it rather than
+asserting it; what it buys is WHERE the height entered.  `d_prev_top` means
+the divergence is older than this pair, `d_prev_advance` means the block
+above is measured differently, `d_gap` means the space BETWEEN the two
+paragraphs is different — the inter-paragraph channel and nothing else.  A
+pair the terms cannot be computed for is named (`page_top`, `page_move`,
+`no_seat`) instead of guessed at.  `carrier` is the largest term over
+`--seat-tol` and `single_term` says whether the other two are both under it.
+
+    python engine/scripts/layout_divergence.py --corpus --out DIR --no-text
+    python engine/scripts/layout_divergence.py --corpus --out DIR --no-text \
+        --seat-tol 2.5
+
+The tolerance is in HWPUNIT, not pixels: seats are integers on both sides and
+the pass never leaves the units the layout was made in.  The default 0.5
+means "any difference at all".
+
+### What the corpus says
+
+144 dpi, `--no-text`, ten forms, top-level paragraphs:
+
+| form | seated both | seats differ | pages with a divergence |
+| --- | --- | --- | --- |
+| `admrul` | 15 | 0 | 0 |
+| `gianmun-1ho` | 3 | 0 | 0 |
+| `gianmun-2ho` | 3 | 0 | 0 |
+| `jeongbo` | 1 | 0 | 0 |
+| `jumin` | 3 | 0 | 0 |
+| `kstartup` | 165 | 139 | 20 |
+| `moel-2013` | 154 | 109 | 4 |
+| `moel-2025` | 187 | 141 | 6 |
+| `nrf` | 53 | 10 | 2 |
+| `saeopja` | 6 | 0 | 0 |
+
+`saeopja`'s 6 is not a typo: its whole body is inside one table, and a cell
+paragraph has a `vertpos` measured from its own cell and no flow seat at all,
+so the pass refuses to put it beside a body-box seat.
+
+Over the 32 divergent pages the carrier is `page_move` 16, `d_prev_advance`
+11, `page_top` 4 and `d_gap` **1**.  Per form, the FIRST seat difference in
+the document:
+
+| form | page | paragraph | Δtop HWPUNIT | carrier | at `--seat-tol 2.5` |
+| --- | --- | --- | --- | --- | --- |
+| `kstartup` | 1 | 1 | −2 | `d_prev_advance` | para 14, −4, `none` |
+| `moel-2013` | 1 | 3 | +2 | `d_prev_advance` | para 4, +3, `none` |
+| `moel-2025` | 1 | 2 | −1 | `d_prev_advance` | para 3, −3, `none` |
+| `nrf` | 1 | 33 | **−276** | **`d_gap`** | unchanged |
+
+Three of the four are the ±2 HWPUNIT `PERCENT` spacing residual #247 already
+named, accumulating: raise the tolerance past it and the delta is a few
+HWPUNIT spread across all three terms with no carrier at all.  `nrf` is the
+one substantive first seat difference on the corpus, it survives any
+tolerance, and it is the form #252 singled out.
+
+### `nrf`: the gap below an anchored table is its outer margin
+
+Paragraph 0 is empty and anchors a table: `hh:sz@height` 63674, `hp:pos`
+`treatAsChar="0" vertRelTo="PARA" vertOffset="0"`, `textWrap="TOP_AND_BOTTOM"`,
+`hp:outMargin` 138 on all four sides.  The pair reads:
+
+    paragraph 0    cache  top 0      advance  2560   (its own empty line)
+                   flow   top 0      advance 63674   (the table's box)
+    paragraph 33   cache  top 63950
+                   flow   top 63674
+
+    d_prev_top        0
+    d_prev_advance   +61114
+    d_gap            -61390   (gap 61390 -> 0)
+    -------------------------
+    Δtop              -276
+
+and 276 is 138 + 138.  The cache seats the next paragraph at
+`0 + 138 + 63674 + 138`.  `kstartup` says it again with different numbers:
+paragraph 148 anchors 69352 with `outMargin=140`, and its successor is cached
+at 69632 = `0 + 140 + 69352 + 140`.  Both exact; those two are every corpus
+anchored object that reserves flow room.
+
+**The rule.**  `hp:outMargin` is the gap OUTSIDE the object's own box
+(schema: `DevDoc/OWPML SCHEMA/ParaList XML schema.xml`, on every
+`ShapeObject`), so the declared `hp:pos` offset names the top of a SLOT that
+is `top + height + bottom` tall and the box sits `top` inside it.  This
+renderer already reads it exactly that way in three places: `_object_origin`
+draws the box `outMargin@top` down from the slot, `_object_extent` widens an
+inline slot by `left + right`, and `_line_metrics` grows an INLINE object's
+line by `top + bottom` (measured on the corpus's 79 object lines,
+`docs/research/object-line-box.md`).  `_anchor_extent` was the one place that
+dropped it, reserving `vertOffset + hh:sz@height` and nothing more.  It now
+reserves `vertOffset + top + height + bottom`, which is the anchored sibling
+of the rule the other three already state.
+
+### The synthetic side, and what it is not
+
+`tests/corpus/render-check/measure_seat_probe.py` asks the same question of a
+document nobody but this repo has touched: the same six-paragraph page
+eighteen times — a text paragraph, an empty one, an empty one holding an
+inline picture, an empty one holding an inline table, an empty one holding an
+ANCHORED table, and a read-out paragraph — with exactly one declared
+attribute changed each time.
+
+**Path A does not exist for it and path C is NOT RUN.**  A package this repo
+writes carries no `hp:lineseg`, so `--layout-policy cache` has nothing to read;
+and no Hancom PDF was exported, so nothing below is evidence about what
+Hancom would do.  The render is compared against the ANALYTIC seat instead —
+the height the paragraph's own `hh:paraPr` and `hh:charPr` say it should
+have, computed in the probe from the values it authored the document with.
+
+How far the read-out paragraph moves against the unchanged baseline, HWPUNIT:
+
+| attribute changed | before | after | analytic |
+| --- | --- | --- | --- |
+| empty paragraph, line spacing 130 / 200 / FIXED 2400 | 0 / 0 / 0 | 0 / 0 / 0 | −300 / +400 / +800 |
+| empty paragraph, `charPr` 8 / 14 / 24 pt | 0 / 0 / 0 | 0 / 0 / 0 | −320 / +640 / +2240 |
+| empty paragraph, `margin/prev`+`/next` 600+200 | +800 | +800 | +800 |
+| inline picture, `outMargin` 141 / 283 | +282 / +566 | +282 / +566 | +282 / +566 |
+| inline table, `outMargin` 141 / 283 | +282 / +566 | +282 / +566 | +282 / +566 |
+| inline table, `charPr` 24 pt | +840 | +840 | +840 |
+| inline table, line spacing 200 | +400 | +400 | +400 |
+| **anchored table, `outMargin` 141 / 283** | **0 / 0** | **+282 / +566** | **+282 / +566** |
+| inline table → anchored | −600 | −600 | −600 |
+| anchored table → inline | +600 | +600 | +600 |
+
+The anchored row is the defect, reproduced on a public document: give an
+inline object an outer margin and everything below it moves; give the same
+margin to the same object anchored and, before this change, nothing moved.
+After it the two agree, which is what the declarations predict.
+
+### The other thing the probe found, and it is NOT fixed here
+
+Every case sits a constant 1600 HWPUNIT above its analytic seat, and the
+reason is the empty paragraph.  `_flow_lines` takes the computed branch only
+`if mode == LINE_LAYOUT_COMPUTED and para.chars`, and a paragraph with no
+characters falls through to its cached linesegs — of which a Rigorloom-written
+package has none — so it gets `rows = []` and a block height of **0**.  The
+three rows above where line spacing and `charPr` height move the read-out by
+nothing are the same fact seen from the side: an empty paragraph with no
+cache has no height for those attributes to scale.
+
+That is a real defect and it is deliberately left alone.  It is measured
+against this probe's own arithmetic and nothing else: no corpus form
+exercises it, because every corpus form's empty paragraph HAS a cached
+lineseg to fall back on, and no Hancom render was made to say what the height
+should be.  Fixing it means inventing a line for a paragraph that has none,
+on a path that only Rigorloom-written documents take — which is the whole
+population of edited documents — and it deserves its own measurement with a
+reference export, not a rider on this one.
+
+### After
+
+Corpus scoreboard, 144 dpi, both policies pinned, before and after:
+
+| channel | `cache` | `computed` |
+| --- | --- | --- |
+| `text_line_iou_mean` | 0.645754 | 0.633897 |
+| `ssim_mean` | 0.830919 | 0.824293 |
+| `ssim_inked_mean` | 0.276175 | 0.277430 |
+| `text_line_pair_rate_mean` | 0.836210 | 0.847831 |
+
+**Byte-identical**, all ten forms, under BOTH policies — not just the cache
+one.  Page counts are unchanged (`kstartup` 21/22 under cache and 22/22 under
+computed, every other form exact), every verdict is unchanged, and
+`render_check` on `render-check-01` is unchanged: 6 · 37 · 6 · 2 at 96 dpi and
+14 · 31 · 4 · 2 at 144.
+
+What moved is the seat channel, and only on `nrf`: seats differing 10 → 7,
+and the −276 page-1 divergence is gone.  The corpus carrier tally goes from
+`page_move` 16 / `d_prev_advance` 11 / `page_top` 4 / `d_gap` 1 to `page_move`
+17 / `d_prev_advance` 11 / `page_top` 4, i.e. `nrf`'s page 1 stops having a
+first seat difference at all and its remaining one is the trailing-empty-
+paragraph pagination #252 already declined to touch.  `kstartup` paragraph
+148's flow height is now 69632 against the cache's own 69632.
+
+The change buys agreement in a channel the raster cannot see, and costs
+nothing in the one it can.  The paragraphs whose seats moved put no ink down
+and no page repaginated, which is why the scoreboard does not move; a
+document whose anchored object is followed by TEXT rather than by five empty
+paragraphs would have moved ink, and none of the ten forms is that document.
+
+### Not proven
+
+- **The rule rests on two anchored objects.**  `nrf` paragraph 0 and
+  `kstartup` paragraph 148 are every corpus anchor that reserves flow room,
+  and both are `TOP_AND_BOTTOM` tables at `vertOffset=0` with
+  `vertRelTo=PARA`.  A `SQUARE`/`TIGHT`/`THROUGH` wrap, a non-zero offset and
+  a `PAGE`-relative anchor all take the same code path and none of them is
+  measured; the tests pin the arithmetic, not the engine's agreement with it.
+- **The synthetic side has no reference.**  Path C was not run.  The probe
+  says the flow pass now obeys the document's own declarations; it does not
+  say Hancom obeys them the same way.
+- **It moved no ink, so no raster channel confirms it.**  The whole evidence
+  is the cached seat agreeing to the HWPUNIT on two forms plus the schema
+  reading.  A form where the correction changes what a reader sees does not
+  exist in this corpus.
+- **The empty paragraph's zero height is unfixed and unpriced.**  It is worth
+  1600 HWPUNIT per empty paragraph on the probe's 10 pt / 160% baseline, and
+  what it is worth on a real Rigorloom-written report is not measured.
+- **The seat pass is top-level only.**  A paragraph inside a table cell has
+  no flow seat and a cell-relative `vertpos`, so `saeopja` — whose body is
+  one table — contributes 6 seats out of 700-odd paragraphs.  Whatever
+  happens inside a cell, this channel cannot see it.
+- **`page_move` is 16 of 32 carriers and none of them is decomposed.**  Where
+  the two policies put a paragraph on different pages the three terms are not
+  computable, and that is most of `kstartup`.
+- **The holdout is not in these numbers.**  The private report-class document
+  was not opened.  `--corpus --no-text` is what the operator runs on it; the
+  seat section carries paragraph addresses, HWPUNIT measurements and declared
+  style values, and no document text under any flag.
