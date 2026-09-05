@@ -9401,3 +9401,436 @@ not moving is what a correctly gated rule has to do.
 - **The corpus is the training set, and now it is also the table.** The
   widths were read off the same ten forms every score above is computed on.
   A form outside the corpus gets the coverage it gets.
+
+## No public line crosses the body bottom — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#256 bracketed Hancom's page-bottom fit test off 41 cached page BREAKS and
+could not close it: the strictest surviving candidate kept a maximum overhang
+of −296 HWPUNIT, so no corpus page kept a line whose box crossed the body
+bottom and five candidates fitted every case equally. A private
+development-validation document has Hancom's editor keeping a 1000/800 line
+whose box crosses by **+566** and moving one at **+626** — one document, one
+page, not in this repository. This run asks whether the public corpus holds a
+sibling for that +566, and the answer is that **it does not, and the corpus
+is now tighter than #256 left it rather than looser.**
+
+Two populations #256 never looked at are the whole reason to ask again. It
+excluded breaks inside a table cell and pages carrying an anchored object,
+and it only ever measured the last line of a page that ends in a cached
+break. A line seated deep in a cell, or on a page with no break after it, was
+never measured at all.
+
+### The instrument: `--scan-all`
+
+`engine/scripts/page_fit_probe.py --corpus --scan-all` drops the event
+structure entirely and walks every cached `hp:lineseg` the cache path seats.
+A cell lineseg's `vertpos` is measured from its own cell's text origin, so
+the conversion to page coordinates needs the cell's seat, and `SeatScanner`
+rederives none of it: it renders the document under the cache policy and
+records the origin every `_render_paragraphs` call is handed — the body top
+for a top-level page, and for a cell the origin `_render_cell_content`
+computes from the table's own placement (`_render_floating` →
+`_object_origin`), the row offset (`_table_tracks`), the cell inset and the
+vertical alignment. The `shift` `_render_paragraphs` accumulates for a
+relaid-out paragraph is deliberately not applied: that is this renderer's
+correction to its own reflow, and the seat under measurement is Hancom's.
+
+**3209 linesegs, 2552 of them inside a table cell.** 629 carry kept-side
+evidence. Four exclusions account for the rest, and each is another rule that
+already explains the seat:
+
+| excluded | n | why |
+| --- | ---: | --- |
+| cell of a table that may not split | 1691 | `pageBreak` is not `CELL`, so the table moves whole or overflows; the table rule put the line there |
+| empty line | 842 | draws no ink |
+| line taller than the body box | 3 | `_place_block`'s `cursor > 0` guard places it without running the fit test |
+| seat off the sheet | 44 | kstartup's table 36 declares `hp:pos@vertOffset="4294967083"` — an unsigned wrap of a small negative — and seats its cells four thousand million HWPUNIT down the page. The same broken POSITION the wild-`vertOffset` guard (kstartup's own limit 12) already refuses to treat as content. |
+
+That last one is worth naming: read without the guard it is the largest
+overhang in the corpus by six orders of magnitude, off a coordinate no page
+has.
+
+### The top tail
+
+Every scanned line whose box, under `vertsize`, ends within 300 HWPUNIT of
+the body bottom — 21 of 3209. Overhang in HWPUNIT, positive meaning the box
+crosses.
+
+| form | pg | para | where | vertsize | `vsz−spc` | `baseline` | `vertsize` | evidence |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |
+| moel-2013 | 5 | 157 | top-level, whole inline table | 74535 | +4027 | −6433 | **+4747** | no — taller than the page |
+| moel-2013 | 5 | 231 | tbl5 r19,c0 | 800 | +4323 | +4203 | **+4323** | no — table may not split |
+| moel-2013 | 6 | 232 | top-level, whole inline table | 73634 | +3126 | −7199 | +3846 | no — taller than the page |
+| moel-2013 | 5 | 230 | tbl5 r19,c0 | 800 | +3523 | +3403 | +3523 | no — empty |
+| moel-2013 | 6 | 294 | tbl6 r15,c0 | 1000 | +3422 | +3272 | +3422 | no — table may not split |
+| moel-2013 | 6 | 293 | tbl6 r15,c0 | 1000 | +2422 | +2272 | +2422 | no — table may not split |
+| nrf | 0 | 36 | top-level | 1600 | +834 | +1554 | +1794 | no — empty (the seats E2.6 measured) |
+| nrf | 0 | 37 | top-level | 1600 | +834 | +1554 | +1794 | no — empty |
+| moel-2013 | 6 | 292 | tbl6 r15,c0 | 1000 | +1422 | +1272 | +1422 | no — empty |
+| moel-2013 | 5 | 229 | tbl5 r18,c2 | 1000 | +1221 | +1171 | +1321 | no — table may not split |
+| saeopja | 1 | 157 | top-level, whole inline table | 76989 | −517 | −10245 | +1303 | no — taller than the page |
+| saeopja | 1 | 217 | tbl1 r20,c0 | 800 | +541 | +901 | +1021 | no — table may not split |
+| moel-2013 | 6 | 291 | tbl6 r15,c0 | 1000 | +422 | +272 | +422 | no — table may not split |
+| moel-2013 | 5 | 228 | tbl5 r18,c2 | 1000 | +121 | +71 | +221 | no — table may not split |
+| jeongbo | 0 | 0 | top-level, whole inline table | 75655 | −1151 | −11379 | **−31** | **yes** |
+| saeopja | 1 | 216 | tbl1 r19,c0 | 800 | −221 | −181 | −61 | no — table may not split |
+| kstartup | 18 | 698 | top-level | 1200 | −562 | −262 | −82 | no — empty |
+| kstartup | 7 | 397 | top-level | 1000 | −758 | −308 | −158 | no — empty |
+| kstartup | 6 | 393 | top-level | 1000 | −815 | −365 | −215 | no — empty |
+| kstartup | 9 | 422 | top-level, whole inline table | 63300 | −776 | −9791 | −296 | yes |
+| saeopja | 4 | 413 | top-level, whole inline table | 75387 | −2119 | −11607 | −299 | yes |
+
+Read the "evidence" column and the result is already there. **Fourteen lines
+in the corpus have a box that crosses the body bottom, and not one of them is
+a text line the fit test decided.** Seven are cells of a table declaring
+`pageBreak="NONE"` — a table Hancom may not cut, so it overflows rather than
+paginating, which is #257's reading of `moel-2013 +4747` confirmed row by
+row. Three are top-level linesegs whose `vertsize` is a whole inline table's
+height and which exceed the body box outright. Four are empty.
+
+And the three lines that DO carry evidence — jeongbo −31, kstartup −296,
+saeopja −299 — are all whole-inline-table linesegs too. **No line of text
+anywhere in the corpus comes within 396 HWPUNIT of the body bottom.**
+
+### The bracket after the scan
+
+`kept` is now per-line over 629 evidence lines rather than the deepest line
+of each break page. The event pass's own kept side is folded back in
+(`evt_MAX`) because the two disagree about exactly one line — #278's
+anchor-overflow fix rebases the page kstartup's table-7 holder paragraph sits
+on, which is the line #256 read `top` = −1368 off — and neither reading owns
+it, so the bound is the larger.
+
+| candidate | scan kept MAX | text-only MAX | evt MAX | **union MAX** | rejected MIN | fits |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `top` | −1696 | −1696 | −1368 | **−1368** | −445 | no (r! = 4) |
+| `vertsize − spacing` | −720 | −720 | −720 | **−720** | +395 | yes |
+| `vertsize // 2` | −1046 | −1046 | −868 | **−868** | +255 | yes |
+| `baseline` | −591 | −591 | −518 | **−518** | +731 | yes |
+| `textheight` | −31 | −396 | −296 | **−31** | +911 | yes |
+| `vertsize` | −31 | −396 | −296 | **−31** | +911 | yes |
+| `vertsize + spacing` | +1521 | +391 | +1521 | **+1521** | +1427 | no (k! = 13) |
+
+The rejected side is unchanged from #256: a line that was never seated cannot
+be scanned, and only the break pass knows about it. Nine of the 41 breaks
+move a line whose would-be overhang under `vertsize` is under +300, and every
+one of them is deeply negative — the closest is `moel-2025` page 2 at −193,
+and none is an unforced text line, so none adds rejected-side evidence. There
+is no near miss on the rejected side either.
+
+So the public bracket tightens on one end only: **`vertsize` and `textheight`
+go from −296 to −31**, and the five surviving candidates are still
+unseparated. −31 is the tightest public measurement of the fit boundary that
+exists, and it is still on the safe side of it.
+
+### The export draws the seat, including the ink below the box
+
+The scan reads the reference PDF for each tail line and locates its ink by
+text. Where the line has text of its own to find, **Hancom's export draws it
+where the cache seated it**, to within the glyph-box tightening a PDF bbox
+always costs:
+
+| form | pg | para | cache top | ink top | Δ | ink bottom vs body bottom |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| moel-2013 | 5 | 231 | 73311 | 73213 | −98 | **+4229** |
+| moel-2013 | 6 | 294 | 72210 | 72201 | −9 | +3409 |
+| moel-2013 | 6 | 293 | 71210 | 71205 | −5 | +2413 |
+| moel-2013 | 5 | 229 | 70109 | 70016 | −93 | +1223 |
+| saeopja | 1 | 217 | 75907 | 75889 | −18 | +1007 |
+| moel-2013 | 6 | 291 | 69210 | 69201 | −9 | +409 |
+| moel-2013 | 5 | 228 | 69009 | 68925 | −84 | +132 |
+| saeopja | 1 | 216 | 74825 | 74809 | −16 | −73 |
+
+Every one of them lands on the page the cache says, and none moved. So the
+public corpus DOES print ink below the derived body bottom — up to 4229
+HWPUNIT of it, measured in Hancom's own export rather than inferred from a
+seat — and every instance is a cell of a table that may not split. A whole
+inline table's lineseg has no text of its own, so the four `+tbl` rows report
+"text not found"; that is the matcher having nothing to match, not a
+disagreement.
+
+### kstartup table 9, the one place Hancom cut through a cell
+
+The cache path draws it as two fragments, rows [0, 3) and [3, 4) — #278's
+split, and this scan finds no other split table in the corpus. The deepest
+text line on the FIRST fragment sits at page-relative 64131 with `vertsize`
+1000 and `spacing` 800:
+
+| candidate | overhang |
+| --- | ---: |
+| `top` | −6869 |
+| `vertsize − spacing` | −6669 |
+| `vertsize // 2` | −6369 |
+| `baseline` | −6019 |
+| `textheight` / `vertsize` | −5869 |
+| `vertsize + spacing` | −5069 |
+
+Nearly six thousand HWPUNIT of clearance. Hancom cut that cell where its
+CONTENT ran out, not where the body bottom is: the fragment's own box reaches
+70624 (#278 measured it drawn) but its last line of text stops well short.
+The one corpus place where Hancom cut through a cell says nothing about the
+fit rule.
+
+### Is there a public witness?
+
+**No.** No page in the public corpus carries a Hancom-placed text line whose
+box crosses the body bottom under any candidate that survives #256's two
+refutations. The private +566 has no public sibling, and after this scan the
+public corpus says the opposite of it more firmly than before: the tightest
+kept box ends **31 HWPUNIT above** the boundary, and the tightest kept box
+belonging to an actual line of text ends 396 above.
+
+Nothing in the renderer changed in this slice. It is a probe-only pass, and
+`own_render.py` is untouched.
+
+### Not proven
+
+- **The scan measures where the CACHE PATH draws, not the raw cached
+  `vertpos`.** For a top-level page on nine of the ten forms those are the
+  same number. They are not the same for the one kstartup page #278 rebases,
+  and they are not the same for a cell, where the seat is the renderer's own
+  table geometry. If `_table_tracks` solves a row a few HWPUNIT tall, every
+  cell line under it moves with the error. The reference-PDF column is the
+  check on that and it agrees to under 100 HWPUNIT on every line it could
+  match — but only on the eight lines that had text to match.
+- **A vertically centred cell's seat is this renderer's estimate.** The
+  offset comes from `_paragraph_block_extent`, which is a computed height,
+  not one the file states. A `CENTER` or `BOTTOM` cell whose block extent we
+  get wrong moves its lines by half or all of the error.
+- **The `pageBreak="NONE"` exclusion is 1691 of 3209 lines.** It rests on
+  `docs/research/table-page-break-rule.md`, which is measured, but it is the
+  single largest exclusion in this run and everything it removes is exactly
+  the population with ink below the body bottom. If that reading is wrong,
+  the tail's top thirteen rows come back as evidence and every candidate
+  above `top` is refuted at once.
+- **The rejected side did not grow.** The scan adds 629 kept-side lines and
+  zero rejected-side ones, because a line the cache never seated has no seat
+  to scan. The `+395` upper bound on the surviving band is still five events
+  on two forms, all of them from #256.
+- **`vertsize == textheight` on every corpus lineseg**, so those two columns
+  remain indistinguishable. Unchanged from #256.
+- **The corpus still has no intra-paragraph page break.** The scan confirms
+  it rather than fixing it: nothing here manufactures the shape the private
+  holdout has.
+
+## Which stand-in rule wins the break test on top of the table — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#292 shipped the measured HFT width table alone and recorded what it costs:
+the substituted per-line median went −120 → −382 HWPUNIT, because the
+휴먼명조 stand-in's −60 per Hangul character stopped being cancelled by the
+HFT error the table had just fixed. It also recorded that `table + cell`
+closes those widths but loses the break test 19 / 47 against 21. This slice
+asks the question that leaves open: on top of the table, is there a FORM of
+#283's stand-in rule that keeps the breaks?
+
+**There is not, and the reason is 15 to 86 HWPUNIT.** Four forms of the rule
+were priced. Every one of them closes the substituted widths, every one of
+them leaves the installed control at 48 / 113, and every one of them loses
+the break test on the same one or two paragraphs — two `moel-2025`
+paragraphs whose line overflows its column by between 15 and 86 HWPUNIT out
+of 48190, which is 0.03% to 0.18% of the box and about a tenth of one
+character. **Nothing ships.**
+
+### The instrument
+
+`hft_width_table.py --standin`, which prices six variants where `--score`
+priced four. A variant is installed by rebinding `own_render.OwnRenderer` and
+`advance_probe.BreakRecordingRenderer` for the length of one measurement, so
+the break test is the REAL breaker on real column widths; `table` is the
+shipped renderer untouched and every other row is read against it.
+
+Two things had to be fixed to ask the question at all.
+
+`advance_probe.py --fallback-rules` was BROKEN on the tip. #292 gave
+`_advance_hwp` a `rel_sz` argument and `RuleRenderer` still declared six
+parameters, so every rule the probe scores raised `TypeError` on the first
+chunk. It also called `super()._advance_hwp` without putting the measured
+table in front, which would have scored each rule against a renderer that no
+longer exists. Both are fixed, and there is a test that compares the
+override's signature to the seam's rather than trusting it.
+
+`break_scoreboard`'s rows now carry the column, the line spans and the line
+widths the breaker actually had. Naming the paragraph that flipped is half an
+answer; the other half is the width that moved and the box it moved across.
+
+### The second measured table
+
+`measure_standin_scale`, for variant `scale`: Hancom's advance over ours per
+DECLARED face, median over every anchored character of that face, measured
+WITH the HFT table active so what is left is the stand-in's own error and not
+one the table has already answered. It carries one ratio per face and nothing
+else — no glyph, no outline, no font program.
+
+| declared face | n | scale |
+| --- | ---: | ---: |
+| 휴먼명조 | 3529 | **1.0494** |
+| HCI Poppy | 123 | 1.0004 |
+| HY울릉도M | 36 | 1.0023 |
+| 고딕 | 24 | 0.9970 |
+
+1.0494 is 1 / 0.9529, and #283 measured the stand-in at 0.9536 of Hancom on
+Hangul: the two agree, and the residual 0.0007 is the Latin and punctuation
+this median also covers. Only 휴먼명조 is materially off 1.
+
+### The five rules, priced
+
+`table` is #292's shipped tree. `cell` is #283's rule, a full-width cell
+advances by the declared cell. `bundled` is `cell` gated on `bundled` alone
+rather than on everything that is not `installed`. `fwchars` is `cell` per
+CHARACTER, so a Hangul run with one Latin character in it still gets full
+cells for its Hangul. `pen` is `cell` with the running total taken to the
+nearest whole 1/600 inch — #283's correction that the grid is on the pen —
+and `scale` is the table above.
+
+| variant | exact widths, installed | exact, substituted | installed ¶ | other ¶ | over-measurements |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **table** (baseline) | 24 / 103 | 0 / 308 | **48 / 113** | **21 / 47** | **30 / 2272** |
+| table + cell | 24 / 103 | 7 / 308 | 48 / 113 | 19 / 47 | 33 / 2272 |
+| table + bundled | 24 / 103 | 7 / 308 | 48 / 113 | 19 / 47 | 33 / 2272 |
+| table + fwchars | 24 / 103 | 7 / 308 | 48 / 113 | 19 / 47 | 33 / 2272 |
+| table + pen | 24 / 103 | **35 / 308** | 48 / 113 | 20 / 47 | 31 / 2272 |
+| table + scale | 24 / 103 | 23 / 308 | 48 / 113 | 20 / 47 | 31 / 2272 |
+
+| variant | installed median | med abs | substituted median | med abs |
+| --- | ---: | ---: | ---: | ---: |
+| table | +5.72 | 8.30 | −381.90 | 381.90 |
+| table + cell / bundled / fwchars | +5.72 | 8.30 | +24.83 | 25.62 |
+| table + pen | +5.72 | 8.30 | **−2.83** | **17.81** |
+| table + scale | +5.72 | 8.30 | −2.19 | 19.07 |
+
+The carriers, ours − Hancom in HWPUNIT:
+
+| line | table | cell / bundled / fwchars | pen | scale |
+| --- | ---: | ---: | ---: | ---: |
+| ¶118 line 0 | −1850.2 | −128.0 | −234.4 | −228.7 |
+| ¶118 line 1 | −1659.2 | +22.9 | −81.0 | −75.5 |
+| ¶141 line 0 | −1068.4 | +85.4 | **+14.1** | +18.0 |
+
+`table+cell` reproduces #292's published row to the digit — 7 / 308, 19 / 47,
+33 over-measurements, +24.83 median, and the three carriers at −128.0, +22.9
+and +85.4 — which is the instrument's control: the new scoring path is the
+old one with more rows in it.
+
+**Three of the five rules are the same rule.** `cell`, `bundled` and
+`fwchars` are identical on every channel measured, to the digit and on the
+carriers. That is two negative findings, not a coincidence:
+
+* the GATE does not matter on this corpus. The substituted population that is
+  not `bundled` is #283's 123 `HCI Poppy` digits plus 60 stray characters,
+  and `HCI Poppy` and 고딕 are HFT faces the measured table now answers for,
+  so the wider gate has almost nothing left to fire on.
+* the CHUNKING does not matter either. `cell` gives up on a chunk with one
+  Latin character in it and `fwchars` does not, and no line in the corpus is
+  decided by the difference: a Korean form's Hangul runs are not mixed at the
+  chunk level often enough to move a break.
+
+### The two paragraphs that flip, and by how much
+
+`moel-2025` ¶64 and ¶160, which are the same 78-character sentence twice —
+the contract preamble `(이하 "사업주"라 함)과(와) … (이하 "근로자"라 함)은
+다음과 같이 근로계약을 체결한다.`, sixteen leading blanks and twelve more in
+the middle where the two names are written in by hand. The cache breaks it
+after 64 characters. The column is 48190 HWPUNIT.
+
+Our own measurement of those 64 characters, found by binary-searching the
+column at which our breaker first puts the break where the cache put it, so
+the number below is the real breaker's own width and not a reconstruction:
+
+| variant | ¶64 | fill | ¶160 | fill |
+| --- | ---: | ---: | ---: | ---: |
+| table | 47020 | 0.9757 | 47083 | 0.9770 |
+| cell / bundled / fwchars | 48205 | 1.0003 | 48276 | **1.0018** |
+| pen | **48132** | 0.9988 | 48202 | 1.0003 |
+| scale | **48135** | 0.9989 | 48206 | 1.0003 |
+
+That is the whole of the break test's 21 → 20 → 19. The line carries about
+20 substituted Hangul characters; the rule adds roughly +60 HWPUNIT to each
+of them, +1185 in total, and the headroom the baseline had was 1170. **The
+rule is right about the width and the line was fitted with 2.4% to spare, so
+correcting a −1170 error puts it 15 over.** `pen` and `scale` add 74 less
+than `cell` does, which is enough to save ¶64 and not enough to save ¶160.
+
+Neither paragraph is evidence about the SHAPE of the stand-in rule. They are
+evidence that at this fill our width and Hancom's are the same number, and
+that whichever side of 48190 we land on is decided by a term smaller than the
+one we are still missing — #283's punctuation slot, +197.76 HWPUNIT per
+installed ASCII punctuation character, of which this line has six.
+
+### Nothing was changed
+
+The renderer is untouched: the four rules live in the probe, as #292's `cell`
+did, because pricing another slice's proposal is all this slice may do with
+it. Every corpus channel is #292's, re-measured on this branch.
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms, `cache`
+0.736589 / 0.861944 / 0.393719 / 0.850991 and `computed` 0.684242 / 0.844732
+/ 0.358878 / 0.846045 for `text_line_iou_mean` / `ssim_mean` /
+`ssim_inked_mean` / `text_line_pair_rate_mean`. Page counts 10 of 10 exact
+under both policies: `admrul` 1/1, `gianmun-1ho` 1/1, `gianmun-2ho` 1/1,
+`jeongbo` 1/1, `jumin` 3/3, `kstartup` 22/22, `moel-2013` 7/7, `moel-2025`
+7/7, `nrf` 4/4, `saeopja` 6/6.
+
+`lineseg_vs_pdf.py --corpus` **411 / 411** comparable paragraphs equal,
+8566 / 8566 characters in agreeing lines. `layout_divergence.py --corpus`
+classes A / B / C / D 1713 / 98 / 214 / 28. `class_b_probe.py --corpus`
+roots `text_rebreak:width` **100**, `table_row_heights` 63,
+`empty_paragraph` 29, `cell_valign` 15, `forced_break` 7.
+`advance_probe.py --corpus --punct`: total over-measure on installed
+punctuation +135.8 HWPUNIT over 545 advances, installed per-line median
++5.72 and median abs 8.30 with 24 of 103 exact, substituted −381.90 with
+0 of 308, cached breaks 48 / 113 installed and 21 / 47 other, proven
+over-measurements 30 of 2272.
+
+`render_check.py` on `render-check-01` is 6 · 37 · 6 · 2 at 96 dpi and
+14 · 31 · 4 · 2 at 144, 9 of 9 pages exact both times. **It resolves 16
+faces and every one of them is `installed`**, over 18205 characters — it
+declares no HFT face (#292) and it carries no stand-in either, so it cannot
+test this slice's subject at all. Its not moving is a control and not a
+verdict.
+
+`advance_probe.py --corpus --fallback-rules` runs again, and with the table
+in front its own break test says the same thing from the other instrument:
+`current` (which is now table-alone) 21 / 47 substituted multi-line, `cell`
+19 / 47, and every `cell+grid` variant 20 / 47, with the installed column at
+48 / 113 throughout. The grid variants there quantise each ADVANCE where
+`pen` quantises the running total; both land on 20, which says the flip is a
+few tens of HWPUNIT either way and not the difference between two theories
+of the grid.
+
+### Not proven
+
+- **The pen rule's pen starts on the grid.** `_advance_hwp` is a per-chunk
+  seam with no line-level cursor, so `pen` rounds each chunk's total from
+  zero rather than the line's running position. On a line with twenty chunks
+  that is twenty roundings where Hancom does one. The variant is a lower
+  bound on what a true line-cumulative pen would be worth, and the gap
+  between them is at most half a grid step per chunk.
+- **The scale table is one ratio for a whole face.** It was measured over
+  every anchored character of that face — Hangul, Latin and punctuation
+  together — and applied to every character of a run. Per-class it would be
+  a different table, and #283 measured that substituted Latin is 131
+  characters in the whole corpus, which is not enough to build one.
+- **Three faces of the four carry fewer than 130 observations.** Only
+  휴먼명조's 1.0494 is a face metric; `HCI Poppy`, `HY울릉도M` and 고딕 are
+  within 0.3% of 1 and their rows change nothing, so the whole of `scale`'s
+  score is one number for one face.
+- **The gate and the chunking are untested, not proven equivalent.** `cell`,
+  `bundled` and `fwchars` agree on this corpus. A corpus with a substituted
+  face the table does not cover, or with mixed Hangul/Latin chunks, would
+  separate them, and none of the ten forms is that corpus.
+- **The two flipping paragraphs are one sentence.** ¶64 and ¶160 of
+  `moel-2025` are the same text at the same size in the same column, so the
+  break test's 21 / 47 → 19 / 47 is two instances of a single line, not two
+  independent observations.
+- **The baseline's agreement on them is not evidence it is right.** `table`
+  matches the cached break on ¶64 and ¶160 while under-measuring the line by
+  1170 HWPUNIT, and its substituted per-line median is −381.90. A rule can
+  make every width better and every one of these breaks worse, and on this
+  corpus it does.
+- **`render_check` cannot see any of this.** No HFT face and no stand-in, so
+  the only live test of a stand-in rule this repo has is the corpus the rule
+  was measured on.
