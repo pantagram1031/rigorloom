@@ -1612,6 +1612,34 @@ def cell_inset(tc, tbl):
             for side in ("left", "right", "top", "bottom")}
 
 
+#: The narrowest text column a table cell ever gets, in HWPUNIT — 0.2 inch.
+#:
+#: MEASURED, on ``engine/scripts/cell_column_probe.py --corpus --residuals``.
+#: Over every cached in-cell ``hp:lineseg`` on the corpus the smallest
+#: ``horzsize`` Hancom ever saved is exactly 1440 and the next smallest is
+#: 1696; 64 lines sit on 1440, none below it.  Those 64 are in cells 283,
+#: 500, 566 and 1284 HWPUNIT wide after their inset — four different widths
+#: driven to one number — and they carry two different ``textheight`` values
+#: (900 and 1000), so the floor is a constant of the layout and not a
+#: multiple of the text.  ``gianmun-1ho`` r8c11 settles that it is a floor on
+#: the LINE and not a clamp on the inset: its whole cell is 565 wide and the
+#: cache still writes a 1440 line box in it, which no reading of the margins
+#: can produce.
+MIN_CELL_TEXT_WIDTH = 1440
+
+
+def cell_text_width(box_hwp, margin):
+    """The text column a cell of ``box_hwp`` HWPUNIT gives its paragraphs.
+
+    The inset comes off the box and the result never goes below
+    :data:`MIN_CELL_TEXT_WIDTH`.  A cell narrower than the floor therefore
+    lays its text out in a column wider than itself and lets it overhang,
+    which is what the cache records Hancom doing.
+    """
+    return max(MIN_CELL_TEXT_WIDTH,
+               box_hwp - margin["left"] - margin["right"])
+
+
 def solve_tracks(count: int, constraints, declared_total=None):
     """Recover per-column widths / per-row heights from span constraints.
 
@@ -1678,6 +1706,148 @@ def solve_tracks(count: int, constraints, declared_total=None):
             scaled[-1] += declared_total - sum(scaled)
             sizes = [max(0, s) for s in scaled]
     return sizes
+
+
+def clip_tracks(sizes, declared_total):
+    """Take an overflow off the LAST track, not off every track in proportion.
+
+    ``hp:tbl/hp:sz@height`` is the table's box, and #273 measured that the row
+    rule sums to it on every Hancom save the cache states a total for.  Two
+    corpus tables overflow it anyway — ``kstartup`` tables 5 and 36, by 78 and
+    282 HWPUNIT — and both are ANCHORED, so the cache states no total for
+    either and only Hancom's own export can say what it drew.  It drew the
+    declared box: at the reference PDF's 841.0/841.89 page scale, table 5
+    measures 62416 HWPUNIT against a declared 62482 (predicted 62417) and
+    table 36 measures 66431 against a declared 66505 (predicted 66435), while
+    the uncompressed sums 62560 and 66787 would predict 62494 and 66717.
+
+    Table 5 also draws its three interior rules, and they say HOW the excess
+    is taken.  Its rows declare 3682 / 19626 / 19626 / 19626 and Hancom drew
+    3684 / 19620 / 19631 / 19541 (±8 HWPUNIT, the same slop every reading in
+    that PDF carries).  The first three rows keep the height they asked for
+    and the LAST one is 78 short — exactly the overflow.  Scaling all four in
+    proportion would have drawn 3677 / 19601 / 19601 / 19603 and puts the last
+    row 62 outside the slop band.  The table is laid out top-down at the
+    heights its rows ask for and cut off at the declared box.
+
+    That is also why this is not the compress #273 removed.  The old step
+    rescaled every track, so one cell this renderer measures too tall moved
+    forty innocent rows; this one moves the last row only, and every row
+    boundary above it stays where the row rule put it.
+
+    A last row the excess would drive negative is clamped at zero and the
+    remainder carries into the row above it, so the tracks always sum to the
+    declared total and none of them is negative.  No corpus table needs the
+    carry: a full render on both policies makes 8 clips and every one of them
+    moves exactly one row, the tightest being ``saeopja``'s 1040 HWPUNIT off
+    a 1082 last row.
+    """
+    excess = sum(sizes) - declared_total
+    if excess <= 0 or not sizes:
+        return list(sizes)
+    out = list(sizes)
+    for index in range(len(out) - 1, -1, -1):
+        take = min(out[index], excess)
+        out[index] -= take
+        excess -= take
+        if excess <= 0:
+            break
+    return out
+
+
+def column_grid(count, constraints, declared_total=None):
+    """A table's column boundaries, ``[x0, x1, ... x_count]`` in HWPUNIT.
+
+    A table has ONE column grid — every row draws against the same
+    boundaries, which is why a cell's ``cellAddr@colAddr`` means anything at
+    all — and OWPML records it nowhere: `hp:tbl` carries a `sz`, a
+    `rowCnt`/`colCnt` and a list of rows, and every `hp:tc` under those
+    carries only its own `cellSz@width`, `cellAddr` and `cellSpan`.  The grid
+    has to be recovered from the cells, and the corpus's rows do not agree
+    about it: `jumin` table 1 declares 50897 across its first thirty-one rows
+    and 48067 across its last eight, and `saeopja` has a table whose every
+    row totals 19 HWPUNIT short of the table's own box.
+
+    **A cell's ``cellSz@width`` is a lower bound on the distance between its
+    two boundaries, not a statement of it.** ``x[0]`` is 0 and ``x[count]``
+    is the table's declared ``hp:sz@width``; every interior boundary sits at
+    the LARGEST x any cell reaching it produces from its own declared width.
+    A row whose widths sum short of the table under-claims every boundary it
+    touches and is fitted to the rows that claim more; a row that agrees
+    changes nothing.  Contradictory rows are therefore not a system to be
+    reconciled — which is what :func:`solve_tracks` treats them as, and why
+    it smears one row's shortfall across every column of every row — they
+    are claims, and the grid is their envelope.
+
+    Measured against the cache's ``hp:lineseg@horzsize`` over 1599 corpus
+    cells (``engine/scripts/track_probe.py --corpus --models gridmax``): this
+    reproduces 1590 of them on the cache's 4 HWPUNIT quantiser against 969
+    for :func:`solve_tracks`, with no cell that the older reading placed
+    correctly placed wrongly here.  Of the nine left, five are a paragraph's
+    negative ``hh:intent`` and not a column question at all, and four are one
+    ``saeopja`` table whose cached boundary no declared width in the file
+    produces.  Against the reference PDFs' own vertical rules it puts a cell
+    edge under 303 of 1643 drawn strokes against 263.
+
+    Solved to a fixpoint because a claim depends on the boundary it starts
+    from.  Every claim moves a boundary strictly to the right of the one it
+    starts at, so the dependency runs one way along the column index and the
+    iteration terminates; the loop bound is belt and braces.  A boundary no
+    cell ever claims — a grid the file does not determine — is split evenly
+    between its nearest determined neighbours, which is the same fallback
+    :func:`solve_tracks` uses for an unknown track.
+
+    ``constraints`` is ``[(start_column, colSpan, cellSz@width), ...]`` in
+    document order; the order does not matter, and that it does not is the
+    point of taking a maximum rather than letting the first or the last cell
+    win.
+    """
+    if count <= 0:
+        return [0]
+    xs = {0: 0}
+    pinned = {0}
+    if declared_total:
+        xs[count] = declared_total
+        pinned.add(count)
+    for _ in range(count + 2):
+        changed = False
+        for start, span, width in constraints:
+            if start is None or start < 0:
+                continue
+            left = xs.get(start)
+            if left is None:
+                continue
+            edge = min(start + max(1, span), count)
+            if edge in pinned:
+                continue
+            claim = left + max(0, width or 0)
+            if declared_total:
+                claim = min(claim, declared_total)
+            if claim > xs.get(edge, -1):
+                xs[edge] = claim
+                changed = True
+        if not changed:
+            break
+
+    # A table whose file gives no right edge closes at the widest claim, so
+    # the even split below always has a determined boundary on both sides.
+    if count not in xs:
+        xs[count] = max(xs.values())
+    out = [xs.get(i) for i in range(count + 1)]
+    lo = 0
+    for i in range(1, count + 1):
+        if out[i] is None:
+            continue
+        gap, steps = out[i] - out[lo], i - lo
+        for step in range(1, steps):
+            out[lo + step] = out[lo] + gap * step // steps
+        lo = i
+    # Nothing may run backwards: a row that overflows its table has every
+    # claim past the right edge clamped onto it, which is a zero-width
+    # column and not a negative one.
+    for i in range(1, count + 1):
+        out[i] = max(out[i], out[i - 1])
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -2220,6 +2390,13 @@ class OwnRenderer:
         # renderer inserted for the remainder -- see
         # ``_split_anchor_overflow`` and ``_render_floating``.
         self._auto_anchor_splits = {}
+        # ``{page index: HWPUNIT}`` for a page the cache/auto path INSERTED
+        # because an anchored table did not fit the room left where the
+        # cache seated it (E2.8).  Every cached ``vertpos`` on that page is
+        # measured from the ORIGINAL page's body top, so the whole page is
+        # drawn shifted by this offset -- which is what puts the table that
+        # moved at the top of the page it moved to.
+        self._auto_anchor_page_offsets = {}
         self._flow_report = None
         self._scratch_draw_cache = None
         # >0 while a measurement pass runs (a table row asking how tall its
@@ -2650,43 +2827,85 @@ class OwnRenderer:
         usable = max(1, geo["usable_height"])
         draw = self._scratch_draw()
         raw_pages = self.paginate()
+        self._auto_anchor_page_offsets = {}
         out = []
         for page_paras in raw_pages:
             current = []
             for para in page_paras:
-                cut = self._auto_anchor_overflow_cut(draw, para, usable)
-                if cut is None:
+                action = self._auto_anchor_overflow_action(draw, para, usable)
+                if action is None:
+                    current.append(para)
+                    continue
+                if action[0] == "move":
+                    # A table that does not fit the room left, but does fit a
+                    # page of its own, MOVES WHOLE — the answer an inline
+                    # flowing table already gets, and the one Hancom's own
+                    # export gives (E2.8).  It leaves the page it did not fit
+                    # and opens the next one, and every cached ``vertpos``
+                    # that comes with it is rebased so that the paragraph
+                    # that moved starts at the top of the body box.
+                    if current:
+                        out.append(current)
+                        current = []
+                    self._auto_anchor_page_offsets[len(out)] = -action[1]
                     current.append(para)
                     continue
                 # This paragraph's own anchored table overflows the seat the
-                # cache gave it: it stays the last thing on the page it was
-                # on, and starts the next page as the first thing there too
-                # (its second row-range picked up by ``_render_floating``'s
-                # queue on that second encounter) — everything after it
-                # naturally continues on the new page.
+                # cache gave it and would not fit a page of its own either:
+                # it stays the last thing on the page it was on, and starts
+                # the next page as the first thing there too (its second
+                # row-range picked up by ``_render_floating``'s queue on that
+                # second encounter) — everything after it naturally continues
+                # on the new page.
                 current.append(para)
                 out.append(current)
                 current = [para]
             out.append(current)
         return out
 
-    def _auto_anchor_overflow_cut(self, draw, para, usable):
-        """The row-boundary cut ``para``'s own anchored table needs to split
-        at, if its cached seat overflows — or ``None``.  Side effect on a
-        cut: registers the two row ranges on ``self._auto_anchor_splits``
-        (a queue ``_render_floating`` consumes, first encounter then
-        second) and flags the table for natural-height drawing, mirroring
-        exactly what ``_split_anchor_overflow`` does for the computed flow
-        pass.
+    def _auto_anchor_overflow_action(self, draw, para, usable):
+        """What ``para``'s own anchored table needs when the seat the cache
+        gave it overflows the page — ``None`` when it fits.
+
+        ``("move", top)``
+            It does not fit the room left below ``top`` but a whole page is
+            enough for it, so it moves whole to the next page and is drawn
+            from that page's body top (``top`` is what the caller rebases
+            the cached ``vertpos`` by).  This is the arm Hancom's own export
+            exercises: `kstartup` seats a 69572-HWPUNIT anchored table at a
+            cached ``vertpos`` of 69632 on a 71000-HWPUNIT page, and the
+            reference PDF draws it at the top of the NEXT page rather than
+            68204 HWPUNIT off the bottom of that one.
+
+        ``("split", cut)``
+            Not even a fresh page is enough, so it splits at the last row
+            boundary that fits.  Side effect: registers the two row ranges
+            on ``self._auto_anchor_splits`` (a queue ``_render_floating``
+            consumes, first encounter then second) and flags the table for
+            natural-height drawing, mirroring exactly what
+            ``_split_anchor_overflow`` does for the computed flow pass.
         """
         info = self._anchor_table_geometry(draw, para)
         if info is None:
             return None
         tbl_el, offset, ys = info
+        if offset > usable:
+            # A wild ``vertOffset`` (kstartup's own limit 12) is a broken
+            # POSITION, not content that needs a second page; it is left to
+            # the existing ignored-reserve handling, exactly as
+            # ``_place_block`` leaves it.
+            return None
         top = _iattr(para.linesegs[0], "vertpos") if para.linesegs else 0
         room = usable - top
         if offset + ys[-1] <= room:
             return None
+        if top > 0 and offset + ys[-1] <= usable:
+            self._skip(
+                "hp:tbl (anchored)",
+                "the cached page assignment seated this table where it "
+                "overflows the usable box and a page of its own is enough "
+                "for it, so it moves whole to the next page")
+            return ("move", top)
         cut = self._row_cut_for_room(ys, 0, max(0, room - offset))
         if not cut:
             return None
@@ -2703,7 +2922,7 @@ class OwnRenderer:
         queue = self._auto_anchor_splits.setdefault(id(tbl_el), [])
         queue.append((0, cut))
         queue.append((cut, len(ys) - 1))
-        return cut
+        return ("split", cut)
 
     # -- block flow (E2.5) -----------------------------------------------
     # ``paginate`` above READS the page assignment the authoring engine left
@@ -4095,29 +4314,72 @@ class OwnRenderer:
     def _line_box(self, para, index, column_hwp):
         """``(horzpos, horzsize)`` in HWPUNIT for the ``index``-th line.
 
-        ``hh:margin`` gives ``left``/``right``/``intent``.  A positive
-        ``intent`` is 들여쓰기 — the first line starts that much further in.
+        THE BOX IS THE PARAGRAPH'S COLUMN LESS ITS OWN LEFT AND RIGHT
+        MARGINS, AND ``hh:intent`` IS NOT IN IT.  Measured, on
+        ``engine/scripts/indent_probe.py --corpus``: over all **3214** cached
+        ``hp:lineseg`` of the ten corpus forms, ``horzpos == margin_left`` on
+        **3214**, first lines and continuations alike, and every multi-line
+        paragraph's lines share one right edge (161/161, and 118/118 of the
+        ones declaring a non-zero ``intent``).  A first line is neither moved
+        nor widened by the indent; the box a paragraph gets is one box.
 
-        A negative ``intent`` is 내어쓰기, and the textbook reading of it —
-        first line at the left margin, every *continuation* line pushed in by
-        its magnitude — is **not** what this corpus's cached boxes show.
-        Measured over all 3214 cached line boxes, three readings score:
+        Readings that put the indent in the box do worse, and the two the
+        corpus separates most sharply are the two this renderer has held:
+        ``max(0, left + intent)`` on line 0 scores 3159 of 3214 and the
+        textbook hanging box 3043.  (#268 scored the same three readings at
+        2860 / 2895 / 2710; it scored ``_line_box``'s WIDTH alongside its
+        position, and the cell columns that width was cut from were wrong
+        until #268 and #277 fixed them.  This measurement reads ``horzpos``
+        straight out of the file and depends on no column at all.)
 
-            horzpos == max(0, left + intent), intent on line 0 only    2860
-            horzpos == left, intent never moves the box                2895
-            first line at left, continuations indented by |intent|     2710
-
-        The hanging reading is the worst of the three, so it is not
-        implemented: a negative ``intent`` moves no line box here.  The other
-        two are within 35 boxes of each other and the first is the plain
-        reading of the attribute, so that is the one kept.
+        The indent is real, and it is drawn INSIDE this box —
+        :meth:`_line_indent`.
         """
+        del index
         pr = para.para_pr
-        left = pr.get("margin_left", 0)
+        left = max(0, pr.get("margin_left", 0))
         right = max(0, pr.get("margin_right", 0))
-        indent = pr.get("indent", 0)
-        horzpos = max(0, left + (indent if index == 0 else 0))
-        return horzpos, max(1, column_hwp - horzpos - right)
+        return left, max(1, column_hwp - left - right)
+
+    @staticmethod
+    def _line_indent(para, index):
+        """How far into its line box the ``index``-th line's text starts.
+
+        ``hh:intent`` is the FIRST-LINE indent, signed, and HWP's two names
+        for it are the two signs:
+
+        * 들여쓰기, ``intent > 0`` — the first line starts ``intent`` further
+          in and every other line starts at the margin;
+        * 내어쓰기, ``intent < 0`` — the first line starts at the margin and
+          every *continuation* line starts ``|intent|`` further in.  The first
+          line hangs out to the left of the block, which is what makes it an
+          outdent.
+
+        MEASURED against Hancom's own exported PDFs, not inferred from the
+        names (``engine/scripts/indent_probe.py --corpus --pdf``, which locates
+        a paragraph's drawn lines by the same whole-line text match
+        ``lineseg_vs_pdf`` uses):
+
+        * every one of the **13** top-level paragraphs whose drawn ``x0`` can
+          separate this reading from ``max(0, left + intent)`` supports this
+          one — the 9 positive-``intent`` paragraphs draw their first line at
+          ``left + intent`` (``nrf`` p15-p23, left 0, intent 2980, drawn at
+          2972) and the 4 negative-``intent`` paragraphs whose ``left + intent``
+          would be below zero draw it at ``left`` instead (``kstartup`` p31,
+          left 3600, intent −3612, drawn at 3600);
+        * the SECOND drawn line of a negative-``intent`` paragraph is at
+          ``left + |intent|`` on **39 of 39** and at ``left`` on **0** —
+          ``moel-2025`` p20 hangs 7420 HWPUNIT, ``kstartup`` p95 3569, and the
+          PDF puts them at 7404 and 3564.  The cache's line box says ``left``
+          for all of these, so the hanging indent is an offset inside the box
+          and is not the box.
+
+        The tolerance in that fit is 50 HWPUNIT (half a point, inside a
+        glyph's own left side bearing); the smallest non-zero ``intent`` on
+        the corpus is 100.
+        """
+        intent = para.para_pr.get("indent", 0)
+        return max(0, intent) if index == 0 else max(0, -intent)
 
     def _line_metrics(self, para, start, end):
         """``(textheight, vertsize, baseline, spacing)`` in HWPUNIT.
@@ -4340,9 +4602,14 @@ class OwnRenderer:
                 cursor += 1
                 continue
             horzpos, horzsize = self._line_box(para, index, column_hwp)
-            avail = float(horzsize)
+            # The indent eats into the line's usable width: a hanging
+            # paragraph's continuation lines are genuinely narrower than its
+            # first, which is exactly why the indent has to enter the BREAK
+            # and not only the draw.
+            indent = self._line_indent(para, index)
+            avail = float(max(1, horzsize - indent))
             if ch == "\t":
-                here = horzpos + width(start, cursor)
+                here = horzpos + indent + width(start, cursor)
                 advances[cursor] = max(
                     0.0, self._tab_advance(para, here, column_hwp) - here)
                 for i in range(cursor, count):
@@ -4375,6 +4642,7 @@ class OwnRenderer:
         for offset, (first, last, forced) in enumerate(spans):
             index = from_line + offset
             horzpos, horzsize = self._line_box(para, index, column_hwp)
+            indent = self._line_indent(para, index)
             textheight, vertsize, baseline, spacing = self._line_metrics(
                 para, first, last)
             visible = last
@@ -4382,7 +4650,12 @@ class OwnRenderer:
                 visible -= 1
             lines.append({
                 "start": first, "end": last,
-                "horzpos": horzpos, "horzsize": horzsize,
+                # ``horzpos``/``horzsize`` are the BOX, the quantities the
+                # cache saves; ``indent`` is the first-line/hanging offset
+                # inside it, which the cache does not save and the drawing
+                # side has to add.  Keeping them apart is what lets
+                # ``--lineseg-agreement`` compare our box against Hancom's.
+                "horzpos": horzpos, "horzsize": horzsize, "indent": indent,
                 "vertpos": vertpos, "vertsize": vertsize,
                 "textheight": textheight, "baseline": baseline,
                 "spacing": spacing, "forced": forced,
@@ -5154,14 +5427,17 @@ class OwnRenderer:
             # from inside one of these lines re-enters this method and leaves
             # its own paragraph behind.
             self._line_para = para
+            # The indent moves the text inside the box and narrows what the
+            # alignment has to play with; it is not part of the box itself.
+            indent = line.get("indent", 0)
             self._draw_line(
                 draw,
                 self._line_items(para, chunk, line["start"]),
-                ox + line["horzpos"],
+                ox + line["horzpos"] + indent,
                 oy + line["vertpos"],
                 oy + line["vertpos"] + line["baseline"],
                 para.align,
-                line["horzsize"],
+                max(1, line["horzsize"] - indent),
                 last_line=(index == len(lines) - 1),
             )
 
@@ -5198,23 +5474,29 @@ class OwnRenderer:
             self._line_para = para
             horzpos = _iattr(seg, "horzpos")
             horzsize = _iattr(seg, "horzsize") or avail_w_hwp
+            # The cache saves the BOX and never the indent (measured: 3214 of
+            # 3214 cached horzpos equal the paragraph's own margin_left), so
+            # the 들여쓰기/내어쓰기 offset has to be added here exactly as the
+            # computed path adds it — otherwise a hanging paragraph draws
+            # every line flush left and Hancom's own PDF does not.
+            indent = self._line_indent(para, i)
             # The cached box, not the paragraph's true available width: see
             # _draw_line's stretch_avail_hwp docstring.  This is only ever a
             # WIDER box than horzsize (never narrower — max() below, and
             # _draw_line takes max() again against avail_px), so a line whose
             # cached horzsize already reaches its container is unaffected.
-            stretch_hwp = max(horzsize,
-                              avail_w_hwp - horzpos - margin_right)
+            stretch_hwp = max(horzsize - indent,
+                              avail_w_hwp - horzpos - indent - margin_right)
             baseline = _iattr(seg, "baseline")
             vertpos = _iattr(seg, "vertpos")
             self._draw_line(
                 draw,
                 self._line_items(para, chunk, start),
-                ox + horzpos,
+                ox + horzpos + indent,
                 oy + vertpos,
                 oy + vertpos + baseline,
                 para.align,
-                horzsize,
+                max(1, horzsize - indent),
                 last_line=(i == len(para.linesegs) - 1),
                 stretch_avail_hwp=stretch_hwp,
             )
@@ -6351,7 +6633,11 @@ class OwnRenderer:
                 })
         if natural_rows:
             rows, cells = self._expand_segmented_rows(cells, rows, cols)
-        widths = solve_tracks(cols, col_cons, decl_w)
+        # Columns come off the shared grid the cells claim, not off a solve
+        # that rescales contradictory rows into each other; rows still go
+        # through solve_tracks, which is the right reading for a max.
+        xs = column_grid(cols, col_cons, decl_w)
+        widths = [xs[i + 1] - xs[i] for i in range(cols)]
         # Columns first, then content extents, then rows: a cell's content
         # height depends on the width it gets, and its width does not depend
         # on any content.  A paragraph this renderer has to relay out is a
@@ -6361,8 +6647,7 @@ class OwnRenderer:
         for cell in cells:
             c0 = min(cell["col"], len(widths))
             c1 = min(cell["col"] + cell["cspan"], len(widths))
-            inner = max(0, sum(widths[c0:c1])
-                        - cell["margin"]["left"] - cell["margin"]["right"])
+            inner = cell_text_width(sum(widths[c0:c1]), cell["margin"])
             content_h = self._paragraph_block_extent(draw, cell["paras"], inner)
             # cellSz height is a *minimum*: HWP grows a row to fit its content
             # and leaves the stored value behind.  Taking the max of the two is
@@ -6371,10 +6656,29 @@ class OwnRenderer:
                 cell["row"], cell["rspan"],
                 max(cell["declared_height"],
                     content_h + cell["margin"]["top"] + cell["margin"]["bottom"])))
-        heights = solve_tracks(rows, row_cons, decl_h)
-        xs = [0]
-        for w in widths:
-            xs.append(xs[-1] + w)
+        # ``hp:tbl/hp:sz@height`` is the table's box on the row axis, and the
+        # rule above already sums to it on 70 of 70 corpus tables the cache
+        # states a total for (``row_height_probe.py --corpus``), so neither
+        # branch below fires on a Hancom save that fits its own declaration.
+        #
+        # A SHORTFALL is distributed proportionally, which is what this always
+        # did.  No corpus table has one on either policy, so nothing here
+        # measures what one should do and the behaviour is left alone.
+        #
+        # An OVERFLOW comes off the last row (``clip_tracks``), measured on
+        # the two corpus tables that have one -- ``kstartup`` 5 and 36, the
+        # subject of ``row_height_probe.py --overflow``.  What #273 removed
+        # was the proportional rescale, which paid for one cell this renderer
+        # measures too tall by moving forty innocent rows; the cut here leaves
+        # every row boundary above the last exactly where the row rule put it,
+        # so the objection that removed it does not reach it, and Hancom's own
+        # export says the declared box is where the table ends.
+        heights = solve_tracks(rows, row_cons)
+        if decl_h:
+            if sum(heights) < decl_h:
+                heights = solve_tracks(rows, row_cons, decl_h)
+            elif sum(heights) > decl_h:
+                heights = clip_tracks(heights, decl_h)
         ys = [0]
         for h in heights:
             ys.append(ys[-1] + h)
@@ -6560,7 +6864,7 @@ class OwnRenderer:
         margin = cell["margin"]
         cx = x0 + margin["left"]
         cy = y0 + margin["top"]
-        avail_w = max(0, (x1 - x0) - margin["left"] - margin["right"])
+        avail_w = cell_text_width(x1 - x0, margin)
         avail_h = max(0, (y1 - y0) - margin["top"] - margin["bottom"])
         sub = _kid(cell["tc"], "subList")
         valign = (sub.get("vertAlign") if sub is not None else "TOP") or "TOP"
@@ -7989,7 +8293,9 @@ class OwnRenderer:
                         self._render_paragraphs(
                             draw, page_paras,
                             (geo["body_left"], geo["body_top"]),
-                            geo["usable_width"])
+                            geo["usable_width"],
+                            block_offset_hwp=self._auto_anchor_page_offsets
+                            .get(local_idx - 1, 0))
                     else:
                         self._render_flow_page(
                             draw, page_paras,
@@ -8325,6 +8631,10 @@ def layout_digest(hwpx_path, dpi=DEFAULT_DPI, repo_root=None):
                 "vertpos_hwpunit": [line["vertpos"] for line in lines],
                 "horzpos_hwpunit": [line["horzpos"] for line in lines],
                 "horzsize_hwpunit": [line["horzsize"] for line in lines],
+                # The 들여쓰기/내어쓰기 offset inside each box.  Reported
+                # separately because the cache does not carry it and the box
+                # above is directly comparable to hp:lineseg without it.
+                "indent_hwpunit": [line["indent"] for line in lines],
                 "vertsize_hwpunit": [line["vertsize"] for line in lines],
                 "baseline_hwpunit": [line["baseline"] for line in lines],
             })
