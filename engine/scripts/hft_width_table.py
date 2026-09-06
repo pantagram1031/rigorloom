@@ -203,6 +203,132 @@ def measure(fonts_by_form, attribution):
     return per_face, unattributed, non_hft
 
 
+def measure_standin_faces(targets, repo_root, keep_text=True, min_n=20):
+    """Per (SUBSTITUTED declared face, code point): the DRAWN advance in em.
+
+    The HFT table above is read out of Type 3 ``/Widths``, which exists only
+    because an HFT face has no font program to embed.  A face the document
+    declares as ``TTF`` reaches the export as an embedded subset TrueType, so
+    the same reading would mean opening a font object; this does not do that.
+    It measures the pen distance between two consecutive DRAWN GLYPH ORIGINS
+    of one text-showing run -- ink positions on a page, the same black-box
+    reading ``verify_against_anchors`` uses as its check on the HFT table --
+    and divides by the run's declared cell.
+
+    Only the faces our own resolver SUBSTITUTED are recorded, because those
+    are the only ones whose metric is currently a guess: an installed face is
+    metered off its own outlines and needs no table.  That makes the section
+    machine-dependent by construction, which is why the renderer gates it on
+    the resolver's answer and not on anything the file declares.
+
+    Excluded, for the reasons ``analyse_line`` states: a segment that is not
+    one character on each side (it carries the space model as well as the
+    glyph), a run boundary (the pen move is not an advance), and any run with
+    ``hh:spacing`` (자간 is our own gap, added after the advance).
+    """
+    per_face = defaultdict(lambda: defaultdict(
+        lambda: {"ems": [], "forms": Counter(), "pdf_fonts": Counter()}))
+    for hwpx, pdf_path in targets:
+        form = Path(pdf_path).stem
+        renderer = own_render.OwnRenderer(hwpx, repo_root=repo_root)
+        metrics = advance_probe.OurMetrics(renderer)
+        pdf = advance_probe.read_pdf_chars(pdf_path)
+        cursor = 0
+        for section in range(len(renderer.sections)):
+            renderer._current_section = section
+            for el in advance_probe._kids(renderer.sections[section], "p"):
+                para = own_render.Paragraph(el, renderer.defs["para_pr"])
+                cells = lineseg_vs_pdf.character_cells(para)
+                if lineseg_vs_pdf.skip_reason(para, cells) is not None:
+                    continue
+                target = lineseg_vs_pdf.normalise(
+                    lineseg_vs_pdf.paragraph_text(cells))
+                hit = pdf.find_run(target, cursor)
+                if hit is None:
+                    continue
+                lo, hi, _relaxed, out_of_order = hit
+                run = advance_probe.merge_lines_with_boxes(pdf.lines[lo:hi])
+                cursor = lineseg_vs_pdf._cursor_after(cursor, hi,
+                                                      out_of_order)
+                for index, (clo, chi) in enumerate(
+                        lineseg_vs_pdf.cached_split(para, cells)):
+                    if index >= len(run):
+                        break
+                    ours = advance_probe._para_chars_in_cells(para, clo, chi)
+                    boxes = run[index]["boxes"]
+                    if not ours or not boxes:
+                        continue
+                    pairs, _n1, _n2 = advance_probe.align(
+                        [(ch, cid) for _i, ch, cid in ours], boxes)
+                    for step in range(len(pairs) - 1):
+                        i1, j1 = pairs[step]
+                        i2, j2 = pairs[step + 1]
+                        if i2 != i1 + 1 or j2 != j1 + 1:
+                            continue
+                        if boxes[j1]["piece"] != boxes[j2]["piece"]:
+                            continue
+                        _pos, char, cid = ours[i1]
+                        entry = metrics.run(char, cid)
+                        if entry["source"] == "installed" or entry["spacing"]:
+                            continue
+                        cell = entry["cell_hwp"]
+                        if not cell:
+                            continue
+                        face = entry["declared"]
+                        if not face:
+                            continue
+                        drawn = ((boxes[j2]["ox"] - boxes[j1]["ox"])
+                                 * HWPUNIT_PER_PT)
+                        seat = per_face[face][char]
+                        seat["ems"].append(drawn / cell)
+                        seat["forms"][form] += 1
+                        seat["pdf_fonts"][boxes[j1].get("font")] += 1
+    return {face: points for face, points in per_face.items()
+            if sum(len(s["ems"]) for s in points.values()) >= min_n}
+
+
+def build_standin_section(per_face):
+    """``standin_faces`` -- one seat per substituted face, widths only."""
+    out = {}
+    for face in sorted(per_face):
+        points = {}
+        full = []
+        for char in sorted(per_face[face]):
+            seat = per_face[face][char]
+            ems = seat["ems"]
+            median = statistics.median(ems)
+            points[f"U+{ord(char):04X}"] = {
+                "char": char,
+                "advance_em": round(median, 6),
+                "observations": len(ems),
+                "spread_em": round(max(ems) - min(ems), 6),
+                "forms": sorted(seat["forms"]),
+                "pdf_fonts": sorted(f for f in seat["pdf_fonts"] if f),
+                "class": advance_probe.char_class(char),
+                "slot": hwp_metric_slot(char),
+            }
+            if own_render.is_full_width(char):
+                full.extend(ems)
+        out[face] = {
+            "declared_type": "TTF",
+            "substituted_because": "the declared face is not installed on the "
+                                   "machine this table was measured on; the "
+                                   "resolver answered it from the bundled "
+                                   "family map or the machine fallback",
+            "code_points": len(points),
+            "observations": sum(p["observations"] for p in points.values()),
+            "full_width_em": (round(statistics.median(full), 6)
+                              if full else None),
+            "full_width_observations": len(full),
+            "forms": sorted({form for p in points.values()
+                             for form in p["forms"]}),
+            "pdf_fonts": sorted({name for p in points.values()
+                                 for name in p["pdf_fonts"]}),
+            "widths": points,
+        }
+    return out
+
+
 def verify_against_anchors(targets, fonts_by_form, repo_root, keep_text=True):
     """Do the declared ``Widths`` agree with the pen distances #267 measured?
 
@@ -294,7 +420,8 @@ def hangul_em(per_face):
     return out
 
 
-def build_payload(per_face, unattributed, non_hft, verify_rows, forms):
+def build_payload(per_face, unattributed, non_hft, verify_rows, forms,
+                  standin=None):
     """The JSON document, header and all."""
     faces = {}
     total_points = 0
@@ -396,9 +523,46 @@ def build_payload(per_face, unattributed, non_hft, verify_rows, forms):
                                "is advanced by the declared cell; see the "
                                "per-face hangul_em below",
         },
+        "standin_declaration": {
+            "status": "MEASURED",
+            "what": "advance widths, in em of the declared cell, of the faces "
+                    "this machine does NOT have installed and the renderer "
+                    "therefore substitutes",
+            "how": "the pen distance between two consecutive drawn glyph "
+                   "origins of one text-showing run in Hancom Office's own "
+                   "PDF export, divided by the run's declared cell; singleton "
+                   "segments only, no hh:spacing, run boundaries excluded",
+            "why_not_the_font_object": "a TTF-declared face reaches the "
+                                       "export as an embedded subset "
+                                       "TrueType, so reading its /W array "
+                                       "would mean opening a font object. "
+                                       "This measures ink positions on the "
+                                       "page instead and never opens one.",
+            "source": "the ten reference PDFs under "
+                      "tests/corpus/forms/render/, exported by Hancom Office",
+            "measured_on": MEASURED_ON,
+            "contains": "advance widths only",
+            "does_not_contain": "no glyph outlines, no font program, no font "
+                                "file, no byte of any embedded font stream",
+            "machine_dependent": "which faces appear here is a property of "
+                                 "the machine the table was measured on. The "
+                                 "renderer gates the section on its own "
+                                 "resolver's answer, so an installed face is "
+                                 "never corrected by it.",
+            "coverage": {
+                "faces": len(standin or {}),
+                "code_points_per_face": {
+                    face: seat["code_points"]
+                    for face, seat in sorted((standin or {}).items())},
+                "observations_per_face": {
+                    face: seat["observations"]
+                    for face, seat in sorted((standin or {}).items())},
+            },
+        },
         "hangul_em": {face: seat for face, seat in
                       sorted(hangul_em(per_face).items())},
         "faces": faces,
+        "standin_faces": standin or {},
     }
 
 
@@ -442,6 +606,21 @@ def format_coverage(payload):
         out.append(f"    {face:<20} {seat['em']:.4f} em over "
                    f"{seat['observations']} observations, "
                    f"{seat['distinct']} distinct")
+    standin = payload.get("standin_faces") or {}
+    out.append("")
+    out.append("  MEASURED STAND-IN advances -- the faces this machine does "
+               "not have, drawn by the reference")
+    if not standin:
+        out.append("    (none: every declared face resolved to an installed "
+                   "one here)")
+    for face, seat in sorted(standin.items()):
+        full = seat["full_width_em"]
+        out.append(f"    {face:<20} {seat['code_points']:>4} code points, "
+                   f"{seat['observations']:>5} observations, full-width "
+                   f"{(f'{full:.5f} em' if full is not None else '--')} over "
+                   f"{seat['full_width_observations']}")
+        out.append(f"        drawn by {', '.join(seat['pdf_fonts']) or '--'} "
+                   f"in {len(seat['forms'])} forms")
     return "\n".join(out)
 
 
@@ -998,8 +1177,13 @@ def main(argv=None):
         per_face, unattributed, non_hft = measure(fonts_by_form, attribution)
         verify_rows = verify_against_anchors(targets, fonts_by_form,
                                              repo_root, keep_text=True)
+        # Measured with the renderer AS IT WILL RUN, table and all: the
+        # stand-in section is a correction to what our own resolver did, so
+        # it has to be read after every rule that already speaks has spoken.
+        standin = build_standin_section(
+            measure_standin_faces(targets, repo_root, keep_text=True))
         payload = build_payload(per_face, unattributed, non_hft, verify_rows,
-                                sorted(fonts_by_form))
+                                sorted(fonts_by_form), standin=standin)
         print(format_coverage(payload))
         out = args.out or (repo_root / TABLE_REL)
         out.parent.mkdir(parents=True, exist_ok=True)
