@@ -11435,3 +11435,238 @@ here is what a CACHED layout says and it has none.
 - **Path C is not run.** Nothing here is measured against a licensed Hancom
   render of an edited document. Every own render stays `own-uncertified`.
 - **The corpus is the training set, again.** Ten public forms, one machine.
+
+## `kstartup` table 36's `vertOffset` is an UNSIGNED field with a negative written into it, and nothing ships — measured, 2026-09-06
+
+Worker: Opus 5, 1M context (`claude-opus-5[1m]`) — the project rule forbids a
+1M context and this run was on one; orchestrator: Fable.
+
+#295 found `kstartup` table 36 declaring `hp:pos@vertOffset="4294967083"` and
+called it "an unsigned wrap of -213". #311 found the same table's origin coming
+out at `4294977337` HWPUNIT in our render and left it as a defect it did not
+chase. The obvious repair — read the attribute as a signed 32-bit value —
+needs a public basis before it can be a rule, so this slice went and read the
+basis first. **The basis says the opposite, and the reference PDF agrees with
+the basis. Nothing ships.**
+
+Path C — an edited candidate against licensed Hancom output — is not run here
+or anywhere in this repo.
+
+### What the attribute is declared to be: three public sources, all unsigned
+
+**The OWPML schema.** `hp:pos`, in the ParaList schema for the OWPML 2024
+paragraph namespace (`http://www.owpml.org/owpml/2024/paragraph`):
+
+```xml
+<xs:attribute name="vertOffset" type="xs:nonNegativeInteger" default="0" />
+<xs:attribute name="horzOffset" type="xs:nonNegativeInteger" default="0" />
+```
+
+Not `xs:int`, not `xs:long`: `xs:nonNegativeInteger`, on both offsets. The
+sibling attributes in the same `complexType` are `xs:boolean` and enumerated
+`xs:string`, so the choice of a non-negative numeric type is a choice the
+schema made and not a default it fell into.
+
+**Hancom's own OWPML model** (`hancom-io/hwpx-owpml-model`,
+`OWPML/Class/Para/pos.h`, the filter model Hancom published for this format)
+stores and returns the same attribute unsigned:
+
+```cpp
+UINT GetVertOffset(void) { return m_uVertOffset; }
+void SetVertOffset(UINT vertOffset) { m_uVertOffset = vertOffset; }
+...
+UINT m_uVertOffset;
+UINT m_uHorzOffset;
+```
+
+**The HWP 5.0 binary format document** (한/글 문서 파일 형식 5.0, revision
+1.3:20181108), §4.3.9 "개체 공통 속성을 포함하는 컨트롤(개체 컨트롤)",
+표 69 개체 공통 속성:
+
+| 자료형 | 길이(바이트) | 설명 |
+| --- | --- | --- |
+| `HWPUNIT` | 4 | 세로 오프셋 값 |
+| `HWPUNIT` | 4 | 가로 오프셋 값 |
+
+and 표 1 자료형, whose third column (부호) carries a check mark for every
+signed type and nothing for the unsigned ones:
+
+| 자료형 | 길이 | 부호 | 설명 |
+| --- | --- | --- | --- |
+| `HWPUNIT` | 4 | | 1/7200인치로 표현된 글 내부 단위 |
+| `SHWPUNIT` | 4 | √ | 1/7200인치로 표현된 글 내부 단위 |
+| `INT32` | 4 | √ | 'signed __int32' 에 해당 |
+| `UINT32(=UINT)` | 4 | | 'unsigned __int32' 에 해당 |
+
+The document has a signed 4-byte unit — `SHWPUNIT` — and it uses it elsewhere.
+The offset fields are `HWPUNIT`. It is not silent and it does not say `INT32`:
+the field is unsigned, deliberately, next to a signed alternative the same
+table defines.
+
+So the writer emitted a two's-complement `-213` into a field three independent
+public sources declare non-negative. That is a writer defect in the document,
+not an under-specified attribute in the format — and it is worth saying that
+this was read off the schema and not off the value, because the value alone
+would have supported either story.
+
+### Where table 36 actually sits — path A, ours, and the export
+
+Table 36 is the 37th `hp:tbl` in document order (42 in the form), anchored by
+paragraph **701**, `treatAsChar="0"`, `vertRelTo="PARA"`,
+`horzRelTo="COLUMN"`, `textWrap="TOP_AND_BOTTOM"`, `pageBreak="CELL"`,
+`hh:sz` 47896 × 66505, `hp:outMargin` 140 on all four sides. It is one row
+of one column plus a second row: drawn row edges `[0, 61960, 66505]`.
+
+**Path A**, the cached `hp:lineseg` read. The cache gives the anchor paragraph
+701 forty-five line segments starting at `@vertpos` 0 and puts it on page 20;
+each of the table's two cells starts its own first line at cell-relative
+`@vertpos` 0 (row 0 `hh:cellSz` 47896 × 58747, row 1 47896 × 4827). The cache
+therefore says nothing at all about where the table's BOX goes — the box's
+seat comes from `hp:pos`, and that is the attribute in question. Rebuilding
+the frame from the render: paragraph 701's own block top is **10114** HWPUNIT
+on page 20, so the slot top is `10114 + vertOffset` and the box top is that
+plus `outMargin@top` 140.
+
+**The reference PDF** (Hancom's own export, page 20 of 22, the same page our
+render puts it on) draws exactly one rectangle there — four strokes, no
+internal row rule:
+
+| edge | px @144 dpi |
+| --- | ---: |
+| top rule | 204.98 |
+| bottom rule | 1533.60 |
+| left rule | 122.81 |
+| right rule | 1080.14 |
+
+**Ours, and the two counterfactuals.** Under `--layout-policy cache` and under
+`--layout-policy computed` the seat is the same number, because `hp:pos` is
+read the same way on both paths:
+
+| reading of `vertOffset` | box top, HWPUNIT | box top, px @144 | vs the PDF's top rule |
+| --- | ---: | ---: | ---: |
+| as declared (unsigned 4294967083) — **what we do today** | 4294977337 | 85899546.74 | +85899341.76 px |
+| as a signed int32 (−213) | 10041 | 200.82 | −4.16 px |
+| as if it were 0 | 10254 | 205.08 | **+0.10 px** |
+
+The horizontal axis is the control that makes the vertical column readable:
+`horzOffset` is 0 and our box left is 6140 HWPUNIT = **122.80** px, against the
+PDF's left rule at **122.81** px — 0.01 px. The frame conversion is right, so
+a 4.16 px gap on the vertical axis is a real disagreement and a 0.10 px one is
+not. (The box's own extent agrees to the same tolerance: our 47896 × 66505 is
+957.92 × 1330.10 px against the export's 957.33 × 1328.62 px between rule
+bounding boxes.)
+
+**Hancom did not apply the −213 either.** Its own export places the table where
+`vertOffset = 0` places it. Reading the wrap as signed would move our box
+4.26 px UP, away from the export, not towards it. The rule the spec asked
+about is refuted twice over: by the schema, and by the only reference render
+we have.
+
+That leaves the wrap as what it looks like — a writer defect the reading
+engine ignores — and leaves the repair, if one is ever wanted, in a different
+place from the one this slice was pointed at: not "read the offset signed" but
+"an out-of-range anchor offset is not a position", which is the rule
+`_place_block` and `_paginate_with_anchor_overflow_fix` already apply as the
+wild-`vertOffset` guard (kstartup's own limit 12) for the flow reserve, and
+which `_render_floating` does not yet apply to the DRAWN origin. Not shipped:
+it is a second rule with a different basis, "0 is what Hancom drew" is one
+observation on one table, and the guard's threshold (`offset > usable`) is a
+corpus-fitted number that has never been scored as a drawing rule.
+
+For the record, `vertOffset` is non-zero on three of the form's 42 tables:
+table 14 at 253, table 41 at 2911, and table 36 at 4294967083. The other two
+are small positives that need no interpretation at all.
+
+### Pages 5 and 7 are NOT downstream of tables 5 and 36 — no
+
+`layout_divergence --corpus` reports four first-seat divergences for
+`kstartup`, two carried by `page_top` (the E2.7 anchor-overflow band, #306) and
+two by `page_move`. Reading its own predecessor records:
+
+| page | head paragraph | cached `vertpos` | predecessor | what the predecessor anchors | table index |
+| ---: | ---: | ---: | ---: | --- | ---: |
+| 5 | 160 | 69632 | **148** | `anchored:tbl`, height 69352, `vertOffset` 0 | **6** |
+| 7 | 393 | 69785 | **180** | `anchored:tbl`, height 70529, `vertOffset` 0 | **9** |
+
+Table 5 is anchored by paragraph **127** and table 36 by paragraph **701**.
+Neither is a predecessor of either head, and table 36 cannot be one in
+principle: paragraph 701 is 541 paragraphs and fifteen pages after the page-5
+head. Table 36 does appear in the divergence list — as the predecessor of the
+`page_move` divergence at page 21, paragraph 731, `delta_top` +7954 HWPUNIT —
+which is a different band from the two `page_top` heads this question is about.
+
+So the answer is **no**. The two tables where `clip_tracks` fires and the two
+page heads no candidate explains are two unrelated facts that happen to live in
+the same form. The 69632 head is the reserve of table 6 read exactly
+(`0 + 140 + 69352 + 140 = 69632`, the identity `_anchored_extent` already
+documents); the 69785 head follows table 9, the one table the cache path drew
+as more than one fragment.
+
+`clip_tracks` was re-measured directly rather than quoted, by wrapping it for
+the whole corpus render: it fires on `kstartup` tables 5 and 36 and nowhere
+else, identically under both policies —
+
+* table 5: `[3682, 19626, 19626, 19626]` against a declared 62482 → `[3682, 19626, 19626, 19548]`
+* table 36: `[61960, 4827]` against a declared 66505 → `[61960, 4545]`
+
+Both are 78-and-282-HWPUNIT trims off the last row, and neither has anything to
+do with `hp:pos`.
+
+### Nothing ships
+
+The spec's condition was: ship the signed reading only if the schema says
+signed. It says `xs:nonNegativeInteger`, so nothing ships. No renderer file is
+touched; `git diff --stat` against `claude/engine-e2-seating-setter` is this
+note.
+
+Consequently pages 5 and 7 do **not** move — their seat divergences are
+unchanged at −69632 and −280 HWPUNIT — and `clip_tracks` **still fires** under
+the cache policy, on tables 5 and 36, exactly as above.
+
+### Before and after
+
+Nothing in the renderer changed, so nothing in any measurement did. Measured
+rather than assumed — every row below was re-run on this branch:
+
+| measure | #319 baseline | this branch |
+| --- | --- | --- |
+| `render_scoreboard --corpus --dpi 144 --layout-policy cache` (ssim / inked / line-IoU) | 0.861944 / 0.393719 / 0.736589, 53 pages, 10/10 exact | identical |
+| … `--layout-policy computed` | 0.850452 / 0.373788 / 0.706026, 53 pages, 10/10 exact | identical |
+| `layout_divergence --corpus` agree / A / B / C | 1830 / 94 / 102 / 28 | identical |
+| `class_b_probe --corpus` root histogram | 63 / 19 / 15 / 3 / 2 | identical |
+| `lineseg_vs_pdf --corpus` (control) | 411 / 411 lines, 8566 / 8566 characters | identical |
+| `page_fit_probe --corpus --scan-all` off-sheet lines | 44 | identical |
+| `render_check` `render-check-01` | 6 · 37 · 6 · 2 @96, 14 · 31 · 4 · 2 @144, 9 / 9 pages | identical |
+
+`page_fit_probe --corpus --scan-all` still excludes the same 44 linesegs as
+"seat off the sheet (a wild anchor offset)" out of 3209 scanned, and they are
+still table 36's — which is the point: they are excluded because the seat is
+4294977337 HWPUNIT, and this slice found that the number is not a wrap to be
+undone but a value Hancom's own reader discards.
+
+### Not proven
+
+- **"Hancom reads it as 0" is one table.** The export agrees with `vertOffset = 0`
+  to 0.10 px on exactly one anchored object in one form. Whether Hancom clamps
+  an out-of-range offset to zero, ignores the attribute when it fails
+  validation, or does something else that happens to coincide here is not
+  measured, and the corpus has no second wrapped offset to test it on.
+- **The rule the measurement suggests was not scored.** "An out-of-range anchor
+  offset draws at the frame origin" is a drawing rule this slice did not
+  implement and did not put through the scoreboard. Nothing here says what it
+  would cost the other nine forms.
+- **The PDF comparison is a rule-bbox comparison.** The four numbers come from
+  the stroked paths' bounding boxes, not their centre lines, which is why the
+  box's extent agrees to 0.6–1.5 px rather than exactly. The 4.16 px separation
+  between the two hypotheses is comfortably outside that, and the 0.10 px
+  agreement is comfortably inside it; a sub-pixel claim would not be.
+- **Path A is path A, and path C is not run.** The cached `hp:lineseg` says
+  nothing about an anchored box's seat, so the "cache" column above is our
+  `hp:pos` reading on both paths, not the authoring engine's own answer. No
+  edited document was measured against a licensed Hancom render.
+- **The schema copy is a public mirror.** The `xs:nonNegativeInteger` quote is
+  from a published copy of the OWPML ParaList schema, corroborated by Hancom's
+  own model source and by the binary format document, and not read out of a
+  paywalled KS X 6101 PDF. Three sources agreeing is why the reading is stated
+  as fact; one of them being a mirror is why this bullet exists.
+- **The corpus is the training set, again.** Ten public forms, one machine.
