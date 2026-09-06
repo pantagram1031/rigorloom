@@ -3435,6 +3435,12 @@ class OwnRenderer:
           longer fits inside ``usable_height``.
         * ``hp:p@pageBreak`` and ``hh:breakSetting@pageBreakBefore`` — an
           explicit page before this block.
+        * ``hh:paraPr/hh:margin/hc:prev`` (문단 위 간격) — the space-before
+          survives a page break.  A block that moves WHOLE to a fresh page,
+          for any of the reasons below, is seated at its own space-before
+          rather than at zero; a block that merely CONTINUES across the break
+          is not, because it already started above.  See
+          :meth:`_page_top_seat` for what that is measured against.
         * ``hp:p@columnBreak`` — where the section declares real columns
           (:meth:`column_spec`), this advances to the next column, wrapping
           to the next page's first column after the last one; where it does
@@ -3562,7 +3568,11 @@ class OwnRenderer:
                     else:
                         page += 1
                 y = 0
-                gap = 0
+                # The break consumes the previous paragraph's space-after —
+                # it falls off the foot of the page that paragraph ended on —
+                # but not this one's space-before, which the cache keeps at
+                # the top of a fresh page (:meth:`_page_top_seat`).
+                gap = self._page_top_seat(block, page, usable)
             notes = note_heights.get(block["index"], 0)
             target, top = page, y + gap
             for attempt in range(2):
@@ -3612,6 +3622,44 @@ class OwnRenderer:
                 "rows": tuple(rows), "kind": kind, "split": split,
                 "para": block["para"], "mode": block["mode"]}
 
+    def _page_top_seat(self, block, page, usable, extent=None):
+        """Where a WHOLE block moved to the top of a fresh page is seated.
+
+        ``hh:paraPr/hh:margin/hc:prev`` (문단 위 간격) is declared on the
+        PARAGRAPH, not on the gap between two of them, and the cache treats
+        it that way: it is kept at the top of a fresh container, not
+        collapsed away.  Measured on this corpus (see own-render-notes,
+        "The space-before survives a page break"):
+
+        * 86 of 86 cell-first paragraphs that declare a space-before are
+          cached at exactly ``vertpos = margin_prev``, and none at 0 — a
+          fresh container does not drop it;
+        * both page heads that declare one (``moel-2025`` ¶233 at 1000,
+          ``kstartup`` ¶398 at 300) are cached at exactly ``margin_prev``;
+        * mid-page, 534 of 539 consecutive top-level pairs sit exactly
+          ``prev margin_next + margin_prev`` apart, and all five exceptions
+          declare neither margin — which is the gap this pass already uses.
+
+        The previous paragraph's ``margin_next`` is NOT added: it belongs to
+        the page that paragraph ended on and falls off its foot.  No corpus
+        page head follows a paragraph that declares one, so that half is
+        reasoning rather than a measurement.
+
+        The space-before is dropped when it would not leave room for what it
+        precedes.  That is both the honest reading — space-before never
+        pushes its own paragraph off the page it was just moved to — and
+        what keeps the caller's "start a fresh page" loop finite.
+        """
+        margin = block.get("margin_prev") or 0
+        if margin <= 0:
+            return 0
+        if extent is None:
+            rows = block["rows"]
+            extent = rows[0]["extent"] if rows else 0
+        if margin + extent > self._usable_on(page, usable):
+            return 0
+        return margin
+
     def _place_block(self, draw, block, page, top, usable, counters):
         """Place one block's lines, breaking a page as they stop fitting.
 
@@ -3659,7 +3707,8 @@ class OwnRenderer:
         if (reserve and top > 0 and top + total > cap
                 and total <= self._usable_on(page + 1, usable)):
             counters["anchored_blocks_moved"] += 1
-            page, top = page + 1, 0
+            page += 1
+            top = self._page_top_seat(block, page, usable, extent=total)
             cap = self._usable_on(page, usable)
             moved_whole = True
         # ...and splits at a row boundary — the same answer an inline
@@ -3678,14 +3727,18 @@ class OwnRenderer:
         if 0 < fits < len(rows) and block["height"] <= cap and top > 0:
             if block["keep_lines"]:
                 counters["keep_lines_moved"] += 1
-                page, top = page + 1, 0
+                page += 1
+                top = self._page_top_seat(block, page, usable,
+                                          extent=block["height"])
             elif (block["widow_orphan"] and len(rows) > 1
                   and (fits < 2 or len(rows) - fits < 2)):
                 # An orphan (one line left behind) or a widow (one line
                 # carried over) is resolved the only way that never invents a
                 # line: the whole paragraph moves on.
                 counters["widow_orphan_moved"] += 1
-                page, top = page + 1, 0
+                page += 1
+                top = self._page_top_seat(block, page, usable,
+                                          extent=block["height"])
 
         out = []
         cursor = max(0, top)
@@ -3715,8 +3768,13 @@ class OwnRenderer:
                 out.append(self._flow_record(block, page, seg_top, seg_height,
                                              (seg_first, index)))
             page += 1
-            cursor = 0
-            seg_top = 0
+            # Nothing of this block has been drawn yet, so it is not
+            # continuing across the break — it is moving WHOLE to a page of
+            # its own, and its space-before comes with it.  A continuation
+            # gets none: the paragraph already started, above.
+            cursor = (self._page_top_seat(block, page, usable)
+                      if not out and index == 0 else 0)
+            seg_top = cursor
             seg_height = 0
             seg_first = index
         if reserve and not out:
