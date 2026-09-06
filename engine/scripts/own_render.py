@@ -354,6 +354,73 @@ def percent_leading(height, value):
 # Corpus census (774 paraPr definitions): breakLatinWord KEEP_WORD 669 /
 # BREAK_WORD 104 / HYPHENATION 1; breakNonLatinWord KEEP_WORD 592 /
 # BREAK_WORD 182; lineWrap BREAK 774 (the only value present).
+#
+# WHAT THIS RENDERER DOES WITH breakNonLatinWord: it reads it, reports it, and
+# breaks at the syllable either way.  ``breakLatinWord`` is honoured as
+# declared; the Korean switch is not.  The basis is #316
+# (docs/research/hangul-syllable-breaking.md), quoted rather than re-derived:
+#
+#   Hancom's own public format document -- 『한/글 문서 파일 구조 5.0』, Hwp
+#   Document File Formats 5.0, revision 1.3:20181108, §4.2.10 문단 모양
+#   (Tag ID : HWPTAG_PARA_SHAPE), in the 속성 1 bit table that follows 표 43 --
+#   defines the Korean switch as ONE BIT: "bit 7  줄 나눔 기준 한글 단위
+#   0 어절 / 1 글자".  "There is no third state and no exception clause."
+#
+#   And the cache does not honour the 어절 state: 70 of the 204 cached line
+#   ends in KEEP_WORD paragraphs -- 34 % -- fall between two Hangul syllables
+#   of one 어절, and all 70 sit in words occupying 0.033 to 0.393 of their own
+#   column, so not one of them is a word that could not have moved to the next
+#   line whole.  "The emergency-break reading is refuted."
+#
+#   The same census finds ZERO cuts inside a Latin word and ZERO inside a
+#   digit group, under either declared value (0 of 218) -- which is why the
+#   Latin switch is left alone.
+#
+# So the unit below is the syllable for Hangul/CJK and the word for Latin, and
+# a paragraph declaring KEEP_WORD gets the syllable unit anyway.  Measured
+# consequence on top of #320's stand-in advance table, path B at 144 dpi
+# (syllable_break_probe.py --corpus --candidates): the break score goes
+# installed 48/113 -> 89/113 and other 21/47 -> 32/47, 53 paragraphs gained
+# against ONE regression, kstartup ¶719 -- named as a declared cost, not a
+# residual, in KOREAN_BREAK_UNIT below.
+#
+#: The unit a Hangul/CJK line may be broken at, and why it is not the declared
+#: one.  Emitted verbatim in the sidecar so the choice is readable without
+#: reading this file.
+KOREAN_BREAK_UNIT = {
+    "unit": "syllable (글자)",
+    "applies_to": "every Hangul/Hanja/kana/CJK-punctuation boundary",
+    "declaration_honored": False,
+    "declaration": (
+        "hh:breakSetting@breakNonLatinWord is parsed, carried on every "
+        "paraPr, and reported per paragraph -- and NOT obeyed. KEEP_WORD "
+        "(어절 단위) and BREAK_WORD (글자 단위) produce the same opportunity "
+        "set in this renderer."),
+    "basis": (
+        "#316. The public format document (『한/글 문서 파일 구조 5.0』 rev "
+        "1.3:20181108, §4.2.10 문단 모양, HWPTAG_PARA_SHAPE, the 속성 1 bit "
+        "table after 표 43) makes the Korean switch one bit -- bit 7, 0 어절 "
+        "/ 1 글자 -- with no third state and no exception clause. The cache "
+        "then contradicts the 어절 state on its own documents: 70 of the 204 "
+        "cached line ends in KEEP_WORD paragraphs (34 %) fall between two "
+        "Hangul syllables of one 어절, in words occupying 0.033 to 0.393 of "
+        "their own column, so none of them is an emergency break."),
+    "latin_untouched": (
+        "hh:breakSetting@breakLatinWord IS honoured as declared. The same "
+        "census finds zero cuts inside a Latin word and zero inside a digit "
+        "group, 0 of 218, under either declared value."),
+    "declared_cost": (
+        "kstartup ¶719 -- an installed-face JUSTIFY line the cache breaks at "
+        "a space and this renderer breaks one syllable later, already 58.8 "
+        "HWPUNIT over its 44744 box and admitted only by the 96 HWPUNIT "
+        "right-edge budget. It is the one corpus paragraph the syllable unit "
+        "stops reproducing, it is unexplained, and it was not tuned away."),
+    "measured": (
+        "path B (our flow pass scored against the cache), 144 dpi, the ten "
+        "public forms: installed 48/113 -> 89/113, other 21/47 -> 32/47, 53 "
+        "gains, 1 regression. Path C -- an edited candidate against licensed "
+        "Hancom output -- IS NOT RUN, here or anywhere in this repo."),
+}
 
 # 금칙처리 — the characters Korean typesetting forbids at a line boundary.
 # KS X 6101 does not publish the set (it is an implementing engine's table),
@@ -638,6 +705,14 @@ def break_opportunities(text, break_latin="KEEP_WORD",
     empty); ``len(text)`` is not returned either (the paragraph end is not a
     break).  The 금칙 filter is applied last and uniformly, so it removes a
     space break just as it removes a syllable break.
+
+    ``break_latin`` decides Latin word integrity as declared.
+    ``break_non_latin`` does NOT decide Hangul/CJK word integrity: the unit is
+    the syllable under either value, on #316's reading of the public format
+    document and of the cache's own line ends.  See ``KOREAN_BREAK_UNIT``.
+    The parameter is kept because it is what the paragraph declares and the
+    sidecar reports it; the seam itself -- this module-level function -- is
+    what ``syllable_break_probe.py`` rebinds to score a candidate.
     """
     ops = []
     for i in range(1, len(text)):
@@ -652,7 +727,14 @@ def break_opportunities(text, break_latin="KEEP_WORD",
         elif a in BREAK_AFTER_ALWAYS:
             allowed = True
         elif ca in ("CJK", "OBJECT") or cb in ("CJK", "OBJECT"):
-            allowed = (break_non_latin == "BREAK_WORD")
+            # THE DECLARATION IS READ AND NOT OBEYED — see KOREAN_BREAK_UNIT.
+            # A Hangul/CJK boundary is a break opportunity whatever
+            # breakNonLatinWord says, because the cache breaks there under
+            # both declared values.  ``break_non_latin`` stays in the
+            # signature, is still parsed off hh:breakSetting, and is still
+            # reported per paragraph in the sidecar, so a reader can see the
+            # declaration this renderer overrode.
+            allowed = True
         else:
             allowed = (break_latin == "BREAK_WORD")
         if not allowed:
@@ -1346,6 +1428,29 @@ class HftWidthTable:
     simply absent: :meth:`advance_em` answers ``None`` and the caller falls
     back to what it did before.  A slim checkout with no table file at all
     behaves exactly like the renderer did before this existed.
+
+    THE SECOND SECTION: ``standin_faces``
+    ------------------------------------
+    ``faces`` above is HFT only, because an HFT face is the one kind that has
+    no TrueType metric anywhere.  #317 measured a different gap: a face the
+    document declares as ``TTF`` which is *not installed on this machine*, so
+    the resolver substitutes a bundled OFL family for it and meters the run
+    off the substitute's outlines.  The whole public corpus has exactly one:
+    휴먼명조, answered by the bundled ``NanumMyeongjo``, whose Hangul syllable
+    advances 0.9502 em where the reference PDFs draw the declared face at
+    0.9964.  That 5 % is not a rounding residue -- it is 60 HWPUNIT per
+    character at 13 pt, and it is what let our breaker fit one syllable more
+    than Hancom did on eleven corpus lines.
+
+    ``standin_faces`` carries the same kind of number for those faces, read
+    the same black-box way, with one deliberate difference in method: the
+    advances are taken from the DRAWN GLYPH ORIGINS -- the pen distance
+    between two consecutive glyphs of one text-showing run -- and never from
+    the embedded font object.  A ``TTF`` face reaches the export as an
+    embedded subset TrueType (``Type0`` / ``Identity-H``), so it does have a
+    font program in the file; this table is measured without opening it, so
+    the section carries advance widths and no more, exactly as the HFT one
+    does.
     """
 
     _shared = {}
@@ -1354,6 +1459,7 @@ class HftWidthTable:
         self.path = Path(repo_root) / HFT_WIDTH_TABLE_REL
         self.faces = {}
         self.hangul = {}
+        self.standin = {}
         self.measured_on = None
         if not self.path.is_file():
             return
@@ -1376,6 +1482,20 @@ class HftWidthTable:
             em = (seat or {}).get("em")
             if em is not None:
                 self.hangul[face] = float(em)
+        for face, seat in (payload.get("standin_faces") or {}).items():
+            widths = {}
+            for entry in ((seat or {}).get("widths") or {}).values():
+                char = entry.get("char")
+                advance = entry.get("advance_em")
+                if char and advance is not None:
+                    widths[char] = float(advance)
+            full = (seat or {}).get("full_width_em")
+            if widths or full is not None:
+                self.standin[face] = {
+                    "widths": widths,
+                    "full_width_em": (float(full) if full is not None
+                                      else None),
+                }
 
     @classmethod
     def shared(cls, repo_root):
@@ -1403,6 +1523,27 @@ class HftWidthTable:
         carrying that reading across to a face it was not taken on.
         """
         return self.hangul.get(face, 1.0)
+
+    def standin_advance_em(self, face, ch):
+        """``ch``'s DRAWN advance in em on ``face``, or ``None``.
+
+        The stand-in section only; a face that is not in it answers ``None``
+        for every character, which is what keeps the whole rule inert on a
+        checkout whose table predates the section.
+        """
+        seat = self.standin.get(face)
+        return seat["widths"].get(ch) if seat else None
+
+    def standin_full_width_em(self, face):
+        """The em a full-width cell was DRAWN at on stand-in ``face``.
+
+        ``None`` when the face is unknown or the measurement saw no
+        full-width character on it -- never a default, because the point of
+        this section is that the stand-in's own outlines are the wrong
+        answer and 1.0 would be a second guess rather than a measurement.
+        """
+        seat = self.standin.get(face)
+        return seat["full_width_em"] if seat else None
 
 
 class BundledFontMap:
@@ -4264,6 +4405,92 @@ class OwnRenderer:
             self.applied.get("hft_measured_advance", 0) + measured)
         return total * pt * HWPUNIT_PER_PT * ratio / 100.0
 
+    def _standin_declared_face(self, cid, slot):
+        """The declared face of a SUBSTITUTED run, or ``None``.
+
+        ``None`` means "this run is not a stand-in": either ``hh:fontRef``
+        names no face for the slot, or the face it names was found installed
+        on this machine and the run is metered off the declared face itself.
+
+        The source is read out of ``_face_for``'s cache through
+        :meth:`_face_source`, so asking never adds a character to the
+        per-face counts the sidecar reports; the run must already have been
+        resolved, which it has -- ``_advance_hwp``'s caller resolved it to
+        get ``font``.
+        """
+        font_ids = self._charpr(cid).get("font_ids") or {}
+        face_name = None
+        for slot_key in (slot, slot.upper()):
+            font_id = font_ids.get(slot_key)
+            if font_id is None:
+                continue
+            table = (self.defs["fontfaces"].get(slot.upper())
+                     or self.defs["fontfaces"].get(slot) or {})
+            face_name = table.get(font_id)
+            if face_name:
+                break
+        if not face_name:
+            return None
+        bold = bool(self._charpr(cid).get("bold"))
+        if self._face_source(cid, slot, bold) == "installed":
+            return None
+        return face_name
+
+    def _standin_advance_hwp(self, font, chunk, cid, slot, pt, ratio, rel_sz):
+        """``chunk``'s advance off the MEASURED STAND-IN table, or ``None``.
+
+        The same shape as :meth:`_hft_advance_hwp` and for the same reason:
+        the rule fires per character, every character has to leave the rule
+        with nothing to say before ``None`` is returned, and a code point the
+        table does not carry keeps the metric it would have had.
+
+        The difference is the gate.  ``_hft_advance_hwp`` asks what the
+        document DECLARES (``hh:font@type="HFT"``); this asks what this
+        machine RESOLVED -- a face our own resolver substituted, which is a
+        property of the box the renderer is running on and not of the file.
+        That is deliberate: an installed 휴먼명조 is metered off the real
+        face's own outlines and needs no correction, and applying one would
+        make the renderer worse on exactly the machines that have the font.
+
+        Two fallbacks for a code point the table does not carry:
+
+        * a full-width cell advances by :meth:`HftWidthTable.
+          standin_full_width_em`, the em this face's own drawn syllables were
+          measured at, when the measurement saw one;
+        * anything else keeps the stand-in's own metric, which is the only
+          answer available for it -- the corpus draws 휴먼명조's Latin and
+          digits off other slots entirely, so there is nothing to measure.
+        """
+        table = self.hft_widths
+        if not table or not chunk or not table.standin:
+            return None
+        face = self._standin_declared_face(cid, slot)
+        if face is None or face not in table.standin:
+            return None
+        full = table.standin_full_width_em(face)
+        metric = None
+        total = 0.0
+        measured = 0
+        for ch in chunk:
+            em = table.standin_advance_em(face, ch)
+            if em is not None:
+                measured += 1
+            elif is_full_width(ch) and full is not None:
+                em = full
+                measured += 1
+            elif ch in HALF_WIDTH_CELL_CHARS:
+                em = SPACE_CELL_FRACTION
+            else:
+                if metric is None:
+                    metric = self._metric_font_for(cid, rel_sz, slot, font)
+                em = self._em_width(metric, ch)
+            total += em
+        if not measured:
+            return None
+        self.applied["standin_measured_advance"] = (
+            self.applied.get("standin_measured_advance", 0) + measured)
+        return total * pt * HWPUNIT_PER_PT * ratio / 100.0
+
     def _reference_font(self, font):
         """``font``'s own face at ``LAYOUT_REFERENCE_PX``.
 
@@ -4492,8 +4719,13 @@ class OwnRenderer:
         scale the em the face reports.  Every advance the layout and the
         drawing cursor use comes through here, which makes it the one place a
         rule about a particular face's advances can be stated -- and the one
-        rule stated here is :meth:`_hft_advance_hwp`, for the runs whose
-        declared face HWP will not have handed a TrueType metric to anybody.
+        rules stated here are :meth:`_hft_advance_hwp`, for the runs whose
+        declared face HWP will not have handed a TrueType metric to anybody,
+        and :meth:`_standin_advance_hwp`, for the runs whose declared face
+        this machine does not have and our resolver substituted.  The HFT
+        table goes first: it is keyed on what the document declares, so it
+        answers the same on every machine, where the stand-in table answers
+        only where a substitution actually happened.
 
         DRAWN in ``font``, ADVANCED by ``metric`` -- the two differ only for
         a bold run in an installed family with both cuts on this machine;
@@ -4502,6 +4734,10 @@ class OwnRenderer:
         hft = self._hft_advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
         if hft is not None:
             return hft
+        standin = self._standin_advance_hwp(font, chunk, cid, slot, pt, ratio,
+                                            rel_sz)
+        if standin is not None:
+            return standin
         metric = self._metric_font_for_pt(cid, pt, slot, font)
         return (self._em_width(metric, chunk) * pt * HWPUNIT_PER_PT
                 * ratio / 100.0)
@@ -7410,7 +7646,6 @@ class OwnRenderer:
     # emits them so a new attribute cannot be honoured without being declared.
     PARAPR_HONORED = (
         "hh:breakSetting@breakLatinWord (KEEP_WORD / BREAK_WORD)",
-        "hh:breakSetting@breakNonLatinWord (KEEP_WORD / BREAK_WORD)",
         "hh:breakSetting@lineWrap=BREAK",
         "hp:paraPr@condense (최소 공백: a line may overrun by the width its "
         "spaces can give up)",
@@ -7421,6 +7656,13 @@ class OwnRenderer:
         "hp:paraPr@tabPrIDRef, for the explicit LEFT stops hh:tabPr declares",
     )
     PARAPR_NOT_HONORED = (
+        "hh:breakSetting@breakNonLatinWord (KEEP_WORD / BREAK_WORD) — READ, "
+        "REPORTED AND OVERRIDDEN. Hangul/CJK is broken at the syllable under "
+        "either declared value; a KEEP_WORD (어절 단위) paragraph is broken "
+        "inside its 어절 anyway. This is a DELIBERATE departure from the "
+        "declaration, on #316's evidence, and break_unit below states it in "
+        "full with the one paragraph it costs. The declared value of every "
+        "paragraph stays readable in the paraPr the sidecar carries.",
         "hh:breakSetting@breakLatinWord=HYPHENATION — hyphenation is not "
         "implemented; broken at word boundaries instead",
         "hh:breakSetting@widowOrphan / @keepWithNext / @keepLines / "
@@ -7701,9 +7943,34 @@ class OwnRenderer:
                     "table and is this renderer's, declared, not the spec's."
                 ),
             },
+            "break_unit": dict(KOREAN_BREAK_UNIT),
+            "declared_break_setting": self._declared_break_setting(),
             "parapr_honored": list(self.PARAPR_HONORED),
             "parapr_not_honored": list(self.PARAPR_NOT_HONORED),
             "paragraphs_relaid_out": computed,
+        }
+
+    def _declared_break_setting(self):
+        """What THIS document declares, against what the breaker did with it.
+
+        ``break_unit`` says the renderer chose the syllable; this says what it
+        chose it over, on this document, so a reader can see the size of the
+        override without opening the file.
+        """
+        counts = {}
+        latin = {}
+        for pr in self.defs.get("para_pr", {}).values():
+            key = str(pr.get("break_non_latin"))
+            counts[key] = counts.get(key, 0) + 1
+            key = str(pr.get("break_latin"))
+            latin[key] = latin.get(key, 0) + 1
+        return {
+            "breakNonLatinWord": dict(sorted(counts.items())),
+            "breakLatinWord": dict(sorted(latin.items())),
+            "note": (
+                "counted over this document's hp:paraPr definitions. Every "
+                "breakNonLatinWord value here was overridden to the syllable "
+                "unit; every breakLatinWord value here was honoured."),
         }
 
     # -- page numbers ----------------------------------------------------
