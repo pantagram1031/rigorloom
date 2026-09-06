@@ -10298,3 +10298,224 @@ thirteen pages; four are now the ¶398 page-top margin and three are the band.
 - **`page_top:margin_prev` is priced on two forms.** `moel-2025` at 1000 and
   `kstartup` at 300 — two page tops, one mechanism, and a third instance
   would be the first real test of the equality check.
+
+## The space-before survives a page break, and the cell top is what proves it — measured and fixed, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#304 left the largest class-B root standing: `page_top:margin_prev`, 88
+paragraphs, "the cache seats the first paragraph of a page at its
+`hh:margin/hc:prev` and the flow pass seats it at 0", with "which policy is
+RIGHT about a page top is not decided here" written under it. It is decided
+now, and the deciding measurement is not at a page top at all.
+
+`own_render.py`'s flow pass now keeps a block's space-before when the block
+moves WHOLE to a fresh page. Class B falls 219 → 131 and nothing else in the
+class table moves.
+
+### The instrument
+
+`engine/scripts/class_b_probe.py [FORM.hwpx | --corpus] --page-top`.
+
+For every page the cache paginates, the mode finds the first TOP-LEVEL
+paragraph the cache seats there and puts its cached `vertpos` — measured from
+the body top, which is the frame `hp:lineseg@vertpos` is already in — beside
+what each candidate rule predicts:
+
+| candidate | predicted seat |
+| --- | --- |
+| `a_margin_prev` | `margin_prev` — the space-before is kept whole |
+| `b_dropped` | 0 — what the flow pass did |
+| `c_collapsed` | `max(margin_prev, previous margin_next)` |
+| `d_pages_2plus` | `margin_prev`, but 0 on the first page |
+| `e_pushed_whole` | `margin_prev`, but 0 when an overflow started the page |
+| `f_uncollapsed` | `previous margin_next + margin_prev` — the mid-page gap |
+
+Each row also carries what would separate them if the corpus had a case: the
+previous paragraph's `margin_next` and whether it ended the previous page or
+straddled into this one, the line spacing, whether the head holds a table or
+a picture or is empty, `pageBreakBefore`, `keepWithNext`, the column, the
+table's own cached seat when the head is an object paragraph, and the seat
+the flow pass gives it.
+
+### Five of the six candidates tie, because the corpus has two page tops
+
+53 page heads over ten forms. **Two of them declare a nonzero space-before**
+— `moel-2025` ¶233 (1000) and `kstartup` ¶398 (300) — and both are cached at
+exactly `margin_prev`:
+
+```
+kstartup  page 9 head p398 vertpos=300  margin_prev=300  prev p397 margin_next=0
+          ended_prev_page=True overflow_start=False pageBreakBefore=False
+          keepWithNext=False lineSpacing=PERCENT/160 holds=- col=0/1 ours=0
+moel-2025 page 7 head p233 vertpos=1000 margin_prev=1000 prev p232 margin_next=0
+          ended_prev_page=True overflow_start=False pageBreakBefore=False
+          keepWithNext=False lineSpacing=PERCENT/123 holds=['tbl'] col=0/1 ours=0
+```
+
+| candidate | exact | per form |
+| --- | ---: | --- |
+| `a_margin_prev` | 51/53 | kstartup 20/22, every other form all |
+| `b_dropped` | **49/53** | kstartup 19/22, moel-2025 6/7 |
+| `c_collapsed` | 51/53 | as `a` |
+| `d_pages_2plus` | 51/53 | as `a` |
+| `e_pushed_whole` | 51/53 | as `a` |
+| `f_uncollapsed` | 51/53 | as `a` |
+
+Only `b` is refuted, and only by those two rows. The other five agree
+everywhere the corpus can be asked, because at every other page head
+`margin_prev` is 0, the previous `margin_next` is 0, the head was pushed
+whole, and no form declares a space-before on the paragraph that opens it.
+**Two page heads cannot separate `a` from `c`, `d`, `e` or `f`.**
+
+The two rows no candidate reproduces are the known E2.7 band and are not
+about margins: `kstartup` page 5 head ¶160 at `vertpos` 69632 and page 7 head
+¶393 at 69785, both `margin_prev` 0 — the anchored table the cache seats off
+the bottom of its page and `_paginate_with_anchor_overflow_fix` rebases.
+
+### The cell top is where the population is
+
+A table cell is a container with a top, and the first paragraph in one has
+its `vertpos` measured from that top exactly as a page head's is measured
+from the body top. There are 1607 of them on this corpus, and **86 declare a
+nonzero space-before**:
+
+    86 of 86 are seated at exactly margin_prev.  0 are seated at 0.
+
+`jeongbo` 15, `jumin` 36, `saeopja` 35. That is the same equality, with
+forty-three times the evidence, and it says `hh:margin/hc:prev` is a property
+of the PARAGRAPH rather than of the gap between two of them: a fresh
+container does not collapse it away. It also argues against `d` specifically
+— the first paragraph of a cell is the "page 1" of its container and keeps
+its space-before there.
+
+The third control is mid-page. Over the 539 consecutive top-level pairs the
+cache seats on one page, **534 sit exactly `previous margin_next +
+margin_prev` apart**, and all five exceptions declare neither margin (they are
+`kstartup` 3 and `nrf` 2, the known line-height band). The gap model the flow
+pass already uses mid-page is right; the page top was the only place it was
+being zeroed.
+
+### The page foot says nothing, and the probe reports that rather than a guess
+
+The mirror question is whether the cache reserves `hh:margin/hc:next` before
+deciding the last line fits — #256's fit bracket used `vertsize + spacing` and
+not `+ margin_next`. `--page-top` brackets it over the same 53 pages:
+`reserve_required` when the next page's head would have fitted but for the
+space-after, `reserve_refuted` when it sits where it could only sit if the
+space-after were not reserved, `silent` otherwise.
+
+    53 page feet, 0 with a nonzero margin_next, 0 required, 0 refuted, 53 silent
+
+`margin_next` is declared on five paragraphs in the whole corpus (three
+top-level in `moel-2025`, two in `kstartup` cells) and **not one of them is
+the last paragraph on a page**. The bracket is empty, and #256's fit test is
+neither confirmed nor refuted by this measurement.
+
+### The rule, and where it is applied
+
+> A block that moves WHOLE onto a fresh page is seated at its own
+> `hh:paraPr/hh:margin/hc:prev`, not at 0. A block that merely CONTINUES
+> across the break is seated at 0, because it already started above. The
+> previous block's `margin_next` is not carried over: it falls off the foot
+> of the page that block ended on.
+
+`OwnRenderer._page_top_seat` is the whole of it, and the four places that
+open a fresh page call it: the explicit `hp:p@pageBreak` /
+`@pageBreakBefore` arm and the column-break arm in `_flow_blocks_once`, the
+anchored-object `moved_whole` arm and the `@keepLines` / `@widowOrphan` arms
+in `_place_block`, and `_place_block`'s row loop when nothing of the block
+has been drawn yet. The row loop's continuation case — the one that had
+already emitted a record, or is past its first row — keeps its 0.
+
+The seat is dropped when `margin_prev` plus what it precedes would not fit
+the fresh page. That is the honest reading (space-before never pushes its own
+paragraph off the page it was just moved to) and it is also what keeps the
+row loop finite: without it, a block whose first line does not fit under its
+own space-before would open a fresh page forever.
+
+The public basis is that `hh:margin/hc:prev` is 문단 위 간격, an attribute of
+`hh:paraPr`, with nothing in OWPML making it conditional on position. Many
+typesetters (CSS, TeX) drop or collapse space-before at a page top; the three
+measurements above say Hancom does not, at least here. The flow pass was
+already inconsistent about it — the FIRST block of the document has always
+been seated at its `margin_prev`, because `gap = prev_next_margin +
+block["margin_prev"]` runs with `prev_next_margin = 0` — so this makes one
+rule out of two.
+
+### After
+
+`class_b_probe.py --corpus` roots:
+
+| root | #304 | now |
+| --- | ---: | ---: |
+| `page_top:margin_prev` | **88** | – |
+| `table_row_heights` | 63 | 63 |
+| `empty_paragraph` | 29 | 29 |
+| `text_line_height` | 19 | 19 |
+| `cell_valign` | 15 | 15 |
+| `page_top_unattributed` | 3 | 3 |
+| `text_rebreak:width` | 2 | 2 |
+| total | 219 | **131** |
+
+`layout_divergence.py --corpus` classes **1713 / 94 / 219 / 28 → 1801 / 94 /
+131 / 28**: 88 paragraphs move from B into agreement and nothing enters or
+leaves A or C. Per form, B goes `moel-2025` 103 → 19 and `kstartup` 7 → 3;
+the other eight are unchanged. The seat pass' own row follows: `moel-2025`
+seats differing 28 → 27 over 6 → 5 pages, `kstartup` 36 → 32 over 5 → 4.
+
+`render_scoreboard.py --corpus --dpi 144`:
+
+| policy | `ssim_mean` | `ssim_inked` | `text_line_iou` |
+| --- | ---: | ---: | ---: |
+| cache, before and after | 0.861944 | 0.393719 | 0.736589 |
+| computed, before | 0.845092 | 0.358796 | 0.684881 |
+| computed, after | **0.848325** | **0.364894** | **0.692148** |
+
+53 pages scored and `page_count` exact 10/10 under both policies, before and
+after. The cache run is byte-identical — the whole scoreboard output diffs
+clean — which is the control that says nothing outside the flow pass moved.
+The computed gain is two forms and only two: `moel-2025` ssim +0.031107 /
+inked +0.048440 / iou +0.064561 and `kstartup` +0.001225 / +0.012535 /
++0.008099, both at unchanged page counts. Everything else is unchanged to
+nine decimal places, which is what a rule that fires twice should look like.
+
+`lineseg_vs_pdf.py --corpus` is 411/411 lines equal and 8566/8566 characters,
+unchanged — it compares the CACHE to Hancom's export and cannot see the flow
+pass at all, so it is a control here rather than a result.
+
+`render_check.py` on `render-check-01` is **unchanged**: 6 match / 37 close /
+6 differ / 2 unsupported at 96 dpi, 14 · 31 · 4 · 2 at 144, 9 of 9 pages
+exact, and the same under `cache` and `computed`. It is a live test and it
+came back negative for a reason worth writing down: the document carries no
+cached `hp:lineseg` at all (this repo wrote it), so both policies take the
+computed path, and although 50 of its paragraphs declare a 600-HWPUNIT
+space-before and a 200 space-after, **none of its seven flow page heads is
+one of them**. The arms fired (one explicit page break, two tables moved
+whole) all landed on paragraphs with no space-before.
+
+### Not proven
+
+- **The rule is priced on two page tops.** `a`, `c`, `d`, `e` and `f` are
+  indistinguishable on this corpus and `a` was chosen on the cell-top
+  evidence and on the OWPML reading, not on a page top that separates them.
+  A form with a space-after on the last paragraph of a page would be the
+  first real test of `c` and `f`; a form with a space-before on its opening
+  paragraph, of `d`; one whose page head is a straddle continuation, of `e`.
+- **The previous paragraph's `margin_next` at a page top is reasoning.** No
+  corpus page head follows a paragraph that declares one, so "it falls off
+  the foot" is an argument, not a measurement.
+- **`_apply_keep_with_next` was left alone.** A block pushed onto its
+  successor's page by 다음 문단과 함께 is a page head too and is still seated
+  at 0. `keep_with_next_moved` is 0 on every corpus form, so changing it
+  would be an unmeasured change to an unexercised path — and it interacts
+  with the successor's own seat, which nothing here measures.
+- **The page-foot mirror is empty, not answered.** 0 of 53 feet discriminate.
+  #256's `vertsize + spacing` bracket stands unchallenged by default.
+- **The fit guard is a tie-break, not a measurement.** No corpus block has a
+  space-before that would not fit the page it moves to; the "drop it rather
+  than overflow" arm is reasoning plus a termination requirement.
+- **131 class-B paragraphs remain.** `table_row_heights` 63 and
+  `empty_paragraph` 29 are the next two roots and neither is touched here.
+- **`render-check-01` did not exercise the change.** Its verdicts are a
+  control that the fix costs nothing, not evidence that it helps.

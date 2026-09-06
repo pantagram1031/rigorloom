@@ -62,6 +62,7 @@ Usage::
 
     python engine/scripts/class_b_probe.py --corpus
     python engine/scripts/class_b_probe.py --corpus --table-origin
+    python engine/scripts/class_b_probe.py --corpus --page-top
     python engine/scripts/class_b_probe.py --corpus --json out.json
     python engine/scripts/class_b_probe.py path/to/doc.hwpx
 
@@ -372,6 +373,7 @@ def trace(hwpx_path, policy, dpi, repo_root=None):
     renderer = SeatingRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
                                layout_policy=policy)
     _images, sidecar = renderer.render()
+    geometry = renderer.page_geometry()
     keys, cells = containers(renderer)
     facts = renderer.paragraph_facts()
     # ``hp:tab`` is the one control this renderer declares it does not place,
@@ -408,6 +410,11 @@ def trace(hwpx_path, policy, dpi, repo_root=None):
         "flow_seats": dict(renderer.flow_seats),
         "cache_seats": dict(renderer.cache_seats),
         "px_per_hwp": dpi / own_render.HWPUNIT_PER_INCH,
+        # The page box, for the page-top and page-bottom passes: a seat is
+        # only a page top relative to a usable height, and a space-after is
+        # only "reserved" relative to the same number.
+        "usable_height_hwp": max(1, geometry["usable_height"]),
+        "col_count": renderer.column_geometry(geometry)[2],
     }
 
 
@@ -1135,6 +1142,301 @@ def table_origin_summary(rows):
     }
 
 
+#: What each candidate predicts a page head's cached ``vertpos`` to be.  The
+#: names are the ones the research question posed them under; ``b`` is what
+#: the flow pass does today and the rest are ways of keeping the space-before.
+PAGE_TOP_CANDIDATES = {
+    "a_margin_prev": "vertpos = margin_prev — the space-before is kept whole",
+    "b_dropped": "vertpos = 0 — the space-before is dropped (the flow pass)",
+    "c_collapsed": "vertpos = max(margin_prev, previous margin_next)",
+    "d_pages_2plus": "vertpos = margin_prev, but 0 on the first page",
+    "e_pushed_whole": "vertpos = margin_prev, but 0 when the page was "
+                      "started by an overflow rather than by a whole block",
+    "f_uncollapsed": "vertpos = previous margin_next + margin_prev — the "
+                     "mid-page gap, applied unchanged at a page top",
+}
+
+
+def _page_top_candidates(margin_prev, prev_margin_next, page, pushed_whole):
+    """Each candidate's predicted ``vertpos`` for one page head."""
+    return {
+        "a_margin_prev": margin_prev,
+        "b_dropped": 0,
+        "c_collapsed": max(margin_prev, prev_margin_next),
+        "d_pages_2plus": margin_prev if page > 1 else 0,
+        "e_pushed_whole": margin_prev if pushed_whole else 0,
+        "f_uncollapsed": prev_margin_next + margin_prev,
+    }
+
+
+def _holds(fact):
+    """What a paragraph carries, for the page-top row."""
+    kinds = [obj["kind"] for obj in (fact.get("objects") or ())]
+    return {
+        "object_kinds": kinds,
+        "table": "tbl" in kinds,
+        "picture": bool({"pic", "picture"} & set(kinds)),
+        "empty": bool(fact.get("empty_text")),
+    }
+
+
+def page_top_report(cache, computed, tol=DEFAULT_TOL_HWP):
+    """Every CACHE page head, and what each candidate rule predicts for it.
+
+    The population is the first TOP-LEVEL paragraph the cache seats on each
+    page — the frame ``hp:lineseg@vertpos`` is measured in, so its seat is
+    directly a number of HWPUNIT below the body top — plus, as the container
+    mirror, the first paragraph of every table cell, whose ``vertpos`` is
+    measured from its own cell in exactly the same way.  A cell top is not a
+    page top, but it IS a container top, and it is the only place on this
+    corpus where the "does a fresh container keep ``hh:margin/hc:prev``"
+    question has more than two instances to answer it.
+
+    Nothing here is inferred from a name: the predicted seat of every
+    candidate is put beside the measured one and the mismatches are listed.
+    """
+    facts = cache["facts"]
+    cache_seats = cache["cache_seats"] or {}
+    grouped_flow = layout_divergence._flow_seats_by_address(
+        computed["flow_seats"])
+    flow_first = {address: entries[0]
+                  for address, entries in grouped_flow.items() if entries}
+    top_level = sorted(address for address, fact in facts.items()
+                       if fact.get("top_level"))
+    seats = {}
+    for address in top_level:
+        seat = layout_divergence._cache_seat(facts.get(address), cache_seats,
+                                             address)
+        if seat is not None:
+            seats[address] = seat
+    ordered = [address for address in top_level if address in seats]
+    #: The table each paragraph holds, so a head that is an object paragraph
+    #: can be shown with the seat its table actually got.
+    table_of_holder = {}
+    for index, record in (cache["table_seats"] or {}).items():
+        table_of_holder.setdefault(record.get("holder"), (index, record))
+
+    by_page = {}
+    for address in ordered:
+        by_page.setdefault(seats[address]["page"], []).append(address)
+
+    rows = []
+    for page in sorted(by_page):
+        address = by_page[page][0]
+        fact = facts.get(address) or {}
+        seat = seats[address]
+        position = ordered.index(address)
+        prior = ordered[position - 1] if position else None
+        prior_fact = facts.get(prior) or {}
+        prior_seat = seats.get(prior)
+        # The cache draws a straddling paragraph once per page it spans, and
+        # ``drawn_pages`` counts those, so the last page it occupies is its
+        # seat page plus the rest of its runs.
+        prior_last_page = (None if prior_seat is None else
+                           prior_seat["page"] + prior_seat["records"] - 1)
+        straddled_in = prior_last_page == page
+        margin_prev = fact.get("margin_prev_hwp") or 0
+        prev_margin_next = prior_fact.get("margin_next_hwp") or 0
+        candidates = _page_top_candidates(margin_prev, prev_margin_next, page,
+                                          not straddled_in)
+        table = table_of_holder.get(address)
+        rows.append({
+            "page": page,
+            "paragraph": address,
+            "cache_vertpos_hwp": seat["top_hwp"],
+            "computed_top_hwp": (flow_first.get(address) or {}).get("top_hwp"),
+            "computed_page": (flow_first.get(address) or {}).get("page"),
+            "margin_prev_hwp": margin_prev,
+            "line_spacing": {
+                "type": fact.get("line_spacing_type"),
+                "value": fact.get("line_spacing_value"),
+            },
+            "holds": _holds(fact),
+            "page_break_before": bool(fact.get("page_break_before")),
+            "keep_with_next": bool(fact.get("keep_with_next")),
+            "column": page % max(1, cache["col_count"]),
+            "col_count": cache["col_count"],
+            "prev": {
+                "paragraph": prior,
+                "margin_next_hwp": prev_margin_next,
+                "last_page": prior_last_page,
+                "ended_previous_page": (prior_last_page is not None
+                                        and prior_last_page == page - 1),
+                "straddled_into_this_page": bool(straddled_in),
+            },
+            "started_by_overflow": bool(straddled_in),
+            "table_seat": (None if table is None else {
+                "table": table[0],
+                "slot_y_hwp": table[1]["slot_y_hwp"],
+                "box_y_hwp": table[1]["box_y_hwp"],
+                "page": table[1]["page"],
+            }),
+            "candidates_hwp": candidates,
+            "matches": {name: abs(value - seat["top_hwp"]) <= tol
+                        for name, value in candidates.items()},
+        })
+
+    #: The container mirror: every table cell's FIRST paragraph.  Its
+    #: ``vertpos`` is measured from the cell's own content top, so "does the
+    #: cache keep the space-before at the top of a fresh container" is the
+    #: same equality asked of a much larger population.
+    cell_first = {}
+    for address, cell in sorted((cache["cell_of"] or {}).items()):
+        cell_first.setdefault(cell, address)
+    cell_rows = []
+    for cell, address in sorted(cell_first.items(), key=lambda kv: kv[1]):
+        fact = facts.get(address) or {}
+        linesegs = fact.get("linesegs") or []
+        if not linesegs:
+            continue
+        margin_prev = fact.get("margin_prev_hwp") or 0
+        cell_rows.append({
+            "paragraph": address,
+            "cache_vertpos_hwp": linesegs[0]["vertpos"],
+            "margin_prev_hwp": margin_prev,
+            "keeps_margin_prev": abs(linesegs[0]["vertpos"] - margin_prev)
+            <= tol,
+            "dropped": abs(linesegs[0]["vertpos"]) <= tol,
+        })
+    return {"page_tops": rows, "cell_tops": cell_rows}
+
+
+def page_top_summary(block):
+    """Exact matches per candidate, and every row that refutes one."""
+    rows = block["page_tops"]
+    counts = {name: sum(1 for row in rows if row["matches"][name])
+              for name in PAGE_TOP_CANDIDATES}
+    #: Only a head with a nonzero space-before can tell the candidates apart;
+    #: everywhere else every candidate predicts the same zero.
+    discriminating = [row for row in rows
+                      if row["margin_prev_hwp"] or row["prev"]["margin_next_hwp"]]
+    misses = {
+        name: [{"page": row["page"], "paragraph": row["paragraph"],
+                "cache_vertpos_hwp": row["cache_vertpos_hwp"],
+                "predicted_hwp": row["candidates_hwp"][name]}
+               for row in rows if not row["matches"][name]]
+        for name in PAGE_TOP_CANDIDATES
+    }
+    cells = block["cell_tops"]
+    with_margin = [row for row in cells if row["margin_prev_hwp"]]
+    return {
+        "page_tops": len(rows),
+        "discriminating_page_tops": len(discriminating),
+        "exact": counts,
+        "counter_examples": misses,
+        "cell_tops": len(cells),
+        "cell_tops_with_margin_prev": len(with_margin),
+        "cell_tops_keeping_margin_prev": sum(1 for row in with_margin
+                                             if row["keeps_margin_prev"]),
+        "cell_tops_dropping_margin_prev": sum(1 for row in with_margin
+                                              if row["dropped"]),
+    }
+
+
+def page_bottom_report(cache, tol=DEFAULT_TOL_HWP):
+    """The mirror: was ``hh:margin/hc:prev``'s partner reserved at a page foot?
+
+    For the LAST top-level paragraph the cache seats on each page, the row
+    states its bottom (``vertpos + vertsize + spacing`` of its last lineseg —
+    #256's fit bracket, which does NOT add ``margin_next``), its
+    ``hh:margin/hc:next``, the usable height, and whether the next page's head
+    would have fitted below it with and without that space-after reserved.
+
+    A page only DISCRIMINATES when the last paragraph declares a nonzero
+    space-after and the head that follows would have fitted without it: then
+    reserving the space-after is the only thing that explains the break.  A
+    page whose head does not fit either way, or that is opened by an explicit
+    ``hp:p@pageBreak``, says nothing about the reserve and is counted apart
+    rather than folded in.
+    """
+    facts = cache["facts"]
+    cache_seats = cache["cache_seats"] or {}
+    usable = cache["usable_height_hwp"]
+    top_level = sorted(address for address, fact in facts.items()
+                       if fact.get("top_level"))
+    seats = {}
+    for address in top_level:
+        seat = layout_divergence._cache_seat(facts.get(address), cache_seats,
+                                             address)
+        if seat is not None:
+            seats[address] = seat
+    ordered = [address for address in top_level if address in seats]
+    by_page = {}
+    for address in ordered:
+        by_page.setdefault(seats[address]["page"], []).append(address)
+
+    rows = []
+    for page in sorted(by_page):
+        address = by_page[page][-1]
+        fact = facts.get(address) or {}
+        linesegs = fact.get("linesegs") or []
+        if not linesegs:
+            continue
+        last = linesegs[-1]
+        bottom = last["vertpos"] + last["vertsize"] + last["spacing"]
+        margin_next = fact.get("margin_next_hwp") or 0
+        head = by_page.get(page + 1, [None])[0]
+        head_fact = facts.get(head) or {}
+        head_segs = head_fact.get("linesegs") or []
+        head_advance = ((head_segs[0]["vertsize"] + head_segs[0]["spacing"])
+                        if head_segs else None)
+        head_margin = head_fact.get("margin_prev_hwp") or 0
+        need = (None if head_advance is None
+                else head_margin + head_advance)
+        rows.append({
+            "page": page,
+            "paragraph": address,
+            "bottom_hwp": bottom,
+            "margin_next_hwp": margin_next,
+            "usable_hwp": usable,
+            "next_head": head,
+            "next_head_needs_hwp": need,
+            "next_head_page_break_before": bool(
+                head_fact.get("page_break_before")),
+            "fits_without_margin_next": (None if need is None
+                                         else bottom + need <= usable + tol),
+            "fits_with_margin_next": (
+                None if need is None
+                else bottom + margin_next + need <= usable + tol),
+        })
+    return rows
+
+
+def page_bottom_bracket(rows):
+    """The bracket: how many page feet can tell the reserve apart, and which.
+
+    ``reserve_required`` — the next head would have fitted but for the
+    space-after, so the cache must have reserved it.  ``reserve_refuted`` —
+    the space-after was NOT reserved, because the head sits where it could
+    only sit if it were not.  ``silent`` — everything else.
+    """
+    required = refuted = silent = 0
+    detail = []
+    for row in rows:
+        if not row["margin_next_hwp"] or row["fits_without_margin_next"] is None:
+            silent += 1
+            continue
+        if row["next_head_page_break_before"]:
+            silent += 1
+            continue
+        if row["fits_without_margin_next"] and not row["fits_with_margin_next"]:
+            required += 1
+            detail.append(row)
+        elif row["fits_with_margin_next"]:
+            refuted += 1
+            detail.append(row)
+        else:
+            silent += 1
+    return {
+        "page_feet": len(rows),
+        "with_margin_next": sum(1 for row in rows if row["margin_next_hwp"]),
+        "reserve_required": required,
+        "reserve_refuted": refuted,
+        "silent": silent,
+        "detail": detail,
+    }
+
+
 def root_histogram(records):
     """One row per ROOT mechanism.  These partition the population."""
     paragraphs = Counter()
@@ -1176,7 +1478,7 @@ def histogram(records):
 
 def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI,
                y_tol=layout_divergence.DEFAULT_Y_TOL, tol=DEFAULT_TOL_HWP,
-               repo_root=None, table_origin=False):
+               repo_root=None, table_origin=False, page_top=False):
     hwpx_path = Path(hwpx_path)
     cache = trace(hwpx_path, own_render.LAYOUT_POLICY_CACHE, dpi, repo_root)
     computed = trace(hwpx_path, own_render.LAYOUT_POLICY_COMPUTED, dpi,
@@ -1191,6 +1493,17 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI,
             "summary": table_origin_summary(origin_rows),
             "causes": TABLE_ORIGIN_CAUSES,
             "rows": origin_rows,
+        }
+    if page_top:
+        block = page_top_report(cache, computed, tol=tol)
+        bottoms = page_bottom_report(cache, tol=tol)
+        extra["page_top"] = {
+            "summary": page_top_summary(block),
+            "candidates": PAGE_TOP_CANDIDATES,
+            "usable_height_hwp": cache["usable_height_hwp"],
+            "bottom_bracket": page_bottom_bracket(bottoms),
+            "bottoms": bottoms,
+            **block,
         }
     return {
         "tool": "class_b_probe",
@@ -1273,8 +1586,98 @@ def build_parser():
                              "table's hp:pos attributes, its seat and height "
                              "under both policies, and which term carries the "
                              "delta")
+    parser.add_argument("--page-top", action="store_true",
+                        help="also dump, for the first cached paragraph on "
+                             "every page, its space-before, the previous "
+                             "paragraph's space-after and how the page was "
+                             "started, and score every candidate rule for "
+                             "its cached seat against the measurement; plus "
+                             "the mirror at the page foot")
     parser.add_argument("--json", help="write the full per-paragraph report")
     return parser
+
+
+def page_top_table(rows):
+    """Candidate scores over every form, then the rows that discriminate."""
+    blocks = [(stem, report["page_top"]) for stem, report in rows
+              if report.get("page_top")]
+    if not blocks:
+        return "page top: nothing measured"
+    out = []
+    width = max(len(name) for name in PAGE_TOP_CANDIDATES)
+    total = sum(block["summary"]["page_tops"] for _stem, block in blocks)
+    out.append(f"{'candidate':<{width}} {'exact':>9}  per form")
+    out.append("-" * (width + 40))
+    for name in PAGE_TOP_CANDIDATES:
+        hits = sum(block["summary"]["exact"][name] for _stem, block in blocks)
+        per = " ".join(
+            f"{stem}:{block['summary']['exact'][name]}/"
+            f"{block['summary']['page_tops']}"
+            for stem, block in blocks)
+        out.append(f"{name:<{width}} {hits:>4}/{total:<4}  {per}")
+    out.append("")
+    for name, text in PAGE_TOP_CANDIDATES.items():
+        out.append(f"{name}: {text}")
+    out.append("")
+    discriminating = sum(block["summary"]["discriminating_page_tops"]
+                         for _stem, block in blocks)
+    out.append(f"page tops {total}, of which {discriminating} carry a nonzero "
+               f"space-before or space-after and can tell the candidates "
+               f"apart")
+    for stem, block in blocks:
+        for row in block["page_tops"]:
+            if not (row["margin_prev_hwp"] or row["prev"]["margin_next_hwp"]):
+                continue
+            failed = sorted(name for name, ok in row["matches"].items()
+                            if not ok)
+            out.append(
+                f"  {stem} page {row['page']} head p{row['paragraph']} "
+                f"vertpos={row['cache_vertpos_hwp']} "
+                f"margin_prev={row['margin_prev_hwp']} "
+                f"prev p{row['prev']['paragraph']} "
+                f"margin_next={row['prev']['margin_next_hwp']} "
+                f"ended_prev_page={row['prev']['ended_previous_page']} "
+                f"overflow_start={row['started_by_overflow']} "
+                f"pageBreakBefore={row['page_break_before']} "
+                f"keepWithNext={row['keep_with_next']} "
+                f"lineSpacing={row['line_spacing']['type']}"
+                f"/{row['line_spacing']['value']} "
+                f"holds={row['holds']['object_kinds'] or '-'} "
+                f"col={row['column']}/{row['col_count']} "
+                f"ours={row['computed_top_hwp']} -> refutes {failed or '-'}")
+    out.append("")
+    orphans = [(stem, row) for stem, block in blocks
+               for row in block["page_tops"]
+               if not any(row["matches"].values())]
+    out.append(f"page tops no candidate reproduces: {len(orphans)}")
+    for stem, row in orphans:
+        out.append(
+            f"  {stem} page {row['page']} head p{row['paragraph']} "
+            f"vertpos={row['cache_vertpos_hwp']} "
+            f"margin_prev={row['margin_prev_hwp']} "
+            f"overflow_start={row['started_by_overflow']} "
+            f"holds={row['holds']['object_kinds'] or '-'} "
+            f"ours={row['computed_top_hwp']}")
+    out.append("")
+    kept = sum(block["summary"]["cell_tops_keeping_margin_prev"]
+               for _stem, block in blocks)
+    with_margin = sum(block["summary"]["cell_tops_with_margin_prev"]
+                      for _stem, block in blocks)
+    cells = sum(block["summary"]["cell_tops"] for _stem, block in blocks)
+    dropped = sum(block["summary"]["cell_tops_dropping_margin_prev"]
+                  for _stem, block in blocks)
+    out.append(f"container mirror: {cells} cell-first paragraphs, "
+               f"{with_margin} with a nonzero space-before, {kept} seat it at "
+               f"exactly margin_prev, {dropped} at zero")
+    out.append("")
+    out.append("page foot mirror (was margin_next reserved?)")
+    for stem, block in blocks:
+        bracket = block["bottom_bracket"]
+        out.append(f"  {stem}: feet {bracket['page_feet']}, with "
+                   f"margin_next {bracket['with_margin_next']}, reserve "
+                   f"required {bracket['reserve_required']}, refuted "
+                   f"{bracket['reserve_refuted']}, silent {bracket['silent']}")
+    return "\n".join(out)
 
 
 def table_origin_table(rows):
@@ -1344,7 +1747,8 @@ def main(argv=None):
         for hwpx, _pdf in forms:
             report = probe_form(hwpx, dpi=args.dpi, y_tol=args.y_tol,
                                 tol=args.tol, repo_root=repo_root,
-                                table_origin=args.table_origin)
+                                table_origin=args.table_origin,
+                                page_top=args.page_top)
             if report["class_b_paragraphs"]:
                 print(summary_line(labels[hwpx.stem], report))
             rows.append((labels[hwpx.stem], report))
@@ -1355,6 +1759,9 @@ def main(argv=None):
         if args.table_origin:
             print()
             print(table_origin_table(rows))
+        if args.page_top:
+            print()
+            print(page_top_table(rows))
         if args.json:
             Path(args.json).write_text(
                 json.dumps(dict(rows), ensure_ascii=False, indent=2,
@@ -1366,7 +1773,8 @@ def main(argv=None):
     stem = Path(args.input).stem
     report = probe_form(Path(args.input), dpi=args.dpi, y_tol=args.y_tol,
                         tol=args.tol, repo_root=repo_root,
-                        table_origin=args.table_origin)
+                        table_origin=args.table_origin,
+                        page_top=args.page_top)
     print(summary_line(stem, report))
     print()
     print(corpus_table([(stem, report)]))
@@ -1376,6 +1784,9 @@ def main(argv=None):
     if args.table_origin:
         print()
         print(table_origin_table([(stem, report)]))
+    if args.page_top:
+        print()
+        print(page_top_table([(stem, report)]))
     if args.json:
         Path(args.json).write_text(
             json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)

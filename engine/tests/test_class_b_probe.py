@@ -95,10 +95,12 @@ def box(address, y0, text="hello", page=1):
 
 
 def trace(origins, facts, boxes, cells=None, cell_boxes=None,
-          containers=None, flow_seats=None, cache_seats=None):
+          containers=None, flow_seats=None, cache_seats=None,
+          table_seats=None, usable=71000, col_count=1):
     return {
         "origins": {o["address"]: o for o in origins},
         "cell_boxes": cell_boxes or {},
+        "table_seats": table_seats or {},
         "line_boxes": boxes,
         "facts": {f["address"]: f for f in facts},
         "containers": containers or {f["address"]: "body" for f in facts},
@@ -106,7 +108,14 @@ def trace(origins, facts, boxes, cells=None, cell_boxes=None,
         "flow_seats": flow_seats or {},
         "cache_seats": cache_seats or {},
         "px_per_hwp": PX_PER_HWP,
+        "usable_height_hwp": usable,
+        "col_count": col_count,
     }
+
+
+def seg(vertpos, vertsize=2560, spacing=0):
+    return {"textpos": 0, "vertpos": vertpos, "vertsize": vertsize,
+            "spacing": spacing}
 
 
 # -- mechanism: the order the labels are decided in ----------------------
@@ -454,12 +463,137 @@ def test_the_report_shape_a_reader_indexes():
         assert "carriers" in record
 
 
+# -- the page-top pass ---------------------------------------------------
+
+def page_top_case(head_vertpos, margin_prev, prev_margin_next=0,
+                  prev_pages=1, head_page=2):
+    """Two pages: p0 seats page 1, p1 is the head of ``head_page``."""
+    facts = [
+        fact(0, margin_next_hwp=prev_margin_next,
+             linesegs=[seg(0), seg(2560)]),
+        fact(1, margin_prev_hwp=margin_prev, linesegs=[seg(head_vertpos)]),
+    ]
+    cache_seats = {
+        0: {"address": 0, "page": 1, "drawn_pages": prev_pages},
+        1: {"address": 1, "page": head_page, "drawn_pages": 1},
+    }
+    cache = trace([], facts, [], cache_seats=cache_seats)
+    computed = trace([], facts, [], flow_seats={
+        (1, head_page): {"address": 1, "page": head_page, "top_hwp": 0,
+                         "height_hwp": 2560}})
+    return cache, computed
+
+
+def test_a_page_head_that_keeps_its_space_before_refutes_only_the_drop():
+    """moel-2025 page 7 in miniature: vertpos IS the space-before."""
+    cache, computed = page_top_case(head_vertpos=1000, margin_prev=1000)
+    block = CB.page_top_report(cache, computed)
+    head = next(row for row in block["page_tops"] if row["page"] == 2)
+    assert head["cache_vertpos_hwp"] == 1000
+    assert head["computed_top_hwp"] == 0
+    assert head["matches"]["a_margin_prev"] is True
+    assert head["matches"]["b_dropped"] is False
+    summary = CB.page_top_summary(block)
+    assert summary["exact"]["b_dropped"] == summary["page_tops"] - 1
+    assert summary["discriminating_page_tops"] == 1
+
+
+def test_a_page_head_seated_at_zero_with_a_space_before_would_refute_keeping():
+    """The measurement is an equality, so the other side is reportable too."""
+    cache, computed = page_top_case(head_vertpos=0, margin_prev=1000)
+    block = CB.page_top_report(cache, computed)
+    head = next(row for row in block["page_tops"] if row["page"] == 2)
+    assert head["matches"]["a_margin_prev"] is False
+    assert head["matches"]["b_dropped"] is True
+    misses = CB.page_top_summary(block)["counter_examples"]["a_margin_prev"]
+    assert [entry["paragraph"] for entry in misses] == [1]
+
+
+def test_a_head_reached_by_overflow_is_marked_as_such():
+    """A predecessor the cache carried onto this page did not push it whole."""
+    cache, computed = page_top_case(head_vertpos=1000, margin_prev=1000,
+                                    prev_pages=2)
+    head = next(row for row in CB.page_top_report(cache, computed)["page_tops"]
+                if row["page"] == 2)
+    assert head["started_by_overflow"] is True
+    assert head["prev"]["straddled_into_this_page"] is True
+    assert head["matches"]["e_pushed_whole"] is False
+    assert head["matches"]["a_margin_prev"] is True
+
+
+def test_the_collapsed_candidate_is_the_one_a_space_after_separates():
+    """max(margin_prev, prev margin_next) only differs when both exist."""
+    cache, computed = page_top_case(head_vertpos=1000, margin_prev=1000,
+                                    prev_margin_next=1800)
+    head = next(row for row in CB.page_top_report(cache, computed)["page_tops"]
+                if row["page"] == 2)
+    assert head["candidates_hwp"]["c_collapsed"] == 1800
+    assert head["candidates_hwp"]["f_uncollapsed"] == 2800
+    assert head["matches"]["a_margin_prev"] is True
+    assert head["matches"]["c_collapsed"] is False
+    assert head["matches"]["f_uncollapsed"] is False
+
+
+def test_a_cell_top_is_the_container_mirror_of_a_page_top():
+    facts = [
+        fact(0, top_level=True, linesegs=[seg(0)]),
+        fact(1, top_level=False, margin_prev_hwp=600, linesegs=[seg(600)]),
+        fact(2, top_level=False, margin_prev_hwp=600, linesegs=[seg(3160)]),
+    ]
+    cache = trace([], facts, [],
+                  cells={1: "tc-a", 2: "tc-a"},
+                  cache_seats={0: {"address": 0, "page": 1,
+                                   "drawn_pages": 1}})
+    block = CB.page_top_report(cache, trace([], facts, []))
+    assert [row["paragraph"] for row in block["cell_tops"]] == [1]
+    assert block["cell_tops"][0]["keeps_margin_prev"] is True
+    summary = CB.page_top_summary(block)
+    assert summary["cell_tops_with_margin_prev"] == 1
+    assert summary["cell_tops_keeping_margin_prev"] == 1
+    assert summary["cell_tops_dropping_margin_prev"] == 0
+
+
+def test_a_page_foot_with_no_space_after_cannot_bracket_the_reserve():
+    facts = [
+        fact(0, linesegs=[seg(0)]),
+        fact(1, margin_prev_hwp=0, linesegs=[seg(0)]),
+    ]
+    cache = trace([], facts, [], usable=10000, cache_seats={
+        0: {"address": 0, "page": 1, "drawn_pages": 1},
+        1: {"address": 1, "page": 2, "drawn_pages": 1}})
+    bracket = CB.page_bottom_bracket(CB.page_bottom_report(cache))
+    assert bracket["with_margin_next"] == 0
+    assert bracket["reserve_required"] == 0
+    assert bracket["reserve_refuted"] == 0
+    assert bracket["silent"] == bracket["page_feet"]
+
+
+def test_a_page_foot_whose_successor_only_fits_without_the_space_after():
+    """The one shape that DOES bracket: the head fits, but not after it."""
+    facts = [
+        fact(0, margin_next_hwp=2000, linesegs=[seg(0, vertsize=6000)]),
+        fact(1, linesegs=[seg(0, vertsize=2560)]),
+    ]
+    cache = trace([], facts, [], usable=10000, cache_seats={
+        0: {"address": 0, "page": 1, "drawn_pages": 1},
+        1: {"address": 1, "page": 2, "drawn_pages": 1}})
+    rows = CB.page_bottom_report(cache)
+    foot = rows[0]
+    assert foot["fits_without_margin_next"] is True
+    assert foot["fits_with_margin_next"] is False
+    bracket = CB.page_bottom_bracket(rows)
+    assert bracket["reserve_required"] == 1
+    assert bracket["reserve_refuted"] == 0
+
+
 # -- the CLI still parses ------------------------------------------------
 
 def test_the_parser_offers_corpus_and_a_tolerance_in_hwpunit():
     args = CB.build_parser().parse_args(["--corpus", "--dpi", "144"])
     assert args.corpus and args.dpi == 144
     assert args.tol == CB.DEFAULT_TOL_HWP
+    assert args.page_top is False
+    assert CB.build_parser().parse_args(["--corpus", "--page-top"]).page_top
 
 
 def test_an_input_is_required_without_corpus():
