@@ -18,3 +18,5 @@ studio/studio.log
 Thumbs.db
 # Release bundles built by scripts/package_module.py; never committed.
 dist/
+work/
+
