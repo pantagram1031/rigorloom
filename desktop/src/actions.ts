@@ -34,6 +34,7 @@ import {
 import {
   captureEditLease,
   commitParagraphClick,
+  commitRunScopedReplacement,
   displayedRevision,
   prepareParagraphEdit,
   type CaretRefusal as RevisionCaretRefusal,
@@ -388,12 +389,14 @@ export type CaretRefusal = RevisionCaretRefusal;
 const CARET_REFUSAL_TEXT: Record<CaretRefusal, string> = {
   no_address: "이 줄에는 문단 주소가 없습니다",
   multi_run:
-    "이 문단은 글 덩어리가 여럿입니다. 어느 덩어리를 고칠지 런타임이 고르지 않으므로 여기에는 커서를 놓지 않습니다",
+    "이 줄의 글이 여러 덩어리에 같이 들어 있어 어느 덩어리인지 고를 수 없습니다",
   run_text_differs:
-    "이 줄과 문단의 글 덩어리가 서로 다릅니다. 한 문단이 여러 줄로 접힌 자리라, 줄만 골라 고칠 방법이 없습니다",
+    "이 줄의 글을 한 덩어리 안에서 한곳으로 짚을 수 없습니다",
   no_inventory: "런타임이 이 문단의 글 덩어리 목록을 돌려주지 못했습니다",
   revision_mismatch:
     "표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓지 않습니다",
+  cross_run:
+    "이 고침은 여러 글 덩어리에 걸쳐 있습니다. 문단을 하나로 합치지 않습니다",
 };
 
 export function caretRefusalText(reason: CaretRefusal): string {
@@ -433,14 +436,9 @@ export function caretOffsetAt(span: GeometrySpan, fraction: number): number | nu
  * THE CHECK THIS SHELL MUST MAKE ITSELF (§12.7). There is no
  * `replace_paragraph_text` operation and none was invented: what writes a
  * paragraph line is `set_run`, which addresses `(atPara, run)` and preserves
- * the run's charPrIDRef. A line is not a run. The two coincide only where the
- * paragraph holds exactly one run whose text IS the line — and the RUNTIME is
- * asked whether that holds, through `document/readRegion`, rather than this
- * shell inferring it from the fact that the text matched.
- *
- * Measured on the corpus before it was written: of 365 uniquely-mapped
- * paragraph lines across 51 real pages, 314 hold exactly one run and 51 do
- * not. The 51 are refused here, by name, with no caret placed.
+ * the run's charPrIDRef. A line is not a run. The click names one run and a
+ * UTF-16 range inside it — a wrap is a range of that run; a span that would
+ * join neighbour runs is `cross_run`, not a flattened paragraph.
  */
 /**
  * Prepare a paragraph caret against the displayed revision. Does not write
@@ -549,7 +547,20 @@ export async function commitEdit(value: string): Promise<void> {
     sawComposition: false,
   });
   const trimmed = value;
-  if (trimmed === edit.before) {
+  const queuedRun = edit.kind === "run" ? queuedRunOpAt(getState(), edit.atPara, edit.run) : null;
+  const runText = edit.kind === "run"
+    ? commitRunScopedReplacement({
+        runText: queuedRun?.text ?? edit.before,
+        rangeStart: edit.rangeStart ?? 0,
+        rangeEnd: edit.rangeEnd ?? (queuedRun?.text ?? edit.before).length,
+        replacement: trimmed,
+        offsetUnit: edit.offsetUnit ?? "utf-16",
+      }).text
+    : trimmed;
+  const unchanged = edit.kind === "run"
+    ? runText === (queuedRun?.before ?? edit.before)
+    : trimmed === edit.before;
+  if (unchanged) {
     // Nothing changed. Proposing a no-op plan would put a row in the queue
     // that says "A → A", which is noise the reviewer has to read past.
     if (edit.opId) await removeOp(edit.opId);
@@ -580,8 +591,8 @@ export async function commitEdit(value: string): Promise<void> {
           kind: "set_run",
           atPara: edit.atPara,
           run: edit.run,
-          text: trimmed,
-          before: edit.before,
+          text: runText,
+          before: queuedRun?.before ?? edit.before,
           origin: "user",
         };
   await setQueue(
@@ -1483,11 +1494,9 @@ export async function loadGeometry(page?: number): Promise<void> {
  *
  * True for a paragraph address carrying an `atPara`, which is the only thing
  * `set_run` can address. It is NOT a promise that the caret will be placed:
- * whether the paragraph holds exactly one run is a question only
- * `document/readRegion` can answer, and `beginParagraphEdit` asks it at click
- * time rather than this function guessing. The distinction matters because 51
- * of the corpus's 365 mapped paragraph lines look exactly like the 314 that
- * work, right up until the runtime answers.
+ * which run the line sits in, and whether the span would cross runs, is a
+ * question only `document/readRegion` can answer, and `beginParagraphEdit`
+ * asks it at click time rather than this function guessing.
  */
 export function addressIsCaretTarget(address: GeometryAddress | null | undefined): boolean {
   return !!address && address.kind === "anchor" && address.atPara != null;
