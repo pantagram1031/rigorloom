@@ -552,9 +552,16 @@ export async function commitEdit(value: string): Promise<void> {
   const queuedRun = edit.kind === "run" ? queuedRunOpAt(getState(), edit.atPara, edit.run) : null;
   const runText = edit.kind === "run"
     ? commitRunScopedReplacement({
-        runText: queuedRun?.text ?? edit.before,
+        // ALWAYS use edit.before (the displayed revision text) as the splice
+        // base.  rangeStart/rangeEnd are UTF-16 offsets computed by
+        // prepareParagraphEdit against the DISPLAYED revision, not against
+        // queuedRun?.text.  Using the queued text as the base when its length
+        // differs from edit.before produces stale offsets and a wrong splice.
+        // The queue has ONE op per run; a second edit replaces the first by
+        // applying the new replacement to the original baseline.
+        runText: edit.before,
         rangeStart: edit.rangeStart ?? 0,
-        rangeEnd: edit.rangeEnd ?? (queuedRun?.text ?? edit.before).length,
+        rangeEnd: edit.rangeEnd ?? edit.before.length,
         replacement: trimmed,
         offsetUnit: edit.offsetUnit ?? "utf-16",
       }).text
