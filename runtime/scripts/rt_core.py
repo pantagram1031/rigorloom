@@ -550,20 +550,42 @@ class RuntimeCore:
 
     def document_page_geometry(self, session_id, *, page: int = 0,
                                run_id=None) -> dict:
-        """Real text positions from the rendered PDF, mapped to addresses."""
+        """Real text positions, mapped against the SAME document revision.
+
+        ``runId`` names the published candidate whose page is on screen.
+        The mapping profile is loaded from that candidate — never from the
+        session source while geometry reads the candidate — and a missing
+        candidate identity is refused rather than silently falling back.
+        ``subject`` is the document digest; ``source.sha256`` remains the
+        PDF/raster artifact digest when those differ.
+        """
         session = self.store.get(session_id)
         session.ensure_dirs()
+        subject = None
+        subject_facts = {"kind": "session_source",
+                         "sha256": session.meta["sourceSha256"]}
+        if run_id is not None:
+            # Resolve BEFORE the profile try/except: an invalid runId must
+            # not be swallowed into unmapped source geometry.
+            subject, receipt = candidate_artifact(
+                session, self._bare_run_id(run_id))
+            subject_facts = {"kind": "candidate", "runId": run_id,
+                             "sha256": receipt["candidate"]["sha256"]}
         try:
-            profile = load_profile(self.tools, session, tag="base")
+            tag = "base" if run_id is None else f"geom-{run_id[:12]}"
+            profile = load_profile(self.tools, session, tag=tag,
+                                   subject=subject)
         except RpcError:
-            # The positions are real whether or not the SOURCE is a form
-            # the scanner can read. A PDF opened directly has no form scan
-            # and so nothing to map spans onto; that costs the mapping,
-            # not the geometry, and page_geometry says which.
+            # The positions are real whether or not this revision is a form
+            # the scanner can read. A genuine profile failure costs the
+            # mapping, not the geometry, and page_geometry says which.
             profile = None
-        return page_geometry(session, page=page, run_id=run_id,
-                             profile=profile, cache=self._geometry_cache,
-                             tools=self.tools)
+        result = page_geometry(session, page=page, run_id=run_id,
+                               profile=profile, cache=self._geometry_cache,
+                               tools=self.tools)
+        if isinstance(result, dict):
+            result["subject"] = subject_facts
+        return result
 
     # -- distribution modules -------------------------------------------------
     def module_list(self) -> dict:

@@ -631,7 +631,19 @@ export interface GeometryMapping {
 export interface GeometryResult {
   sessionId: string;
   available: boolean;
-  source?: { kind: string; sha256?: string; bytes?: number; runId?: string };
+  source?: {
+    kind: string;
+    sha256?: string;
+    bytes?: number;
+    runId?: string;
+    /** Document digest when ``sha256`` is a prepared PDF/raster artifact. */
+    candidateSha256?: string;
+  };
+  /**
+   * WHICH DOCUMENT the address map was built from. Distinct from
+   * ``source.sha256``, which may be a PDF or raster artifact of that document.
+   */
+  subject?: { kind: string; runId?: string; sha256: string };
   page?: number;
   pageCount?: number;
   pageSize?: { widthPt: number; heightPt: number };
@@ -726,7 +738,13 @@ export interface OverlayPick {
    */
   caret?: number | null;
   /** Why no caret was placed. Present only for `kind: "no_caret"`. */
-  refusal?: "no_address" | "multi_run" | "run_text_differs" | "no_inventory" | string;
+  refusal?:
+    | "no_address"
+    | "multi_run"
+    | "run_text_differs"
+    | "no_inventory"
+    | "revision_mismatch"
+    | string;
 }
 
 export interface PrepareResult {
