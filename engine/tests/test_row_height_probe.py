@@ -100,9 +100,19 @@ def test_the_remainder_view_accounts_for_every_paragraph_it_claims(
         saeopja_remainder):
     """Shape, on one real form: every ``table_row_heights`` class-B paragraph
     gets a named mechanism, and the row deltas above it are the step
-    ``class_b_probe`` measured — that identity is the view's own oracle."""
+    ``class_b_probe`` measured — that identity is the view's own oracle.
+
+    There are none left on this form to check it against.  #317 traced
+    ``saeopja``'s ``table_row_heights`` paragraphs to row heights our breaker
+    inflated by over-breaking a cell, and the last of those cells (¶393)
+    closed on the in-table HFT widths: the form's class-B count goes 25 -> 0
+    and this root mechanism disappears from the whole corpus.  The identity is
+    still asserted, over whatever the view finds, so a paragraph that comes
+    back is still checked; the count is pinned at 0 so that coming back is
+    itself a failure rather than a silent change of subject.
+    """
     report = saeopja_remainder
-    assert report["table_row_heights_paragraphs"] >= 1
+    assert report["table_row_heights_paragraphs"] == 0
     assert report["exact"] == report["table_row_heights_paragraphs"]
     for entry in report["paragraphs"]:
         assert entry["mechanism"]

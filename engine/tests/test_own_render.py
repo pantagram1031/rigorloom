@@ -3199,7 +3199,9 @@ LINESEG_AGREEMENT = {
     # because kstartup's multiline line counts were already exact.
     "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 22, 2, 2, 2, 2),
     # 0 -> 1 break position: ¶63's cached cut is inside an 어절.
-    "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 1),
+    # 31 -> 32 sequences and 1 -> 2 break positions on the in-table HFT slice:
+    # ¶63's line is metered off 한양중고딕, whose `"` the table now carries.
+    "gianmun-byeolji-1ho": (32, 32, 32, 1, 1, 2, 2),
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     # 53 -> 56 sequences and 2 -> 5 break positions on the syllable unit.
     "jeongbo-gonggae-cheongguseo": (58, 58, 56, 6, 6, 7, 5),
@@ -3263,7 +3265,10 @@ LINESEG_AGREEMENT = {
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 88, 3, 3, 3, 2),
     # 760 -> 761, 750 -> 761, 16 -> 17 and 8 -> 24 on the syllable unit.
     # ¶189 (제61조제3|항) is one of them.
-    "saeopja-deungnok-sinchengseo": (765, 761, 761, 18, 17, 25, 24),
+    # 761 -> 762, 17 -> 18 and 24 -> 25 on the in-table HFT slice: this form's
+    # whole text is inside tables, so the table had no row of its own until
+    # the attribution walk reached them.  The one paragraph is ¶393.
+    "saeopja-deungnok-sinchengseo": (765, 762, 762, 18, 18, 25, 25),
 }
 
 
@@ -3557,7 +3562,31 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # collapses below the shipped breaker before they close.  ¶719 is pinned
     # on its own in ``test_the_syllable_unit_costs_kstartup_719_and_that_is_
     # declared`` so it fails loudly if it ever moves.
-    assert totals == [2151, 2137, 2108, 161, 150, 219, 160], totals
+    #
+    # 2137 -> 2138, 2108 -> 2110, 150 -> 151 and 160 -> 162 on the
+    # IN-TABLE HFT slice.  Nothing was tuned and no rule changed: the
+    # measured table's attribution walk was reading only the TOP-LEVEL
+    # paragraphs, so a form whose text lives inside tables contributed
+    # nothing to it.  ``saeopja`` has six top-level paragraphs, all of them
+    # skipped as tables, and 757 inside cells; the export's own Type 3
+    # objects for 한양견고딕 and the 8 pt 한양신명조 were read out of the
+    # PDF and left unclaimed.  Walking every ``hp:p`` claims them: 226 ->
+    # 528 code points, 5 -> 8 faces, and the 494 unattributed Type 3 code
+    # points fall to 18.  Every one of the 226 rows the table already had
+    # is unchanged.
+    #
+    # The two paragraphs that move are ``saeopja`` ¶393 -- #313's cell,
+    # whose six 8 pt characters were metered off ``H2MJSM.TTF``'s 0.625 em
+    # digits where Hancom drew 0.500, +238.0 over its 2894 column and now
+    # -110.0 under it -- and ``gianmun-1ho`` ¶63, on 한양중고딕's ``"``.
+    # ¶393 was the last of #311's three over-broken cells; all three now
+    # reproduce the cache.  Its row heights were what #317 traced
+    # ``saeopja``'s 25 class-B paragraphs to, and they go to 0
+    # (layout_divergence 1932/42/48/31 -> 1959/40/23/31).  The rasters
+    # agree on both policies (cache ssim +0.0005, inked +0.0064, line IoU
+    # +0.0005; computed +0.0009 / +0.0087 / +0.0050, per-form means over
+    # the corpus; 53 pages and 10/10 exact page counts on both).
+    assert totals == [2151, 2138, 2110, 161, 151, 219, 162], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():

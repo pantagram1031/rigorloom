@@ -49,10 +49,14 @@ CORPUS = os.path.join(ROOT, "tests", "corpus", "forms", "converted")
 #: WAS that residual — one class-B line at -0.02 px — so computed layout now
 #: reproduces its cache exactly and its report has an empty
 #: ``first_divergence_per_paragraph``, which makes every test below vacuous.
-#: ``gianmun-byeolji-1ho`` is smaller still (one page) and diverges for a
-#: reason this renderer has not closed: one class-A paragraph, three lines,
-#: the font-substitution advance gap.
-SMALL_FORM = os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")
+#: It was then ``gianmun-byeolji-1ho`` (one page, one class-A paragraph over
+#: three lines) until the measured HFT table's attribution walk reached the
+#: paragraphs inside tables: that form's ¶63 is metered off 한양중고딕, whose
+#: ``"`` the table now carries, and its last disagreement closed too.
+#: ``jeongbo-gonggae-cheongguseo`` is also one page and still diverges —
+#: two class-A paragraphs over four lines, on the substituted-face advance
+#: gap, which no slice has closed.
+SMALL_FORM = os.path.join(CORPUS, "jeongbo-gonggae-cheongguseo.hwpx")
 
 
 def box(text="hello", page=1, y0=100.0, x0=10.0, address=0):

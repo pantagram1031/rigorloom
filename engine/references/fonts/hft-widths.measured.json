@@ -21,19 +21,22 @@
       "saeopja-deungnok-sinchengseo"
     ],
     "coverage": {
-      "faces": 5,
-      "code_points": 226,
+      "faces": 8,
+      "code_points": 528,
       "code_points_per_face": {
-        "HCI Poppy": 22,
+        "HCI Poppy": 37,
         "고딕": 38,
         "명조": 1,
-        "한양신명조": 5,
-        "한양중고딕": 160
+        "신명 신문명조": 69,
+        "필기": 70,
+        "한양견고딕": 71,
+        "한양신명조": 49,
+        "한양중고딕": 193
       },
-      "observations": 2301,
+      "observations": 3184,
       "code_points_with_more_than_one_width": 0,
-      "type3_code_points_no_paired_run_used": 494,
-      "attributed_to_a_non_HFT_face": 0
+      "type3_code_points_no_paired_run_used": 18,
+      "attributed_to_a_non_HFT_face": 2
     },
     "verification": {
       "what": "the declared /Widths against the pen distance between two aligned glyph origins, on unstretched lines with no hh:spacing, per singleton segment",
@@ -60,6 +63,41 @@
         }
       },
       "note": "a singleton's pen distance runs to the NEXT glyph's origin, so it still carries any gap Hancom opens at a class boundary; the residual is an upper bound"
+    },
+    "verification_in_table": {
+      "observations": 244,
+      "median_abs_em": 0.014916,
+      "within_0.01_em": 111,
+      "within_0.02_em": 128,
+      "per_class": {
+        "digit": {
+          "n": 59,
+          "median_abs_em": 0.006
+        },
+        "fw_punct": {
+          "n": 1,
+          "median_abs_em": 1e-06
+        },
+        "hangul": {
+          "n": 146,
+          "median_abs_em": 0.043499
+        },
+        "hanja": {
+          "n": 1,
+          "median_abs_em": 0.014927
+        },
+        "latin": {
+          "n": 19,
+          "median_abs_em": 0.0025
+        },
+        "punct": {
+          "n": 18,
+          "median_abs_em": 0.006
+        }
+      },
+      "what": "the same reading, on the paragraphs INSIDE tables -- the rows the top-level walk above never reaches, which is where this table's 한양견고딕 and 8 pt 한양신명조 coverage comes from",
+      "why_separate": "advance_probe.probe_document walks the top-level paragraphs, because a cached hp:lineseg comparison is defined on the flowed body; the check above is read off it and is left exactly as it was",
+      "note": "read per class. digit, latin and punct -- the classes whose rows actually move an advance -- agree with /Widths to a few thousandths of an em. hangul does not: a cell line's pen distances run 4-5 % wide because the cell justifies its own text, which the top-level check never sees (hangul there is 0.0003 em). That costs this table nothing, because every hangul row it adds carries 1.0000 em -- exactly the declared cell an uncovered syllable already fell back to -- so no hangul row changes any advance the renderer computes."
     },
     "hangul_fallback": "a Hangul syllable this table does not cover is advanced by the declared cell; see the per-face hangul_em below"
   },
@@ -94,9 +132,33 @@
       "modal_share": 1.0,
       "distinct": 1
     },
+    "신명 신문명조": {
+      "em": 1.0,
+      "observations": 115,
+      "modal_share": 1.0,
+      "distinct": 1
+    },
+    "필기": {
+      "em": 1.0,
+      "observations": 102,
+      "modal_share": 1.0,
+      "distinct": 1
+    },
+    "한양견고딕": {
+      "em": 1.0,
+      "observations": 149,
+      "modal_share": 1.0,
+      "distinct": 1
+    },
+    "한양신명조": {
+      "em": 1.0,
+      "observations": 36,
+      "modal_share": 1.0,
+      "distinct": 1
+    },
     "한양중고딕": {
       "em": 1.0,
-      "observations": 801,
+      "observations": 949,
       "modal_share": 1.0,
       "distinct": 1
     }
@@ -104,25 +166,27 @@
   "faces": {
     "HCI Poppy": {
       "declared_type": "HFT",
-      "code_points": 22,
-      "observations": 1183,
+      "code_points": 37,
+      "observations": 1333,
       "forms": [
         "admrul-gajokdolbom-hyuga-sinchengseo",
         "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
         "moel-pyojun-geunrogyeyakseo-2013",
-        "moel-pyojun-geunrogyeyakseo-2025"
+        "moel-pyojun-geunrogyeyakseo-2025",
+        "nrf-gyeolgwa-bogoseo-yangsik"
       ],
       "widths": {
         "U+0020": {
           "char": " ",
           "advance_em": 0.25,
-          "observations": 30,
-          "declarations": 4,
+          "observations": 40,
+          "declarations": 6,
           "forms": [
             "admrul-gajokdolbom-hyuga-sinchengseo",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "space",
           "slot": "latin"
@@ -142,13 +206,14 @@
         "U+0028": {
           "char": "(",
           "advance_em": 0.332,
-          "observations": 212,
-          "declarations": 4,
+          "observations": 224,
+          "declarations": 7,
           "forms": [
             "admrul-gajokdolbom-hyuga-sinchengseo",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "punct",
           "slot": "latin"
@@ -156,13 +221,25 @@
         "U+0029": {
           "char": ")",
           "advance_em": 0.332,
-          "observations": 212,
-          "declarations": 4,
+          "observations": 224,
+          "declarations": 7,
           "forms": [
             "admrul-gajokdolbom-hyuga-sinchengseo",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+002A": {
+          "char": "*",
+          "advance_em": 0.388,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "punct",
           "slot": "latin"
@@ -170,11 +247,13 @@
         "U+002C": {
           "char": ",",
           "advance_em": 0.248,
-          "observations": 107,
-          "declarations": 2,
+          "observations": 125,
+          "declarations": 5,
           "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "punct",
           "slot": "latin"
@@ -182,11 +261,12 @@
         "U+002D": {
           "char": "-",
           "advance_em": 0.332,
-          "observations": 89,
-          "declarations": 2,
+          "observations": 93,
+          "declarations": 3,
           "forms": [
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "punct",
           "slot": "latin"
@@ -194,13 +274,14 @@
         "U+002E": {
           "char": ".",
           "advance_em": 0.248,
-          "observations": 109,
-          "declarations": 4,
+          "observations": 130,
+          "declarations": 6,
           "forms": [
             "admrul-gajokdolbom-hyuga-sinchengseo",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "punct",
           "slot": "latin"
@@ -208,11 +289,13 @@
         "U+002F": {
           "char": "/",
           "advance_em": 0.605,
-          "observations": 8,
-          "declarations": 2,
+          "observations": 11,
+          "declarations": 4,
           "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "punct",
           "slot": "latin"
@@ -220,13 +303,14 @@
         "U+0030": {
           "char": "0",
           "advance_em": 0.498,
-          "observations": 8,
-          "declarations": 4,
+          "observations": 16,
+          "declarations": 6,
           "forms": [
             "admrul-gajokdolbom-hyuga-sinchengseo",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -234,11 +318,13 @@
         "U+0031": {
           "char": "1",
           "advance_em": 0.498,
-          "observations": 47,
-          "declarations": 2,
+          "observations": 62,
+          "declarations": 6,
           "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -246,13 +332,14 @@
         "U+0032": {
           "char": "2",
           "advance_em": 0.498,
-          "observations": 13,
-          "declarations": 4,
+          "observations": 21,
+          "declarations": 6,
           "forms": [
             "admrul-gajokdolbom-hyuga-sinchengseo",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -260,11 +347,13 @@
         "U+0033": {
           "char": "3",
           "advance_em": 0.498,
-          "observations": 11,
-          "declarations": 2,
+          "observations": 15,
+          "declarations": 5,
           "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -272,11 +361,12 @@
         "U+0034": {
           "char": "4",
           "advance_em": 0.498,
-          "observations": 14,
-          "declarations": 2,
+          "observations": 15,
+          "declarations": 3,
           "forms": [
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -284,11 +374,12 @@
         "U+0035": {
           "char": "5",
           "advance_em": 0.498,
-          "observations": 11,
-          "declarations": 2,
+          "observations": 12,
+          "declarations": 3,
           "forms": [
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -296,12 +387,13 @@
         "U+0036": {
           "char": "6",
           "advance_em": 0.498,
-          "observations": 12,
-          "declarations": 3,
+          "observations": 14,
+          "declarations": 4,
           "forms": [
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -309,11 +401,12 @@
         "U+0037": {
           "char": "7",
           "advance_em": 0.498,
-          "observations": 20,
-          "declarations": 2,
+          "observations": 21,
+          "declarations": 3,
           "forms": [
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -321,11 +414,12 @@
         "U+0038": {
           "char": "8",
           "advance_em": 0.498,
-          "observations": 9,
-          "declarations": 2,
+          "observations": 12,
+          "declarations": 4,
           "forms": [
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -333,11 +427,12 @@
         "U+0039": {
           "char": "9",
           "advance_em": 0.498,
-          "observations": 9,
-          "declarations": 2,
+          "observations": 10,
+          "declarations": 3,
           "forms": [
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "digit",
           "slot": "latin"
@@ -345,15 +440,60 @@
         "U+003A": {
           "char": ":",
           "advance_em": 0.248,
-          "observations": 206,
-          "declarations": 4,
+          "observations": 213,
+          "declarations": 5,
           "forms": [
             "admrul-gajokdolbom-hyuga-sinchengseo",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
-            "moel-pyojun-geunrogyeyakseo-2025"
+            "moel-pyojun-geunrogyeyakseo-2025",
+            "nrf-gyeolgwa-bogoseo-yangsik"
           ],
           "class": "punct",
+          "slot": "latin"
+        },
+        "U+0044": {
+          "char": "D",
+          "advance_em": 0.773,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0045": {
+          "char": "E",
+          "advance_em": 0.609,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+004E": {
+          "char": "N",
+          "advance_em": 0.83,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0052": {
+          "char": "R",
+          "advance_em": 0.667,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
           "slot": "latin"
         },
         "U+005B": {
@@ -376,6 +516,116 @@
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
           "class": "punct",
+          "slot": "latin"
+        },
+        "U+0061": {
+          "char": "a",
+          "advance_em": 0.498,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0063": {
+          "char": "c",
+          "advance_em": 0.443,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0064": {
+          "char": "d",
+          "advance_em": 0.609,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0065": {
+          "char": "e",
+          "advance_em": 0.478,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0066": {
+          "char": "f",
+          "advance_em": 0.332,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0067": {
+          "char": "g",
+          "advance_em": 0.554,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0068": {
+          "char": "h",
+          "advance_em": 0.582,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+006F": {
+          "char": "o",
+          "advance_em": 0.546,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0070": {
+          "char": "p",
+          "advance_em": 0.599,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0077": {
+          "char": "w",
+          "advance_em": 0.832,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "latin",
           "slot": "latin"
         },
         "U+007E": {
@@ -841,15 +1091,2515 @@
         }
       }
     },
-    "한양신명조": {
+    "신명 신문명조": {
       "declared_type": "HFT",
-      "code_points": 5,
-      "observations": 87,
+      "code_points": 69,
+      "observations": 155,
       "forms": [
-        "moel-pyojun-geunrogyeyakseo-2013",
+        "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+      ],
+      "widths": {
+        "U+0020": {
+          "char": " ",
+          "advance_em": 1.0,
+          "observations": 7,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "space",
+          "slot": "latin"
+        },
+        "U+0025": {
+          "char": "%",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0028": {
+          "char": "(",
+          "advance_em": 0.5,
+          "observations": 4,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0029": {
+          "char": ")",
+          "advance_em": 0.5,
+          "observations": 5,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+002C": {
+          "char": ",",
+          "advance_em": 0.5,
+          "observations": 6,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0030": {
+          "char": "0",
+          "advance_em": 0.5,
+          "observations": 8,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0032": {
+          "char": "2",
+          "advance_em": 0.5,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0033": {
+          "char": "3",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0035": {
+          "char": "5",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+003C": {
+          "char": "<",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+003E": {
+          "char": ">",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0041": {
+          "char": "A",
+          "advance_em": 0.658,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0054": {
+          "char": "T",
+          "advance_em": 0.632,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+0056": {
+          "char": "V",
+          "advance_em": 0.658,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "latin",
+          "slot": "latin"
+        },
+        "U+AC00": {
+          "char": "가",
+          "advance_em": 1.0,
+          "observations": 5,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AC74": {
+          "char": "건",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACBD": {
+          "char": "경",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACF5": {
+          "char": "공",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACFC": {
+          "char": "과",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AD6C": {
+          "char": "구",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AE08": {
+          "char": "금",
+          "advance_em": 1.0,
+          "observations": 5,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AE09": {
+          "char": "급",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AE30": {
+          "char": "기",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B294": {
+          "char": "는",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B2F4": {
+          "char": "담",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B300": {
+          "char": "대",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B418": {
+          "char": "되",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B420": {
+          "char": "될",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B4F1": {
+          "char": "등",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BB34": {
+          "char": "무",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC0F": {
+          "char": "및",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BD80": {
+          "char": "부",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BD84": {
+          "char": "분",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BD88": {
+          "char": "불",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BE44": {
+          "char": "비",
+          "advance_em": 1.0,
+          "observations": 8,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C0AC": {
+          "char": "사",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C0C1": {
+          "char": "상",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C131": {
+          "char": "성",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C138": {
+          "char": "세",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C18C": {
+          "char": "소",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C2DC": {
+          "char": "시",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C2DD": {
+          "char": "식",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C561": {
+          "char": "액",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C57C": {
+          "char": "야",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C5C5": {
+          "char": "업",
+          "advance_em": 1.0,
+          "observations": 6,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C5D0": {
+          "char": "에",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C608": {
+          "char": "예",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C694": {
+          "char": "요",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C6A9": {
+          "char": "용",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C6B0": {
+          "char": "우",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C6D0": {
+          "char": "원",
+          "advance_em": 1.0,
+          "observations": 6,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C720": {
+          "char": "유",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C740": {
+          "char": "은",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C758": {
+          "char": "의",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C774": {
+          "char": "이",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C778": {
+          "char": "인",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C785": {
+          "char": "입",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C791": {
+          "char": "작",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C7A5": {
+          "char": "장",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C810": {
+          "char": "점",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C900": {
+          "char": "준",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C911": {
+          "char": "중",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C9C0": {
+          "char": "지",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CC9C": {
+          "char": "천",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CD08": {
+          "char": "초",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CD9C": {
+          "char": "출",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CE58": {
+          "char": "치",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D3B8": {
+          "char": "편",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D488": {
+          "char": "품",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        }
+      }
+    },
+    "필기": {
+      "declared_type": "HFT",
+      "code_points": 70,
+      "observations": 114,
+      "forms": [
         "moel-pyojun-geunrogyeyakseo-2025"
       ],
       "widths": {
+        "U+0020": {
+          "char": " ",
+          "advance_em": 0.5,
+          "observations": 4,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "space",
+          "slot": "latin"
+        },
+        "U+0028": {
+          "char": "(",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0029": {
+          "char": ")",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+002C": {
+          "char": ",",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+002D": {
+          "char": "-",
+          "advance_em": 0.5,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0030": {
+          "char": "0",
+          "advance_em": 0.5,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0035": {
+          "char": "5",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+AC00": {
+          "char": "가",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AC04": {
+          "char": "간",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AC74": {
+          "char": "건",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AC83": {
+          "char": "것",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACBD": {
+          "char": "경",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACFC": {
+          "char": "과",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ADFC": {
+          "char": "근",
+          "advance_em": 1.0,
+          "observations": 5,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AE30": {
+          "char": "기",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B294": {
+          "char": "는",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B2E8": {
+          "char": "단",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B2F9": {
+          "char": "당",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B3D9": {
+          "char": "동",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B418": {
+          "char": "되",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B4F1": {
+          "char": "등",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B7C9": {
+          "char": "량",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B824": {
+          "char": "려",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B85C": {
+          "char": "로",
+          "advance_em": 1.0,
+          "observations": 7,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B8CC": {
+          "char": "료",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B9CC": {
+          "char": "만",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BA70": {
+          "char": "며",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BA74": {
+          "char": "면",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BA85": {
+          "char": "명",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BB34": {
+          "char": "무",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC18": {
+          "char": "반",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC1C": {
+          "char": "발",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC29": {
+          "char": "방",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BCC0": {
+          "char": "변",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BD80": {
+          "char": "부",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C0AC": {
+          "char": "사",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C11C": {
+          "char": "서",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C18C": {
+          "char": "소",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C2DC": {
+          "char": "시",
+          "advance_em": 1.0,
+          "observations": 5,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C54A": {
+          "char": "않",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C57C": {
+          "char": "야",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C5B4": {
+          "char": "어",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C5C5": {
+          "char": "업",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C640": {
+          "char": "와",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C694": {
+          "char": "요",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C6A9": {
+          "char": "용",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C6D0": {
+          "char": "원",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C704": {
+          "char": "위",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C720": {
+          "char": "유",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C73C": {
+          "char": "으",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C740": {
+          "char": "은",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C744": {
+          "char": "을",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C758": {
+          "char": "의",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C774": {
+          "char": "이",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C778": {
+          "char": "인",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C77C": {
+          "char": "일",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C788": {
+          "char": "있",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C790": {
+          "char": "자",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C801": {
+          "char": "적",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C815": {
+          "char": "정",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C81C": {
+          "char": "제",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C870": {
+          "char": "조",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C8FC": {
+          "char": "주",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C9C0": {
+          "char": "지",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D0DC": {
+          "char": "태",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D558": {
+          "char": "하",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D568": {
+          "char": "함",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D569": {
+          "char": "합",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D56D": {
+          "char": "항",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D5C8": {
+          "char": "허",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        }
+      }
+    },
+    "한양견고딕": {
+      "declared_type": "HFT",
+      "code_points": 71,
+      "observations": 173,
+      "forms": [
+        "admrul-gajokdolbom-hyuga-sinchengseo",
+        "gianmun-byeolji-1ho",
+        "gianmun-byeolji-2ho",
+        "jeongbo-gonggae-cheongguseo",
+        "jumin-deungchobon-sinchengseo",
+        "saeopja-deungnok-sinchengseo"
+      ],
+      "widths": {
+        "U+0020": {
+          "char": " ",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-2ho",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "space",
+          "slot": "latin"
+        },
+        "U+0028": {
+          "char": "(",
+          "advance_em": 0.368,
+          "observations": 5,
+          "declarations": 3,
+          "forms": [
+            "gianmun-byeolji-2ho",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0029": {
+          "char": ")",
+          "advance_em": 0.375,
+          "observations": 5,
+          "declarations": 3,
+          "forms": [
+            "gianmun-byeolji-2ho",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+005B": {
+          "char": "[",
+          "advance_em": 0.336,
+          "observations": 5,
+          "declarations": 2,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+005D": {
+          "char": "]",
+          "advance_em": 0.336,
+          "observations": 5,
+          "declarations": 2,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+AC00": {
+          "char": "가",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AC1C": {
+          "char": "개",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "jeongbo-gonggae-cheongguseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACE0": {
+          "char": "고",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACF5": {
+          "char": "공",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "jeongbo-gonggae-cheongguseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACFC": {
+          "char": "과",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AD00": {
+          "char": "관",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AD50": {
+          "char": "교",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AD6C": {
+          "char": "구",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jeongbo-gonggae-cheongguseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AE30": {
+          "char": "기",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B294": {
+          "char": "는",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B2CC": {
+          "char": "닌",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B2E8": {
+          "char": "단",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B2EC": {
+          "char": "달",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B3CC": {
+          "char": "돌",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B3D9": {
+          "char": "동",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B41C": {
+          "char": "된",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B4F1": {
+          "char": "등",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "jumin-deungchobon-sinchengseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B610": {
+          "char": "또",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B78C": {
+          "char": "람",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B85D": {
+          "char": "록",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "jumin-deungchobon-sinchengseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B958": {
+          "char": "류",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B97C": {
+          "char": "를",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BA85": {
+          "char": "명",
+          "advance_em": 1.0,
+          "observations": 5,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BAA9": {
+          "char": "목",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BBFC": {
+          "char": "민",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC1B": {
+          "char": "받",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC88": {
+          "char": "번",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC95": {
+          "char": "법",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BCF4": {
+          "char": "보",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jeongbo-gonggae-cheongguseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BCF8": {
+          "char": "본",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BD04": {
+          "char": "봄",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BD80": {
+          "char": "부",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "jumin-deungchobon-sinchengseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C0AC": {
+          "char": "사",
+          "advance_em": 1.0,
+          "observations": 11,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C11C": {
+          "char": "서",
+          "advance_em": 1.0,
+          "observations": 8,
+          "declarations": 5,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo",
+            "jeongbo-gonggae-cheongguseo",
+            "jumin-deungchobon-sinchengseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C138": {
+          "char": "세",
+          "advance_em": 1.0,
+          "observations": 7,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C18C": {
+          "char": "소",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C1A1": {
+          "char": "송",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C2E0": {
+          "char": "신",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 4,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo",
+            "jumin-deungchobon-sinchengseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C544": {
+          "char": "아",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C5C5": {
+          "char": "업",
+          "advance_em": 1.0,
+          "observations": 11,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C5F4": {
+          "char": "열",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C6A9": {
+          "char": "용",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C704": {
+          "char": "위",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C720": {
+          "char": "유",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C744": {
+          "char": "을",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C758": {
+          "char": "의",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C774": {
+          "char": "이",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C778": {
+          "char": "인",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 2,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C790": {
+          "char": "자",
+          "advance_em": 1.0,
+          "observations": 10,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C7A5": {
+          "char": "장",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C815": {
+          "char": "정",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "jeongbo-gonggae-cheongguseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C81C": {
+          "char": "제",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C870": {
+          "char": "조",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C871": {
+          "char": "족",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C885": {
+          "char": "종",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C8FC": {
+          "char": "주",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C9C1": {
+          "char": "직",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CCAD": {
+          "char": "청",
+          "advance_em": 1.0,
+          "observations": 5,
+          "declarations": 5,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo",
+            "jeongbo-gonggae-cheongguseo",
+            "jumin-deungchobon-sinchengseo",
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CCB4": {
+          "char": "체",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CD08": {
+          "char": "초",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D22C": {
+          "char": "투",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D45C": {
+          "char": "표",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "jumin-deungchobon-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D569": {
+          "char": "합",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D589": {
+          "char": "행",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D638": {
+          "char": "호",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D734": {
+          "char": "휴",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "admrul-gajokdolbom-hyuga-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        }
+      }
+    },
+    "한양신명조": {
+      "declared_type": "HFT",
+      "code_points": 49,
+      "observations": 170,
+      "forms": [
+        "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
+        "moel-pyojun-geunrogyeyakseo-2013",
+        "moel-pyojun-geunrogyeyakseo-2025",
+        "nrf-gyeolgwa-bogoseo-yangsik",
+        "saeopja-deungnok-sinchengseo"
+      ],
+      "widths": {
+        "U+0028": {
+          "char": "(",
+          "advance_em": 0.395,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0029": {
+          "char": ")",
+          "advance_em": 0.374,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+0030": {
+          "char": "0",
+          "advance_em": 0.5,
+          "observations": 16,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0031": {
+          "char": "1",
+          "advance_em": 0.5,
+          "observations": 3,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0032": {
+          "char": "2",
+          "advance_em": 0.5,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0033": {
+          "char": "3",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0034": {
+          "char": "4",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0035": {
+          "char": "5",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0036": {
+          "char": "6",
+          "advance_em": 0.5,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0037": {
+          "char": "7",
+          "advance_em": 0.5,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0038": {
+          "char": "8",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
+        "U+0039": {
+          "char": "9",
+          "advance_em": 0.5,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "digit",
+          "slot": "latin"
+        },
         "U+00B7": {
           "char": "·",
           "advance_em": 0.384,
@@ -908,14 +3658,368 @@
           ],
           "class": "fw_punct",
           "slot": "symbol"
+        },
+        "U+25E6": {
+          "char": "◦",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 2,
+          "forms": [
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "fw_punct",
+          "slot": "symbol"
+        },
+        "U+300C": {
+          "char": "「",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "fw_punct",
+          "slot": "symbol"
+        },
+        "U+300D": {
+          "char": "」",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 1,
+          "forms": [
+            "nrf-gyeolgwa-bogoseo-yangsik"
+          ],
+          "class": "fw_punct",
+          "slot": "symbol"
+        },
+        "U+5B6B": {
+          "char": "孫",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hanja",
+          "slot": "hanja"
+        },
+        "U+ACC4": {
+          "char": "계",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AD00": {
+          "char": "관",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AD6C": {
+          "char": "구",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+AE30": {
+          "char": "기",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B4DC": {
+          "char": "드",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B9E4": {
+          "char": "매",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BAA8": {
+          "char": "모",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC30": {
+          "char": "배",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC95": {
+          "char": "법",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BCF8": {
+          "char": "본",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BD80": {
+          "char": "부",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BD84": {
+          "char": "분",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C190": {
+          "char": "손",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C218": {
+          "char": "수",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C678": {
+          "char": "외",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C6B0": {
+          "char": "우",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C758": {
+          "char": "의",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C778": {
+          "char": "인",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C790": {
+          "char": "자",
+          "advance_em": 1.0,
+          "observations": 4,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C81C": {
+          "char": "제",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C870": {
+          "char": "조",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C871": {
+          "char": "족",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CE5C": {
+          "char": "친",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+CF54": {
+          "char": "코",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D0C0": {
+          "char": "타",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D2B9": {
+          "char": "특",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D615": {
+          "char": "형",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+FF5E": {
+          "char": "～",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "saeopja-deungnok-sinchengseo"
+          ],
+          "class": "fw_punct",
+          "slot": "symbol"
         }
       }
     },
     "한양중고딕": {
       "declared_type": "HFT",
-      "code_points": 160,
-      "observations": 978,
+      "code_points": 193,
+      "observations": 1186,
       "forms": [
+        "gianmun-byeolji-1ho",
+        "gianmun-byeolji-2ho",
         "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
         "moel-pyojun-geunrogyeyakseo-2013",
         "moel-pyojun-geunrogyeyakseo-2025"
@@ -924,9 +4028,11 @@
         "U+0020": {
           "char": " ",
           "advance_em": 1.0,
-          "observations": 52,
-          "declarations": 3,
+          "observations": 65,
+          "declarations": 5,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -934,12 +4040,25 @@
           "class": "space",
           "slot": "latin"
         },
+        "U+0022": {
+          "char": "\"",
+          "advance_em": 0.42,
+          "observations": 22,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
         "U+0028": {
           "char": "(",
           "advance_em": 0.288,
-          "observations": 24,
-          "declarations": 2,
+          "observations": 28,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -949,9 +4068,11 @@
         "U+0029": {
           "char": ")",
           "advance_em": 0.281,
-          "observations": 24,
-          "declarations": 2,
+          "observations": 28,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -961,11 +4082,24 @@
         "U+002C": {
           "char": ",",
           "advance_em": 0.246,
-          "observations": 12,
-          "declarations": 2,
+          "observations": 22,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "punct",
+          "slot": "latin"
+        },
+        "U+002D": {
+          "char": "-",
+          "advance_em": 0.518,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho"
           ],
           "class": "punct",
           "slot": "latin"
@@ -973,9 +4107,11 @@
         "U+002E": {
           "char": ".",
           "advance_em": 0.245,
-          "observations": 6,
-          "declarations": 2,
+          "observations": 8,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1131,11 +4267,22 @@
           "class": "fw_punct",
           "slot": "symbol"
         },
+        "U+2024": {
+          "char": "․",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "fw_punct",
+          "slot": "symbol"
+        },
         "U+203B": {
           "char": "※",
           "advance_em": 1.0,
-          "observations": 18,
-          "declarations": 3,
+          "observations": 19,
+          "declarations": 4,
           "forms": [
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
@@ -1193,9 +4340,10 @@
         "U+AC1C": {
           "char": "개",
           "advance_em": 1.0,
-          "observations": 4,
-          "declarations": 1,
+          "observations": 5,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2013"
           ],
           "class": "hangul",
@@ -1223,6 +4371,17 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+AC80": {
+          "char": "검",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+AC83": {
           "char": "것",
           "advance_em": 1.0,
@@ -1230,6 +4389,18 @@
           "declarations": 1,
           "forms": [
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ACB0": {
+          "char": "결",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -1262,9 +4433,11 @@
         "U+ACE0": {
           "char": "고",
           "advance_em": 1.0,
-          "observations": 10,
-          "declarations": 1,
+          "observations": 13,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
           "class": "hangul",
@@ -1273,9 +4446,10 @@
         "U+ACF5": {
           "char": "공",
           "advance_em": 1.0,
-          "observations": 16,
-          "declarations": 2,
+          "observations": 18,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1285,9 +4459,10 @@
         "U+ACFC": {
           "char": "과",
           "advance_em": 1.0,
-          "observations": 2,
-          "declarations": 1,
+          "observations": 3,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
           "class": "hangul",
@@ -1296,9 +4471,10 @@
         "U+AD00": {
           "char": "관",
           "advance_em": 1.0,
-          "observations": 3,
-          "declarations": 2,
+          "observations": 4,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1308,9 +4484,10 @@
         "U+AD6C": {
           "char": "구",
           "advance_em": 1.0,
-          "observations": 1,
-          "declarations": 1,
+          "observations": 2,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -1330,9 +4507,10 @@
         "U+AD8C": {
           "char": "권",
           "advance_em": 1.0,
-          "observations": 2,
-          "declarations": 1,
+          "observations": 3,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -1345,6 +4523,17 @@
           "declarations": 1,
           "forms": [
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+ADF8": {
+          "char": "그",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -1375,9 +4564,10 @@
         "U+AE09": {
           "char": "급",
           "advance_em": 1.0,
-          "observations": 3,
-          "declarations": 2,
+          "observations": 4,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1387,9 +4577,11 @@
         "U+AE30": {
           "char": "기",
           "advance_em": 1.0,
-          "observations": 21,
-          "declarations": 3,
+          "observations": 24,
+          "declarations": 5,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -1408,12 +4600,25 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+B09C": {
+          "char": "난",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+B0B4": {
           "char": "내",
           "advance_em": 1.0,
-          "observations": 1,
-          "declarations": 1,
+          "observations": 2,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
           "class": "hangul",
@@ -1456,9 +4661,11 @@
         "U+B294": {
           "char": "는",
           "advance_em": 1.0,
-          "observations": 31,
-          "declarations": 3,
+          "observations": 34,
+          "declarations": 5,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -1469,9 +4676,11 @@
         "U+B2C8": {
           "char": "니",
           "advance_em": 1.0,
-          "observations": 3,
-          "declarations": 1,
+          "observations": 6,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -1480,9 +4689,11 @@
         "U+B2E4": {
           "char": "다",
           "advance_em": 1.0,
-          "observations": 3,
-          "declarations": 1,
+          "observations": 7,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -1525,9 +4736,10 @@
         "U+B3C4": {
           "char": "도",
           "advance_em": 1.0,
-          "observations": 2,
-          "declarations": 1,
+          "observations": 4,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
           "class": "hangul",
@@ -1579,13 +4791,47 @@
           "class": "hangul",
           "slot": "hangul"
         },
-        "U+B77C": {
-          "char": "라",
+        "U+B530": {
+          "char": "따",
           "advance_em": 1.0,
           "observations": 1,
           "declarations": 1,
           "forms": [
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B54C": {
+          "char": "때",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B77C": {
+          "char": "라",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-2ho",
             "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+B780": {
+          "char": "란",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-2ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -1601,12 +4847,24 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+B828": {
+          "char": "련",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+B85C": {
           "char": "로",
           "advance_em": 1.0,
-          "observations": 30,
-          "declarations": 2,
+          "observations": 31,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1616,9 +4874,10 @@
         "U+B97C": {
           "char": "를",
           "advance_em": 1.0,
-          "observations": 4,
-          "declarations": 2,
+          "observations": 5,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1628,9 +4887,10 @@
         "U+B9AC": {
           "char": "리",
           "advance_em": 1.0,
-          "observations": 7,
-          "declarations": 2,
+          "observations": 8,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1696,9 +4956,10 @@
         "U+BA85": {
           "char": "명",
           "advance_em": 1.0,
-          "observations": 5,
-          "declarations": 2,
+          "observations": 10,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1739,6 +5000,28 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+BB34": {
+          "char": "무",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BB38": {
+          "char": "문",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+BBF8": {
           "char": "미",
           "advance_em": 1.0,
@@ -1765,9 +5048,10 @@
         "U+BC0F": {
           "char": "및",
           "advance_em": 1.0,
-          "observations": 2,
-          "declarations": 2,
+          "observations": 3,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1785,6 +5069,17 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+BC1C": {
+          "char": "발",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+BC29": {
           "char": "방",
           "advance_em": 1.0,
@@ -1792,6 +5087,17 @@
           "declarations": 1,
           "forms": [
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BC88": {
+          "char": "번",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -1804,6 +5110,17 @@
           "forms": [
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+BCC4": {
+          "char": "별",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -1858,9 +5175,10 @@
         "U+BD84": {
           "char": "분",
           "advance_em": 1.0,
-          "observations": 1,
-          "declarations": 1,
+          "observations": 2,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
           "class": "hangul",
@@ -1869,9 +5187,11 @@
         "U+BE44": {
           "char": "비",
           "advance_em": 1.0,
-          "observations": 1,
-          "declarations": 1,
+          "observations": 3,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -1880,9 +5200,10 @@
         "U+C0AC": {
           "char": "사",
           "advance_em": 1.0,
-          "observations": 13,
-          "declarations": 2,
+          "observations": 14,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1914,10 +5235,23 @@
         "U+C11C": {
           "char": "서",
           "advance_em": 1.0,
-          "observations": 2,
+          "observations": 6,
+          "declarations": 3,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C131": {
+          "char": "성",
+          "advance_em": 1.0,
+          "observations": 1,
           "declarations": 1,
           "forms": [
-            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -1936,9 +5270,10 @@
         "U+C18C": {
           "char": "소",
           "advance_em": 1.0,
-          "observations": 5,
-          "declarations": 3,
+          "observations": 8,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -1949,9 +5284,10 @@
         "U+C218": {
           "char": "수",
           "advance_em": 1.0,
-          "observations": 3,
-          "declarations": 2,
+          "observations": 5,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1983,9 +5319,10 @@
         "U+C2DC": {
           "char": "시",
           "advance_em": 1.0,
-          "observations": 12,
-          "declarations": 2,
+          "observations": 14,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -1995,9 +5332,11 @@
         "U+C2DD": {
           "char": "식",
           "advance_em": 1.0,
-          "observations": 1,
-          "declarations": 1,
+          "observations": 3,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -2006,10 +5345,34 @@
         "U+C2E0": {
           "char": "신",
           "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C544": {
+          "char": "아",
+          "advance_em": 1.0,
+          "observations": 3,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C548": {
+          "char": "안",
+          "advance_em": 1.0,
           "observations": 1,
           "declarations": 1,
           "forms": [
-            "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -2059,6 +5422,17 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+C5B4": {
+          "char": "어",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+C5C5": {
           "char": "업",
           "advance_em": 1.0,
@@ -2073,9 +5447,11 @@
         "U+C5D0": {
           "char": "에",
           "advance_em": 1.0,
-          "observations": 23,
-          "declarations": 3,
+          "observations": 26,
+          "declarations": 5,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2086,9 +5462,10 @@
         "U+C5EC": {
           "char": "여",
           "advance_em": 1.0,
-          "observations": 11,
-          "declarations": 3,
+          "observations": 12,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2099,9 +5476,10 @@
         "U+C5F0": {
           "char": "연",
           "advance_em": 1.0,
-          "observations": 6,
-          "declarations": 1,
+          "observations": 7,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
           "class": "hangul",
@@ -2151,12 +5529,25 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+C694": {
+          "char": "요",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+C6A9": {
           "char": "용",
           "advance_em": 1.0,
-          "observations": 13,
-          "declarations": 2,
+          "observations": 16,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -2166,9 +5557,10 @@
         "U+C6B0": {
           "char": "우",
           "advance_em": 1.0,
-          "observations": 15,
-          "declarations": 3,
+          "observations": 16,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2190,9 +5582,10 @@
         "U+C6D0": {
           "char": "원",
           "advance_em": 1.0,
-          "observations": 3,
-          "declarations": 1,
+          "observations": 4,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -2213,9 +5606,10 @@
         "U+C704": {
           "char": "위",
           "advance_em": 1.0,
-          "observations": 2,
-          "declarations": 1,
+          "observations": 3,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -2259,9 +5653,11 @@
         "U+C740": {
           "char": "은",
           "advance_em": 1.0,
-          "observations": 3,
-          "declarations": 2,
+          "observations": 5,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -2271,9 +5667,10 @@
         "U+C744": {
           "char": "을",
           "advance_em": 1.0,
-          "observations": 21,
-          "declarations": 3,
+          "observations": 22,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2284,9 +5681,11 @@
         "U+C758": {
           "char": "의",
           "advance_em": 1.0,
-          "observations": 14,
-          "declarations": 2,
+          "observations": 17,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -2296,9 +5695,11 @@
         "U+C774": {
           "char": "이",
           "advance_em": 1.0,
-          "observations": 5,
-          "declarations": 2,
+          "observations": 8,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -2320,9 +5721,10 @@
         "U+C77C": {
           "char": "일",
           "advance_em": 1.0,
-          "observations": 16,
-          "declarations": 3,
+          "observations": 18,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2356,9 +5758,10 @@
         "U+C788": {
           "char": "있",
           "advance_em": 1.0,
-          "observations": 2,
-          "declarations": 1,
+          "observations": 3,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -2367,11 +5770,23 @@
         "U+C790": {
           "char": "자",
           "advance_em": 1.0,
-          "observations": 5,
-          "declarations": 2,
+          "observations": 9,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C791": {
+          "char": "작",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -2390,9 +5805,11 @@
         "U+C7AC": {
           "char": "재",
           "advance_em": 1.0,
-          "observations": 11,
-          "declarations": 2,
+          "observations": 14,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -2413,11 +5830,23 @@
         "U+C801": {
           "char": "적",
           "advance_em": 1.0,
-          "observations": 11,
-          "declarations": 2,
+          "observations": 12,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C804": {
+          "char": "전",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -2425,9 +5854,11 @@
         "U+C815": {
           "char": "정",
           "advance_em": 1.0,
-          "observations": 12,
-          "declarations": 3,
+          "observations": 14,
+          "declarations": 5,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2449,9 +5880,10 @@
         "U+C870": {
           "char": "조",
           "advance_em": 1.0,
-          "observations": 6,
-          "declarations": 2,
+          "observations": 7,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -2461,9 +5893,10 @@
         "U+C8FC": {
           "char": "주",
           "advance_em": 1.0,
-          "observations": 8,
-          "declarations": 3,
+          "observations": 11,
+          "declarations": 4,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2496,12 +5929,25 @@
         "U+C9C0": {
           "char": "지",
           "advance_em": 1.0,
-          "observations": 16,
-          "declarations": 3,
+          "observations": 20,
+          "declarations": 5,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+C9C1": {
+          "char": "직",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -2542,9 +5988,10 @@
         "U+CC98": {
           "char": "처",
           "advance_em": 1.0,
-          "observations": 1,
-          "declarations": 1,
+          "observations": 2,
+          "declarations": 2,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -2583,6 +6030,17 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+D06C": {
+          "char": "크",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+D130": {
           "char": "터",
           "advance_em": 1.0,
@@ -2590,6 +6048,17 @@
           "declarations": 1,
           "forms": [
             "moel-pyojun-geunrogyeyakseo-2025"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D1A0": {
+          "char": "토",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
@@ -2605,12 +6074,70 @@
           "class": "hangul",
           "slot": "hangul"
         },
+        "U+D398": {
+          "char": "페",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D3B8": {
+          "char": "편",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D3EC": {
+          "char": "포",
+          "advance_em": 1.0,
+          "observations": 2,
+          "declarations": 2,
+          "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D45C": {
+          "char": "표",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D544": {
+          "char": "필",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-2ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
         "U+D558": {
           "char": "하",
           "advance_em": 1.0,
-          "observations": 20,
-          "declarations": 3,
+          "observations": 25,
+          "declarations": 5,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2621,9 +6148,11 @@
         "U+D55C": {
           "char": "한",
           "advance_em": 1.0,
-          "observations": 5,
-          "declarations": 3,
+          "observations": 7,
+          "declarations": 5,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2013",
             "moel-pyojun-geunrogyeyakseo-2025"
@@ -2634,9 +6163,11 @@
         "U+D560": {
           "char": "할",
           "advance_em": 1.0,
-          "observations": 2,
-          "declarations": 1,
+          "observations": 4,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
           ],
           "class": "hangul",
@@ -2645,9 +6176,11 @@
         "U+D568": {
           "char": "함",
           "advance_em": 1.0,
-          "observations": 2,
-          "declarations": 1,
+          "observations": 4,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
+            "gianmun-byeolji-2ho",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
           "class": "hangul",
@@ -2679,9 +6212,10 @@
         "U+D589": {
           "char": "행",
           "advance_em": 1.0,
-          "observations": 5,
-          "declarations": 2,
+          "observations": 7,
+          "declarations": 3,
           "forms": [
+            "gianmun-byeolji-1ho",
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo",
             "moel-pyojun-geunrogyeyakseo-2025"
           ],
@@ -2717,6 +6251,28 @@
           "declarations": 1,
           "forms": [
             "kstartup-jiwon-sincheongseo-saeopgyehoekseo"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D638": {
+          "char": "호",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
+          ],
+          "class": "hangul",
+          "slot": "hangul"
+        },
+        "U+D648": {
+          "char": "홈",
+          "advance_em": 1.0,
+          "observations": 1,
+          "declarations": 1,
+          "forms": [
+            "gianmun-byeolji-1ho"
           ],
           "class": "hangul",
           "slot": "hangul"
