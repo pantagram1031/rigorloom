@@ -1,0 +1,9 @@
+{
+  "candidate_id": "c1",
+  "run_id": "run-sample-001",
+  "sha": "HEAD",
+  "allowed_commands": ["c1", "c2", "c3", "pytest", "rustc"],
+  "evidence_dir": "work/qa/evidence-sample-001",
+  "cards": ["c1", "c2", "c3"],
+  "requested_model": "gemini-3.8-flash"
+}
