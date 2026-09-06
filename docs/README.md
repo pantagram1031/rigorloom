@@ -44,6 +44,9 @@ plan, not living documentation:
   authoring research for 5-gen models.
 - [research/linux-hwp-edit.md](research/linux-hwp-edit.md) — Linux HWP/HWPX
   tooling research behind the v0.15 renderer-certification work.
+- [research/loom-cursor-model-pool-research.md](research/loom-cursor-model-pool-research.md)
+  — which Cursor Cloud Agent launch id to use for desktop
+  product-completion cards (not the buyer skill-tier table).
 
 ## `plans/`
 
