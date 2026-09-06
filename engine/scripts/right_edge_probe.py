@@ -156,6 +156,23 @@ def _excess_pen(rec):
     return quantised - rec["avail"] - rec["slack"]
 
 
+def _excess_gap(rec):
+    """``condense``, with the LAST character's own 자간 gap counted in.
+
+    ``_measure`` drops the trailing ``hh:charPr@spacing`` gap because 자간
+    opens space BETWEEN characters, and the reference's DRAWN pen positions
+    say so (``own_render._spacing_gap``: gianmun's four-cell 발신명의 run at
+    ``spacing="50"`` is 5.5 em wide, not 6.0).  That is a measurement of what
+    is drawn.  Whether the BREAKER fits the same quantity is a separate
+    question the drawn positions cannot answer, and this candidate is it:
+    every character carries its own gap, the last one included, so a span of
+    ``k`` characters occupies ``k`` cells rather than ``k`` advances and
+    ``k - 1`` gaps.
+    """
+    return (rec["w_visible"] + rec["trailing_gap"]
+            - rec["avail"] - rec["slack"])
+
+
 #: ``name -> (excess function, threshold in HWPUNIT or None to read one off
 #: the bracket)``.  ``tol12`` shares ``condense``'s excess on purpose: a
 #: tolerance is not a different measurement, it is a different threshold on
@@ -168,9 +185,11 @@ CANDIDATES = {
     "condense": (_excess_condense, 0.0),
     "tol12": (_excess_condense, None),
     "pen": (_excess_pen, 0.0),
+    "gap": (_excess_gap, 0.0),
 }
 
-CANDIDATE_ORDER = ("strict", "space", "punct", "condense", "tol12", "pen")
+CANDIDATE_ORDER = ("strict", "space", "punct", "condense", "tol12", "pen",
+                   "gap")
 
 CANDIDATE_BASIS = {
     "strict": "no hang at all: the whole cached span against the box",
@@ -180,6 +199,8 @@ CANDIDATE_BASIS = {
                 "#298, and this table's baseline",
     "tol12": "a fixed tolerance of k x 12 HWPUNIT (#283's pen grid)",
     "pen": "the sum rounded onto the 12 HWPUNIT pen grid before comparing",
+    "gap": "hh:charPr@spacing counted after the LAST character too, so a "
+           "span is k cells and not k advances plus k-1 gaps",
 }
 
 
@@ -312,7 +333,13 @@ def _probe_paragraph(renderer, para, el, address, in_cell):
             "form": None, "stem": None, "address": address, "line": index,
             "in_cell": in_cell, "align": align, "condense": condense,
             "horzsize": horzsize, "indent": indent, "avail": avail,
+            # The span's own character indices, so a caller can decompose the
+            # width this record states without re-deriving the span.
+            "first": first, "visible": visible, "last": last,
             "chars": visible - first,
+            # The 자간 gap ``width()`` drops off the end of the span, which
+            # the ``gap`` candidate puts back.
+            "trailing_gap": gaps[visible - 1],
             "w_full": w_full, "w_visible": w_visible,
             "w_no_trail_punct": w_no_trail_punct,
             "slack": slack(first, visible),
@@ -350,6 +377,7 @@ def _probe_paragraph(renderer, para, el, address, in_cell):
                     "w_no_trail_punct": r_punct,
                     "slack": slack(first, q + 1),
                     "avail": avail,
+                    "trailing_gap": gaps[q],
                 }
         out.append(rec)
     return out
@@ -539,7 +567,8 @@ def watched_rows(records, labels_seen):
 def _fits_factory(name, threshold):
     excess = CANDIDATES[name][0]
 
-    def _line_fits(self, para, width_hwp, avail_hwp, slack_hwp, start, end):
+    def _line_fits(self, para, width_hwp, avail_hwp, slack_hwp, start, end,
+                   trailing_gap_hwp=0.0):
         chars = para.chars
         visible = end
         while visible > start and chars[visible - 1][0] in own_render.SPACE_CHARS:
@@ -547,7 +576,7 @@ def _fits_factory(name, threshold):
         rec = {
             "w_full": width_hwp, "w_visible": width_hwp,
             "w_no_trail_punct": width_hwp, "avail": avail_hwp,
-            "slack": slack_hwp,
+            "slack": slack_hwp, "trailing_gap": trailing_gap_hwp,
         }
         if visible > start and _is_punct(chars[visible - 1][0]):
             # The breaker never presents a span that ends in whitespace, so
