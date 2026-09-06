@@ -310,10 +310,19 @@ def test_every_cell_candidate_carries_a_basis_and_a_seam():
 #: #316 predicted for them and the only prediction it made that could be
 #: tested by shipping: both are paragraphs the cache cut INSIDE an 어절, so
 #: the declared ``KEEP_WORD`` reading was what put the extra line there, not
-#: any width term.  ``saeopja`` ¶393 is the remaining one, and #316 said why
-#: no break rule reaches it: its excess is +238.0 HWPUNIT on a 2894 column,
-#: it is width and not opportunity, and the budget already forgives 96.
-STILL_OVERBROKEN = {("saeopja-deungnok-sinchengseo", 393)}
+#: any width term.  ``saeopja`` ¶393 was the remaining one, and #316 said why
+#: no break rule reaches it: its excess was +238.0 HWPUNIT on a 2894 column,
+#: width and not opportunity, and the budget already forgives 96.  No break
+#: rule did reach it; a WIDTH did.  The measured HFT table's attribution walk
+#: was reading only the top-level paragraphs, and ``saeopja``'s six top-level
+#: paragraphs are all tables -- so nothing in this form had ever been
+#: attributed and 한양신명조 carried no digit.  Its six 8 pt characters were
+#: metered off ``H2MJSM.TTF``'s 0.625 em where Hancom's own export declares
+#: 0.500, and with the measured digits the line comes in 110.0 HWPUNIT under
+#: its column and breaks where the cache broke it.  All three cells are now
+#: closed, and the set is left in place, empty, because a cell that goes back
+#: to being over-broken has to fail loudly.
+STILL_OVERBROKEN = set()
 
 
 def test_the_named_cells_are_read_off_the_real_breaker():
@@ -322,10 +331,11 @@ def test_the_named_cells_are_read_off_the_real_breaker():
     No corpus COUNT is pinned here — that is a measurement and belongs in the
     notes — but that the three named paragraphs exist, that the view finds a
     column for each, and which of them our breaker still over-breaks is what
-    every number in the notes rests on.  Two of the three closed; the one that
-    did not is the width cell, and it is named rather than dropped from the
-    view, because a cell that stops being over-broken is evidence and has to
-    stay visible.
+    every number in the notes rests on.  All three now close: two on the
+    syllable unit, and the width cell on the in-table HFT widths.  They are
+    named rather than dropped from the view, because a cell that stops being
+    over-broken is evidence and has to stay visible — and so is one that
+    starts again.
     """
     forms = {path.stem: path
              for path, _ in probe.layout_divergence.corpus_forms(ROOT)}

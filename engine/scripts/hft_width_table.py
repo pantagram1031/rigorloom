@@ -97,6 +97,32 @@ CARRIERS = {"moel-pyojun-geunrogyeyakseo-2013": (118, 141)}
 
 # -- the measurement -----------------------------------------------------
 
+def text_paragraphs(renderer, section):
+    """Every ``hp:p`` of one section, INCLUDING the ones inside tables.
+
+    ``_kids(section, "p")`` is the top-level paragraph list, and it is what
+    ``advance_probe.probe_document`` and every line-level probe walk, because
+    a cached ``hp:lineseg`` comparison is defined on the flowed body.  The
+    ATTRIBUTION below is a different question -- "which declared face is this
+    Type 3 font object standing for" -- and a form whose text lives inside a
+    table answered it with nothing at all: ``saeopja-deungnok-sinchengseo``
+    has six top-level paragraphs, all of them ``skip_reason == "table"``, and
+    757 paragraphs inside table cells that the walk never reached.  So the
+    export's own Type 3 fonts for 한양견고딕 and the 8 pt 한양신명조 were read,
+    found unclaimed, and counted in ``type3_code_points_no_paired_run_used``.
+
+    Walking every ``hp:p`` in document order costs the attribution nothing it
+    was relying on: the pairing is still ``lineseg_vs_pdf``'s, a paragraph
+    that does not match the PDF text is still dropped, and the WIDTH still
+    comes from ``/Widths`` and never from the pairing -- the pairing only
+    picks which face a font object belongs to.  Cell paragraphs do reach the
+    PDF out of the cursor's order (654 of 748 on ``saeopja``), which
+    ``find_run`` already handles by searching from 0 and flagging it.
+    """
+    root = renderer.sections[section]
+    return [el for el in root.iter() if own_render._local(el.tag) == "p"]
+
+
 def attribute_by_metric_slot(hwpx_path, pdf_path, repo_root):
     """``{pdf font: {char: Counter((face, type))}}``, on the METRIC slot.
 
@@ -120,7 +146,7 @@ def attribute_by_metric_slot(hwpx_path, pdf_path, repo_root):
     usage = defaultdict(lambda: defaultdict(Counter))
     for section in range(len(renderer.sections)):
         renderer._current_section = section
-        for el in own_render._kids(renderer.sections[section], "p"):
+        for el in text_paragraphs(renderer, section):
             para = own_render.Paragraph(el, renderer.defs["para_pr"])
             cells = lineseg_vs_pdf.character_cells(para)
             if lineseg_vs_pdf.skip_reason(para, cells) is not None:
@@ -396,6 +422,127 @@ def verify_against_anchors(targets, fonts_by_form, repo_root, keep_text=True):
     return rows
 
 
+def verify_in_table_anchors(targets, fonts_by_form, repo_root):
+    """``verify_against_anchors``, on the paragraphs inside tables.
+
+    ``verify_against_anchors`` reads its lines out of
+    ``advance_probe.probe_document``, which walks the TOP-LEVEL paragraphs --
+    it is the same walk every ``hp:lineseg`` probe uses and it is not this
+    slice's to change.  So the rows :func:`text_paragraphs` newly attributes
+    would ship unchecked, which is exactly the rows that matter here.
+
+    This is the same reading on the same evidence, done locally: the pen
+    distance between two consecutive drawn glyph origins of ONE text-showing
+    piece, in em of the size the PDF set that font in, against what the Type 3
+    object declares in ``/Widths``.  The same three filters
+    ``verify_against_anchors`` states -- adjacent on both sides, one piece, no
+    ``hh:spacing`` -- plus the stretched-line filter that its ``comparable``
+    flag stands for, recomputed here from the paragraph's own align mode.
+
+    No font program is opened: ``/Widths`` is the export's own declaration and
+    the origins are ink positions on the page.
+    """
+    rows = []
+    for hwpx, pdf_path in targets:
+        if hwpx is None:
+            continue
+        form = Path(pdf_path).stem
+        declared_width = {}
+        for font in fonts_by_form[form].values():
+            if font["subtype"] != "Type3":
+                continue
+            for glyph in font["glyphs"].values():
+                if glyph.get("char"):
+                    declared_width.setdefault(
+                        (font["span_name"], glyph["char"]), glyph["width_em"])
+        renderer = own_render.OwnRenderer(hwpx, repo_root=repo_root)
+        metrics = advance_probe.OurMetrics(renderer)
+        top_level = set()
+        for section in range(len(renderer.sections)):
+            top_level.update(id(el) for el in
+                             own_render._kids(renderer.sections[section], "p"))
+        pdf = advance_probe.read_pdf_chars(pdf_path)
+        cursor = 0
+        for section in range(len(renderer.sections)):
+            renderer._current_section = section
+            for el in text_paragraphs(renderer, section):
+                para = own_render.Paragraph(el, renderer.defs["para_pr"])
+                cells = lineseg_vs_pdf.character_cells(para)
+                if lineseg_vs_pdf.skip_reason(para, cells) is not None:
+                    continue
+                target = lineseg_vs_pdf.normalise(
+                    lineseg_vs_pdf.paragraph_text(cells))
+                hit = pdf.find_run(target, cursor)
+                if hit is None:
+                    continue
+                lo, hi, _relaxed, out_of_order = hit
+                run = advance_probe.merge_lines_with_boxes(pdf.lines[lo:hi])
+                cursor = lineseg_vs_pdf._cursor_after(cursor, hi,
+                                                      out_of_order)
+                if id(el) in top_level:
+                    continue
+                splits = list(lineseg_vs_pdf.cached_split(para, cells))
+                align_mode = para.para_pr.get("align", "LEFT")
+                for index, (clo, chi) in enumerate(splits):
+                    if index >= len(run):
+                        break
+                    last = index == len(splits) - 1
+                    if (align_mode == "DISTRIBUTE"
+                            or (align_mode == "JUSTIFY" and not last)):
+                        continue
+                    ours = advance_probe._para_chars_in_cells(para, clo, chi)
+                    boxes = run[index]["boxes"]
+                    if not ours or not boxes:
+                        continue
+                    pairs, _n1, _n2 = advance_probe.align(
+                        [(ch, cid) for _i, ch, cid in ours], boxes)
+                    for step in range(len(pairs) - 1):
+                        i1, j1 = pairs[step]
+                        i2, j2 = pairs[step + 1]
+                        if i2 != i1 + 1 or j2 != j1 + 1:
+                            continue
+                        if boxes[j1]["piece"] != boxes[j2]["piece"]:
+                            continue
+                        _pos, char, cid = ours[i1]
+                        if metrics.run(char, cid)["spacing"]:
+                            continue
+                        name = boxes[j1].get("font")
+                        declared = declared_width.get((name, char))
+                        size = boxes[j1].get("size") or 0.0
+                        if declared is None or size <= 0:
+                            continue
+                        rows.append({
+                            "form": form,
+                            "char": char,
+                            "pdf_font": name,
+                            "widths_em": declared,
+                            "anchored_em": (boxes[j2]["ox"] - boxes[j1]["ox"])
+                            / size,
+                        })
+        del renderer
+    return rows
+
+
+def summarise_residuals(rows):
+    """The residual block ``build_payload`` writes, for one set of rows."""
+    residuals = [abs(row["widths_em"] - row["anchored_em"]) for row in rows]
+    per_class = defaultdict(list)
+    for row in rows:
+        per_class[advance_probe.char_class(row["char"])].append(
+            abs(row["widths_em"] - row["anchored_em"]))
+    return {
+        "observations": len(residuals),
+        "median_abs_em": (round(statistics.median(residuals), 6)
+                          if residuals else None),
+        "within_0.01_em": sum(1 for r in residuals if r <= 0.01),
+        "within_0.02_em": sum(1 for r in residuals if r <= 0.02),
+        "per_class": {
+            klass: {"n": len(values),
+                    "median_abs_em": round(statistics.median(values), 6)}
+            for klass, values in sorted(per_class.items())},
+    }
+
+
 def hangul_em(per_face):
     """Per face, the em a Hangul syllable is observed at, if it is observed.
 
@@ -421,7 +568,7 @@ def hangul_em(per_face):
 
 
 def build_payload(per_face, unattributed, non_hft, verify_rows, forms,
-                  standin=None):
+                  standin=None, in_table_rows=None):
     """The JSON document, header and all."""
     faces = {}
     total_points = 0
@@ -485,6 +632,26 @@ def build_payload(per_face, unattributed, non_hft, verify_rows, forms,
                 "so it still carries any gap Hancom opens at a class "
                 "boundary; the residual is an upper bound",
     }
+    in_table_verification = dict(summarise_residuals(in_table_rows or []))
+    in_table_verification.update({
+        "what": "the same reading, on the paragraphs INSIDE tables -- the "
+                "rows the top-level walk above never reaches, which is where "
+                "this table's 한양견고딕 and 8 pt 한양신명조 coverage comes "
+                "from",
+        "why_separate": "advance_probe.probe_document walks the top-level "
+                        "paragraphs, because a cached hp:lineseg comparison "
+                        "is defined on the flowed body; the check above is "
+                        "read off it and is left exactly as it was",
+        "note": "read per class. digit, latin and punct -- the classes whose "
+                "rows actually move an advance -- agree with /Widths to a few "
+                "thousandths of an em. hangul does not: a cell line's pen "
+                "distances run 4-5 % wide because the cell justifies its own "
+                "text, which the top-level check never sees (hangul there is "
+                "0.0003 em). That costs this table nothing, because every "
+                "hangul row it adds carries 1.0000 em -- exactly the declared "
+                "cell an uncovered syllable already fell back to -- so no "
+                "hangul row changes any advance the renderer computes.",
+    })
     return {
         "declaration": {
             "status": "MEASURED",
@@ -519,6 +686,7 @@ def build_payload(per_face, unattributed, non_hft, verify_rows, forms,
                 "attributed_to_a_non_HFT_face": sum(non_hft.values()),
             },
             "verification": verification,
+            "verification_in_table": in_table_verification,
             "hangul_fallback": "a Hangul syllable this table does not cover "
                                "is advanced by the declared cell; see the "
                                "per-face hangul_em below",
@@ -1177,13 +1345,16 @@ def main(argv=None):
         per_face, unattributed, non_hft = measure(fonts_by_form, attribution)
         verify_rows = verify_against_anchors(targets, fonts_by_form,
                                              repo_root, keep_text=True)
+        in_table_rows = verify_in_table_anchors(targets, fonts_by_form,
+                                                repo_root)
         # Measured with the renderer AS IT WILL RUN, table and all: the
         # stand-in section is a correction to what our own resolver did, so
         # it has to be read after every rule that already speaks has spoken.
         standin = build_standin_section(
             measure_standin_faces(targets, repo_root, keep_text=True))
         payload = build_payload(per_face, unattributed, non_hft, verify_rows,
-                                sorted(fonts_by_form), standin=standin)
+                                sorted(fonts_by_form), standin=standin,
+                                in_table_rows=in_table_rows)
         print(format_coverage(payload))
         out = args.out or (repo_root / TABLE_REL)
         out.parent.mkdir(parents=True, exist_ok=True)
