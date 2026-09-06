@@ -9621,3 +9621,302 @@ of the grid.
 - **`render_check` cannot see any of this.** No HFT face and no stand-in, so
   the only live test of a stand-in rule this repo has is the corpus the rule
   was measured on.
+
+## The right edge allows a tenth of a character — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#242 measured where a text line's box ENDS and #256 / #295 measured the
+page-BOTTOM fit. The RIGHT-edge fit test — how far a line's advance may run
+past its column before the breaker wraps it — had never been measured against
+the cache at all, and #297 is where that bill came due: every stand-in
+variant that corrects substituted face widths loses the break test on
+`moel-2025` ¶64 and ¶160, the same 78-character sentence twice, because the
+corrected width of the 64 characters the cache keeps on one line lands **15 to
+86 HWPUNIT over a 48190 box**. 0.03% to 0.18% of the line. #297 closed with
+"nothing ships" and named the gap.
+
+**The gap is the fit test, and the cache says so from both sides.** The rule
+is now `width ≤ box + condense slack + eight 1/600 inch pen steps`, 96
+HWPUNIT, and with it every one of #297's six stand-in variants holds
+**21 / 47** on the break test instead of 19 or 20.
+
+### The instrument
+
+`engine/scripts/right_edge_probe.py FORM.hwpx [--corpus] [--breaks]
+[--standin VARIANT] [--tolerance K] [--json] [--no-text]`.
+
+#265 recorded that the cache "cannot score a candidate advance, because
+`hp:lineseg` records where a line STARTS, not how wide its text was", and
+`fit_scoreboard` has since used the one direction it can prove: a cached line
+our metrics call too wide is a proven over-measurement. That is one-sided.
+**The cache is in fact two-sided, and nobody had read it that way:**
+
+* **KEPT** — every cached line is a span Hancom FITTED into its box, so the
+  true rule must call our width for it a fit. 2272 lines over the ten forms.
+* **REJECTED** — for a cached line that is not the last, Hancom did NOT put
+  the next word on it. The breaker is greedy and its widths are monotone, so
+  a cut at `last` proves that the span reaching the last non-space character
+  before the NEXT break opportunity overflowed. That exact span is the tight
+  bound; any earlier character in the run only might have. 183 spans.
+
+A cached line ending on a CONTROL cell is kept out of the rejected population.
+Its break was an explicit `hp:lineBreak` and says nothing about width; without
+the exclusion `moel-2025` ¶30's first line — fourteen characters in a 48188
+box, because the author pressed shift-enter — makes the rejected minimum
+−35690 HWPUNIT and the whole measurement meaningless.
+
+The excess is `ours − (horzsize − indent)`, the quantity `compute_lines`
+actually fits against, since #268/#277 established the indent is inside the
+box and not part of it. `fit_scoreboard`'s 30 over-measurements are counted
+against `horzsize` alone, which is why this probe finds 33 under the same
+strict test.
+
+`compute_lines`' comparison moved behind a `_line_fits` seam, byte for byte
+the same test it was. That is what lets a candidate be installed by
+overriding ONE method and the REAL breaker then be run on real columns under
+it — and `--standin` composes a `hft_width_table` WIDTH rule underneath,
+because the question is not whether the under-measuring metric survives a
+looser fit test but whether a corrected one does.
+
+### The kept excess, by trailing class
+
+144 dpi, HWPUNIT, trailing whitespace dropped. Most cached lines are nowhere
+near their box — a form is full of one-line paragraphs and forced breaks — so
+the percentiles are a property of the corpus and only the right tail decides
+anything.
+
+| population | n | p50 | p90 | p99 | max | > 0 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| all | 2272 | −3237 | −348 | +27 | **+2870** | 33 |
+| trailing space | 264 | −2987 | −362 | +728 | +1126 | 9 |
+| trailing punctuation | 593 | −6586 | −360 | −110 | +170 | 2 |
+| trailing other | 1415 | −2956 | −316 | +27 | +2870 | 22 |
+| `condense` > 0 | 245 | −2512 | −64 | +1459 | +2870 | 19 |
+| `condense` = 0 | 2027 | −3405 | −360 | −21 | +1000 | 14 |
+| in a cell | 1790 | −2712 | −257 | +154 | +2870 | 29 |
+| top level | 482 | −18266 | −1730 | −131 | +900 | 4 |
+| JUSTIFY | 984 | −10635 | −524 | +27 | +900 | 14 |
+| fill ≥ 0.95 | 340 | −317 | −4 | +1439 | +2870 | 33 |
+
+Exactly **one** of the 33 overflows is a whole multiple of 12, which is the
+first negative finding: the excess is not a grid artefact.
+
+### The bracket, per candidate
+
+`kept max` is the largest excess the candidate must forgive; `rejected min`
+the smallest it must still reject; `kept ✗` / `rej ✗` are what it gets wrong
+against the cache alone, no render needed. `strict` counts the trailing
+space; `space` hangs it (which `compute_lines` already does, by never
+presenting a span that ends in whitespace); `punct` also hangs a line-final
+mark; `condense` is the shipped slack; `tol12` is `condense` at the best
+whole pen step; `pen` rounds the sum onto the grid first.
+
+| candidate | kept max | rejected min | kept ✗ | rej ✗ |
+| --- | ---: | ---: | ---: | ---: |
+| strict | +2870 | −3454 | 62 | 13 |
+| space | +2870 | −3454 | 33 | 13 |
+| punct | +2870 | −3454 | 31 | 14 |
+| condense | +1370 | −3454 | 18 | 14 |
+| tol12 (36) | +1370 | −3454 | 11 | 14 |
+| pen | +1372 | −3456 | 17 | 14 |
+
+**No candidate is consistent.** Every one has `kept max` above `rejected
+min`, on the corpus and on eight of the ten forms individually, so there is
+no threshold that gets both populations right and the bracket is empty. That
+is not a property of the fit test: 14 spans Hancom rejected are ones our
+widths call comfortably UNDER the box, one of them by 3454 HWPUNIT, and no
+right-edge rule can explain a break the width did not cause.
+
+Three of the six move almost nothing. **Hanging the trailing space is worth
+29 of the 62** — the largest single effect measured here, and it was already
+implemented. **Hanging a line-final punctuation mark moves 2 lines and costs
+1 span**; 금칙 처리 is a real convention and the corpus does not support
+reading it as a right-edge allowance. **Rounding the sum onto the pen grid
+moves 1 line.** `condense` is worth 13, and it too was already there.
+
+### The one thing left is a tolerance, and the cache brackets it
+
+Sorted, the 18 cached lines the shipped rule calls too wide:
+
+| excess | form ¶ | chars | fill | condense |
+| ---: | --- | ---: | ---: | ---: |
+| +1.1 | moel-2013 ¶215 | 33 | 1.0001 | 0 |
+| +7.5 | jumin ¶34 | 44 | 1.0002 | 0 |
+| +11.5 | moel-2013 ¶261 ln 1 | 47 | 1.0003 | 0 |
+| +27.1 ×4 | moel-2025 ¶241 ¶248 ¶286 ¶324 | 54 | 1.0006 | 0 |
+| +63.1 | kstartup ¶793 | 63 | 1.0013 | 0 |
+| +170.2 | gianmun-1ho ¶63 ln 1 | 57 | 1.0039 | 0 |
+| +210.2 | kstartup ¶790 | 54 | 1.0045 | 0 |
+| +344 … +1370 | saeopja ×4, kstartup ×3 | | 1.011 – 1.286 | |
+
+There is a cliff. Eight lines sit at 63 HWPUNIT or less and fill their box to
+within 0.13%; the next is 170 and the tail runs to a line 28.6% over, which
+is a metric error and not a tolerance. On the other side the smallest
+rejected span is **+42.4** and the next is **+111.8**, so a threshold
+anywhere in **[63.1, 111.8)** rescues all eight and costs exactly one span.
+Sweeping k:
+
+| k × 12 | 0 | 12 | 24 | 36 | 48 | 72 | **96** | 120 | 192 | 288 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| lines wrongly broken | 18 | 15 | 15 | 11 | 11 | 10 | **10** | 10 | 9 | 8 |
+| spans wrongly kept | 14 | 14 | 14 | 14 | 15 | 15 | **15** | 17 | 20 | 25 |
+
+Under the corrected substituted widths of #292/#297 — `--standin table+cell`,
+which is where the question came from — the same sweep starts at 21 lines
+wrongly broken and 9 spans wrongly kept, and k = 8 is the joint optimum at
+10 / 10. **`RIGHT_EDGE_TOLERANCE_STEPS = 8`, 96 HWPUNIT, 0.96 pt, about a
+fourteenth of a 13 pt Hangul cell.** Setting it to 0 restores the strict test
+exactly, which a test asserts rather than describes.
+
+### The two paragraphs, under each candidate
+
+`moel-2025` ¶64 and ¶160 line 0, 63 visible characters in a 48188 box. The
+"rejected" row is the span Hancom refused, which is the headroom the
+tolerance is NOT allowed to eat:
+
+| widths | ¶64 kept | ¶64 rejected | ¶160 kept | ¶160 rejected |
+| --- | ---: | ---: | ---: | ---: |
+| shipped (`table`) | −1168.1 | +1915.4 | −1105.2 | +1990.6 |
+| `table+cell` | **+16.8** | +3227.8 | **+88.1** | +3312.1 |
+| `table+pen` | **−56.4** | +3146.7 | **+14.4** | +3230.4 |
+
+Under `table+cell` both lines are 16.8 and 88.1 over; under `table+pen` ¶64
+comes back inside its box and only ¶160 is over, by 14.4, which is #297's
+"`pen` saves ¶64 and not ¶160" read off the widths instead of off a binary
+search. Every rejected span is more than 3100 over under every corrected
+width rule, so there is three thousand HWPUNIT of room between the decision
+this slice changes and the next one it could break. `punct` moves neither
+(their last visible character is not punctuation) and `pen` moves them by
+one or two HWPUNIT.
+
+### The two-sided score: the real breaker, real columns
+
+`--breaks` installs each candidate through the seam and runs
+`advance_probe.break_scoreboard`. Cached break positions reproduced,
+installed-face control / everything else:
+
+| candidate | shipped widths | `--standin table+cell` |
+| --- | --- | --- |
+| strict | 45 / 113 · 21 / 47 (3 regressions) | 45 / 113 · 19 / 47 (3) |
+| space | 45 / 113 · 21 / 47 (3) | 45 / 113 · 19 / 47 (3) |
+| punct | 45 / 113 · 21 / 47 (3) | 45 / 113 · 19 / 47 (3) |
+| condense (was shipped) | 48 / 113 · 21 / 47 | 48 / 113 · 19 / 47 |
+| **tol12 at 96** | **48 / 113 · 21 / 47, 0 regressions, 0 gains** | **48 / 113 · 21 / 47, 0 regressions, gains ¶64 and ¶160** |
+| pen | 48 / 113 · 21 / 47 | 48 / 113 · 19 / 47 |
+
+The tolerance is free as the tree ships and is exactly what the stand-in rule
+was missing. The three regressions on `strict` / `space` / `punct` are the
+`condense` slack those rows drop, not the hang: `jeongbo` ¶75, `jumin` ¶98,
+`saeopja` ¶205.
+
+### What it cost, and what it bought
+
+`render_scoreboard.py --corpus --dpi 144`, means over the ten forms,
+`text_line_iou_mean` / `ssim_mean` / `ssim_inked_mean` /
+`text_line_pair_rate_mean`. **`cache` is byte-identical** —
+0.736589 / 0.861944 / 0.393719 / 0.850991 before and after, as it must be,
+because cache mode does not break lines. `computed`, the policy that grades
+the breaker:
+
+| | before | after |
+| --- | ---: | ---: |
+| `text_line_iou_mean` | 0.684242 | **0.684881** |
+| `ssim_mean` | 0.844732 | **0.845092** |
+| `ssim_inked_mean` | 0.358878 | 0.358796 |
+| `text_line_pair_rate_mean` | 0.846045 | **0.846205** |
+
+Three of four up, one down by 0.00008. Page counts 10 of 10 exact under both
+policies, before and after: `admrul` 1/1, `gianmun-1ho` 1/1, `gianmun-2ho`
+1/1, `jeongbo` 1/1, `jumin` 3/3, `kstartup` 22/22, `moel-2013` 7/7,
+`moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6. Three forms move and seven do not:
+`moel-2025` (+0.00541 IoU, +0.00049 ssim, +0.00161 pair rate, −0.00186
+inked), `jumin` (+0.00098 / +0.00307 / +0.00105 / 0), `moel-2013`
+(+0.00001 / +0.00005 / −0.00001 / 0).
+
+`lineseg_vs_pdf.py --corpus` **411 / 411** comparable paragraphs equal and
+8566 / 8566 characters in agreeing lines, before and after.
+
+`lineseg_agreement` over the corpus 2151 / **2132** / **2056** / 161 /
+**145** / 219 / **92** against 2151 / 2127 / 2052 / 161 / 144 / 219 / 91.
+Every column that moved went up. Five paragraphs stop being broken — the four
+`moel-2025` lines at +27.1 and `jumin` ¶34 at +7.5 — and no break position is
+lost.
+
+`hft_width_table.py --standin`, the table #297 published, re-measured:
+
+| variant | exact inst | exact subst | installed ¶ | other ¶ | over-measured |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| table | 24 / 103 | 0 / 308 | 48 / 113 | **21 / 47** | 30 / 2272 |
+| table + cell | 24 / 103 | 7 / 308 | 48 / 113 | **21 / 47** (was 19) | 33 / 2272 |
+| table + bundled | 24 / 103 | 7 / 308 | 48 / 113 | **21 / 47** (was 19) | 33 / 2272 |
+| table + fwchars | 24 / 103 | 7 / 308 | 48 / 113 | **21 / 47** (was 19) | 33 / 2272 |
+| table + pen | 24 / 103 | 35 / 308 | 48 / 113 | **21 / 47** (was 20) | 31 / 2272 |
+| table + scale | 24 / 103 | 23 / 308 | 48 / 113 | **21 / 47** (was 20) | 31 / 2272 |
+
+The per-line width medians are untouched — a fit rule cannot move a width —
+and so is the over-measured column, which `fit_scoreboard` computes with its
+own strict, deliberately one-sided test. **The break test no longer blocks
+any form of the stand-in rule.** Which of the six is right is still #283's
+and #297's question and is not decided here.
+
+`layout_divergence.py --corpus` classes A / B / C / D 1713 / 98 / 214 / 28 →
+1713 / **94** / 219 / 28, with one paragraph now A&B. `class_b_probe.py
+--corpus` roots:
+
+| root | before | after |
+| --- | ---: | ---: |
+| `text_rebreak:width` | 100 | **41** |
+| `table_origin_unattributed` | — | 64 |
+| `table_row_heights` | 63 | 63 |
+| `empty_paragraph` | 29 | 29 |
+| `cell_valign` | 15 | 15 |
+| `forced_break` | 7 | 7 |
+
+The root this slice targets falls by 59 and a new one of the same size
+appears, all of it `moel-2025`: those paragraphs sit under a table whose
+origin still differs, and the re-break above them that used to explain the
+origin is gone, so the probe can no longer attribute it. That is a real
+finding and not bookkeeping — **the `moel-2025` table origin is not caused by
+the width re-breaks above it**, and until #298 the two were confounded.
+
+`render_check.py` on `render-check-01` is 6 · 37 · 6 · 2 at 96 dpi and
+14 · 31 · 4 · 2 at 144, 9 of 9 pages exact, before and after. It resolves 16
+faces and every one is `installed` (#292), so it cannot see this subject
+either; its not moving is a control and not a verdict.
+
+### Not proven
+
+- **The tolerance is an error budget, not a Hancom rule.** Nothing in OWPML
+  or in Hancom's documentation says a line may overflow its column, and this
+  measurement cannot distinguish "the engine allows 96 HWPUNIT" from "our
+  advance is up to 96 HWPUNIT short on a full line". #297 already named a
+  term that would explain it — #283's punctuation slot, +197.76 HWPUNIT per
+  installed ASCII punctuation character, of which ¶64 has six. If that term
+  lands, the right k should be re-measured and may be 0.
+- **k = 8 was chosen on the corpus that measures it.** The window [63.1,
+  111.8) is two observations wide: one kept line at +63.1 and one rejected
+  span at +111.8. A form with a line at +80 that Hancom broke would close it.
+  The k is the joint optimum under `table+cell` and tied-optimal under
+  `table+pen`; under the shipped widths alone the optimum is k = 3, and 8 is
+  the value that also clears ¶64 and ¶160. That is a choice made with the
+  target in view and it is recorded as one.
+- **The two paragraphs are still one sentence.** ¶64 and ¶160 are the same
+  text at the same size in the same column, so 19 / 47 → 21 / 47 is two
+  instances of a single line. #297 said this and it is no less true now that
+  the number moved the other way.
+- **No candidate is consistent, including the one that shipped.** The bracket
+  is empty for all six: 14 spans Hancom rejected are ones our widths call
+  under the box, one by 3454 HWPUNIT. Those breaks have a cause this slice
+  did not find, and a fit rule is not it.
+- **The hanging-punctuation candidate is untested, not refuted.** 금칙 처리 is
+  a real convention; what this measures is that reading it as a right-edge
+  allowance moves 2 cached lines and costs 1 rejected span on this corpus.
+  Two observations decide nothing about the rule.
+- **`condense` is still read as this renderer reads it.** The tolerance sits
+  on top of the slack and the two were not separated: a corpus where they
+  disagree would price them apart, and none of the ten forms is that corpus.
+- **The `table_origin_unattributed` 64 is new and unexplained.** The
+  re-breaks that used to stand between `moel-2025`'s class-B paragraphs and
+  their table origin are gone, and what is left has no root. It was there
+  before, hidden behind them.

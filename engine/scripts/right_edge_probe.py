@@ -176,7 +176,8 @@ CANDIDATE_BASIS = {
     "strict": "no hang at all: the whole cached span against the box",
     "space": "Korean typesetting hangs a line-final space (#242)",
     "punct": "금칙 처리 / 줄 끝 문장부호 내밀기",
-    "condense": "hp:paraPr@condense, an OWPML attribute — the shipped rule",
+    "condense": "hp:paraPr@condense, an OWPML attribute — the rule before "
+                "#298, and this table's baseline",
     "tol12": "a fixed tolerance of k x 12 HWPUNIT (#283's pen grid)",
     "pen": "the sum rounded onto the 12 HWPUNIT pen grid before comparing",
 }
@@ -699,7 +700,7 @@ def _print_report(report):
                          f" /{_f(row['rejected_min'], 8, 0)}")
             print(line)
         print()
-    print("a tolerance of k pen steps on the shipped measure: what it costs")
+    print("a tolerance of k pen steps on the condense measure: what it costs")
     print()
     print(f"{'k':>4}{'HWPUNIT':>9}{'kept wrong':>12}{'rejected wrong':>16}")
     print("-" * 41)
@@ -711,8 +712,8 @@ def _print_report(report):
     print()
     over = report["counterexamples"]["kept_over"]
     near = report["counterexamples"]["rejected_near"]
-    print(f"every cached line the shipped rule calls too wide ({len(over)}), "
-          "widest last")
+    print(f"every cached line the strict-plus-condense rule calls too wide "
+          f"({len(over)}), widest last")
     print()
     for row in over:
         print(f"  {row['excess']:>9.1f}  {row['form']:<12} ¶{row['paragraph']:<5}"
