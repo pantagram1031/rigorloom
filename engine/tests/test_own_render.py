@@ -2734,6 +2734,148 @@ def test_the_syllable_unit_costs_kstartup_719_and_that_is_declared():
         "sweep before changing this pin")
 
 
+# ------------------------------------------- the cell-taking controls (#317)
+#
+# ``hp:lineBreak`` takes a ``textpos`` cell, puts nothing in
+# ``Paragraph.chars`` and ends the line it sits on.  Which controls behave
+# that way is a MEASUREMENT of the cache and the table is in
+# ``MANDATORY_BREAK_CONTROLS``; these tests pin the one the corpus exercises,
+# the mechanism on a synthetic paragraph, and the counter-case.
+
+
+def test_the_corpus_says_only_the_line_break_control_ends_a_line():
+    """The seam is a measured set, not a reading of the element names.
+
+    30 of 30 ``hp:lineBreak`` occurrences have the cache starting a line
+    immediately after them.  ``hp:tab``'s fifteen all sit in paragraphs the
+    cache kept on one line, so it is unmeasured rather than refuted;
+    ``hp:fwSpace`` IS refuted -- admrul 13 carries two of them on a two-line
+    paragraph and the cache breaks at neither.
+    """
+    assert own_render.MANDATORY_BREAK_CONTROLS == frozenset({"lineBreak"})
+    # Whatever else the set grows to, it may only hold controls that take a
+    # cell: a control the cache cannot see cannot be what the cache broke at.
+    assert all(own_render.textpos_cells(name) > 0
+               for name in own_render.MANDATORY_BREAK_CONTROLS)
+
+
+def test_moel_2025_73_breaks_where_the_author_pressed_shift_enter():
+    """THE CARRIER, on the real form: ``moel-2025`` 73.
+
+    ``<hp:t>6. 임  금<hp:lineBreak/>   </hp:t>`` at 13 pt, then an 11 pt run.
+    The cache puts its second line at ``textpos`` 8 -- the cell after the
+    control's own -- which is character 7, and both of its lines are 1300 tall
+    with 40 of leading under the paragraph's 103 % spacing.  The breaker used
+    to have no notion of the control at all and broke on width at character
+    52, which made the second line 11 pt and every block below it 4.16 px too
+    high (``class_b_probe``'s ``text_line_height`` root, 20 paragraphs).
+    """
+    import advance_probe
+
+    path = os.path.join(CORPUS, "moel-pyojun-geunrogyeyakseo-2025.hwpx")
+    _need(path)
+    renderer = own_render.OwnRenderer(path, dpi=144, repo_root=ROOT,
+                                      line_layout="computed")
+    para = None
+    for section in renderer.sections:
+        for element in section.iter():
+            if own_render._local(element.tag) != "p":
+                continue
+            if renderer.paragraph_index.get(id(element)) == 73:
+                para = own_render.Paragraph(element,
+                                            renderer.defs["para_pr"])
+    assert para is not None
+    assert para.mandatory_ends == [7]
+    assert [own_render._iattr(seg, "textpos")
+            for seg in para.linesegs] == [0, 8]
+    assert para.lineseg_spans() == [(0, 7), (7, 59)]
+
+    column = own_render._iattr(para.linesegs[0], "horzsize")
+    lines = renderer.compute_lines(renderer._scratch_draw(), para, column)
+    assert [(line["start"], line["end"]) for line in lines] == [(0, 7),
+                                                                (7, 59)]
+    # The line the control closes keeps its OWN metrics -- the control is not
+    # a character and adds no height -- and so both lines come out at the
+    # cached 1300 + 40.
+    assert [(line["textheight"], line["spacing"]) for line in lines] == [
+        (1300, 40), (1300, 40)]
+    assert [(own_render._iattr(seg, "textheight"),
+             own_render._iattr(seg, "spacing"))
+            for seg in para.linesegs] == [(1300, 40), (1300, 40)]
+    # And the two-sided break score agrees, which is the number that grades it.
+    for row in advance_probe.break_scoreboard(path, dpi=144, repo_root=ROOT):
+        if row["address"] == 73:
+            assert row["match"], (row["cache_breaks"], row["computed_breaks"])
+            break
+    else:
+        raise AssertionError("moel-2025 73 is no longer scorable")
+
+
+def _break_control_paragraph(renderer, inner, cid, para_id, **parapr):
+    """A synthetic ``hp:p`` whose single run may hold inline controls."""
+    from xml.etree import ElementTree as ET
+
+    _synthetic_paragraph(renderer, "", cid, para_id=para_id, **parapr)
+    element = ET.fromstring(
+        f'<hp:p xmlns:hp="urn:x" paraPrIDRef="{para_id}">'
+        f'<hp:run charPrIDRef="{cid}"><hp:t>{inner}</hp:t></hp:run></hp:p>')
+    return own_render.Paragraph(element, renderer.defs["para_pr"])
+
+
+def test_a_line_break_mid_run_ends_its_line_however_wide_the_column(
+        typo_probe):
+    """The mechanism, on a paragraph nothing about the corpus decides.
+
+    The column is wide enough for the whole text -- the fit test would never
+    have been given a reason to cut -- so the two lines are the control's
+    doing and nothing else's.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__lbctl__", height=1000)
+    para = _break_control_paragraph(
+        renderer, "가나다<hp:lineBreak/>라마바", cid, "__lbpara__")
+    assert para.mandatory_ends == [3]
+    assert para.text == "가나다라마바"
+    # The control takes its cell and draws nothing, so the stream is one cell
+    # longer than it is characters long.
+    assert para.cell_count == len(para.chars) + own_render.CELL_PER_CHAR
+
+    lines = renderer.compute_lines(draw, para, 1000000)
+    assert [(line["start"], line["end"]) for line in lines] == [(0, 3),
+                                                                (3, 6)]
+    # Not an emergency break: ``forced`` means the breaker ran out of
+    # opportunities, and this line ended because the document said so.
+    assert [line["forced"] for line in lines] == [False, False]
+    # The control has no width of its own: the first line's box is exactly
+    # what its three characters measure.
+    assert lines[0]["width_hwpunit"] == pytest.approx(
+        renderer.span_width(draw, para, 0, 3))
+
+
+def test_a_paragraph_with_no_control_breaks_exactly_as_it_did(typo_probe):
+    """THE COUNTER-CASE.  The same text, no control, one line.
+
+    Nothing about the width decision moved: a paragraph carrying no
+    cell-taking control has an empty ``mandatory_ends`` and reaches the same
+    spans it reached before this slice, on a wide column and on a narrow one.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__nolb__", height=1000)
+    para = _break_control_paragraph(
+        renderer, "가나다라마바", cid, "__nolbpara__")
+    assert para.mandatory_ends == []
+    assert para.cell_count == len(para.chars)
+
+    wide = renderer.compute_lines(draw, para, 1000000)
+    assert [(line["start"], line["end"]) for line in wide] == [(0, 6)]
+    # And where the WIDTH does decide, it still decides: three characters of
+    # room cut it in the same place a width break always did.
+    narrow_hwp = int(renderer.span_width(draw, para, 0, 3))
+    narrow = renderer.compute_lines(draw, para, narrow_hwp)
+    assert [(line["start"], line["end"]) for line in narrow] == [(0, 3),
+                                                                 (3, 6)]
+
+
 def test_latin_words_and_digit_groups_are_still_never_split():
     """THE SYNTHETIC COUNTER-CASE: the override stops at the Latin switch.
 
@@ -3202,7 +3344,9 @@ LINESEG_AGREEMENT = {
     "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 1),
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     # 53 -> 56 sequences and 2 -> 5 break positions on the syllable unit.
-    "jeongbo-gonggae-cheongguseo": (58, 58, 56, 6, 6, 7, 5),
+    # 56 -> 57 and 5 -> 6 on the line-break-control slice: 45 is the form's
+    # one ``<hp:lineBreak/>`` carrier and it now breaks where the cache does.
+    "jeongbo-gonggae-cheongguseo": (58, 58, 57, 6, 6, 7, 6),
     # 130 -> 131, 24 -> 25, 12 -> 13 on the right-edge slice (#298): the fit
     # test now allows a line to run eight pen steps past its box, which is
     # what ``right_edge_probe.py --corpus`` measured the cache to allow, and
@@ -3241,7 +3385,13 @@ LINESEG_AGREEMENT = {
     # multiline columns do not move -- all four are one-line paragraphs.
     # 288 -> 296 and 11 -> 19 on the syllable unit; the two line-count columns
     # (304, 27) do not move.
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 296, 37, 27, 47, 19),
+    # 304 -> 314, 296 -> 313, 27 -> 37 and 19 -> 46 on the line-break-control
+    # slice, the largest move any slice has made on this form and the reason
+    # the slice exists: 17 of its paragraphs carry the corpus' 27 of 30
+    # ``<hp:lineBreak/>``, every one of them multi-line by construction, and
+    # the breaker had no notion of the control at all.  BOTH line-count
+    # columns close completely (314/314, 37/37).
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 314, 313, 37, 37, 47, 46),
     # 89 -> 88 and 3 -> 2 on the MEASURED STAND-IN advance slice (#317): the
     # only column that moved is the line COUNT, and it moved on exactly one
     # paragraph, nrf ¶30.  The correction widens every 휴먼명조 syllable by
@@ -3557,7 +3707,21 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # collapses below the shipped breaker before they close.  ¶719 is pinned
     # on its own in ``test_the_syllable_unit_costs_kstartup_719_and_that_is_
     # declared`` so it fails loudly if it ever moves.
-    assert totals == [2151, 2137, 2108, 161, 150, 219, 160], totals
+    #
+    # 2137 -> 2147, 2108 -> 2126, 150 -> 160 and 160 -> 188 on the
+    # LINE-BREAK-CONTROL slice.  ``hp:lineBreak`` takes a ``textpos`` cell,
+    # draws nothing, and ends the line it sits on; the breaker had no notion
+    # of it and broke those paragraphs on width instead.  Which controls
+    # behave that way is measured, not assumed: of the twelve cell-taking
+    # inline controls the ten forms carry, ``hp:lineBreak`` is 30 of 30 for a
+    # cached line starting immediately after it, ``hp:tab``'s fifteen all sit
+    # in one-line paragraphs (unmeasured, so untouched) and ``hp:fwSpace`` is
+    # REFUTED (admrul 13 carries two on a two-line paragraph and the cache
+    # breaks at neither).  Only two forms move, jeongbo and moel-2025, they
+    # are the two that carry the control on a paragraph that breaks, and NO
+    # form and NO column falls.  The two multi-line columns of moel-2025 both
+    # close outright.
+    assert totals == [2151, 2147, 2126, 161, 160, 219, 188], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -4778,6 +4942,104 @@ def test_a_wild_vertOffset_is_left_to_the_ignored_reserve_handling():
     pos.set("vertOffset", "4294967083")
     assert _overflow_action(tbl, 4114, 71000) is None
     assert ET.tostring(tbl) is not None
+
+
+# ------------------------------- the slot a split table's CONTINUATION opens
+#
+# MEASURED, path A (cache) with the reference PDF as confirmation only.
+# ``_anchor_extent`` reads ``hp:outMargin`` as the slot AROUND an anchored
+# object (``vertOffset + top + height + bottom``), and a table that lands on
+# two pages opens that slot on each of them.  kstartup ¶180 is the corpus's
+# only split anchored table: 140 on every side, 69505 HWPUNIT of row content
+# left after the cut, and the cache seats the next paragraph (¶393) at 69785
+# = 140 + 69505 + 140.  The reference PDF draws the continuation's own top
+# rule 140 below the body top of the page it continues onto, the same offset
+# as the first fragment's rule on the page before (own-render-notes E2.8).
+
+def _split_continuation_height(row_heights, out_margin, usable=71000,
+                               declared=None):
+    """The height ``_split_anchor_overflow`` gives the continuation record."""
+    from xml.etree import ElementTree as ET
+
+    tbl = _anchored_table(declared if declared is not None
+                          else sum(row_heights), row_heights)
+    if out_margin is not None:
+        tbl.append(ET.fromstring(
+            '<hp:outMargin xmlns:hp="urn:x" left="%d" top="%d" right="%d" '
+            'bottom="%d"/>' % ((out_margin,) * 4)))
+    renderer = own_render.OwnRenderer(
+        _need(os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")), dpi=96)
+    draw = renderer._scratch_draw()
+    holder = _AnchorHolder(tbl, 0)
+    block = _flow_block(0, advance=1000)
+    block["para"] = holder
+    ys = [0]
+    for height in row_heights:
+        ys.append(ys[-1] + height)
+    records = renderer._split_anchor_overflow(
+        block, 0, 0, usable, collections.Counter(), tbl, 0, ys)
+    assert records is not None and len(records) == 2, records
+    return records[1]["height"], ys
+
+
+def test_a_split_tables_continuation_opens_its_own_outer_margin():
+    """kstartup ¶180 in miniature: 140 + the rows left over + 140.
+
+    The number the corpus pins is the SEAT of the paragraph after it, and
+    that seat is this record's height: ¶393 is cached at 69785 with 69505
+    HWPUNIT of table below the cut and ``hp:outMargin`` 140 on every side.
+    """
+    row_heights = (30000, 30000, 30000)
+    height, ys = _split_continuation_height(row_heights, 140)
+    cut = 2                       # 60000 fits 71000, 90000 does not
+    assert height == 140 + (ys[-1] - ys[cut]) + 140 == 30280
+
+
+def test_a_continuation_with_no_outer_margin_gets_no_phantom_gap():
+    """The counter-case: the rule adds what the object DECLARES, nothing.
+
+    A table that declares no ``hp:outMargin`` -- the shape most corpus forms
+    outside kstartup and nrf have -- opens a continuation slot exactly as
+    tall as the rows left after the cut.  A rule that hard-coded kstartup's
+    280, or applied a default margin where the file declares none, fails
+    here and passes the witness above.
+    """
+    row_heights = (30000, 30000, 30000)
+    bare, ys = _split_continuation_height(row_heights, None)
+    zeroed, _ys = _split_continuation_height(row_heights, 0)
+    assert bare == zeroed == ys[-1] - ys[2] == 30000
+
+
+def test_the_split_kstartup_actually_declares_seats_393_where_the_cache_does():
+    """The real witness, end to end: the corpus's one split anchored table.
+
+    The flow pass places ¶393 at exactly the ``hp:lineseg@vertpos`` the
+    authoring engine cached for it.  Path A against path B on an UNEDITED
+    document -- no reference PDF is scored here and nothing is certified.
+    """
+    renderer = own_render.OwnRenderer(
+        _need(os.path.join(
+            CORPUS, "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx")),
+        dpi=96, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    draw = renderer._scratch_draw()
+    placements, _pages, counters = renderer.flow(draw)
+    assert counters["tables_split"] == 1, counters
+
+    cached = {}
+    order = 0
+    for page in renderer.paginate():
+        for para in page:
+            cached[order] = (own_render._iattr(para.linesegs[0], "vertpos")
+                             if para.linesegs else None)
+            order += 1
+    blocks = renderer._flow_blocks(
+        draw, renderer.column_geometry(renderer.page_geometry())[0])
+    seat_of = {block["index"]: cached[i] for i, block in enumerate(blocks)}
+    assert seat_of[393] == 69785, "fixture drifted"
+
+    got = [r for r in placements if r["block"] == 393]
+    assert len(got) == 1, got
+    assert got[0]["top"] == seat_of[393]
 
 
 def test_no_corpus_row_declares_itself_a_repeatable_header():

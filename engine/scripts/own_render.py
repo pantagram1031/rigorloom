@@ -237,6 +237,50 @@ TEXTPOS_CELLS_CHAR = frozenset({
     "lineBreak", "hyphen", "nbSpace", "fwSpace",
 })
 
+# Cell-taking inline controls that END THE LINE THEY SIT ON.  The control
+# draws nothing and puts nothing in ``Paragraph.chars``, so the line it closes
+# keeps exactly the metrics its own characters give it and the control's own
+# width is 0; what it does is deny the breaker the choice.
+#
+# WHICH CONTROLS BELONG HERE IS A MEASUREMENT of the authoring engine's own
+# cache, not a reading of the element names.  Every occurrence of every
+# cell-taking inline control on the ten committed corpus forms was located in
+# the ``textpos`` stream and asked whether the cached ``hp:lineseg@textpos``
+# sequence starts a line AT that cell or IMMEDIATELY AFTER it (a control that
+# ends a line sits on the line it ends, so the next line starts at
+# ``cell + textpos_cells(name)``):
+#
+#   control      cells  occ   starts a line after it   otherwise
+#   lineBreak        1   30                       30   0
+#   tbl              8   81                        0   80 end the paragraph,
+#                                                       1 neither
+#   colPr            8   32                        0   30 one-line paragraphs,
+#                                                       2 neither
+#   tab              8   15                        0   15 one-line paragraphs
+#   secPr            8   10                        0   10 one-line paragraphs
+#   fieldBegin       8    9                        0   8 one-line, 1 neither
+#   fieldEnd         8    9                        0   8 end the paragraph,
+#                                                       1 neither
+#   fwSpace          1    8                        0   6 one-line paragraphs,
+#                                                       2 NEITHER
+#   rect             8    5                        0   4 end the paragraph,
+#                                                       1 one-line paragraph
+#   newNum           8    4                        0   4 one-line paragraphs
+#   pic              8    2                        0   2 end the paragraph
+#   header           8    1                        0   1 ends the paragraph
+#
+# (the whole census, and the carrier, are written up in
+# ``docs/research/line-break-control.md``)
+#
+# ``hp:lineBreak`` is 30 for 30 with no counter-example, so it is here.
+# ``hp:tab`` is NOT: all fifteen of its occurrences sit in paragraphs the
+# cache broke into one line, so the cache never had to decide and there is
+# nothing to read off it.  ``hp:fwSpace`` is not either, and it is refuted
+# rather than merely unmeasured: admrul 13 carries two of them on a
+# two-line paragraph and the cache breaks at neither.  ``hp:hyphen`` and
+# ``hp:nbSpace`` occur nowhere on the corpus.
+MANDATORY_BREAK_CONTROLS = frozenset({"lineBreak"})
+
 # HWPX-only span markers: a begin/end pair that decorates the text it wraps
 # and has no control character behind it, so it takes no cell.
 TEXTPOS_CELLS_MARK = frozenset({
@@ -2187,6 +2231,12 @@ class Paragraph:
     that puts nothing into that stream.  A run with an empty ``<hp:t>`` draws
     no glyph but still declares a character shape, and the line it sits on is
     as tall as that shape — see ``_line_metrics``.
+
+    ``mandatory_ends`` is the ascending list of ``chars`` indices a
+    :data:`MANDATORY_BREAK_CONTROLS` control closes a line before — i.e. the
+    index the NEXT line starts at.  It is a ``chars`` index and not a cell,
+    because the breaker works in ``chars``; the two coincide here anyway,
+    since such a control draws nothing.
     """
 
     def __init__(self, el, para_pr):
@@ -2197,6 +2247,7 @@ class Paragraph:
         self.objects = []      # [(char_index, element_local_name, element, charpr)]
         self.object_at = {}    # char_index -> (name, element, charpr, floating)
         self.empty_runs = []   # [(char_index, charPrIDRef)]
+        self.mandatory_ends = []   # [char_index] — see the class docstring
         self.tabs = 0
         # ``cell_start[i]`` -- the textpos cell chars[i] begins at.  Kept in
         # step with ``chars`` below: every append to one appends to the other.
@@ -2226,6 +2277,8 @@ class Paragraph:
                 sub_name = _local(sub.tag)
                 if sub_name == "tab":
                     self.tabs += 1
+                if sub_name in MANDATORY_BREAK_CONTROLS:
+                    self.mandatory_ends.append(len(self.chars))
                 cells += textpos_cells(sub_name)
                 scan_t(sub)
                 for ch in sub.tail or "":
@@ -2273,7 +2326,12 @@ class Paragraph:
                     cells += textpos_cells(name)
                 else:
                     # <hp:secPr> and anything else a run may hold: no glyph,
-                    # but the authoring engine's textpos counted it.
+                    # but the authoring engine's textpos counted it.  The
+                    # corpus puts every one of its 30 <hp:lineBreak/> inside an
+                    # <hp:t>, but the schema allows one here too and the seam
+                    # has to be the same one.
+                    if name in MANDATORY_BREAK_CONTROLS:
+                        self.mandatory_ends.append(len(self.chars))
                     cells += textpos_cells(name)
             if len(self.chars) == before:
                 self.empty_runs.append((before, charpr))
@@ -3509,12 +3567,37 @@ class OwnRenderer:
         remainder that still would not fit an entirely fresh page is left
         to the existing "block taller than a page" handling (the object is
         still drawn, in full, at its declared offset) rather than looping.
+
+        The CONTINUATION carries the object's outer margin, both halves of
+        it.  ``_anchor_extent`` already reads ``hp:outMargin`` as the slot
+        around an anchored object rather than a one-off gap
+        (``vertOffset + top + height + bottom``); a table that lands on two
+        pages opens a slot on each of them, so the room the block after it
+        starts below is ``top + <rows on this page> + bottom``, not the bare
+        row height.  Measured on the corpus's one split anchored table —
+        `kstartup` ¶180, ``hp:sz@height`` 70529 against 140034 of real row
+        content, ``hp:outMargin`` 140 on every side:
+
+            the rows left over after the cut are 69505 tall
+            the cache seats the next paragraph (¶393) at 69785
+                                                 = 140 + 69505 + 140
+            the reference PDF draws the continuation's own top rule 140
+            below the body top of the page it continues onto, the same
+            offset it draws the table's first rule at on the page before
+
+        The FIRST half is left as it is: nothing follows it on that page —
+        it is what fills the page — so no cached seat measures it, and
+        inventing a number for it here would be a guess dressed up as
+        symmetry.  The room test is likewise unchanged: on the one witness
+        the cut is the same row either way (70529 fits both 71000 and
+        71000 - 280).
         """
         cap = self._usable_on(page, usable)
         room = max(0, cap - top - offset)
         cut = self._row_cut_for_room(ys, 0, room)
         if cut == 0:
             return None
+        _left, out_top, _right, out_bottom = self._object_out_margin(tbl_el)
         self._skip("hp:tbl@repeatHeader",
                    "a table split across a page boundary does not repeat its "
                    "header row on the continuation page")
@@ -3531,7 +3614,8 @@ class OwnRenderer:
             split={"table": id(tbl_el), "row_start": 0, "row_end": cut})
         page += 1
         rest = self._flow_record(
-            block, page, 0, ys[-1] - ys[cut], (1, 1), kind="table",
+            block, page, 0, out_top + (ys[-1] - ys[cut]) + out_bottom,
+            (1, 1), kind="table",
             split={"table": id(tbl_el), "row_start": cut,
                    "row_end": len(ys) - 1})
         return [first, rest]
@@ -5274,7 +5358,9 @@ class OwnRenderer:
 
         Greedy first-fit, which is what HWP's own line breaker is (its cached
         boxes are reproducible by a greedy pass; a Knuth-Plass total-fit pass
-        would disagree with them on purpose).  ``width_hwpunit`` excludes
+        would disagree with them on purpose), with one MANDATORY break the fit
+        test never sees: a :data:`MANDATORY_BREAK_CONTROLS` control ends its
+        line wherever it sits.  ``width_hwpunit`` excludes
         trailing whitespace, because a space that falls at a line end hangs
         outside the box rather than forcing a break; ``width_px`` is that
         width at this render's dpi, for the drawing side.
@@ -5332,11 +5418,34 @@ class OwnRenderer:
             spaces = prefix_space[end] - prefix_space[start]
             return spaces * condense / 100.0
 
+        # hp:lineBreak and its kind (:data:`MANDATORY_BREAK_CONTROLS`): the
+        # control takes a textpos cell, draws nothing, and ends the line it
+        # sits on.  It is not a break OPPORTUNITY — the fit test never gets
+        # asked about it — so it is consumed ahead of every other decision in
+        # the loop below, before the trailing-space skip, because the
+        # character the next line starts on is usually a space (moel-2025 73:
+        # ``<hp:t>6. 임  금<hp:lineBreak/>   </hp:t>``) and a space is
+        # otherwise stepped over without a width decision at all.
+        mandatory = [end for end in para.mandatory_ends if from_char < end < count]
+        pending = 0
+
         spans = []
         start = from_char
         index = from_line
         cursor = from_char
         while cursor < count:
+            if pending < len(mandatory) and cursor == mandatory[pending]:
+                pending += 1
+                if cursor > start:
+                    spans.append((start, cursor, False))
+                    start = cursor
+                    index += 1
+                    continue
+                # Two controls with no character between them would ask for a
+                # zero-character line.  The corpus carries no such pair (the
+                # closest is moel-2025 29, nine cells apart), so rather than
+                # invent a height for a line no measurement has ever seen,
+                # the second control closes nothing.
             ch = chars[cursor][0]
             if ch == "\n":
                 spans.append((start, cursor + 1, False))
