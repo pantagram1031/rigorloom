@@ -3063,7 +3063,19 @@ LINESEG_AGREEMENT = {
     # being broken; the eight-pen-step tolerance keeps them whole.  Its two
     # multiline columns do not move -- all four are one-line paragraphs.
     "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 288, 37, 27, 47, 11),
-    "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
+    # 89 -> 88 and 3 -> 2 on the MEASURED STAND-IN advance slice (#317): the
+    # only column that moved is the line COUNT, and it moved on exactly one
+    # paragraph, nrf ¶30.  The correction widens every 휴먼명조 syllable by
+    # about 5 % -- the bundled NanumMyeongjo stand-in advances one at 0.950 em
+    # where the reference draws the declared face at 0.996 -- and ¶30's second
+    # line no longer fits, so we lay it out in three lines where the cache
+    # used two.  ¶30 was ALREADY a break-sequence disagreement before this
+    # (cache [0, 50], ours [0, 45]): its first line breaks five characters
+    # early for a reason this slice did not touch, and the width correction
+    # only propagated that error into the line count.  No paragraph that
+    # agreed on breaks stopped agreeing -- sequence_exact holds at 87 -- and
+    # the corpus break scoreboard is unchanged at 48/113 and 21/47.
+    "nrf-gyeolgwa-bogoseo-yangsik": (89, 88, 87, 3, 2, 3, 1),
     "saeopja-deungnok-sinchengseo": (765, 760, 750, 18, 16, 25, 8),
 }
 
@@ -3310,7 +3322,31 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # the one that grades the breaker (line IoU +0.00064, ssim +0.00036,
     # pair rate +0.00016, inked -0.00008, means over the corpus), and the
     # cache policy is byte-identical because it does not break lines.
-    assert totals == [2151, 2132, 2056, 161, 145, 219, 92], totals
+    #
+    # 2132 -> 2131 and 145 -> 144 on the measured-stand-in slice (#317), the
+    # ONLY two columns that move and the only slice in this list whose
+    # headline column goes down.  It is one paragraph, nrf ¶30, and it is
+    # worth the cost it names.  The corpus declares 휴먼명조 on 3529
+    # characters; this machine does not have that face, so the resolver
+    # substitutes the bundled NanumMyeongjo, which advances a Hangul syllable
+    # at 0.950 em where the reference PDFs draw the declared face at 0.996 --
+    # 60 HWPUNIT per character at 13 pt, under-measured on every line of the
+    # two moel forms.  ``standin_faces`` corrects that from the drawn glyph
+    # origins, and nrf ¶30's second line stops fitting: three computed lines
+    # where the cache has two.  ¶30 was already a break-sequence disagreement
+    # (cache [0, 50], ours [0, 45] -- its FIRST line breaks five characters
+    # early for a reason this slice does not touch), so no paragraph that
+    # agreed on breaks stopped agreeing: sequence_exact holds at 2056 and the
+    # break-position column at 92.  What the correction buys is not in these
+    # totals, because the shipped breaker cannot see it: eleven of the
+    # thirteen paragraphs #316's ``syllable`` candidate loses are lost to
+    # exactly this 5 %, and with the table they close (13 regressions -> 1,
+    # 43 gains -> 53, the non-installed half 10/47 -> 32/47), leaving only
+    # kstartup ¶719, which is installed-face throughout.  The rasters agree
+    # on BOTH policies and on every form (cache ssim +0.0070, inked +0.0246,
+    # line IoU +0.0069; computed +0.0056 / +0.0188 / +0.0059, means over the
+    # corpus; 53 pages and 10/10 exact page counts on both).
+    assert totals == [2151, 2131, 2056, 161, 144, 219, 92], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():

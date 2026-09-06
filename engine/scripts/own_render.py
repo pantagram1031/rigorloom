@@ -1346,6 +1346,29 @@ class HftWidthTable:
     simply absent: :meth:`advance_em` answers ``None`` and the caller falls
     back to what it did before.  A slim checkout with no table file at all
     behaves exactly like the renderer did before this existed.
+
+    THE SECOND SECTION: ``standin_faces``
+    ------------------------------------
+    ``faces`` above is HFT only, because an HFT face is the one kind that has
+    no TrueType metric anywhere.  #317 measured a different gap: a face the
+    document declares as ``TTF`` which is *not installed on this machine*, so
+    the resolver substitutes a bundled OFL family for it and meters the run
+    off the substitute's outlines.  The whole public corpus has exactly one:
+    휴먼명조, answered by the bundled ``NanumMyeongjo``, whose Hangul syllable
+    advances 0.9502 em where the reference PDFs draw the declared face at
+    0.9964.  That 5 % is not a rounding residue -- it is 60 HWPUNIT per
+    character at 13 pt, and it is what let our breaker fit one syllable more
+    than Hancom did on eleven corpus lines.
+
+    ``standin_faces`` carries the same kind of number for those faces, read
+    the same black-box way, with one deliberate difference in method: the
+    advances are taken from the DRAWN GLYPH ORIGINS -- the pen distance
+    between two consecutive glyphs of one text-showing run -- and never from
+    the embedded font object.  A ``TTF`` face reaches the export as an
+    embedded subset TrueType (``Type0`` / ``Identity-H``), so it does have a
+    font program in the file; this table is measured without opening it, so
+    the section carries advance widths and no more, exactly as the HFT one
+    does.
     """
 
     _shared = {}
@@ -1354,6 +1377,7 @@ class HftWidthTable:
         self.path = Path(repo_root) / HFT_WIDTH_TABLE_REL
         self.faces = {}
         self.hangul = {}
+        self.standin = {}
         self.measured_on = None
         if not self.path.is_file():
             return
@@ -1376,6 +1400,20 @@ class HftWidthTable:
             em = (seat or {}).get("em")
             if em is not None:
                 self.hangul[face] = float(em)
+        for face, seat in (payload.get("standin_faces") or {}).items():
+            widths = {}
+            for entry in ((seat or {}).get("widths") or {}).values():
+                char = entry.get("char")
+                advance = entry.get("advance_em")
+                if char and advance is not None:
+                    widths[char] = float(advance)
+            full = (seat or {}).get("full_width_em")
+            if widths or full is not None:
+                self.standin[face] = {
+                    "widths": widths,
+                    "full_width_em": (float(full) if full is not None
+                                      else None),
+                }
 
     @classmethod
     def shared(cls, repo_root):
@@ -1403,6 +1441,27 @@ class HftWidthTable:
         carrying that reading across to a face it was not taken on.
         """
         return self.hangul.get(face, 1.0)
+
+    def standin_advance_em(self, face, ch):
+        """``ch``'s DRAWN advance in em on ``face``, or ``None``.
+
+        The stand-in section only; a face that is not in it answers ``None``
+        for every character, which is what keeps the whole rule inert on a
+        checkout whose table predates the section.
+        """
+        seat = self.standin.get(face)
+        return seat["widths"].get(ch) if seat else None
+
+    def standin_full_width_em(self, face):
+        """The em a full-width cell was DRAWN at on stand-in ``face``.
+
+        ``None`` when the face is unknown or the measurement saw no
+        full-width character on it -- never a default, because the point of
+        this section is that the stand-in's own outlines are the wrong
+        answer and 1.0 would be a second guess rather than a measurement.
+        """
+        seat = self.standin.get(face)
+        return seat["full_width_em"] if seat else None
 
 
 class BundledFontMap:
@@ -4198,6 +4257,92 @@ class OwnRenderer:
             self.applied.get("hft_measured_advance", 0) + measured)
         return total * pt * HWPUNIT_PER_PT * ratio / 100.0
 
+    def _standin_declared_face(self, cid, slot):
+        """The declared face of a SUBSTITUTED run, or ``None``.
+
+        ``None`` means "this run is not a stand-in": either ``hh:fontRef``
+        names no face for the slot, or the face it names was found installed
+        on this machine and the run is metered off the declared face itself.
+
+        The source is read out of ``_face_for``'s cache through
+        :meth:`_face_source`, so asking never adds a character to the
+        per-face counts the sidecar reports; the run must already have been
+        resolved, which it has -- ``_advance_hwp``'s caller resolved it to
+        get ``font``.
+        """
+        font_ids = self._charpr(cid).get("font_ids") or {}
+        face_name = None
+        for slot_key in (slot, slot.upper()):
+            font_id = font_ids.get(slot_key)
+            if font_id is None:
+                continue
+            table = (self.defs["fontfaces"].get(slot.upper())
+                     or self.defs["fontfaces"].get(slot) or {})
+            face_name = table.get(font_id)
+            if face_name:
+                break
+        if not face_name:
+            return None
+        bold = bool(self._charpr(cid).get("bold"))
+        if self._face_source(cid, slot, bold) == "installed":
+            return None
+        return face_name
+
+    def _standin_advance_hwp(self, font, chunk, cid, slot, pt, ratio, rel_sz):
+        """``chunk``'s advance off the MEASURED STAND-IN table, or ``None``.
+
+        The same shape as :meth:`_hft_advance_hwp` and for the same reason:
+        the rule fires per character, every character has to leave the rule
+        with nothing to say before ``None`` is returned, and a code point the
+        table does not carry keeps the metric it would have had.
+
+        The difference is the gate.  ``_hft_advance_hwp`` asks what the
+        document DECLARES (``hh:font@type="HFT"``); this asks what this
+        machine RESOLVED -- a face our own resolver substituted, which is a
+        property of the box the renderer is running on and not of the file.
+        That is deliberate: an installed 휴먼명조 is metered off the real
+        face's own outlines and needs no correction, and applying one would
+        make the renderer worse on exactly the machines that have the font.
+
+        Two fallbacks for a code point the table does not carry:
+
+        * a full-width cell advances by :meth:`HftWidthTable.
+          standin_full_width_em`, the em this face's own drawn syllables were
+          measured at, when the measurement saw one;
+        * anything else keeps the stand-in's own metric, which is the only
+          answer available for it -- the corpus draws 휴먼명조's Latin and
+          digits off other slots entirely, so there is nothing to measure.
+        """
+        table = self.hft_widths
+        if not table or not chunk or not table.standin:
+            return None
+        face = self._standin_declared_face(cid, slot)
+        if face is None or face not in table.standin:
+            return None
+        full = table.standin_full_width_em(face)
+        metric = None
+        total = 0.0
+        measured = 0
+        for ch in chunk:
+            em = table.standin_advance_em(face, ch)
+            if em is not None:
+                measured += 1
+            elif is_full_width(ch) and full is not None:
+                em = full
+                measured += 1
+            elif ch in HALF_WIDTH_CELL_CHARS:
+                em = SPACE_CELL_FRACTION
+            else:
+                if metric is None:
+                    metric = self._metric_font_for(cid, rel_sz, slot, font)
+                em = self._em_width(metric, ch)
+            total += em
+        if not measured:
+            return None
+        self.applied["standin_measured_advance"] = (
+            self.applied.get("standin_measured_advance", 0) + measured)
+        return total * pt * HWPUNIT_PER_PT * ratio / 100.0
+
     def _reference_font(self, font):
         """``font``'s own face at ``LAYOUT_REFERENCE_PX``.
 
@@ -4426,8 +4571,13 @@ class OwnRenderer:
         scale the em the face reports.  Every advance the layout and the
         drawing cursor use comes through here, which makes it the one place a
         rule about a particular face's advances can be stated -- and the one
-        rule stated here is :meth:`_hft_advance_hwp`, for the runs whose
-        declared face HWP will not have handed a TrueType metric to anybody.
+        rules stated here are :meth:`_hft_advance_hwp`, for the runs whose
+        declared face HWP will not have handed a TrueType metric to anybody,
+        and :meth:`_standin_advance_hwp`, for the runs whose declared face
+        this machine does not have and our resolver substituted.  The HFT
+        table goes first: it is keyed on what the document declares, so it
+        answers the same on every machine, where the stand-in table answers
+        only where a substitution actually happened.
 
         DRAWN in ``font``, ADVANCED by ``metric`` -- the two differ only for
         a bold run in an installed family with both cuts on this machine;
@@ -4436,6 +4586,10 @@ class OwnRenderer:
         hft = self._hft_advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
         if hft is not None:
             return hft
+        standin = self._standin_advance_hwp(font, chunk, cid, slot, pt, ratio,
+                                            rel_sz)
+        if standin is not None:
+            return standin
         metric = self._metric_font_for_pt(cid, pt, slot, font)
         return (self._em_width(metric, chunk) * pt * HWPUNIT_PER_PT
                 * ratio / 100.0)
