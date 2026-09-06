@@ -354,6 +354,73 @@ def percent_leading(height, value):
 # Corpus census (774 paraPr definitions): breakLatinWord KEEP_WORD 669 /
 # BREAK_WORD 104 / HYPHENATION 1; breakNonLatinWord KEEP_WORD 592 /
 # BREAK_WORD 182; lineWrap BREAK 774 (the only value present).
+#
+# WHAT THIS RENDERER DOES WITH breakNonLatinWord: it reads it, reports it, and
+# breaks at the syllable either way.  ``breakLatinWord`` is honoured as
+# declared; the Korean switch is not.  The basis is #316
+# (docs/research/hangul-syllable-breaking.md), quoted rather than re-derived:
+#
+#   Hancom's own public format document -- 『한/글 문서 파일 구조 5.0』, Hwp
+#   Document File Formats 5.0, revision 1.3:20181108, §4.2.10 문단 모양
+#   (Tag ID : HWPTAG_PARA_SHAPE), in the 속성 1 bit table that follows 표 43 --
+#   defines the Korean switch as ONE BIT: "bit 7  줄 나눔 기준 한글 단위
+#   0 어절 / 1 글자".  "There is no third state and no exception clause."
+#
+#   And the cache does not honour the 어절 state: 70 of the 204 cached line
+#   ends in KEEP_WORD paragraphs -- 34 % -- fall between two Hangul syllables
+#   of one 어절, and all 70 sit in words occupying 0.033 to 0.393 of their own
+#   column, so not one of them is a word that could not have moved to the next
+#   line whole.  "The emergency-break reading is refuted."
+#
+#   The same census finds ZERO cuts inside a Latin word and ZERO inside a
+#   digit group, under either declared value (0 of 218) -- which is why the
+#   Latin switch is left alone.
+#
+# So the unit below is the syllable for Hangul/CJK and the word for Latin, and
+# a paragraph declaring KEEP_WORD gets the syllable unit anyway.  Measured
+# consequence on top of #320's stand-in advance table, path B at 144 dpi
+# (syllable_break_probe.py --corpus --candidates): the break score goes
+# installed 48/113 -> 89/113 and other 21/47 -> 32/47, 53 paragraphs gained
+# against ONE regression, kstartup ¶719 -- named as a declared cost, not a
+# residual, in KOREAN_BREAK_UNIT below.
+#
+#: The unit a Hangul/CJK line may be broken at, and why it is not the declared
+#: one.  Emitted verbatim in the sidecar so the choice is readable without
+#: reading this file.
+KOREAN_BREAK_UNIT = {
+    "unit": "syllable (글자)",
+    "applies_to": "every Hangul/Hanja/kana/CJK-punctuation boundary",
+    "declaration_honored": False,
+    "declaration": (
+        "hh:breakSetting@breakNonLatinWord is parsed, carried on every "
+        "paraPr, and reported per paragraph -- and NOT obeyed. KEEP_WORD "
+        "(어절 단위) and BREAK_WORD (글자 단위) produce the same opportunity "
+        "set in this renderer."),
+    "basis": (
+        "#316. The public format document (『한/글 문서 파일 구조 5.0』 rev "
+        "1.3:20181108, §4.2.10 문단 모양, HWPTAG_PARA_SHAPE, the 속성 1 bit "
+        "table after 표 43) makes the Korean switch one bit -- bit 7, 0 어절 "
+        "/ 1 글자 -- with no third state and no exception clause. The cache "
+        "then contradicts the 어절 state on its own documents: 70 of the 204 "
+        "cached line ends in KEEP_WORD paragraphs (34 %) fall between two "
+        "Hangul syllables of one 어절, in words occupying 0.033 to 0.393 of "
+        "their own column, so none of them is an emergency break."),
+    "latin_untouched": (
+        "hh:breakSetting@breakLatinWord IS honoured as declared. The same "
+        "census finds zero cuts inside a Latin word and zero inside a digit "
+        "group, 0 of 218, under either declared value."),
+    "declared_cost": (
+        "kstartup ¶719 -- an installed-face JUSTIFY line the cache breaks at "
+        "a space and this renderer breaks one syllable later, already 58.8 "
+        "HWPUNIT over its 44744 box and admitted only by the 96 HWPUNIT "
+        "right-edge budget. It is the one corpus paragraph the syllable unit "
+        "stops reproducing, it is unexplained, and it was not tuned away."),
+    "measured": (
+        "path B (our flow pass scored against the cache), 144 dpi, the ten "
+        "public forms: installed 48/113 -> 89/113, other 21/47 -> 32/47, 53 "
+        "gains, 1 regression. Path C -- an edited candidate against licensed "
+        "Hancom output -- IS NOT RUN, here or anywhere in this repo."),
+}
 
 # 금칙처리 — the characters Korean typesetting forbids at a line boundary.
 # KS X 6101 does not publish the set (it is an implementing engine's table),
@@ -638,6 +705,14 @@ def break_opportunities(text, break_latin="KEEP_WORD",
     empty); ``len(text)`` is not returned either (the paragraph end is not a
     break).  The 금칙 filter is applied last and uniformly, so it removes a
     space break just as it removes a syllable break.
+
+    ``break_latin`` decides Latin word integrity as declared.
+    ``break_non_latin`` does NOT decide Hangul/CJK word integrity: the unit is
+    the syllable under either value, on #316's reading of the public format
+    document and of the cache's own line ends.  See ``KOREAN_BREAK_UNIT``.
+    The parameter is kept because it is what the paragraph declares and the
+    sidecar reports it; the seam itself -- this module-level function -- is
+    what ``syllable_break_probe.py`` rebinds to score a candidate.
     """
     ops = []
     for i in range(1, len(text)):
@@ -652,7 +727,14 @@ def break_opportunities(text, break_latin="KEEP_WORD",
         elif a in BREAK_AFTER_ALWAYS:
             allowed = True
         elif ca in ("CJK", "OBJECT") or cb in ("CJK", "OBJECT"):
-            allowed = (break_non_latin == "BREAK_WORD")
+            # THE DECLARATION IS READ AND NOT OBEYED — see KOREAN_BREAK_UNIT.
+            # A Hangul/CJK boundary is a break opportunity whatever
+            # breakNonLatinWord says, because the cache breaks there under
+            # both declared values.  ``break_non_latin`` stays in the
+            # signature, is still parsed off hh:breakSetting, and is still
+            # reported per paragraph in the sidecar, so a reader can see the
+            # declaration this renderer overrode.
+            allowed = True
         else:
             allowed = (break_latin == "BREAK_WORD")
         if not allowed:
@@ -7498,7 +7580,6 @@ class OwnRenderer:
     # emits them so a new attribute cannot be honoured without being declared.
     PARAPR_HONORED = (
         "hh:breakSetting@breakLatinWord (KEEP_WORD / BREAK_WORD)",
-        "hh:breakSetting@breakNonLatinWord (KEEP_WORD / BREAK_WORD)",
         "hh:breakSetting@lineWrap=BREAK",
         "hp:paraPr@condense (최소 공백: a line may overrun by the width its "
         "spaces can give up)",
@@ -7509,6 +7590,13 @@ class OwnRenderer:
         "hp:paraPr@tabPrIDRef, for the explicit LEFT stops hh:tabPr declares",
     )
     PARAPR_NOT_HONORED = (
+        "hh:breakSetting@breakNonLatinWord (KEEP_WORD / BREAK_WORD) — READ, "
+        "REPORTED AND OVERRIDDEN. Hangul/CJK is broken at the syllable under "
+        "either declared value; a KEEP_WORD (어절 단위) paragraph is broken "
+        "inside its 어절 anyway. This is a DELIBERATE departure from the "
+        "declaration, on #316's evidence, and break_unit below states it in "
+        "full with the one paragraph it costs. The declared value of every "
+        "paragraph stays readable in the paraPr the sidecar carries.",
         "hh:breakSetting@breakLatinWord=HYPHENATION — hyphenation is not "
         "implemented; broken at word boundaries instead",
         "hh:breakSetting@widowOrphan / @keepWithNext / @keepLines / "
@@ -7783,9 +7871,34 @@ class OwnRenderer:
                     "table and is this renderer's, declared, not the spec's."
                 ),
             },
+            "break_unit": dict(KOREAN_BREAK_UNIT),
+            "declared_break_setting": self._declared_break_setting(),
             "parapr_honored": list(self.PARAPR_HONORED),
             "parapr_not_honored": list(self.PARAPR_NOT_HONORED),
             "paragraphs_relaid_out": computed,
+        }
+
+    def _declared_break_setting(self):
+        """What THIS document declares, against what the breaker did with it.
+
+        ``break_unit`` says the renderer chose the syllable; this says what it
+        chose it over, on this document, so a reader can see the size of the
+        override without opening the file.
+        """
+        counts = {}
+        latin = {}
+        for pr in self.defs.get("para_pr", {}).values():
+            key = str(pr.get("break_non_latin"))
+            counts[key] = counts.get(key, 0) + 1
+            key = str(pr.get("break_latin"))
+            latin[key] = latin.get(key, 0) + 1
+        return {
+            "breakNonLatinWord": dict(sorted(counts.items())),
+            "breakLatinWord": dict(sorted(latin.items())),
+            "note": (
+                "counted over this document's hp:paraPr definitions. Every "
+                "breakNonLatinWord value here was overridden to the syllable "
+                "unit; every breakLatinWord value here was honoured."),
         }
 
     # -- page numbers ----------------------------------------------------

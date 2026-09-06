@@ -96,16 +96,50 @@ def test_a_narrowing_only_ever_adds_to_what_the_paragraph_declares():
     That is what makes the score readable: a candidate can only move a break
     LATER, so a paragraph it loses is one where the cache stopped short of
     the widest span our metric says fits.
+
+    The baseline here is the DECLARED semantics -- ``breakNonLatinWord``
+    obeyed as written -- which is no longer what
+    ``own_render.break_opportunities`` returns: the renderer now breaks Hangul
+    at the syllable under either value (#316).  ``narrowed`` with a predicate
+    that never fires is exactly the old shipped rule, so it is the honest
+    baseline for the property this test is about.
     """
+    declared_rule = probe.narrowed(lambda a, b: False)
     text = "근로자의 교부요구와 관계없이 3항 abc 처리"
     for declared_latin in ("KEEP_WORD", "BREAK_WORD"):
         for declared_cjk in ("KEEP_WORD", "BREAK_WORD"):
-            base = set(own_render.break_opportunities(
-                text, declared_latin, declared_cjk))
+            base = set(declared_rule(text, declared_latin, declared_cjk))
             for name, (_basis, predicate) in probe.NARROWINGS.items():
                 widened = set(probe.narrowed(predicate)(
                     text, declared_latin, declared_cjk))
                 assert base <= widened, name
+
+
+def test_the_shipped_breaker_now_reproduces_the_syllable_candidate_exactly():
+    """The switch is the probe's own candidate, by construction (#316, #320).
+
+    The point of the seam is that the number the probe scored and the
+    behaviour the renderer ships cannot drift: whatever
+    ``own_render.break_opportunities`` does must equal what
+    ``narrowed(NARROWINGS['syllable'])`` does, on the paragraph the argument
+    turns on and under every declared pair.  If someone re-narrows the rule
+    without re-scoring it, this fails.
+    """
+    para, _cuts = _paragraph("moel-pyojun-geunrogyeyakseo-2013", 261)
+    candidate = probe.narrowed(probe.NARROWINGS["syllable"][1])
+    assert para.para_pr["break_non_latin"] == "KEEP_WORD"
+    for declared_latin in ("KEEP_WORD", "BREAK_WORD"):
+        for declared_cjk in ("KEEP_WORD", "BREAK_WORD"):
+            assert (own_render.break_opportunities(
+                        para.text, declared_latin, declared_cjk)
+                    == candidate(para.text, declared_latin, declared_cjk))
+    # Not vacuous: the paragraph really does carry Hangul boundaries that the
+    # declared KEEP_WORD would have closed.
+    shipped = own_render.break_opportunities(para.text, "KEEP_WORD",
+                                             "KEEP_WORD")
+    declared = probe.narrowed(lambda a, b: False)(para.text, "KEEP_WORD",
+                                                  "KEEP_WORD")
+    assert len(shipped) > len(declared)
 
 
 def test_the_syllable_narrowing_is_break_word_forced_on_and_nothing_else():
@@ -208,11 +242,19 @@ def test_the_probe_leaves_the_module_level_breaker_where_it_found_it():
     assert own_render.break_opportunities is base
 
 
-def test_the_probe_does_not_write_anything_into_the_renderer():
-    """``ship nothing`` is a property of the tree, and this is its pin."""
-    assert not hasattr(own_render, "SYLLABLE_BREAK")
+def test_the_renderer_does_not_import_the_probe_that_measures_it():
+    """The instrument stays outside the thing it measures.
+
+    #316 shipped nothing and pinned that.  This branch DOES ship the syllable
+    unit, so the surviving property is the weaker and more useful one: the
+    renderer must not depend on the probe.  The probe rebinds the renderer's
+    module-level breaker; a renderer that imported the probe back would make
+    the seam circular and the scores unreadable.
+    """
     source = (ROOT / "engine" / "scripts" / "own_render.py").read_text(
         encoding="utf-8")
-    assert "syllable_break_probe" not in source
+    assert "import syllable_break_probe" not in source
     assert os.path.isfile(ROOT / "engine" / "scripts"
                           / "syllable_break_probe.py")
+    # The choice the renderer did make is declared in the renderer itself.
+    assert own_render.KOREAN_BREAK_UNIT["declaration_honored"] is False

@@ -255,14 +255,24 @@ def test_the_installed_punctuation_residual_is_the_number_307_measured():
 
 
 def test_the_syllable_seam_forces_break_word_and_puts_the_function_back():
+    """The seam still swaps and still restores -- and it is now a no-op.
+
+    The shipped breaker BECAME the syllable unit (#316): breakNonLatinWord is
+    read, reported and not obeyed, so a declared KEEP_WORD already yields
+    every syllable boundary.  This candidate therefore buys nothing any more,
+    which is exactly what ``syllable_break_probe --candidates`` measures
+    (shipped and ``syllable`` score identically, 89/113 and 32/47).  What the
+    test still has to hold is the SEAM: the context manager replaces the
+    module-level function and puts the original back, because every other
+    candidate in this probe is scored through the same mechanism.
+    """
     base = own_render.break_opportunities
-    # 어절 단위: the only break in this text is at the space.
     text = "가나다 라마바"
-    assert base(text, "KEEP_WORD", "KEEP_WORD") == [4]
+    # 글자 단위, under the DECLARED 어절 단위 -- the override.
+    assert base(text, "KEEP_WORD", "KEEP_WORD") == [1, 2, 4, 5, 6]
     with probe.syllable_opportunities():
         assert own_render.break_opportunities is not base
-        # 글자 단위: every syllable boundary is an opportunity, and the
-        # declared KEEP_WORD no longer suppresses them.
+        # The candidate agrees with the shipped breaker by construction now.
         assert own_render.break_opportunities(
             text, "KEEP_WORD", "KEEP_WORD") == [1, 2, 4, 5, 6]
     assert own_render.break_opportunities is base
@@ -295,13 +305,27 @@ def test_every_cell_candidate_carries_a_basis_and_a_seam():
         assert own_render.RIGHT_EDGE_TOLERANCE_HWP == budget
 
 
+#: Of the three cells #311 named over-broken, which still are.  ``moel-2013``
+#: ¶261 and ``saeopja`` ¶189 CLOSED on the syllable-unit slice, which is what
+#: #316 predicted for them and the only prediction it made that could be
+#: tested by shipping: both are paragraphs the cache cut INSIDE an 어절, so
+#: the declared ``KEEP_WORD`` reading was what put the extra line there, not
+#: any width term.  ``saeopja`` ¶393 is the remaining one, and #316 said why
+#: no break rule reaches it: its excess is +238.0 HWPUNIT on a 2894 column,
+#: it is width and not opportunity, and the budget already forgives 96.
+STILL_OVERBROKEN = {("saeopja-deungnok-sinchengseo", 393)}
+
+
 def test_the_named_cells_are_read_off_the_real_breaker():
-    """The view's own oracle: each cell is over-broken, by exactly one line.
+    """The view's own oracle, re-measured after the syllable unit landed.
 
     No corpus COUNT is pinned here — that is a measurement and belongs in the
     notes — but that the three named paragraphs exist, that the view finds a
-    column for each, and that our breaker makes one more line than the cache
-    holds is what every number in the notes rests on.
+    column for each, and which of them our breaker still over-breaks is what
+    every number in the notes rests on.  Two of the three closed; the one that
+    did not is the width cell, and it is named rather than dropped from the
+    view, because a cell that stops being over-broken is evidence and has to
+    stay visible.
     """
     forms = {path.stem: path
              for path, _ in probe.layout_divergence.corpus_forms(ROOT)}
@@ -312,17 +336,28 @@ def test_the_named_cells_are_read_off_the_real_breaker():
     report = probe.cell_report(targets, ROOT, score=False)
     assert len(report["cells"]) == 3
     assert "candidates" not in report
+    seen = set()
     for record in report["cells"]:
+        key = (record["stem"], record["address"])
         assert record["column_hwp"] > 0
-        assert record["our_line_count"] == record["cached_lines"] + 1
-        assert record["deciding"] is not None
-        piece = record["decomposition"]
-        assert piece["width_kind"] in ("width-limited", "not width-limited")
+        if key in STILL_OVERBROKEN:
+            seen.add(key)
+            assert record["our_line_count"] == record["cached_lines"] + 1
+            assert record["deciding"] is not None
+            piece = record["decomposition"]
+            assert piece["width_kind"] in ("width-limited",
+                                           "not width-limited")
+        else:
+            # Closed by the syllable unit: our line count is the cache's, and
+            # there is no deciding line left to decompose.
+            assert record["our_line_count"] == record["cached_lines"], key
+            assert record["deciding"] is None, key
         # The column the cell is laid out in IS the cached box on the cache's
         # own 4 HWPUNIT quantiser (#311), which is why the extra line cannot
         # be blamed on the track solver.
         assert abs(record["column_hwp"]
                    - record["cached_horzsize"][0]) <= 4
+    assert seen == STILL_OVERBROKEN
 
 
 def test_a_line_ending_on_a_control_cell_is_not_evidence_about_width():
