@@ -10944,3 +10944,191 @@ which is the only claim made for it.
   charging in proportion, are different rules and only the first was
   measured — deliberately: the corpus has three tables to fit and each new
   ordering is another turn of the same overfit.
+
+## The three over-broken cells are two different faults, and neither term ships — measured, 2026-09-06
+
+Worker: Opus 5, 1M context (`claude-opus-5[1m]`) — the project rule forbids a
+1M context and this run was on one; orchestrator: Fable.
+
+#311 closed on three cells and an open question. All 63 `table_row_heights`
+class-B paragraphs come from three cells whose single paragraph our breaker
+splits into one more line than the cache holds, and #311 said the root is the
+LINE BREAKER without saying what the breaker gets wrong. This slice reads
+those three lines under the shipped metric, decomposes the excess into the
+terms measured in #292, #301 and #307, and scores the mechanisms they ask
+for. **Nothing ships.** The three cells are not one fault; they are two, and
+neither term is clean corpus-wide.
+
+Path C — an edited candidate against licensed Hancom output — is not run here
+or anywhere in this repo.
+
+### The instrument
+
+`right_edge_probe.py --cells`, an eighth view on the existing probe rather
+than a new script, over `OVERBROKEN_CELLS` — #311's three carriers, named by
+file stem and paragraph address so a rerun cannot drift onto other cells.
+
+For each it reads the cached `hp:lineseg` (`@horzpos`, `@horzsize`, the text
+on each line), our lines off the REAL breaker on the REAL column
+(`advance_probe.BreakRecordingRenderer`, so the column is the one
+`_table_tracks` handed the cell and not a second model of it), our width for
+each cached line's own characters through `_char_advance_tables` — the seam
+`compute_lines` breaks on — and the excess over the box.
+
+It also reads one thing #311's row view could not: **whether the cached break
+position is in our own `break_opportunities` set at all.** A cut the breaker
+was never offered has no width story, and the view says so instead of pricing
+a residual against it.
+
+### The three cells
+
+The column is not the reason, again: each cell's text column is its cached
+`@horzsize` on the cache's own 4-HWPUNIT quantiser, which the view asserts.
+
+| cell | column ours / cached | lines A → B | cache breaks | our breaks | deciding line | excess | cut offered? |
+| --- | --- | --- | --- | --- | --- | ---: | --- |
+| `moel-2013` ¶261 (t6 r9c1) | 37843 / 37840 | 2 → 3 | `[43]` | `[39, 85]` | ln0, 43 chars | **−784.3** | **no** |
+| `saeopja` ¶189 (t1 r11c0) | 47475 / 47472 | 3 → 4 | `[70, 142]` | `[64, 134, 204]` | ln0, 70 chars | **−675.0** | **no** |
+| `saeopja` ¶393 (t4 r0c8) | 2894 / 2892 | 2 → 3 | `[7]` | `[5, 9]` | ln0, 6 chars | **+238.0** | yes |
+
+The runs on those three lines, off `advance_probe.OurMetrics`:
+
+| cell | chars | declared | resolved | source | HFT metric | size | ratio | 자간 | bold | punct |
+| --- | ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: |
+| `moel-2013` ¶261 | 43 | 돋움 | `gulim.ttc#2` | installed | none | 10.0 pt | 100 | +2 | no | 4 |
+| `saeopja` ¶189 | 70 | 돋움체 | `gulim.ttc#3` | installed | none | 8.0 pt | 100 | 0 | no | 4 |
+| `saeopja` ¶393 | 6 | 한양신명조 | `H2MJSM.TTF` | installed | 한양신명조 | 8.0 pt | 100 | −13 | no | 1 |
+
+**Two of the three are not a width disagreement at all.** On `moel-2013` ¶261
+the cache breaks between `예금통장` and `에`, and on `saeopja` ¶189 between
+`제61조제3` and `항` — inside a word, in a paragraph whose `hp:paraPr` declares
+`breakNonLatinWord="KEEP_WORD"` (어절 단위). Our breaker honours the
+declaration, so those cuts are not in its opportunity set and it takes the
+previous space instead. Our width for the cache's own line is **784.3 and
+675.0 HWPUNIT UNDER the box**: the line fits, with room, and no width term of
+any size reaches a cut the breaker never offered.
+
+### The decomposition
+
+Per deciding line, in HWPUNIT.
+
+| term | `moel-2013` ¶261 | `saeopja` ¶189 | `saeopja` ¶393 |
+| --- | ---: | ---: | ---: |
+| excess (shipped metric, vs the real column) | −784.3 | −675.0 | **+238.0** |
+| (a) trailing 자간 (#307), already counted | +20.0 | 0.0 | **−104.0** |
+| (b) installed punctuation residual (#307) | +2.08 | +2.08 | +0.00 |
+| (c) measured HFT table vs the face metric (#292) | 0.0 (0 chars) | 0.0 (0 chars) | 0.0 (**6 of 6** chars on an HFT face the table does not carry) |
+| (d) right-edge budget (#301) | 96 | 96 | 96 |
+| (e) anything else | n/a — not width-limited | n/a — not width-limited | **+142.0** |
+
+(b) is #307's `INSTALLED_PUNCT_RESIDUAL_HWP`, +253.3 over 487 advances =
++0.52 per glyph, priced on the punctuation each line carries. On ¶261 and
+¶189 that is 2.08 HWPUNIT against excesses of 675 and 784 in the other
+direction; on ¶393 it is **zero**, because that run's single punctuation mark
+is on a face Hancom meters out of its own HFT table and #307's residual is
+about installed faces only.
+
+(c) is zero on all three for the same reason on the first two (no HFT face)
+and a different one on the third: the declared face IS 한양신명조, but
+`hft_width_table` carries no measured advance for any of `0 2 ～ 0 6 의`, so
+all six advances come from the installed `H2MJSM.TTF` outlines unchecked
+against Hancom's own pen. The four ASCII digits are metered at 0.625 em
+there. This is where the +142 unexplained sits: at the half cell (0.5 em) the
+line would come to 2784 against a 2894 column and close with 110 to spare —
+recorded as an observation about where to look, not as a rule, because it is
+one line of one cell and it is the fallback slice's population.
+
+### What would close each cell, and what it costs
+
+Per cell, one quantity, and the corpus price of changing it.
+`--cells` scores each on `advance_probe.break_scoreboard` — the number a
+break rule ships on — and on `lineseg_agreement`, the measure #302 and #307
+argued the right-edge budget from.
+
+| candidate | installed | other | regress | gain | cells closed | lineseg multi-line: break seq / line count | `jumin` ¶139 |
+| --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| shipped | 48 / 113 | 21 / 47 | 0 | 0 | none | 69 / 161 · 145 / 161 | cache `[0, 60, 113]` ours `[0, 59, 113]` |
+| `syllable` | **89 / 113** | **10 / 47** | 13 | 43 | ¶261, ¶189 | 99 / 161 · 150 / 161 | exact |
+| `syl@just` | 85 / 113 | **10 / 47** | 13 | 39 | ¶261, ¶189 | 95 / 161 · 150 / 161 | exact |
+| `budget240` | 48 / 113 | 21 / 47 | 1 | 1 | ¶393 | 69 / 161 · 147 / 161 | cache `[0, 60, 113]` ours `[0, 59, 113]` |
+
+* **¶261 and ¶189 need `breakNonLatinWord` to mean nothing.** Forcing
+  `BREAK_WORD` on every paragraph closes both **exactly** — `ours == cache`
+  on both — and it is the largest single move anyone has made on the break
+  score: installed 48 → **89 of 113**. It also fixes `jumin` ¶139, which the
+  shipped tree gets wrong. And it **fails the gate**: `other` falls 21 → 10,
+  and 13 paragraphs the shipped tree reproduces stop being reproduced. The
+  obvious narrowing does not help — scoping the rule to JUSTIFY paragraphs
+  (`syl@just`) leaves **the same 13 regressions** and the same 10 / 47, so
+  the damage is not an over-application to left-aligned text. What the drop
+  in `other` says is that syllable breaking makes the break position depend
+  on the width of every character rather than of every word, which exposes
+  the substituted-face widths that are #283's and #292's subject.
+* **¶393 needs 238 HWPUNIT of width it does not have.** Nothing else is
+  available: the excess is +238.0, (b) and (c) are worth 0, and the budget
+  already forgives 96. Raising the budget to 240 (20 pen steps) closes ¶393
+  **exactly** and the corpus totals do not move — 48 / 113 and 21 / 47 — but
+  a paragraph changes hands: `moel-2013` ¶220 stops being reproduced. A
+  budget of twenty pen steps is also two and a half times the eight #298
+  measured and #302 re-derived, on a window that was `[18.5, 26.3)`.
+
+**No single term closes all three**, which is what the slice was told to
+require, so nothing ships. Two of the cells are a break-opportunity question
+and the third is a width question, and they cannot be the same rule.
+
+### The numbers
+
+`own_render.py` is untouched, so before and after are the same run.
+
+| policy | `ssim_mean` | `ssim_inked` | `text_line_iou` | pages | `page_count` exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| cache, before and after | 0.861944 | 0.393719 | 0.736589 | 53 | 10/10 |
+| computed, before and after | 0.848325 | 0.364894 | 0.692148 | 53 | 10/10 |
+
+`layout_divergence.py --corpus` **1801 / 94 / 131 / 28** (A&B 1), unchanged,
+and the root list is unchanged: `table_row_heights` 63, `empty_paragraph` 29,
+`text_line_height` 19, `cell_valign` 15, `page_top_unattributed` 3,
+`text_rebreak:width` 2.
+
+`lineseg_vs_pdf.py --corpus` 411 / 411 lines and 8566 / 8566 characters — it
+compares the CACHE to Hancom's export and cannot see the flow pass, so it is
+a control.
+
+`right_edge_probe --corpus --breaks` **48 / 113 installed · 21 / 47 other** on
+`condense`, `tol12`, `pen` and `gap`, zero regressions, unchanged.
+
+`render_check.py` on `render-check-01`: 6 match / 37 close / 6 differ / 2
+unsupported at 96 dpi, 14 · 31 · 4 · 2 at 144, 9 / 9 pages exact. The
+document carries no cached `hp:lineseg` (this repo wrote it), so both
+policies take the computed path and it tests nothing about this slice except
+that the probe change costs the renderer nothing.
+
+### Not proven
+
+- **Nothing was fixed.** The 63 stay class B. What this slice adds to #311 is
+  that they are not one question but two, and that the larger of the two is
+  not about widths at all.
+- **`breakNonLatinWord` may not mean what this renderer reads it as.** Two of
+  the three cells declare KEEP_WORD and the cache breaks their Hangul
+  mid-word anyway. Either Hancom overrides the attribute under some condition
+  this slice did not find, or the attribute's two values are not the two
+  behaviours `break_opportunities` gives them. The corpus census is
+  KEEP_WORD 592 / BREAK_WORD 182 over 774 `paraPr`, so the attribute is
+  present and declared on every one of them and the question is what it
+  MEANS, which no public document consulted here settles. Reading it as
+  BREAK_WORD everywhere is measured above and refuted; nothing narrower was
+  found.
+- **The 13 regressions were not diagnosed.** They are the same 13 under both
+  syllable candidates and they are named in the probe's output, but why the
+  cache keeps those words whole was not read line by line. That is the next
+  question and it is bigger than this slice.
+- **`saeopja` ¶393's +142 has a candidate and not a measurement.** The
+  half-width digit reading closes it arithmetically on one line. Whether
+  한양신명조 really meters ASCII digits at half a cell is a question for the
+  HFT table (#292) and its own reference PDFs, and it was not asked here.
+- **Three cells is three observations.** Every statement above rests on
+  `moel-2013` ¶261, `saeopja` ¶189 and `saeopja` ¶393, and two of the three
+  are in one form.
+- **The corpus is the training set, again.** Every number is off the same ten
+  forms and the same machine's installed fonts, and `budget240` was chosen as
+  the smallest whole pen step above one cell's excess, which is a fit.

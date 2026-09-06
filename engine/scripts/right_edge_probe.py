@@ -70,12 +70,48 @@ rules underneath, which is the whole point of the exercise: the question is
 not whether the shipped, under-measuring metric survives a looser fit test but
 whether a CORRECTED metric does.
 
+THE THREE OVER-BROKEN CELLS
+---------------------------
+``--cells`` is #312's view and it asks one question of ``OVERBROKEN_CELLS``,
+the three cells #311 found behind all 63 ``table_row_heights`` class-B
+paragraphs: *why* does our breaker split each of them into one more line than
+the cache holds?
+
+For each it prints the cached lines (``hp:lineseg`` ``@horzpos`` /
+``@horzsize`` and the text on each), our lines off the REAL breaker on the
+REAL column, the column ``_table_tracks`` hands the cell against the cached
+``@horzsize`` it is meant to reproduce, our width for each cached line's own
+characters under the shipped metric with its runs decomposed
+(``advance_probe.OurMetrics``: declared face, resolved file, installed or
+HFT-metered, size, ``hh:ratio``, 자간, bold), and the excess over the box.
+
+The excess is then decomposed into the terms that have been measured
+separately elsewhere — the trailing 자간 (#307), the installed-face
+punctuation residual (#307, ``INSTALLED_PUNCT_RESIDUAL_HWP``), the measured
+HFT table against the face metric (#292), the right-edge budget (#301,
+``RIGHT_EDGE_TOLERANCE_HWP``) — and what is left over is named as left over.
+
+Because a line the breaker never got to *offer* has no width story at all, the
+view also reports whether each cached break position is in our own
+``break_opportunities`` set, and scores the mechanisms the three cells
+between them ask for against the whole corpus — on
+``advance_probe.break_scoreboard`` and on ``lineseg_agreement``, the two
+numbers #302 and #307 argued the right-edge budget from:
+
+``syllable``   a Hangul/CJK syllable break is allowed whatever
+               ``hh:breakSetting@breakNonLatinWord`` declares;
+``syl@just``   the same, scoped to JUSTIFY paragraphs, which is the obvious
+               narrowing and is measured so that it is refuted rather than
+               assumed;
+``budget240``  ``RIGHT_EDGE_TOLERANCE_HWP`` raised from 96 to 240 HWPUNIT.
+
 Usage::
 
     python engine/scripts/right_edge_probe.py FORM.hwpx
     python engine/scripts/right_edge_probe.py --corpus
     python engine/scripts/right_edge_probe.py --corpus --breaks
     python engine/scripts/right_edge_probe.py --corpus --breaks --standin table+pen
+    python engine/scripts/right_edge_probe.py --corpus --cells
     python engine/scripts/right_edge_probe.py --corpus --json out.json --no-text
 
 This is measurement.  On its own it changes nothing in ``own_render.py``.
@@ -112,6 +148,35 @@ PEN_GRID_HWP = advance_probe.DEVICE_GRID_HWP
 #: break the stand-in rules move.  Keyed by file stem, not by the short label,
 #: which depends on how many forms the run was given.
 WATCHED = {"moel-pyojun-geunrogyeyakseo-2025": (64, 160)}
+
+#: The three cells #311 found behind every one of the 63 `table_row_heights`
+#: class-B paragraphs: one paragraph each, which our breaker splits into one
+#: more line than the cache holds, growing its row and pushing every paragraph
+#: below it down.  ``file stem -> {paragraph address: the cell it sits in}``.
+OVERBROKEN_CELLS = {
+    "moel-pyojun-geunrogyeyakseo-2013": {261: "table 6 row 9 cell 1"},
+    "saeopja-deungnok-sinchengseo": {189: "table 1 row 11 cell 0",
+                                     393: "table 4 row 0 cell 8"},
+}
+
+#: #307's installed-face punctuation residual, PER GLYPH: +253.3 HWPUNIT over
+#: the 487 anchored punctuation advances metered off a face this machine has,
+#: once the 58 Hancom answered out of its own HFT table are taken out.  A TERM
+#: IN A DECOMPOSITION and not a rule — no code in this repo applies it, and
+#: #307 recorded it as mixed in sign inside one face and unexplained.
+INSTALLED_PUNCT_RESIDUAL_HWP = 253.3 / 487
+
+#: The control #307 pinned and #302 argued the budget from: ``jumin``'s
+#: ``lineseg_agreement``, whose ¶139 and ¶160 a lower right-edge budget lost.
+#: Any mechanism ``--cells`` scores is asked the same question, because a
+#: break rule that moves the breaker moves this too.
+LINESEG_CONTROL_STEM = "jumin-deungchobon-sinchengseo"
+LINESEG_CONTROL_PARAGRAPHS = (139, 160)
+
+#: What ``--cells`` raises the right-edge budget to when it prices the budget
+#: as the term that closes a cell.  20 pen steps: the smallest whole step
+#: above `saeopja` ¶393's excess, which is what a budget would have to cover.
+CELL_BUDGET_HWP = 240.0
 
 #: How far the tolerance sweep runs, in whole 12 HWPUNIT pen steps.  40 steps
 #: is 480 HWPUNIT, about an eighth of a 13 pt Hangul cell and five times what
@@ -665,6 +730,581 @@ def break_report(targets, repo_root, brackets, standin=None, dpi=144):
 
 
 # --------------------------------------------------------------------------
+# The three over-broken cells (#312)
+# --------------------------------------------------------------------------
+# #311 found that all 63 ``table_row_heights`` class-B paragraphs are carried
+# by three cells whose single paragraph our breaker splits into one more line
+# than the cache holds.  Everything below reads those three, and only those
+# three, in the breaker's own arithmetic.
+
+@contextlib.contextmanager
+def syllable_opportunities():
+    """Allow a Hangul/CJK syllable break whatever ``breakNonLatinWord`` says.
+
+    ``compute_lines`` calls the module-level ``break_opportunities``, so
+    rebinding it is the same kind of seam ``installed`` uses for the fit test:
+    one function, both renderers, nothing else touched.  The rule is
+    ``breakNonLatinWord="BREAK_WORD"`` forced on every paragraph — 글자 단위
+    — which is what two of the three cells' cached breaks require.
+    """
+    base = own_render.break_opportunities
+
+    def patched(text, break_latin="KEEP_WORD", break_non_latin="KEEP_WORD"):
+        del break_non_latin
+        return base(text, break_latin, "BREAK_WORD")
+
+    own_render.break_opportunities = patched
+    try:
+        yield
+    finally:
+        own_render.break_opportunities = base
+
+
+@contextlib.contextmanager
+def syllable_opportunities_in_justify():
+    """``syllable_opportunities``, but only where the paragraph is JUSTIFY.
+
+    The obvious narrowing, and the one the three cells suggest: two of them
+    are 양쪽 정렬 and the third already declares ``BREAK_WORD``, so a rule
+    that only lets 양쪽 정렬 break by syllable would reach both without
+    touching a left-aligned paragraph anywhere.  ``break_opportunities`` is
+    handed text and not a paragraph, so the scope has to be applied one level
+    up, in ``compute_lines`` — which is why this is a renderer swap and not a
+    function swap.
+    """
+    def _override(base):
+        def compute_lines(self, draw, para, column_hwp, from_char=0,
+                          from_line=0):
+            pr = para.para_pr
+            saved = pr.get("break_non_latin")
+            if pr.get("align") == "JUSTIFY":
+                pr["break_non_latin"] = "BREAK_WORD"
+            try:
+                return base.compute_lines(self, draw, para, column_hwp,
+                                          from_char=from_char,
+                                          from_line=from_line)
+            finally:
+                pr["break_non_latin"] = saved
+        return compute_lines
+
+    base_renderer = own_render.OwnRenderer
+    base_recorder = advance_probe.BreakRecordingRenderer
+    own_render.OwnRenderer = type(
+        "JustifySyllableRenderer", (base_renderer,),
+        {"compute_lines": _override(base_renderer)})
+    advance_probe.BreakRecordingRenderer = type(
+        "JustifySyllableRecorder", (base_recorder,),
+        {"compute_lines": _override(base_recorder)})
+    try:
+        yield
+    finally:
+        own_render.OwnRenderer = base_renderer
+        advance_probe.BreakRecordingRenderer = base_recorder
+
+
+@contextlib.contextmanager
+def tolerance_budget(value):
+    """Run one measurement with a different ``RIGHT_EDGE_TOLERANCE_HWP``.
+
+    ``_line_fits`` reads the module global at call time, so this reaches the
+    real breaker without subclassing anything.
+    """
+    old = own_render.RIGHT_EDGE_TOLERANCE_HWP
+    own_render.RIGHT_EDGE_TOLERANCE_HWP = value
+    try:
+        yield
+    finally:
+        own_render.RIGHT_EDGE_TOLERANCE_HWP = old
+
+
+#: ``name -> (basis, context manager factory)``.  ``shipped`` is the tree as
+#: it stands and is the row every other one is read against.
+CELL_CANDIDATES = {
+    "shipped": ("the tree as it stands", contextlib.nullcontext),
+    "syllable": ("hh:breakSetting@breakNonLatinWord read as BREAK_WORD on "
+                 "every paragraph (글자 단위)", syllable_opportunities),
+    "syl@just": ("the same, but only where the paragraph is JUSTIFY "
+                 "(양쪽 정렬)", syllable_opportunities_in_justify),
+    "budget240": (f"RIGHT_EDGE_TOLERANCE_HWP raised from "
+                  f"{own_render.RIGHT_EDGE_TOLERANCE_HWP:.0f} to "
+                  f"{CELL_BUDGET_HWP:.0f} HWPUNIT (20 pen steps)",
+                  lambda: tolerance_budget(CELL_BUDGET_HWP)),
+}
+
+CELL_CANDIDATE_ORDER = ("shipped", "syllable", "syl@just", "budget240")
+
+
+def _cache_breaks(para):
+    """The cached line starts, in the breaker's own ``chars`` index space.
+
+    ``hp:lineseg@textpos`` counts cells, not characters; this is the same walk
+    ``advance_probe.break_scoreboard`` does, repeated here so a ``--cells``
+    record and a scoreboard row cannot disagree about where the cache broke.
+    """
+    cells = lineseg_vs_pdf.character_cells(para)
+    out = []
+    for _lo, hi in lineseg_vs_pdf.cached_split(para, cells)[:-1]:
+        cut = len(para.chars)
+        for index in range(len(para.chars)):
+            if para.cell_start[index] >= hi:
+                cut = index
+                break
+        out.append(cut)
+    return out
+
+
+def _runs_in(metrics, para, start, end):
+    """The distinct ``OurMetrics`` runs over ``chars[start:end]``, with counts.
+
+    One row per (declared face, resolved file, installed-or-HFT, size, ratio,
+    자간, bold) — the decomposition the question asks for, taken off the
+    renderer's own API rather than re-derived from the charPr table.
+    """
+    rows = {}
+    order = []
+    for ch, cid in para.chars[start:end]:
+        run = metrics.run(ch, cid)
+        key = (run["declared"], run["resolved"], run["source"], run["hft"],
+               run["size_pt"], run["ratio"], run["spacing"], run["bold"])
+        if key not in rows:
+            rows[key] = {"declared": run["declared"],
+                         "resolved": run["resolved"],
+                         "source": run["source"], "hft": run["hft"],
+                         "size_pt": run["size_pt"], "ratio": run["ratio"],
+                         "spacing": run["spacing"], "bold": run["bold"],
+                         "chars": 0, "punct": 0}
+            order.append(key)
+        rows[key]["chars"] += 1
+        if _is_punct(ch):
+            rows[key]["punct"] += 1
+    return [rows[key] for key in order]
+
+
+def _hft_terms(renderer, para, start, end):
+    """(#292) the measured HFT table against the face metric, per character.
+
+    Two numbers, because the table can be silent in two different ways.
+    ``measured_delta`` is the HWPUNIT the table MOVED — summed over the
+    characters it carries an advance for — and ``uncovered`` counts the
+    characters whose declared face IS an HFT face but which the table says
+    nothing about, so their advance is the installed outline's, unchecked
+    against Hancom's own pen.
+    """
+    table = renderer.hft_widths
+    delta = 0.0
+    measured = 0
+    uncovered = 0
+    for ch, cid in para.chars[start:end]:
+        face = renderer._declared_hft_face(cid, ch)
+        if face is None:
+            continue
+        slot = advance_probe.script_slot(ch)
+        ratio, _spacing, rel_sz, _offset = renderer._typography(cid, ch)
+        pt = (renderer._charpr(cid).get("height_pt") or 10.0) * rel_sz / 100.0
+        scale = pt * own_render.HWPUNIT_PER_PT * ratio / 100.0
+        em = table.advance_em(face, ch) if table else None
+        if em is None:
+            uncovered += 1
+            continue
+        font = renderer._font_for(cid, rel_sz, slot)
+        metric = renderer._metric_font_for_pt(cid, pt, slot, font)
+        delta += (em - renderer._em_width(metric, ch)) * scale
+        measured += 1
+    return {"measured": measured, "measured_delta": delta,
+            "uncovered": uncovered}
+
+
+def _cell_record(renderer, metrics, el, address, label, stem):
+    """One over-broken cell, read line by line.  All HWPUNIT."""
+    para = own_render.Paragraph(el, renderer.defs["para_pr"])
+    pr = para.para_pr
+    call = renderer.break_calls.get(address)
+    column = float(call["column_hwp"]) if call else None
+    advances, gaps = renderer._char_advance_tables(None, para)
+    condense = max(0, min(100, pr.get("condense", 0) or 0))
+    opportunities = set(own_render.break_opportunities(
+        para.text, pr.get("break_latin", "KEEP_WORD"),
+        pr.get("break_non_latin", "KEEP_WORD")))
+
+    def width(start, end):
+        if end <= start:
+            return 0.0
+        return sum(advances[start:end]) + sum(gaps[start:end]) - gaps[end - 1]
+
+    def slack(start, end):
+        spaces = sum(advances[i] for i in range(start, end)
+                     if para.chars[i][0] in own_render.SPACE_CHARS)
+        return spaces * condense / 100.0
+
+    cache_breaks = _cache_breaks(para)
+    our_breaks = [end for _start, end in call["spans"][:-1]] if call else []
+
+    lines = []
+    start = 0
+    for index, end in enumerate(cache_breaks + [len(para.chars)]):
+        visible = end
+        while (visible > start
+               and para.chars[visible - 1][0] in own_render.SPACE_CHARS):
+            visible -= 1
+        seg = para.linesegs[index] if index < len(para.linesegs) else None
+        indent = renderer._line_indent(para, index)
+        w_visible = width(start, visible)
+        trailing_gap = gaps[visible - 1] if visible > start else 0.0
+        this_slack = slack(start, visible)
+        avail = (column - indent) if column is not None else None
+        runs = _runs_in(metrics, para, start, visible)
+        punct_installed = sum(row["punct"] for row in runs
+                              if row["source"] == "installed"
+                              and row["hft"] is None)
+        lines.append({
+            "line": index,
+            "start": start, "visible": visible, "end": end,
+            "text": "".join(ch for ch, _cid in para.chars[start:visible]),
+            "horzpos": _iattr(seg, "horzpos") if seg is not None else None,
+            "horzsize": _iattr(seg, "horzsize") if seg is not None else None,
+            "indent": indent,
+            "avail": avail,
+            "w_visible": w_visible,
+            "trailing_gap": trailing_gap,
+            "slack": this_slack,
+            # The quantity ``_line_fits`` actually compares, and its excess
+            # over the box the breaker actually had.
+            "w_fit": w_visible + trailing_gap,
+            "excess": (w_visible + trailing_gap - avail - this_slack
+                       if avail is not None else None),
+            "fits_shipped": (renderer._line_fits(
+                para, w_visible, avail, this_slack, start, visible,
+                trailing_gap) if avail is not None else None),
+            "break_offered": (end in opportunities
+                              if end < len(para.chars) else True),
+            "runs": runs,
+            "punct_installed": punct_installed,
+            "hft": _hft_terms(renderer, para, start, visible),
+        })
+        start = end
+
+    our_lines = []
+    if call:
+        for index, (lo, hi) in enumerate(call["spans"]):
+            our_lines.append({
+                "line": index, "start": lo, "end": hi,
+                "width": call["widths"][index],
+                "horzsize": call["horzsize"][index],
+                "text": "".join(ch for ch, _cid in para.chars[lo:hi]),
+            })
+
+    return {
+        "stem": stem, "address": address, "cell": label,
+        "align": pr.get("align"), "condense": condense,
+        "break_latin": pr.get("break_latin"),
+        "break_non_latin": pr.get("break_non_latin"),
+        "column_hwp": column,
+        "cached_horzsize": [_iattr(seg, "horzsize") for seg in para.linesegs],
+        "cached_horzpos": [_iattr(seg, "horzpos") for seg in para.linesegs],
+        "cache_breaks": cache_breaks,
+        "our_breaks": our_breaks,
+        "cached_lines": len(para.linesegs),
+        "our_line_count": len(our_lines),
+        "lines": lines,
+        "our_lines": our_lines,
+        "deciding": _deciding_line(cache_breaks, our_breaks),
+    }
+
+
+def _deciding_line(cache_breaks, our_breaks):
+    """The first cached line whose end our breaker did not reproduce.
+
+    A greedy breaker's later lines are downstream of its first disagreement,
+    so only the first one is evidence about anything.
+    """
+    for index, cut in enumerate(cache_breaks):
+        if index >= len(our_breaks) or our_breaks[index] != cut:
+            return index
+    return None
+
+
+def decompose(record):
+    """The deciding line's excess, split into the terms measured elsewhere.
+
+    Returns the terms in HWPUNIT plus the verdict: what single quantity would
+    have to change, and by how much, for our breaker to put the cached break
+    where the cache put it.  A line whose excess is NEGATIVE has no width
+    story — the breaker was never offered the cut — and says so.
+    """
+    index = record["deciding"]
+    if index is None:
+        return None
+    line = record["lines"][index]
+    excess = line["excess"]
+    punct = line["punct_installed"] * INSTALLED_PUNCT_RESIDUAL_HWP
+    budget = own_render.RIGHT_EDGE_TOLERANCE_HWP
+    terms = {
+        # (a) #307: the last character's own 자간, which _line_fits counts.
+        # Reported as the signed amount it contributes to ``w_fit``.
+        "trailing_gap": line["trailing_gap"],
+        # (b) #307's installed-face punctuation residual, priced per glyph.
+        "punct_installed": punct,
+        # (c) #292: the measured HFT table against the face metric.
+        "hft_measured_delta": line["hft"]["measured_delta"],
+        "hft_uncovered_chars": line["hft"]["uncovered"],
+        # (d) #301's error budget.
+        "budget": budget,
+    }
+    if excess is None:
+        return {"line": index, "terms": terms, "verdict": "no column recorded"}
+    if not line["break_offered"]:
+        # The cut is not in our opportunity set, so no width closes it: our
+        # width for the cache's own line already fits, with room to spare.
+        terms["residual"] = None
+        return {
+            "line": index, "excess": excess, "terms": terms,
+            "width_kind": "not width-limited",
+            "verdict": (
+                f"the cached cut at {line['end']} is not in our "
+                f"break_opportunities set; our width for the cache's own line "
+                f"is {-excess:.1f} HWPUNIT UNDER the box, so no width term of "
+                f"any size reaches it"),
+        }
+    # A width story: how far the fit test misses by, and what is unexplained
+    # once the named terms are taken out of it.
+    over_budget = excess - budget
+    terms["residual"] = over_budget - punct - terms["hft_measured_delta"]
+    return {
+        "line": index, "excess": excess, "terms": terms,
+        "width_kind": "width-limited",
+        "verdict": (
+            f"our width must fall by {over_budget:.1f} HWPUNIT "
+            f"({over_budget / line['w_fit'] * 100:.2f}% of the line), or the "
+            f"budget must rise from {budget:.0f} to {excess:.0f}"),
+    }
+
+
+def _lineseg_control(targets, repo_root, factory):
+    """``lineseg_agreement`` over the corpus under one candidate.
+
+    The multi-line break-sequence count summed over the ten forms — the
+    number #302 and #307 argued the right-edge budget from — plus whether the
+    two ``jumin`` paragraphs #307 named are among the ones it now gets wrong.
+    ``lineseg_agreement`` caps its ``disagreements`` listing at 40 rows, so
+    that flag is reported alongside the cap rather than as a bare boolean.
+    """
+    multi = {"scored": 0, "break_sequence_exact": 0, "line_count_exact": 0}
+    watched = None
+    capped = False
+    with factory():
+        for path, _reference in targets:
+            report = own_render.lineseg_agreement(path, repo_root=repo_root)
+            block = report["multiline_paragraphs"]
+            multi["scored"] += block["paragraphs_scored"]
+            multi["break_sequence_exact"] += \
+                block["paragraphs_break_sequence_exact"]
+            multi["line_count_exact"] += block["paragraphs_line_count_exact"]
+            if Path(path).stem == LINESEG_CONTROL_STEM:
+                rows = {row["paragraph"]: row
+                        for row in report["disagreements"]}
+                watched = {}
+                for address in LINESEG_CONTROL_PARAGRAPHS:
+                    row = rows.get(address)
+                    watched[address] = (
+                        "exact" if row is None
+                        else f"cache {row['cached']} ours {row['computed']}")
+                capped = len(report["disagreements"]) >= 40
+    multi["watched"] = watched
+    multi["listing_capped"] = capped
+    return multi
+
+
+def score_cells(targets, repo_root, dpi=144):
+    """Every candidate, on the two-sided score AND on the three cells.
+
+    The corpus number is ``advance_probe.break_scoreboard`` — the same one a
+    fit rule is graded by — so a mechanism that closes a cell and costs the
+    corpus is priced in one table with a mechanism that does neither.
+    """
+    rows = []
+    baseline = None
+    for name in CELL_CANDIDATE_ORDER:
+        _basis, factory = CELL_CANDIDATES[name]
+        totals = {"installed": 0, "installed_match": 0, "other": 0,
+                  "other_match": 0}
+        matched = set()
+        cells = {}
+        with factory():
+            for path, _reference in targets:
+                stem = Path(path).stem
+                wanted = OVERBROKEN_CELLS.get(stem, {})
+                for row in advance_probe.break_scoreboard(
+                        path, dpi=dpi, repo_root=repo_root):
+                    key = "installed" if row["installed"] else "other"
+                    totals[key] += 1
+                    if row["match"]:
+                        totals[key + "_match"] += 1
+                        matched.add((stem, row["address"]))
+                    if row["address"] in wanted:
+                        cells[(stem, row["address"])] = {
+                            "cache": list(row["cache_breaks"]),
+                            "ours": list(row["computed_breaks"]),
+                            "match": row["match"],
+                        }
+        row = {"candidate": name, "totals": totals, "cells": cells,
+               "matched": matched,
+               "lineseg": _lineseg_control(targets, repo_root, factory)}
+        if name == "shipped":
+            baseline = row
+        rows.append(row)
+    base = baseline["matched"]
+    for row in rows:
+        row["regressions"] = sorted(base - row["matched"])
+        row["gains"] = sorted(row["matched"] - base)
+    for row in rows:
+        row.pop("matched")
+    return rows
+
+
+def cell_report(targets, repo_root, dpi=144, score=True):
+    records = []
+    for path, _reference in targets:
+        wanted = OVERBROKEN_CELLS.get(Path(path).stem)
+        if not wanted:
+            continue
+        renderer = advance_probe.BreakRecordingRenderer(
+            path, dpi=dpi, repo_root=repo_root, layout_policy="computed")
+        renderer.render()
+        metrics = advance_probe.OurMetrics(renderer)
+        for section in renderer.sections:
+            for el in section.iter():
+                if _local(el.tag) != "p":
+                    continue
+                address = renderer.paragraph_index.get(id(el))
+                if address not in wanted:
+                    continue
+                record = _cell_record(renderer, metrics, el, address,
+                                      wanted[address], Path(path).stem)
+                record["decomposition"] = decompose(record)
+                records.append(record)
+    out = {"cells": records}
+    if score:
+        out["candidates"] = score_cells(targets, repo_root, dpi=dpi)
+    return out
+
+
+def _print_cells(report):
+    print()
+    print("the three cells our breaker over-breaks (#311), line by line")
+    print()
+    for record in report["cells"]:
+        print("=" * 78)
+        print(f"{record['stem']} ¶{record['address']} — {record['cell']}")
+        print(f"  align={record['align']} condense={record['condense']} "
+              f"breakLatinWord={record['break_latin']} "
+              f"breakNonLatinWord={record['break_non_latin']}")
+        print(f"  text column: ours {record['column_hwp']:.0f}  "
+              f"cached @horzsize {record['cached_horzsize']}  "
+              f"@horzpos {record['cached_horzpos']}")
+        print(f"  cached lines {record['cached_lines']} -> ours "
+              f"{record['our_line_count']}   "
+              f"cache breaks {record['cache_breaks']}  "
+              f"our breaks {record['our_breaks']}")
+        print()
+        print("  cached lines, our width for exactly those characters")
+        print(f"    {'ln':>2}{'chars':>7}{'w_fit':>10}{'trail 자간':>11}"
+              f"{'slack':>8}{'indent':>8}{'avail':>9}{'excess':>10}"
+              f"{'fits':>6}{'offered':>9}")
+        print("    " + "-" * 82)
+        for line in record["lines"]:
+            avail = "-" if line["avail"] is None else f"{line['avail']:.0f}"
+            excess = ("-" if line["excess"] is None
+                      else f"{line['excess']:.1f}")
+            print(f"    {line['line']:>2}{line['visible'] - line['start']:>7}"
+                  f"{line['w_fit']:>10.1f}{line['trailing_gap']:>11.1f}"
+                  f"{line['slack']:>8.1f}{line['indent']:>8}{avail:>9}"
+                  f"{excess:>10}{str(line['fits_shipped']):>6}"
+                  f"{str(line['break_offered']):>9}")
+        print()
+        for line in record["lines"]:
+            print(f"    ln{line['line']} {line['text']!r}")
+        print()
+        print("  our lines")
+        for line in record["our_lines"]:
+            print(f"    ln{line['line']} [{line['start']}:{line['end']}] "
+                  f"w={line['width']:.1f} {line['text']!r}")
+        print()
+        print("  runs on the deciding line (advance_probe.OurMetrics)")
+        index = record["deciding"]
+        rows = record["lines"][index]["runs"] if index is not None else []
+        for run in rows:
+            print(f"    {run['chars']:>3} chars  declared={run['declared']}"
+                  f"  resolved={run['resolved']}  {run['source']}"
+                  f"  hft={run['hft']}  {run['size_pt']} pt"
+                  f"  ratio={run['ratio']}  자간={run['spacing']}"
+                  f"  bold={run['bold']}  punct={run['punct']}")
+        print()
+        piece = record["decomposition"]
+        if piece is None:
+            print("  the deciding line: none — our breaker reproduces the "
+                  "cache here")
+            print()
+            continue
+        terms = piece["terms"]
+        print(f"  the deciding line is ln{piece['line']}, excess "
+              f"{piece['excess']:>+.1f} HWPUNIT ({piece['width_kind']})")
+        print(f"    (a) trailing 자간 (#307), already counted   "
+              f"{terms['trailing_gap']:>+10.1f}")
+        print(f"    (b) installed punctuation residual (#307)   "
+              f"{terms['punct_installed']:>+10.2f}")
+        print(f"    (c) measured HFT table vs face (#292)       "
+              f"{terms['hft_measured_delta']:>+10.1f}"
+              f"   ({terms['hft_uncovered_chars']} chars on an HFT face the "
+              f"table does not carry)")
+        print(f"    (d) right-edge budget (#301)                "
+              f"{terms['budget']:>+10.1f}")
+        if terms["residual"] is None:
+            print("    (e) anything else                                  "
+                  "   n/a")
+        else:
+            print(f"    (e) anything else                           "
+                  f"{terms['residual']:>+10.1f}")
+        print(f"    -> {piece['verdict']}")
+        print()
+    if not report.get("candidates"):
+        return
+    print("=" * 78)
+    print("the mechanisms the three cells ask for, on the corpus")
+    print()
+    print(f"{'candidate':<12}{'installed':>12}{'other':>12}{'regress':>9}"
+          f"{'gain':>6}  basis")
+    print("-" * 100)
+    for row in report["candidates"]:
+        tot = row["totals"]
+        print(f"{row['candidate']:<12}"
+              f"{tot['installed_match']:>7} /{tot['installed']:>4}"
+              f"{tot['other_match']:>7} /{tot['other']:>4}"
+              f"{len(row['regressions']):>9}{len(row['gains']):>6}"
+              f"  {CELL_CANDIDATES[row['candidate']][0]}")
+    print()
+    for row in report["candidates"]:
+        print(f"  {row['candidate']}:")
+        for (stem, address), cell in sorted(row["cells"].items()):
+            print(f"    {stem[:22]:<22} ¶{address:<4} cache={cell['cache']} "
+                  f"ours={cell['ours']} match={cell['match']}")
+        if row["regressions"]:
+            print("    regresses: " + ", ".join(
+                f"{stem[:12]} ¶{addr}" for stem, addr in row["regressions"][:8])
+                + (" …" if len(row["regressions"]) > 8 else ""))
+        control = row.get("lineseg")
+        if control:
+            print(f"    lineseg_agreement, corpus multi-line: break sequence "
+                  f"{control['break_sequence_exact']}/{control['scored']}, "
+                  f"line count {control['line_count_exact']}/"
+                  f"{control['scored']}"
+                  + ("  (jumin listing capped at 40)"
+                     if control["listing_capped"] else ""))
+            for address, state in sorted((control["watched"] or {}).items()):
+                print(f"      {LINESEG_CONTROL_STEM[:5]} ¶{address}: {state}")
+    print()
+
+
+# --------------------------------------------------------------------------
 # Reporting
 # --------------------------------------------------------------------------
 
@@ -822,6 +1462,14 @@ def build_parser():
                         help="every converted corpus form")
     parser.add_argument("--breaks", action="store_true",
                         help="also run the real breaker under each candidate")
+    parser.add_argument("--cells", action="store_true",
+                        help="the three cells #311 found our breaker "
+                             "over-breaking, line by line, with the excess "
+                             "decomposed and the mechanisms they ask for "
+                             "scored on the corpus")
+    parser.add_argument("--no-cell-score", action="store_true",
+                        help="with --cells, skip the corpus-wide candidate "
+                             "score (the cell tables alone, no renders)")
     parser.add_argument("--standin", metavar="VARIANT",
                         help="install one hft_width_table stand-in width rule "
                              "underneath (e.g. table+pen), so the fit test is "
@@ -901,8 +1549,13 @@ def main(argv=None):
     if args.breaks:
         report["breaks"] = break_report(targets, repo_root, brackets,
                                         standin=args.standin, dpi=args.dpi)
+    if args.cells:
+        report["cells"] = cell_report(targets, repo_root, dpi=args.dpi,
+                                      score=not args.no_cell_score)
     if not args.no_text:
         _print_report(report)
+        if args.cells:
+            _print_cells(report["cells"])
     if args.json:
         payload = {"report": report}
         Path(args.json).write_text(
