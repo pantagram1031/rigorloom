@@ -19,11 +19,10 @@ use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Value};
-
 use crate::digest;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ExportOk {
     pub path: PathBuf,
     pub sha256: String,
@@ -32,10 +31,11 @@ pub struct ExportOk {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ExportErr {
     pub code: &'static str,
     pub message: String,
-    pub data: Value,
+    pub data: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +45,11 @@ pub enum CrashAfter {
     DestReplaced,
 }
 
-fn err(code: &'static str, message: String, data: Value) -> ExportErr {
+fn field(key: &str, value: impl std::fmt::Display) -> (String, String) {
+    (key.to_string(), value.to_string())
+}
+
+fn err(code: &'static str, message: String, data: Vec<(String, String)>) -> ExportErr {
     ExportErr {
         code,
         message,
@@ -268,7 +272,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             "저장할 파일 이름이 없습니다.".into(),
-            json!({ "destination": dest.to_string_lossy() }),
+            vec![field("destination", dest.to_string_lossy())],
         ));
     }
 
@@ -278,7 +282,7 @@ pub fn publish_export_pair_at(
             return Err(err(
                 "export_failed",
                 "저장할 폴더가 없습니다.".into(),
-                json!({ "parent": parent.to_string_lossy() }),
+                vec![field("parent", parent.to_string_lossy())],
             ));
         }
     }
@@ -294,11 +298,11 @@ pub fn publish_export_pair_at(
             return Err(err(
                 "export_alias",
                 format!("같은 파일이라 내보낼 수 없습니다 ({why})."),
-                json!({
-                    "left": left.to_string_lossy(),
-                    "right": right.to_string_lossy(),
-                    "reason": why,
-                }),
+                vec![
+                    field("left", left.to_string_lossy()),
+                    field("right", right.to_string_lossy()),
+                    field("reason", why),
+                ],
             ));
         }
     }
@@ -307,7 +311,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             "대상이 폴더입니다.".into(),
-            json!({ "destination": dest.to_string_lossy() }),
+            vec![field("destination", dest.to_string_lossy())],
         ));
     }
 
@@ -320,7 +324,7 @@ pub fn publish_export_pair_at(
                 return Err(err(
                     "export_failed",
                     format!("기존 대상 파일을 읽지 못했습니다: {e}"),
-                    json!({ "destination": dest.to_string_lossy() }),
+                    vec![field("destination", dest.to_string_lossy())],
                 ));
             }
         }
@@ -353,7 +357,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             format!("후보본을 저장하지 못했습니다: {e}"),
-            json!({ "destination": dest.to_string_lossy() }),
+            vec![field("destination", dest.to_string_lossy())],
         ));
     }
     if let Err(e) = copy_durable(receipt, &receipt_tmp) {
@@ -361,7 +365,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             format!("영수증을 저장하지 못했습니다: {e}"),
-            json!({ "destination": receipt_dest.to_string_lossy() }),
+            vec![field("destination", receipt_dest.to_string_lossy())],
         ));
     }
 
@@ -372,7 +376,7 @@ pub fn publish_export_pair_at(
             return Err(err(
                 "export_failed",
                 format!("내보낸 파일을 다시 읽지 못했습니다: {e}"),
-                json!({ "destination": dest.to_string_lossy() }),
+                vec![field("destination", dest.to_string_lossy())],
             ));
         }
     };
@@ -384,7 +388,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             "export crashed after staging".into(),
-            json!({ "stage": "staged" }),
+            vec![field("stage", "staged")],
         ));
     }
 
@@ -394,7 +398,7 @@ pub fn publish_export_pair_at(
             return Err(err(
                 "export_failed",
                 format!("기존 대상 파일을 보존하지 못했습니다: {e}"),
-                json!({ "destination": dest.to_string_lossy() }),
+                vec![field("destination", dest.to_string_lossy())],
             ));
         }
     }
@@ -404,7 +408,7 @@ pub fn publish_export_pair_at(
             return Err(err(
                 "export_failed",
                 format!("기존 영수증을 보존하지 못했습니다: {e}"),
-                json!({ "destination": receipt_dest.to_string_lossy() }),
+                vec![field("destination", receipt_dest.to_string_lossy())],
             ));
         }
     }
@@ -434,7 +438,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             format!("영수증을 저장하지 못했습니다: {e}"),
-            json!({ "destination": receipt_dest.to_string_lossy() }),
+            vec![field("destination", receipt_dest.to_string_lossy())],
         ));
     }
 
@@ -443,7 +447,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             "export crashed after receipt publish".into(),
-            json!({ "stage": "receipt" }),
+            vec![field("stage", "receipt")],
         ));
     }
 
@@ -452,7 +456,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             format!("후보본을 저장하지 못했습니다: {e}"),
-            json!({ "destination": dest.to_string_lossy() }),
+            vec![field("destination", dest.to_string_lossy())],
         ));
     }
 
@@ -461,7 +465,7 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             "export crashed after destination replace".into(),
-            json!({ "stage": "dest" }),
+            vec![field("stage", "dest")],
         ));
     }
 
@@ -475,10 +479,10 @@ pub fn publish_export_pair_at(
         return Err(err(
             "export_failed",
             "내보낸 쌍이 완전하지 않습니다.".into(),
-            json!({
-                "destination": dest.to_string_lossy(),
-                "receipt": receipt_dest.to_string_lossy(),
-            }),
+            vec![
+                field("destination", dest.to_string_lossy()),
+                field("receipt", receipt_dest.to_string_lossy()),
+            ],
         ));
     }
 

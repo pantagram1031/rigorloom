@@ -284,7 +284,13 @@ fn export_candidate(
             "bytes": done.bytes,
             "receiptPath": done.receipt_path.to_string_lossy(),
         })),
-        Err(e) => Err(refuse(e.code, e.message, e.data)),
+        Err(e) => {
+            let mut data = serde_json::Map::new();
+            for (key, value) in e.data {
+                data.insert(key, Value::String(value));
+            }
+            Err(refuse(e.code, e.message, Value::Object(data)))
+        }
     }
 }
 
