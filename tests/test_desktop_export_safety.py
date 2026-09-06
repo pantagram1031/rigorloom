@@ -7,7 +7,6 @@ pair publish. They do not exercise own_render IoU or rematch.
 """
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -16,7 +15,6 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-CARGO_TOML = REPO / "desktop" / "src-tauri" / "Cargo.toml"
 EXPORT_RS = REPO / "desktop" / "src-tauri" / "src" / "export.rs"
 MAIN_RS = REPO / "desktop" / "src-tauri" / "src" / "main.rs"
 WRITE_PY = REPO / "engine" / "scripts" / "hwpx_write.py"
@@ -46,55 +44,41 @@ def test_export_module_refuses_aliases_and_stages_first():
 def test_writer_replaces_dest_only_after_a_complete_temp():
     text = WRITE_PY.read_text(encoding="utf-8")
     start = text.index("    def write(self, path):")
-    end = text.index("    def tobytes(self):")
+    end = text.index("    def tobytes(self):", start)
     body = text[start:end]
     assert "os.replace" in body
     assert "os.fsync" in body
-    assert "shutil.move" not in body
+    assert "shutil.move(" not in body
 
 
-def test_export_safety_rust_matrix():
-    cargo = shutil.which("cargo")
-    if cargo is None:
-        pytest.skip("cargo is not installed")
-    env = os.environ.copy()
-    env.setdefault("CARGO_TERM_COLOR", "never")
-    completed = subprocess.run(
-        [
-            cargo,
-            "test",
-            "--manifest-path",
-            str(CARGO_TOML),
-            "--offline",
-            "export::",
-            "--",
-            "--test-threads=1",
-        ],
-        cwd=str(REPO / "desktop" / "src-tauri"),
+HARNESS = Path(__file__).resolve().parent / "desktop_export_safety_harness.rs"
+
+
+def test_export_safety_rust_matrix(tmp_path):
+    rustc = shutil.which("rustc")
+    if rustc is None:
+        pytest.skip("rustc is not installed")
+    binary = tmp_path / "export_safety"
+    compiled = subprocess.run(
+        [rustc, "--test", "--edition", "2021", "-o", str(binary), str(HARNESS)],
+        cwd=str(REPO),
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=60,
         check=False,
-        env=env,
     )
-    if completed.returncode != 0 and "offline" in (completed.stderr + completed.stdout):
-        completed = subprocess.run(
-            [
-                cargo,
-                "test",
-                "--manifest-path",
-                str(CARGO_TOML),
-                "export::",
-                "--",
-                "--test-threads=1",
-            ],
-            cwd=str(REPO / "desktop" / "src-tauri"),
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-            env=env,
-        )
+    if compiled.returncode != 0:
+        sys.stderr.write(compiled.stdout)
+        sys.stderr.write(compiled.stderr)
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    completed = subprocess.run(
+        [str(binary), "--test-threads=1"],
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
     if completed.returncode != 0:
         sys.stderr.write(completed.stdout)
         sys.stderr.write(completed.stderr)
