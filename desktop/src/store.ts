@@ -129,10 +129,9 @@ export interface QueuedFillOp extends QueuedOpBase {
  *
  * There is no `replace_paragraph_text` operation and this shell did not invent
  * one: `set_run` replaces one run at `(atPara, run)` and preserves its
- * `charPrIDRef` (engine/scripts/preedit.py:2464). What that costs is the check
- * in `beginParagraphEdit` — a run is not a line, and the two coincide only
- * where a paragraph holds exactly one run. Where they do not, no caret is
- * placed at all.
+ * `charPrIDRef` (engine/scripts/preedit.py:2464). The caret names that run
+ * and a UTF-16 range inside it (a wrapped visual line is a range, not a
+ * different run). A span that would cross neighbour runs is refused.
  *
  * `run` is the index the run inventory returned, never a count this shell kept.
  */
@@ -244,6 +243,13 @@ export interface InlineRunEdit extends InlineEditBase {
    * whichever head happened to land while the field was open.
    */
   runId?: string | null;
+  documentSha256?: string | null;
+  /** Always `"utf-16"` for a run caret. See `run_map.ts`. */
+  offsetUnit?: "utf-16";
+  /** UTF-16 start of the clicked visual line inside `before`. */
+  rangeStart?: number;
+  /** UTF-16 end of the clicked visual line inside `before`. */
+  rangeEnd?: number;
 }
 
 export type InlineEdit = InlineCellEdit | InlineRunEdit;

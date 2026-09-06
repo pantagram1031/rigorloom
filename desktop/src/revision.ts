@@ -7,16 +7,32 @@
  * commit validates the lease once. Superseded work is a silent no-op — not
  * a refusal a caller can turn back into a stale selection.
  *
+ * Card 3 (run-scoped edit) sits on the same lease: the click names one run
+ * and a UTF-16 range inside it. See `run_map.ts`.
+ *
  * See docs/research/revision-coherence-01.md (PR #254) and this wiring on
  * the desktop-own-render tip (PR #221).
  */
+
+import { locateSpanInRuns, type OffsetUnit } from "./run_map";
 
 export type CaretRefusal =
   | "no_address"
   | "multi_run"
   | "run_text_differs"
   | "no_inventory"
-  | "revision_mismatch";
+  | "revision_mismatch"
+  | "cross_run";
+
+export { OFFSET_UNIT, type OffsetUnit } from "./run_map";
+export {
+  commitRunScopedReplacement,
+  fieldTextForRunEdit,
+  locateSpanInRuns,
+  replaceUtf16Range,
+  utf16Length,
+  utf16Slice,
+} from "./run_map";
 
 export interface DocumentRevision {
   sessionId: string;
@@ -49,6 +65,10 @@ export type ParagraphEditEffect =
       spanIndex: number;
       sizePt?: number;
       region: { at_para?: number; runs?: Array<{ index: number; text?: string }> };
+      /** UTF-16 range of the clicked visual line inside `before`. */
+      offsetUnit: OffsetUnit;
+      rangeStart: number;
+      rangeEnd: number;
     }
   | {
       kind: "refused";
@@ -145,10 +165,6 @@ export function subjectMatchesLease(
   return true;
 }
 
-function looselySameText(a: string, b: string): boolean {
-  return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
-}
-
 export interface RegionAnswer {
   subject?: { kind?: string; runId?: string | null; sha256?: string };
   regions: Array<{ at_para?: number; runs?: Array<{ index: number; text?: string }> }>;
@@ -197,29 +213,26 @@ export async function prepareParagraphEdit(args: {
   if (runs.length === 0) {
     return { kind: "refused", lease, refusal: "no_inventory", address, spanIndex: args.spanIndex };
   }
-  if (runs.length > 1) {
-    return { kind: "refused", lease, refusal: "multi_run", address, spanIndex: args.spanIndex };
+  const located = locateSpanInRuns(args.spanText, runs);
+  if (located.kind === "refused") {
+    return { kind: "refused", lease, refusal: located.refusal, address, spanIndex: args.spanIndex };
   }
-  const run = runs[0];
-  if (!looselySameText(run.text ?? "", args.spanText)) {
-    return {
-      kind: "refused",
-      lease,
-      refusal: "run_text_differs",
-      address,
-      spanIndex: args.spanIndex,
-    };
-  }
+  const rangeLen = located.rangeEnd - located.rangeStart;
+  const caret =
+    args.caret == null ? null : Math.max(0, Math.min(args.caret, rangeLen));
   return {
     kind: "caret",
     lease,
     atPara,
-    run: run.index,
-    before: args.queuedBefore ?? run.text ?? "",
-    caret: args.caret,
+    run: located.run,
+    before: args.queuedBefore ?? located.runText,
+    caret,
     spanIndex: args.spanIndex,
     sizePt: args.sizePt,
     region: region ?? { at_para: atPara, runs },
+    offsetUnit: located.offsetUnit,
+    rangeStart: located.rangeStart,
+    rangeEnd: located.rangeEnd,
   };
 }
 
@@ -237,6 +250,10 @@ export type OverlayCommit =
         spanIndex: number;
         sizePt?: number;
         runId: string | null;
+        documentSha256: string | null;
+        offsetUnit: OffsetUnit;
+        rangeStart: number;
+        rangeEnd: number;
       };
       overlayPick: {
         kind: "caret";
@@ -295,6 +312,10 @@ export function commitParagraphClick(
       spanIndex: effect.spanIndex,
       sizePt: effect.sizePt,
       runId: effect.lease.runId,
+      documentSha256: effect.lease.documentSha256,
+      offsetUnit: effect.offsetUnit,
+      rangeStart: effect.rangeStart,
+      rangeEnd: effect.rangeEnd,
     },
     overlayPick: {
       kind: "caret",

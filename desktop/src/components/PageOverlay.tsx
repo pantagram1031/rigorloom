@@ -71,6 +71,7 @@ import {
   commitEdit,
   dismissOverlayPick,
 } from "../actions";
+import { fieldTextForRunEdit } from "../revision";
 import { useWorkspace, type InlineRunEdit } from "../store";
 import type { GeometryResult, GeometrySeat, GeometrySpan, NormRect } from "../types";
 import { SeatEditor } from "./SeatEditor";
@@ -262,7 +263,7 @@ function SpanOverlay({
       >
         <SeatEditor
           className="seat-input ov-caret-input"
-          value={editing.before}
+          value={fieldTextForRunEdit(editing.before, editing.rangeStart, editing.rangeEnd)}
           caret={editing.caret}
           style={editing.sizePt ? { fontSize: `${editing.sizePt}pt` } : undefined}
           onCommit={(next) => void commitEdit(next)}
