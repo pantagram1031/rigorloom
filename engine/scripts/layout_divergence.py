@@ -394,6 +394,16 @@ class TracingRenderer(own_render.OwnRenderer):
         #: under that policy and nothing else records it, so the seat pass
         #: would otherwise have no cache-side page for an inkless paragraph.
         self.cache_seats = {}
+        #: ``id()`` of every line-box record ``_draw_line`` has already given
+        #: an address to.  A paragraph holding an inline table draws its
+        #: cells' lines from INSIDE its own ``_draw_line`` call, so the outer
+        #: call sees them in its own ``fresh`` slice and must not relabel them
+        #: as its own.  The claim used to be implicit in ``setdefault`` on the
+        #: ``address`` key; the desktop renderer now stamps that key itself on
+        #: every box, so the claim has to be tracked here instead.  The
+        #: records are held for the renderer's whole life by ``line_boxes``,
+        #: which is what makes ``id()`` safe to key on.
+        self._addressed_boxes = set()
 
     def _render_cached_lines(self, draw, para, *args, **kwargs):
         outer, self._tracing_para = self._tracing_para, para
@@ -480,6 +490,13 @@ class TracingRenderer(own_render.OwnRenderer):
             text = "".join(seg.text for kind, seg in items if kind == "text")
             faces = self._line_faces(items)
             for record in fresh:
+                # Claim only what no INNER ``_draw_line`` has claimed already:
+                # this slice includes every line an inline table drew from
+                # inside this call, and those belong to their own cell
+                # paragraphs, not to the one holding the table.
+                if id(record) in self._addressed_boxes:
+                    continue
+                self._addressed_boxes.add(id(record))
                 # The desktop renderer stamps its own OWPML ``address`` dict
                 # (kind / atPara / table / row / col) on every box.  This tool
                 # keys paragraphs by its flat document-order index, so that
