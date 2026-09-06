@@ -238,6 +238,12 @@ export interface InlineRunEdit extends InlineEditBase {
   caret: number | null;
   spanIndex: number;
   sizePt?: number;
+  /**
+   * Document revision this caret was opened against. ``commitEdit`` passes
+   * it through as the plan base so the queue does not silently rebase onto
+   * whichever head happened to land while the field was open.
+   */
+  runId?: string | null;
 }
 
 export type InlineEdit = InlineCellEdit | InlineRunEdit;
@@ -457,6 +463,12 @@ export interface WorkspaceState {
   geometryFetches: number;
   /** What the last click on the page resolved to. Drives the status bar. */
   overlayPick: OverlayPick | null;
+  /**
+   * Monotonic edit-intent generation. Advanced on a new click, cancel,
+   * session/view replacement, or revision selection. A lease that does not
+   * carry the current value is superseded — a no-op, not a refusal.
+   */
+  editIntentGeneration: number;
 
   // --- chrome --------------------------------------------------------------
   /** Webview zoom factor, 0.5-2.0, persisted. */
@@ -680,6 +692,7 @@ const initial: WorkspaceState = {
   geometryCache: {},
   geometryFetches: 0,
   overlayPick: null,
+  editIntentGeneration: 0,
 
   uiZoom: 1,
   toast: null,
@@ -750,9 +763,17 @@ export function useWorkspace<T>(select: (s: WorkspaceState) => T): T {
   );
 }
 
+/** Advance the edit-intent generation. Returns the new value. */
+export function bumpEditIntent(): number {
+  const next = state.editIntentGeneration + 1;
+  setState({ editIntentGeneration: next });
+  return next;
+}
+
 // --- actions -----------------------------------------------------------------
 
-export const setView = (view: View) => setState({ view });
+export const setView = (view: View) =>
+  setState({ view, editIntentGeneration: state.editIntentGeneration + 1 });
 
 export const setCenterMode = (centerMode: CenterMode) => setState({ centerMode });
 

@@ -27,9 +27,18 @@ import {
   showToast,
   queuedOpAt,
   queuedRunOpAt,
+  bumpEditIntent,
   type Draft,
   type QueuedOp,
 } from "./store";
+import {
+  captureEditLease,
+  commitParagraphClick,
+  displayedRevision,
+  prepareParagraphEdit,
+  type CaretRefusal as RevisionCaretRefusal,
+  type ParagraphEditEffect,
+} from "./revision";
 import type {
   AppliedCandidate,
   EditableRegion,
@@ -45,7 +54,6 @@ import type {
   Recent,
   RegionText,
   RuntimeError,
-  TextRun,
   Turn,
   VerificationReport,
 } from "./types";
@@ -159,6 +167,7 @@ export async function selectSession(sessionId: string) {
           findings: [],
           checkedAt: null,
           checkPhase: "idle" as const,
+          editIntentGeneration: getState().editIntentGeneration + 1,
           inlineEdit: null,
           render: null,
           renderPhase: "idle" as const,
@@ -374,7 +383,7 @@ export function beginEdit(table: number, row: number, col: number): boolean {
  * and gets silence concludes the feature is broken, when the honest answer is
  * that this paragraph has no single run to address.
  */
-export type CaretRefusal = "no_address" | "multi_run" | "run_text_differs" | "no_inventory";
+export type CaretRefusal = RevisionCaretRefusal;
 
 const CARET_REFUSAL_TEXT: Record<CaretRefusal, string> = {
   no_address: "이 줄에는 문단 주소가 없습니다",
@@ -383,26 +392,12 @@ const CARET_REFUSAL_TEXT: Record<CaretRefusal, string> = {
   run_text_differs:
     "이 줄과 문단의 글 덩어리가 서로 다릅니다. 한 문단이 여러 줄로 접힌 자리라, 줄만 골라 고칠 방법이 없습니다",
   no_inventory: "런타임이 이 문단의 글 덩어리 목록을 돌려주지 못했습니다",
+  revision_mismatch:
+    "표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓지 않습니다",
 };
 
 export function caretRefusalText(reason: CaretRefusal): string {
   return CARET_REFUSAL_TEXT[reason];
-}
-
-/**
- * The mapping's own normalizer, as far as a shell can honestly go.
- *
- * `pipeline/scripts/check_residue.normalize_text` is Python and lives on the
- * other side of the wire; it cannot be imported here. So this comparison is
- * deliberately the WEAKEST one that is still safe — collapse whitespace runs,
- * trim — which is a strict subset of what the gate does. A pair this rejects
- * the gate would reject too. A pair this accepts the gate might have accepted
- * for reasons of its own, and the consequence of that direction is only that a
- * caret is refused where it could have been placed, which is the direction
- * this application errs in on purpose.
- */
-function looselySameText(a: string, b: string): boolean {
-  return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -447,58 +442,101 @@ export function caretOffsetAt(span: GeometrySpan, fraction: number): number | nu
  * paragraph lines across 51 real pages, 314 hold exactly one run and 51 do
  * not. The 51 are refused here, by name, with no caret placed.
  */
+/**
+ * Prepare a paragraph caret against the displayed revision. Does not write
+ * selection or overlay — the public click commits the returned effect.
+ */
+export async function prepareOverlayParagraphEdit(
+  span: GeometrySpan,
+  fraction: number | undefined,
+  intent: number,
+): Promise<ParagraphEditEffect | null> {
+  const state = getState();
+  const address = span.address;
+  if (!address || address.atPara == null) return null;
+  const lease = captureEditLease(state, address.atPara, intent);
+  if (!lease) return null;
+  return prepareParagraphEdit({
+    lease,
+    spanText: span.text,
+    spanIndex: span.index,
+    sizePt: span.sizePt,
+    caret: fraction === undefined ? null : caretOffsetAt(span, fraction),
+    address,
+    readRegion: rt.readRegion,
+  });
+}
+
+function applyOverlayParagraphCommit(effect: ParagraphEditEffect): boolean {
+  const commit = commitParagraphClick(effect, getState());
+  if (commit.kind === "noop") return false;
+  if (commit.kind === "refused") {
+    setState({
+      overlayPick: {
+        kind: "no_caret",
+        targetId: commit.overlayPick.targetId,
+        address: commit.overlayPick.address,
+        refusal: commit.overlayPick.refusal,
+        label: `${addressLabel(commit.overlayPick.address)} — ${caretRefusalText(commit.overlayPick.refusal)}`,
+      },
+      selection: commit.selection,
+    });
+    return true;
+  }
+  const sessionId = commit.sessionId;
+  const existing = getState().texts[sessionId] ?? [];
+  const region = commit.region as RegionText;
+  const queued = queuedRunOpAt(getState(), commit.inlineEdit.atPara, commit.inlineEdit.run);
+  setState({
+    texts: {
+      ...getState().texts,
+      [sessionId]: [...existing.filter((r) => r.at_para !== commit.inlineEdit.atPara), region],
+    },
+    selection: commit.selection,
+    inlineEdit: {
+      ...commit.inlineEdit,
+      opId: queued?.opId ?? null,
+      before: queued?.before ?? commit.inlineEdit.before,
+    },
+    overlayPick: {
+      kind: "caret",
+      targetId: commit.overlayPick.targetId,
+      address: commit.overlayPick.address,
+      caret: commit.overlayPick.caret,
+      label:
+        `${addressLabel(commit.overlayPick.address)}` +
+        (commit.overlayPick.snapped
+          ? " · 글자별 위치가 없어 줄 앞에 커서를 놓음"
+          : ` · ${commit.overlayPick.caret ?? 0}번째 글자 앞`),
+    },
+  });
+  return true;
+}
+
+/**
+ * Put a caret in a paragraph line, or refuse and say which refusal it is.
+ *
+ * Prepare then commit: the read may await, but only a still-current lease
+ * writes selection. A superseded reply is a silent no-op (null), not a
+ * refusal a caller can turn into a stale overlay.
+ */
 export async function beginParagraphEdit(
   span: GeometrySpan,
   fraction?: number,
 ): Promise<CaretRefusal | null> {
-  const sessionId = getState().activeSessionId;
-  const address = span.address;
-  if (!sessionId || !address || address.atPara == null) return "no_address";
-  const atPara = address.atPara;
-
-  let runs: TextRun[] = [];
-  try {
-    const answer = await rt.readRegion(sessionId, [{ atPara }]);
-    const region = answer.regions.find((r) => r.at_para === atPara);
-    runs = region?.runs ?? [];
-    if (region) {
-      // Kept beside the cell texts the tree loaded, so the toolbar over this
-      // caret can name the run's face (§14) without a second call.
-      const existing = getState().texts[sessionId] ?? [];
-      setState({
-        texts: {
-          ...getState().texts,
-          [sessionId]: [...existing.filter((r) => r.at_para !== atPara), region],
-        },
-      });
-    }
-  } catch {
-    return "no_inventory";
-  }
-  if (runs.length === 0) return "no_inventory";
-  if (runs.length > 1) return "multi_run";
-  const run = runs[0];
-  if (!looselySameText(run.text ?? "", span.text)) return "run_text_differs";
-
-  const queued = queuedRunOpAt(getState(), atPara, run.index);
-  setState({
-    selection: { kind: "paragraph", atPara },
-    inlineEdit: {
-      kind: "run",
-      atPara,
-      run: run.index,
-      before: queued?.before ?? run.text ?? "",
-      opId: queued?.opId ?? null,
-      caret: fraction === undefined ? null : caretOffsetAt(span, fraction),
-      spanIndex: span.index,
-      sizePt: span.sizePt,
-    },
-  });
-  return null;
+  const intent = bumpEditIntent();
+  const effect = await prepareOverlayParagraphEdit(span, fraction, intent);
+  if (!effect) return "no_address";
+  if (!applyOverlayParagraphCommit(effect)) return null;
+  return effect.kind === "refused" ? effect.refusal : null;
 }
 
 export function cancelEdit(): void {
-  setState({ inlineEdit: null, sawComposition: false });
+  setState({
+    inlineEdit: null,
+    sawComposition: false,
+    editIntentGeneration: getState().editIntentGeneration + 1,
+  });
 }
 
 /** Enter. The value joins the queue and the plan is rebuilt around it. */
@@ -546,7 +584,10 @@ export async function commitEdit(value: string): Promise<void> {
           before: edit.before,
           origin: "user",
         };
-  await setQueue([...ops, next]);
+  await setQueue(
+    [...ops, next],
+    edit.kind === "run" ? { baseRunId: edit.runId ?? null } : {},
+  );
 }
 
 function cellSlug(table: number, row: number, col: number): string {
@@ -1000,7 +1041,11 @@ export function selectHistory(runId: string | null): void {
  * to bytes the user has just navigated away from.
  */
 export async function setHead(runId: string | null): Promise<void> {
-  setState({ head: runId, applied: null });
+  setState({
+    head: runId,
+    applied: null,
+    editIntentGeneration: getState().editIntentGeneration + 1,
+  });
   if (runId) {
     await loadReceipt(runId);
     const receipt = getState().receipts[runId];
@@ -1363,9 +1408,9 @@ export async function renderCurrentPage(
 // the wrong place is worse than no box: it puts a text cursor where the text
 // is not, and it does it with the confidence of a real answer.
 
-/** `${sessionId}:${zeroBasedPage}` — the cache key, and the smoke reads it. */
-export function geometryKey(sessionId: string, page: number): string {
-  return `${sessionId}:${page}`;
+/** `${sessionId}:${page}` for the source; candidate pages add `:${runId}`. */
+export function geometryKey(sessionId: string, page: number, runId?: string | null): string {
+  return runId ? `${sessionId}:${page}:${runId}` : `${sessionId}:${page}`;
 }
 
 /**
@@ -1393,7 +1438,8 @@ export async function loadGeometry(page?: number): Promise<void> {
   const sessionId = state.activeSessionId;
   if (!sessionId) return;
   const wanted = Math.max(0, (page ?? state.page) - 1);
-  const key = geometryKey(sessionId, wanted);
+  const runId = displayedRevision(state)?.runId ?? state.render?.source?.runId ?? null;
+  const key = geometryKey(sessionId, wanted, runId);
 
   const held = state.geometryCache[key];
   if (held) {
@@ -1406,7 +1452,7 @@ export async function loadGeometry(page?: number): Promise<void> {
   setState({ geometryPhase: "starting", geometryError: null });
   const call = (async () => {
     try {
-      const geometry = await rt.pageGeometry(sessionId, wanted);
+      const geometry = await rt.pageGeometry(sessionId, wanted, runId);
       setState({
         geometry,
         geometryPhase: "ready",
@@ -1601,42 +1647,26 @@ export async function clickOverlaySpan(
     return;
   }
 
-  // A PARAGRAPH LINE. The caret path, and the runtime decides whether there is
-  // one — this shell asks and prints the answer, whichever way it comes back.
+  // A PARAGRAPH LINE. Prepare returns an effect with a revision/intent lease;
+  // this public boundary is the only place that writes. A superseded reply
+  // — including two clicks completed in reverse order — is a silent no-op,
+  // not a refusal this handler can turn back into an old selection.
   if (addressIsCaretTarget(address)) {
-    const refusal = await beginParagraphEdit(span, fraction);
-    if (refusal) {
+    const intent = bumpEditIntent();
+    const effect = await prepareOverlayParagraphEdit(span, fraction, intent);
+    if (!effect) {
       setState({
         overlayPick: {
           kind: "no_caret",
           targetId: id,
           address,
-          refusal,
-          label: `${addressLabel(address)} — ${caretRefusalText(refusal)}`,
+          refusal: "no_address",
+          label: `${addressLabel(address)} — ${caretRefusalText("no_address")}`,
         },
       });
-      setSelection({ kind: "paragraph", atPara: address.atPara! });
       return;
     }
-    const edit = getState().inlineEdit;
-    const snapped = edit?.kind === "run" && edit.caret === null;
-    setState({
-      overlayPick: {
-        kind: "caret",
-        targetId: id,
-        address,
-        // The offset is stated, and so is its absence. "커서를 줄 앞에 놓음"
-        // is not a nicety: it is the difference between a measured position
-        // and a fallback, and a user who is not told cannot know which they
-        // are looking at.
-        caret: edit?.kind === "run" ? edit.caret : null,
-        label:
-          `${addressLabel(address)}` +
-          (snapped
-            ? " · 글자별 위치가 없어 줄 앞에 커서를 놓음"
-            : ` · ${(edit?.kind === "run" ? edit.caret : 0) ?? 0}번째 글자 앞`),
-      },
-    });
+    applyOverlayParagraphCommit(effect);
     return;
   }
 
@@ -1687,26 +1717,26 @@ export async function chooseCandidate(address: GeometryAddress): Promise<void> {
     const span = (getState().geometry?.spans ?? []).find(
       (s) => `span-${s.index}` === pick?.targetId,
     );
-    const refusal = span
-      ? await beginParagraphEdit({ ...span, address, confidence: "unique" })
-      : "no_address";
-    setState({
-      overlayPick: refusal
-        ? {
-            kind: "no_caret",
-            targetId: pick?.targetId ?? "candidate",
-            address,
-            refusal,
-            label: `${addressLabel(address)} — ${caretRefusalText(refusal)}`,
-          }
-        : {
-            kind: "caret",
-            targetId: pick?.targetId ?? "candidate",
-            address,
-            caret: null,
-            label: `${addressLabel(address)} — 사용자가 고름 · 줄 앞에 커서를 놓음`,
-          },
-    });
+    if (!span) {
+      setState({
+        overlayPick: {
+          kind: "no_caret",
+          targetId: pick?.targetId ?? "candidate",
+          address,
+          refusal: "no_address",
+          label: `${addressLabel(address)} — ${caretRefusalText("no_address")}`,
+        },
+      });
+      return;
+    }
+    const intent = bumpEditIntent();
+    const effect = await prepareOverlayParagraphEdit(
+      { ...span, address, confidence: "unique" },
+      undefined,
+      intent,
+    );
+    if (!effect) return;
+    applyOverlayParagraphCommit(effect);
     return;
   }
 
