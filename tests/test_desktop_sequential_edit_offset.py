@@ -23,6 +23,13 @@ Example:
   Fix:   replaceUtf16Range("Hello World", 6, 11, "Earth")
            = "Hello Earth"   (correct)
 
+Follow-up (this tip): ``edit.before`` is only the displayed text while no
+``set_run`` is queued on the run — with one queued it is overridden with that
+op's ``before``. The splice base is therefore carried explicitly as
+``edit.rangeText`` (the run text the offsets were measured on) and applied by
+``runTextAfterEdit`` in ``revision.ts``. See
+``tests/test_desktop_same_run_range_text.py``.
+
 The structural tests below fail on the tip that has the bug and pass after
 the fix is applied.
 
@@ -88,9 +95,11 @@ def test_commit_edit_splice_base_is_before_not_queued_text():
         "commitEdit still uses queuedRun?.text as the runText splice base; "
         "offsets from prepareParagraphEdit are valid for edit.before only"
     )
-    # The fix: edit.before used directly
-    assert "runText: edit.before," in body or "runText: edit.before\n" in body, (
-        "commitEdit does not use edit.before as the runText splice base"
+    # The fix: the splice goes through ``runTextAfterEdit`` (revision.ts),
+    # whose base is ``edit.rangeText`` — the displayed run text the range was
+    # measured against. See test_desktop_same_run_range_text.py.
+    assert "runTextAfterEdit(edit, " in body, (
+        "commitEdit does not splice through runTextAfterEdit"
     )
 
 

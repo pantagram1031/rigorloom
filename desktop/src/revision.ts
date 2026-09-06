@@ -14,7 +14,12 @@
  * the desktop-own-render tip (PR #221).
  */
 
-import { locateSpanInRuns, type OffsetUnit } from "./run_map";
+import {
+  commitRunScopedReplacement,
+  locateSpanInRuns,
+  utf16Length,
+  type OffsetUnit,
+} from "./run_map";
 
 export type CaretRefusal =
   | "no_address"
@@ -65,7 +70,15 @@ export type ParagraphEditEffect =
       spanIndex: number;
       sizePt?: number;
       region: { at_para?: number; runs?: Array<{ index: number; text?: string }> };
-      /** UTF-16 range of the clicked visual line inside `before`. */
+      /**
+       * The run text the runtime returned for the DISPLAYED revision — the
+       * string `rangeStart`/`rangeEnd` were measured against. `before` is the
+       * op's A→B baseline and may be an earlier revision's text when a
+       * `set_run` is already queued on this run; only `rangeText` is a valid
+       * splice base for the range.
+       */
+      rangeText: string;
+      /** UTF-16 range of the clicked visual line inside `rangeText`. */
       offsetUnit: OffsetUnit;
       rangeStart: number;
       rangeEnd: number;
@@ -230,10 +243,42 @@ export async function prepareParagraphEdit(args: {
     spanIndex: args.spanIndex,
     sizePt: args.sizePt,
     region: region ?? { at_para: atPara, runs },
+    rangeText: located.runText,
     offsetUnit: located.offsetUnit,
     rangeStart: located.rangeStart,
     rangeEnd: located.rangeEnd,
   };
+}
+
+/**
+ * The run text a committed caret edit produces.
+ *
+ * The replacement goes into `rangeText` — the displayed run text the range
+ * was measured on — never into `before` and never into a queued op's text.
+ * Both of those can differ from the displayed text in length, and a splice
+ * at offsets measured on one string applied to another lands at a stale
+ * position (independent review #338, finding 1). An edit without a measured
+ * range replaces the whole displayed run. `rangeText` absent is the legacy
+ * shape, where `before` was the displayed text by construction.
+ */
+export function runTextAfterEdit(
+  edit: {
+    before: string;
+    rangeText?: string;
+    offsetUnit?: OffsetUnit;
+    rangeStart?: number;
+    rangeEnd?: number;
+  },
+  replacement: string,
+): string {
+  const base = edit.rangeText ?? edit.before;
+  return commitRunScopedReplacement({
+    runText: base,
+    rangeStart: edit.rangeStart ?? 0,
+    rangeEnd: edit.rangeEnd ?? utf16Length(base),
+    replacement,
+    offsetUnit: edit.offsetUnit ?? "utf-16",
+  }).text;
 }
 
 export type OverlayCommit =
@@ -251,6 +296,7 @@ export type OverlayCommit =
         sizePt?: number;
         runId: string | null;
         documentSha256: string | null;
+        rangeText: string;
         offsetUnit: OffsetUnit;
         rangeStart: number;
         rangeEnd: number;
@@ -313,6 +359,7 @@ export function commitParagraphClick(
       sizePt: effect.sizePt,
       runId: effect.lease.runId,
       documentSha256: effect.lease.documentSha256,
+      rangeText: effect.rangeText,
       offsetUnit: effect.offsetUnit,
       rangeStart: effect.rangeStart,
       rangeEnd: effect.rangeEnd,
