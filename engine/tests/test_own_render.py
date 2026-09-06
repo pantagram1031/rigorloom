@@ -21,6 +21,7 @@ the module skips when they or Pillow are absent.
 """
 from __future__ import annotations
 
+import collections
 import io
 import json
 import os
@@ -2742,8 +2743,8 @@ def test_a_line_overrunning_by_less_than_the_tolerance_is_kept(typo_probe):
     # And the allowance is the whole of the difference: with it switched off
     # the same box breaks the same line.
     strict = type("Strict", (type(renderer),), {
-        "_line_fits": lambda self, para, width, avail, slack, start, end:
-            width <= avail + slack})
+        "_line_fits": lambda self, para, width, avail, slack, start, end,
+        gap=0.0: width + gap <= avail + slack})
     renderer.__class__ = strict
     try:
         again, _ = _breaks(renderer, draw, text, cid,
@@ -2752,6 +2753,96 @@ def test_a_line_overrunning_by_less_than_the_tolerance_is_kept(typo_probe):
     finally:
         renderer.__class__ = strict.__mro__[1]
     assert len(again) == 2, again
+
+
+def _trailing_gap(renderer, draw, para, cid):
+    """The 자간 gap after the paragraph's last character, in HWPUNIT."""
+    ch = para.chars[-1][0]
+    _ratio, spacing, _rel, _off = renderer._typography(cid, ch)
+    return renderer._spacing_gap(renderer._measure_hwp(draw, ch, cid), spacing)
+
+
+def test_the_breaker_counts_the_last_characters_letter_spacing(typo_probe):
+    """자간 is a per-character cell to the BREAKER, not only a gap between.
+
+    ``_measure`` gives a span of ``k`` characters ``k`` advances and ``k - 1``
+    gaps, because that is the DRAWN extent: nothing follows the last glyph
+    for a final gap to separate it from.  The fit test compares the pen
+    position instead, and the pen has moved by that gap.
+
+    Both directions are asserted on the same synthetic paragraph, which is
+    what makes this the mechanism and not a corpus reading: with a NEGATIVE
+    자간 the line fits a box narrower than its drawn extent, and with a
+    POSITIVE one it fails a box exactly as wide as it.  The margin is a whole
+    letter-spacing gap, which is set far larger than
+    ``RIGHT_EDGE_TOLERANCE_HWP`` so that the budget cannot be what decides
+    either case.
+    """
+    renderer, _image, draw = typo_probe
+    text = "가나 다라"
+
+    tight = _synthetic_charpr(renderer, "__gapneg__", height=1000,
+                              spacing=-20)
+    para = _synthetic_paragraph(renderer, text, tight,
+                                para_id="__gapnegmeasure__")
+    drawn = renderer.span_width(draw, para, 0, len(text))
+    gap = _trailing_gap(renderer, draw, para, tight)
+    assert gap < -own_render.RIGHT_EDGE_TOLERANCE_HWP, (
+        "the gap has to outweigh the error budget for this to test the gap")
+
+    box = int(drawn + gap)
+    held, lines = _breaks(renderer, draw, text, tight, box,
+                          para_id="__gapneg1__")
+    assert len(held) == 1, held
+    # ... and the drawn width is untouched: this rule moves the FIT, not the
+    # measurement, so the line box is still the visible advance.
+    assert lines[0]["width_hwpunit"] == pytest.approx(drawn)
+
+    # The same box, with the trailing gap taken back out of the test, breaks.
+    blind = type("Blind", (type(renderer),), {
+        "_line_fits": lambda self, para, width, avail, slack, start, end,
+        trailing=0.0: width <= avail + slack
+        + own_render.RIGHT_EDGE_TOLERANCE_HWP})
+    renderer.__class__ = blind
+    try:
+        without, _ = _breaks(renderer, draw, text, tight, box,
+                             para_id="__gapneg2__")
+    finally:
+        renderer.__class__ = blind.__mro__[1]
+    assert len(without) == 2, without
+
+    loose = _synthetic_charpr(renderer, "__gappos__", height=1000, spacing=20)
+    para = _synthetic_paragraph(renderer, text, loose,
+                                para_id="__gapposmeasure__")
+    drawn = renderer.span_width(draw, para, 0, len(text))
+    gap = _trailing_gap(renderer, draw, para, loose)
+    assert gap > own_render.RIGHT_EDGE_TOLERANCE_HWP
+    broken, _ = _breaks(renderer, draw, text, loose, int(drawn),
+                        para_id="__gappos1__")
+    assert len(broken) == 2, broken
+
+
+def test_letter_spacing_of_zero_leaves_the_fit_test_where_it_was(typo_probe):
+    """The 자간 term is inert on a run that declares none.
+
+    Most of the corpus is such a run, so the rule above has to be provably
+    silent there: a box exactly as wide as the drawn extent holds the line,
+    and one narrower by more than the tolerance does not.
+    """
+    renderer, _image, draw = typo_probe
+    text = "가나 다라"
+    cid = _synthetic_charpr(renderer, "__gapzero__", height=1000, spacing=0)
+    para = _synthetic_paragraph(renderer, text, cid,
+                                para_id="__gapzeromeasure__")
+    drawn = renderer.span_width(draw, para, 0, len(text))
+    assert _trailing_gap(renderer, draw, para, cid) == 0.0
+    held, _ = _breaks(renderer, draw, text, cid, int(drawn),
+                      para_id="__gapzero1__")
+    assert len(held) == 1, held
+    cut, _ = _breaks(renderer, draw, text, cid,
+                     int(drawn - 4 * own_render.RIGHT_EDGE_TOLERANCE_HWP - 1),
+                     para_id="__gapzero2__")
+    assert len(cut) == 2, cut
 
 
 def test_a_trailing_space_never_forces_a_break(typo_probe):
@@ -4070,6 +4161,140 @@ def test_the_flow_pass_is_deterministic(tmp_path):
         assert a == b, "the flow pass is not deterministic"
     assert (first["report"]["block_layout"]["blocks"]
             == second["report"]["block_layout"]["blocks"])
+
+
+# -- the space-before at a page top --------------------------------------
+
+class _Placer(own_render.OwnRenderer):
+    """The flow pass's placement arithmetic, with no document under it.
+
+    ``_flow_blocks_once`` and ``_place_block`` reach the renderer only for
+    the page box, the anchored-table hooks and the footnote plan, so the
+    page-top seat can be exercised on hand-built blocks — which is the only
+    way to state "page 1 versus page 2" and "moved whole versus continued"
+    as separate cases without four synthesised .hwpx files.
+    """
+
+    def __init__(self):  # deliberately not OwnRenderer.__init__
+        self._flow_reserve = {}
+        self.skips = []
+
+    def _anchor_table_geometry(self, draw, para):
+        return None
+
+    def _block_note_heights(self, draw):
+        return {}
+
+    def _skip(self, element, reason):
+        self.skips.append((element, reason))
+
+    def place(self, blocks, usable, start_page=0):
+        counters = collections.Counter()
+        return self._flow_blocks_once(None, blocks, usable, counters,
+                                      start_page, 0, 0), counters
+
+
+def _flow_block(index, margin_prev=0, margin_next=0, lines=1, advance=2560,
+                table=False, **over):
+    rows = [{"advance": advance, "extent": advance, "vertpos": 0,
+             "vertsize": advance, "spacing": 0,
+             "table": object() if table else None}
+            for _ in range(lines)]
+    block = {
+        "index": index, "para": None, "mode": "computed", "rows": rows,
+        "height": advance * lines, "anchor_extent": 0,
+        "margin_prev": margin_prev, "margin_next": margin_next,
+        "page_break_before": False, "column_break": False,
+        "keep_with_next": False, "keep_lines": False, "widow_orphan": False,
+        "cached_top": None,
+    }
+    block.update(over)
+    return block
+
+
+def _tops(records):
+    """``{(block, page): top}`` over one placement sweep."""
+    return {(r["block"], r["page"]): r["top"] for r in records}
+
+
+def test_a_block_pushed_whole_onto_a_fresh_page_keeps_its_space_before():
+    """moel-2025 ¶233 in miniature: the cache seats it at margin_prev.
+
+    The predecessor fills the page, so the block does not fit below it and
+    moves whole.  It is the head of the new page and its 문단 위 간격 comes
+    with it.
+    """
+    usable = 10000
+    blocks = [_flow_block(0, advance=8000), _flow_block(1, margin_prev=1000,
+                                                        advance=2560)]
+    records, _counters = _Placer().place(blocks, usable)
+    tops = _tops(records)
+    assert tops[(0, 0)] == 0
+    assert tops[(1, 1)] == 1000, records
+
+
+def test_a_block_that_starts_the_document_keeps_its_space_before_too():
+    """Page 1 is not special: the candidate that zeroes it there is refused.
+
+    The corpus cannot discriminate — no form declares a space-before on the
+    paragraph that opens it — so the choice is pinned here rather than left
+    to whichever branch happens to run.
+    """
+    records, _counters = _Placer().place(
+        [_flow_block(0, margin_prev=1000, advance=2560)], 10000)
+    assert _tops(records)[(0, 0)] == 1000
+
+
+def test_a_block_that_only_continues_across_the_break_gets_no_new_space():
+    """A paragraph already started above, so its space-before is spent."""
+    usable = 10000
+    blocks = [_flow_block(0, advance=6000),
+              _flow_block(1, margin_prev=1000, lines=4, advance=2000)]
+    records, _counters = _Placer().place(blocks, usable)
+    tops = _tops(records)
+    # It starts below the first block WITH its space-before, and the lines
+    # that do not fit continue at the very top of the next page.
+    assert tops[(1, 0)] == 7000
+    assert tops[(1, 1)] == 0, records
+
+
+def test_an_explicit_page_break_keeps_the_space_before():
+    """The break spends the previous block's space-after, not this one's."""
+    blocks = [_flow_block(0, margin_next=800, advance=2560),
+              _flow_block(1, margin_prev=1000, advance=2560,
+                          page_break_before=True)]
+    records, counters = _Placer().place(blocks, 10000)
+    assert counters["explicit_page_breaks"] == 1
+    assert _tops(records)[(1, 1)] == 1000, records
+
+
+def test_a_space_before_with_no_room_for_the_first_line_is_dropped():
+    """It never pushes its own paragraph off the page it was moved to."""
+    usable = 10000
+    blocks = [_flow_block(0, advance=8000),
+              _flow_block(1, margin_prev=1000, advance=9500)]
+    records, _counters = _Placer().place(blocks, usable)
+    assert _tops(records)[(1, 1)] == 0, records
+
+
+def test_a_table_holder_moved_whole_keeps_its_space_before():
+    """The 88 the corpus actually carries are two nested tables under one
+    such holder, so the table arm is the one that has to be right."""
+    usable = 10000
+    blocks = [_flow_block(0, advance=8000),
+              _flow_block(1, margin_prev=1000, advance=2560, table=True)]
+    records, counters = _Placer().place(blocks, usable)
+    assert counters["tables_moved_whole"] == 1
+    assert _tops(records)[(1, 1)] == 1000, records
+
+
+def test_the_page_top_seat_needs_no_document_to_be_stated():
+    """The helper is an arithmetic rule, and both of its arms are named."""
+    placer = _Placer()
+    block = _flow_block(0, margin_prev=1000, advance=2560)
+    assert placer._page_top_seat(block, 0, 10000) == 1000
+    assert placer._page_top_seat(block, 0, 10000, extent=9500) == 0
+    assert placer._page_top_seat(_flow_block(0), 0, 10000) == 0
 
 
 def test_a_table_splits_only_when_it_is_anchored_and_says_CELL():

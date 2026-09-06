@@ -10133,3 +10133,658 @@ either; its not moving is a control and not a verdict.
   re-breaks that used to stand between `moel-2025`'s class-B paragraphs and
   their table origin are gone, and what is left has no root. It was there
   before, hidden behind them.
+
+## The 64 table origins are one page top, and the walk was charging phantoms — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#301 closed on an open item: "the `table_origin_unattributed` 64 is new and
+unexplained ... what is left has no root." It has one. **All 64 are two
+tables, on one page, of one form, and the whole of their origin delta is a
+single paragraph's space-before at the top of `moel-2025` page 7** — 1000
+HWPUNIT, 10 pt, `hh:margin/hc:prev`, which the cache keeps at a page top and
+the flow pass drops.
+
+Nothing in `own_render.py` changed. This is a probe fix, and it found two
+defects in the attribution walk rather than one.
+
+### The instrument
+
+`engine/scripts/class_b_probe.py [FORM.hwpx | --corpus] --table-origin
+[--json OUT]`.
+
+For every class-B paragraph whose cell rode a table whose ORIGIN moved, the
+new mode dumps the holder paragraph (index, the classes
+`layout_divergence` gives its lines, its own `d_seat`), the table's placement
+(inline vs anchored, `hp:pos@treatAsChar` / `@vertRelTo` / `@vertOffset`,
+`hp:tbl@textWrap`, `hp:outMargin`), its seat and drawn height under both
+policies, the preceding paragraph, and the page. The origin delta is then
+split into terms that are subtractions of measured numbers, never names:
+
+    d_slot_y = d_holder_block_top + d_within_holder
+             (+ d_outMargin.top + d_vertOffset, both constants of the file)
+
+and the paragraph is booked to whichever term carries it: **(a)** the
+holder's own block top moved, **(b)** the table sits at a different offset
+inside its holder, **(c)** a table above it came out a different height,
+**(d)** the column solve moved its content.
+
+### What the corpus says
+
+114 class-B paragraphs ride a moved table origin. **Every one of them is (a),
+and `d_within_holder` is exactly 0 for all six tables involved:**
+
+| form | table | holder ¶ | placement | carrying term |
+| --- | --- | --- | --- | --- |
+| moel-2025 | tbl7 | 233 | inline | −1000 |
+| moel-2025 | tbl8 | 251 | inline | −1000 |
+| moel-2025 | tbl9 | 289 | inline | −1000 |
+| kstartup | tbl15 | 399 | inline | −300 |
+| kstartup | tbl16 | 401 | inline | −300 |
+| nrf | tbl1 | 41 | inline | +5120 |
+
+All six are `treatAsChar="1"`, `vertRelTo="PARA"`, `vertOffset="0"`,
+`textWrap="TOP_AND_BOTTOM"`. **No table's origin moved for a `hp:pos` reason
+on this corpus.** (b) is not refuted; it is absent, so #255's outMargin work
+and the inline-vs-anchored seat both stay untested by this measurement.
+
+The 64 are `moel-2025` tbl8 (32 paragraphs) and tbl9 (32). Both are tables
+nested in a CELL of tbl7, and the chain is four links long:
+
+    ¶233  top-level, page 7, margin_prev 1000, holds tbl7 inline
+          cache seats it at 1000 below the body top, computed at 0
+      → tbl7's origin moves −1000
+      → the cells of tbl7 move −1000  (¶251, ¶289 live in two of them)
+      → ¶251 and ¶289 hold tbl8 and tbl9 inline, d_seat 0 each
+      → tbl8 and tbl9 move −1000
+      → the 64 paragraphs in their cells move −1000  (−20.0 px at 144 dpi)
+
+### Defect one: the walk stopped one level up
+
+`_root` followed a moved table origin to the paragraph holding the table and
+then asked only whether a PREDECESSOR of that paragraph was charged with a
+step. ¶251 has no predecessor charged and no step of its own — its whole
+displacement came from the cell it sits in — so the walk returned
+`table_origin_unattributed` and stopped, one table short of the answer. A
+table nested in another table's cell needs the same four-term question asked
+of the holder, and of the holder's holder, until a term that is not a
+container answers it. `root_of` now recurses, with a `seen` set.
+
+### Defect two: steps were charged across page boundaries
+
+Recursing alone would have made it worse. A seat is measured from the top of
+the page it is drawn on, so subtracting two seats on different pages is a
+change of frame, not a height anybody paid for — and the chain telescopes
+those differences into ± pairs whose largest member `_largest` then charged
+to an innocent paragraph. `moel-2025` ¶74, before and after:
+
+    before   ¶29 −1496 text_rebreak:width      after   ¶73 −208 text_line_height
+             ¶30 +1496 text_rebreak:width
+             ¶60 −1328 text_rebreak:width
+             ¶61 +1328 text_rebreak:width
+             ¶73  −208 text_line_height
+    root: text_rebreak:width (a ±1496 pair, pages away)   root: text_line_height
+
+¶74's drawn `dy` is −4.16 px, which is −208 HWPUNIT: the surviving carrier is
+the whole of it and the four it replaced summed to nothing. Followed up, ¶233
+would have been charged to ¶96, four pages back. The step chain and
+`carriers_for` now both refuse a cross-page pair.
+
+That leaves the page top to name, and two things there are measurable:
+
+* **carried across the break** — predecessors the CACHE left on the previous
+  page and the flow pass put on this one. Their computed heights are room the
+  page head does not get, and the sum is checked against its `d_seat`. `nrf`
+  page 2: ¶36 and ¶37, two empty paragraphs at 2560 each, 5120 = the head
+  ¶38's whole displacement. This is what kept `nrf`'s 29 named.
+* **the space-before at a page top** — the head's cache seat equals its
+  `hh:margin/hc:prev` and the flow pass seats it at zero. `moel-2025` ¶233
+  (1000) and `kstartup` ¶398 (300). Checked as an equality on each paragraph,
+  so a paragraph where it does not hold comes back `page_top_unattributed`
+  and stays visible rather than borrowing the label.
+
+### Roots, before and after
+
+| root | #301 | now |
+| --- | ---: | ---: |
+| `page_top:margin_prev` | – | **88** |
+| `table_row_heights` | 63 | 63 |
+| `empty_paragraph` | 29 | 29 |
+| `text_line_height` | – | 19 |
+| `cell_valign` | 15 | 15 |
+| `page_top_unattributed` | – | 3 |
+| `text_rebreak:width` | 41 | 2 |
+| `table_origin_unattributed` | **64** | – |
+| `forced_break` | 7 | – |
+| total | 219 | 219 |
+
+`table_origin_unattributed` is empty. The 41 `text_rebreak:width` did not
+survive as re-breaks: 20 of them were tbl7's cell paragraphs charged to ¶231's
+re-break when ¶233's page-top margin is what moved them, 19 were the ¶74 band
+above, and the 2 left are `jumin`'s. `forced_break`'s 7 were `kstartup`'s
+¶148 / ¶160 ±69632 — the E2.7 anchor-overflow split, charged across up to
+thirteen pages; four are now the ¶398 page-top margin and three are the band.
+
+### What did not move
+
+`own_render.py` is untouched, so these are controls and they read the same as
+#301: `render_scoreboard.py --corpus --dpi 144` cache `ssim_mean` 0.861944 /
+`ssim_inked` 0.393719 / `text_line_iou` 0.736589, computed 0.845092 /
+0.358796 / 0.684882, 53 pages scored and `page_count` exact 10/10 under both;
+`lineseg_vs_pdf.py --corpus` 411/411 lines equal, 8566/8566 characters;
+`layout_divergence.py --corpus` classes 1713 / 94 / 219 / 28;
+`render_check.py` on `render-check-01` 6 · 37 · 6 · 2 at 96 dpi and
+14 · 31 · 4 · 2 at 144, 9 of 9 pages exact.
+
+### Not proven
+
+- **Which policy is RIGHT about a page top is not decided here.** The cache
+  keeps a paragraph's space-before at the top of a page and the flow pass
+  drops it; this slice measures the disagreement and names it, and does not
+  say whose it is. `lineseg_vs_pdf` puts `moel-2025` on the cache's side for
+  pages (0 of 216 lines on a different page) but ¶233 is an object paragraph
+  and is skipped, so the 1000 itself was never compared to the export.
+- **The renderer is not fixed.** 88 of 219 class-B paragraphs now name one
+  mechanism; nothing was done about it.
+- **(b), (c) and (d) are absent, not refuted.** Six tables, all inline, all
+  `vertOffset=0`. A corpus with an anchored table whose origin moved would
+  test the `hp:pos` handling; these ten forms do not contain one.
+- **Three `kstartup` paragraphs are still a band.** ¶759, ¶794, ¶797 carry
+  −62751 / −62793 / −62793 with no same-page carrier and no carried run that
+  sums to it: the E2.7 anchor-overflow pages, unchanged and still unnamed.
+- **The recursion is measured to two levels.** tbl7 → tbl8 / tbl9 is the
+  deepest nesting on the corpus; the `seen` guard is reasoning, not a
+  measurement.
+- **`page_top:margin_prev` is priced on two forms.** `moel-2025` at 1000 and
+  `kstartup` at 300 — two page tops, one mechanism, and a third instance
+  would be the first real test of the equality check.
+
+## The space-before survives a page break, and the cell top is what proves it — measured and fixed, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#304 left the largest class-B root standing: `page_top:margin_prev`, 88
+paragraphs, "the cache seats the first paragraph of a page at its
+`hh:margin/hc:prev` and the flow pass seats it at 0", with "which policy is
+RIGHT about a page top is not decided here" written under it. It is decided
+now, and the deciding measurement is not at a page top at all.
+
+`own_render.py`'s flow pass now keeps a block's space-before when the block
+moves WHOLE to a fresh page. Class B falls 219 → 131 and nothing else in the
+class table moves.
+
+### The instrument
+
+`engine/scripts/class_b_probe.py [FORM.hwpx | --corpus] --page-top`.
+
+For every page the cache paginates, the mode finds the first TOP-LEVEL
+paragraph the cache seats there and puts its cached `vertpos` — measured from
+the body top, which is the frame `hp:lineseg@vertpos` is already in — beside
+what each candidate rule predicts:
+
+| candidate | predicted seat |
+| --- | --- |
+| `a_margin_prev` | `margin_prev` — the space-before is kept whole |
+| `b_dropped` | 0 — what the flow pass did |
+| `c_collapsed` | `max(margin_prev, previous margin_next)` |
+| `d_pages_2plus` | `margin_prev`, but 0 on the first page |
+| `e_pushed_whole` | `margin_prev`, but 0 when an overflow started the page |
+| `f_uncollapsed` | `previous margin_next + margin_prev` — the mid-page gap |
+
+Each row also carries what would separate them if the corpus had a case: the
+previous paragraph's `margin_next` and whether it ended the previous page or
+straddled into this one, the line spacing, whether the head holds a table or
+a picture or is empty, `pageBreakBefore`, `keepWithNext`, the column, the
+table's own cached seat when the head is an object paragraph, and the seat
+the flow pass gives it.
+
+### Five of the six candidates tie, because the corpus has two page tops
+
+53 page heads over ten forms. **Two of them declare a nonzero space-before**
+— `moel-2025` ¶233 (1000) and `kstartup` ¶398 (300) — and both are cached at
+exactly `margin_prev`:
+
+```
+kstartup  page 9 head p398 vertpos=300  margin_prev=300  prev p397 margin_next=0
+          ended_prev_page=True overflow_start=False pageBreakBefore=False
+          keepWithNext=False lineSpacing=PERCENT/160 holds=- col=0/1 ours=0
+moel-2025 page 7 head p233 vertpos=1000 margin_prev=1000 prev p232 margin_next=0
+          ended_prev_page=True overflow_start=False pageBreakBefore=False
+          keepWithNext=False lineSpacing=PERCENT/123 holds=['tbl'] col=0/1 ours=0
+```
+
+| candidate | exact | per form |
+| --- | ---: | --- |
+| `a_margin_prev` | 51/53 | kstartup 20/22, every other form all |
+| `b_dropped` | **49/53** | kstartup 19/22, moel-2025 6/7 |
+| `c_collapsed` | 51/53 | as `a` |
+| `d_pages_2plus` | 51/53 | as `a` |
+| `e_pushed_whole` | 51/53 | as `a` |
+| `f_uncollapsed` | 51/53 | as `a` |
+
+Only `b` is refuted, and only by those two rows. The other five agree
+everywhere the corpus can be asked, because at every other page head
+`margin_prev` is 0, the previous `margin_next` is 0, the head was pushed
+whole, and no form declares a space-before on the paragraph that opens it.
+**Two page heads cannot separate `a` from `c`, `d`, `e` or `f`.**
+
+The two rows no candidate reproduces are the known E2.7 band and are not
+about margins: `kstartup` page 5 head ¶160 at `vertpos` 69632 and page 7 head
+¶393 at 69785, both `margin_prev` 0 — the anchored table the cache seats off
+the bottom of its page and `_paginate_with_anchor_overflow_fix` rebases.
+
+### The cell top is where the population is
+
+A table cell is a container with a top, and the first paragraph in one has
+its `vertpos` measured from that top exactly as a page head's is measured
+from the body top. There are 1607 of them on this corpus, and **86 declare a
+nonzero space-before**:
+
+    86 of 86 are seated at exactly margin_prev.  0 are seated at 0.
+
+`jeongbo` 15, `jumin` 36, `saeopja` 35. That is the same equality, with
+forty-three times the evidence, and it says `hh:margin/hc:prev` is a property
+of the PARAGRAPH rather than of the gap between two of them: a fresh
+container does not collapse it away. It also argues against `d` specifically
+— the first paragraph of a cell is the "page 1" of its container and keeps
+its space-before there.
+
+The third control is mid-page. Over the 539 consecutive top-level pairs the
+cache seats on one page, **534 sit exactly `previous margin_next +
+margin_prev` apart**, and all five exceptions declare neither margin (they are
+`kstartup` 3 and `nrf` 2, the known line-height band). The gap model the flow
+pass already uses mid-page is right; the page top was the only place it was
+being zeroed.
+
+### The page foot says nothing, and the probe reports that rather than a guess
+
+The mirror question is whether the cache reserves `hh:margin/hc:next` before
+deciding the last line fits — #256's fit bracket used `vertsize + spacing` and
+not `+ margin_next`. `--page-top` brackets it over the same 53 pages:
+`reserve_required` when the next page's head would have fitted but for the
+space-after, `reserve_refuted` when it sits where it could only sit if the
+space-after were not reserved, `silent` otherwise.
+
+    53 page feet, 0 with a nonzero margin_next, 0 required, 0 refuted, 53 silent
+
+`margin_next` is declared on five paragraphs in the whole corpus (three
+top-level in `moel-2025`, two in `kstartup` cells) and **not one of them is
+the last paragraph on a page**. The bracket is empty, and #256's fit test is
+neither confirmed nor refuted by this measurement.
+
+### The rule, and where it is applied
+
+> A block that moves WHOLE onto a fresh page is seated at its own
+> `hh:paraPr/hh:margin/hc:prev`, not at 0. A block that merely CONTINUES
+> across the break is seated at 0, because it already started above. The
+> previous block's `margin_next` is not carried over: it falls off the foot
+> of the page that block ended on.
+
+`OwnRenderer._page_top_seat` is the whole of it, and the four places that
+open a fresh page call it: the explicit `hp:p@pageBreak` /
+`@pageBreakBefore` arm and the column-break arm in `_flow_blocks_once`, the
+anchored-object `moved_whole` arm and the `@keepLines` / `@widowOrphan` arms
+in `_place_block`, and `_place_block`'s row loop when nothing of the block
+has been drawn yet. The row loop's continuation case — the one that had
+already emitted a record, or is past its first row — keeps its 0.
+
+The seat is dropped when `margin_prev` plus what it precedes would not fit
+the fresh page. That is the honest reading (space-before never pushes its own
+paragraph off the page it was just moved to) and it is also what keeps the
+row loop finite: without it, a block whose first line does not fit under its
+own space-before would open a fresh page forever.
+
+The public basis is that `hh:margin/hc:prev` is 문단 위 간격, an attribute of
+`hh:paraPr`, with nothing in OWPML making it conditional on position. Many
+typesetters (CSS, TeX) drop or collapse space-before at a page top; the three
+measurements above say Hancom does not, at least here. The flow pass was
+already inconsistent about it — the FIRST block of the document has always
+been seated at its `margin_prev`, because `gap = prev_next_margin +
+block["margin_prev"]` runs with `prev_next_margin = 0` — so this makes one
+rule out of two.
+
+### After
+
+`class_b_probe.py --corpus` roots:
+
+| root | #304 | now |
+| --- | ---: | ---: |
+| `page_top:margin_prev` | **88** | – |
+| `table_row_heights` | 63 | 63 |
+| `empty_paragraph` | 29 | 29 |
+| `text_line_height` | 19 | 19 |
+| `cell_valign` | 15 | 15 |
+| `page_top_unattributed` | 3 | 3 |
+| `text_rebreak:width` | 2 | 2 |
+| total | 219 | **131** |
+
+`layout_divergence.py --corpus` classes **1713 / 94 / 219 / 28 → 1801 / 94 /
+131 / 28**: 88 paragraphs move from B into agreement and nothing enters or
+leaves A or C. Per form, B goes `moel-2025` 103 → 19 and `kstartup` 7 → 3;
+the other eight are unchanged. The seat pass' own row follows: `moel-2025`
+seats differing 28 → 27 over 6 → 5 pages, `kstartup` 36 → 32 over 5 → 4.
+
+`render_scoreboard.py --corpus --dpi 144`:
+
+| policy | `ssim_mean` | `ssim_inked` | `text_line_iou` |
+| --- | ---: | ---: | ---: |
+| cache, before and after | 0.861944 | 0.393719 | 0.736589 |
+| computed, before | 0.845092 | 0.358796 | 0.684881 |
+| computed, after | **0.848325** | **0.364894** | **0.692148** |
+
+53 pages scored and `page_count` exact 10/10 under both policies, before and
+after. The cache run is byte-identical — the whole scoreboard output diffs
+clean — which is the control that says nothing outside the flow pass moved.
+The computed gain is two forms and only two: `moel-2025` ssim +0.031107 /
+inked +0.048440 / iou +0.064561 and `kstartup` +0.001225 / +0.012535 /
++0.008099, both at unchanged page counts. Everything else is unchanged to
+nine decimal places, which is what a rule that fires twice should look like.
+
+`lineseg_vs_pdf.py --corpus` is 411/411 lines equal and 8566/8566 characters,
+unchanged — it compares the CACHE to Hancom's export and cannot see the flow
+pass at all, so it is a control here rather than a result.
+
+`render_check.py` on `render-check-01` is **unchanged**: 6 match / 37 close /
+6 differ / 2 unsupported at 96 dpi, 14 · 31 · 4 · 2 at 144, 9 of 9 pages
+exact, and the same under `cache` and `computed`. It is a live test and it
+came back negative for a reason worth writing down: the document carries no
+cached `hp:lineseg` at all (this repo wrote it), so both policies take the
+computed path, and although 50 of its paragraphs declare a 600-HWPUNIT
+space-before and a 200 space-after, **none of its seven flow page heads is
+one of them**. The arms fired (one explicit page break, two tables moved
+whole) all landed on paragraphs with no space-before.
+
+### Not proven
+
+- **The rule is priced on two page tops.** `a`, `c`, `d`, `e` and `f` are
+  indistinguishable on this corpus and `a` was chosen on the cell-top
+  evidence and on the OWPML reading, not on a page top that separates them.
+  A form with a space-after on the last paragraph of a page would be the
+  first real test of `c` and `f`; a form with a space-before on its opening
+  paragraph, of `d`; one whose page head is a straddle continuation, of `e`.
+- **The previous paragraph's `margin_next` at a page top is reasoning.** No
+  corpus page head follows a paragraph that declares one, so "it falls off
+  the foot" is an argument, not a measurement.
+- **`_apply_keep_with_next` was left alone.** A block pushed onto its
+  successor's page by 다음 문단과 함께 is a page head too and is still seated
+  at 0. `keep_with_next_moved` is 0 on every corpus form, so changing it
+  would be an unmeasured change to an unexercised path — and it interacts
+  with the successor's own seat, which nothing here measures.
+- **The page-foot mirror is empty, not answered.** 0 of 53 feet discriminate.
+  #256's `vertsize + spacing` bracket stands unchallenged by default.
+- **The fit guard is a tie-break, not a measurement.** No corpus block has a
+  space-before that would not fit the page it moves to; the "drop it rather
+  than overflow" arm is reasoning plus a termination requirement.
+- **131 class-B paragraphs remain.** `table_row_heights` 63 and
+  `empty_paragraph` 29 are the next two roots and neither is touched here.
+- **`render-check-01` did not exercise the change.** Its verdicts are a
+  control that the fix costs nothing, not evidence that it helps.
+## The last character carries its 자간, and the punctuation residual is gone — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#298 shipped `RIGHT_EDGE_TOLERANCE_HWP = 96` as a **declared error budget**
+and named the term most likely to be hiding inside it: #283's ASCII
+punctuation slot, +197.76 HWPUNIT per installed punctuation character over
+the 39 lines the full-width rule then overflowed. That term has not been
+re-read on its own since #292 put the measured HFT table in front of the face
+metric. This slice reads it, finds it **gone**, decomposes #298's two
+unexplained populations, and finds the term that actually explains them —
+which is not about punctuation at all.
+
+**자간 is a per-character cell to the breaker, and `_line_fits` now counts
+it.** Seven of the eight cached lines #298 called too wide by 63 HWPUNIT or
+less come back inside their box on their own, and the window the tolerance
+sits in shrinks from [63.1, 111.8) to **[18.5, 26.3)**. The budget stays at
+eight steps anyway, and the measurement below says exactly why.
+
+### The instruments
+
+* `advance_probe.py --corpus --punct --installed-only`. Every anchored
+  single-character record now carries the **HFT face metering it**
+  (`_declared_hft_face`, #292's slot-correct lookup), and `punct_char_table`
+  groups by it. An installed DECLARED face and an HFT METRIC are independent
+  — `source` says the file's face is on this machine, `hft` says Hancom
+  answered the run out of its own table instead — and every reading of "the
+  installed punctuation residual" before this one folded the two together.
+  `--installed-only` drops the HFT half.
+* `right_edge_probe.py --corpus [--breaks]` gains a seventh candidate,
+  `gap`, and each record now carries its own span bounds and the trailing
+  ``hh:charPr@spacing`` gap `width()` drops off the end.
+
+### The installed punctuation residual, with the HFT runs taken out
+
+545 anchored punctuation advances on faces the file declares and this machine
+has. **58 of them Hancom metered from its own HFT table** and they are not
+evidence about any installed face:
+
+| population | n | Σ ours − Hancom |
+| --- | ---: | ---: |
+| both, which is what #285 and #292 reported | 545 | +135.8 |
+| **metered off the installed face** | **487** | **+253.3** |
+| metered from the HFT table (#292) | 58 | −117.4 |
+
+**+253.3 HWPUNIT over 487 advances is +0.52 each, and #283's +197.76 slot is
+not in it.** The largest single code point is `-`, and it is worth +1.4
+HWPUNIT per instance. Carried by:
+
+| cp | n | our face | Hancom em | ours em | ratio | Σ |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| `-` U+002D | 178 | `malgunbd.ttf` | 0.3903 | 0.3937 | 1.0088 | **+243.0** |
+| `.` U+002E | 17 | `malgunbd.ttf` | 0.2220 | 0.2188 | 0.9801 | **−189.1** |
+| `-` U+002D | 117 | `malgun.ttf` | 0.3903 | 0.3937 | 1.0089 | **+156.4** |
+| `◦` U+25E6 | 12 | `batang.ttc` | 0.3800 | 0.3750 | 0.9868 | −69.0 |
+| `(` U+0028 | 10 | `malgunbd.ttf` | 0.3043 | 0.3047 | 1.0002 | −36.3 |
+
+The em column is the pen move over the declared cell, 자간 included, which is
+why `-` reads 0.3937 rather than 맑은 고딕's own 840/2048 = 0.4102: the runs
+carrying it declare `spacing="-4"`. The residual is **mixed in sign per code
+point and inside one face** — `-` over by 0.9% and `.` under by 2.0% on the
+same file at the same size — so it is not a `ratio` term, not a `spacing`
+term and not a missing bold cut, all three of which would move a face one
+way. What is left of it is the difference between an outline advance and
+Hancom's own pen, which the probe already measures as a 12 HWPUNIT grid
+(30.86% of Hancom's per-character advances land on a multiple of 12 against
+2.50% by chance) and which no rule in this repo reproduces.
+
+The 58 HFT-metered advances sum to −117.4 and are #292's business: `(` on
+한양중고딕 −60.8, `“` −16.3, `”` −16.0, `]` on 한양신명조 −10.9.
+
+### #298's two populations, decomposed
+
+The kept lines over their box and the spans Hancom rejected that our widths
+call under it, `condense` measure, `right_edge_probe.py --corpus`.
+
+**The eight kept lines.** Every one is `ratio` 100, not bold, and a face this
+machine has. Seven are metered off that face and one off the HFT table:
+
+| line | excess | chars | face | 자간 on the last character |
+| --- | ---: | ---: | --- | ---: |
+| `moel-2013` ¶215 ln 0 | +1.1 | 33 | `gulim.ttc` | −6 |
+| `jumin` ¶34 ln 0 | +7.5 | 44 | `malgun.ttf` | **+1** |
+| `moel-2013` ¶261 ln 1 | +11.5 | 47 | `gulim.ttc` | −3 |
+| `moel-2025` ¶241 ¶248 ¶286 ¶324 ln 0 | +27.1 ×4 | 54 | `malgun.ttf` | −8 |
+| `kstartup` ¶793 ln 0 | +63.1 | 63 | `H2GTRM.TTF` / HFT 한양중고딕 | −11 |
+
+No `ratio`, no bold, no substitution, and the punctuation they carry is 1 to
+10 characters — at +0.52 HWPUNIT each the residual above is worth **under 6
+HWPUNIT on the widest of them**, a fifth of the smallest excess it would have
+to explain and a tenth of the largest. `moel-2013`'s two lines are on
+`gulim.ttc`, which the per-code-point table never reaches at all: the
+anchored pairing is top-level only and both lines are in a cell.
+
+**The fourteen rejected spans.** All fourteen are spans our widths call
+UNDER the box, so closing them needs us to measure MORE; the punctuation
+residual is an over-measure and moves every one of them the wrong way. Half
+of them are not an installed-face question at all:
+
+| span | excess | what carries the width |
+| --- | ---: | --- |
+| `kstartup` ¶740 ln 1 | −3453.8 | bundled NanumMyeongjo-Bold ×29 + HFT ×8 |
+| `moel-2025` ¶328 ln 0 | −1889.7 | machine fallback ×30, HFT 필기 declared |
+| `nrf` ¶25 ln 0 | −1537.6 | bundled ×33 + machine fallback ×12 |
+| `moel-2013` ¶236 ln 3 | −1535.0 | `gulim.ttc`, English, span ends `live-` |
+| `kstartup` ¶740 ln 0 | −1374.4 | bundled + HFT |
+| `jumin` ¶2 ln 0 | −980.4 | `malgun.ttf`, `ratio` 98, 자간 −2 |
+| `kstartup` ¶129 ¶138 ¶150 ln 0 | −670.5 ×3 | `malgunbd.ttf` bold, 6 chars in a 9116 CENTER box |
+| `jeongbo` ¶74 ln 1 | −498.1 | `gulim.ttc`, `ratio` 95, 자간 −5 |
+| `moel-2013` ¶88 ln 0 | −467.2 | HFT ×25 + bundled ×22 |
+| `moel-2025` ¶119 ln 0 | −415.7 | HFT ×26 + bundled ×25 |
+| `moel-2013` ¶286 ln 0 | −200.5 | `gulim.ttc`, English, span ends `off-` |
+| `moel-2025` ¶128 ln 0 | −90.2 | HFT ×43 + bundled ×19 |
+
+Seven carry a substituted or HFT-metered run, which is #283's and #292's
+subject. Of the seven that are all installed and all metered off the face,
+**three are the same six characters three times** — `창업아이템,` in a 9116
+box our widths say holds eight — and **two are English lines whose next break
+opportunity falls inside a hyphenated word**, so the tight bound the probe
+constructs is our own `break_opportunities` and not a width Hancom rejected.
+The two that remain, `jeongbo` ¶74 and `jumin` ¶2, are the only rows in
+either population where `ratio` is not 100 (95 and 98), and they are 498 and
+980 HWPUNIT out over 62 and 29 characters — 8 and 34 HWPUNIT per character,
+against a punctuation residual of 0.52 per punctuation mark.
+
+**So the answer to #298's question is no on both sides.** The installed-face
+punctuation term is the right sign for the eight kept lines and two orders of
+magnitude too small; it is the wrong sign for all fourteen rejected spans.
+
+### The term that does explain the eight is 자간, and it is not a width
+
+`_measure` gives a span of `k` characters `k` advances and `k − 1` gaps,
+because `_spacing_gap`'s own measurement says so: gianmun's four-cell 발신명의
+run at `spacing="50"` is 5.5 em wide in the reference, not 6.0. That is a
+measurement of what is **drawn**, and it does not settle what the breaker
+compares. The two are consistent: the distance from the first glyph's origin
+to the last glyph's right edge is `k` advances and `k − 1` gaps whether or
+not the pen moves again after the last glyph, because nothing follows it for
+the final gap to separate it from. `hh:charPr@spacing` is declared per
+character and applies to each; the pen position at the end of a span
+therefore includes the last one's gap, and the fit test compares the pen
+position.
+
+`_line_fits` takes the trailing gap as its own argument — `compute_lines` has
+it in hand in the `gaps` array it already builds — and adds it to the width
+before the comparison. Nothing else moves: no advance changes, `width_hwpunit`
+is still the visible extent, and a run with no 자간 is provably untouched
+(both directions are pinned on synthetic paragraphs, and the tests set the
+gap far larger than the tolerance so the budget cannot be what decides them).
+
+The cache, `right_edge_probe.py --corpus`:
+
+| candidate | kept max | rejected min | kept ✗ | rej ✗ |
+| --- | ---: | ---: | ---: | ---: |
+| condense (#298's baseline) | +1370.0 | −3453.8 | 18 | 14 |
+| tol12 at 36 | +1370.0 | −3453.8 | 11 | 14 |
+| pen | +1372.0 | −3456.0 | 17 | 14 |
+| **gap** | **+1300.0** | −3478.5 | **12** | **14** |
+
+Six of the 18 close at a threshold of ZERO and **no span changes hands**.
+Line by line, they are exactly the cliff #298 could not explain: all four
+`moel-2025` lines at +27.1, `moel-2013` ¶215 at +1.1 and ¶261 at +11.5, and
+`kstartup` ¶793 at +63.1 — every one a run with a negative 자간. The eighth,
+`jumin` ¶34, is the one line in the population whose last character declares
+a POSITIVE 자간, and it goes the other way: +7.5 to +18.5. That is the rule
+predicting its own counterexample and it is recorded as one.
+
+On the two-sided score — the real breaker on real columns — `gap` at
+threshold 0 is **48 / 113 installed · 21 / 47 other, zero regressions, zero
+gains**, identical to the shipped rule. Under `--standin table+cell` it gains
+`moel-2025` ¶64 on its own (−22.2 against +16.8) and leaves ¶160 at +62.1.
+
+### The window, re-derived — and why 96 stays
+
+Under `gap`, sorted:
+
+| | #298 (`condense`) | now (`gap`) |
+| --- | --- | --- |
+| cached lines over the box | 18 | **12** |
+| smallest three | +1.1, +7.5, +11.5 | **+0.2, +18.5, +161.9** |
+| smallest span correctly rejected | +42.4 | **+26.3** |
+| window | [63.1, 111.8) | **[18.5, 26.3)** |
+| whole pen steps inside it | 6, 7, 8, 9 | **2, and only 2** |
+
+`k = 0` is not admitted: `moel-2013` ¶261 line 1 sits at +0.2 and `jumin` ¶34
+at +18.5. Two steps, 24 HWPUNIT, is the joint optimum on the probe's own
+measure (10 lines wrongly broken, 14 spans wrongly kept, against 10 / 15 at
+eight steps).
+
+**It was measured and not taken.** Two other corpus measures still want
+eight, and both were checked rather than assumed:
+
+* `lineseg_agreement` loses `jumin` ¶139 below eight steps — its computed
+  breaks go `[0, 59, 113]` to `[0, 59, 111, 167]` — and the corpus totals
+  fall `[2151, 2132, 2056, 161, 145, 219, 92]` to `[…, 2131, …, 144, …, 91]`.
+  That paragraph is NOT near its box on the per-line cached `@horzsize` this
+  probe reads (its three lines fill 0.988, 0.981 and 0.991); `lineseg_agreement`
+  reconstructs ONE box from the paragraph's cached first line and uses it for
+  every line, so its k-sensitivity here is its own instrument's and not the
+  right edge's. It is a pinned number all the same.
+* `hft_width_table.py --standin` loses `moel-2025` ¶160 below six steps:
+  62.1 over a 48188 box under `gap`, where #298 measured 88.1. `table+cell`,
+  `table+bundled` and `table+fwchars` go 21 / 47 to 20 / 47.
+
+Lowering the budget onto a window two observations wide and 7.8 HWPUNIT
+across, at the cost of two measured numbers, is not a trade this measurement
+supports. `RIGHT_EDGE_TOLERANCE_STEPS` stays **8**, and the window it now
+sits far outside of is written into the constant's own comment.
+
+### Before and after
+
+`gap` at eight steps is a **no-op on every corpus number**, which is what it
+has to be: the six lines it rescues were already inside the budget, so the
+budget was already keeping them, and what changed is the reason.
+
+| measure | before | after |
+| --- | --- | --- |
+| `render_scoreboard --corpus --dpi 144 --layout-policy cache` | 0.736589 / 0.861944 / 0.393719 / 0.850991 | identical |
+| … `--layout-policy computed` | 0.684881 / 0.845092 / 0.358796 / 0.846205 | identical |
+| page counts, both policies | 10 / 10 exact | 10 / 10 exact |
+| `lineseg_vs_pdf --corpus` | 411 / 411, 8566 / 8566 | identical |
+| `layout_divergence --corpus` A/B/C/D | 1713 / 94 / 219 / 28 (A&B 1) | identical |
+| `class_b_probe --corpus` roots | 64 / 63 / 41 / 29 / 15 / 7 | identical |
+| `hft_width_table --standin`, six variants | 21 / 47 on all six | identical |
+| `render_check` render-check-01 | 6 · 37 · 6 · 2 @96, 14 · 31 · 4 · 2 @144, 9/9 | identical |
+| `advance_probe --corpus --punct` breaks | 48 / 113 · 21 / 47 | identical |
+| proven over-measurements | 30 / 2272 | identical |
+| `right_edge_probe` cached lines over the box | 18 | **12** |
+
+Page counts, both policies, before and after: `admrul` 1/1, `gianmun-1ho`
+1/1, `gianmun-2ho` 1/1, `jeongbo` 1/1, `jumin` 3/3, `kstartup` 22/22,
+`moel-2013` 7/7, `moel-2025` 7/7, `nrf` 4/4, `saeopja` 6/6.
+
+`render_check` resolves 16 faces and every one is `installed` with no HFT
+face at all, so it is the live control for an installed-face change; it does
+not move, and its not moving is what a correctly scoped rule has to do.
+
+### Not proven
+
+- **The trailing gap is a reading of the breaker, not a documented rule.**
+  OWPML says `hh:charPr@spacing` is 자간 and `_spacing_gap` measured that it
+  is proportional to the advance; neither says whether the LAST character of
+  a line carries one. What is measured here is that the cache behaves as if
+  it does, on six lines, and that the drawn pen positions cannot contradict
+  it. A run whose 자간 is positive is the case that would show it up, and
+  this corpus has one line of that kind — `jumin` ¶34 — which the rule makes
+  worse.
+- **Six lines, and four of them are one paragraph repeated.** `moel-2025`
+  ¶241 ¶248 ¶286 ¶324 are the same sentence four times in the same form. The
+  independent observations are three: that sentence, `moel-2013` ¶215/¶261,
+  and `kstartup` ¶793.
+- **The budget is still a budget, and it is now far outside its own
+  window.** Eight steps was inside [63.1, 111.8); it is not inside
+  [18.5, 26.3). It is held there by `lineseg_agreement`'s box reconstruction
+  and by a stand-in width rule that does not ship, and both of those are
+  reasons to keep a number rather than evidence for it.
+- **`lineseg_agreement`'s one-box-per-paragraph reconstruction was not
+  fixed.** `jumin` ¶139 says the metric and `right_edge_probe` disagree about
+  what box a continuation line has. Which is right is measurable and was not
+  measured here.
+- **The installed-face residual has no mechanism.** +253.3 over 487 advances
+  is small, mixed in sign inside one face, and unexplained. The 12 HWPUNIT
+  pen grid is the obvious candidate and it is a 31% fit, not a rule.
+- **`gulim.ttc` has no anchored punctuation at all.** Two of the eight kept
+  lines are set in it and the per-code-point table cannot see them: the
+  pairing is top-level only and both lines are in a cell. The same is true of
+  every face whose punctuation only ever appears inside a table.
+- **The corpus is the training set, again.** Every number here is off the
+  same ten forms and the same machine's installed fonts.

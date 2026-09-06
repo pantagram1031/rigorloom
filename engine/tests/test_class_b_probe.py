@@ -95,18 +95,27 @@ def box(address, y0, text="hello", page=1):
 
 
 def trace(origins, facts, boxes, cells=None, cell_boxes=None,
-          containers=None):
+          containers=None, flow_seats=None, cache_seats=None,
+          table_seats=None, usable=71000, col_count=1):
     return {
         "origins": {o["address"]: o for o in origins},
         "cell_boxes": cell_boxes or {},
+        "table_seats": table_seats or {},
         "line_boxes": boxes,
         "facts": {f["address"]: f for f in facts},
         "containers": containers or {f["address"]: "body" for f in facts},
         "cell_of": cells or {},
-        "flow_seats": {},
-        "cache_seats": {},
+        "flow_seats": flow_seats or {},
+        "cache_seats": cache_seats or {},
         "px_per_hwp": PX_PER_HWP,
+        "usable_height_hwp": usable,
+        "col_count": col_count,
     }
+
+
+def seg(vertpos, vertsize=2560, spacing=0):
+    return {"textpos": 0, "vertpos": vertpos, "vertsize": vertsize,
+            "spacing": spacing}
 
 
 # -- mechanism: the order the labels are decided in ----------------------
@@ -295,6 +304,118 @@ def test_a_row_that_grew_is_not_confused_with_a_table_that_moved():
     assert row["root_mechanism"] == "table_row_heights"
 
 
+def test_a_table_nested_in_a_cell_is_followed_up_to_the_outer_holder():
+    """One level up is not enough when a table sits in another table's cell.
+
+    ¶1 holds the outer table and is seated 1000 lower under the cache — its
+    space-before at a page top.  ¶5 lives in one of that table's cells and
+    holds the INNER table; ¶9 lives in a cell of the inner one.  ¶5 has no
+    predecessor and no step of its own: the whole of its displacement came
+    from the cell it sits in, so the only way to name ¶9 is to ask ¶5 the
+    same question again and land on ¶1.
+    """
+    facts = [fact(1, anchor_kind="inline:tbl", empty_text=True, characters=1,
+                  margin_prev_hwp=1000,
+                  objects=[{"kind": "tbl", "treat_as_char": True}]),
+             fact(5, top_level=False, anchor_kind="inline:tbl",
+                  empty_text=True, characters=1,
+                  objects=[{"kind": "tbl", "treat_as_char": True}]),
+             fact(9, top_level=False)]
+
+    def side(seat_one, mode):
+        outer_cell = 4000 + seat_one
+        inner_cell = outer_cell + 600
+        return trace(
+            [origin(1, seat_one, page=2, advance=20000, mode=mode),
+             origin(5, 0, page=2, container_y=outer_cell, mode=mode),
+             origin(9, 0, page=2, container_y=inner_cell, mode=mode)],
+            facts,
+            [box(1, 10.0, page=2), box(5, 40.0 + seat_one * PX_PER_HWP,
+                                       page=2),
+             box(9, 60.0 + seat_one * PX_PER_HWP, page=2)],
+            cells={5: "tc-outer", 9: "tc-inner"},
+            cell_boxes={
+                "tc-outer": {"row": 0, "col": 0, "y0_hwp": outer_cell,
+                             "margin_top_hwp": 0, "table": "outer",
+                             "table_y_hwp": outer_cell, "holder": 1,
+                             "page": 2},
+                "tc-inner": {"row": 0, "col": 0, "y0_hwp": inner_cell,
+                             "margin_top_hwp": 0, "table": "inner",
+                             "table_y_hwp": inner_cell, "holder": 5,
+                             "page": 2}},
+            containers={1: "body", 5: "cell-outer", 9: "cell-inner"})
+
+    cache = side(1000, "lineseg")
+    computed = side(0, "computed")
+    rows = {r["paragraph"]: r for r in CB.decompose(cache, computed,
+                                                    y_tol=0.01)}
+    inner = rows[9]
+    assert inner["carrier_term"] == "d_container_y_hwp"
+    assert inner["cell"]["carrier"] == "table_origin"
+    assert inner["cell"]["holder"] == 5
+    # ¶5 has no carriers of its own — the old walk stopped here.
+    assert inner["holder"]["carriers"] == []
+    assert inner["root_mechanism"] == "page_top:margin_prev"
+    assert "via_holder:page_top:margin_prev" in inner["mechanisms"]
+
+
+def test_a_step_is_not_charged_across_a_page_boundary():
+    """Seats are page-relative, so their difference across a break is not a
+    step anybody paid for.  ¶0 must not be charged for ¶1."""
+    facts = [fact(0), fact(1, margin_prev_hwp=1000)]
+    cache = trace([origin(0, 0, page=1, advance=1496),
+                   origin(1, 1000, page=2, advance=1496)],
+                  facts, [box(0, 10.0, page=1), box(1, 30.0, page=2)])
+    computed = trace([origin(0, 0, page=1, advance=2992, lines=2,
+                             mode="computed"),
+                      origin(1, 0, page=2, advance=1496, mode="computed")],
+                     facts, [box(0, 10.0, page=1), box(1, 10.0, page=2)])
+    row = CB.decompose(cache, computed, y_tol=0.01)[0]
+    assert row["paragraph"] == 1
+    assert row["carrier_term"] == "d_seat_hwp"
+    assert row["carriers"] == []
+    assert row["root_mechanism"] == "page_top:margin_prev"
+
+
+def test_the_space_before_at_a_page_top_is_checked_not_assumed():
+    """The margin has to ACCOUNT for the seat, or the band stays visible."""
+    facts = [fact(0), fact(1, margin_prev_hwp=40)]
+    cache = trace([origin(0, 0, page=1, advance=1496),
+                   origin(1, 1000, page=2, advance=1496)],
+                  facts, [box(0, 10.0, page=1), box(1, 30.0, page=2)])
+    computed = trace([origin(0, 0, page=1, advance=1496),
+                      origin(1, 0, page=2, advance=1496, mode="computed")],
+                     facts, [box(0, 10.0, page=1), box(1, 10.0, page=2)])
+    row = CB.decompose(cache, computed, y_tol=0.01)[0]
+    assert row["root_mechanism"] == "page_top_unattributed"
+
+
+def test_a_paragraph_carried_across_the_break_pays_for_the_page_head():
+    """The flow pass put ¶1 on page 2; the cache left it on page 1.  Its
+    computed height is exactly the room ¶2 lost, so ¶1 is the root."""
+    facts = [fact(0), fact(1, empty_text=True, characters=0), fact(2)]
+    cache = trace(
+        [origin(0, 0, page=1, advance=1496),
+         origin(2, 0, page=2, advance=1496)],
+        facts, [box(0, 10.0, page=1), box(2, 10.0, page=2)],
+        cache_seats={0: {"address": 0, "page": 1, "drawn_pages": 1},
+                     1: {"address": 1, "page": 1, "drawn_pages": 1},
+                     2: {"address": 2, "page": 2, "drawn_pages": 1}})
+    computed = trace(
+        [origin(0, 0, page=1, advance=1496, mode="computed"),
+         origin(2, 2560, page=2, advance=1496, mode="computed")],
+        facts, [box(0, 10.0, page=1), box(2, 61.2, page=2)],
+        cache_seats={0: {"address": 0, "page": 1, "drawn_pages": 1},
+                     1: {"address": 1, "page": 1, "drawn_pages": 1},
+                     2: {"address": 2, "page": 2, "drawn_pages": 1}},
+        flow_seats={(1, 2): {"address": 1, "page": 2, "top_hwp": 0,
+                             "height_hwp": 2560}})
+    row = CB.decompose(cache, computed, y_tol=0.01)[0]
+    assert row["paragraph"] == 2
+    assert row["carriers"] == []
+    assert row["root_mechanism"] == "empty_paragraph"
+
+
 def test_a_paragraph_the_policies_put_on_different_pages_is_named_not_guessed():
     facts = [fact(0)]
     cache = trace([origin(0, 100, page=1)], facts, [box(0, 10.0, page=1)])
@@ -342,12 +463,137 @@ def test_the_report_shape_a_reader_indexes():
         assert "carriers" in record
 
 
+# -- the page-top pass ---------------------------------------------------
+
+def page_top_case(head_vertpos, margin_prev, prev_margin_next=0,
+                  prev_pages=1, head_page=2):
+    """Two pages: p0 seats page 1, p1 is the head of ``head_page``."""
+    facts = [
+        fact(0, margin_next_hwp=prev_margin_next,
+             linesegs=[seg(0), seg(2560)]),
+        fact(1, margin_prev_hwp=margin_prev, linesegs=[seg(head_vertpos)]),
+    ]
+    cache_seats = {
+        0: {"address": 0, "page": 1, "drawn_pages": prev_pages},
+        1: {"address": 1, "page": head_page, "drawn_pages": 1},
+    }
+    cache = trace([], facts, [], cache_seats=cache_seats)
+    computed = trace([], facts, [], flow_seats={
+        (1, head_page): {"address": 1, "page": head_page, "top_hwp": 0,
+                         "height_hwp": 2560}})
+    return cache, computed
+
+
+def test_a_page_head_that_keeps_its_space_before_refutes_only_the_drop():
+    """moel-2025 page 7 in miniature: vertpos IS the space-before."""
+    cache, computed = page_top_case(head_vertpos=1000, margin_prev=1000)
+    block = CB.page_top_report(cache, computed)
+    head = next(row for row in block["page_tops"] if row["page"] == 2)
+    assert head["cache_vertpos_hwp"] == 1000
+    assert head["computed_top_hwp"] == 0
+    assert head["matches"]["a_margin_prev"] is True
+    assert head["matches"]["b_dropped"] is False
+    summary = CB.page_top_summary(block)
+    assert summary["exact"]["b_dropped"] == summary["page_tops"] - 1
+    assert summary["discriminating_page_tops"] == 1
+
+
+def test_a_page_head_seated_at_zero_with_a_space_before_would_refute_keeping():
+    """The measurement is an equality, so the other side is reportable too."""
+    cache, computed = page_top_case(head_vertpos=0, margin_prev=1000)
+    block = CB.page_top_report(cache, computed)
+    head = next(row for row in block["page_tops"] if row["page"] == 2)
+    assert head["matches"]["a_margin_prev"] is False
+    assert head["matches"]["b_dropped"] is True
+    misses = CB.page_top_summary(block)["counter_examples"]["a_margin_prev"]
+    assert [entry["paragraph"] for entry in misses] == [1]
+
+
+def test_a_head_reached_by_overflow_is_marked_as_such():
+    """A predecessor the cache carried onto this page did not push it whole."""
+    cache, computed = page_top_case(head_vertpos=1000, margin_prev=1000,
+                                    prev_pages=2)
+    head = next(row for row in CB.page_top_report(cache, computed)["page_tops"]
+                if row["page"] == 2)
+    assert head["started_by_overflow"] is True
+    assert head["prev"]["straddled_into_this_page"] is True
+    assert head["matches"]["e_pushed_whole"] is False
+    assert head["matches"]["a_margin_prev"] is True
+
+
+def test_the_collapsed_candidate_is_the_one_a_space_after_separates():
+    """max(margin_prev, prev margin_next) only differs when both exist."""
+    cache, computed = page_top_case(head_vertpos=1000, margin_prev=1000,
+                                    prev_margin_next=1800)
+    head = next(row for row in CB.page_top_report(cache, computed)["page_tops"]
+                if row["page"] == 2)
+    assert head["candidates_hwp"]["c_collapsed"] == 1800
+    assert head["candidates_hwp"]["f_uncollapsed"] == 2800
+    assert head["matches"]["a_margin_prev"] is True
+    assert head["matches"]["c_collapsed"] is False
+    assert head["matches"]["f_uncollapsed"] is False
+
+
+def test_a_cell_top_is_the_container_mirror_of_a_page_top():
+    facts = [
+        fact(0, top_level=True, linesegs=[seg(0)]),
+        fact(1, top_level=False, margin_prev_hwp=600, linesegs=[seg(600)]),
+        fact(2, top_level=False, margin_prev_hwp=600, linesegs=[seg(3160)]),
+    ]
+    cache = trace([], facts, [],
+                  cells={1: "tc-a", 2: "tc-a"},
+                  cache_seats={0: {"address": 0, "page": 1,
+                                   "drawn_pages": 1}})
+    block = CB.page_top_report(cache, trace([], facts, []))
+    assert [row["paragraph"] for row in block["cell_tops"]] == [1]
+    assert block["cell_tops"][0]["keeps_margin_prev"] is True
+    summary = CB.page_top_summary(block)
+    assert summary["cell_tops_with_margin_prev"] == 1
+    assert summary["cell_tops_keeping_margin_prev"] == 1
+    assert summary["cell_tops_dropping_margin_prev"] == 0
+
+
+def test_a_page_foot_with_no_space_after_cannot_bracket_the_reserve():
+    facts = [
+        fact(0, linesegs=[seg(0)]),
+        fact(1, margin_prev_hwp=0, linesegs=[seg(0)]),
+    ]
+    cache = trace([], facts, [], usable=10000, cache_seats={
+        0: {"address": 0, "page": 1, "drawn_pages": 1},
+        1: {"address": 1, "page": 2, "drawn_pages": 1}})
+    bracket = CB.page_bottom_bracket(CB.page_bottom_report(cache))
+    assert bracket["with_margin_next"] == 0
+    assert bracket["reserve_required"] == 0
+    assert bracket["reserve_refuted"] == 0
+    assert bracket["silent"] == bracket["page_feet"]
+
+
+def test_a_page_foot_whose_successor_only_fits_without_the_space_after():
+    """The one shape that DOES bracket: the head fits, but not after it."""
+    facts = [
+        fact(0, margin_next_hwp=2000, linesegs=[seg(0, vertsize=6000)]),
+        fact(1, linesegs=[seg(0, vertsize=2560)]),
+    ]
+    cache = trace([], facts, [], usable=10000, cache_seats={
+        0: {"address": 0, "page": 1, "drawn_pages": 1},
+        1: {"address": 1, "page": 2, "drawn_pages": 1}})
+    rows = CB.page_bottom_report(cache)
+    foot = rows[0]
+    assert foot["fits_without_margin_next"] is True
+    assert foot["fits_with_margin_next"] is False
+    bracket = CB.page_bottom_bracket(rows)
+    assert bracket["reserve_required"] == 1
+    assert bracket["reserve_refuted"] == 0
+
+
 # -- the CLI still parses ------------------------------------------------
 
 def test_the_parser_offers_corpus_and_a_tolerance_in_hwpunit():
     args = CB.build_parser().parse_args(["--corpus", "--dpi", "144"])
     assert args.corpus and args.dpi == 144
     assert args.tol == CB.DEFAULT_TOL_HWP
+    assert args.page_top is False
+    assert CB.build_parser().parse_args(["--corpus", "--page-top"]).page_top
 
 
 def test_an_input_is_required_without_corpus():

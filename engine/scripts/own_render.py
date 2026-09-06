@@ -169,31 +169,38 @@ LINE_BOX_END = "visible_advance"
 # 0.96 pt -- about a fourteenth of a 13 pt Hangul cell.
 #
 # MEASURED, ``engine/scripts/right_edge_probe.py --corpus``.  The cache is a
-# two-sided oracle here and had never been read as one: a cached line is a
-# span Hancom FITTED, and the span reaching the last non-space character
-# before the next break opportunity is one it REJECTED.  Over the ten forms,
-# 2272 cached lines and 183 rejected spans:
+# two-sided oracle here: a cached line is a span Hancom FITTED, and the span
+# reaching the last non-space character before the next break opportunity is
+# one it REJECTED.  Over the ten forms, 2272 cached lines and 183 rejected
+# spans.
 #
-# * 18 cached lines come out wider than their box under the strict test, and
-#   eight of those by 63 HWPUNIT or less -- 1.1, 7.5, 11.5, 27.1 four times,
-#   63.1.  A strict test breaks lines Hancom kept whole.
-# * the smallest rejected span sits at +42.4 and the next at +111.8, so a
-#   threshold anywhere in [63.1, 111.8) costs exactly one span and rescues
-#   all eight of those lines.  Eight steps, 96, is inside that window and is
-#   the k minimising (lines wrongly broken + spans wrongly kept) under the
-#   corrected substituted widths of #292/#297.
-# * on the two-sided score -- the REAL breaker on real columns -- 96 changes
-#   the corpus break test not at all as the tree ships (48/113 installed,
-#   21/47 other, zero flips), and under #283's stand-in width rule it is what
-#   turns 19/47 back into 21/47 by rescuing ``moel-2025`` 64 and 160, whose
-#   corrected widths land 16.8 and 88.1 over a 48188 box.
+# #298 read it first and set eight steps, on a window of [63.1, 111.8) left
+# by 18 cached lines it called too wide -- eight of them by 63 HWPUNIT or
+# less.  It recorded, as not proven, that the eight might be a missing WIDTH
+# term rather than an allowance.  #302 found part of the term: ``_line_fits``
+# now counts the last character's 자간 gap (see the method), and SEVEN of
+# those eight come back inside their box on their own.  The window that is
+# left is much tighter and the budget is NOT lowered onto it:
 #
-# It is a tolerance and not a hang: no candidate that hangs a glyph explains
-# these lines (the punctuation hang moves 2 of the 18, and rounding the sum
-# onto the pen grid moves 1).  What it says is that the last tenth of a
-# character of a line is inside our own measurement error, and the notes
-# name the width term still missing.  Setting it to 0 restores the strict
-# test exactly.
+# * 12 cached lines are still over, and only two by less than 160 HWPUNIT --
+#   ``moel-2013`` ¶261 line 1 at +0.2 and ``jumin`` ¶34 at +18.5.  The
+#   smallest span Hancom rejected is +26.3 (``moel-2013`` ¶236 line 4), so
+#   the probe's own window is [18.5, 26.3) and two steps is the only whole k
+#   inside it.
+# * two steps is not taken, because two other corpus measures still want
+#   eight and both were checked rather than assumed.  ``lineseg_agreement``
+#   loses ``jumin`` ¶139 below eight (it reconstructs one line box for a
+#   whole paragraph, and that box is not the per-line cached ``@horzsize``
+#   this probe reads, so its k-sensitivity is its own); and #283's stand-in
+#   width rule still needs eight to hold ``moel-2025`` ¶160, whose corrected
+#   width lands 62.1 over a 48188 box once the 자간 term is in.
+# * on the two-sided score -- the REAL breaker on real columns -- k makes no
+#   difference at all between 0 and 8: 48/113 installed, 21/47 other at
+#   every one of them.
+#
+# What is left is an ERROR BUDGET and not a Hancom rule: nothing in OWPML
+# says a line may overflow its column.  Setting it to 0 restores the strict
+# test exactly, which a test asserts rather than describes.
 RIGHT_EDGE_TOLERANCE_STEPS = 8
 RIGHT_EDGE_TOLERANCE_HWP = RIGHT_EDGE_TOLERANCE_STEPS * HWPUNIT_PER_INCH / 600
 
@@ -3470,6 +3477,12 @@ class OwnRenderer:
           longer fits inside ``usable_height``.
         * ``hp:p@pageBreak`` and ``hh:breakSetting@pageBreakBefore`` — an
           explicit page before this block.
+        * ``hh:paraPr/hh:margin/hc:prev`` (문단 위 간격) — the space-before
+          survives a page break.  A block that moves WHOLE to a fresh page,
+          for any of the reasons below, is seated at its own space-before
+          rather than at zero; a block that merely CONTINUES across the break
+          is not, because it already started above.  See
+          :meth:`_page_top_seat` for what that is measured against.
         * ``hp:p@columnBreak`` — where the section declares real columns
           (:meth:`column_spec`), this advances to the next column, wrapping
           to the next page's first column after the last one; where it does
@@ -3597,7 +3610,11 @@ class OwnRenderer:
                     else:
                         page += 1
                 y = 0
-                gap = 0
+                # The break consumes the previous paragraph's space-after —
+                # it falls off the foot of the page that paragraph ended on —
+                # but not this one's space-before, which the cache keeps at
+                # the top of a fresh page (:meth:`_page_top_seat`).
+                gap = self._page_top_seat(block, page, usable)
             notes = note_heights.get(block["index"], 0)
             target, top = page, y + gap
             for attempt in range(2):
@@ -3647,6 +3664,44 @@ class OwnRenderer:
                 "rows": tuple(rows), "kind": kind, "split": split,
                 "para": block["para"], "mode": block["mode"]}
 
+    def _page_top_seat(self, block, page, usable, extent=None):
+        """Where a WHOLE block moved to the top of a fresh page is seated.
+
+        ``hh:paraPr/hh:margin/hc:prev`` (문단 위 간격) is declared on the
+        PARAGRAPH, not on the gap between two of them, and the cache treats
+        it that way: it is kept at the top of a fresh container, not
+        collapsed away.  Measured on this corpus (see own-render-notes,
+        "The space-before survives a page break"):
+
+        * 86 of 86 cell-first paragraphs that declare a space-before are
+          cached at exactly ``vertpos = margin_prev``, and none at 0 — a
+          fresh container does not drop it;
+        * both page heads that declare one (``moel-2025`` ¶233 at 1000,
+          ``kstartup`` ¶398 at 300) are cached at exactly ``margin_prev``;
+        * mid-page, 534 of 539 consecutive top-level pairs sit exactly
+          ``prev margin_next + margin_prev`` apart, and all five exceptions
+          declare neither margin — which is the gap this pass already uses.
+
+        The previous paragraph's ``margin_next`` is NOT added: it belongs to
+        the page that paragraph ended on and falls off its foot.  No corpus
+        page head follows a paragraph that declares one, so that half is
+        reasoning rather than a measurement.
+
+        The space-before is dropped when it would not leave room for what it
+        precedes.  That is both the honest reading — space-before never
+        pushes its own paragraph off the page it was just moved to — and
+        what keeps the caller's "start a fresh page" loop finite.
+        """
+        margin = block.get("margin_prev") or 0
+        if margin <= 0:
+            return 0
+        if extent is None:
+            rows = block["rows"]
+            extent = rows[0]["extent"] if rows else 0
+        if margin + extent > self._usable_on(page, usable):
+            return 0
+        return margin
+
     def _place_block(self, draw, block, page, top, usable, counters):
         """Place one block's lines, breaking a page as they stop fitting.
 
@@ -3694,7 +3749,8 @@ class OwnRenderer:
         if (reserve and top > 0 and top + total > cap
                 and total <= self._usable_on(page + 1, usable)):
             counters["anchored_blocks_moved"] += 1
-            page, top = page + 1, 0
+            page += 1
+            top = self._page_top_seat(block, page, usable, extent=total)
             cap = self._usable_on(page, usable)
             moved_whole = True
         # ...and splits at a row boundary — the same answer an inline
@@ -3713,14 +3769,18 @@ class OwnRenderer:
         if 0 < fits < len(rows) and block["height"] <= cap and top > 0:
             if block["keep_lines"]:
                 counters["keep_lines_moved"] += 1
-                page, top = page + 1, 0
+                page += 1
+                top = self._page_top_seat(block, page, usable,
+                                          extent=block["height"])
             elif (block["widow_orphan"] and len(rows) > 1
                   and (fits < 2 or len(rows) - fits < 2)):
                 # An orphan (one line left behind) or a widow (one line
                 # carried over) is resolved the only way that never invents a
                 # line: the whole paragraph moves on.
                 counters["widow_orphan_moved"] += 1
-                page, top = page + 1, 0
+                page += 1
+                top = self._page_top_seat(block, page, usable,
+                                          extent=block["height"])
 
         out = []
         cursor = max(0, top)
@@ -3750,8 +3810,13 @@ class OwnRenderer:
                 out.append(self._flow_record(block, page, seg_top, seg_height,
                                              (seg_first, index)))
             page += 1
-            cursor = 0
-            seg_top = 0
+            # Nothing of this block has been drawn yet, so it is not
+            # continuing across the break — it is moving WHOLE to a page of
+            # its own, and its space-before comes with it.  A continuation
+            # gets none: the paragraph already started, above.
+            cursor = (self._page_top_seat(block, page, usable)
+                      if not out and index == 0 else 0)
+            seg_top = cursor
             seg_height = 0
             seg_first = index
         if reserve and not out:
@@ -4868,13 +4933,15 @@ class OwnRenderer:
             spacing = 0
         return textheight, vertsize, baseline, spacing
 
-    def _line_fits(self, para, width_hwp, avail_hwp, slack_hwp, start, end):
+    def _line_fits(self, para, width_hwp, avail_hwp, slack_hwp, start, end,
+                   trailing_gap_hwp=0.0):
         """THE RIGHT-EDGE FIT TEST: may ``chars[start:end]`` stay on one line?
 
         Every quantity is HWPUNIT.  ``width_hwp`` is the breaker's own width
         for the span with no trailing gap, ``avail_hwp`` the line box less the
         indent, ``slack_hwp`` what ``hp:paraPr@condense`` lets the span's
-        spaces give up.  Returns True when the span fits.
+        spaces give up, ``trailing_gap_hwp`` the ``hh:charPr@spacing`` gap
+        ``width_hwp`` dropped off the end.  Returns True when the span fits.
 
         A SEAM, because the rule is a measurement and not an axiom.  The
         breaker asks this question once per candidate character and #298
@@ -4896,14 +4963,36 @@ class OwnRenderer:
         * **condense**, in ``slack_hwp``, whose direction ``compute_lines``
           decided by measurement.
 
-        The third is ``RIGHT_EDGE_TOLERANCE_HWP``, and it is this method's
-        own: a span fits while it is no wider than its box PLUS eight pen
-        steps.  #298 measured why, and the two candidates it does not
-        implement — hanging punctuation and rounding the sum onto the pen
-        grid — are measured there too and move almost nothing.
+        The third is 자간 AT THE END OF THE SPAN, and it is this method's own.
+        ``_measure`` drops the last character's ``hh:charPr@spacing`` gap
+        because 자간 opens space BETWEEN characters and the reference's DRAWN
+        pen positions say so (``_spacing_gap``: gianmun's four-cell 발신명의
+        run at ``spacing="50"`` is 5.5 em wide, not 6.0).  That is a
+        measurement of what is drawn, and it does not settle what the BREAKER
+        compares: a run of ``k`` characters can occupy ``k`` cells of
+        ``advance + gap`` while its visible extent is still ``k`` advances
+        plus ``k - 1`` gaps, because nothing follows the last glyph for the
+        final gap to separate it from.  #302 measured the cache on exactly
+        this and the cache says the breaker counts it: of the eight cached
+        lines this renderer called too wide by 63 HWPUNIT or less, SEVEN come
+        back inside their box when the trailing gap is counted — all four
+        ``moel-2025`` lines at +27.1, ``moel-2013`` ¶215 at +1.1 and ¶261 at
+        +11.5, ``kstartup`` ¶793 at +63.1 — every one of them a run with a
+        negative 자간, and no span Hancom rejected changes hands.
+
+        The fourth is ``RIGHT_EDGE_TOLERANCE_HWP``, an ERROR BUDGET and not a
+        Hancom rule: a span fits while it is no wider than its box plus eight
+        pen steps.  #298 measured it; #302 re-derived it on top of the 자간
+        term above, found the probe's own window had shrunk to [18.5, 26.3),
+        and left the budget where it was because two other corpus measures
+        still want the eight — the constant's own comment says which.  The
+        two candidates neither slice implements — hanging punctuation and
+        rounding the sum onto the pen grid — are measured there too and move
+        almost nothing.
         """
         del para, start, end
-        return width_hwp <= avail_hwp + slack_hwp + RIGHT_EDGE_TOLERANCE_HWP
+        return (width_hwp + trailing_gap_hwp
+                <= avail_hwp + slack_hwp + RIGHT_EDGE_TOLERANCE_HWP)
 
     def compute_lines(self, draw, para, column_hwp, from_char=0,
                       from_line=0):
@@ -5011,7 +5100,8 @@ class OwnRenderer:
             if (cursor > start
                     and not self._line_fits(
                         para, width(start, cursor + 1), avail,
-                        slack(start, cursor + 1), start, cursor + 1)):
+                        slack(start, cursor + 1), start, cursor + 1,
+                        gaps[cursor])):
                 cut = None
                 for position in opportunities:
                     if start < position <= cursor:
