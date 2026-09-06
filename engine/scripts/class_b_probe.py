@@ -40,9 +40,28 @@ buys is WHERE the height entered:
 * ``d_first_offset`` — the paragraph's OWN.  Its first line sits at a
   different offset inside its own block.
 
+Two things the walk refuses to do, both because doing them produced a wrong
+answer on the corpus:
+
+* it does not charge a step ACROSS a page boundary.  A seat is measured from
+  the top of the page it is drawn on, so two seats on different pages are
+  numbers in different frames; subtracting them telescopes into ± pairs that
+  cancel and whose largest member is then charged to an innocent paragraph
+  pages back.  When no predecessor on the same page paid for a paragraph's
+  seat, the drift entered at the page TOP, and there are two named things to
+  measure there: paragraphs the flow pass carried across the break that the
+  cache left behind, and the head's own ``hh:margin/hc:prev`` space-before,
+  which the cache keeps at a page top and the flow pass drops.
+
+* it does not stop at "the table moved".  A table nested in another table's
+  cell has a holder whose OWN top moved for a container reason of its own, so
+  the same four-term question is asked of the holder, and of its holder,
+  until a term that is not a container answers it.
+
 Usage::
 
     python engine/scripts/class_b_probe.py --corpus
+    python engine/scripts/class_b_probe.py --corpus --table-origin
     python engine/scripts/class_b_probe.py --corpus --json out.json
     python engine/scripts/class_b_probe.py path/to/doc.hwpx
 
@@ -99,6 +118,26 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
         self._container_stack = [(0, 0)]
         self._table_origin = None
         self._floating_para = None
+        #: ``{table address: seat record}`` — how each table was placed.
+        self.table_seats = {}
+        #: Document-order index over ``hp:tbl``, the join key across policies.
+        #: ``id()`` is per-render, so the tables have to be numbered the way
+        #: ``paragraph_index`` numbers paragraphs before either policy's
+        #: record can be put beside the other's.  Built on first use because
+        #: the section trees are loaded lazily, exactly as they are there.
+        self._table_index = None
+        self._awaiting_tbl = None
+
+    @property
+    def table_index(self):
+        if self._table_index is None:
+            self._table_index = {
+                id(el): index
+                for index, el in enumerate(
+                    e for section in self.sections for e in section.iter()
+                    if own_render._local(e.tag) == "tbl")
+            }
+        return self._table_index
 
     # -- containers ------------------------------------------------------
     def _render_flow_page(self, draw, records, origin_hwp, avail_w_hwp):
@@ -132,16 +171,89 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
         finally:
             self._floating_para = outer
 
+    def _table_tracks(self, draw, tbl, **kwargs):
+        """Latch the row track the table was actually laid out on.
+
+        ``_render_table`` asks for the tracks before it draws anything, so
+        the first call after a ``_render_table`` entry is that table's own and
+        a nested table's call cannot be mistaken for it.  The last ``ys`` is
+        the table's drawn height, which is the term (c) of the origin
+        question — a table above this one being taller moves this one down.
+        """
+        xs, ys, cells = super()._table_tracks(draw, tbl, **kwargs)
+        if self._awaiting_tbl is not None and self._awaiting_tbl == id(tbl):
+            self._awaiting_tbl = None
+            record = self.table_seats.get(self.table_index.get(id(tbl)))
+            if record is not None:
+                record["height_hwp"] = ys[-1] if ys else 0
+                record["rows"] = max(0, len(ys) - 1)
+                record["cols"] = max(0, len(xs) - 1)
+                record["col_edges_hwp"] = list(xs)
+                record["row_edges_hwp"] = list(ys)
+        return xs, ys, cells
+
     def _render_table(self, draw, tbl, origin_hwp):
         holder = self._floating_para or self._tracing_para
         address = (self.paragraph_index.get(id(holder.el))
                    if holder is not None else None)
+        self._note_table_seat(tbl, origin_hwp, address,
+                              anchored=self._floating_para is not None)
         outer = self._table_origin
+        outer_await = self._awaiting_tbl
         self._table_origin = (id(tbl), origin_hwp[1], address)
+        self._awaiting_tbl = id(tbl)
         try:
             return super()._render_table(draw, tbl, origin_hwp)
         finally:
             self._table_origin = outer
+            self._awaiting_tbl = outer_await
+
+    def _note_table_seat(self, tbl, origin_hwp, holder, anchored):
+        """Where this table was seated, and everything that decided it.
+
+        ``origin_hwp`` is the object BOX's top-left — ``_object_origin`` has
+        already inset it by ``hp:outMargin@left/top`` — so the SLOT the
+        placement path chose is ``origin - outMargin``, and that is the number
+        the two policies have to be compared on: the box offset is a constant
+        of the document and cannot move between them.
+        """
+        index = self.table_index.get(id(tbl))
+        if index is None or index in self.table_seats:
+            return
+        pos = own_render._kid(tbl, "pos")
+        margin = self._object_out_margin(tbl)
+        sz = own_render._kid(tbl, "sz")
+        self.table_seats[index] = {
+            "table": index,
+            "page": self._page,
+            "holder": holder,
+            "anchored": bool(anchored),
+            "inline": bool(self._table_is_inline(tbl)),
+            "box_y_hwp": origin_hwp[1],
+            "box_x_hwp": origin_hwp[0],
+            "slot_y_hwp": origin_hwp[1] - margin[1],
+            "out_margin_hwp": {"left": margin[0], "top": margin[1],
+                               "right": margin[2], "bottom": margin[3]},
+            "declared_height_hwp": (own_render._iattr(sz, "height")
+                                    if sz is not None else None),
+            "declared_width_hwp": (own_render._iattr(sz, "width")
+                                   if sz is not None else None),
+            "tree_level": tbl.get("treeLevel"),
+            "page_break": tbl.get("pageBreak"),
+            "text_wrap": tbl.get("textWrap"),
+            "pos": (None if pos is None else {
+                "treatAsChar": pos.get("treatAsChar"),
+                "vertRelTo": pos.get("vertRelTo"),
+                "horzRelTo": pos.get("horzRelTo"),
+                "vertAlign": pos.get("vertAlign"),
+                "horzAlign": pos.get("horzAlign"),
+                "vertOffset": own_render._iattr(pos, "vertOffset"),
+                "horzOffset": own_render._iattr(pos, "horzOffset"),
+                "flowWithText": pos.get("flowWithText"),
+                "affectLSpacing": pos.get("affectLSpacing"),
+                "allowOverlap": pos.get("allowOverlap"),
+            }),
+        }
 
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
         table, table_y, holder = self._table_origin or (None, None, None)
@@ -279,6 +391,12 @@ def trace(hwpx_path, policy, dpi, repo_root=None):
     return {
         "origins": dict(renderer.paragraph_origins),
         "cell_boxes": dict(renderer.cell_boxes),
+        "table_seats": dict(renderer.table_seats),
+        "table_of_cell": {
+            cell_id: renderer.table_index.get(box["table"])
+            for cell_id, box in renderer.cell_boxes.items()
+            if box.get("table") is not None
+        },
         "line_boxes": sidecar.get("line_boxes") or [],
         "facts": facts,
         "containers": keys,
@@ -294,7 +412,7 @@ def trace(hwpx_path, policy, dpi, repo_root=None):
 
 
 def top_level_seats(cache, computed):
-    """``{address: d_seat}`` for TOP-LEVEL paragraphs, inkless ones included.
+    """``{address: (d_seat, before, after, page)}`` for TOP-LEVEL paragraphs.
 
     The cache seat is the paragraph's first ``hp:lineseg@vertpos``, measured
     from the body top, and the computed one is where the flow pass placed its
@@ -303,6 +421,10 @@ def top_level_seats(cache, computed):
     relaid out, so the cursor never shifts and this agrees with the drawn
     origin wherever both exist; what it adds is the paragraphs that draw
     nothing at all.
+
+    Both seats are measured from the top of the paragraph's OWN page, so the
+    page comes back with them: two seats on different pages are numbers in
+    different frames and subtracting them is not a step (``decompose``).
     """
     grouped = layout_divergence._flow_seats_by_address(computed["flow_seats"])
     out = {}
@@ -320,7 +442,8 @@ def top_level_seats(cache, computed):
                         {"line_count": len(fact.get("linesegs") or []),
                          "advance_hwp": earlier.get("advance_hwp")},
                         {"line_count": later.get("records"),
-                         "advance_hwp": later.get("advance_hwp")})
+                         "advance_hwp": later.get("advance_hwp")},
+                        later["page"])
     return out
 
 
@@ -453,7 +576,7 @@ def _largest(carriers):
     return max(carriers, key=lambda entry: abs(entry["step_hwp"]))
 
 
-def _root(record, tol):
+def _root(record, tol, holder_root=None, seat_root=None):
     """ONE mechanism per class-B paragraph: the biggest term, followed down.
 
     The histogram over ``mechanisms`` books a paragraph under every mechanism
@@ -461,11 +584,20 @@ def _root(record, tol):
     that carries most of the paragraph's ``dy``, follows a moved table up to
     the paragraph that holds it, and names what it finds there — so the roots
     partition the population and can be counted against each other.
+
+    ``holder_root`` and ``seat_root`` are the two places the walk can run out
+    of record and has to go back to the trace: a holder whose own top moved
+    for a container reason of its own (a table nested in a table's cell), and
+    a paragraph seated first on its page, with no predecessor to charge.
+    ``decompose`` supplies both; without them this falls back to the answer
+    the record alone supports, which is what the unit tests pin.
     """
     term = record.get("carrier_term")
     if term == "d_container_y_hwp":
         cell = record.get("cell") or {}
         if cell.get("carrier") == "table_origin":
+            if holder_root is not None:
+                return holder_root(cell.get("holder"))
             largest = _largest((record.get("holder") or {}).get("carriers"))
             return (largest["mechanism"] if largest
                     else "table_origin_unattributed")
@@ -474,7 +606,11 @@ def _root(record, tol):
         return "cell_valign"
     if term == "d_seat_hwp":
         largest = _largest(record.get("carriers"))
-        return largest["mechanism"] if largest else "seat_unattributed"
+        if largest:
+            return largest["mechanism"]
+        if seat_root is not None:
+            return seat_root(record["paragraph"])
+        return "seat_unattributed"
     if term == "d_first_offset_hwp":
         return "own:" + (record.get("own_mechanism") or "unknown")
     return "unattributed"
@@ -491,17 +627,23 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
     #: ``{address: d_seat}`` for every paragraph seated on the same page
     #: under both policies — the only pairs whose terms are comparable.
     d_seat = {}
+    #: ``{address: page}`` for every seat in ``d_seat``.  A seat is measured
+    #: from the top of the container on the page it was drawn on, so two
+    #: seats on different pages are numbers in different frames.
+    page_of = {}
     for address, later in computed["origins"].items():
         earlier = cache["origins"].get(address)
         if earlier is None or later["page"] != earlier["page"]:
             continue
         d_seat[address] = later["seat_hwp"] - earlier["seat_hwp"]
+        page_of[address] = later["page"]
     #: Per-address metrics for ``mechanism``, preferring what was drawn.
     metrics = {"cache": dict(cache["origins"]),
                "computed": dict(computed["origins"])}
-    for address, (delta, before, after) in top_level_seats(cache,
-                                                           computed).items():
+    for address, (delta, before, after, page) in top_level_seats(
+            cache, computed).items():
         d_seat[address] = delta
+        page_of[address] = page
         metrics["cache"].setdefault(address, before)
         metrics["computed"].setdefault(address, after)
 
@@ -514,7 +656,12 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
     #: ``{container: {address: the step this paragraph contributed}}``.  A
     #: paragraph with no characters never reaches a line-drawing call and so
     #: has no d_seat of its own; it is stepped OVER rather than breaking the
-    #: chain, because the cursor it did not move is exactly the point.
+    #: chain, because the cursor it did not move is exactly the point.  A page
+    #: boundary is NOT stepped over: the cursor is reset there, both seats are
+    #: measured from the new page's own top, and their difference is a change
+    #: of frame rather than a height anybody paid for.  Charging it produced
+    #: the one attribution this probe was found to get wrong — moel-2025's
+    #: page-7 table was charged to a paragraph on page 3.
     steps = {}
     for key, addresses in by_container.items():
         previous = None
@@ -524,7 +671,8 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
                 continue
             if previous is not None:
                 prior_address, prior = previous
-                steps.setdefault(key, {})[prior_address] = here - prior
+                if page_of.get(prior_address) == page_of.get(address):
+                    steps.setdefault(key, {})[prior_address] = here - prior
             previous = (address, here)
 
     def carriers_for(address):
@@ -533,6 +681,8 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
         for prior in by_container.get(keys.get(address), ()):
             if prior >= address:
                 break
+            if page_of.get(prior) != page_of.get(address):
+                continue
             step = (steps.get(keys.get(address)) or {}).get(prior)
             if step is None or abs(step) <= tol:
                 continue
@@ -542,6 +692,161 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
             found.append({"paragraph": prior, "step_hwp": step,
                           "mechanism": name, "detail": detail})
         return found
+
+    def terms_for(address):
+        """The four-term split of ONE paragraph's own top, or ``None``."""
+        later = computed["origins"].get(address)
+        earlier = cache["origins"].get(address)
+        if earlier is None or later is None:
+            return None
+        if later["page"] != earlier["page"]:
+            return None
+        return {
+            "d_container_y_hwp": (later["container_y_hwp"]
+                                  - earlier["container_y_hwp"]),
+            "d_block_offset_hwp": (later["block_offset_hwp"]
+                                   - earlier["block_offset_hwp"]),
+            "d_seat_hwp": later["seat_hwp"] - earlier["seat_hwp"],
+            "d_first_offset_hwp": (later["first_offset_hwp"]
+                                   - earlier["first_offset_hwp"]),
+        }
+
+    #: Which page each policy put a TOP-LEVEL paragraph on, and how tall the
+    #: flow pass made it.  A paragraph the two policies page differently has
+    #: no ``d_seat`` at all — the frames are different — but it is exactly
+    #: what pushed the page it landed on, so the pages are kept.
+    grouped_flow = layout_divergence._flow_seats_by_address(
+        computed["flow_seats"])
+    cache_pages = {address: entry.get("page")
+                   for address, entry in (cache["cache_seats"] or {}).items()}
+    flow_first = {address: entries[0]
+                  for address, entries in grouped_flow.items() if entries}
+
+    def page_head(address):
+        """The first paragraph seated on ``address``' page, same container."""
+        page = page_of.get(address)
+        for candidate in by_container.get(keys.get(address), ()):
+            if candidate in d_seat and page_of.get(candidate) == page:
+                return candidate
+        return None
+
+    def carried_over(head):
+        """The run of paragraphs the flow pass carried onto ``head``' page.
+
+        Read straight off the two policies' own page assignments: walking up
+        from ``head``, a predecessor the CACHE left on the previous page and
+        the flow pass put on this one is a paragraph this page is carrying
+        that the cache never had, and its computed height is room ``head``
+        does not get.  The walk stops at the first predecessor both policies
+        agree about, so it is the contiguous run and not a search.
+        """
+        out = []
+        priors = [p for p in by_container.get(keys.get(head), ()) if p < head]
+        for prior in reversed(priors):
+            earlier_page = cache_pages.get(prior)
+            later = flow_first.get(prior)
+            if earlier_page is None or later is None:
+                break
+            if later.get("page") == earlier_page:
+                break
+            out.append({"paragraph": prior,
+                        "height_hwp": later.get("height_hwp") or 0})
+        return out
+
+    def seat_root(address, seen=None):
+        """The root of a paragraph whose OWN seat carries it.
+
+        A predecessor charged with the step on the SAME page names it.  When
+        there is none the drift did not enter on this page: it entered at the
+        page top, and the page's own head is where to look.  Two things can
+        be measured there, and both are checked rather than assumed:
+
+        * the flow pass CARRIED paragraphs across the break that the cache
+          left on the page before, and their computed heights add up to
+          exactly the head's ``d_seat`` — then the tallest of them is the
+          root, named the ordinary way (nrf's two empty paragraphs);
+        * nothing was carried, and the head's cache seat is exactly its
+          ``hh:margin/hc:prev`` while the flow pass seats it at zero — the
+          cache keeps a paragraph's space-before at the top of a page and the
+          flow pass drops it (moel-2025 page 7, kstartup page 9).
+
+        Neither sum matching, the answer is ``page_top_unattributed``: a named
+        band, still visible, and not a paragraph three pages back charged with
+        a step that was only ever a change of frame.
+        """
+        largest = _largest(carriers_for(address))
+        if largest:
+            return largest["mechanism"]
+        seen = seen or set()
+        head = page_head(address)
+        if (head is not None and head != address and head not in seen
+                and abs((d_seat.get(head) or 0)
+                        - (d_seat.get(address) or 0)) <= tol):
+            return seat_root(head, seen | {address})
+        delta = d_seat.get(address) or 0
+        carried = carried_over(address)
+        if carried and abs(sum(entry["height_hwp"] for entry in carried)
+                           - delta) <= tol:
+            worst = max(carried, key=lambda entry: abs(entry["height_hwp"]))
+            name, _detail = mechanism(
+                facts.get(worst["paragraph"]) or {},
+                metrics["cache"].get(worst["paragraph"]),
+                metrics["computed"].get(worst["paragraph"]), tol=tol)
+            return name
+        earlier = cache["origins"].get(address)
+        later = computed["origins"].get(address)
+        margin = (facts.get(address) or {}).get("margin_prev_hwp") or 0
+        if (earlier is not None and later is not None and margin
+                and abs(later["seat_hwp"]) <= tol
+                and abs(earlier["seat_hwp"] - margin) <= tol
+                and abs(delta + margin) <= tol):
+            return "page_top:margin_prev"
+        if head is not None:
+            return "page_top_unattributed"
+        return "seat_unattributed"
+
+    def root_of(address, seen=None):
+        """ONE root for a paragraph, following every container it inherits.
+
+        The walk used to stop one level up — at the paragraph holding the
+        table whose origin moved — and call it a day if that paragraph had no
+        predecessor charged with a step.  A table nested in another table's
+        cell breaks that: the holder's own top moved because ITS container
+        moved, and the answer is one more table up.  So the same four-term
+        question is asked of the holder, and of the holder's holder, until a
+        term that is not a container answers it.  ``seen`` makes the walk
+        terminate on a cycle it should never see.
+        """
+        seen = seen or set()
+        if address is None or address in seen:
+            return "table_origin_unattributed"
+        seen = seen | {address}
+        terms = terms_for(address)
+        if terms is None:
+            return "unattributed"
+        significant = [name for name, value in terms.items()
+                       if abs(value) > tol]
+        if not significant:
+            return "unattributed"
+        term = max(significant, key=lambda name: abs(terms[name]))
+        if term == "d_container_y_hwp":
+            cell = _cell_terms(address, cache, computed, tol)
+            carrier = (cell or {}).get("carrier")
+            if carrier == "table_origin":
+                holder = (cell or {}).get("holder")
+                if holder is None:
+                    return "table_origin_unattributed"
+                return root_of(holder, seen)
+            return ("table_row_heights" if carrier
+                    else "cell_unattributed")
+        if term == "d_block_offset_hwp":
+            return "cell_valign"
+        if term == "d_seat_hwp":
+            return seat_root(address)
+        name, _detail = mechanism(facts.get(address) or {},
+                                  metrics["cache"].get(address),
+                                  metrics["computed"].get(address), tol=tol)
+        return "own:" + name
 
     records = []
     for address, hit in sorted(targets.items()):
@@ -599,7 +904,11 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
                 named.extend("via_holder:" + entry["mechanism"]
                              for entry in via)
                 if not via:
-                    named.append("via_holder:unattributed")
+                    # The holder's own top moved for a reason of its own —
+                    # a table nested in a cell, or a page top.  Name what the
+                    # walk finds up there rather than shrugging at it.
+                    named.append("via_holder:"
+                                 + root_of(holder, {address}))
         if abs(terms["d_block_offset_hwp"]) > tol:
             named.append("cell_valign")
         carriers = []
@@ -607,7 +916,7 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
             carriers = carriers_for(address)
             named.extend(entry["mechanism"] for entry in carriers)
             if not carriers:
-                named.append("seat_unattributed")
+                named.append(seat_root(address))
         if abs(terms["d_first_offset_hwp"]) > tol:
             name, detail = mechanism(fact, earlier, later, tol=tol)
             record["own_mechanism"] = name
@@ -620,7 +929,10 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
         record["carrier_term"] = (
             max(significant, key=lambda name: abs(terms[name]))
             if significant else "none")
-        record["root_mechanism"] = _root(record, tol)
+        record["root_mechanism"] = _root(
+            record, tol,
+            holder_root=lambda holder, here=address: root_of(holder, {here}),
+            seat_root=seat_root)
         record["single_term"] = len(significant) == 1
         record["split"] = (
             "inherited" if record["carrier_term"] == "d_seat_hwp"
@@ -628,6 +940,199 @@ def decompose(cache, computed, y_tol, tol=DEFAULT_TOL_HWP):
             else "container" if significant else "unattributed")
         records.append(record)
     return records
+
+
+def paragraph_classes(cache_boxes, computed_boxes, y_tol):
+    """``{address: the classes layout_divergence gives its lines}``.
+
+    A paragraph that draws no ink at all — one whose only content is an
+    anchored object, say — has no line box under either policy and so appears
+    in neither map.  It is reported as ``no_lines`` rather than as class A,
+    because "the two policies agree" and "there was nothing to disagree
+    about" are different answers to the table-origin question.
+    """
+    cache_paras = layout_divergence.by_paragraph(cache_boxes)
+    computed_paras = layout_divergence.by_paragraph(computed_boxes)
+    out = {}
+    for address in sorted(set(cache_paras) | set(computed_paras)):
+        rows = layout_divergence.classify_paragraph(
+            cache_paras.get(address) or [], computed_paras.get(address) or [],
+            y_tol=y_tol)
+        out[address] = sorted({row["class"] for row in rows}) or ["none"]
+    return out
+
+
+#: The four candidate causes of a moved table origin, in the order the
+#: placement path meets them.  ``a`` is a probe bug and ``b`` a renderer one;
+#: ``c`` and ``d`` are already named roots and appear here only when the walk
+#: reached this bucket by mistake.
+TABLE_ORIGIN_CAUSES = {
+    "a": "holder_upstream — the holder paragraph's own block top moved",
+    "b": "table_seat — the table sits at a different offset inside its "
+         "holder under the two policies",
+    "c": "table_height — a table above it came out a different height",
+    "d": "columns — the table's own column solve moved its content",
+    "other": "no term above tolerance carries the origin delta",
+}
+
+
+def _table_origin_terms(seat_a, seat_b, holder_a, holder_b, tol):
+    """Split a table's origin delta into holder, in-holder and box terms."""
+    d_slot = seat_b["slot_y_hwp"] - seat_a["slot_y_hwp"]
+    d_box = seat_b["box_y_hwp"] - seat_a["box_y_hwp"]
+    d_margin = (seat_b["out_margin_hwp"]["top"]
+                - seat_a["out_margin_hwp"]["top"])
+    d_offset = ((seat_b["pos"] or {}).get("vertOffset", 0)
+                - (seat_a["pos"] or {}).get("vertOffset", 0))
+
+    def block_top(record):
+        if record is None:
+            return None
+        return (record["container_y_hwp"] + record["block_offset_hwp"]
+                + record["seat_hwp"])
+
+    top_a, top_b = block_top(holder_a), block_top(holder_b)
+    d_holder = None if top_a is None or top_b is None else top_b - top_a
+    terms = {
+        "d_box_y_hwp": d_box,
+        "d_slot_y_hwp": d_slot,
+        "d_out_margin_top_hwp": d_margin,
+        "d_vert_offset_hwp": d_offset,
+        "d_holder_block_top_hwp": d_holder,
+        "d_within_holder_hwp": (None if d_holder is None
+                                else d_slot - d_holder),
+        "d_height_hwp": ((seat_b.get("height_hwp") or 0)
+                         - (seat_a.get("height_hwp") or 0)),
+        "d_cols": (seat_b.get("cols") or 0) - (seat_a.get("cols") or 0),
+        "d_col_edges_hwp": (
+            [b - a for a, b in zip(seat_a.get("col_edges_hwp") or (),
+                                   seat_b.get("col_edges_hwp") or ())]),
+    }
+    if abs(d_margin) > tol or abs(d_offset) > tol:
+        cause = "b"
+    elif d_holder is not None and abs(d_holder) > tol:
+        cause = ("a" if abs(terms["d_within_holder_hwp"] or 0) <= abs(d_holder)
+                 else "b")
+    elif d_holder is not None and abs(terms["d_within_holder_hwp"]) > tol:
+        cause = "b"
+    elif any(abs(value) > tol for value in terms["d_col_edges_hwp"]):
+        cause = "d"
+    elif abs(terms["d_height_hwp"]) > tol:
+        cause = "c"
+    else:
+        cause = "other"
+    terms["cause"] = cause
+    return terms
+
+
+def table_origin_report(cache, computed, records, y_tol, tol=DEFAULT_TOL_HWP):
+    """One row per class-B paragraph whose cell rode a MOVED table origin.
+
+    The row carries what the four candidate causes need to be told apart: the
+    holder paragraph and its own class and seat, the table's positioning
+    attributes, its seat and height under both policies, and the paragraph
+    before the holder.  Nothing here is inferred from a name — every term is a
+    subtraction of two measured numbers, and ``d_slot_y`` is checked against
+    the sum of the terms it was split into.
+    """
+    classes = paragraph_classes(cache["line_boxes"], computed["line_boxes"],
+                                y_tol)
+    order = sorted(computed["containers"])
+    prev_of = {address: (order[i - 1] if i else None)
+               for i, address in enumerate(order)}
+    rows = []
+    for record in records:
+        cell = record.get("cell") or {}
+        if cell.get("carrier") != "table_origin":
+            continue
+        address = record["paragraph"]
+        cell_id_a = cache["cell_of"].get(address)
+        cell_id_b = computed["cell_of"].get(address)
+        table = (computed["table_of_cell"].get(cell_id_b)
+                 if cell_id_b is not None else None)
+        table_a = (cache["table_of_cell"].get(cell_id_a)
+                   if cell_id_a is not None else None)
+        seat_a = cache["table_seats"].get(table_a)
+        seat_b = computed["table_seats"].get(table)
+        row = {
+            "paragraph": address,
+            "root_mechanism": record.get("root_mechanism"),
+            "page": record.get("page"),
+            "dy_px": record.get("dy_px"),
+            "cell": {"row": cell.get("row"), "col": cell.get("col")},
+            "table": table,
+            "d_table_y_hwp": cell.get("d_table_y_hwp"),
+            "d_row_top_hwp": cell.get("d_row_top_hwp"),
+        }
+        holder = cell.get("holder")
+        row["holder"] = {
+            "paragraph": holder,
+            "classes": classes.get(holder),
+            "d_seat_hwp": (record.get("holder") or {}).get("d_seat_hwp"),
+            "carriers": [entry["mechanism"]
+                         for entry in (record.get("holder") or {}).get(
+                             "carriers") or ()],
+        }
+        prior = prev_of.get(holder) if holder is not None else None
+        prior_a = cache["origins"].get(prior)
+        prior_b = computed["origins"].get(prior)
+        row["preceding"] = {
+            "paragraph": prior,
+            "classes": classes.get(prior),
+            "d_top_hwp": (None if prior_a is None or prior_b is None
+                          else prior_b["abs_top_hwp"] - prior_a["abs_top_hwp"]),
+        }
+        if seat_a is None or seat_b is None:
+            row["cause"] = "other"
+            row["note"] = "the table was not drawn under one of the policies"
+            rows.append(row)
+            continue
+        row["placement"] = {
+            "inline": seat_b["inline"],
+            "anchored": seat_b["anchored"],
+            "pos": seat_b["pos"],
+            "out_margin_hwp": seat_b["out_margin_hwp"],
+            "text_wrap": seat_b["text_wrap"],
+            "page_break": seat_b["page_break"],
+            "declared_height_hwp": seat_b["declared_height_hwp"],
+        }
+        row["seat"] = {
+            "cache": {"slot_y_hwp": seat_a["slot_y_hwp"],
+                      "box_y_hwp": seat_a["box_y_hwp"],
+                      "height_hwp": seat_a.get("height_hwp"),
+                      "page": seat_a["page"]},
+            "computed": {"slot_y_hwp": seat_b["slot_y_hwp"],
+                         "box_y_hwp": seat_b["box_y_hwp"],
+                         "height_hwp": seat_b.get("height_hwp"),
+                         "page": seat_b["page"]},
+        }
+        holder_a = cache["origins"].get(holder)
+        holder_b = computed["origins"].get(holder)
+        row["holder"]["lines"] = {
+            "cache": (holder_a or {}).get("line_count"),
+            "computed": (holder_b or {}).get("line_count"),
+        }
+        terms = _table_origin_terms(seat_a, seat_b, holder_a, holder_b, tol)
+        row["cause"] = terms.pop("cause")
+        row["terms_hwp"] = terms
+        rows.append(row)
+    return rows
+
+
+def table_origin_summary(rows):
+    """Cause histogram, and the table each cause was measured on."""
+    causes = Counter(row["cause"] for row in rows)
+    per_table = {}
+    for row in rows:
+        key = row["cause"]
+        per_table.setdefault(key, Counter())[row.get("table")] += 1
+    return {
+        "paragraphs": len(rows),
+        "causes": dict(causes),
+        "tables_per_cause": {name: dict(counter)
+                             for name, counter in per_table.items()},
+        "roots": dict(Counter(row.get("root_mechanism") for row in rows)),
+    }
 
 
 def root_histogram(records):
@@ -671,13 +1176,22 @@ def histogram(records):
 
 def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI,
                y_tol=layout_divergence.DEFAULT_Y_TOL, tol=DEFAULT_TOL_HWP,
-               repo_root=None):
+               repo_root=None, table_origin=False):
     hwpx_path = Path(hwpx_path)
     cache = trace(hwpx_path, own_render.LAYOUT_POLICY_CACHE, dpi, repo_root)
     computed = trace(hwpx_path, own_render.LAYOUT_POLICY_COMPUTED, dpi,
                      repo_root)
     records = decompose(cache, computed, y_tol, tol=tol)
     rows, breadth = histogram(records)
+    extra = {}
+    if table_origin:
+        origin_rows = table_origin_report(cache, computed, records, y_tol,
+                                          tol=tol)
+        extra["table_origin"] = {
+            "summary": table_origin_summary(origin_rows),
+            "causes": TABLE_ORIGIN_CAUSES,
+            "rows": origin_rows,
+        }
     return {
         "tool": "class_b_probe",
         "source": hwpx_path.name,
@@ -697,6 +1211,7 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI,
         "root_mechanisms": root_histogram(records),
         "mechanism_breadth": breadth,
         "paragraphs": records,
+        **extra,
     }
 
 
@@ -752,8 +1267,68 @@ def build_parser():
     parser.add_argument("--tol", type=float, default=DEFAULT_TOL_HWP,
                         help="a term at or under this many HWPUNIT is zero "
                              "(default 0.5 — the terms are integers)")
+    parser.add_argument("--table-origin", action="store_true",
+                        help="also dump, for every class-B paragraph riding a "
+                             "MOVED table origin, the holder paragraph, the "
+                             "table's hp:pos attributes, its seat and height "
+                             "under both policies, and which term carries the "
+                             "delta")
     parser.add_argument("--json", help="write the full per-paragraph report")
     return parser
+
+
+def table_origin_table(rows):
+    """The per-cause histogram, plus one line per table it was measured on."""
+    out = []
+    per_cause = {}
+    for stem, report in rows:
+        block = report.get("table_origin")
+        if not block:
+            continue
+        for row in block["rows"]:
+            per_cause.setdefault(row["cause"], []).append((stem, row))
+    if not per_cause:
+        return "table origin: no class-B paragraph rides a moved table origin"
+    width = max(len(name) for name in per_cause)
+    out.append(f"{'cause':<{width}} {'paras':>6}  tables (form:table:paras)")
+    out.append("-" * (width + 40))
+    for cause in sorted(per_cause, key=lambda c: (-len(per_cause[c]), c)):
+        entries = per_cause[cause]
+        tally = Counter((stem, row.get("table")) for stem, row in entries)
+        per = " ".join(f"{stem}:tbl{table}:{count}"
+                       for (stem, table), count in sorted(tally.items()))
+        out.append(f"{cause:<{width}} {len(entries):>6}  {per}")
+    out.append("")
+    for cause in sorted(per_cause):
+        out.append(f"{cause}: {TABLE_ORIGIN_CAUSES.get(cause, '?')}")
+    out.append("")
+    seen = set()
+    for cause, entries in sorted(per_cause.items()):
+        for stem, row in entries:
+            key = (stem, row.get("table"))
+            if key in seen:
+                continue
+            seen.add(key)
+            place = row.get("placement") or {}
+            pos = place.get("pos") or {}
+            terms = row.get("terms_hwp") or {}
+            out.append(
+                f"{stem} tbl{row.get('table')} page {row.get('page')} "
+                f"holder p{(row.get('holder') or {}).get('paragraph')} "
+                f"(class {(row.get('holder') or {}).get('classes')}, "
+                f"lines {(row.get('holder') or {}).get('lines')}) "
+                f"{'inline' if place.get('inline') else 'anchored'} "
+                f"vertRelTo={pos.get('vertRelTo')} "
+                f"vertOffset={pos.get('vertOffset')} "
+                f"treatAsChar={pos.get('treatAsChar')} "
+                f"textWrap={place.get('text_wrap')} "
+                f"outMargin.top={(place.get('out_margin_hwp') or {}).get('top')}"
+                f" | d_slot={terms.get('d_slot_y_hwp')} "
+                f"d_holder_top={terms.get('d_holder_block_top_hwp')} "
+                f"d_within={terms.get('d_within_holder_hwp')} "
+                f"d_height={terms.get('d_height_hwp')} "
+                f"-> {cause}")
+    return "\n".join(out)
 
 
 def main(argv=None):
@@ -768,7 +1343,8 @@ def main(argv=None):
         rows = []
         for hwpx, _pdf in forms:
             report = probe_form(hwpx, dpi=args.dpi, y_tol=args.y_tol,
-                                tol=args.tol, repo_root=repo_root)
+                                tol=args.tol, repo_root=repo_root,
+                                table_origin=args.table_origin)
             if report["class_b_paragraphs"]:
                 print(summary_line(labels[hwpx.stem], report))
             rows.append((labels[hwpx.stem], report))
@@ -776,6 +1352,9 @@ def main(argv=None):
         print(corpus_table(rows))
         print()
         print(corpus_table(rows, key="mechanisms", title="every mechanism"))
+        if args.table_origin:
+            print()
+            print(table_origin_table(rows))
         if args.json:
             Path(args.json).write_text(
                 json.dumps(dict(rows), ensure_ascii=False, indent=2,
@@ -786,13 +1365,17 @@ def main(argv=None):
         build_parser().error("an input .hwpx is required without --corpus")
     stem = Path(args.input).stem
     report = probe_form(Path(args.input), dpi=args.dpi, y_tol=args.y_tol,
-                        tol=args.tol, repo_root=repo_root)
+                        tol=args.tol, repo_root=repo_root,
+                        table_origin=args.table_origin)
     print(summary_line(stem, report))
     print()
     print(corpus_table([(stem, report)]))
     print()
     print(corpus_table([(stem, report)], key="mechanisms",
                        title="every mechanism"))
+    if args.table_origin:
+        print()
+        print(table_origin_table([(stem, report)]))
     if args.json:
         Path(args.json).write_text(
             json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
