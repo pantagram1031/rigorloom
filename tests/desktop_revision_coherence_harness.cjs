@@ -12,15 +12,27 @@ const path = require("node:path");
 const ts = require(path.join(__dirname, "..", "desktop", "node_modules", "typescript"));
 
 const root = path.join(__dirname, "..");
-const sourcePath = path.join(root, "desktop", "src", "revision.ts");
-const source = fs.readFileSync(sourcePath, "utf8");
-const emitted = ts.transpileModule(source, {
-  compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
-}).outputText;
+const cache = new Map();
 
-const mod = {};
-const wrapper = { exports: mod };
-new Function("exports", "module", "require", emitted)(mod, wrapper, require);
+function loadTs(rel) {
+  const file = path.join(root, rel);
+  if (cache.has(file)) return cache.get(file);
+  const source = fs.readFileSync(file, "utf8");
+  const emitted = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const wrapper = { exports: {} };
+  const localRequire = (spec) => {
+    if (spec.startsWith("./") || spec.startsWith("../")) {
+      const resolved = path.join(path.dirname(file), spec.endsWith(".ts") ? spec : `${spec}.ts`);
+      return loadTs(path.relative(root, resolved));
+    }
+    return require(spec);
+  };
+  new Function("exports", "module", "require", emitted)(wrapper.exports, wrapper, localRequire);
+  cache.set(file, wrapper.exports);
+  return wrapper.exports;
+}
 
 const {
   displayedRevision,
@@ -29,7 +41,7 @@ const {
   subjectMatchesLease,
   prepareParagraphEdit,
   commitParagraphClick,
-} = mod;
+} = loadTs("desktop/src/revision.ts");
 
 function fail(name, detail) {
   console.error(`FAIL ${name}: ${detail}`);
