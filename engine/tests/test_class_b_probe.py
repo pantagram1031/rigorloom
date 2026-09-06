@@ -128,6 +128,23 @@ def seg(vertpos, vertsize=2560, spacing=0):
             "spacing": spacing}
 
 
+# -- the renderer subclass survives a base class that assigns table_index --
+
+def test_seating_renderer_accepts_a_base_class_assigning_table_index():
+    """On the desktop line ``OwnRenderer.__init__`` assigns ``self.table_index``.
+
+    The probe declares ``table_index`` as a property; without a setter that
+    assignment raises ``AttributeError`` and no ``SeatingRenderer`` can be
+    built there.  The setter keeps the handed-over index as the cache.
+    """
+    prop = CB.SeatingRenderer.__dict__["table_index"]
+    assert isinstance(prop, property) and prop.fset is not None
+    r = CB.SeatingRenderer.__new__(CB.SeatingRenderer)
+    r.table_index = {1: 0}
+    assert r.table_index == {1: 0}
+    assert r._table_index == {1: 0}
+
+
 # -- mechanism: the order the labels are decided in ----------------------
 
 def test_forced_break_beats_every_height():
