@@ -10788,3 +10788,159 @@ not move, and its not moving is what a correctly scoped rule has to do.
   every face whose punctuation only ever appears inside a table.
 - **The corpus is the training set, again.** Every number here is off the
   same ten forms and the same machine's installed fonts.
+
+## The `table_row_heights` remainder is three cells the breaker over-breaks, and no row rule closes it — measured, 2026-09-06
+
+Worker: Opus 5, 1M context (`claude-opus-5[1m]`); orchestrator: Fable.
+
+`layout_divergence.py --corpus` on #308 is 1801 / 94 / 131 / 28 and the
+largest root left in the 131 is `table_row_heights`, 63 paragraphs. This
+slice asks what row height the cache read (path A) implies for each of them
+against what our flow pass (path B) computes, groups them by mechanism, and
+scores the two row-height rules the grouping suggests. **Nothing ships.** The
+63 are not a row-height disagreement: the row rule is passing through,
+faithfully, a line the LINE BREAKER put there.
+
+Path C — an edited candidate against licensed Hancom output — is not run
+here or anywhere in this repo.
+
+### The instrument
+
+`row_height_probe.py --remainder`, an eighth view on the existing probe
+rather than a new script. It takes `class_b_probe`'s own population (the same
+`root_mechanism` histogram `--corpus` prints, so the two cannot disagree
+about who is in the 63), renders the form under both policies with
+`RowHeightRenderer`, and for each of those paragraphs reports every row ABOVE
+it whose path-A and path-B heights differ, the cell in that row that moved,
+and whether the row deltas SUM to the `d_row_top_hwp` `class_b_probe`
+measured. That sum is the view's own oracle: a paragraph whose row deltas do
+not reproduce its measured step is one the grouping does not explain.
+
+`_count_extent_lines` is new and is a LABEL, not a second measurement: it
+counts the lines `_paragraph_block_extent` made its height out of, off the
+same `line_layout_mode` decision and the same `_restart_segments` walk, so a
+cell whose height moved can be asked whether the number of lines in it moved.
+
+### The grouping
+
+| mechanism | paras | exact | carrier paragraph |
+| --- | ---: | ---: | --- |
+| `cell_rebreak:+1_line:within_declared_row` | 35 | 35/35 | `saeopja` ¶190 (table 1 row 12; carrier row 11) |
+| `cell_rebreak:+1_line:over_declared_row` | 28 | 28/28 | `moel-2013` ¶262 (table 6 row 10; carrier row 9) |
+
+63 of 63, exact on every member. The two names differ only in where the
+growth landed — whether the row's path-A height was exactly the
+`cellSz@height` its cells declare, or was already above it — and not in what
+moved. What moved is the same thing three times, and **three cells in the
+whole corpus carry all 63 paragraphs**:
+
+| carrier cell | declared | inset | content A → B | lines A → B | row A → B | paragraphs |
+| --- | ---: | ---: | --- | --- | --- | ---: |
+| `moel-2013` table 6 r9 c1 (¶261) | 2458 | 566 | 2100 → 3200 | 2 → 3 | 2666 → 3766 | 28 |
+| `saeopja` table 1 r11 c0 (¶189) | 3162 | 282 | 2880 → 3920 | 3 → 4 | 3162 → 4202 | 23 |
+| `saeopja` table 4 r0 c8 (¶393) | 2430 | 282 | 2040 → 3280 | 2 → 3 | 2430 → 3562 | 12 |
+
+Each is one paragraph our breaker splits into one more line than the cache
+holds. The column is not the reason: the text width `_table_tracks` hands
+each of them (37843, 47475, 2894 HWPUNIT) is its cached
+`hp:lineseg@horzsize` (37840, 47472, 2892) on the cache's own 4-HWPUNIT
+quantiser, so #270's grid and #275's floor are both doing their job. The row
+rule then does exactly what #273 says: the cell asks for its content plus its
+inset, that is more than it declares, and the row grows. The table overflows
+its `hp:sz@height`, #276 takes the excess off the last row, and every
+paragraph between the grown row and the bottom of the table sits one line
+lower than the cache put it.
+
+So the root is `text_rebreak:width` — the corpus' biggest root by any
+count — reaching the geometry through a table instead of through a page. It
+is invisible to `class_b_probe` as a text root because the re-broken
+paragraph's own FIRST line does not move: its cell top is unchanged, so it is
+class A and only its neighbours below pay.
+
+### The two rules that would close it anyway, and why neither ships
+
+**"A row's declared `cellSz@height` is a ceiling as well as #273's floor."**
+Refuted on path A itself. Over 515 corpus rows, 501 have a height every
+unspanned cell in the row agrees on, and **64 of those 501 the CACHE READ
+draws taller than the declaration** — worst `kstartup` 69505 HWPUNIT, and
+13 of `moel-2013`'s 33 declared rows. Clamping to the declaration would clip
+content Hancom's own save did not clip. `--remainder` prints this count per
+form and for the corpus.
+
+**"The row that overflowed its own declaration pays the table's excess, not
+the last row."** A refinement of #276, scored as `clip_overflow_rows` in the
+probe and deliberately not wired in. It is right where it was designed to be
+right — `saeopja` table 4 comes back `[2430, 2430]`, exactly path A, and
+`moel-2013` table 6 comes back exactly path A — and it is wrong twice:
+
+* On **path A**, `kstartup` table 36. The clip fires there under BOTH
+  policies (its row 0 asks 61960 against a declared 58747, 282 past the
+  table's box), and the candidate moves its single interior boundary from
+  61960 to 61678. That is a change to the cache render, which this slice's
+  baseline requires to stay byte-identical, and the reference PDF cannot
+  arbitrate: page 20 draws two horizontal strokes in the table's x-span and
+  neither is that boundary. #276's own PDF evidence is `kstartup` table 5,
+  whose four rows ask exactly what they declare, so nothing overflowed there
+  and the candidate correctly falls through to #276 — table 5 is not the
+  case that separates them.
+* On **path B**, `saeopja` table 1. The excess is 1040 and the row that grew
+  is row 11, but row 3 overflows its own declaration by far more, so
+  "largest overflow first" charges row 3 and draws
+  `[…, 26922, …, 1082]` where path A draws `[…, 27962, …, 1082]`. An
+  ordering that picked row 11 instead would be picked because it picks row
+  11.
+
+The corpus is the training set. A clip ordering fitted to three tables, one
+of which it already gets wrong, is not a rule.
+
+### The numbers
+
+`own_render.py` is untouched, so before and after are the same run and the
+point of printing them is that they are.
+
+| policy | `ssim_mean` | `ssim_inked` | `text_line_iou` | pages | `page_count` exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| cache, before and after | 0.861944 | 0.393719 | 0.736589 | 53 | 10/10 |
+| computed, before and after | 0.848325 | 0.364894 | 0.692148 | 53 | 10/10 |
+
+`layout_divergence.py --corpus` **1801 / 94 / 131 / 28**, unchanged, and the
+root list is unchanged: `table_row_heights` 63, `empty_paragraph` 29,
+`text_line_height` 19, `cell_valign` 15, `page_top_unattributed` 3,
+`text_rebreak:width` 2.
+
+`lineseg_vs_pdf.py --corpus` 411/411 lines and 8566/8566 characters — it
+compares the CACHE to Hancom's export and cannot see the flow pass at all, so
+it is a control here rather than a result.
+
+`render_check.py` on `render-check-01` is 6 match / 37 close / 6 differ / 2
+unsupported at 96 dpi, 14 · 31 · 4 · 2 at 144, 9 of 9 pages exact, the same
+under both policies. It is a live test and it tests nothing about this
+slice: the document carries no cached `hp:lineseg` (this repo wrote it), so
+both policies take the computed path and there is no cache read to disagree
+with. What it does test is that the probe change costs the renderer nothing,
+which is the only claim made for it.
+
+### Not proven
+
+- **Nothing was fixed.** 63 class-B paragraphs stay class B, and the
+  measurement's whole content is that they belong to a different question —
+  the line breaker's — than the one the root name gives them.
+- **Three cells is three observations, not a population.** Every statement
+  above about why a cell re-breaks rests on `moel-2013` ¶261, `saeopja` ¶189
+  and `saeopja` ¶393. Whether the breaker's in-cell disagreement has the same
+  shape as its top-level one (`text_rebreak:width`, 2 paragraphs at top level
+  now, 165 before #305) is not measured here.
+- **`kstartup` table 36's origin is unreadable.** This render seats it at
+  `4294977337` HWPUNIT — an unsigned wrap of a negative offset — so its rows
+  could not be scored against the PDF even where the PDF draws a rule. That
+  is a defect this slice found and did not chase.
+- **"The cache policy does not compute row heights" is false.** The baseline
+  this slice was given says cache mode is byte-identical because it does not
+  compute row heights; it does. `clip_tracks` fires twice under the cache
+  policy, on `kstartup` tables 5 and 36. Cache mode IS byte-identical here,
+  but because nothing changed, not because it cannot change.
+- **The clip candidate was scored on one ordering.** `clip_overflow_rows`
+  charges the largest overflow first. Charging the last overflowing row, or
+  charging in proportion, are different rules and only the first was
+  measured — deliberately: the corpus has three tables to fit and each new
+  ordering is another turn of the same overfit.

@@ -97,11 +97,24 @@ at all: every holder caches ONE lineseg for its table, an inline table's
 carries the whole table however many pages it takes, ``pageBreak`` is a
 static authoring setting and ``repeatHeader`` is ``"1"`` on all 81.
 
+``--remainder``
+---------------
+The 63 class-B paragraphs ``class_b_probe.py --corpus`` still roots in
+``table_row_heights``, one line each: which row ABOVE the paragraph came out a
+different height under our flow pass (path B) than under the cache read (path
+A), what in that row's cells moved it, and whether those row deltas SUM to the
+``d_row_top_hwp`` ``class_b_probe`` measured for the paragraph.  Path C -- an
+edited candidate against licensed Hancom output -- is not run here or anywhere
+in this repo.  It also scores, over every row of every corpus table, the one
+candidate rule the grouping suggests: that a row's declared
+``cellSz@height`` is a CEILING as well as #273's floor.
+
 Usage::
 
     python engine/scripts/row_height_probe.py FORM.hwpx
     python engine/scripts/row_height_probe.py --corpus
     python engine/scripts/row_height_probe.py --corpus --overflow --paginated
+    python engine/scripts/row_height_probe.py --corpus --remainder
     python engine/scripts/row_height_probe.py --corpus --pdf --json out.json --no-text
 
 This is measurement.  It changes nothing in ``own_render.py``.
@@ -168,12 +181,18 @@ class RowHeightRenderer(own_render.OwnRenderer):
     """
 
     def __init__(self, *args, **kwargs):
+        #: ``--remainder`` needs to know how many LINES a cell's content
+        #: height was made of, which costs a second break of every computed
+        #: cell; off by default so every other caller pays nothing.
+        self._count_lines = bool(kwargs.pop("count_lines", False))
         super().__init__(*args, **kwargs)
         #: ``{table index in document order: record}`` -- first draw wins, so
         #: a table the flow pass split across two pages is measured once.
         self.tables = {}
         #: ``{id(first hp:p element): content height}``
         self._content = {}
+        #: ``{id(first hp:p element): the line count that height is made of}``
+        self._extent_lines = {}
         self._index = None
         #: Every ``_table_tracks`` call, in the order the render makes them:
         #: ``[(table index, natural_rows, declared total, solved total)]``.
@@ -204,7 +223,42 @@ class RowHeightRenderer(own_render.OwnRenderer):
         value = super()._paragraph_block_extent(draw, paras, avail_w_hwp)
         if paras:
             self._content.setdefault(id(paras[0].el), value)
+            if self._count_lines and id(paras[0].el) not in self._extent_lines:
+                self._extent_lines[id(paras[0].el)] = self._count_extent_lines(
+                    draw, paras, avail_w_hwp)
         return value
+
+    def _count_extent_lines(self, draw, paras, avail_w_hwp):
+        """How many LINES the cell's content height is made of.
+
+        Counted the way :meth:`own_render.OwnRenderer._paragraph_block_extent`
+        counts the height it returns -- maxed inside a ``_restart_segments``
+        segment, summed across segments, and read off the same
+        ``line_layout_mode`` decision -- so that a cell whose height moved
+        between the two policies can be asked whether it moved because the
+        breaker put a different NUMBER of lines in it.  A count is not a
+        height and cannot be substituted for one; this is a label on the
+        renderer's own number, not a second derivation of it.
+        """
+        self._quiet += 1
+        try:
+            usable = max(1, self.page_geometry()["usable_height"])
+            total = 0
+            for segment in self._restart_segments(paras, usable):
+                count = 0
+                for para in segment:
+                    index = self.paragraph_index.get(id(para.el))
+                    mode, _reason = self.line_layout_mode(
+                        para, avail_w_hwp, index)
+                    if mode == "computed" and para.chars:
+                        lines = self.compute_lines(draw, para, avail_w_hwp)
+                        count = max(count, len(lines))
+                    else:
+                        count = max(count, len(para.linesegs or ()))
+                total += count
+            return total
+        finally:
+            self._quiet -= 1
 
     def _table_tracks(self, draw, tbl, natural_rows=False):
         xs, ys, cells = super()._table_tracks(draw, tbl, natural_rows)
@@ -232,9 +286,12 @@ class RowHeightRenderer(own_render.OwnRenderer):
     def _cell_record(self, cell):
         paras = cell["paras"]
         content = self._content.get(id(paras[0].el)) if paras else 0
+        lines = self._extent_lines.get(id(paras[0].el)) if paras else None
         return {
             "row": cell["row"],
             "col": cell["col"],
+            "paragraphs": [self.paragraph_index.get(id(p.el)) for p in paras],
+            "extent_lines": lines,
             "rspan": cell["rspan"],
             "cspan": cell["cspan"],
             "declared": cell["declared_height"],
@@ -258,6 +315,13 @@ class RowHeightRenderer(own_render.OwnRenderer):
             record["origin"] = tuple(origin_hwp)
             record["page"] = self._page
         solve = self.solves[before] if len(self.solves) > before else None
+        if record is not None and solve is not None:
+            # The heights the DRAW used.  ``record["ys"]`` is the first solve
+            # this render made for the table, and for an anchored one that is
+            # ``_anchor_table_geometry``'s fit measurement rather than the
+            # draw; ``--remainder`` compares what was drawn.
+            record.setdefault("drawn_heights", list(solve["heights"]))
+            record.setdefault("drawn_natural_rows", bool(solve["natural_rows"]))
         rows = self._table_splits.get(id(tbl))
         heights = solve["heights"] if solve else []
         row_from, row_to = rows if rows else (0, len(heights))
@@ -619,6 +683,485 @@ def paginated_report(renderer, tables):
 
 
 # --------------------------------------------------------------------------
+# The class-B remainder (``--remainder``)
+# --------------------------------------------------------------------------
+#
+# ``class_b_probe.py --corpus`` roots 63 of the 131 remaining class-B
+# paragraphs in ``table_row_heights``: the paragraph's own cell sits at the
+# same offset inside its cell under both policies and its table's origin has
+# not moved, but the sum of the ROW heights above it has.  This view answers,
+# for each of those 63, which row moved, by how much, and what in that row's
+# cells moved it -- path A being the cache read (the cache policy's own row
+# solve, whose content heights are the cached ``hp:lineseg`` extents and whose
+# floors are the declared ``hp:tc/hp:cellSz@height``) and path B the same
+# original re-laid out by our flow pass.  Path C is not run here or anywhere.
+
+def _row_floors(record):
+    """``[declared height]`` per row: the largest unspanned ``cellSz@height``.
+
+    :func:`declared_row_heights` drops a row whose unspanned cells disagree,
+    because the FILE does not then say what that row is.  A floor is a
+    different question -- how tall the row is declared to be at least -- and a
+    disagreement answers it: the largest declaration in the row.  Used only by
+    the clip candidate below, never by the renderer.
+    """
+    rows = own_render._iattr(record["tbl"], "rowCnt", 0)
+    if record["cells"]:
+        rows = max(rows, max(c["row"] + c["rspan"] for c in record["cells"]))
+    floors = [0] * rows
+    for cell in record["cells"]:
+        if cell["rspan"] != 1 or not (0 <= cell["row"] < rows):
+            continue
+        floors[cell["row"]] = max(floors[cell["row"]], cell["declared"] or 0)
+    return floors
+
+
+def clip_overflow_rows(sizes, declared_total, floors):
+    """The clip candidate: the row that OVERFLOWED its declaration pays.
+
+    :func:`own_render.clip_tracks` (#276) takes a table's excess off the LAST
+    row.  This candidate takes it off the rows that asked for more than their
+    own declared ``cellSz@height`` first, largest overflow first, and only
+    what is left over off the last row -- so #276's measured case, a file
+    whose row declarations themselves sum past the table's box (``kstartup``
+    table 5, whose four rows ask exactly what they declare), falls through to
+    #276 unchanged.  Scored here; NOT wired into the renderer.
+    """
+    excess = sum(sizes) - declared_total
+    if excess <= 0 or not sizes:
+        return list(sizes)
+    out = list(sizes)
+    over = sorted(
+        ((max(0, out[i] - (floors[i] if i < len(floors) else 0)), i)
+         for i in range(len(out))), reverse=True)
+    for amount, index in over:
+        if excess <= 0:
+            break
+        take = min(amount, excess, out[index])
+        out[index] -= take
+        excess -= take
+    for index in range(len(out) - 1, -1, -1):
+        if excess <= 0:
+            break
+        take = min(out[index], excess)
+        out[index] -= take
+        excess -= take
+    return out
+
+
+def clip_candidate_scores(a_state, b_state):
+    """Score the clip candidate against path A, on both policies.
+
+    Two questions, and a rule has to answer both to be shippable.  On path B:
+    does charging the excess to the overflowing row reproduce the row heights
+    the CACHE read produces, on every table where the clip fires?  On path A:
+    does it leave the cache render alone?  A candidate that closes path B by
+    moving path A is not a fix, it is a second disagreement.
+    """
+    out = {}
+    for label, state in (("path_A", a_state), ("path_B", b_state)):
+        rows = []
+        for table in sorted(state):
+            entry = state[table]
+            total = entry["declared_total"]
+            natural = entry["natural"]
+            if not total or entry["natural_rows"] or sum(natural) <= total:
+                continue
+            today = own_render.clip_tracks(natural, total)
+            candidate = clip_overflow_rows(natural, total, entry["floors"])
+            reference = (a_state.get(table) or {}).get("heights") or []
+            rows.append({
+                "table": table,
+                "excess": sum(natural) - total,
+                "today": today,
+                "candidate": candidate,
+                "candidate_changes_it": today != candidate,
+                "today_matches_path_A": today == list(reference),
+                "candidate_matches_path_A": candidate == list(reference),
+            })
+        out[label] = rows
+    return out
+
+
+#: A row's height is an integer count of HWPUNIT; nothing here is a tolerance.
+def _table_state(renderer):
+    """``{table: {heights, declared_rows, cells, ...}}`` for one policy."""
+    out = {}
+    for key, record in renderer.tables.items():
+        ys = record["ys"]
+        heights = record.get("drawn_heights") or [
+            ys[i + 1] - ys[i] for i in range(len(ys) - 1)]
+        declared_rows, ambiguous = declared_row_heights(record)
+        size = own_render._kid(record["tbl"], "sz")
+        out[key] = {
+            "heights": list(heights),
+            "natural": solve_rows(record, "max", compress=False),
+            "floors": _row_floors(record),
+            "declared_total": (own_render._iattr(size, "height")
+                               if size is not None else None),
+            "declared_rows": declared_rows,
+            "rows_ambiguous": ambiguous,
+            "natural_rows": bool(record.get("drawn_natural_rows",
+                                            record["natural_rows"])),
+            "page": record.get("page"),
+            "cells": {(c["row"], c["col"]): c for c in record["cells"]},
+        }
+    return out
+
+
+def _paragraph_sites(renderer):
+    """``{paragraph index: (table, row, col)}`` for every cell paragraph."""
+    out = {}
+    for key, record in renderer.tables.items():
+        for cell in record["cells"]:
+            for index in cell.get("paragraphs") or ():
+                if index is not None:
+                    out.setdefault(index, (key, cell["row"], cell["col"]))
+    return out
+
+
+def _row_driver(a_table, b_table, row):
+    """The cell whose content height moved most in ``row``, and by how much."""
+    driver = None
+    best = 0
+    for (r, col), cell_a in sorted(a_table["cells"].items()):
+        if r != row:
+            continue
+        cell_b = b_table["cells"].get((r, col))
+        if cell_b is None:
+            continue
+        delta = cell_b["content"] - cell_a["content"]
+        if driver is None or abs(delta) > abs(best):
+            driver, best = (col, cell_a, cell_b), delta
+    return driver, best
+
+
+def _row_mechanism(a_table, b_table, row):
+    """Name what moved one row between the two policies, and show its cell.
+
+    Two axes, because both matter to whether a rule at the row seam could
+    close it.  WHAT moved: a cell whose content broke into a different number
+    of lines (``cell_rebreak``), a cell whose lines came out a different
+    height at the same count (``cell_line_height``), or no cell at all, in
+    which case the row moved because :func:`own_render.clip_tracks` took its
+    excess somewhere else (``row_clip_shift``).  WHERE it landed: the row's
+    path-A height was exactly the ``cellSz@height`` its cells declare
+    (``within_declared_row`` -- the growth crosses the declared floor for the
+    first time) or it was already above it (``over_declared_row`` -- the
+    declared height was decoration on that row under BOTH policies).
+    """
+    height_a = a_table["heights"][row] if row < len(a_table["heights"]) else None
+    height_b = b_table["heights"][row] if row < len(b_table["heights"]) else None
+    driver, delta = _row_driver(a_table, b_table, row)
+    declared = a_table["declared_rows"].get(row)
+    where = ("within_declared_row"
+             if declared is not None and height_a == declared
+             else "over_declared_row")
+    detail = {"row": row, "a": height_a, "b": height_b,
+              "delta": (None if height_a is None or height_b is None
+                        else height_b - height_a),
+              "declared_row": declared}
+    if driver is None or delta == 0:
+        detail["driver"] = None
+        return "row_clip_shift", detail
+    col, cell_a, cell_b = driver
+    lines_a, lines_b = cell_a.get("extent_lines"), cell_b.get("extent_lines")
+    if lines_a is not None and lines_b is not None and lines_a != lines_b:
+        what = f"cell_rebreak:{lines_b - lines_a:+d}_line"
+    else:
+        what = "cell_line_height"
+    detail["driver"] = {
+        "col": col, "declared": cell_a["declared"], "inset": cell_a["inset"],
+        "content_a": cell_a["content"], "content_b": cell_b["content"],
+        "lines_a": lines_a, "lines_b": lines_b,
+        "paragraphs": cell_a.get("paragraphs") or [],
+    }
+    return f"{what}:{where}", detail
+
+
+def declared_ceiling_counterexamples(a_state):
+    """Rows the cache draws TALLER than the ``cellSz@height`` they declare.
+
+    The one candidate rule the grouping below suggests is that a row's
+    declared height is a CEILING as well as #273's floor -- which would pin
+    every path-B row to its path-A height wherever the file declares one.
+    This counts, over every row of every table in the form, the rows that
+    refute it: a row whose unspanned cells all declare the same height and
+    whose path-A height is not that height.  ``over`` is the refuting
+    direction (content drives the row past its declaration under the CACHE
+    policy, so a ceiling would clip content Hancom's own save did not clip).
+    """
+    rows = declared = over = under = 0
+    worst = None
+    for table in a_state.values():
+        for index, height in enumerate(table["heights"]):
+            rows += 1
+            value = table["declared_rows"].get(index)
+            if value is None:
+                continue
+            declared += 1
+            if height > value:
+                over += 1
+                if worst is None or height - value > worst[0]:
+                    worst = (height - value, index, value, height)
+            elif height < value:
+                under += 1
+    return {"rows": rows, "rows_with_a_declared_height": declared,
+            "cache_row_over_declared": over, "cache_row_under_declared": under,
+            "worst_excess_hwp": None if worst is None else worst[0]}
+
+
+def remainder_report(hwpx_path, dpi=own_render.DEFAULT_DPI, repo_root=None,
+                     y_tol=None, tol=None):
+    """Every ``table_row_heights`` class-B paragraph, and the row that moved it.
+
+    The population is ``class_b_probe``'s own -- the same ``root_mechanism``
+    histogram ``--corpus`` prints -- so this view cannot disagree with it
+    about who is in the 63.  What it adds is the row arithmetic underneath:
+    the rows above the paragraph whose path-A and path-B heights differ, the
+    cell in each that moved, and whether those deltas SUM to the
+    ``d_row_top_hwp`` ``class_b_probe`` measured.  That sum is the exactness
+    test: a paragraph whose row deltas do not reproduce its measured step is
+    one this grouping does not explain, and is reported as such.
+    """
+    import class_b_probe
+
+    hwpx_path = Path(hwpx_path)
+    kwargs = {}
+    if y_tol is not None:
+        kwargs["y_tol"] = y_tol
+    if tol is not None:
+        kwargs["tol"] = tol
+    class_b = class_b_probe.probe_form(hwpx_path, dpi=dpi,
+                                       repo_root=repo_root, **kwargs)
+    targets = [record for record in class_b["paragraphs"]
+               if record.get("root_mechanism") == "table_row_heights"]
+
+    states, sites = {}, {}
+    for policy in (own_render.LAYOUT_POLICY_CACHE,
+                   own_render.LAYOUT_POLICY_COMPUTED):
+        renderer = RowHeightRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
+                                     layout_policy=policy, count_lines=True)
+        renderer.render()
+        states[policy] = _table_state(renderer)
+        sites[policy] = _paragraph_sites(renderer)
+    a_state = states[own_render.LAYOUT_POLICY_CACHE]
+    b_state = states[own_render.LAYOUT_POLICY_COMPUTED]
+
+    rows = []
+    for record in targets:
+        index = record["paragraph"]
+        site = sites[own_render.LAYOUT_POLICY_CACHE].get(index)
+        cell = record.get("cell") or {}
+        entry = {
+            "paragraph": index,
+            "page": record.get("page"),
+            "dy_px": record.get("dy_px"),
+            "measured_d_row_top_hwp": cell.get("d_row_top_hwp"),
+            "cell_row": cell.get("row"),
+            "cell_col": cell.get("col"),
+        }
+        if site is None:
+            entry.update({"table": None, "mechanism": "unlocated",
+                          "exact": False, "contributions": []})
+            rows.append(entry)
+            continue
+        table, row, col = site
+        entry.update({"table": table, "row": row, "col": col})
+        a_table, b_table = a_state.get(table), b_state.get(table)
+        if a_table is None or b_table is None:
+            entry.update({"mechanism": "unlocated", "exact": False,
+                          "contributions": []})
+            rows.append(entry)
+            continue
+        if a_table["natural_rows"] or b_table["natural_rows"]:
+            # ``_expand_segmented_rows`` has renumbered this table's rows on
+            # one side, so a row index does not name the same row on both.
+            entry.update({"mechanism": "split_table_rows_renumbered",
+                          "exact": False, "contributions": []})
+            rows.append(entry)
+            continue
+        contributions = []
+        for above in range(min(row, len(a_table["heights"]),
+                               len(b_table["heights"]))):
+            if a_table["heights"][above] == b_table["heights"][above]:
+                continue
+            name, detail = _row_mechanism(a_table, b_table, above)
+            detail["mechanism"] = name
+            contributions.append(detail)
+        predicted = sum(c["delta"] or 0 for c in contributions)
+        measured = entry["measured_d_row_top_hwp"]
+        carrier = max(contributions, key=lambda c: abs(c["delta"] or 0),
+                      default=None)
+        entry.update({
+            "contributions": contributions,
+            "predicted_d_row_top_hwp": predicted,
+            "exact": measured is not None and predicted == measured,
+            "mechanism": (carrier["mechanism"] if carrier
+                          else "no_row_above_moved"),
+            "carrier_row": None if carrier is None else carrier["row"],
+        })
+        rows.append(entry)
+
+    groups = {}
+    for entry in rows:
+        bucket = groups.setdefault(entry["mechanism"],
+                                   {"paragraphs": 0, "exact": 0,
+                                    "carriers": set(), "example": None})
+        bucket["paragraphs"] += 1
+        bucket["exact"] += 1 if entry["exact"] else 0
+        if entry.get("table") is not None and entry.get("carrier_row") is not None:
+            bucket["carriers"].add((entry["table"], entry["carrier_row"]))
+        if bucket["example"] is None:
+            bucket["example"] = entry
+    ordered = []
+    for name in sorted(groups, key=lambda n: (-groups[n]["paragraphs"], n)):
+        bucket = groups[name]
+        example = bucket["example"]
+        ordered.append({
+            "mechanism": name,
+            "paragraphs": bucket["paragraphs"],
+            "exact": bucket["exact"],
+            "carrier_rows": sorted(bucket["carriers"]),
+            "example_paragraph": example["paragraph"],
+            "example_table": example.get("table"),
+            "example_row": example.get("row"),
+            "example_carrier_row": example.get("carrier_row"),
+            "example_d_row_top_hwp": example.get("measured_d_row_top_hwp"),
+        })
+
+    moved = []
+    for table in sorted(set(a_state) & set(b_state)):
+        a_table, b_table = a_state[table], b_state[table]
+        if a_table["natural_rows"] or b_table["natural_rows"]:
+            continue
+        for index in range(min(len(a_table["heights"]),
+                               len(b_table["heights"]))):
+            if a_table["heights"][index] == b_table["heights"][index]:
+                continue
+            name, detail = _row_mechanism(a_table, b_table, index)
+            detail["mechanism"] = name
+            detail["table"] = table
+            moved.append(detail)
+
+    return {
+        "class_b_paragraphs": class_b["class_b_paragraphs"],
+        "table_row_heights_paragraphs": len(targets),
+        "exact": sum(1 for entry in rows if entry["exact"]),
+        "groups": ordered,
+        "paragraphs": rows,
+        "rows_that_moved": moved,
+        "declared_ceiling": declared_ceiling_counterexamples(a_state),
+        "clip_candidate": clip_candidate_scores(a_state, b_state),
+    }
+
+
+def remainder_block(stem, report):
+    remainder = report["remainder"]
+    out = [f"  {stem}: {remainder['table_row_heights_paragraphs']} of "
+           f"{remainder['class_b_paragraphs']} class-B paragraphs rooted in "
+           f"table_row_heights; {remainder['exact']} whose measured step the "
+           f"rows above them reproduce exactly"]
+    if remainder["rows_that_moved"]:
+        out.append(f"    {'tbl':>4} {'row':>4} {'path A':>9} {'path B':>9}"
+                   f" {'delta':>8} {'declared':>9}  mechanism / driving cell")
+        for row in remainder["rows_that_moved"]:
+            driver = row["driver"]
+            note = "-"
+            if driver is not None:
+                note = (f"col{driver['col']} decl={driver['declared']} "
+                        f"inset={driver['inset']} content "
+                        f"{driver['content_a']}->{driver['content_b']} "
+                        f"lines {driver['lines_a']}->{driver['lines_b']} "
+                        f"para {driver['paragraphs']}")
+            declared = row["declared_row"]
+            out.append(f"    {row['table']:>4} {row['row']:>4} "
+                       f"{row['a']:>9} {row['b']:>9} {row['delta']:>+8} "
+                       f"{'-' if declared is None else declared:>9}  "
+                       f"{row['mechanism']}\n{' ' * 10}{note}")
+    for group in remainder["groups"]:
+        out.append(f"    {group['mechanism']}: {group['paragraphs']} paras, "
+                   f"{group['exact']}/{group['paragraphs']} exact, carrier "
+                   f"rows {group['carrier_rows']}, e.g. paragraph "
+                   f"{group['example_paragraph']} in table "
+                   f"{group['example_table']} row {group['example_row']} "
+                   f"({group['example_d_row_top_hwp']:+} HWPUNIT)")
+    ceiling = remainder["declared_ceiling"]
+    out.append(f"    declared-as-ceiling: {ceiling['rows']} rows, "
+               f"{ceiling['rows_with_a_declared_height']} with a declared "
+               f"height, {ceiling['cache_row_over_declared']} that path A "
+               f"draws TALLER than it (worst "
+               f"{ceiling['worst_excess_hwp']} HWPUNIT)")
+    for label, entries in sorted(remainder["clip_candidate"].items()):
+        for entry in entries:
+            out.append(
+                f"    clip candidate on {label} table {entry['table']} "
+                f"(excess {entry['excess']}): today {entry['today']} "
+                f"{'==' if entry['today_matches_path_A'] else '!='} path A; "
+                f"overflowing-row-pays {entry['candidate']} "
+                f"{'==' if entry['candidate_matches_path_A'] else '!='} "
+                f"path A"
+                + ("" if entry["candidate_changes_it"]
+                   else "  (candidate is a no-op here)"))
+    return "\n".join(out)
+
+
+def remainder_corpus_table(rows):
+    """The grouping, summed over the corpus, one carrier paragraph each."""
+    groups = {}
+    for stem, report in rows:
+        for group in report["remainder"]["groups"]:
+            bucket = groups.setdefault(group["mechanism"],
+                                       {"paragraphs": 0, "exact": 0,
+                                        "per_form": [], "example": None})
+            bucket["paragraphs"] += group["paragraphs"]
+            bucket["exact"] += group["exact"]
+            bucket["per_form"].append(f"{stem}:{group['paragraphs']}")
+            if bucket["example"] is None:
+                bucket["example"] = (stem, group)
+    names = sorted(groups, key=lambda n: (-groups[n]["paragraphs"], n))
+    width = max([len(n) for n in names] + [len("mechanism")])
+    out = [f"{'mechanism':<{width}} {'paras':>6} {'exact':>9}  "
+           f"carrier paragraph (form, paragraph, table row)"]
+    out.append("-" * (width + 60))
+    for name in names:
+        bucket = groups[name]
+        stem, group = bucket["example"]
+        out.append(f"{name:<{width}} {bucket['paragraphs']:>6} "
+                   f"{bucket['exact']:>4}/{bucket['paragraphs']:<4}  "
+                   f"{stem} p{group['example_paragraph']} "
+                   f"(table {group['example_table']} row "
+                   f"{group['example_row']}, carrier row "
+                   f"{group['example_carrier_row']})  "
+                   f"[{' '.join(bucket['per_form'])}]")
+    ceiling = Counter()
+    for _stem, report in rows:
+        for key, value in report["remainder"]["declared_ceiling"].items():
+            if isinstance(value, int):
+                ceiling[key] += value
+    out.append(f"  declared-as-ceiling over the whole corpus: "
+               f"{ceiling['rows']} rows, "
+               f"{ceiling['rows_with_a_declared_height']} declare a height, "
+               f"{ceiling['cache_row_over_declared']} of those path A draws "
+               f"TALLER than the declaration")
+    clip = Counter()
+    for _stem, report in rows:
+        for label, entries in report["remainder"]["clip_candidate"].items():
+            for entry in entries:
+                clip[(label, "tables")] += 1
+                clip[(label, "changed")] += 1 if entry["candidate_changes_it"] else 0
+                clip[(label, "today_ok")] += 1 if entry["today_matches_path_A"] else 0
+                clip[(label, "candidate_ok")] += 1 if entry["candidate_matches_path_A"] else 0
+    for label in ("path_A", "path_B"):
+        out.append(
+            f"  clip candidate on {label}: fires on {clip[(label, 'tables')]} "
+            f"tables, changes {clip[(label, 'changed')]} of them; "
+            f"today reproduces path A on {clip[(label, 'today_ok')]}, "
+            f"overflowing-row-pays on {clip[(label, 'candidate_ok')]}")
+    return "\n".join(out)
+
+
+# --------------------------------------------------------------------------
 # The PDF oracle
 # --------------------------------------------------------------------------
 
@@ -710,7 +1253,7 @@ def pdf_rule_oracle(renderer, report, pdf_path):
 # --------------------------------------------------------------------------
 
 def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
-               repo_root=None, pdf_path=None):
+               repo_root=None, pdf_path=None, remainder=False):
     renderer = RowHeightRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
                                  layout_policy=policy)
     renderer.render()
@@ -766,6 +1309,9 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
     }
     if pdf_path is not None:
         report["pdf"] = pdf_rule_oracle(renderer, report, pdf_path)
+    if remainder:
+        report["remainder"] = remainder_report(hwpx_path, dpi=dpi,
+                                               repo_root=repo_root)
     return report
 
 
@@ -989,6 +1535,13 @@ def build_parser():
                              "(holder linesegs, treatAsChar, pageBreak, "
                              "repeatHeader) and the fragments this render "
                              "drew for it")
+    parser.add_argument("--remainder", action="store_true",
+                        help="explain every class-B paragraph rooted in "
+                             "table_row_heights: which row above it moved "
+                             "between the cache read (path A) and our flow "
+                             "pass (path B), what in that row's cells moved "
+                             "it, and whether the deltas reproduce the step "
+                             "class_b_probe measured")
     parser.add_argument("--json", help="write the full per-table report")
     parser.add_argument("--no-text", action="store_true",
                         help="write only the JSON report")
@@ -1009,7 +1562,8 @@ def main(argv=None):
         for hwpx, pdf in forms:
             report = probe_form(hwpx, dpi=args.dpi, policy=args.layout_policy,
                                 repo_root=repo_root,
-                                pdf_path=pdf if (args.pdf and pdf) else None)
+                                pdf_path=pdf if (args.pdf and pdf) else None,
+                                remainder=args.remainder)
             stem = labels[hwpx.stem]
             rows.append((stem, report))
             if not quiet:
@@ -1022,6 +1576,8 @@ def main(argv=None):
                     print(overflow_block(stem, report))
                 if args.paginated:
                     print(paginated_block(stem, report))
+                if args.remainder:
+                    print(remainder_block(stem, report))
                 block = pdf_table(report)
                 if block:
                     print(block)
@@ -1030,6 +1586,9 @@ def main(argv=None):
             print("corpus:")
             print(corpus_scores(rows))
             print(corpus_residuals(rows))
+            if args.remainder:
+                print()
+                print(remainder_corpus_table(rows))
         if args.json:
             Path(args.json).write_text(
                 json.dumps(dict(rows), ensure_ascii=False, indent=2,
@@ -1042,7 +1601,8 @@ def main(argv=None):
     pdf = repo_root / "tests" / "corpus" / "forms" / "render" / (hwpx.stem + ".pdf")
     report = probe_form(hwpx, dpi=args.dpi, policy=args.layout_policy,
                         repo_root=repo_root,
-                        pdf_path=pdf if (args.pdf and pdf.is_file()) else None)
+                        pdf_path=pdf if (args.pdf and pdf.is_file()) else None,
+                        remainder=args.remainder)
     if not quiet:
         print(RULE_QUESTION)
         print(summary_line(hwpx.stem, report))
@@ -1054,6 +1614,8 @@ def main(argv=None):
             print(overflow_block(hwpx.stem, report))
         if args.paginated:
             print(paginated_block(hwpx.stem, report))
+        if args.remainder:
+            print(remainder_block(hwpx.stem, report))
         block = pdf_table(report)
         if block:
             print(block)
