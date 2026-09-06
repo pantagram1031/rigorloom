@@ -10788,3 +10788,468 @@ not move, and its not moving is what a correctly scoped rule has to do.
   every face whose punctuation only ever appears inside a table.
 - **The corpus is the training set, again.** Every number here is off the
   same ten forms and the same machine's installed fonts.
+
+## The `table_row_heights` remainder is three cells the breaker over-breaks, and no row rule closes it — measured, 2026-09-06
+
+Worker: Opus 5, 1M context (`claude-opus-5[1m]`); orchestrator: Fable.
+
+`layout_divergence.py --corpus` on #308 is 1801 / 94 / 131 / 28 and the
+largest root left in the 131 is `table_row_heights`, 63 paragraphs. This
+slice asks what row height the cache read (path A) implies for each of them
+against what our flow pass (path B) computes, groups them by mechanism, and
+scores the two row-height rules the grouping suggests. **Nothing ships.** The
+63 are not a row-height disagreement: the row rule is passing through,
+faithfully, a line the LINE BREAKER put there.
+
+Path C — an edited candidate against licensed Hancom output — is not run
+here or anywhere in this repo.
+
+### The instrument
+
+`row_height_probe.py --remainder`, an eighth view on the existing probe
+rather than a new script. It takes `class_b_probe`'s own population (the same
+`root_mechanism` histogram `--corpus` prints, so the two cannot disagree
+about who is in the 63), renders the form under both policies with
+`RowHeightRenderer`, and for each of those paragraphs reports every row ABOVE
+it whose path-A and path-B heights differ, the cell in that row that moved,
+and whether the row deltas SUM to the `d_row_top_hwp` `class_b_probe`
+measured. That sum is the view's own oracle: a paragraph whose row deltas do
+not reproduce its measured step is one the grouping does not explain.
+
+`_count_extent_lines` is new and is a LABEL, not a second measurement: it
+counts the lines `_paragraph_block_extent` made its height out of, off the
+same `line_layout_mode` decision and the same `_restart_segments` walk, so a
+cell whose height moved can be asked whether the number of lines in it moved.
+
+### The grouping
+
+| mechanism | paras | exact | carrier paragraph |
+| --- | ---: | ---: | --- |
+| `cell_rebreak:+1_line:within_declared_row` | 35 | 35/35 | `saeopja` ¶190 (table 1 row 12; carrier row 11) |
+| `cell_rebreak:+1_line:over_declared_row` | 28 | 28/28 | `moel-2013` ¶262 (table 6 row 10; carrier row 9) |
+
+63 of 63, exact on every member. The two names differ only in where the
+growth landed — whether the row's path-A height was exactly the
+`cellSz@height` its cells declare, or was already above it — and not in what
+moved. What moved is the same thing three times, and **three cells in the
+whole corpus carry all 63 paragraphs**:
+
+| carrier cell | declared | inset | content A → B | lines A → B | row A → B | paragraphs |
+| --- | ---: | ---: | --- | --- | --- | ---: |
+| `moel-2013` table 6 r9 c1 (¶261) | 2458 | 566 | 2100 → 3200 | 2 → 3 | 2666 → 3766 | 28 |
+| `saeopja` table 1 r11 c0 (¶189) | 3162 | 282 | 2880 → 3920 | 3 → 4 | 3162 → 4202 | 23 |
+| `saeopja` table 4 r0 c8 (¶393) | 2430 | 282 | 2040 → 3280 | 2 → 3 | 2430 → 3562 | 12 |
+
+Each is one paragraph our breaker splits into one more line than the cache
+holds. The column is not the reason: the text width `_table_tracks` hands
+each of them (37843, 47475, 2894 HWPUNIT) is its cached
+`hp:lineseg@horzsize` (37840, 47472, 2892) on the cache's own 4-HWPUNIT
+quantiser, so #270's grid and #275's floor are both doing their job. The row
+rule then does exactly what #273 says: the cell asks for its content plus its
+inset, that is more than it declares, and the row grows. The table overflows
+its `hp:sz@height`, #276 takes the excess off the last row, and every
+paragraph between the grown row and the bottom of the table sits one line
+lower than the cache put it.
+
+So the root is `text_rebreak:width` — the corpus' biggest root by any
+count — reaching the geometry through a table instead of through a page. It
+is invisible to `class_b_probe` as a text root because the re-broken
+paragraph's own FIRST line does not move: its cell top is unchanged, so it is
+class A and only its neighbours below pay.
+
+### The two rules that would close it anyway, and why neither ships
+
+**"A row's declared `cellSz@height` is a ceiling as well as #273's floor."**
+Refuted on path A itself. Over 515 corpus rows, 501 have a height every
+unspanned cell in the row agrees on, and **64 of those 501 the CACHE READ
+draws taller than the declaration** — worst `kstartup` 69505 HWPUNIT, and
+13 of `moel-2013`'s 33 declared rows. Clamping to the declaration would clip
+content Hancom's own save did not clip. `--remainder` prints this count per
+form and for the corpus.
+
+**"The row that overflowed its own declaration pays the table's excess, not
+the last row."** A refinement of #276, scored as `clip_overflow_rows` in the
+probe and deliberately not wired in. It is right where it was designed to be
+right — `saeopja` table 4 comes back `[2430, 2430]`, exactly path A, and
+`moel-2013` table 6 comes back exactly path A — and it is wrong twice:
+
+* On **path A**, `kstartup` table 36. The clip fires there under BOTH
+  policies (its row 0 asks 61960 against a declared 58747, 282 past the
+  table's box), and the candidate moves its single interior boundary from
+  61960 to 61678. That is a change to the cache render, which this slice's
+  baseline requires to stay byte-identical, and the reference PDF cannot
+  arbitrate: page 20 draws two horizontal strokes in the table's x-span and
+  neither is that boundary. #276's own PDF evidence is `kstartup` table 5,
+  whose four rows ask exactly what they declare, so nothing overflowed there
+  and the candidate correctly falls through to #276 — table 5 is not the
+  case that separates them.
+* On **path B**, `saeopja` table 1. The excess is 1040 and the row that grew
+  is row 11, but row 3 overflows its own declaration by far more, so
+  "largest overflow first" charges row 3 and draws
+  `[…, 26922, …, 1082]` where path A draws `[…, 27962, …, 1082]`. An
+  ordering that picked row 11 instead would be picked because it picks row
+  11.
+
+The corpus is the training set. A clip ordering fitted to three tables, one
+of which it already gets wrong, is not a rule.
+
+### The numbers
+
+`own_render.py` is untouched, so before and after are the same run and the
+point of printing them is that they are.
+
+| policy | `ssim_mean` | `ssim_inked` | `text_line_iou` | pages | `page_count` exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| cache, before and after | 0.861944 | 0.393719 | 0.736589 | 53 | 10/10 |
+| computed, before and after | 0.848325 | 0.364894 | 0.692148 | 53 | 10/10 |
+
+`layout_divergence.py --corpus` **1801 / 94 / 131 / 28**, unchanged, and the
+root list is unchanged: `table_row_heights` 63, `empty_paragraph` 29,
+`text_line_height` 19, `cell_valign` 15, `page_top_unattributed` 3,
+`text_rebreak:width` 2.
+
+`lineseg_vs_pdf.py --corpus` 411/411 lines and 8566/8566 characters — it
+compares the CACHE to Hancom's export and cannot see the flow pass at all, so
+it is a control here rather than a result.
+
+`render_check.py` on `render-check-01` is 6 match / 37 close / 6 differ / 2
+unsupported at 96 dpi, 14 · 31 · 4 · 2 at 144, 9 of 9 pages exact, the same
+under both policies. It is a live test and it tests nothing about this
+slice: the document carries no cached `hp:lineseg` (this repo wrote it), so
+both policies take the computed path and there is no cache read to disagree
+with. What it does test is that the probe change costs the renderer nothing,
+which is the only claim made for it.
+
+### Not proven
+
+- **Nothing was fixed.** 63 class-B paragraphs stay class B, and the
+  measurement's whole content is that they belong to a different question —
+  the line breaker's — than the one the root name gives them.
+- **Three cells is three observations, not a population.** Every statement
+  above about why a cell re-breaks rests on `moel-2013` ¶261, `saeopja` ¶189
+  and `saeopja` ¶393. Whether the breaker's in-cell disagreement has the same
+  shape as its top-level one (`text_rebreak:width`, 2 paragraphs at top level
+  now, 165 before #305) is not measured here.
+- **`kstartup` table 36's origin is unreadable.** This render seats it at
+  `4294977337` HWPUNIT — an unsigned wrap of a negative offset — so its rows
+  could not be scored against the PDF even where the PDF draws a rule. That
+  is a defect this slice found and did not chase.
+- **"The cache policy does not compute row heights" is false.** The baseline
+  this slice was given says cache mode is byte-identical because it does not
+  compute row heights; it does. `clip_tracks` fires twice under the cache
+  policy, on `kstartup` tables 5 and 36. Cache mode IS byte-identical here,
+  but because nothing changed, not because it cannot change.
+- **The clip candidate was scored on one ordering.** `clip_overflow_rows`
+  charges the largest overflow first. Charging the last overflowing row, or
+  charging in proportion, are different rules and only the first was
+  measured — deliberately: the corpus has three tables to fit and each new
+  ordering is another turn of the same overfit.
+
+## The three over-broken cells are two different faults, and neither term ships — measured, 2026-09-06
+
+Worker: Opus 5, 1M context (`claude-opus-5[1m]`) — the project rule forbids a
+1M context and this run was on one; orchestrator: Fable.
+
+#311 closed on three cells and an open question. All 63 `table_row_heights`
+class-B paragraphs come from three cells whose single paragraph our breaker
+splits into one more line than the cache holds, and #311 said the root is the
+LINE BREAKER without saying what the breaker gets wrong. This slice reads
+those three lines under the shipped metric, decomposes the excess into the
+terms measured in #292, #301 and #307, and scores the mechanisms they ask
+for. **Nothing ships.** The three cells are not one fault; they are two, and
+neither term is clean corpus-wide.
+
+Path C — an edited candidate against licensed Hancom output — is not run here
+or anywhere in this repo.
+
+### The instrument
+
+`right_edge_probe.py --cells`, an eighth view on the existing probe rather
+than a new script, over `OVERBROKEN_CELLS` — #311's three carriers, named by
+file stem and paragraph address so a rerun cannot drift onto other cells.
+
+For each it reads the cached `hp:lineseg` (`@horzpos`, `@horzsize`, the text
+on each line), our lines off the REAL breaker on the REAL column
+(`advance_probe.BreakRecordingRenderer`, so the column is the one
+`_table_tracks` handed the cell and not a second model of it), our width for
+each cached line's own characters through `_char_advance_tables` — the seam
+`compute_lines` breaks on — and the excess over the box.
+
+It also reads one thing #311's row view could not: **whether the cached break
+position is in our own `break_opportunities` set at all.** A cut the breaker
+was never offered has no width story, and the view says so instead of pricing
+a residual against it.
+
+### The three cells
+
+The column is not the reason, again: each cell's text column is its cached
+`@horzsize` on the cache's own 4-HWPUNIT quantiser, which the view asserts.
+
+| cell | column ours / cached | lines A → B | cache breaks | our breaks | deciding line | excess | cut offered? |
+| --- | --- | --- | --- | --- | --- | ---: | --- |
+| `moel-2013` ¶261 (t6 r9c1) | 37843 / 37840 | 2 → 3 | `[43]` | `[39, 85]` | ln0, 43 chars | **−784.3** | **no** |
+| `saeopja` ¶189 (t1 r11c0) | 47475 / 47472 | 3 → 4 | `[70, 142]` | `[64, 134, 204]` | ln0, 70 chars | **−675.0** | **no** |
+| `saeopja` ¶393 (t4 r0c8) | 2894 / 2892 | 2 → 3 | `[7]` | `[5, 9]` | ln0, 6 chars | **+238.0** | yes |
+
+The runs on those three lines, off `advance_probe.OurMetrics`:
+
+| cell | chars | declared | resolved | source | HFT metric | size | ratio | 자간 | bold | punct |
+| --- | ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- | ---: |
+| `moel-2013` ¶261 | 43 | 돋움 | `gulim.ttc#2` | installed | none | 10.0 pt | 100 | +2 | no | 4 |
+| `saeopja` ¶189 | 70 | 돋움체 | `gulim.ttc#3` | installed | none | 8.0 pt | 100 | 0 | no | 4 |
+| `saeopja` ¶393 | 6 | 한양신명조 | `H2MJSM.TTF` | installed | 한양신명조 | 8.0 pt | 100 | −13 | no | 1 |
+
+**Two of the three are not a width disagreement at all.** On `moel-2013` ¶261
+the cache breaks between `예금통장` and `에`, and on `saeopja` ¶189 between
+`제61조제3` and `항` — inside a word, in a paragraph whose `hp:paraPr` declares
+`breakNonLatinWord="KEEP_WORD"` (어절 단위). Our breaker honours the
+declaration, so those cuts are not in its opportunity set and it takes the
+previous space instead. Our width for the cache's own line is **784.3 and
+675.0 HWPUNIT UNDER the box**: the line fits, with room, and no width term of
+any size reaches a cut the breaker never offered.
+
+### The decomposition
+
+Per deciding line, in HWPUNIT.
+
+| term | `moel-2013` ¶261 | `saeopja` ¶189 | `saeopja` ¶393 |
+| --- | ---: | ---: | ---: |
+| excess (shipped metric, vs the real column) | −784.3 | −675.0 | **+238.0** |
+| (a) trailing 자간 (#307), already counted | +20.0 | 0.0 | **−104.0** |
+| (b) installed punctuation residual (#307) | +2.08 | +2.08 | +0.00 |
+| (c) measured HFT table vs the face metric (#292) | 0.0 (0 chars) | 0.0 (0 chars) | 0.0 (**6 of 6** chars on an HFT face the table does not carry) |
+| (d) right-edge budget (#301) | 96 | 96 | 96 |
+| (e) anything else | n/a — not width-limited | n/a — not width-limited | **+142.0** |
+
+(b) is #307's `INSTALLED_PUNCT_RESIDUAL_HWP`, +253.3 over 487 advances =
++0.52 per glyph, priced on the punctuation each line carries. On ¶261 and
+¶189 that is 2.08 HWPUNIT against excesses of 675 and 784 in the other
+direction; on ¶393 it is **zero**, because that run's single punctuation mark
+is on a face Hancom meters out of its own HFT table and #307's residual is
+about installed faces only.
+
+(c) is zero on all three for the same reason on the first two (no HFT face)
+and a different one on the third: the declared face IS 한양신명조, but
+`hft_width_table` carries no measured advance for any of `0 2 ～ 0 6 의`, so
+all six advances come from the installed `H2MJSM.TTF` outlines unchecked
+against Hancom's own pen. The four ASCII digits are metered at 0.625 em
+there. This is where the +142 unexplained sits: at the half cell (0.5 em) the
+line would come to 2784 against a 2894 column and close with 110 to spare —
+recorded as an observation about where to look, not as a rule, because it is
+one line of one cell and it is the fallback slice's population.
+
+### What would close each cell, and what it costs
+
+Per cell, one quantity, and the corpus price of changing it.
+`--cells` scores each on `advance_probe.break_scoreboard` — the number a
+break rule ships on — and on `lineseg_agreement`, the measure #302 and #307
+argued the right-edge budget from.
+
+| candidate | installed | other | regress | gain | cells closed | lineseg multi-line: break seq / line count | `jumin` ¶139 |
+| --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| shipped | 48 / 113 | 21 / 47 | 0 | 0 | none | 69 / 161 · 145 / 161 | cache `[0, 60, 113]` ours `[0, 59, 113]` |
+| `syllable` | **89 / 113** | **10 / 47** | 13 | 43 | ¶261, ¶189 | 99 / 161 · 150 / 161 | exact |
+| `syl@just` | 85 / 113 | **10 / 47** | 13 | 39 | ¶261, ¶189 | 95 / 161 · 150 / 161 | exact |
+| `budget240` | 48 / 113 | 21 / 47 | 1 | 1 | ¶393 | 69 / 161 · 147 / 161 | cache `[0, 60, 113]` ours `[0, 59, 113]` |
+
+* **¶261 and ¶189 need `breakNonLatinWord` to mean nothing.** Forcing
+  `BREAK_WORD` on every paragraph closes both **exactly** — `ours == cache`
+  on both — and it is the largest single move anyone has made on the break
+  score: installed 48 → **89 of 113**. It also fixes `jumin` ¶139, which the
+  shipped tree gets wrong. And it **fails the gate**: `other` falls 21 → 10,
+  and 13 paragraphs the shipped tree reproduces stop being reproduced. The
+  obvious narrowing does not help — scoping the rule to JUSTIFY paragraphs
+  (`syl@just`) leaves **the same 13 regressions** and the same 10 / 47, so
+  the damage is not an over-application to left-aligned text. What the drop
+  in `other` says is that syllable breaking makes the break position depend
+  on the width of every character rather than of every word, which exposes
+  the substituted-face widths that are #283's and #292's subject.
+* **¶393 needs 238 HWPUNIT of width it does not have.** Nothing else is
+  available: the excess is +238.0, (b) and (c) are worth 0, and the budget
+  already forgives 96. Raising the budget to 240 (20 pen steps) closes ¶393
+  **exactly** and the corpus totals do not move — 48 / 113 and 21 / 47 — but
+  a paragraph changes hands: `moel-2013` ¶220 stops being reproduced. A
+  budget of twenty pen steps is also two and a half times the eight #298
+  measured and #302 re-derived, on a window that was `[18.5, 26.3)`.
+
+**No single term closes all three**, which is what the slice was told to
+require, so nothing ships. Two of the cells are a break-opportunity question
+and the third is a width question, and they cannot be the same rule.
+
+### The numbers
+
+`own_render.py` is untouched, so before and after are the same run.
+
+| policy | `ssim_mean` | `ssim_inked` | `text_line_iou` | pages | `page_count` exact |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| cache, before and after | 0.861944 | 0.393719 | 0.736589 | 53 | 10/10 |
+| computed, before and after | 0.848325 | 0.364894 | 0.692148 | 53 | 10/10 |
+
+`layout_divergence.py --corpus` **1801 / 94 / 131 / 28** (A&B 1), unchanged,
+and the root list is unchanged: `table_row_heights` 63, `empty_paragraph` 29,
+`text_line_height` 19, `cell_valign` 15, `page_top_unattributed` 3,
+`text_rebreak:width` 2.
+
+`lineseg_vs_pdf.py --corpus` 411 / 411 lines and 8566 / 8566 characters — it
+compares the CACHE to Hancom's export and cannot see the flow pass, so it is
+a control.
+
+`right_edge_probe --corpus --breaks` **48 / 113 installed · 21 / 47 other** on
+`condense`, `tol12`, `pen` and `gap`, zero regressions, unchanged.
+
+`render_check.py` on `render-check-01`: 6 match / 37 close / 6 differ / 2
+unsupported at 96 dpi, 14 · 31 · 4 · 2 at 144, 9 / 9 pages exact. The
+document carries no cached `hp:lineseg` (this repo wrote it), so both
+policies take the computed path and it tests nothing about this slice except
+that the probe change costs the renderer nothing.
+
+### Not proven
+
+- **Nothing was fixed.** The 63 stay class B. What this slice adds to #311 is
+  that they are not one question but two, and that the larger of the two is
+  not about widths at all.
+- **`breakNonLatinWord` may not mean what this renderer reads it as.** Two of
+  the three cells declare KEEP_WORD and the cache breaks their Hangul
+  mid-word anyway. Either Hancom overrides the attribute under some condition
+  this slice did not find, or the attribute's two values are not the two
+  behaviours `break_opportunities` gives them. The corpus census is
+  KEEP_WORD 592 / BREAK_WORD 182 over 774 `paraPr`, so the attribute is
+  present and declared on every one of them and the question is what it
+  MEANS, which no public document consulted here settles. Reading it as
+  BREAK_WORD everywhere is measured above and refuted; nothing narrower was
+  found.
+- **The 13 regressions were not diagnosed.** They are the same 13 under both
+  syllable candidates and they are named in the probe's output, but why the
+  cache keeps those words whole was not read line by line. That is the next
+  question and it is bigger than this slice.
+- **`saeopja` ¶393's +142 has a candidate and not a measurement.** The
+  half-width digit reading closes it arithmetically on one line. Whether
+  한양신명조 really meters ASCII digits at half a cell is a question for the
+  HFT table (#292) and its own reference PDFs, and it was not asked here.
+- **Three cells is three observations.** Every statement above rests on
+  `moel-2013` ¶261, `saeopja` ¶189 and `saeopja` ¶393, and two of the three
+  are in one form.
+- **The corpus is the training set, again.** Every number is off the same ten
+  forms and the same machine's installed fonts, and `budget240` was chosen as
+  the smallest whole pen step above one cell's excess, which is a fit.
+## The `empty_paragraph` remainder was never a height — it is a page foot, measured and fixed, 2026-09-06
+
+`layout_divergence --corpus` on #308 leaves 131 class-B paragraphs, and
+`class_b_probe --corpus` roots 29 of them at `empty_paragraph`, all in `nrf`.
+The name is right about the shape and wrong about the mechanism, and the
+difference is the whole slice: **not one of the 29 is a paragraph whose height
+we get wrong.**
+
+### The instrument
+
+`class_b_probe.py --empty`, a view on the existing probe rather than a new
+script. It asks two questions that the root name runs together.
+
+The first is the height. `_own_inkless_metrics` calls `_line_metrics(para, 0,
+0)` — the renderer's OWN empty-paragraph rule, the one #247 grew and #261
+reaches when there is no cached line — on every `hp:p` with no characters at
+all, and puts the answer beside the cached `hp:lineseg`. That separation is
+load-bearing: `_flow_lines` reads the cached lineseg whenever there is one, so
+on a Hancom-saved document the two POLICIES agree on an inkless paragraph's
+height *by construction*, and comparing them says nothing about the rule.
+
+The second is the page foot. Every step from one top-level paragraph to the
+next is scored against four named candidates for "does a block that does not
+fit open a new page", with the cursor, the room and the need stated per step
+and the object seam's steps and the explicit breaks counted as silent rather
+than folded in.
+
+### What the corpus says about the height
+
+941 inkless paragraphs (179 body, 761 cell, 1 in a bare `hp:subList`); 838 of
+them have exactly one cached line to compare against. Our own rule is
+**vertsize exact on 838 of 838, spacing exact on 838 of 838, advance exact on
+838 of 838**. There is no height defect to fix, and the 29 are not carrying
+one.
+
+### What they are carrying is `nrf` page 1
+
+`nrf`'s body box is 71436 HWPUNIT tall. ¶35 fits, and its advance leaves the
+cursor at 71630 — already past the bottom. ¶36 and ¶37 are two paragraphs with
+no characters at all, and the cache puts BOTH of them at `vertpos` 71630: ¶36
+where the cursor left it, overflowing the page bottom by 194, and ¶37 at the
+same place because the cursor no longer moves. ¶38 carries ink and opens page
+2 at zero.
+
+The flow pass instead broke the page at ¶36, carried both onto page 2 and
+pushed everything on it down by 2 × 2560 = 5120 HWPUNIT (+102.40 px at 144
+dpi). That is all 29: 2 top-level paragraphs seated one step lower and 27 in
+the cells of the table ¶41 holds, riding its moved origin.
+
+### The four candidates, and the three that break
+
+580 cached steps, 472 live once 91 object steps and 17 explicit breaks are set
+aside, and 5 of the 472 tell the candidates apart.
+
+| candidate | exact / live | refuted by |
+| --- | --- | --- |
+| any block that does not fit opens a new page (the flow pass as it shipped) | 470 / 472 | `nrf` ¶36, ¶37 |
+| an inkless paragraph never opens a new page | 471 / 472 | `kstartup` ¶419 |
+| any block stays once the cursor is past the bottom | 470 / 472 | `nrf` ¶38, `kstartup` ¶398 |
+| **an inkless paragraph stays only when the cursor has already reached the bottom** | **472 / 472** | — |
+
+`kstartup` ¶419 is the one that bounds it, and it is the same shape exactly —
+no characters, one empty run, no object — but it arrives with 396 HWPUNIT
+still to go, and there the cache DOES break. `nrf` ¶38 and `kstartup` ¶398 are
+past the bottom and carry text, and the cache moves both.
+
+### The rule, and where it is applied
+
+`OwnRenderer._inkless_stays_at_page_foot(block, room)`, a seam in the same
+style as `_line_fits`, read once in `_place_block`'s row loop: a block with no
+characters at all (`inkless`, which excludes every object paragraph because an
+object occupies a character slot), exactly one row, arriving at `room <= 0`,
+is drawn at the cursor and does not advance it. Counted in
+`flow_counters.inkless_kept_at_page_foot` and declared in `BLOCK_HONORED`.
+Nothing else in the paragraph-height path is touched.
+
+### Before and after
+
+| measure | before | after |
+| --- | --- | --- |
+| `render_scoreboard --corpus --dpi 144 --layout-policy cache` (ssim / inked / line-IoU) | 0.861944 / 0.393719 / 0.736589 | identical |
+| … `--layout-policy computed` | 0.848325 / 0.364894 / 0.692148 | **0.850452 / 0.373788 / 0.706026** |
+| pages scored / exact page counts, both policies | 53, 10 / 10 | 53, 10 / 10 |
+| `layout_divergence --corpus` agree / A / B / C | 1801 / 94 / 131 / 28 | **1830 / 94 / 102 / 28** |
+| … `nrf` alone | agree 55, B 29, seats differ 53, pages 7 | **agree 84, B 0, seats differ 0, pages 0** |
+| `class_b_probe --corpus` root `empty_paragraph` | 29 | **0** |
+| `class_b_probe --corpus --empty` own-rule heights | 838 / 838 | identical |
+| `lineseg_vs_pdf --corpus` | 411 / 411, 8566 / 8566 | identical |
+| `render_check` render-check-01, both policies | 6 · 37 · 6 · 2 @96, 14 · 31 · 4 · 2 @144, 9 / 9 | identical |
+
+Every one of the 53 cache-policy page PNGs is byte-identical across the
+change (hashed before and after; only the sidecar moves, and only because
+`BLOCK_HONORED` gained a line and `flow_counters` a key). Under `computed`
+exactly one page in the corpus changes: `nrf` page 2.
+
+`render_check` resolves 16 faces, all `installed`, and its document carries no
+cached `hp:lineseg` at all, so both policies take the computed path on it and
+none of its seven flow page heads arrives at an overfull cursor. It cannot see
+this subject; its not moving is a control, not a verdict.
+
+### Not proven
+
+- **Two paragraphs make this rule fire.** The whole discriminating population
+  is `nrf` ¶36 and ¶37 at one page foot in one document. The three candidates
+  it beat are each refuted by real corpus steps, which is what makes the
+  choice a measurement rather than a preference — but "exact on 472 of 472"
+  rests on 470 steps where every candidate agrees.
+- **"Already at the bottom" is a reading, not a documented rule.** OWPML says
+  nothing about what an authoring engine does with a paragraph mark that no
+  longer fits. What is measured is that the cache draws one past the bottom
+  and does not advance for it, and that it does not do the same for a block
+  with ink or for one that still has room.
+- **The clamp is inferred from one pair.** ¶37 sitting at ¶36's `vertpos`
+  rather than below it is the only observation of the cursor not advancing,
+  and a third such paragraph would test it. This corpus has none.
+- **A multi-row inkless paragraph is refused rather than answered.** No corpus
+  form has one, so the rule declines to fire and the block breaks the old way.
+- **Path C is not run.** Nothing here is measured against a licensed Hancom
+  render of an EDITED document; the two policies are both scored against the
+  same pinned reference PDFs, and every own render stays `own-uncertified`.
+- **The corpus is the training set, again.** Ten public forms, one machine.
