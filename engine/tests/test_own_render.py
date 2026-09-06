@@ -2704,6 +2704,77 @@ def test_condense_lets_a_line_keep_what_its_spaces_can_give_up(typo_probe):
     assert len(loose) == 1, loose
 
 
+def test_the_right_edge_tolerance_is_whole_pen_steps():
+    """#283's grid is 1/600 inch; the tolerance is a whole number of them."""
+    step = own_render.HWPUNIT_PER_INCH / 600
+    assert own_render.RIGHT_EDGE_TOLERANCE_STEPS >= 0
+    assert own_render.RIGHT_EDGE_TOLERANCE_HWP == pytest.approx(
+        own_render.RIGHT_EDGE_TOLERANCE_STEPS * step)
+    # A tolerance worth as much as a whole 10 pt character would not be a
+    # rounding allowance, it would be a licence to overflow.
+    assert own_render.RIGHT_EDGE_TOLERANCE_HWP < own_render.HWPUNIT_PER_PT * 10
+
+
+def test_a_line_overrunning_by_less_than_the_tolerance_is_kept(typo_probe):
+    """The right-edge rule: a hair over the box is a fit, a character is not.
+
+    Measured on the cached ``hp:lineseg`` of the ten corpus forms, which say
+    both which spans Hancom fitted and which it rejected —
+    ``engine/scripts/right_edge_probe.py``.  What is pinned here is the
+    MECHANISM and not the corpus: a line whose advance exceeds its column by
+    less than ``RIGHT_EDGE_TOLERANCE_HWP`` stays whole, and one that exceeds
+    it by more breaks.  Setting the constant to zero restores the strict test,
+    which is asserted rather than described.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__edge__", height=1000)
+    text = "가나 다라"
+    para = _synthetic_paragraph(renderer, text, cid, para_id="__edgemeasure__")
+    full = renderer.span_width(draw, para, 0, len(text))
+    tolerance = own_render.RIGHT_EDGE_TOLERANCE_HWP
+    assert tolerance > 0, "this test has nothing to say at a zero tolerance"
+
+    inside, _ = _breaks(renderer, draw, text, cid, int(full - tolerance / 2))
+    outside, _ = _breaks(renderer, draw, text, cid, int(full - tolerance * 4))
+    assert len(inside) == 1, inside
+    assert len(outside) == 2, outside
+
+    # And the allowance is the whole of the difference: with it switched off
+    # the same box breaks the same line.
+    strict = type("Strict", (type(renderer),), {
+        "_line_fits": lambda self, para, width, avail, slack, start, end:
+            width <= avail + slack})
+    renderer.__class__ = strict
+    try:
+        again, _ = _breaks(renderer, draw, text, cid,
+                           int(full - tolerance / 2),
+                           para_id="__edgestrict__")
+    finally:
+        renderer.__class__ = strict.__mro__[1]
+    assert len(again) == 2, again
+
+
+def test_a_trailing_space_never_forces_a_break(typo_probe):
+    """Korean typesetting hangs a line-final space, and the breaker does too.
+
+    The mechanism is that ``compute_lines`` only asks ``_line_fits`` about a
+    span ending in a non-space character, so a space at a line end can never
+    be the character that overflows.  A column exactly as wide as the visible
+    text therefore holds the line whatever its trailing spaces are worth.
+    """
+    renderer, _image, draw = typo_probe
+    cid = _synthetic_charpr(renderer, "__hang__", height=1000)
+    para = _synthetic_paragraph(renderer, "가나다", cid, para_id="__hangvis__")
+    visible = renderer.span_width(draw, para, 0, 3)
+    for trailing in (1, 2, 5):
+        spans, lines = _breaks(renderer, draw, "가나다" + " " * trailing, cid,
+                               int(visible), para_id=f"__hang{trailing}__")
+        assert len(spans) == 1, (trailing, spans)
+        # ``width_hwpunit`` is the VISIBLE advance, so the hanging spaces are
+        # not in the box either.
+        assert lines[0]["width_hwpunit"] == pytest.approx(visible)
+
+
 def test_line_advance_follows_the_declared_line_spacing(typo_probe):
     renderer, _image, draw = typo_probe
     cid = _synthetic_charpr(renderer, "__ls__", height=1300)
@@ -2876,7 +2947,11 @@ LINESEG_AGREEMENT = {
     "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
     "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
-    "jumin-deungchobon-sinchengseo": (133, 130, 117, 27, 24, 36, 12),
+    # 130 -> 131, 24 -> 25, 12 -> 13 on the right-edge slice (#298): the fit
+    # test now allows a line to run eight pen steps past its box, which is
+    # what ``right_edge_probe.py --corpus`` measured the cache to allow, and
+    # jumin ¶34 -- 7.5 HWPUNIT over a 43208 box -- stops being broken.
+    "jumin-deungchobon-sinchengseo": (133, 131, 117, 27, 25, 36, 13),
     # 452 -> 454, 433 -> 435 on the bold-metering slice (#281): kstartup's
     # bold runs declare 맑은 고딕 and set hh:charPr@bold, and their advance is
     # now the family's REGULAR cut, which is what Hancom's own export
@@ -2892,7 +2967,11 @@ LINESEG_AGREEMENT = {
     # moel-2013 ¶118 and ¶141 -- now break exactly where the cache broke
     # them.  Every column that moved went up.
     "moel-pyojun-geunrogyeyakseo-2013": (264, 262, 253, 35, 33, 50, 34),
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 300, 284, 37, 27, 47, 11),
+    # 300 -> 304, 284 -> 288 on the right-edge slice (#298): four cached
+    # lines of this form come out 27.1 HWPUNIT over a 44056 box and were
+    # being broken; the eight-pen-step tolerance keeps them whole.  Its two
+    # multiline columns do not move -- all four are one-line paragraphs.
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 288, 37, 27, 47, 11),
     "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
     "saeopja-deungnok-sinchengseo": (765, 760, 750, 18, 16, 25, 8),
 }
@@ -3123,7 +3202,24 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # break agreements before and after).  The rasters agree on the computed
     # policy, which is the one that grades the breaker (line IoU +0.0192,
     # ssim +0.0045, inked +0.0074, means over the corpus).
-    assert totals == [2151, 2127, 2052, 161, 144, 219, 91], totals
+    #
+    # 2127 -> 2132, 2052 -> 2056, 144 -> 145 and 91 -> 92 on the right-edge
+    # slice (#298), the first measurement of how far past its column a line's
+    # advance may run before the breaker wraps it.  The cache is a two-sided
+    # oracle about that -- a cached line is a span Hancom fitted, and the
+    # span reaching the next break opportunity is one it rejected -- and read
+    # that way it says the strict test is too strict by a tenth of a
+    # character: eight of the 18 cached lines this renderer calls too wide
+    # are over by 63 HWPUNIT or less, while the tightest span Hancom rejected
+    # is 111.8 over.  ``RIGHT_EDGE_TOLERANCE_HWP`` is eight 1/600 inch pen
+    # steps, inside that window.  Five paragraphs stop being broken (four of
+    # moel-2025 at 27.1 over a 44056 box, jumin ¶34 at 7.5 over 43208), no
+    # break position is lost, and the class-B root ``text_rebreak:width``
+    # falls 100 -> 41.  The rasters agree on the computed policy, which is
+    # the one that grades the breaker (line IoU +0.00064, ssim +0.00036,
+    # pair rate +0.00016, inked -0.00008, means over the corpus), and the
+    # cache policy is byte-identical because it does not break lines.
+    assert totals == [2151, 2132, 2056, 161, 145, 219, 92], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
