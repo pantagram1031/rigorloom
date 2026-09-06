@@ -182,6 +182,149 @@ def test_a_kept_line_and_its_rejected_span_share_one_column():
             assert rec["rejected"]["w_full"] >= rec["w_visible"]
 
 
+# -- the three over-broken cells (#312) ------------------------------------
+
+def _cell(excess, *, offered, trailing_gap=0.0, punct=0, hft_delta=0.0,
+          uncovered=0, w_fit=1000.0):
+    """One synthetic cell whose first cached line is the deciding one."""
+    return {
+        "cache_breaks": [10], "our_breaks": [8], "deciding": 0,
+        "lines": [{
+            "line": 0, "start": 0, "visible": 10, "end": 10,
+            "excess": excess, "break_offered": offered,
+            "trailing_gap": trailing_gap, "punct_installed": punct,
+            "w_fit": w_fit,
+            "hft": {"measured": 0, "measured_delta": hft_delta,
+                    "uncovered": uncovered},
+        }],
+    }
+
+
+def test_the_named_cells_are_addressed_by_file_and_paragraph():
+    """#311's three carriers, so a rerun cannot silently measure others."""
+    assert probe.OVERBROKEN_CELLS
+    total = sum(len(rows) for rows in probe.OVERBROKEN_CELLS.values())
+    assert total == 3
+    for stem, rows in probe.OVERBROKEN_CELLS.items():
+        assert stem and not stem.endswith(".hwpx")
+        for address, label in rows.items():
+            assert isinstance(address, int)
+            assert "row" in label and "cell" in label
+
+
+def test_the_deciding_line_is_the_first_break_our_breaker_missed():
+    """A greedy breaker's later lines are downstream of its first miss."""
+    assert probe._deciding_line([10, 20, 30], [10, 20, 30]) is None
+    assert probe._deciding_line([10, 20, 30], [10, 18, 26]) == 1
+    # Fewer breaks than the cache: the first one we never made decides.
+    assert probe._deciding_line([10, 20], [10]) == 1
+    assert probe._deciding_line([10, 20], []) == 0
+
+
+def test_a_cut_the_breaker_was_never_offered_has_no_width_story():
+    """The whole point of the view: a missing opportunity is not a width.
+
+    Our width for the cache's own line is UNDER the box, so no width term of
+    any size reaches the cut, and the decomposition has to say so rather than
+    price a residual that would be meaningless.
+    """
+    piece = probe.decompose(_cell(-784.3, offered=False))
+    assert piece["width_kind"] == "not width-limited"
+    assert piece["terms"]["residual"] is None
+    assert "break_opportunities" in piece["verdict"]
+
+
+def test_a_width_limited_line_prices_the_budget_and_names_the_residual():
+    """Every named term comes out of the excess; what is left is declared."""
+    budget = own_render.RIGHT_EDGE_TOLERANCE_HWP
+    piece = probe.decompose(_cell(budget + 200.0, offered=True, punct=4,
+                                  hft_delta=-50.0))
+    assert piece["width_kind"] == "width-limited"
+    assert piece["terms"]["budget"] == pytest.approx(budget)
+    assert piece["terms"]["punct_installed"] == pytest.approx(
+        4 * probe.INSTALLED_PUNCT_RESIDUAL_HWP)
+    # residual = (excess - budget) - punctuation - the HFT table's own move
+    assert piece["terms"]["residual"] == pytest.approx(
+        200.0 - 4 * probe.INSTALLED_PUNCT_RESIDUAL_HWP + 50.0)
+
+
+def test_the_installed_punctuation_residual_is_the_number_307_measured():
+    """A term in a decomposition, per glyph, and nothing applies it."""
+    assert probe.INSTALLED_PUNCT_RESIDUAL_HWP == pytest.approx(253.3 / 487)
+    assert 0.5 < probe.INSTALLED_PUNCT_RESIDUAL_HWP < 0.55
+
+
+def test_the_syllable_seam_forces_break_word_and_puts_the_function_back():
+    base = own_render.break_opportunities
+    # 어절 단위: the only break in this text is at the space.
+    text = "가나다 라마바"
+    assert base(text, "KEEP_WORD", "KEEP_WORD") == [4]
+    with probe.syllable_opportunities():
+        assert own_render.break_opportunities is not base
+        # 글자 단위: every syllable boundary is an opportunity, and the
+        # declared KEEP_WORD no longer suppresses them.
+        assert own_render.break_opportunities(
+            text, "KEEP_WORD", "KEEP_WORD") == [1, 2, 4, 5, 6]
+    assert own_render.break_opportunities is base
+
+
+def test_the_budget_seam_puts_the_constant_back():
+    base = own_render.RIGHT_EDGE_TOLERANCE_HWP
+    with probe.tolerance_budget(probe.CELL_BUDGET_HWP):
+        assert own_render.RIGHT_EDGE_TOLERANCE_HWP == probe.CELL_BUDGET_HWP
+    assert own_render.RIGHT_EDGE_TOLERANCE_HWP == base
+
+
+def test_every_cell_candidate_carries_a_basis_and_a_seam():
+    assert set(probe.CELL_CANDIDATE_ORDER) == set(probe.CELL_CANDIDATES)
+    assert probe.CELL_CANDIDATE_ORDER[0] == "shipped"
+    renderer = own_render.OwnRenderer
+    recorder = probe.advance_probe.BreakRecordingRenderer
+    opportunities = own_render.break_opportunities
+    budget = own_render.RIGHT_EDGE_TOLERANCE_HWP
+    for name in probe.CELL_CANDIDATE_ORDER:
+        basis, factory = probe.CELL_CANDIDATES[name]
+        assert basis.strip()
+        with factory():
+            pass
+        # Every seam has to put the tree back, or the candidate after it is
+        # scored under the one before it.
+        assert own_render.OwnRenderer is renderer
+        assert probe.advance_probe.BreakRecordingRenderer is recorder
+        assert own_render.break_opportunities is opportunities
+        assert own_render.RIGHT_EDGE_TOLERANCE_HWP == budget
+
+
+def test_the_named_cells_are_read_off_the_real_breaker():
+    """The view's own oracle: each cell is over-broken, by exactly one line.
+
+    No corpus COUNT is pinned here — that is a measurement and belongs in the
+    notes — but that the three named paragraphs exist, that the view finds a
+    column for each, and that our breaker makes one more line than the cache
+    holds is what every number in the notes rests on.
+    """
+    forms = {path.stem: path
+             for path, _ in probe.layout_divergence.corpus_forms(ROOT)}
+    targets = [(forms[stem], None) for stem in probe.OVERBROKEN_CELLS
+               if stem in forms]
+    if len(targets) != len(probe.OVERBROKEN_CELLS):
+        pytest.skip("this checkout's corpus does not carry both forms")
+    report = probe.cell_report(targets, ROOT, score=False)
+    assert len(report["cells"]) == 3
+    assert "candidates" not in report
+    for record in report["cells"]:
+        assert record["column_hwp"] > 0
+        assert record["our_line_count"] == record["cached_lines"] + 1
+        assert record["deciding"] is not None
+        piece = record["decomposition"]
+        assert piece["width_kind"] in ("width-limited", "not width-limited")
+        # The column the cell is laid out in IS the cached box on the cache's
+        # own 4 HWPUNIT quantiser (#311), which is why the extra line cannot
+        # be blamed on the track solver.
+        assert abs(record["column_hwp"]
+                   - record["cached_horzsize"][0]) <= 4
+
+
 def test_a_line_ending_on_a_control_cell_is_not_evidence_about_width():
     """An explicit line break is not a width decision, so it is left out.
 
