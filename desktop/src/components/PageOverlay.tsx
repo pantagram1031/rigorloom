@@ -263,7 +263,11 @@ function SpanOverlay({
       >
         <SeatEditor
           className="seat-input ov-caret-input"
-          value={fieldTextForRunEdit(editing.before, editing.rangeStart, editing.rangeEnd)}
+          value={fieldTextForRunEdit(
+            editing.rangeText ?? editing.before,
+            editing.rangeStart,
+            editing.rangeEnd,
+          )}
           caret={editing.caret}
           style={editing.sizePt ? { fontSize: `${editing.sizePt}pt` } : undefined}
           onCommit={(next) => void commitEdit(next)}

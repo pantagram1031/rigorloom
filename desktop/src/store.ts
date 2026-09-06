@@ -244,11 +244,17 @@ export interface InlineRunEdit extends InlineEditBase {
    */
   runId?: string | null;
   documentSha256?: string | null;
+  /**
+   * The displayed run text `rangeStart`/`rangeEnd` were measured against.
+   * `before` is the op baseline and may be older than the page; the field
+   * value and the commit splice both read `rangeText`. See `revision.ts`.
+   */
+  rangeText?: string;
   /** Always `"utf-16"` for a run caret. See `run_map.ts`. */
   offsetUnit?: "utf-16";
-  /** UTF-16 start of the clicked visual line inside `before`. */
+  /** UTF-16 start of the clicked visual line inside `rangeText`. */
   rangeStart?: number;
-  /** UTF-16 end of the clicked visual line inside `before`. */
+  /** UTF-16 end of the clicked visual line inside `rangeText`. */
   rangeEnd?: number;
 }
 
