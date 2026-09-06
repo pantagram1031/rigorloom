@@ -162,6 +162,16 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
             }
         return self._table_index
 
+    @table_index.setter
+    def table_index(self, value):
+        # A base ``OwnRenderer`` on another line assigns ``self.table_index``
+        # in its own ``__init__`` (the line-box address feature).  Without a
+        # setter that assignment raises against this property and no
+        # ``SeatingRenderer`` can be built on that line.  The value it hands
+        # over is the same document-order index this property would compute,
+        # so it is kept as the cache.
+        self._table_index = value
+
     # -- containers ------------------------------------------------------
     def _render_flow_page(self, draw, records, origin_hwp, avail_w_hwp):
         self._container_stack.append((origin_hwp[1], 0))
