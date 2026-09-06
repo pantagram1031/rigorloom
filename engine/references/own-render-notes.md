@@ -11132,3 +11132,124 @@ that the probe change costs the renderer nothing.
 - **The corpus is the training set, again.** Every number is off the same ten
   forms and the same machine's installed fonts, and `budget240` was chosen as
   the smallest whole pen step above one cell's excess, which is a fit.
+## The `empty_paragraph` remainder was never a height — it is a page foot, measured and fixed, 2026-09-06
+
+`layout_divergence --corpus` on #308 leaves 131 class-B paragraphs, and
+`class_b_probe --corpus` roots 29 of them at `empty_paragraph`, all in `nrf`.
+The name is right about the shape and wrong about the mechanism, and the
+difference is the whole slice: **not one of the 29 is a paragraph whose height
+we get wrong.**
+
+### The instrument
+
+`class_b_probe.py --empty`, a view on the existing probe rather than a new
+script. It asks two questions that the root name runs together.
+
+The first is the height. `_own_inkless_metrics` calls `_line_metrics(para, 0,
+0)` — the renderer's OWN empty-paragraph rule, the one #247 grew and #261
+reaches when there is no cached line — on every `hp:p` with no characters at
+all, and puts the answer beside the cached `hp:lineseg`. That separation is
+load-bearing: `_flow_lines` reads the cached lineseg whenever there is one, so
+on a Hancom-saved document the two POLICIES agree on an inkless paragraph's
+height *by construction*, and comparing them says nothing about the rule.
+
+The second is the page foot. Every step from one top-level paragraph to the
+next is scored against four named candidates for "does a block that does not
+fit open a new page", with the cursor, the room and the need stated per step
+and the object seam's steps and the explicit breaks counted as silent rather
+than folded in.
+
+### What the corpus says about the height
+
+941 inkless paragraphs (179 body, 761 cell, 1 in a bare `hp:subList`); 838 of
+them have exactly one cached line to compare against. Our own rule is
+**vertsize exact on 838 of 838, spacing exact on 838 of 838, advance exact on
+838 of 838**. There is no height defect to fix, and the 29 are not carrying
+one.
+
+### What they are carrying is `nrf` page 1
+
+`nrf`'s body box is 71436 HWPUNIT tall. ¶35 fits, and its advance leaves the
+cursor at 71630 — already past the bottom. ¶36 and ¶37 are two paragraphs with
+no characters at all, and the cache puts BOTH of them at `vertpos` 71630: ¶36
+where the cursor left it, overflowing the page bottom by 194, and ¶37 at the
+same place because the cursor no longer moves. ¶38 carries ink and opens page
+2 at zero.
+
+The flow pass instead broke the page at ¶36, carried both onto page 2 and
+pushed everything on it down by 2 × 2560 = 5120 HWPUNIT (+102.40 px at 144
+dpi). That is all 29: 2 top-level paragraphs seated one step lower and 27 in
+the cells of the table ¶41 holds, riding its moved origin.
+
+### The four candidates, and the three that break
+
+580 cached steps, 472 live once 91 object steps and 17 explicit breaks are set
+aside, and 5 of the 472 tell the candidates apart.
+
+| candidate | exact / live | refuted by |
+| --- | --- | --- |
+| any block that does not fit opens a new page (the flow pass as it shipped) | 470 / 472 | `nrf` ¶36, ¶37 |
+| an inkless paragraph never opens a new page | 471 / 472 | `kstartup` ¶419 |
+| any block stays once the cursor is past the bottom | 470 / 472 | `nrf` ¶38, `kstartup` ¶398 |
+| **an inkless paragraph stays only when the cursor has already reached the bottom** | **472 / 472** | — |
+
+`kstartup` ¶419 is the one that bounds it, and it is the same shape exactly —
+no characters, one empty run, no object — but it arrives with 396 HWPUNIT
+still to go, and there the cache DOES break. `nrf` ¶38 and `kstartup` ¶398 are
+past the bottom and carry text, and the cache moves both.
+
+### The rule, and where it is applied
+
+`OwnRenderer._inkless_stays_at_page_foot(block, room)`, a seam in the same
+style as `_line_fits`, read once in `_place_block`'s row loop: a block with no
+characters at all (`inkless`, which excludes every object paragraph because an
+object occupies a character slot), exactly one row, arriving at `room <= 0`,
+is drawn at the cursor and does not advance it. Counted in
+`flow_counters.inkless_kept_at_page_foot` and declared in `BLOCK_HONORED`.
+Nothing else in the paragraph-height path is touched.
+
+### Before and after
+
+| measure | before | after |
+| --- | --- | --- |
+| `render_scoreboard --corpus --dpi 144 --layout-policy cache` (ssim / inked / line-IoU) | 0.861944 / 0.393719 / 0.736589 | identical |
+| … `--layout-policy computed` | 0.848325 / 0.364894 / 0.692148 | **0.850452 / 0.373788 / 0.706026** |
+| pages scored / exact page counts, both policies | 53, 10 / 10 | 53, 10 / 10 |
+| `layout_divergence --corpus` agree / A / B / C | 1801 / 94 / 131 / 28 | **1830 / 94 / 102 / 28** |
+| … `nrf` alone | agree 55, B 29, seats differ 53, pages 7 | **agree 84, B 0, seats differ 0, pages 0** |
+| `class_b_probe --corpus` root `empty_paragraph` | 29 | **0** |
+| `class_b_probe --corpus --empty` own-rule heights | 838 / 838 | identical |
+| `lineseg_vs_pdf --corpus` | 411 / 411, 8566 / 8566 | identical |
+| `render_check` render-check-01, both policies | 6 · 37 · 6 · 2 @96, 14 · 31 · 4 · 2 @144, 9 / 9 | identical |
+
+Every one of the 53 cache-policy page PNGs is byte-identical across the
+change (hashed before and after; only the sidecar moves, and only because
+`BLOCK_HONORED` gained a line and `flow_counters` a key). Under `computed`
+exactly one page in the corpus changes: `nrf` page 2.
+
+`render_check` resolves 16 faces, all `installed`, and its document carries no
+cached `hp:lineseg` at all, so both policies take the computed path on it and
+none of its seven flow page heads arrives at an overfull cursor. It cannot see
+this subject; its not moving is a control, not a verdict.
+
+### Not proven
+
+- **Two paragraphs make this rule fire.** The whole discriminating population
+  is `nrf` ¶36 and ¶37 at one page foot in one document. The three candidates
+  it beat are each refuted by real corpus steps, which is what makes the
+  choice a measurement rather than a preference — but "exact on 472 of 472"
+  rests on 470 steps where every candidate agrees.
+- **"Already at the bottom" is a reading, not a documented rule.** OWPML says
+  nothing about what an authoring engine does with a paragraph mark that no
+  longer fits. What is measured is that the cache draws one past the bottom
+  and does not advance for it, and that it does not do the same for a block
+  with ink or for one that still has room.
+- **The clamp is inferred from one pair.** ¶37 sitting at ¶36's `vertpos`
+  rather than below it is the only observation of the cursor not advancing,
+  and a third such paragraph would test it. This corpus has none.
+- **A multi-row inkless paragraph is refused rather than answered.** No corpus
+  form has one, so the rule declines to fire and the block breaks the old way.
+- **Path C is not run.** Nothing here is measured against a licensed Hancom
+  render of an EDITED document; the two policies are both scored against the
+  same pinned reference PDFs, and every own render stays `own-uncertified`.
+- **The corpus is the training set, again.** Ten public forms, one machine.

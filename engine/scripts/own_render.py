@@ -3421,6 +3421,10 @@ class OwnRenderer:
                 "keep_with_next": bool(pr.get("keep_with_next")),
                 "keep_lines": bool(pr.get("keep_lines")),
                 "widow_orphan": bool(pr.get("widow_orphan")),
+                # No characters AT ALL — not even an object slot, since an
+                # object occupies one.  The page-foot rule below is the only
+                # thing that reads it; see _inkless_stays_at_page_foot.
+                "inkless": not para.chars,
                 "cached_top": (_iattr(para.linesegs[0], "vertpos")
                                if para.linesegs else None),
             })
@@ -3511,6 +3515,7 @@ class OwnRenderer:
             "anchored_blocks_moved": 0,
             "anchored_extents_ignored": 0,
             "blocks_taller_than_page": 0,
+            "inkless_kept_at_page_foot": 0,
         }
         counters["footnote_blocks_moved"] = 0
         counters["footnote_reserve_capped"] = 0
@@ -3761,6 +3766,15 @@ class OwnRenderer:
                 seg_height += row["advance"]
                 index += 1
                 continue
+            if self._inkless_stays_at_page_foot(block, room):
+                # A paragraph with no characters at all, arriving at a cursor
+                # that has already reached the page bottom, does not open a
+                # page: it is drawn where it is and it does not advance the
+                # cursor.  See :meth:`_inkless_stays_at_page_foot` for the
+                # measurement and for the three candidates it beat.
+                counters["inkless_kept_at_page_foot"] += 1
+                index += 1
+                continue
             # An INLINE (글자처럼 취급) table never splits — measured, see
             # ``TABLE_SPLIT_AT_ROWS`` above and
             # docs/research/table-page-break-rule.md.  ``row["table"]`` is by
@@ -3792,6 +3806,58 @@ class OwnRenderer:
             out.append(self._flow_record(block, page, seg_top, seg_height,
                                          (seg_first, len(rows))))
         return out
+
+    @staticmethod
+    def _inkless_stays_at_page_foot(block, room):
+        """May this block sit past the page bottom rather than open a page?
+
+        A SEAM, because the answer is a measurement.  #247 settled how tall a
+        paragraph with no characters is (the ``hh:charPr@height`` of its empty
+        runs, exact on every one of the corpus' cached lines) and #261 settled
+        what to do when there is no cached line to read it off.  Neither says
+        what happens when a paragraph that tall does not FIT, and the flow
+        pass' answer — every block that does not fit opens a new page — is
+        wrong about one shape of block.
+
+        Measured (``class_b_probe.py --corpus --empty``, 580 cached steps from
+        one top-level paragraph to the next, 472 of them live once the object
+        seam's 91 and the 17 explicit breaks are set aside):
+
+        * **any block that does not fit opens a new page** — the flow pass as
+          it ships — is exact on 470 of 472, and both misses are the same
+          shape: ``nrf`` ¶36 and ¶37, two paragraphs with no characters at
+          all, which the cache leaves on page 1 at ``vertpos`` 71630 with the
+          body box only 71436 tall.  The line overflows the page bottom and
+          Hancom draws it there anyway.
+        * **an inkless paragraph never opens a new page** is exact on 471 and
+          is refuted by ``kstartup`` ¶419: same shape exactly — no characters,
+          one empty run, no object — but the cursor is still 396 HWPUNIT
+          inside the page when it arrives, and there the cache DOES break.
+        * **any block stays once the cursor is past the bottom**, inkless or
+          not, is exact on 470 and is refuted by ``nrf`` ¶38 and ``kstartup``
+          ¶398, both of which carry text and both of which the cache moves.
+        * **this rule** — an inkless paragraph stays only when the cursor has
+          ALREADY reached the page bottom — is exact on 472 of 472, all five
+          steps that tell the four candidates apart included.
+
+        The discriminating population is small and this docstring says so: two
+        paragraphs at one page foot make the rule fire, one paragraph stops
+        the broader version of it and two more stop the broadest.  What the
+        rule is NOT allowed to touch is a block with any character in it — an
+        object occupies a character slot, so ``inkless`` excludes every object
+        paragraph as well — or a block with more than one row, which no
+        inkless paragraph on this corpus has and whose remaining rows would
+        otherwise be swallowed with no advance.
+
+        The cursor does not move: ``_place_block`` adds nothing to
+        ``seg_height``, so the block leaves a zero-height record at the
+        cursor, the next block starts where this one did, and the first block
+        that carries ink then finds the same overfull page and breaks.  That
+        is exactly the cache's own shape at ``nrf`` page 1 — ¶36 and ¶37 both
+        seated at 71630, ¶38 opening page 2.
+        """
+        return (room <= 0 and bool(block.get("inkless"))
+                and len(block["rows"]) == 1)
 
     @staticmethod
     def _rows_that_fit(rows, top, usable):
@@ -7403,6 +7469,12 @@ class OwnRenderer:
         "hp:tbl@textWrap=TOP_AND_BOTTOM / SQUARE / TIGHT / THROUGH on an "
         "ANCHORED object — the object's declared extent is reserved in the "
         "flow, so the next block starts below it",
+        "a paragraph with no characters at all does not open a new page when "
+        "the cursor has already reached the page bottom: it is drawn where it "
+        "is and does not advance the cursor, which is what the cache does "
+        "(exact on 472 of 472 cached page-foot steps, see "
+        "_inkless_stays_at_page_foot); counted in "
+        "flow_counters.inkless_kept_at_page_foot",
     )
     BLOCK_NOT_HONORED = (
         "unequal-width columns (hp:colPr@sameSz=false, per-column hp:colSz) "
