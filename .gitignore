@@ -20,3 +20,5 @@ Thumbs.db
 dist/
 # Card1 / Card5 Run-Card evidence (regenerated on the Windows runner).
 qa/_artifacts/
+# Unattended QA harness evidence (qa/run_cards.py job.json runs).
+work/
