@@ -3567,12 +3567,37 @@ class OwnRenderer:
         remainder that still would not fit an entirely fresh page is left
         to the existing "block taller than a page" handling (the object is
         still drawn, in full, at its declared offset) rather than looping.
+
+        The CONTINUATION carries the object's outer margin, both halves of
+        it.  ``_anchor_extent`` already reads ``hp:outMargin`` as the slot
+        around an anchored object rather than a one-off gap
+        (``vertOffset + top + height + bottom``); a table that lands on two
+        pages opens a slot on each of them, so the room the block after it
+        starts below is ``top + <rows on this page> + bottom``, not the bare
+        row height.  Measured on the corpus's one split anchored table —
+        `kstartup` ¶180, ``hp:sz@height`` 70529 against 140034 of real row
+        content, ``hp:outMargin`` 140 on every side:
+
+            the rows left over after the cut are 69505 tall
+            the cache seats the next paragraph (¶393) at 69785
+                                                 = 140 + 69505 + 140
+            the reference PDF draws the continuation's own top rule 140
+            below the body top of the page it continues onto, the same
+            offset it draws the table's first rule at on the page before
+
+        The FIRST half is left as it is: nothing follows it on that page —
+        it is what fills the page — so no cached seat measures it, and
+        inventing a number for it here would be a guess dressed up as
+        symmetry.  The room test is likewise unchanged: on the one witness
+        the cut is the same row either way (70529 fits both 71000 and
+        71000 - 280).
         """
         cap = self._usable_on(page, usable)
         room = max(0, cap - top - offset)
         cut = self._row_cut_for_room(ys, 0, room)
         if cut == 0:
             return None
+        _left, out_top, _right, out_bottom = self._object_out_margin(tbl_el)
         self._skip("hp:tbl@repeatHeader",
                    "a table split across a page boundary does not repeat its "
                    "header row on the continuation page")
@@ -3589,7 +3614,8 @@ class OwnRenderer:
             split={"table": id(tbl_el), "row_start": 0, "row_end": cut})
         page += 1
         rest = self._flow_record(
-            block, page, 0, ys[-1] - ys[cut], (1, 1), kind="table",
+            block, page, 0, out_top + (ys[-1] - ys[cut]) + out_bottom,
+            (1, 1), kind="table",
             split={"table": id(tbl_el), "row_start": cut,
                    "row_end": len(ys) - 1})
         return [first, rest]

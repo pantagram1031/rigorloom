@@ -4861,6 +4861,104 @@ def test_a_wild_vertOffset_is_left_to_the_ignored_reserve_handling():
     assert ET.tostring(tbl) is not None
 
 
+# ------------------------------- the slot a split table's CONTINUATION opens
+#
+# MEASURED, path A (cache) with the reference PDF as confirmation only.
+# ``_anchor_extent`` reads ``hp:outMargin`` as the slot AROUND an anchored
+# object (``vertOffset + top + height + bottom``), and a table that lands on
+# two pages opens that slot on each of them.  kstartup ¶180 is the corpus's
+# only split anchored table: 140 on every side, 69505 HWPUNIT of row content
+# left after the cut, and the cache seats the next paragraph (¶393) at 69785
+# = 140 + 69505 + 140.  The reference PDF draws the continuation's own top
+# rule 140 below the body top of the page it continues onto, the same offset
+# as the first fragment's rule on the page before (own-render-notes E2.8).
+
+def _split_continuation_height(row_heights, out_margin, usable=71000,
+                               declared=None):
+    """The height ``_split_anchor_overflow`` gives the continuation record."""
+    from xml.etree import ElementTree as ET
+
+    tbl = _anchored_table(declared if declared is not None
+                          else sum(row_heights), row_heights)
+    if out_margin is not None:
+        tbl.append(ET.fromstring(
+            '<hp:outMargin xmlns:hp="urn:x" left="%d" top="%d" right="%d" '
+            'bottom="%d"/>' % ((out_margin,) * 4)))
+    renderer = own_render.OwnRenderer(
+        _need(os.path.join(CORPUS, "gianmun-byeolji-1ho.hwpx")), dpi=96)
+    draw = renderer._scratch_draw()
+    holder = _AnchorHolder(tbl, 0)
+    block = _flow_block(0, advance=1000)
+    block["para"] = holder
+    ys = [0]
+    for height in row_heights:
+        ys.append(ys[-1] + height)
+    records = renderer._split_anchor_overflow(
+        block, 0, 0, usable, collections.Counter(), tbl, 0, ys)
+    assert records is not None and len(records) == 2, records
+    return records[1]["height"], ys
+
+
+def test_a_split_tables_continuation_opens_its_own_outer_margin():
+    """kstartup ¶180 in miniature: 140 + the rows left over + 140.
+
+    The number the corpus pins is the SEAT of the paragraph after it, and
+    that seat is this record's height: ¶393 is cached at 69785 with 69505
+    HWPUNIT of table below the cut and ``hp:outMargin`` 140 on every side.
+    """
+    row_heights = (30000, 30000, 30000)
+    height, ys = _split_continuation_height(row_heights, 140)
+    cut = 2                       # 60000 fits 71000, 90000 does not
+    assert height == 140 + (ys[-1] - ys[cut]) + 140 == 30280
+
+
+def test_a_continuation_with_no_outer_margin_gets_no_phantom_gap():
+    """The counter-case: the rule adds what the object DECLARES, nothing.
+
+    A table that declares no ``hp:outMargin`` -- the shape most corpus forms
+    outside kstartup and nrf have -- opens a continuation slot exactly as
+    tall as the rows left after the cut.  A rule that hard-coded kstartup's
+    280, or applied a default margin where the file declares none, fails
+    here and passes the witness above.
+    """
+    row_heights = (30000, 30000, 30000)
+    bare, ys = _split_continuation_height(row_heights, None)
+    zeroed, _ys = _split_continuation_height(row_heights, 0)
+    assert bare == zeroed == ys[-1] - ys[2] == 30000
+
+
+def test_the_split_kstartup_actually_declares_seats_393_where_the_cache_does():
+    """The real witness, end to end: the corpus's one split anchored table.
+
+    The flow pass places ¶393 at exactly the ``hp:lineseg@vertpos`` the
+    authoring engine cached for it.  Path A against path B on an UNEDITED
+    document -- no reference PDF is scored here and nothing is certified.
+    """
+    renderer = own_render.OwnRenderer(
+        _need(os.path.join(
+            CORPUS, "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx")),
+        dpi=96, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    draw = renderer._scratch_draw()
+    placements, _pages, counters = renderer.flow(draw)
+    assert counters["tables_split"] == 1, counters
+
+    cached = {}
+    order = 0
+    for page in renderer.paginate():
+        for para in page:
+            cached[order] = (own_render._iattr(para.linesegs[0], "vertpos")
+                             if para.linesegs else None)
+            order += 1
+    blocks = renderer._flow_blocks(
+        draw, renderer.column_geometry(renderer.page_geometry())[0])
+    seat_of = {block["index"]: cached[i] for i, block in enumerate(blocks)}
+    assert seat_of[393] == 69785, "fixture drifted"
+
+    got = [r for r in placements if r["block"] == 393]
+    assert len(got) == 1, got
+    assert got[0]["top"] == seat_of[393]
+
+
 def test_no_corpus_row_declares_itself_a_repeatable_header():
     """Why a split table repeats nothing, on this corpus.
 

@@ -7620,6 +7620,26 @@ say the same thing row by row: 4240 / 23180 / 42960 against this renderer's
   clip rule is a rule about a table that fits ONE page; `natural_rows` already
   exempts a split table from it, and this is the measurement that says the
   exemption is right.
+- **The continuation opens its own `hp:outMargin` slot, both halves of it.**
+  The seat above (+140) is the top half; the bottom half is measurable from
+  the paragraph after the table. `kstartup` ¶393 — the head of the page the
+  continuation ends on, `margin_prev` 0, no ink of its own — is cached at
+  **69785 = 140 + 69505 + 140**, the two outer margins around the 69505
+  HWPUNIT of rows left after the cut. So the room the next block starts
+  below is `top + <rows on this page> + bottom`, the same slot
+  `_anchor_extent` reads for a table that fits one page
+  (`vertOffset + top + height + bottom`), applied per page rather than once.
+  The flow pass gave the continuation the bare 69505 and seated ¶393 280
+  HWPUNIT high; `_split_anchor_overflow` now adds the declared margin and
+  the seat is exact. The FIRST fragment is left alone: nothing follows it on
+  its own page, so no cached seat measures it.
+
+  Ink-neutral on the whole corpus — ¶393 draws nothing and ¶394 declares
+  `pageBreak` — so the scoreboard does not move under either policy
+  (`0.868910 / 0.418275 / 0.743520` cache, `0.865224 / 0.407508 / 0.721058`
+  computed, 53 pages, 10/10 page-count exact, before and after). It is
+  visible only in the seat channel: `layout_divergence --corpus` kstartup
+  seat deltas 32 → 31 and pages with a seat divergence 4 → 3.
 
 ### The page the cache lost was never a split
 
