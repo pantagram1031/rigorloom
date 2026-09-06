@@ -50,7 +50,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import sys
 import tempfile
 import zipfile
@@ -648,19 +647,43 @@ class HwpxPackage:
 
     # -- output ------------------------------------------------------------
     def write(self, path):
-        """Write the package, atomically, preserving member order and metadata."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        handle, temp_name = tempfile.mkstemp(suffix=".hwpx", dir=str(path.parent))
+        """Write the package, atomically, preserving member order and metadata.
+
+        The destination is replaced only after the temp file is complete and
+        fsynced. A failed write leaves pre-existing destination bytes in place.
+        ``os.replace`` is used instead of ``shutil.move`` so an existing dest
+        is not unlinked before the new file is named.
+        """
         import os
-        os.close(handle)
+        path = Path(path)
+        if path.exists() and path.is_dir():
+            raise HwpxWriteError("destination is a directory: %s" % path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = self.tobytes()
+        handle, temp_name = tempfile.mkstemp(suffix=".hwpx", dir=str(path.parent))
         temp_path = Path(temp_name)
         try:
-            temp_path.write_bytes(self.tobytes())
-            shutil.move(str(temp_path), str(path))
-        finally:
+            written = 0
+            view = memoryview(data)
+            while written < len(data):
+                n = os.write(handle, view[written:])
+                if n <= 0:
+                    raise OSError("temp write made no progress")
+                written += n
+            os.fsync(handle)
+        except BaseException:
+            os.close(handle)
             if temp_path.exists():
                 temp_path.unlink()
+            raise
+        else:
+            os.close(handle)
+        try:
+            os.replace(str(temp_path), str(path))
+        except BaseException:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
         return path
 
     def tobytes(self):
