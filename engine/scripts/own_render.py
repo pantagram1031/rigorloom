@@ -161,6 +161,42 @@ LAYOUT_REFERENCE_PX = 1024
 # the last glyph's ink.
 LINE_BOX_END = "visible_advance"
 
+# --------------------------------------------------------------------------
+# The right-edge fit tolerance
+# --------------------------------------------------------------------------
+# HOW FAR PAST ITS COLUMN A LINE'S ADVANCE MAY RUN BEFORE THE BREAKER WRAPS
+# IT, in whole 1/600 inch pen steps (#283's grid).  Eight steps, 96 HWPUNIT,
+# 0.96 pt -- about a fourteenth of a 13 pt Hangul cell.
+#
+# MEASURED, ``engine/scripts/right_edge_probe.py --corpus``.  The cache is a
+# two-sided oracle here and had never been read as one: a cached line is a
+# span Hancom FITTED, and the span reaching the last non-space character
+# before the next break opportunity is one it REJECTED.  Over the ten forms,
+# 2272 cached lines and 183 rejected spans:
+#
+# * 18 cached lines come out wider than their box under the strict test, and
+#   eight of those by 63 HWPUNIT or less -- 1.1, 7.5, 11.5, 27.1 four times,
+#   63.1.  A strict test breaks lines Hancom kept whole.
+# * the smallest rejected span sits at +42.4 and the next at +111.8, so a
+#   threshold anywhere in [63.1, 111.8) costs exactly one span and rescues
+#   all eight of those lines.  Eight steps, 96, is inside that window and is
+#   the k minimising (lines wrongly broken + spans wrongly kept) under the
+#   corrected substituted widths of #292/#297.
+# * on the two-sided score -- the REAL breaker on real columns -- 96 changes
+#   the corpus break test not at all as the tree ships (48/113 installed,
+#   21/47 other, zero flips), and under #283's stand-in width rule it is what
+#   turns 19/47 back into 21/47 by rescuing ``moel-2025`` 64 and 160, whose
+#   corrected widths land 16.8 and 88.1 over a 48188 box.
+#
+# It is a tolerance and not a hang: no candidate that hangs a glyph explains
+# these lines (the punctuation hang moves 2 of the 18, and rounding the sum
+# onto the pen grid moves 1).  What it says is that the last tenth of a
+# character of a line is inside our own measurement error, and the notes
+# name the width term still missing.  Setting it to 0 restores the strict
+# test exactly.
+RIGHT_EDGE_TOLERANCE_STEPS = 8
+RIGHT_EDGE_TOLERANCE_HWP = RIGHT_EDGE_TOLERANCE_STEPS * HWPUNIT_PER_INCH / 600
+
 # U+FFFC OBJECT REPLACEMENT CHARACTER: the slot an inline object occupies in
 # a paragraph character stream.  ONE slot, whatever ``textpos`` counts for it
 # (see ``TEXTPOS_CELLS_*``): the drawing side wants one item per object, and
@@ -4797,6 +4833,43 @@ class OwnRenderer:
             spacing = 0
         return textheight, vertsize, baseline, spacing
 
+    def _line_fits(self, para, width_hwp, avail_hwp, slack_hwp, start, end):
+        """THE RIGHT-EDGE FIT TEST: may ``chars[start:end]`` stay on one line?
+
+        Every quantity is HWPUNIT.  ``width_hwp`` is the breaker's own width
+        for the span with no trailing gap, ``avail_hwp`` the line box less the
+        indent, ``slack_hwp`` what ``hp:paraPr@condense`` lets the span's
+        spaces give up.  Returns True when the span fits.
+
+        A SEAM, because the rule is a measurement and not an axiom.  The
+        breaker asks this question once per candidate character and #298
+        priced six answers to it against the cache
+        (``engine/scripts/right_edge_probe.py``); a candidate is installed by
+        overriding this method and nothing else, which is what lets the probe
+        run the REAL breaker on REAL columns under a rule the shipped tree
+        does not hold.
+
+        Two of the six are already here and neither is a choice this method
+        makes:
+
+        * **a trailing space hangs.**  ``compute_lines`` only reaches this
+          test on a non-space ``cursor``, so a span ending in whitespace is
+          never presented and a space at a line end can never force a break.
+          That is the Korean typesetting convention and #242 measured the
+          reference PDFs splitting on it (19 lines drop the trailing space,
+          15 keep it), which is why ``LINE_BOX_END`` is ``visible_advance``.
+        * **condense**, in ``slack_hwp``, whose direction ``compute_lines``
+          decided by measurement.
+
+        The third is ``RIGHT_EDGE_TOLERANCE_HWP``, and it is this method's
+        own: a span fits while it is no wider than its box PLUS eight pen
+        steps.  #298 measured why, and the two candidates it does not
+        implement — hanging punctuation and rounding the sum onto the pen
+        grid — are measured there too and move almost nothing.
+        """
+        del para, start, end
+        return width_hwp <= avail_hwp + slack_hwp + RIGHT_EDGE_TOLERANCE_HWP
+
     def compute_lines(self, draw, para, column_hwp, from_char=0,
                       from_line=0):
         """Break ``para`` into line boxes from font metrics — this is E2.1.
@@ -4901,8 +4974,9 @@ class OwnRenderer:
                 cursor += 1
                 continue
             if (cursor > start
-                    and width(start, cursor + 1)
-                    > avail + slack(start, cursor + 1)):
+                    and not self._line_fits(
+                        para, width(start, cursor + 1), avail,
+                        slack(start, cursor + 1), start, cursor + 1)):
                 cut = None
                 for position in opportunities:
                     if start < position <= cursor:
@@ -8578,6 +8652,18 @@ class OwnRenderer:
                 "reference PDFs' own line boxes were measured to agree with."
             ),
             "line_box_end": LINE_BOX_END,
+            "right_edge_tolerance_hwpunit": RIGHT_EDGE_TOLERANCE_HWP,
+            "right_edge_tolerance_meaning": (
+                "how far past its column a line's advance may run before this "
+                "breaker wraps it, in HWPUNIT: "
+                f"{RIGHT_EDGE_TOLERANCE_STEPS} steps of the 1/600 inch pen "
+                "grid. Measured against the cached hp:lineseg of the ten "
+                "corpus forms, which say both which spans Hancom fitted and "
+                "which it rejected (engine/scripts/right_edge_probe.py). It "
+                "is a declared allowance for this renderer's own advance "
+                "error at the last tenth of a character, not a claim that "
+                "Hancom lets a line overflow."
+            ),
             "page_furniture": self._page_furniture_report(geo),
             "sections": section_infos,
             "sections_meaning": (
