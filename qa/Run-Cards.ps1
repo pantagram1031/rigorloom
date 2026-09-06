@@ -241,7 +241,41 @@ foreach ($card in $targetCards) {
             gui_claimed = $false
         }
     }
-    elseif ($card -in @("c4", "c5", "gui", "ime", "installer")) {
+    elseif ($card -eq "c4") {
+        # Card 4 PREP only: probe fixture, scaffold manifest, check completeness.
+        # Always NOT_RUN. PASS is a human verdict on installed-build GUI evidence.
+        $pyCmd = if (Test-ToolPresent "python3") { "python3" } else { "python" }
+        $fixture = if ($job.metadata -and $job.metadata.card4_fixture) { $job.metadata.card4_fixture } else { "tests/corpus/forms/converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx" }
+        $probeFile = Join-Path $evidenceDir "c4-fixture-probe.json"
+        $manifestFile = Join-Path $evidenceDir "c4-manifest.json"
+        $checkFile = Join-Path $evidenceDir "c4-manifest-check.json"
+        & $pyCmd qa/card4_prep.py --workspace $ws probe --hwpx $fixture --out $probeFile *>&1 | Set-Content $logFile -Encoding utf8
+        $probeExit = $LASTEXITCODE
+        & $pyCmd qa/card4_prep.py --workspace $ws scaffold --evidence-dir $evidenceDir --hwpx $fixture --sha $job.sha *>&1 | Add-Content $logFile -Encoding utf8
+        & $pyCmd qa/card4_prep.py --workspace $ws validate --manifest $manifestFile --out $checkFile *>&1 | Add-Content $logFile -Encoding utf8
+        $checkExit = $LASTEXITCODE
+        $rec = [ordered]@{
+            timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            card_id = $card
+            runner = "card4_prep"
+            exit_code = 0
+            status = "NOT_RUN"
+            gui_ime_claimed = $false
+            fixture_probe_exit = $probeExit
+            manifest_check_exit = $checkExit
+        }
+        $rec | ConvertTo-Json -Compress | Add-Content $jsonlFile -Encoding utf8
+        $fixtureWord = if ($probeExit -eq 0) { "eligible" } else { "NOT eligible" }
+        $evidenceWord = if ($checkExit -eq 0) { "EVIDENCE_COMPLETE" } else { "EVIDENCE_INCOMPLETE" }
+        $verdicts += [ordered]@{
+            card_id = $card
+            status = "NOT_RUN"
+            exit_code = $null
+            reason = "Card 4 PREP only: fixture $fixtureWord; evidence $evidenceWord. Verdict stays NOT_RUN until a human records a verdict on installed-build GUI evidence."
+            gui_claimed = $false
+        }
+    }
+    elseif ($card -in @("c5", "gui", "ime", "installer")) {
         $rec = [ordered]@{
             timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             card_id = $card

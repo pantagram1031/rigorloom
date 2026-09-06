@@ -133,3 +133,23 @@ The verifier strictly maps execution status without claiming interactive success
 - Unattended headless CI / Cloud Agent runners do not possess desktop interactive display contexts or Hancom COM/IME bindings.
 - Under no circumstances does the verifier report `PASS` or simulate GUI/IME success in unattended mode.
 - Any request for interactive cards (`c4`, `c5`, `gui`, `ime`, `installer`) automatically yields `NOT_RUN` with `gui_ime_claimed: false`.
+
+### Card 4 (Korean mixed-format E2E): PREP only
+
+`c4` runs `qa/card4_prep.py` and still yields `NOT_RUN`. The runbook, fixture
+requirements and evidence contract are in `qa/cards/card4-korean-e2e.md`.
+
+- `probe`: checks a fixture `.hwpx` for tables, mixed-`charPr` paragraphs, a
+  >= 200-char paragraph and >= 200 Hangul chars; records its sha256.
+  Default fixture: `tests/corpus/forms/converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx`.
+  Override with `metadata.card4_fixture` in `job.json`.
+- `scaffold`: writes `c4-manifest.json`, the ten-step evidence skeleton the
+  operator fills in on a real Windows install (never overwritten once present).
+- `validate`: reports `EVIDENCE_COMPLETE` / `EVIDENCE_INCOMPLETE`. Complete is
+  not PASS; PASS is a human verdict on the screenshots, receipt and hashes.
+
+```bash
+python qa/run_cards.py --job qa/job.card4.example.json --workspace .
+python qa/card4_prep.py probe --hwpx <path>
+python qa/card4_prep.py validate --manifest work/qa/<run>/c4-manifest.json
+```

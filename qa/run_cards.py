@@ -279,7 +279,45 @@ def execute_card(
         except Exception as exc:
             return verify_exit_code(card_id, 1, reason=f"Execution error: {exc}", is_blocked=True)
 
-    elif card_id in ("c4", "c5", "gui", "ime", "installer"):
+    elif card_id == "c4":
+        # Card 4: Korean mixed-format E2E. PREP ONLY. The harness probes the
+        # fixture, scaffolds the operator's evidence manifest and, if one has
+        # been filled in, checks it for completeness. The verdict is ALWAYS
+        # NOT_RUN here: PASS is a human reading real GUI evidence from an
+        # installed build, never this script.
+        from qa.card4_prep import DEFAULT_FIXTURE, probe_fixture, scaffold_manifest, validate_manifest
+
+        fixture_rel = (job.get("metadata") or {}).get("card4_fixture") or DEFAULT_FIXTURE
+        fixture = Path(fixture_rel)
+        if not fixture.is_absolute():
+            fixture = workspace_root / fixture
+        probe = probe_fixture(fixture)
+        probe_file = evidence_dir / "c4-fixture-probe.json"
+        with probe_file.open("w", encoding="utf-8") as f:
+            json.dump(probe, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        manifest_file = scaffold_manifest(evidence_dir, fixture, job.get("sha"), workspace_root)
+        check = validate_manifest(manifest_file, workspace_root)
+        check_file = evidence_dir / "c4-manifest-check.json"
+        with check_file.open("w", encoding="utf-8") as f:
+            json.dump(check, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        _write_jsonl_record(jsonl_file, card_id, 0, "card4_prep", ["probe", "scaffold", "validate"], status="NOT_RUN")
+        reason = (
+            f"Card 4 PREP only: fixture {'eligible' if probe.get('eligible') else 'NOT eligible (' + probe.get('reason', '') + ')'}; "
+            f"evidence {check['result']} ({len(check['problems'])} open items). "
+            "Verdict stays NOT_RUN until a human records a verdict on real installed-build GUI evidence."
+        )
+        return verify_exit_code(
+            card_id,
+            None,
+            reason=reason,
+            command=[sys.executable, "qa/card4_prep.py", "probe|scaffold|validate"],
+            output_files=[str(probe_file), str(manifest_file), str(check_file), str(jsonl_file)],
+            is_not_run=True,
+        )
+
+    elif card_id in ("c5", "gui", "ime", "installer"):
         # Explicitly marked as NOT_RUN per contract until local runner exists
         _write_jsonl_record(jsonl_file, card_id, 0, "not_run", [card_id], status="NOT_RUN")
         return verify_exit_code(
