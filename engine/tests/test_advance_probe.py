@@ -71,6 +71,9 @@ class Metrics:
         return {
             "declared": "declared", "resolved": "resolved.ttf",
             "source": "installed",
+            # Not an HFT run: the declared face is installed AND Hancom
+            # metered it off that face.  #292 made the two independent.
+            "hft": None,
             "slot": "hangul", "bold": False, "size_pt": 13.0,
             "cell_hwp": 13.0 * AP.HWPUNIT_PER_PT,
             "spacing": 0, "ratio": 100, "class": AP.char_class(ch),
