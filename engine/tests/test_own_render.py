@@ -4297,6 +4297,89 @@ def test_the_page_top_seat_needs_no_document_to_be_stated():
     assert placer._page_top_seat(_flow_block(0), 0, 10000) == 0
 
 
+# -- the inkless paragraph at a page foot (#308 remainder) ----------------
+
+def test_an_inkless_block_past_the_page_bottom_stays_and_does_not_advance():
+    """nrf ¶36/¶37 in miniature, and the counter-case that bounds the rule.
+
+    Two paragraphs with no characters at all arrive at a cursor that has
+    already run past the page bottom.  The cache keeps both on the page, at
+    the same ``vertpos``, and opens the next page only for the block that
+    carries ink — so the rule places them where they are, advances nothing,
+    and lets the ink break.  The counter-case is the same block arriving while
+    the page still has room: too little room for it, but room, and there it
+    breaks like anything else (``kstartup`` ¶419).
+    """
+    usable = 10000
+    # nrf ¶35's shape: it FITS (its extent clears the bottom) and its advance
+    # then carries the cursor past it, which is the only way a block arrives
+    # at a cursor already out of the page.
+    overshoot = _flow_block(0, advance=10200, height=10200, rows=[
+        {"advance": 10200, "extent": 9000, "vertpos": 0, "vertsize": 10200,
+         "spacing": 0, "table": None}])
+    blocks = [overshoot,
+              _flow_block(1, advance=2560, inkless=True),
+              _flow_block(2, advance=2560, inkless=True),
+              _flow_block(3, advance=2560)]
+    records, counters = _Placer().place(blocks, usable)
+    tops = _tops(records)
+    assert counters["inkless_kept_at_page_foot"] == 2, records
+    # Both inkless blocks sit on page 0 at the cursor the ink left, and
+    # neither moves it.
+    assert tops[(1, 0)] == 10200, records
+    assert tops[(2, 0)] == 10200, records
+    # The block that carries ink finds the same overfull page and breaks.
+    assert tops[(3, 1)] == 0, records
+
+    # The counter-case: room left, not enough of it — the cache breaks, and
+    # so does this.
+    blocks = [_flow_block(0, advance=9000),
+              _flow_block(1, advance=2560, inkless=True)]
+    records, counters = _Placer().place(blocks, 10000)
+    assert counters["inkless_kept_at_page_foot"] == 0, records
+    assert _tops(records)[(1, 1)] == 0, records
+
+
+def test_the_inkless_page_foot_rule_is_stated_as_arithmetic():
+    """The seam's three conditions, each refused on its own.
+
+    A block with ink, a block whose cursor is still inside the page, and a
+    block with more than one row all fall through to the ordinary page break;
+    only the inkless single-row block at or past the bottom is kept.
+    """
+    placer = _Placer()
+    inkless = _flow_block(0, advance=2560, inkless=True)
+    assert placer._inkless_stays_at_page_foot(inkless, 0) is True
+    assert placer._inkless_stays_at_page_foot(inkless, -194) is True
+    assert placer._inkless_stays_at_page_foot(inkless, 396) is False
+    assert placer._inkless_stays_at_page_foot(
+        _flow_block(0, advance=2560), 0) is False
+    assert placer._inkless_stays_at_page_foot(
+        _flow_block(0, advance=2560, lines=2, inkless=True), 0) is False
+
+
+def test_the_nrf_page_foot_is_placed_where_the_cache_places_it():
+    """The real carrier: ``nrf`` ¶36 and ¶37, both at 71630 on page 1.
+
+    The corpus case behind the rule, pinned end to end through the real flow
+    pass rather than through the arithmetic harness.  The body box is 71436
+    HWPUNIT tall and the cache seats both paragraphs at 71630 — past the
+    bottom, drawn there anyway — with ¶38 opening page 2 at zero.
+    """
+    path = _need(os.path.join(CORPUS, "nrf-gyeolgwa-bogoseo-yangsik.hwpx"))
+    renderer = own_render.OwnRenderer(
+        path, dpi=144, block_layout=own_render.BLOCK_LAYOUT_COMPUTED)
+    placements, _pages, counters = renderer.flow()
+    seats = {}
+    for record in placements:
+        seats.setdefault(record["block"], (record["page"], record["top"]))
+    assert renderer.page_geometry()["usable_height"] == 71436
+    assert counters["inkless_kept_at_page_foot"] == 2, counters
+    assert seats[36] == (0, 71630), seats[36]
+    assert seats[37] == (0, 71630), seats[37]
+    assert seats[38] == (1, 0), seats[38]
+
+
 def test_a_table_splits_only_when_it_is_anchored_and_says_CELL():
     """The split permission has two halves, and BOTH are checked.
 
