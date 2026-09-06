@@ -1,0 +1,13 @@
+{
+  "candidate_id": "c4",
+  "run_id": "run-c4-sample-001",
+  "sha": "02d8ffe",
+  "allowed_commands": ["c4"],
+  "evidence_dir": "work/qa/c4-sample-001",
+  "cards": ["c4"],
+  "requested_model": "gemini-3.8-flash",
+  "metadata": {
+    "product_branch": "claude/same-run-offset-range-text",
+    "card4_fixture": "tests/corpus/forms/converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
+  }
+}
