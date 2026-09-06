@@ -744,6 +744,7 @@ export interface OverlayPick {
     | "run_text_differs"
     | "no_inventory"
     | "revision_mismatch"
+    | "cross_run"
     | string;
 }
 

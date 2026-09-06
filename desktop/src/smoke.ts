@@ -2424,7 +2424,7 @@ async function caretChecks(spans: GeometrySpan[]) {
       refusals.push(`${pick.refusal}`);
       check("a line the runtime will not address places NO caret and says why",
         getState().inlineEdit === null &&
-          ["multi_run", "run_text_differs", "no_inventory", "no_address", "revision_mismatch"].includes(
+          ["multi_run", "run_text_differs", "no_inventory", "no_address", "revision_mismatch", "cross_run"].includes(
             `${pick.refusal}`,
           ),
         `${pick.refusal} — ${pick.label}`);
@@ -2441,7 +2441,7 @@ async function caretChecks(spans: GeometrySpan[]) {
     }
   }
   check("every line that refused a caret named WHICH refusal, from the closed set",
-    refusals.every((r) => ["multi_run", "run_text_differs", "no_inventory", "no_address", "revision_mismatch"].includes(r)),
+    refusals.every((r) => ["multi_run", "run_text_differs", "no_inventory", "no_address", "revision_mismatch", "cross_run"].includes(r)),
     refusals.length
       ? refusals.join(", ")
       : `no line among the ${provoke.length + Math.min(CARET_ATTEMPTS, caretSpans.length)} tried on this page refused`);
