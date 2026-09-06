@@ -9920,3 +9920,168 @@ either; its not moving is a control and not a verdict.
   re-breaks that used to stand between `moel-2025`'s class-B paragraphs and
   their table origin are gone, and what is left has no root. It was there
   before, hidden behind them.
+
+## The 64 table origins are one page top, and the walk was charging phantoms — measured, 2026-09-06
+
+Worker: Opus; orchestrator: Fable.
+
+#301 closed on an open item: "the `table_origin_unattributed` 64 is new and
+unexplained ... what is left has no root." It has one. **All 64 are two
+tables, on one page, of one form, and the whole of their origin delta is a
+single paragraph's space-before at the top of `moel-2025` page 7** — 1000
+HWPUNIT, 10 pt, `hh:margin/hc:prev`, which the cache keeps at a page top and
+the flow pass drops.
+
+Nothing in `own_render.py` changed. This is a probe fix, and it found two
+defects in the attribution walk rather than one.
+
+### The instrument
+
+`engine/scripts/class_b_probe.py [FORM.hwpx | --corpus] --table-origin
+[--json OUT]`.
+
+For every class-B paragraph whose cell rode a table whose ORIGIN moved, the
+new mode dumps the holder paragraph (index, the classes
+`layout_divergence` gives its lines, its own `d_seat`), the table's placement
+(inline vs anchored, `hp:pos@treatAsChar` / `@vertRelTo` / `@vertOffset`,
+`hp:tbl@textWrap`, `hp:outMargin`), its seat and drawn height under both
+policies, the preceding paragraph, and the page. The origin delta is then
+split into terms that are subtractions of measured numbers, never names:
+
+    d_slot_y = d_holder_block_top + d_within_holder
+             (+ d_outMargin.top + d_vertOffset, both constants of the file)
+
+and the paragraph is booked to whichever term carries it: **(a)** the
+holder's own block top moved, **(b)** the table sits at a different offset
+inside its holder, **(c)** a table above it came out a different height,
+**(d)** the column solve moved its content.
+
+### What the corpus says
+
+114 class-B paragraphs ride a moved table origin. **Every one of them is (a),
+and `d_within_holder` is exactly 0 for all six tables involved:**
+
+| form | table | holder ¶ | placement | carrying term |
+| --- | --- | --- | --- | --- |
+| moel-2025 | tbl7 | 233 | inline | −1000 |
+| moel-2025 | tbl8 | 251 | inline | −1000 |
+| moel-2025 | tbl9 | 289 | inline | −1000 |
+| kstartup | tbl15 | 399 | inline | −300 |
+| kstartup | tbl16 | 401 | inline | −300 |
+| nrf | tbl1 | 41 | inline | +5120 |
+
+All six are `treatAsChar="1"`, `vertRelTo="PARA"`, `vertOffset="0"`,
+`textWrap="TOP_AND_BOTTOM"`. **No table's origin moved for a `hp:pos` reason
+on this corpus.** (b) is not refuted; it is absent, so #255's outMargin work
+and the inline-vs-anchored seat both stay untested by this measurement.
+
+The 64 are `moel-2025` tbl8 (32 paragraphs) and tbl9 (32). Both are tables
+nested in a CELL of tbl7, and the chain is four links long:
+
+    ¶233  top-level, page 7, margin_prev 1000, holds tbl7 inline
+          cache seats it at 1000 below the body top, computed at 0
+      → tbl7's origin moves −1000
+      → the cells of tbl7 move −1000  (¶251, ¶289 live in two of them)
+      → ¶251 and ¶289 hold tbl8 and tbl9 inline, d_seat 0 each
+      → tbl8 and tbl9 move −1000
+      → the 64 paragraphs in their cells move −1000  (−20.0 px at 144 dpi)
+
+### Defect one: the walk stopped one level up
+
+`_root` followed a moved table origin to the paragraph holding the table and
+then asked only whether a PREDECESSOR of that paragraph was charged with a
+step. ¶251 has no predecessor charged and no step of its own — its whole
+displacement came from the cell it sits in — so the walk returned
+`table_origin_unattributed` and stopped, one table short of the answer. A
+table nested in another table's cell needs the same four-term question asked
+of the holder, and of the holder's holder, until a term that is not a
+container answers it. `root_of` now recurses, with a `seen` set.
+
+### Defect two: steps were charged across page boundaries
+
+Recursing alone would have made it worse. A seat is measured from the top of
+the page it is drawn on, so subtracting two seats on different pages is a
+change of frame, not a height anybody paid for — and the chain telescopes
+those differences into ± pairs whose largest member `_largest` then charged
+to an innocent paragraph. `moel-2025` ¶74, before and after:
+
+    before   ¶29 −1496 text_rebreak:width      after   ¶73 −208 text_line_height
+             ¶30 +1496 text_rebreak:width
+             ¶60 −1328 text_rebreak:width
+             ¶61 +1328 text_rebreak:width
+             ¶73  −208 text_line_height
+    root: text_rebreak:width (a ±1496 pair, pages away)   root: text_line_height
+
+¶74's drawn `dy` is −4.16 px, which is −208 HWPUNIT: the surviving carrier is
+the whole of it and the four it replaced summed to nothing. Followed up, ¶233
+would have been charged to ¶96, four pages back. The step chain and
+`carriers_for` now both refuse a cross-page pair.
+
+That leaves the page top to name, and two things there are measurable:
+
+* **carried across the break** — predecessors the CACHE left on the previous
+  page and the flow pass put on this one. Their computed heights are room the
+  page head does not get, and the sum is checked against its `d_seat`. `nrf`
+  page 2: ¶36 and ¶37, two empty paragraphs at 2560 each, 5120 = the head
+  ¶38's whole displacement. This is what kept `nrf`'s 29 named.
+* **the space-before at a page top** — the head's cache seat equals its
+  `hh:margin/hc:prev` and the flow pass seats it at zero. `moel-2025` ¶233
+  (1000) and `kstartup` ¶398 (300). Checked as an equality on each paragraph,
+  so a paragraph where it does not hold comes back `page_top_unattributed`
+  and stays visible rather than borrowing the label.
+
+### Roots, before and after
+
+| root | #301 | now |
+| --- | ---: | ---: |
+| `page_top:margin_prev` | – | **88** |
+| `table_row_heights` | 63 | 63 |
+| `empty_paragraph` | 29 | 29 |
+| `text_line_height` | – | 19 |
+| `cell_valign` | 15 | 15 |
+| `page_top_unattributed` | – | 3 |
+| `text_rebreak:width` | 41 | 2 |
+| `table_origin_unattributed` | **64** | – |
+| `forced_break` | 7 | – |
+| total | 219 | 219 |
+
+`table_origin_unattributed` is empty. The 41 `text_rebreak:width` did not
+survive as re-breaks: 20 of them were tbl7's cell paragraphs charged to ¶231's
+re-break when ¶233's page-top margin is what moved them, 19 were the ¶74 band
+above, and the 2 left are `jumin`'s. `forced_break`'s 7 were `kstartup`'s
+¶148 / ¶160 ±69632 — the E2.7 anchor-overflow split, charged across up to
+thirteen pages; four are now the ¶398 page-top margin and three are the band.
+
+### What did not move
+
+`own_render.py` is untouched, so these are controls and they read the same as
+#301: `render_scoreboard.py --corpus --dpi 144` cache `ssim_mean` 0.861944 /
+`ssim_inked` 0.393719 / `text_line_iou` 0.736589, computed 0.845092 /
+0.358796 / 0.684882, 53 pages scored and `page_count` exact 10/10 under both;
+`lineseg_vs_pdf.py --corpus` 411/411 lines equal, 8566/8566 characters;
+`layout_divergence.py --corpus` classes 1713 / 94 / 219 / 28;
+`render_check.py` on `render-check-01` 6 · 37 · 6 · 2 at 96 dpi and
+14 · 31 · 4 · 2 at 144, 9 of 9 pages exact.
+
+### Not proven
+
+- **Which policy is RIGHT about a page top is not decided here.** The cache
+  keeps a paragraph's space-before at the top of a page and the flow pass
+  drops it; this slice measures the disagreement and names it, and does not
+  say whose it is. `lineseg_vs_pdf` puts `moel-2025` on the cache's side for
+  pages (0 of 216 lines on a different page) but ¶233 is an object paragraph
+  and is skipped, so the 1000 itself was never compared to the export.
+- **The renderer is not fixed.** 88 of 219 class-B paragraphs now name one
+  mechanism; nothing was done about it.
+- **(b), (c) and (d) are absent, not refuted.** Six tables, all inline, all
+  `vertOffset=0`. A corpus with an anchored table whose origin moved would
+  test the `hp:pos` handling; these ten forms do not contain one.
+- **Three `kstartup` paragraphs are still a band.** ¶759, ¶794, ¶797 carry
+  −62751 / −62793 / −62793 with no same-page carrier and no carried run that
+  sums to it: the E2.7 anchor-overflow pages, unchanged and still unnamed.
+- **The recursion is measured to two levels.** tbl7 → tbl8 / tbl9 is the
+  deepest nesting on the corpus; the `seen` guard is reasoning, not a
+  measurement.
+- **`page_top:margin_prev` is priced on two forms.** `moel-2025` at 1000 and
+  `kstartup` at 300 — two page tops, one mechanism, and a third instance
+  would be the first real test of the equality check.
