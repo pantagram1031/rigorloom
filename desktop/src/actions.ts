@@ -28,6 +28,8 @@ import {
   queuedOpAt,
   queuedRunOpAt,
   bumpEditIntent,
+  bumpPlanGeneration,
+  currentPlanGeneration,
   type Draft,
   type QueuedOp,
 } from "./store";
@@ -740,6 +742,13 @@ async function setQueue(
     return;
   }
 
+  // GENERATION FENCE. Bump before the first await so any concurrent call that
+  // starts after this one gets a strictly larger token. After each async
+  // suspension we check whether we still hold the latest token; if not, a
+  // newer setQueue has taken over and this one must return silently rather
+  // than overwriting the newer result.
+  const gen = bumpPlanGeneration();
+
   setState({
     draft: {
       ...state.draft,
@@ -782,7 +791,9 @@ async function setQueue(
       ),
       { baseRunId, reverses },
     );
+    if (currentPlanGeneration() !== gen) return;
     const validation = await rt.validatePlan(plan.planId);
+    if (currentPlanGeneration() !== gen) return;
     setState({
       draft: {
         ops,
@@ -798,6 +809,7 @@ async function setQueue(
       },
     });
   } catch (e) {
+    if (currentPlanGeneration() !== gen) return;
     // A refusal here is a real answer: `unknown_op_kind`, `unsupported_backend`
     // and `unknown_field` are raised by `plan/propose` before a plan exists at
     // all. Keep the queue, drop the plan, show the payload.

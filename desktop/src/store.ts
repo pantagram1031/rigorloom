@@ -776,6 +776,38 @@ export function bumpEditIntent(): number {
   return next;
 }
 
+// --- plan-operation generation fence -----------------------------------------
+//
+// A monotonic counter that is bumped at the START of every setQueue call.
+// Each call captures its own token; before writing async results back to the
+// store it checks that the token still equals the current counter. A newer
+// call that arrived while the first was in flight will have bumped the counter,
+// so the older call's check fails and it returns without touching the store.
+//
+// Kept as a plain module variable (not in WorkspaceState) so bumping it never
+// triggers a React re-render. The store functions below are the only access
+// point; nothing else may read or write the variable.
+//
+// `_resetPlanGenerationForTest` exists solely for harness teardown; it must
+// not appear in production call paths.
+
+let _planGeneration = 0;
+
+/** Bump and return a new plan-operation generation token. Call once per setQueue. */
+export function bumpPlanGeneration(): number {
+  return ++_planGeneration;
+}
+
+/** Read the current plan-operation generation. Call after each await in setQueue. */
+export function currentPlanGeneration(): number {
+  return _planGeneration;
+}
+
+/** Reset the fence counter. FOR TESTS ONLY — never call from application code. */
+export function _resetPlanGenerationForTest(): void {
+  _planGeneration = 0;
+}
+
 // --- actions -----------------------------------------------------------------
 
 export const setView = (view: View) =>
