@@ -11670,3 +11670,161 @@ undone but a value Hancom's own reader discards.
   paywalled KS X 6101 PDF. Three sources agreeing is why the reading is stated
   as fact; one of them being a mirror is why this bullet exists.
 - **The corpus is the training set, again.** Ten public forms, one machine.
+
+
+## The HFT rows that live inside tables (#323 → this slice)
+
+`hft-widths.measured.json` carried no 한양신명조 advance for a digit, so
+`saeopja` ¶393 — a six-character line in table 4 row 0 cell 8, column 2894
+HWPUNIT — was metered off the installed `H2MJSM.TTF` at 0.625 em per digit and
+came out **+238.0 over its box**, the last of #311's three over-broken cells
+and the one #313 left with +142 unexplained.
+
+The evidence was in the corpus all along; the **walk** was not.
+`attribute_by_metric_slot` paired HWPX runs to drawn PDF glyphs over
+`_kids(section, "p")` — the TOP-LEVEL paragraphs — which is the right walk for
+every `hp:lineseg` probe (a cached line comparison is defined on the flowed
+body) and the wrong one for an attribution. `saeopja` has **six** top-level
+paragraphs, every one of them `skip_reason == "table"`, and **757** paragraphs
+inside table cells. The export's own Type 3 objects for 한양견고딕 and the
+8 pt 한양신명조 were read out of the PDF, found unclaimed, and counted in
+`type3_code_points_no_paired_run_used` — 494 of them corpus-wide.
+
+`hft_width_table.text_paragraphs` walks every `hp:p`. Nothing else changed:
+the width still comes from `/Widths` (the #292 reading), the pairing still only
+picks which face a font object stands for, and **all 226 rows the table already
+had are byte-identical**.
+
+### What the corpus asks for, and what the table now carries
+
+Per HFT-declared face, over every HFT run in the ten public forms
+(`advance_probe --corpus --punct`, `hft_width_table --score`, and the
+renderer's own `_declared_hft_face` gate):
+
+| face | demanded code points | missing before | missing after | occurrences missing before |
+| --- | --- | --- | --- | --- |
+| 한양중고딕 | 193 | 33 | 0 | 64 |
+| 한양견고딕 | 72 | 72 | 1 | 250 |
+| 필기 | 70 | 70 | 0 | 147 |
+| 신명 신문명조 | 69 | 69 | 0 | 190 |
+| 한양신명조 | 50 | 45 | 1 | 85 |
+| HCI Poppy | 37 | 15 | 0 | 19 |
+| 고딕 | 39 | 1 | 1 | 31 |
+| 명조 | 1 | 0 | 0 | 0 |
+
+Before, an uncovered code point fell back three ways, in this order: a
+full-width cell took `full_width_em` (1.0 em on every face here), `U+0020` and
+`U+00A0` took `SPACE_CELL_FRACTION`, and **everything else kept the installed
+outline's metric** — which is the error, because #288 measured that no face on
+this machine reproduces an HFT advance. The 한양신명조 digits are exactly that
+case: 0.625 em from `H2MJSM.TTF` against the 0.500 em Hancom's own export
+declares.
+
+Table coverage 226 → **528** code points, 5 → **8** faces, 2301 → 3184
+observations, unattributed Type 3 code points 494 → **18**, and two characters
+attributed to a face the file does not call HFT (reported, not written).
+
+### The check, and where it is weak
+
+The declared `/Widths` are cross-checked against the pen distance between two
+aligned glyph origins. `verify_against_anchors` reads its lines out of
+`advance_probe.probe_document`, which walks the top-level paragraphs, so it
+cannot see the new rows; `verify_in_table_anchors` is the same reading done
+locally over the in-cell paragraphs, reported separately as
+`verification_in_table` and **not** merged into the existing 206-observation
+number, which is unchanged.
+
+It reads 244 observations, median absolute **0.0149 em** — and that is not one
+number worth quoting. Per class: digit 0.0060 (n=59), punct 0.0060 (n=18),
+latin 0.0025 (n=19), fw_punct 0.000001, **hangul 0.0435 (n=146)**. A cell
+line's pen distances run 4–5 % wide because the cell justifies its own text,
+which the top-level check never sees (hangul there is 0.0003 em over 73
+observations). It is not 장평: `hh:ratio` is 100 on 239 of the 244 and dividing
+it out moves the median by 0.00001.
+
+It costs this table nothing, and the reason is worth stating rather than
+asserting: **every hangul row the extension adds is 1.0000 em**, which is
+exactly the declared cell an uncovered syllable already fell back to. No
+hangul row moves any advance the renderer computes. The classes that do move
+one — digit, latin, punct — are the classes that agree to a few thousandths of
+an em. `test_hft_in_table_widths` pins both halves of that.
+
+### Before / after, both policies, 144 dpi
+
+| measure | #323 (before) | this branch |
+| --- | --- | --- |
+| `render_scoreboard --corpus --dpi 144 --layout-policy cache` (ssim / inked / line-IoU, per-form means) | 0.868910 / 0.418275 / 0.743520, 53 pages, 10/10 exact | **0.869449 / 0.424699 / 0.744005**, 53 pages, 10/10 exact |
+| … `--layout-policy computed` | 0.864976 / 0.409681 / 0.728976, 53 pages, 10/10 exact | **0.865903 / 0.418386 / 0.733962**, 53 pages, 10/10 exact |
+| `layout_divergence --corpus` agree / A / B / C | 1932 / 42 / 48 / 31 | **1959 / 40 / 23 / 31** |
+| `class_b_probe --corpus` | kstartup 3, moel-2025 20, saeopja 25 | kstartup 3, moel-2025 20, **saeopja 0** |
+| `lineseg_vs_pdf --corpus` (control) | 411 / 411 lines, 8566 / 8566 characters | identical |
+| `render_check` `render-check-01` | 6 · 37 · 6 · 2 @96, 14 · 34 · 1 · 2 @144, 9 / 9 pages | identical |
+| `hft_width_table --score`, `table` variant (inst ¶ / other ¶ / over-measured) | 89 / 113, 32 / 47, 31 / 2272 | **91 / 113**, 32 / 47, **30 / 2272** |
+| `lineseg_agreement`, corpus totals | 2151 / 2137 / 2108 / 161 / 150 / 219 / 160 | **2151 / 2138 / 2110 / 161 / 151 / 219 / 162** |
+
+`right_edge_probe --corpus --breaks`, cached-break agreement per candidate,
+before → after (installed ¶ of 113, other ¶ of 47):
+
+| candidate | before | after | regressions |
+| --- | --- | --- | --- |
+| strict | 81 / 31 | 83 / 31 | same 7, none new |
+| space | 81 / 31 | 83 / 31 | same 7, none new |
+| punct | 82 / 31 | 83 / 31 | same 8, none new |
+| condense | 88 / 31 | 90 / 31 | 0 |
+| tol12 | 89 / 32 | **91 / 32** | same 2, none new |
+| pen | 89 / 31 | 91 / 31 | 0 |
+| gap | 90 / 32 | 92 / 32 | same 1, none new |
+
+Every candidate rose or held; no candidate lost a paragraph it had.
+
+### The three #311 cells
+
+| cell | before | after |
+| --- | --- | --- |
+| `moel-2013` ¶261 (table 6 row 9 cell 1) | closed on the syllable unit | closed |
+| `saeopja` ¶189 (table 1 row 11 cell 0) | closed on the syllable unit | closed |
+| `saeopja` ¶393 (table 4 row 0 cell 8) | excess **+238.0**, cache breaks [7], ours [5, 9] | excess **−110.0**, cache breaks [7], ours **[7]** |
+
+¶393's line width falls 3132.0 → 2784.0 HWPUNIT. The arithmetic is closed:
+four digits × (0.625 − 0.500) em × 800 HWPUNIT/em at 8 pt = 400, times the
+run's 자간 −13 % = 348. `～` (U+FF5E) and `의` were already advancing at the
+full cell and do not move. #313's +142 "anything else" was never a separate
+term — it was the digit error, minus the 96 HWPUNIT right-edge budget and the
+−104 trailing 자간 that the decomposition had already netted out.
+
+#317 traced `saeopja`'s 25 `cell_valign` class-B paragraphs to row heights
+inflated by over-broken cells. With ¶393 closed the form's class-B count is 0,
+`table_row_heights` disappears from the corpus root histogram entirely, and
+`row_height_probe`'s remainder view finds nothing left to account for.
+
+### Not proven
+
+- **Path C is not run, anywhere.** No edited candidate was measured against a
+  licensed Hancom render. The "after" column is path A (the cached
+  `hp:lineseg` read) and path B (the same originals relaid out by our flow
+  pass); every own render stays `own-uncertified`. None of these numbers is a
+  compatibility percentage.
+- **The in-table pairing is not the top-level pairing.** Cell paragraphs reach
+  the PDF out of the cursor's order — 654 of 748 matches on `saeopja`, 86 of
+  128 on `jumin` — and `find_run` answers those by searching from 0. The
+  attribution survives it because a Type 3 font object belongs to one face and
+  the modal share came out 1.0 on almost every object; two objects did not
+  (`kstartup` T8 at 0.60 over 5 attributions, `moel-2013` T4 at 0.50 over 10),
+  and those are decided by `most_common` exactly as they were before. A
+  position-anchored pairing would settle it and was not built.
+- **The hangul residual is diagnosed, not measured.** "The cell justifies its
+  own text" explains a 4–5 % pen distance and is consistent with the top-level
+  check reading 0.0003 em on the same class, but no cell justification model
+  was fitted and none is needed here — the rows are 1.0 em either way.
+- **The stand-in section was deliberately left on the old walk.** `휴먼명조`
+  and the other substituted faces are still measured over the top-level
+  paragraphs only. Extending that walk too would move a different rule on a
+  different gate (the resolver's, not the file's) and was not scored.
+- **`U+0020` rows are pre-existing behaviour, now on three more faces.** The
+  shipped table already carried a space row for 한양중고딕 (1.0 em) and HCI
+  Poppy (0.25); this adds 신명 신문명조, 필기 and 한양견고딕. `_text_pieces`
+  gives a space its own piece and overwrites the advance, so the rule is
+  largely inert, and the corpus numbers above are the evidence that it is —
+  not a proof that it always will be.
+- **The corpus is the training set, again.** Ten public forms, one machine, and
+  the faces this machine happens not to have installed.
