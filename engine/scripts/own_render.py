@@ -169,31 +169,38 @@ LINE_BOX_END = "visible_advance"
 # 0.96 pt -- about a fourteenth of a 13 pt Hangul cell.
 #
 # MEASURED, ``engine/scripts/right_edge_probe.py --corpus``.  The cache is a
-# two-sided oracle here and had never been read as one: a cached line is a
-# span Hancom FITTED, and the span reaching the last non-space character
-# before the next break opportunity is one it REJECTED.  Over the ten forms,
-# 2272 cached lines and 183 rejected spans:
+# two-sided oracle here: a cached line is a span Hancom FITTED, and the span
+# reaching the last non-space character before the next break opportunity is
+# one it REJECTED.  Over the ten forms, 2272 cached lines and 183 rejected
+# spans.
 #
-# * 18 cached lines come out wider than their box under the strict test, and
-#   eight of those by 63 HWPUNIT or less -- 1.1, 7.5, 11.5, 27.1 four times,
-#   63.1.  A strict test breaks lines Hancom kept whole.
-# * the smallest rejected span sits at +42.4 and the next at +111.8, so a
-#   threshold anywhere in [63.1, 111.8) costs exactly one span and rescues
-#   all eight of those lines.  Eight steps, 96, is inside that window and is
-#   the k minimising (lines wrongly broken + spans wrongly kept) under the
-#   corrected substituted widths of #292/#297.
-# * on the two-sided score -- the REAL breaker on real columns -- 96 changes
-#   the corpus break test not at all as the tree ships (48/113 installed,
-#   21/47 other, zero flips), and under #283's stand-in width rule it is what
-#   turns 19/47 back into 21/47 by rescuing ``moel-2025`` 64 and 160, whose
-#   corrected widths land 16.8 and 88.1 over a 48188 box.
+# #298 read it first and set eight steps, on a window of [63.1, 111.8) left
+# by 18 cached lines it called too wide -- eight of them by 63 HWPUNIT or
+# less.  It recorded, as not proven, that the eight might be a missing WIDTH
+# term rather than an allowance.  #302 found part of the term: ``_line_fits``
+# now counts the last character's 자간 gap (see the method), and SEVEN of
+# those eight come back inside their box on their own.  The window that is
+# left is much tighter and the budget is NOT lowered onto it:
 #
-# It is a tolerance and not a hang: no candidate that hangs a glyph explains
-# these lines (the punctuation hang moves 2 of the 18, and rounding the sum
-# onto the pen grid moves 1).  What it says is that the last tenth of a
-# character of a line is inside our own measurement error, and the notes
-# name the width term still missing.  Setting it to 0 restores the strict
-# test exactly.
+# * 12 cached lines are still over, and only two by less than 160 HWPUNIT --
+#   ``moel-2013`` ¶261 line 1 at +0.2 and ``jumin`` ¶34 at +18.5.  The
+#   smallest span Hancom rejected is +26.3 (``moel-2013`` ¶236 line 4), so
+#   the probe's own window is [18.5, 26.3) and two steps is the only whole k
+#   inside it.
+# * two steps is not taken, because two other corpus measures still want
+#   eight and both were checked rather than assumed.  ``lineseg_agreement``
+#   loses ``jumin`` ¶139 below eight (it reconstructs one line box for a
+#   whole paragraph, and that box is not the per-line cached ``@horzsize``
+#   this probe reads, so its k-sensitivity is its own); and #283's stand-in
+#   width rule still needs eight to hold ``moel-2025`` ¶160, whose corrected
+#   width lands 62.1 over a 48188 box once the 자간 term is in.
+# * on the two-sided score -- the REAL breaker on real columns -- k makes no
+#   difference at all between 0 and 8: 48/113 installed, 21/47 other at
+#   every one of them.
+#
+# What is left is an ERROR BUDGET and not a Hancom rule: nothing in OWPML
+# says a line may overflow its column.  Setting it to 0 restores the strict
+# test exactly, which a test asserts rather than describes.
 RIGHT_EDGE_TOLERANCE_STEPS = 8
 RIGHT_EDGE_TOLERANCE_HWP = RIGHT_EDGE_TOLERANCE_STEPS * HWPUNIT_PER_INCH / 600
 
@@ -4891,13 +4898,15 @@ class OwnRenderer:
             spacing = 0
         return textheight, vertsize, baseline, spacing
 
-    def _line_fits(self, para, width_hwp, avail_hwp, slack_hwp, start, end):
+    def _line_fits(self, para, width_hwp, avail_hwp, slack_hwp, start, end,
+                   trailing_gap_hwp=0.0):
         """THE RIGHT-EDGE FIT TEST: may ``chars[start:end]`` stay on one line?
 
         Every quantity is HWPUNIT.  ``width_hwp`` is the breaker's own width
         for the span with no trailing gap, ``avail_hwp`` the line box less the
         indent, ``slack_hwp`` what ``hp:paraPr@condense`` lets the span's
-        spaces give up.  Returns True when the span fits.
+        spaces give up, ``trailing_gap_hwp`` the ``hh:charPr@spacing`` gap
+        ``width_hwp`` dropped off the end.  Returns True when the span fits.
 
         A SEAM, because the rule is a measurement and not an axiom.  The
         breaker asks this question once per candidate character and #298
@@ -4919,14 +4928,36 @@ class OwnRenderer:
         * **condense**, in ``slack_hwp``, whose direction ``compute_lines``
           decided by measurement.
 
-        The third is ``RIGHT_EDGE_TOLERANCE_HWP``, and it is this method's
-        own: a span fits while it is no wider than its box PLUS eight pen
-        steps.  #298 measured why, and the two candidates it does not
-        implement — hanging punctuation and rounding the sum onto the pen
-        grid — are measured there too and move almost nothing.
+        The third is 자간 AT THE END OF THE SPAN, and it is this method's own.
+        ``_measure`` drops the last character's ``hh:charPr@spacing`` gap
+        because 자간 opens space BETWEEN characters and the reference's DRAWN
+        pen positions say so (``_spacing_gap``: gianmun's four-cell 발신명의
+        run at ``spacing="50"`` is 5.5 em wide, not 6.0).  That is a
+        measurement of what is drawn, and it does not settle what the BREAKER
+        compares: a run of ``k`` characters can occupy ``k`` cells of
+        ``advance + gap`` while its visible extent is still ``k`` advances
+        plus ``k - 1`` gaps, because nothing follows the last glyph for the
+        final gap to separate it from.  #302 measured the cache on exactly
+        this and the cache says the breaker counts it: of the eight cached
+        lines this renderer called too wide by 63 HWPUNIT or less, SEVEN come
+        back inside their box when the trailing gap is counted — all four
+        ``moel-2025`` lines at +27.1, ``moel-2013`` ¶215 at +1.1 and ¶261 at
+        +11.5, ``kstartup`` ¶793 at +63.1 — every one of them a run with a
+        negative 자간, and no span Hancom rejected changes hands.
+
+        The fourth is ``RIGHT_EDGE_TOLERANCE_HWP``, an ERROR BUDGET and not a
+        Hancom rule: a span fits while it is no wider than its box plus eight
+        pen steps.  #298 measured it; #302 re-derived it on top of the 자간
+        term above, found the probe's own window had shrunk to [18.5, 26.3),
+        and left the budget where it was because two other corpus measures
+        still want the eight — the constant's own comment says which.  The
+        two candidates neither slice implements — hanging punctuation and
+        rounding the sum onto the pen grid — are measured there too and move
+        almost nothing.
         """
         del para, start, end
-        return width_hwp <= avail_hwp + slack_hwp + RIGHT_EDGE_TOLERANCE_HWP
+        return (width_hwp + trailing_gap_hwp
+                <= avail_hwp + slack_hwp + RIGHT_EDGE_TOLERANCE_HWP)
 
     def compute_lines(self, draw, para, column_hwp, from_char=0,
                       from_line=0):
@@ -5034,7 +5065,8 @@ class OwnRenderer:
             if (cursor > start
                     and not self._line_fits(
                         para, width(start, cursor + 1), avail,
-                        slack(start, cursor + 1), start, cursor + 1)):
+                        slack(start, cursor + 1), start, cursor + 1,
+                        gaps[cursor])):
                 cut = None
                 for position in opportunities:
                     if start < position <= cursor:

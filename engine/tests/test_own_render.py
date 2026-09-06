@@ -2743,8 +2743,8 @@ def test_a_line_overrunning_by_less_than_the_tolerance_is_kept(typo_probe):
     # And the allowance is the whole of the difference: with it switched off
     # the same box breaks the same line.
     strict = type("Strict", (type(renderer),), {
-        "_line_fits": lambda self, para, width, avail, slack, start, end:
-            width <= avail + slack})
+        "_line_fits": lambda self, para, width, avail, slack, start, end,
+        gap=0.0: width + gap <= avail + slack})
     renderer.__class__ = strict
     try:
         again, _ = _breaks(renderer, draw, text, cid,
@@ -2753,6 +2753,96 @@ def test_a_line_overrunning_by_less_than_the_tolerance_is_kept(typo_probe):
     finally:
         renderer.__class__ = strict.__mro__[1]
     assert len(again) == 2, again
+
+
+def _trailing_gap(renderer, draw, para, cid):
+    """The 자간 gap after the paragraph's last character, in HWPUNIT."""
+    ch = para.chars[-1][0]
+    _ratio, spacing, _rel, _off = renderer._typography(cid, ch)
+    return renderer._spacing_gap(renderer._measure_hwp(draw, ch, cid), spacing)
+
+
+def test_the_breaker_counts_the_last_characters_letter_spacing(typo_probe):
+    """자간 is a per-character cell to the BREAKER, not only a gap between.
+
+    ``_measure`` gives a span of ``k`` characters ``k`` advances and ``k - 1``
+    gaps, because that is the DRAWN extent: nothing follows the last glyph
+    for a final gap to separate it from.  The fit test compares the pen
+    position instead, and the pen has moved by that gap.
+
+    Both directions are asserted on the same synthetic paragraph, which is
+    what makes this the mechanism and not a corpus reading: with a NEGATIVE
+    자간 the line fits a box narrower than its drawn extent, and with a
+    POSITIVE one it fails a box exactly as wide as it.  The margin is a whole
+    letter-spacing gap, which is set far larger than
+    ``RIGHT_EDGE_TOLERANCE_HWP`` so that the budget cannot be what decides
+    either case.
+    """
+    renderer, _image, draw = typo_probe
+    text = "가나 다라"
+
+    tight = _synthetic_charpr(renderer, "__gapneg__", height=1000,
+                              spacing=-20)
+    para = _synthetic_paragraph(renderer, text, tight,
+                                para_id="__gapnegmeasure__")
+    drawn = renderer.span_width(draw, para, 0, len(text))
+    gap = _trailing_gap(renderer, draw, para, tight)
+    assert gap < -own_render.RIGHT_EDGE_TOLERANCE_HWP, (
+        "the gap has to outweigh the error budget for this to test the gap")
+
+    box = int(drawn + gap)
+    held, lines = _breaks(renderer, draw, text, tight, box,
+                          para_id="__gapneg1__")
+    assert len(held) == 1, held
+    # ... and the drawn width is untouched: this rule moves the FIT, not the
+    # measurement, so the line box is still the visible advance.
+    assert lines[0]["width_hwpunit"] == pytest.approx(drawn)
+
+    # The same box, with the trailing gap taken back out of the test, breaks.
+    blind = type("Blind", (type(renderer),), {
+        "_line_fits": lambda self, para, width, avail, slack, start, end,
+        trailing=0.0: width <= avail + slack
+        + own_render.RIGHT_EDGE_TOLERANCE_HWP})
+    renderer.__class__ = blind
+    try:
+        without, _ = _breaks(renderer, draw, text, tight, box,
+                             para_id="__gapneg2__")
+    finally:
+        renderer.__class__ = blind.__mro__[1]
+    assert len(without) == 2, without
+
+    loose = _synthetic_charpr(renderer, "__gappos__", height=1000, spacing=20)
+    para = _synthetic_paragraph(renderer, text, loose,
+                                para_id="__gapposmeasure__")
+    drawn = renderer.span_width(draw, para, 0, len(text))
+    gap = _trailing_gap(renderer, draw, para, loose)
+    assert gap > own_render.RIGHT_EDGE_TOLERANCE_HWP
+    broken, _ = _breaks(renderer, draw, text, loose, int(drawn),
+                        para_id="__gappos1__")
+    assert len(broken) == 2, broken
+
+
+def test_letter_spacing_of_zero_leaves_the_fit_test_where_it_was(typo_probe):
+    """The 자간 term is inert on a run that declares none.
+
+    Most of the corpus is such a run, so the rule above has to be provably
+    silent there: a box exactly as wide as the drawn extent holds the line,
+    and one narrower by more than the tolerance does not.
+    """
+    renderer, _image, draw = typo_probe
+    text = "가나 다라"
+    cid = _synthetic_charpr(renderer, "__gapzero__", height=1000, spacing=0)
+    para = _synthetic_paragraph(renderer, text, cid,
+                                para_id="__gapzeromeasure__")
+    drawn = renderer.span_width(draw, para, 0, len(text))
+    assert _trailing_gap(renderer, draw, para, cid) == 0.0
+    held, _ = _breaks(renderer, draw, text, cid, int(drawn),
+                      para_id="__gapzero1__")
+    assert len(held) == 1, held
+    cut, _ = _breaks(renderer, draw, text, cid,
+                     int(drawn - 4 * own_render.RIGHT_EDGE_TOLERANCE_HWP - 1),
+                     para_id="__gapzero2__")
+    assert len(cut) == 2, cut
 
 
 def test_a_trailing_space_never_forces_a_break(typo_probe):
