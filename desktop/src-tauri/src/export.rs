@@ -110,19 +110,27 @@ fn strip_extended_prefix(text: &str) -> String {
 fn normalize_windows_path_text(text: &str) -> String {
     let stripped = strip_extended_prefix(text);
     let unified = stripped.replace('/', "\\");
-    let lower = unified.to_ascii_lowercase();
-    rebuild_windows_parts(lower.trim_end_matches([' ', '.']))
+    rebuild_windows_parts(&unified.to_ascii_lowercase())
 }
 
-fn rebuild_windows_parts(trimmed: &str) -> String {
+/// Trim trailing dots/spaces on a Windows *component*, never on `.` / `..`.
+fn trim_win_component(piece: &str) -> &str {
+    if piece == "." || piece == ".." {
+        return piece;
+    }
+    piece.trim_end_matches([' ', '.'])
+}
+
+fn rebuild_windows_parts(lower: &str) -> String {
     let mut out = String::new();
-    let mut rest = trimmed;
+    let mut rest = lower;
     if rest.starts_with("\\\\") {
         out.push_str("\\\\");
         rest = &rest[2..];
     }
     let mut stack: Vec<&str> = Vec::new();
-    for piece in rest.split('\\') {
+    for raw in rest.split('\\') {
+        let piece = trim_win_component(raw);
         if piece.is_empty() || piece == "." {
             continue;
         }
@@ -469,11 +477,6 @@ pub fn publish_export_pair_at(
         ));
     }
 
-    remove_if_exists(&dest_bak);
-    remove_if_exists(&receipt_bak);
-    remove_if_exists(&dest_tmp);
-    remove_if_exists(&receipt_tmp);
-
     if !dest.is_file() || !receipt_dest.is_file() {
         restore(true, true);
         return Err(err(
@@ -486,10 +489,39 @@ pub fn publish_export_pair_at(
         ));
     }
 
+    let (landed_sha, landed_bytes) = match digest::sha256_file(dest) {
+        Ok(pair) => pair,
+        Err(e) => {
+            restore(true, true);
+            return Err(err(
+                "export_failed",
+                format!("내보낸 파일을 다시 읽지 못했습니다: {e}"),
+                vec![field("destination", dest.to_string_lossy())],
+            ));
+        }
+    };
+    if landed_sha != sha256 || landed_bytes != bytes {
+        restore(true, true);
+        return Err(err(
+            "export_failed",
+            "내보낸 파일의 해시가 후보본과 다릅니다.".into(),
+            vec![
+                field("destination", dest.to_string_lossy()),
+                field("expected", sha256),
+                field("actual", landed_sha),
+            ],
+        ));
+    }
+
+    remove_if_exists(&dest_bak);
+    remove_if_exists(&receipt_bak);
+    remove_if_exists(&dest_tmp);
+    remove_if_exists(&receipt_tmp);
+
     Ok(ExportOk {
         path: dest.to_path_buf(),
-        sha256,
-        bytes,
+        sha256: landed_sha,
+        bytes: landed_bytes,
         receipt_path: receipt_dest,
     })
 }
@@ -542,6 +574,22 @@ mod tests {
             Path::new(r"C:\Users\a\out.hwpx"),
             Path::new(r"C:\Users\a\other.hwpx"),
         ));
+        assert!(paths_are_aliases(
+            Path::new(r"\\?\UNC\server\share\out.hwpx"),
+            Path::new("//server/share/out.hwpx"),
+        ));
+        assert!(paths_are_aliases(
+            Path::new(r"C:\foo\.."),
+            Path::new(r"C:\"),
+        ));
+        assert!(!paths_are_aliases(
+            Path::new(r"C:\foo\.."),
+            Path::new(r"C:\foo"),
+        ));
+        assert!(paths_are_aliases(
+            Path::new(r"C:\Users\a\out.hwpx."),
+            Path::new(r"C:\Users\a\out.hwpx"),
+        ));
     }
 
     #[test]
@@ -580,6 +628,17 @@ mod tests {
         let err = publish_export_pair(&artifact, &receipt, &artifact).unwrap_err();
         assert_eq!(err.code, "export_alias");
         assert_eq!(fs::read(&artifact).unwrap(), b"NEW-ARTIFACT-BYTES");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_receipt_as_destination_is_refused() {
+        let dir = scratch();
+        let (artifact, receipt, _) = setup(&dir);
+        let err = publish_export_pair(&artifact, &receipt, &receipt).unwrap_err();
+        assert_eq!(err.code, "export_alias");
+        assert_eq!(fs::read(&artifact).unwrap(), b"NEW-ARTIFACT-BYTES");
+        assert_eq!(fs::read(&receipt).unwrap(), b"{\"ok\":true}");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -653,6 +712,7 @@ mod tests {
         let dir = scratch();
         let (artifact, receipt, dest) = setup(&dir);
         fs::write(&dest, b"OLD-DESTINATION-BYTES").unwrap();
+        fs::write(receipt_sidecar(&dest), b"OLD-RECEIPT-BYTES").unwrap();
         let err = publish_export_pair_at(
             &artifact,
             &receipt,
@@ -662,6 +722,27 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code, "export_failed");
         assert_eq!(fs::read(&dest).unwrap(), b"OLD-DESTINATION-BYTES");
+        assert_eq!(
+            fs::read(receipt_sidecar(&dest)).unwrap(),
+            b"OLD-RECEIPT-BYTES"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn crash_after_dest_replace_on_new_dest_leaves_no_pair() {
+        let dir = scratch();
+        let (artifact, receipt, dest) = setup(&dir);
+        let err = publish_export_pair_at(
+            &artifact,
+            &receipt,
+            &dest,
+            Some(CrashAfter::DestReplaced),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "export_failed");
+        assert!(!dest.exists());
+        assert!(!receipt_sidecar(&dest).is_file());
         let _ = fs::remove_dir_all(&dir);
     }
 

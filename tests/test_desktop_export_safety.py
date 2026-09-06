@@ -38,7 +38,10 @@ def test_export_module_refuses_aliases_and_stages_first():
     # dest is replaced last, after the receipt sidecar
     dest_replace = text.index("atomic_replace(&dest_tmp, dest)")
     receipt_replace = text.index("atomic_replace(&receipt_tmp, &receipt_dest)")
+    landed = text.index("let (landed_sha, landed_bytes)")
+    bak_gone = text.rindex("remove_if_exists(&dest_bak)")
     assert receipt_replace < dest_replace
+    assert dest_replace < landed < bak_gone
 
 
 def test_writer_replaces_dest_only_after_a_complete_temp():
