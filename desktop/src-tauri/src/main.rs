@@ -8,6 +8,7 @@
 mod agenthost;
 mod credstore;
 mod digest;
+mod export;
 mod jobkill;
 mod prefs;
 mod sidecar;
@@ -276,48 +277,15 @@ fn export_candidate(
             ));
         }
     }
-    // The receipt lands beside the artifact under a name that names it, so the
-    // pair cannot be separated by accident on the way to somebody's email.
-    let receipt_target = target.with_file_name(format!(
-        "{}.receipt.json",
-        target
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "candidate".into())
-    ));
-
-    std::fs::copy(&artifact, &target).map_err(|e| {
-        refuse(
-            "export_failed",
-            format!("후보본을 저장하지 못했습니다: {e}"),
-            json!({ "destination": destination }),
-        )
-    })?;
-    std::fs::copy(&receipt, &receipt_target).map_err(|e| {
-        // Leave nothing half-exported: an artifact whose receipt failed to
-        // land is exactly the unaccountable file this whole path exists to
-        // prevent.
-        let _ = std::fs::remove_file(&target);
-        refuse(
-            "export_failed",
-            format!("영수증을 저장하지 못했습니다: {e}"),
-            json!({ "destination": receipt_target.to_string_lossy() }),
-        )
-    })?;
-
-    let (sha256, bytes) = digest::sha256_file(&target).map_err(|e| {
-        refuse(
-            "export_failed",
-            format!("내보낸 파일을 다시 읽지 못했습니다: {e}"),
-            json!({ "destination": destination }),
-        )
-    })?;
-    Ok(json!({
-        "path": target.to_string_lossy(),
-        "sha256": sha256,
-        "bytes": bytes,
-        "receiptPath": receipt_target.to_string_lossy(),
-    }))
+    match export::publish_export_pair(&artifact, &receipt, &target) {
+        Ok(done) => Ok(json!({
+            "path": done.path.to_string_lossy(),
+            "sha256": done.sha256,
+            "bytes": done.bytes,
+            "receiptPath": done.receipt_path.to_string_lossy(),
+        })),
+        Err(e) => Err(refuse(e.code, e.message, e.data)),
+    }
 }
 
 // --- the dev-mode agent door ---------------------------------------------------
