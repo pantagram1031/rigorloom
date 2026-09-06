@@ -63,6 +63,7 @@ Usage::
     python engine/scripts/class_b_probe.py --corpus
     python engine/scripts/class_b_probe.py --corpus --table-origin
     python engine/scripts/class_b_probe.py --corpus --page-top
+    python engine/scripts/class_b_probe.py --corpus --empty
     python engine/scripts/class_b_probe.py --corpus --json out.json
     python engine/scripts/class_b_probe.py path/to/doc.hwpx
 
@@ -368,6 +369,41 @@ def containers(renderer):
     return keys, cells
 
 
+def _own_inkless_metrics(renderer):
+    """``{address: {textheight, vertsize, baseline, spacing}}`` for INKLESS ``hp:p``.
+
+    ``_line_metrics(para, 0, 0)`` IS the renderer's empty-paragraph rule — the
+    same call ``_flow_lines`` makes on a paragraph that has neither characters
+    nor a cached ``hp:linesegarray``.  Asking it here, of every paragraph with
+    no characters at all, states our height for one WITHOUT letting the cache
+    answer on our behalf, which is the only way path B can be put beside path A
+    on a document the authoring engine saved.
+
+    A paragraph holding an object is excluded: its character stream is not
+    empty (the object occupies a slot), so its height is the object seam's
+    question and not this one's.
+    """
+    out = {}
+    for section in renderer.sections:
+        for element in section.iter():
+            if own_render._local(element.tag) != "p":
+                continue
+            address = renderer.paragraph_index.get(id(element))
+            if address is None:
+                continue
+            para = own_render.Paragraph(element, renderer.defs["para_pr"])
+            if para.chars:
+                continue
+            textheight, vertsize, baseline, spacing = renderer._line_metrics(
+                para, 0, 0)
+            out[address] = {"textheight_hwp": textheight,
+                            "vertsize_hwp": vertsize,
+                            "baseline_hwp": baseline,
+                            "spacing_hwp": spacing,
+                            "advance_hwp": vertsize + spacing}
+    return out
+
+
 def trace(hwpx_path, policy, dpi, repo_root=None):
     """One render under one policy: seats, cell boxes, line boxes, facts."""
     renderer = SeatingRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
@@ -391,6 +427,14 @@ def trace(hwpx_path, policy, dpi, repo_root=None):
                 1 for node in element.iter()
                 if own_render._local(node.tag) == "tab")
     return {
+        # What THIS renderer's own empty-paragraph rule (#247's empty-run pass,
+        # reached through #261's inkless branch) makes of every paragraph that
+        # puts no character on its line.  It is the only number that states our
+        # height for such a paragraph independently of the cache: ``_flow_lines``
+        # falls back on the cached ``hp:lineseg`` whenever there is one, so a
+        # document Hancom saved never exercises the rule and the two policies
+        # agree on the height by construction rather than by agreement.
+        "own_inkless_metrics": _own_inkless_metrics(renderer),
         "origins": dict(renderer.paragraph_origins),
         "cell_boxes": dict(renderer.cell_boxes),
         "table_seats": dict(renderer.table_seats),
@@ -1437,6 +1481,375 @@ def page_bottom_bracket(rows):
     }
 
 
+#: What each candidate says the CACHE does at a page foot when the next block
+#: does not fit.  ``a`` is the flow pass as it ships; the rest keep an inkless
+#: paragraph — no characters at all, so no object either — on the page.
+EMPTY_FOOT_CANDIDATES = {
+    "a_break_always": "any block that does not fit opens a new page (the flow "
+                      "pass as it ships)",
+    "b_inkless_never_breaks": "an inkless paragraph never opens a new page",
+    "c_inkless_past_bottom_stays": "an inkless paragraph does not open a new "
+                                   "page when the cursor has ALREADY reached "
+                                   "the page bottom; anywhere else it breaks "
+                                   "like any other block",
+    "d_any_block_past_bottom_stays": "any block, inkless or not, stays on the "
+                                     "page once the cursor is past the bottom",
+}
+
+#: Why a cached step says nothing about the candidates.
+EMPTY_FOOT_SILENT = {
+    "hard_break": "the head declares hp:p@pageBreak or @columnBreak",
+    "object": "the head or its predecessor holds an object, whose placement "
+              "the anchored/inline seam decides and this rule does not",
+    "no_cursor": "the step starts at the top of a page, where every block is "
+                 "placed whatever its height",
+}
+
+
+def _empty_step_kind(fact):
+    """``bare_inkless`` / ``object`` / ``ink`` for one paragraph."""
+    if fact.get("objects"):
+        return "object"
+    return "bare_inkless" if not fact.get("characters") else "ink"
+
+
+def _empty_foot_predictions(kind, need, room):
+    """Each candidate's answer to "does the cache break the page here?"."""
+    short = need > room
+    return {
+        "a_break_always": short,
+        "b_inkless_never_breaks": short and kind != "bare_inkless",
+        "c_inkless_past_bottom_stays": short and not (
+            kind == "bare_inkless" and room <= 0),
+        "d_any_block_past_bottom_stays": short and room > 0,
+    }
+
+
+def empty_report(cache, computed, records, tol=DEFAULT_TOL_HWP):
+    """Every INKLESS paragraph, path A beside path B, and the page-foot rule.
+
+    Two separate questions, kept apart because they have different answers.
+
+    **The height.**  For every paragraph that puts no character on its line,
+    the row states what the cache gives (``hp:lineseg@vertpos``, ``vertsize``,
+    ``spacing``), what the paragraph DECLARES (``hh:lineSpacing`` type and
+    value, the ``hh:charPr@height`` of each empty run, whether there is an
+    ``hp:linesegarray`` at all) and what our own rule makes of it
+    (``own_inkless_metrics``, i.e. ``_line_metrics(para, 0, 0)``).  The last
+    one is the load-bearing column: ``_flow_lines`` reads the cached lineseg
+    whenever there is one, so on a Hancom-saved document the two POLICIES
+    agree on an inkless paragraph's height by construction, and the only way
+    to find out whether the RULE is right is to ask it separately.
+
+    **The page foot.**  The height being right does not make the pagination
+    right.  Every step from one top-level paragraph to the next is scored
+    against ``EMPTY_FOOT_CANDIDATES``: the cursor the previous paragraph left,
+    the room to the page bottom, what the head needs, and whether the cache
+    actually broke the page there.  Steps the object seam or an explicit break
+    decides are counted as silent (``EMPTY_FOOT_SILENT``) rather than folded
+    in, and a candidate is only tested where the four disagree.
+    """
+    facts = cache["facts"]
+    own = cache.get("own_inkless_metrics") or {}
+    usable = cache["usable_height_hwp"]
+    seats = cache["cache_seats"] or {}
+    grouped = layout_divergence._flow_seats_by_address(computed["flow_seats"])
+    roots = {record["paragraph"]: record.get("root_mechanism")
+             for record in records}
+    class_b = {record["paragraph"]: record for record in records}
+
+    rows = []
+    for address, fact in sorted(facts.items()):
+        if not fact.get("empty_text"):
+            continue
+        segs = fact.get("linesegs") or []
+        first = segs[0] if segs else {}
+        mine = own.get(address)
+        flow = grouped.get(address) or []
+        cached_advance = fact.get("cache_advance_hwp")
+        rows.append({
+            "paragraph": address,
+            "place": ("body" if fact.get("top_level")
+                      else ("cell" if address in (cache["cell_of"] or {})
+                            else "other")),
+            "characters": fact.get("characters"),
+            "objects": [obj["kind"] for obj in (fact.get("objects") or ())],
+            "linesegarray": bool(segs),
+            "line_spacing": {"type": fact.get("line_spacing_type"),
+                             "value": fact.get("line_spacing_value")},
+            "empty_runs": fact.get("empty_runs") or [],
+            "margin_prev_hwp": fact.get("margin_prev_hwp"),
+            "margin_next_hwp": fact.get("margin_next_hwp"),
+            "cache": {"vertpos_hwp": first.get("vertpos"),
+                      "vertsize_hwp": first.get("vertsize"),
+                      "spacing_hwp": first.get("spacing"),
+                      "advance_hwp": cached_advance,
+                      "page": (seats.get(address) or {}).get("page")},
+            "own_rule": mine,
+            "flow": ({"top_hwp": flow[0]["top_hwp"], "page": flow[0]["page"],
+                      "height_hwp": sum(seat.get("height_hwp") or 0
+                                        for seat in flow)} if flow else None),
+            # Our RULE against the cache, where both exist and the paragraph
+            # has exactly one cached line to compare against.
+            "height_exact": (None if mine is None or len(segs) != 1 else
+                             (abs(mine["vertsize_hwp"] - first["vertsize"])
+                              <= tol
+                              and abs(mine["spacing_hwp"] - first["spacing"])
+                              <= tol)),
+            "class_b": address in class_b,
+            "root_mechanism": roots.get(address),
+        })
+
+    scored = [row for row in rows if row["height_exact"] is not None]
+    heights = {
+        "inkless_paragraphs": len(rows),
+        "comparable": len(scored),
+        "vertsize_exact": sum(
+            1 for row in scored
+            if row["own_rule"]["vertsize_hwp"] == row["cache"]["vertsize_hwp"]),
+        "spacing_exact": sum(
+            1 for row in scored
+            if row["own_rule"]["spacing_hwp"] == row["cache"]["spacing_hwp"]),
+        "advance_exact": sum(1 for row in scored if row["height_exact"]),
+        "by_place": dict(Counter(row["place"] for row in rows)),
+        "misses": [{"paragraph": row["paragraph"], "place": row["place"],
+                    "cache": row["cache"], "own_rule": row["own_rule"]}
+                   for row in scored if not row["height_exact"]],
+    }
+
+    steps = []
+    ordered = [address for address in sorted(facts)
+               if facts[address].get("top_level")
+               and (facts[address].get("linesegs") or [])]
+    for position in range(1, len(ordered)):
+        prior, address = ordered[position - 1], ordered[position]
+        fact, prior_fact = facts[address], facts[prior]
+        page = (seats.get(address) or {}).get("page")
+        prior_page = (seats.get(prior) or {}).get("page")
+        if page is None or prior_page is None:
+            continue
+        last = prior_fact["linesegs"][-1]
+        head = fact["linesegs"][0]
+        cursor = (last["vertpos"] + last["vertsize"] + last["spacing"]
+                  + (prior_fact.get("margin_next_hwp") or 0))
+        room = usable - cursor
+        # ``_place_block``'s own fit test is against the row EXTENT, which is
+        # the baseline and not the vertsize (docs/research/line-fit-rule.md).
+        need = head.get("baseline") or int(round(
+            own_render.BASELINE_RATIO * head["vertsize"]))
+        kind = _empty_step_kind(fact)
+        broke = page != prior_page
+        silent = None
+        if fact.get("page_break_before") or fact.get("column_break"):
+            silent = "hard_break"
+        elif fact.get("objects") or prior_fact.get("objects"):
+            silent = "object"
+        elif cursor <= 0:
+            silent = "no_cursor"
+        predictions = _empty_foot_predictions(kind, need, room)
+        steps.append({
+            "paragraph": address,
+            "prev": prior,
+            "page": page,
+            "prev_page": prior_page,
+            "kind": kind,
+            "cursor_hwp": cursor,
+            "room_hwp": room,
+            "need_hwp": need,
+            "usable_hwp": usable,
+            "broke": broke,
+            "silent": silent,
+            "discriminating": (silent is None
+                               and len(set(predictions.values())) > 1),
+            "predictions": predictions,
+            "matches": {name: value == broke
+                        for name, value in predictions.items()},
+        })
+
+    # An inkless paragraph draws no line box, so it is never itself class B:
+    # what it does is move the paragraphs BELOW it, and those are the class-B
+    # population ``decompose`` roots at ``empty_paragraph``.  The carriers are
+    # the inkless paragraphs the two policies actually seat differently.
+    carriers = [
+        {"paragraph": row["paragraph"],
+         "cache": row["cache"], "flow": row["flow"],
+         "line_spacing": row["line_spacing"],
+         "empty_runs": row["empty_runs"],
+         "d_page": (None if not row["flow"] or row["cache"]["page"] is None
+                    else row["flow"]["page"] - row["cache"]["page"]),
+         "d_top_hwp": (None if not row["flow"]
+                       or row["cache"]["vertpos_hwp"] is None
+                       else row["flow"]["top_hwp"]
+                       - row["cache"]["vertpos_hwp"])}
+        for row in rows
+        if row["place"] == "body" and row["flow"] and not row["objects"]
+        and (row["flow"]["page"] != row["cache"]["page"]
+             or row["flow"]["top_hwp"] != row["cache"]["vertpos_hwp"])]
+    rooted = [{"paragraph": record["paragraph"], "dy_px": record.get("dy_px"),
+               "container": record.get("container"),
+               "split": record.get("split")}
+              for record in records
+              if record.get("root_mechanism") == "empty_paragraph"]
+
+    live = [step for step in steps if step["silent"] is None]
+    discriminating = [step for step in live if step["discriminating"]]
+    candidates = {
+        name: {
+            "exact": sum(1 for step in live if step["matches"][name]),
+            "exact_discriminating": sum(1 for step in discriminating
+                                        if step["matches"][name]),
+            "counter_examples": [
+                {"paragraph": step["paragraph"], "prev": step["prev"],
+                 "kind": step["kind"], "cursor_hwp": step["cursor_hwp"],
+                 "room_hwp": step["room_hwp"], "need_hwp": step["need_hwp"],
+                 "cache_broke": step["broke"],
+                 "predicted_break": step["predictions"][name]}
+                for step in live if not step["matches"][name]],
+        }
+        for name in EMPTY_FOOT_CANDIDATES
+    }
+    return {
+        "heights": heights,
+        "paragraphs": rows,
+        "carriers": carriers,
+        "class_b_rooted_here": rooted,
+        "page_feet": {
+            "steps": len(steps),
+            "live": len(live),
+            "discriminating": len(discriminating),
+            "silent": dict(Counter(step["silent"] for step in steps
+                                   if step["silent"])),
+            "candidates": candidates,
+            "rows": [step for step in steps
+                     if step["discriminating"] or not all(
+                         step["matches"].values())],
+        },
+    }
+
+
+def empty_table(rows):
+    """The inkless population, the height check, and the page-foot bracket."""
+    blocks = [(stem, report["empty"]) for stem, report in rows
+              if report.get("empty")]
+    if not blocks:
+        return "empty: nothing measured"
+    out = []
+    total = sum(block["heights"]["inkless_paragraphs"] for _s, block in blocks)
+    comparable = sum(block["heights"]["comparable"] for _s, block in blocks)
+    exact = sum(block["heights"]["advance_exact"] for _s, block in blocks)
+    vs_exact = sum(block["heights"]["vertsize_exact"] for _s, block in blocks)
+    sp_exact = sum(block["heights"]["spacing_exact"] for _s, block in blocks)
+    places = Counter()
+    for _stem, block in blocks:
+        places.update(block["heights"]["by_place"])
+    out.append("inkless paragraphs (hp:p that puts no character on its line)")
+    out.append(f"  population {total} — " + ", ".join(
+        f"{place} {count}" for place, count in sorted(places.items())))
+    out.append(f"  our own rule vs the cache, over the {comparable} with "
+               f"exactly one cached line:")
+    out.append(f"    vertsize exact {vs_exact}/{comparable}, spacing exact "
+               f"{sp_exact}/{comparable}, advance exact {exact}/{comparable}")
+    for stem, block in blocks:
+        for miss in block["heights"]["misses"]:
+            out.append(f"    MISS {stem} p{miss['paragraph']} "
+                       f"({miss['place']}): cache {miss['cache']} vs own "
+                       f"{miss['own_rule']}")
+    out.append("")
+    rooted = sum(len(block["class_b_rooted_here"]) for _s, block in blocks)
+    out.append(f"an inkless paragraph draws no line box, so it is never itself "
+               f"class B: it MOVES the paragraphs below it. {rooted} class-B "
+               f"paragraphs are rooted at empty_paragraph, and these are the "
+               f"inkless paragraphs the two policies seat differently:")
+    header = (f"  {'form':<12} {'para':>5} {'A page':>6} {'A vertpos':>10} "
+              f"{'A adv':>7} {'B page':>6} {'B top':>10} {'B height':>9} "
+              f"{'lineSpacing':>13}  runs (charPr@height pt)")
+    out.append(header)
+    out.append("  " + "-" * (len(header) - 2))
+    carriers = 0
+    for stem, block in blocks:
+        for row in block["carriers"]:
+            carriers += 1
+            runs = ",".join(f"{run['charpr']}@{run['height_pt']}"
+                            for run in row["empty_runs"]) or "-"
+            spacing = (f"{row['line_spacing']['type']}"
+                       f"/{row['line_spacing']['value']}")
+            out.append(
+                f"  {stem:<12} {row['paragraph']:>5} "
+                f"{str(row['cache']['page']):>6} "
+                f"{str(row['cache']['vertpos_hwp']):>10} "
+                f"{str(row['cache']['advance_hwp']):>7} "
+                f"{str(row['flow']['page']):>6} "
+                f"{str(row['flow']['top_hwp']):>10} "
+                f"{str(row['flow']['height_hwp']):>9} "
+                f"{spacing:>13}  {runs}")
+    if not carriers:
+        out.append("  (none — every top-level inkless paragraph is seated "
+                   "identically under both policies)")
+    for stem, block in blocks:
+        rows_here = block["class_b_rooted_here"]
+        if rows_here:
+            out.append(f"  {stem}: class B rooted at empty_paragraph "
+                       f"{len(rows_here)} — " + ", ".join(
+                           f"p{row['paragraph']}({row['split']},"
+                           f"{row['dy_px']:+g}px)" for row in rows_here[:6])
+                       + (f", +{len(rows_here) - 6} more"
+                          if len(rows_here) > 6 else ""))
+    out.append("")
+    out.append("page foot: does a block that does not fit open a new page?")
+    steps = sum(block["page_feet"]["steps"] for _s, block in blocks)
+    live = sum(block["page_feet"]["live"] for _s, block in blocks)
+    disc = sum(block["page_feet"]["discriminating"] for _s, block in blocks)
+    silent = Counter()
+    for _stem, block in blocks:
+        silent.update(block["page_feet"]["silent"])
+    out.append(f"  {steps} cached steps, {live} live, {disc} tell the "
+               f"candidates apart; silent " + (", ".join(
+                   f"{name} {count}" for name, count in sorted(silent.items()))
+                   or "none"))
+    width = max(len(name) for name in EMPTY_FOOT_CANDIDATES)
+    out.append(f"  {'candidate':<{width}} {'exact/live':>12} "
+               f"{'exact/discriminating':>21}  counter-examples")
+    out.append("  " + "-" * (width + 60))
+    for name in EMPTY_FOOT_CANDIDATES:
+        hits = sum(block["page_feet"]["candidates"][name]["exact"]
+                   for _s, block in blocks)
+        dhits = sum(
+            block["page_feet"]["candidates"][name]["exact_discriminating"]
+            for _s, block in blocks)
+        misses = [(stem, entry)
+                  for stem, block in blocks
+                  for entry in
+                  block["page_feet"]["candidates"][name]["counter_examples"]]
+        shown = ", ".join(f"{stem} p{entry['paragraph']}"
+                          for stem, entry in misses[:4])
+        if len(misses) > 4:
+            shown += f", +{len(misses) - 4} more"
+        out.append(f"  {name:<{width}} {hits:>6}/{live:<5} {dhits:>10}/{disc:<10}"
+                   f"  {shown or '-'}")
+    out.append("")
+    for name, text in EMPTY_FOOT_CANDIDATES.items():
+        out.append(f"  {name}: {text}")
+    out.append("")
+    for name, text in EMPTY_FOOT_SILENT.items():
+        out.append(f"  silent/{name}: {text}")
+    out.append("")
+    out.append("the steps that tell them apart, and the silent ones no "
+               "candidate reproduces")
+    for stem, block in blocks:
+        for step in block["page_feet"]["rows"]:
+            failed = sorted(name for name, ok in step["matches"].items()
+                            if not ok)
+            verdict = (f"SILENT/{step['silent']}, not scored"
+                       if step["silent"] else f"refutes {failed or '-'}")
+            out.append(
+                f"  {stem} p{step['prev']} -> p{step['paragraph']} "
+                f"({step['kind']}) cursor={step['cursor_hwp']} "
+                f"room={step['room_hwp']} need={step['need_hwp']} "
+                f"usable={step['usable_hwp']} cache "
+                f"{'BROKE' if step['broke'] else 'stayed'} -> {verdict}")
+    return "\n".join(out)
+
+
 def root_histogram(records):
     """One row per ROOT mechanism.  These partition the population."""
     paragraphs = Counter()
@@ -1478,7 +1891,8 @@ def histogram(records):
 
 def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI,
                y_tol=layout_divergence.DEFAULT_Y_TOL, tol=DEFAULT_TOL_HWP,
-               repo_root=None, table_origin=False, page_top=False):
+               repo_root=None, table_origin=False, page_top=False,
+               empty=False):
     hwpx_path = Path(hwpx_path)
     cache = trace(hwpx_path, own_render.LAYOUT_POLICY_CACHE, dpi, repo_root)
     computed = trace(hwpx_path, own_render.LAYOUT_POLICY_COMPUTED, dpi,
@@ -1505,6 +1919,8 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI,
             "bottoms": bottoms,
             **block,
         }
+    if empty:
+        extra["empty"] = empty_report(cache, computed, records, tol=tol)
     return {
         "tool": "class_b_probe",
         "source": hwpx_path.name,
@@ -1593,6 +2009,12 @@ def build_parser():
                              "started, and score every candidate rule for "
                              "its cached seat against the measurement; plus "
                              "the mirror at the page foot")
+    parser.add_argument("--empty", action="store_true",
+                        help="also dump every INKLESS paragraph — what the "
+                             "cache gives it, what it declares, and what this "
+                             "renderer's own empty-paragraph rule makes of it "
+                             "— and score the page-foot candidates for what "
+                             "the cache does with one that does not fit")
     parser.add_argument("--json", help="write the full per-paragraph report")
     return parser
 
@@ -1748,7 +2170,7 @@ def main(argv=None):
             report = probe_form(hwpx, dpi=args.dpi, y_tol=args.y_tol,
                                 tol=args.tol, repo_root=repo_root,
                                 table_origin=args.table_origin,
-                                page_top=args.page_top)
+                                page_top=args.page_top, empty=args.empty)
             if report["class_b_paragraphs"]:
                 print(summary_line(labels[hwpx.stem], report))
             rows.append((labels[hwpx.stem], report))
@@ -1762,6 +2184,9 @@ def main(argv=None):
         if args.page_top:
             print()
             print(page_top_table(rows))
+        if args.empty:
+            print()
+            print(empty_table(rows))
         if args.json:
             Path(args.json).write_text(
                 json.dumps(dict(rows), ensure_ascii=False, indent=2,
@@ -1774,7 +2199,7 @@ def main(argv=None):
     report = probe_form(Path(args.input), dpi=args.dpi, y_tol=args.y_tol,
                         tol=args.tol, repo_root=repo_root,
                         table_origin=args.table_origin,
-                        page_top=args.page_top)
+                        page_top=args.page_top, empty=args.empty)
     print(summary_line(stem, report))
     print()
     print(corpus_table([(stem, report)]))
@@ -1787,6 +2212,9 @@ def main(argv=None):
     if args.page_top:
         print()
         print(page_top_table([(stem, report)]))
+    if args.empty:
+        print()
+        print(empty_table([(stem, report)]))
     if args.json:
         Path(args.json).write_text(
             json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
