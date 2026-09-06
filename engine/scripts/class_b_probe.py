@@ -118,7 +118,7 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
         #: ``{address: seat record}`` — see the module docstring for the terms.
         self.paragraph_origins = {}
         #: ``{id(hp:tc): {y0, row, col, table, table_y}}`` under this policy.
-        self.cell_boxes = {}
+        self.seat_cell_boxes = {}
         #: ``{address: [line record]}`` — the SPAN and the metrics of every
         #: line each paragraph actually drew under this policy.  The span is
         #: the load-bearing half: ``_line_metrics`` is handed ``[start, end)``
@@ -297,7 +297,7 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
 
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
         table, table_y, holder = self._table_origin or (None, None, None)
-        self.cell_boxes.setdefault(id(cell["tc"]), {
+        self.seat_cell_boxes.setdefault(id(cell["tc"]), {
             "row": cell["row"],
             "col": cell["col"],
             "y0_hwp": y0,
@@ -735,11 +735,11 @@ def trace(hwpx_path, policy, dpi, repo_root=None):
         "section_grids": _section_grids(renderer),
         "declarations": _paragraph_declarations(renderer),
         "origins": dict(renderer.paragraph_origins),
-        "cell_boxes": dict(renderer.cell_boxes),
+        "cell_boxes": dict(renderer.seat_cell_boxes),
         "table_seats": dict(renderer.table_seats),
         "table_of_cell": {
             cell_id: renderer.table_index.get(box["table"])
-            for cell_id, box in renderer.cell_boxes.items()
+            for cell_id, box in renderer.seat_cell_boxes.items()
             if box.get("table") is not None
         },
         "line_boxes": sidecar.get("line_boxes") or [],
