@@ -33,11 +33,24 @@ Usage::
     python engine/scripts/hft_width_table.py --build --out PATH
     python engine/scripts/hft_width_table.py --score
     python engine/scripts/hft_width_table.py --score --carriers
+    python engine/scripts/hft_width_table.py --standin
 
 ``--build`` measures the corpus and writes the table.  ``--score`` prices it:
 the table as the metric source for HFT-declared runs, #283's full-width cell
 rule for substituted faces, and both together, each against the cached break
 positions, the one-sided fit test and the two ``moel-2013`` carriers.
+
+``--standin`` asks the question #292 left open.  The table ships alone and
+leaves the substituted per-line widths worse than it found them, because the
+휴먼명조 stand-in's own error is no longer cancelled by the HFT error the
+table just fixed; #283's rule closes those widths and loses the break test.
+So: WITH the table active, which FORM of the stand-in rule keeps the breaks?
+Four are priced against the table alone -- the full-width cell, the same
+thing gated on the bundled faces only, the same thing per character inside a
+mixed chunk, the same thing with the running pen on the 1/600 inch grid, and
+a second measured table of per-face correction factors -- and every
+paragraph whose break-test verdict flips is named, with the width that moved
+and the column it moved across.
 
 HOW ``--score`` SWITCHES RULES
 ------------------------------
@@ -506,7 +519,40 @@ class NoTableMixin:
         return None
 
 
-class CellRuleMixin:
+#: 1/600 inch in HWPUNIT -- the grid #283 measured Hancom's PEN positions
+#: onto.  It is a grid on the accumulated position and not on the advance,
+#: so a rule that uses it has to round the running total; rounding each
+#: advance takes 4 HWPUNIT per character off a 13 pt line, which is how
+#: #267's "advance = size on the grid" scored 16 / 411 against 22.
+PEN_GRID_HWP = advance_probe.DEVICE_GRID_HWP
+
+
+class StandinMixin:
+    """The gate every stand-in rule shares: is this run drawn by a stand-in?
+
+    Read out of ``face_resolution``, which ``_font_for`` has already filled
+    in for this chunk, so asking never adds a character to the per-face
+    counts the sidecar reports.
+
+    ``standin_sources`` is the population the rule is allowed to move.
+    #283's ``cell`` was priced over everything that is not ``installed``,
+    which folds the bundled 휴먼명조 stand-in together with the machine
+    fallback answering for faces this box does not have; ``bundled`` alone is
+    the narrower gate, and the two are scored separately because the
+    difference between them is a measurement and not a preference.
+    """
+
+    standin_sources = ("bundled", "system")
+
+    def _substituted(self, cid, slot):
+        bold = bool(self._charpr(cid).get("bold"))
+        name = (advance_probe.declared_face(self, cid, slot)
+                or "(no hh:fontRef for this slot)")
+        record = self.face_resolution.get((name, slot, bold))
+        return bool(record) and record["source"] in self.standin_sources
+
+
+class CellRuleMixin(StandinMixin):
     """#283's rule: a SUBSTITUTED face advances a full-width cell by the cell.
 
     #283 measured that the bundled ``NanumMyeongjo`` answering for 휴먼명조
@@ -532,30 +578,136 @@ class CellRuleMixin:
             return len(chunk) * pt * HWPUNIT_PER_PT * ratio / 100.0
         return super()._advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
 
-    def _substituted(self, cid, slot):
-        """Is this run drawn by a stand-in rather than the declared face?
 
-        Read out of ``face_resolution``, which ``_font_for`` has already
-        filled in for this chunk, so asking never adds a character to the
-        per-face counts the sidecar reports.
-        """
-        bold = bool(self._charpr(cid).get("bold"))
-        name = (advance_probe.declared_face(self, cid, slot)
-                or "(no hh:fontRef for this slot)")
-        record = self.face_resolution.get((name, slot, bold))
-        return bool(record) and record["source"] != "installed"
+class BundledCellRuleMixin(CellRuleMixin):
+    """``cell``, on the BUNDLED stand-ins only.
+
+    The one stand-in this repo chose is the bundled family map; a ``system``
+    fallback is whatever the machine handed back and is not a face anybody
+    measured.  #283 priced the rule over both together.
+    """
+
+    standin_sources = ("bundled",)
+
+
+class FullWidthCharRuleMixin(CellRuleMixin):
+    """``cell``, per CHARACTER, on the full-width characters of a MIXED chunk.
+
+    ``CellRuleMixin`` fires only where EVERY character of the chunk is a full
+    cell, so a Hangul run with one Latin character in it keeps the stand-in's
+    advance for the Hangul too.  This says the same thing about the same
+    characters -- a full-width cell advances by the declared cell -- and
+    leaves Latin and digits on the face metric, which is the only answer
+    available for them (#283: 131 substituted Latin/digit characters in the
+    whole corpus, 123 of them one face and one class).
+
+    It costs the face's kern table on a mixed chunk, which is what
+    ``_hft_advance_hwp`` already pays for the same reason: the characters a
+    Korean face kerns are not the ones this fires on.
+    """
+
+    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio, rel_sz=100):
+        hft = self._hft_advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
+        if hft is not None:
+            return hft
+        if not chunk or not self._substituted(cid, slot) \
+                or not any(own_render.is_full_width(ch) for ch in chunk):
+            return super(CellRuleMixin, self)._advance_hwp(
+                font, chunk, cid, slot, pt, ratio, rel_sz)
+        cell = pt * HWPUNIT_PER_PT * ratio / 100.0
+        metric = self._metric_font_for_pt(cid, pt, slot, font)
+        total = 0.0
+        for ch in chunk:
+            if own_render.is_full_width(ch):
+                total += cell
+            else:
+                total += self._em_width(metric, ch) * cell
+        return total
+
+
+class PenGridCellRuleMixin(CellRuleMixin):
+    """``cell``, with the running PEN quantised onto the 1/600 inch grid.
+
+    #283 corrected #267 here: the grid is on the pen position, so a run of
+    full cells accumulates the declared cell exactly and only the total is
+    rounded.  This states that correction as a rule -- the chunk's advance is
+    ``n x cell`` taken to the nearest whole 1/600 inch -- which can differ
+    from ``cell`` by at most half a grid step, 6 HWPUNIT, per chunk.
+
+    The pen is assumed to START on the grid, because the seam is per chunk
+    and carries no line-level cursor.  That is the limit of this variant and
+    not a claim about Hancom.
+    """
+
+    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio, rel_sz=100):
+        hft = self._hft_advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
+        if hft is not None:
+            return hft
+        base = super()._advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
+        if not chunk or not self._substituted(cid, slot) \
+                or not all(own_render.is_full_width(ch) for ch in chunk):
+            return base
+        return round(base / PEN_GRID_HWP) * PEN_GRID_HWP
+
+
+class ScaleRuleMixin(StandinMixin):
+    """A MEASURED per-face scale: the stand-in's own advance, corrected.
+
+    Where ``cell`` says "forget the stand-in, a full cell is a full cell",
+    this says "keep the stand-in's outlines and multiply them by how wrong
+    they are", with the factor read off the reference PDFs per DECLARED face
+    (:func:`measure_standin_scale`).  It is a second measured table, keyed by
+    declared face and carrying widths only -- one ratio per face, no glyph
+    and no outline -- and it applies to every character of the run rather
+    than to the full-width ones, because the ratio was measured over the
+    run's whole population.
+
+    For 휴먼명조 against the bundled Nanum Myeongjo stand-in that factor is
+    about 1 / 0.9536; #283 measured the real 휴먼명조 as embedded in the
+    references at 1.000 em for Hangul against the stand-in's 0.9536.
+    """
+
+    #: ``{declared face: Hancom's advance / ours}``.  Empty means the rule
+    #: has nothing to say and the renderer is unchanged.
+    standin_scale = {}
+
+    def _advance_hwp(self, font, chunk, cid, slot, pt, ratio, rel_sz=100):
+        hft = self._hft_advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
+        if hft is not None:
+            return hft
+        base = super()._advance_hwp(font, chunk, cid, slot, pt, ratio, rel_sz)
+        if not chunk or not self._substituted(cid, slot):
+            return base
+        scale = self.standin_scale.get(
+            advance_probe.declared_face(self, cid, slot))
+        return base * scale if scale else base
+
+
+#: ``{variant name: (measured HFT table on?, stand-in rule mixin or None)}``.
+VARIANT_SPECS = {
+    "current": (False, None),
+    "cell": (False, CellRuleMixin),
+    "table": (True, None),
+    "table+cell": (True, CellRuleMixin),
+    "table+bundled": (True, BundledCellRuleMixin),
+    "table+fwchars": (True, FullWidthCharRuleMixin),
+    "table+pen": (True, PenGridCellRuleMixin),
+    "table+scale": (True, ScaleRuleMixin),
+}
 
 
 def variant_classes(name):
     """``(renderer_cls, break_recorder_cls)`` for one rule combination."""
+    has_table, rule = VARIANT_SPECS[name]
     bases = []
-    if "table" not in name:
+    if not has_table:
         bases.append(NoTableMixin)
-    if "cell" in name:
-        bases.append(CellRuleMixin)
-    renderer = type(f"Renderer_{name}", tuple(bases) + (own_render.OwnRenderer,),
+    if rule is not None:
+        bases.append(rule)
+    safe = name.replace("+", "_")
+    renderer = type(f"Renderer_{safe}", tuple(bases) + (own_render.OwnRenderer,),
                     {})
-    recorder = type(f"BreakRecorder_{name}",
+    recorder = type(f"BreakRecorder_{safe}",
                     tuple(bases) + (advance_probe.BreakRecordingRenderer,), {})
     return renderer, recorder
 
@@ -582,6 +734,63 @@ def variant(name):
 
 VARIANTS = ("current", "table", "cell", "table+cell")
 
+#: #295's question: WITH the measured table active, which form of the
+#: stand-in rule wins the break test?  ``table`` is the baseline every other
+#: row is read against.
+STANDIN_VARIANTS = ("table", "table+cell", "table+bundled", "table+fwchars",
+                    "table+pen", "table+scale")
+
+
+# -- the second measured table: how wrong is each stand-in? ----------------
+
+def measure_standin_scale(targets, repo_root, keep_text=True, min_n=20):
+    """``{declared face: Hancom's advance / ours}``, off the reference PDFs.
+
+    Measured WITH the HFT table active, so what is left is the stand-in's own
+    error and not one the table has already answered.  Only anchored
+    characters count -- the ones ``advance_probe`` paired glyph for glyph
+    against the export -- and only faces our resolver did not find installed.
+
+    The median is taken over the face's whole observed population rather than
+    per class, because the rule this feeds applies one factor to a run.
+    Faces with fewer than ``min_n`` observations are dropped: a handful of
+    characters is not a face metric.
+    """
+    buckets = defaultdict(list)
+    with variant("table"):
+        for hwpx, pdf in targets:
+            report = advance_probe.probe_document(hwpx, pdf,
+                                                  repo_root=repo_root,
+                                                  keep_text=keep_text)
+            for para in report["paragraphs"]:
+                for line in para["lines"]:
+                    for entry in line.get("chars", []):
+                        if entry.get("source") == "installed":
+                            continue
+                        ours = entry.get("ours_hwp") or 0.0
+                        hancom = entry.get("hancom_hwp") or 0.0
+                        if ours <= 0 or hancom <= 0:
+                            continue
+                        buckets[entry["declared"]].append(hancom / ours)
+    rows = []
+    for face, values in sorted(buckets.items(), key=lambda kv: -len(kv[1])):
+        rows.append({"declared": face, "n": len(values),
+                     "scale": statistics.median(values),
+                     "used": len(values) >= min_n})
+    return ({row["declared"]: row["scale"] for row in rows if row["used"]},
+            rows)
+
+
+def format_standin_scale(rows):
+    out = ["", "the second measured table: Hancom's advance over the "
+                "stand-in's, per DECLARED face", "",
+           f"{'declared face':<24} {'n':>6} {'scale':>8}  used"]
+    out.append("-" * 50)
+    for row in rows:
+        out.append(f"{(row['declared'] or '(none)')[:24]:<24} {row['n']:>6} "
+                   f"{row['scale']:>8.4f}  {'yes' if row['used'] else 'no'}")
+    return "\n".join(out)
+
 
 # -- scoring --------------------------------------------------------------
 
@@ -592,14 +801,17 @@ def score_variant(name, targets, repo_root, dpi=144, keep_text=True):
     fit = {"lines": 0, "over": 0}
     reports = []
     carriers = []
+    per_paragraph = {}
     with variant(name):
         for hwpx, pdf in targets:
+            stem = Path(hwpx).stem
             for row in advance_probe.break_scoreboard(hwpx, dpi=dpi,
                                                       repo_root=repo_root):
                 key = "installed" if row["installed"] else "other"
                 breaks[key] += 1
                 if row["match"]:
                     breaks[key + "_match"] += 1
+                per_paragraph[(stem, row["address"])] = row
             for row in advance_probe.fit_scoreboard(hwpx,
                                                     repo_root=repo_root):
                 fit["lines"] += 1
@@ -613,6 +825,7 @@ def score_variant(name, targets, repo_root, dpi=144, keep_text=True):
                                              keep_text=keep_text))
     widths = advance_probe.line_delta_stats(reports)
     return {"variant": name, "breaks": breaks, "fit": fit, "widths": widths,
+            "paragraphs": per_paragraph,
             "carriers": [
                 {"paragraph": line["paragraph"], "line": line["line"],
                  "horzsize": line["horzsize"],
@@ -621,6 +834,74 @@ def score_variant(name, targets, repo_root, dpi=144, keep_text=True):
                  "delta": round(line["ours_span_hwp"]
                                 - line["hancom_span_hwp"], 1)}
                 for line in carriers]}
+
+
+def break_flips(baseline, row):
+    """Paragraphs whose break test verdict differs between two variants.
+
+    A break moves when a line's measured width crosses the column it is
+    fitted into, so each flip carries the width the breaker had for the line
+    whose end moved, under both variants, against that column.
+    """
+    flips = []
+    for key, after in row["paragraphs"].items():
+        before = baseline["paragraphs"].get(key)
+        if before is None or before["match"] == after["match"]:
+            continue
+        index = 0
+        for index, (lo, hi) in enumerate(zip(before["our_spans"],
+                                             after["our_spans"])):
+            if list(lo) != list(hi):
+                break
+        flips.append({
+            "form": key[0], "address": key[1],
+            "installed": after["installed"],
+            "gained": after["match"],
+            "line": index,
+            "column_hwp": round(after["column_hwp"], 1),
+            "before_hwp": round(before["our_widths"][index], 1)
+            if index < len(before["our_widths"]) else None,
+            "after_hwp": round(after["our_widths"][index], 1)
+            if index < len(after["our_widths"]) else None,
+            "cache_breaks": after["cache_breaks"],
+            "before_breaks": before["computed_breaks"],
+            "after_breaks": after["computed_breaks"],
+        })
+    flips.sort(key=lambda f: (not f["gained"], f["form"], f["address"]))
+    return flips
+
+
+def format_flips(rows):
+    out = ["", "which paragraphs' break test verdict FLIPS against the "
+                "table-alone baseline", "",
+           "line = the first line whose span moved; width = our measurement "
+           "of it, before -> after", ""]
+    baseline = rows[0]
+    for row in rows[1:]:
+        flips = break_flips(baseline, row)
+        gained = sum(1 for f in flips if f["gained"])
+        out.append(f"{row['variant']}  ({gained} gained, "
+                   f"{len(flips) - gained} lost)")
+        if not flips:
+            out.append("    none")
+            out.append("")
+            continue
+        out.append(f"    {'form':<34} {'¶':>6} {'':<5} {'line':>4} "
+                   f"{'column':>9} {'before':>9} {'after':>9}  breaks "
+                   f"cache / before / after")
+        for f in flips:
+            delta = ("--" if f["before_hwp"] is None or f["after_hwp"] is None
+                     else f"{f['after_hwp'] - f['before_hwp']:+.1f}")
+            out.append(
+                f"    {f['form'][:34]:<34} {f['address']:>6} "
+                f"{'gain' if f['gained'] else 'LOSS':<5} {f['line']:>4} "
+                f"{f['column_hwp']:>9.0f} "
+                f"{(f['before_hwp'] if f['before_hwp'] is not None else 0):>9.0f} "
+                f"{(f['after_hwp'] if f['after_hwp'] is not None else 0):>9.0f} "
+                f"({delta})  {f['cache_breaks']} / {f['before_breaks']} / "
+                f"{f['after_breaks']}")
+        out.append("")
+    return "\n".join(out)
 
 
 def format_scores(rows):
@@ -686,6 +967,9 @@ def build_parser():
                         help="measure the corpus and write the table")
     parser.add_argument("--score", action="store_true",
                         help="price the table, the cell rule and both")
+    parser.add_argument("--standin", action="store_true",
+                        help="price every form of the stand-in rule on top "
+                             "of the table, and name the breaks that flip")
     parser.add_argument("--carriers", action="store_true",
                         help="with --build, print the carriers' coverage")
     parser.add_argument("--out", type=Path, default=None,
@@ -702,8 +986,8 @@ def build_parser():
 def main(argv=None):
     utf8_stdio()
     args = build_parser().parse_args(argv)
-    if not args.build and not args.score:
-        build_parser().error("give --build, --score, or both")
+    if not args.build and not args.score and not args.standin:
+        build_parser().error("give --build, --score, --standin, or several")
     repo_root = args.repo_root or Path(__file__).resolve().parents[2]
     targets = lineseg_vs_pdf.corpus_targets(repo_root)
     keep_text = not args.no_text
@@ -728,17 +1012,27 @@ def main(argv=None):
             print(format_carrier_coverage(carrier_coverage(targets,
                                                            repo_root)))
 
-    if args.score:
+    if args.score or args.standin:
+        names = STANDIN_VARIANTS if args.standin else VARIANTS
+        if args.standin:
+            scale, scale_rows = measure_standin_scale(targets, repo_root,
+                                                      keep_text=keep_text)
+            ScaleRuleMixin.standin_scale = scale
+            print(format_standin_scale(scale_rows))
         rows = []
-        for name in VARIANTS:
+        for name in names:
             print(f"scoring {name} ...", file=sys.stderr)
             rows.append(score_variant(name, targets, repo_root, dpi=args.dpi,
                                       keep_text=keep_text))
         print(format_scores(rows))
+        if args.standin:
+            print(format_flips(rows))
         if args.json:
             args.json.parent.mkdir(parents=True, exist_ok=True)
             args.json.write_text(
-                json.dumps(rows, indent=2, ensure_ascii=False),
+                json.dumps([{k: v for k, v in row.items()
+                             if k != "paragraphs"} for row in rows],
+                           indent=2, ensure_ascii=False),
                 encoding="utf-8")
             print(f"\nwrote {args.json}")
     return 0
