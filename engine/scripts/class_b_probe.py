@@ -64,6 +64,8 @@ Usage::
     python engine/scripts/class_b_probe.py --corpus --table-origin
     python engine/scripts/class_b_probe.py --corpus --page-top
     python engine/scripts/class_b_probe.py --corpus --empty
+    python engine/scripts/class_b_probe.py --corpus --line-height
+    python engine/scripts/class_b_probe.py --corpus --valign
     python engine/scripts/class_b_probe.py --corpus --json out.json
     python engine/scripts/class_b_probe.py path/to/doc.hwpx
 
@@ -117,6 +119,25 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
         self.paragraph_origins = {}
         #: ``{id(hp:tc): {y0, row, col, table, table_y}}`` under this policy.
         self.seat_cell_boxes = {}
+        #: ``{address: [line record]}`` — the SPAN and the metrics of every
+        #: line each paragraph actually drew under this policy.  The span is
+        #: the load-bearing half: ``_line_metrics`` is handed ``[start, end)``
+        #: and answers for the characters in it, so a line that is a different
+        #: HEIGHT because it holds different CHARACTERS is a break difference
+        #: wearing a height difference's label, and only the span tells them
+        #: apart.
+        self.paragraph_lines = {}
+        #: ``{id(hp:tc): {vertAlign, avail_h, block extent, offset}}`` — the
+        #: four numbers ``_render_cell_content`` solves a cell's vertical
+        #: alignment from, recorded as it solves them.
+        self.cell_valign = {}
+        #: Set while a ``_render_cell_content`` call is in flight, so the
+        #: block extent that call measures can be read off the shared
+        #: ``_paragraph_block_extent`` without measuring the cell twice.  The
+        #: FIRST call under the flag is this cell's; a nested table's cells
+        #: raise the flag again for themselves.
+        self._want_block_extent = False
+        self._last_block_extent = None
         self._container_stack = [(0, 0)]
         self._table_origin = None
         self._floating_para = None
@@ -267,6 +288,13 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
             }),
         }
 
+    def _paragraph_block_extent(self, draw, paras, avail_w_hwp):
+        extent = super()._paragraph_block_extent(draw, paras, avail_w_hwp)
+        if self._want_block_extent:
+            self._want_block_extent = False
+            self._last_block_extent = extent
+        return extent
+
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
         table, table_y, holder = self._table_origin or (None, None, None)
         self.seat_cell_boxes.setdefault(id(cell["tc"]), {
@@ -279,7 +307,44 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
             "holder": holder,
             "page": self._page,
         })
-        return super()._render_cell_content(draw, cell, x0, y0, x1, y1)
+        margin = cell["margin"]
+        sub = own_render._kid(cell["tc"], "subList")
+        valign = ((sub.get("vertAlign") if sub is not None else "TOP")
+                  or "TOP").upper()
+        avail_h = max(0, (y1 - y0) - margin["top"] - margin["bottom"])
+        outer_want, outer_last = self._want_block_extent, self._last_block_extent
+        self._want_block_extent, self._last_block_extent = True, None
+        try:
+            result = super()._render_cell_content(draw, cell, x0, y0, x1, y1)
+            block = self._last_block_extent
+        finally:
+            self._want_block_extent = outer_want
+            self._last_block_extent = outer_last
+        cached_block = max([para.extent_hwp() for para in cell["paras"]]
+                           or [0])
+        offset = 0
+        if block is not None:
+            if valign == "CENTER":
+                offset = max(0, (avail_h - block) // 2)
+            elif valign == "BOTTOM":
+                offset = max(0, avail_h - block)
+        self.cell_valign.setdefault(id(cell["tc"]), {
+            "row": cell["row"],
+            "col": cell["col"],
+            "table": self.table_index.get(table) if table is not None else None,
+            "vert_align": valign,
+            "cell_height_hwp": y1 - y0,
+            "avail_height_hwp": avail_h,
+            "declared_height_hwp": cell.get("declared_height"),
+            "margin_top_hwp": margin["top"],
+            "margin_bottom_hwp": margin["bottom"],
+            "block_extent_hwp": block,
+            "cached_block_extent_hwp": cached_block,
+            "offset_hwp": offset,
+            "paragraphs": len(cell["paras"]),
+            "page": self._page,
+        })
+        return result
 
     # -- paragraphs ------------------------------------------------------
     def _render_cached_lines(self, draw, para, origin_hwp, *args, **kwargs):
@@ -291,6 +356,15 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
         advance = sum(own_render._iattr(seg, "vertsize")
                       + own_render._iattr(seg, "spacing")
                       for seg in para.linesegs)
+        self._note_lines(para, [
+            {"start": start, "end": end,
+             "vertpos_hwp": own_render._iattr(seg, "vertpos"),
+             "vertsize_hwp": own_render._iattr(seg, "vertsize"),
+             "textheight_hwp": own_render._iattr(seg, "textheight"),
+             "baseline_hwp": own_render._iattr(seg, "baseline"),
+             "spacing_hwp": own_render._iattr(seg, "spacing")}
+            for (start, end), seg in zip(para.lineseg_spans(), para.linesegs)
+        ], "lineseg")
         self._note_origin(para, seat, 0, len(para.linesegs), advance,
                           "lineseg")
         return super()._render_cached_lines(draw, para, origin_hwp,
@@ -311,11 +385,33 @@ class SeatingRenderer(layout_divergence.TracingRenderer):
                   if para.linesegs and rows is None else 0)
         advance = sum(line["vertsize"] + line["spacing"]
                       for line in lines or ())
+        self._note_lines(para, [
+            {"start": line["start"], "end": line["end"],
+             "vertpos_hwp": line["vertpos"],
+             "vertsize_hwp": line["vertsize"],
+             "textheight_hwp": line["textheight"],
+             "baseline_hwp": line["baseline"],
+             "spacing_hwp": line["spacing"]}
+            for line in lines or ()
+        ], "computed")
         self._note_origin(para, origin_hwp[1] + rebase,
                           (lines[0]["vertpos"] if lines else 0),
                           len(lines or ()), advance, "computed")
         return super()._render_computed_lines(draw, para, origin_hwp, lines,
                                               *args, **kwargs)
+
+    def _note_lines(self, para, lines, mode):
+        """``paragraph_lines[address]`` — the spans and metrics actually drawn.
+
+        ``setdefault`` for the same reason ``_note_origin`` uses it: a
+        paragraph the cache carries across a page break arrives twice and the
+        first arrival is the one the seat was measured against.
+        """
+        address = self.paragraph_index.get(id(para.el))
+        if address is None or not lines:
+            return
+        self.paragraph_lines.setdefault(address, {"mode": mode,
+                                                  "lines": lines})
 
     def _note_origin(self, para, block_top, first_offset, line_count, advance,
                      mode):
@@ -414,6 +510,183 @@ def _own_inkless_metrics(renderer):
     return out
 
 
+def _cached_span_metrics(renderer):
+    """PATH A for the line HEIGHT: our rule, on the cache's own line spans.
+
+    ``_line_metrics(para, start, end)`` answers for the characters in
+    ``[start, end)``, so putting our answer beside the cached ``hp:lineseg``
+    is only a test of the height RULE when both are asked about the same
+    characters.  ``lineseg_spans()`` reconstructs the cache's spans from
+    ``@textpos``, so this asks our rule the cache's own question and the
+    residual it reports is the rule's alone — no break difference can leak
+    into it.
+
+    That separation is the whole point of the ``--line-height`` view: the
+    same paragraph measured on OUR spans mixes two faults, and the corpus has
+    one of each.
+
+    ``{address: {lines: [...], exact, total}}``.
+    """
+    out = {}
+    for section in renderer.sections:
+        for element in section.iter():
+            if own_render._local(element.tag) != "p":
+                continue
+            address = renderer.paragraph_index.get(id(element))
+            if address is None:
+                continue
+            para = own_render.Paragraph(element, renderer.defs["para_pr"])
+            if not para.linesegs or not para.chars:
+                continue
+            lines = []
+            for (start, end), seg in zip(para.lineseg_spans(), para.linesegs):
+                textheight, vertsize, baseline, spacing = \
+                    renderer._line_metrics(para, start, end)
+                cached_vertsize = own_render._iattr(seg, "vertsize")
+                cached_spacing = own_render._iattr(seg, "spacing")
+                # A cached boundary that has CELLS between it and the last
+                # character before it has a control sitting on it — an
+                # ``hp:lineBreak`` and its kind take a ``textpos`` cell and
+                # put nothing in ``chars``.  ``cell_start`` is the renderer's
+                # own bookkeeping for exactly that, so this is read off it
+                # rather than re-walked.
+                control_before = 0
+                if 0 < start < len(para.cell_start):
+                    control_before = (para.cell_start[start]
+                                      - para.cell_start[start - 1] - 1)
+                lines.append({
+                    "span": [start, end],
+                    "control_cells_before_start": control_before,
+                    "vertsize_hwp": vertsize,
+                    "textheight_hwp": textheight,
+                    "baseline_hwp": baseline,
+                    "spacing_hwp": spacing,
+                    "cached_vertsize_hwp": cached_vertsize,
+                    "cached_textheight_hwp": own_render._iattr(seg,
+                                                               "textheight"),
+                    "cached_baseline_hwp": own_render._iattr(seg, "baseline"),
+                    "cached_spacing_hwp": cached_spacing,
+                    "exact": (vertsize == cached_vertsize
+                              and spacing == cached_spacing),
+                })
+            out[address] = {
+                "lines": lines,
+                "exact": sum(1 for line in lines if line["exact"]),
+                "total": len(lines),
+            }
+    return out
+
+
+def _run_declarations(renderer, element):
+    """What each ``hp:run`` of one paragraph DECLARES about its line height.
+
+    Everything the height rule could read and everything it deliberately does
+    not: ``hh:charPr@height`` (which it reads), ``hh:ratio`` / ``hh:relSz``
+    (which it excludes — see ``_line_metrics``' docstring), the ``hh:fontRef``
+    face per language slot, and whether that face is metered off the measured
+    HFT table or off an installed/bundled file.  A mechanism that turned out
+    to be one of the excluded ones would show up here as the only thing the
+    carriers have in common.
+    """
+    runs = []
+    for run in element.iter():
+        if own_render._local(run.tag) != "run":
+            continue
+        cid = run.get("charPrIDRef")
+        pr = renderer._charpr(cid)
+        text = "".join(node for node in run.itertext())
+        hft = None
+        for ch in text:
+            face = renderer._declared_hft_face(cid, ch)
+            if face:
+                hft = face
+                break
+        typography = pr.get("typography") or {}
+        slot = own_render.script_slot(text[0]) if text else "hangul"
+        bold = bool(pr.get("bold"))
+        renderer._face_for(cid, slot, bold)
+        resolved = renderer._face_cache.get((cid, slot, bold))
+        face = resolved[1] if resolved else None
+        runs.append({
+            "charpr": cid,
+            "face_source": (face or {}).get("source"),
+            "face_declared": (face or {}).get("declared"),
+            "height_pt": pr.get("height_pt"),
+            "height_hwp": (None if pr.get("height_pt") is None else
+                           int(round(pr["height_pt"]
+                                     * own_render.HWPUNIT_PER_PT))),
+            "characters": len(text),
+            "empty": not text,
+            "font_ids": pr.get("font_ids"),
+            "ratio": (typography.get("ratio") or {}).get("hangul"),
+            "rel_sz": (typography.get("relSz") or {}).get("hangul"),
+            "spacing": (typography.get("spacing") or {}).get("hangul"),
+            "hft_face": hft,
+        })
+    return runs
+
+
+def _paragraph_declarations(renderer):
+    """``{address: {para: ..., runs: [...]}}`` — everything a height could read.
+
+    The paragraph half carries the two ``hh:paraPr`` attributes that could
+    change a line's height and are not already in ``paragraph_facts``:
+    ``@snapToGrid``, which the renderer declares it does not implement, and
+    ``@fontLineHeight``, which it declares the same way.
+    """
+    out = {}
+    for section in renderer.sections:
+        for element in section.iter():
+            if own_render._local(element.tag) != "p":
+                continue
+            address = renderer.paragraph_index.get(id(element))
+            if address is None:
+                continue
+            para = own_render.Paragraph(element, renderer.defs["para_pr"])
+            pr = para.para_pr
+            out[address] = {
+                "para": {
+                    "snap_to_grid": pr.get("snap_to_grid"),
+                    "font_line_height": pr.get("font_line_height"),
+                    "condense": pr.get("condense"),
+                    "line_spacing_type": pr.get("line_spacing_type"),
+                    "line_spacing_value": pr.get("line_spacing_value"),
+                    "line_spacing_unit": pr.get("line_spacing_unit"),
+                },
+                "runs": _run_declarations(renderer, element),
+            }
+    return out
+
+
+def _section_grids(renderer):
+    """``{section index: hp:secPr/hp:grid attributes}``.
+
+    ``hp:paraPr@snapToGrid`` is one of the renderer's declared skips, so a
+    paragraph that sets it is a candidate mechanism on its face.  It is only a
+    mechanism if the SECTION actually has a grid: ``lineGrid``/``charGrid`` at
+    zero is "no grid", and snapping to nothing is a no-op however the flag is
+    set.  Both halves are reported so the reader does not have to take the
+    negative on trust.
+    """
+    out = {}
+    for index, section in enumerate(renderer.sections):
+        record = None
+        for element in section.iter():
+            if own_render._local(element.tag) != "secPr":
+                continue
+            for kid in element:
+                if own_render._local(kid.tag) == "grid":
+                    record = {
+                        "line_grid": own_render._iattr(kid, "lineGrid"),
+                        "char_grid": own_render._iattr(kid, "charGrid"),
+                        "wonggoji": own_render._iattr(kid, "wonggojiFormat"),
+                    }
+                    break
+            break
+        out[index] = record
+    return out
+
+
 def trace(hwpx_path, policy, dpi, repo_root=None):
     """One render under one policy: seats, cell boxes, line boxes, facts."""
     renderer = SeatingRenderer(hwpx_path, dpi=dpi, repo_root=repo_root,
@@ -436,6 +709,14 @@ def trace(hwpx_path, policy, dpi, repo_root=None):
             facts[address]["tabs"] = sum(
                 1 for node in element.iter()
                 if own_render._local(node.tag) == "tab")
+            # ``hp:lineBreak`` for the same reason: it takes a ``textpos``
+            # cell (``TEXTPOS_CELLS_CHAR``), so the CACHE's spans break at it,
+            # and it is not in the character stream at all, so ours cannot.
+            # Whether a span difference sits on one is the question the
+            # ``--line-height`` view exists to answer.
+            facts[address]["line_breaks"] = sum(
+                1 for node in element.iter()
+                if own_render._local(node.tag) == "lineBreak")
     return {
         # What THIS renderer's own empty-paragraph rule (#247's empty-run pass,
         # reached through #261's inkless branch) makes of every paragraph that
@@ -445,6 +726,14 @@ def trace(hwpx_path, policy, dpi, repo_root=None):
         # document Hancom saved never exercises the rule and the two policies
         # agree on the height by construction rather than by agreement.
         "own_inkless_metrics": _own_inkless_metrics(renderer),
+        # PATH A for the height rule, and the spans each policy actually drew.
+        # Kept apart on purpose: the first is our rule on the CACHE's spans,
+        # the second is what our own break pass handed it.
+        "cached_span_metrics": _cached_span_metrics(renderer),
+        "paragraph_lines": dict(renderer.paragraph_lines),
+        "cell_valign": dict(renderer.cell_valign),
+        "section_grids": _section_grids(renderer),
+        "declarations": _paragraph_declarations(renderer),
         "origins": dict(renderer.paragraph_origins),
         "cell_boxes": dict(renderer.seat_cell_boxes),
         "table_seats": dict(renderer.table_seats),
@@ -1860,6 +2149,404 @@ def empty_table(rows):
     return "\n".join(out)
 
 
+#: The mechanisms a ``text_line_height`` paragraph can be charged to, in the
+#: order the question is asked.  Only the first is a LINE-HEIGHT mechanism;
+#: the other two are break-position faults that the root label
+#: ``text_line_height`` cannot tell apart from one, because ``mechanism()``
+#: sees an equal line COUNT and an unequal ADVANCE and has nothing else to go
+#: on.  Separating them is the whole job of this view.
+LINE_HEIGHT_MECHANISMS = {
+    "height_rule": (
+        "our _line_metrics disagrees with the cached hp:lineseg ON THE "
+        "CACHE'S OWN SPANS — a height rule fault, and the only one of these "
+        "that the line-height seam can fix"),
+    "span:control_break": (
+        "path A is exact, but our line SPANS differ from the cache's and a "
+        "cached boundary the flow pass does not share has a control cell on "
+        "it (hp:lineBreak and its kind take a textpos cell and put nothing "
+        "in the character stream, so the cache breaks there and we cannot). "
+        "The line is a different height because it holds different "
+        "CHARACTERS, not because the height rule read them differently"),
+    "span:width": (
+        "path A is exact and the spans differ with no control on the "
+        "boundary — the break moved on glyph advances alone"),
+    "advance_unattributed": (
+        "path A is exact and the spans agree, and the advance still differs"),
+}
+
+
+def _carrier_of(record):
+    """The paragraph whose own height a class-B record is charged to."""
+    if record.get("carrier_term") == "d_seat_hwp":
+        largest = _largest(record.get("carriers"))
+        if largest:
+            return largest["paragraph"]
+    return record.get("paragraph")
+
+
+def _spans_of(entry):
+    return [[line["start"], line["end"]] for line in (entry or {}).get("lines")
+            or ()]
+
+
+def _line_height_mechanism(path_a, cached_spans, our_spans, line_breaks):
+    if path_a and path_a["exact"] < path_a["total"]:
+        return "height_rule"
+    if cached_spans and our_spans and cached_spans != our_spans:
+        ours = {tuple(span) for span in our_spans}
+        controls = any(
+            line.get("control_cells_before_start")
+            for line, span in zip((path_a or {}).get("lines") or (),
+                                  cached_spans)
+            if tuple(span) not in ours)
+        if controls and line_breaks:
+            return "span:control_break"
+        return "span:width"
+    return "advance_unattributed"
+
+
+def line_height_report(cache, computed, records, tol=DEFAULT_TOL_HWP):
+    """Every ``text_line_height`` paragraph, and WHICH of two faults it is.
+
+    ``mechanism()`` reaches ``text_line_height`` by elimination: the two
+    policies drew the same NUMBER of lines and the lines add up to a different
+    total.  That is true of a paragraph whose height rule misread its runs and
+    equally true of one whose lines hold different CHARACTERS because the
+    break moved without changing the count, and the two want opposite fixes.
+
+    So the view scores the height rule on its own, against the authoring
+    engine's cache, on the cache's own spans (``_cached_span_metrics``): PATH
+    A, in which no break difference can participate.  What is left over after
+    that is a span difference, and a span difference is named by what sits on
+    the boundary.
+
+    Every class-B paragraph is reported against its CARRIER — the predecessor
+    whose height it inherited — because a run of inherited paragraphs is one
+    fault, not twenty, and counting them as twenty is what makes the root
+    histogram look like a population.
+    """
+    facts = computed["facts"]
+    path_a = cache.get("cached_span_metrics") or {}
+    decls = cache.get("declarations") or {}
+    grids = cache.get("section_grids") or {}
+
+    victims = {}
+    for record in records:
+        if record.get("root_mechanism") != "text_line_height":
+            continue
+        carrier = _carrier_of(record)
+        if carrier is None:
+            continue
+        victims.setdefault(carrier, []).append(record["paragraph"])
+
+    # PATH A over the WHOLE form, not only the carriers: a rule is only clean
+    # if it is clean on every line the cache states, and the counter-example
+    # this looks for would not be in the class-B population by construction.
+    corpus_lines = sum(entry["total"] for entry in path_a.values())
+    corpus_exact = sum(entry["exact"] for entry in path_a.values())
+    span_agree = span_differ = 0
+    span_diff_rows = []
+    for address, entry in sorted(path_a.items()):
+        cached_spans = [line["span"] for line in entry["lines"]]
+        ours = _spans_of(computed["paragraph_lines"].get(address))
+        if not ours:
+            continue
+        if ours == cached_spans:
+            span_agree += 1
+            continue
+        span_differ += 1
+        fact = facts.get(address) or {}
+        span_diff_rows.append({
+            "paragraph": address,
+            "line_breaks": fact.get("line_breaks"),
+            "cached_lines": len(cached_spans),
+            "computed_lines": len(ours),
+            "cached_advance_hwp": fact.get("cache_advance_hwp"),
+        })
+
+    rows = []
+    for carrier, inherited in sorted(victims.items()):
+        fact = facts.get(carrier) or {}
+        entry = path_a.get(carrier)
+        cached_spans = [line["span"] for line in (entry or {}).get("lines")
+                        or ()]
+        ours = _spans_of(computed["paragraph_lines"].get(carrier))
+        decl = decls.get(carrier) or {}
+        runs = decl.get("runs") or []
+        heights = sorted({run["height_hwp"] for run in runs
+                          if run["height_hwp"] is not None})
+        cache_origin = cache["origins"].get(carrier) or {}
+        computed_origin = computed["origins"].get(carrier) or {}
+        rows.append({
+            "paragraph": carrier,
+            "page": computed_origin.get("page"),
+            "class_b_paragraphs": len(inherited),
+            "inherited_by": sorted(inherited),
+            "cached_spans": cached_spans,
+            "computed_spans": ours,
+            "spans_agree": bool(cached_spans) and cached_spans == ours,
+            "cached_advance_hwp": cache_origin.get("advance_hwp"),
+            "computed_advance_hwp": computed_origin.get("advance_hwp"),
+            "advance_delta_hwp": (
+                None if cache_origin.get("advance_hwp") is None
+                or computed_origin.get("advance_hwp") is None
+                else computed_origin["advance_hwp"]
+                - cache_origin["advance_hwp"]),
+            "path_a": (None if entry is None else
+                       {"exact": entry["exact"], "total": entry["total"]}),
+            "cached_lines": [
+                {"span": line["span"],
+                 "vertsize_hwp": line["cached_vertsize_hwp"],
+                 "textheight_hwp": line["cached_textheight_hwp"],
+                 "baseline_hwp": line["cached_baseline_hwp"],
+                 "spacing_hwp": line["cached_spacing_hwp"],
+                 "ours_vertsize_hwp": line["vertsize_hwp"],
+                 "ours_spacing_hwp": line["spacing_hwp"],
+                 "control_cells_before_start":
+                     line["control_cells_before_start"]}
+                for line in (entry or {}).get("lines") or ()],
+            "computed_lines": (
+                computed["paragraph_lines"].get(carrier) or {}).get("lines"),
+            "line_spacing": {"type": fact.get("line_spacing_type"),
+                             "value": fact.get("line_spacing_value")},
+            "snap_to_grid": (decl.get("para") or {}).get("snap_to_grid"),
+            "font_line_height": (decl.get("para")
+                                 or {}).get("font_line_height"),
+            "section_grid": grids.get(fact.get("section")),
+            "line_breaks": fact.get("line_breaks"),
+            "tabs": fact.get("tabs"),
+            "objects": [obj["kind"] for obj in (fact.get("objects") or ())],
+            "run_heights_hwp": heights,
+            "mixed_run_sizes": len(heights) > 1,
+            "runs": runs,
+            "hft_faces": sorted({run["hft_face"] for run in runs
+                                 if run["hft_face"]}),
+            "face_sources": sorted({run["face_source"] for run in runs
+                                    if run["face_source"]}),
+            "typography_not_neutral": sorted({
+                name for run in runs for name, value in
+                (("ratio", run["ratio"]), ("relSz", run["rel_sz"]))
+                if value not in (None, 100)}),
+            "mechanism": _line_height_mechanism(
+                path_a.get(carrier), cached_spans, ours,
+                fact.get("line_breaks")),
+        })
+    return {
+        "mechanisms": LINE_HEIGHT_MECHANISMS,
+        "carriers": rows,
+        "path_a": {"exact": corpus_exact, "total": corpus_lines},
+        "spans": {"agree": span_agree, "differ": span_differ},
+        "span_differences": span_diff_rows,
+    }
+
+
+def valign_report(cache, computed, records, tol=DEFAULT_TOL_HWP):
+    """Every ``cell_valign`` paragraph, and WHICH input to the offset moved.
+
+    ``_render_cell_content`` solves one equation::
+
+        offset = 0                                    vertAlign TOP
+               = max(0, (avail_h - block) // 2)                 CENTER
+               = max(0, avail_h - block)                        BOTTOM
+
+    so ``d_block_offset`` has exactly two channels, and which one carries it
+    decides whose fault it is:
+
+    * ``avail_h`` moved — the ROW under the cell came out a different height,
+      and the cell re-centred content it laid out identically.  The cell's
+      alignment did nothing wrong; it faithfully re-solved a moved box.
+    * ``block`` moved — the cell's own content is a different height, and the
+      alignment moved it by half (CENTER) or all (BOTTOM) of that.
+
+    Both terms are recorded as ``_render_cell_content`` solves them, and the
+    equation is re-solved here from the recorded inputs rather than asserted,
+    so a row whose ``formula_ok`` is false would mean the recorded inputs do
+    not explain the drawn offset — which is the answer this view could give
+    and does not.
+    """
+    rows = []
+    for record in records:
+        if record.get("root_mechanism") != "cell_valign":
+            continue
+        address = record["paragraph"]
+        before = cache["cell_valign"].get(cache["cell_of"].get(address)) or {}
+        after = (computed["cell_valign"].get(computed["cell_of"].get(address))
+                 or {})
+        fact = computed["facts"].get(address) or {}
+        segs = fact.get("linesegs") or []
+        d_avail = ((after.get("avail_height_hwp") or 0)
+                   - (before.get("avail_height_hwp") or 0))
+        d_block = ((after.get("block_extent_hwp") or 0)
+                   - (before.get("block_extent_hwp") or 0))
+        d_offset = (record.get("terms_hwp") or {}).get("d_block_offset_hwp")
+        if abs(d_avail) > tol and abs(d_block) > tol:
+            channel = "both"
+        elif abs(d_avail) > tol:
+            channel = "row_height"
+        elif abs(d_block) > tol:
+            channel = "block_extent"
+        else:
+            channel = "neither"
+        rows.append({
+            "paragraph": address,
+            "dy_px": record.get("dy_px"),
+            "table": before.get("table"),
+            "row": before.get("row"),
+            "col": before.get("col"),
+            "vert_align": before.get("vert_align"),
+            "cached_first_line_vertpos_hwp": (segs[0]["vertpos"] if segs
+                                              else None),
+            "declared_height_hwp": before.get("declared_height_hwp"),
+            "cache": {k: before.get(k) for k in
+                      ("cell_height_hwp", "avail_height_hwp",
+                       "block_extent_hwp", "cached_block_extent_hwp",
+                       "offset_hwp", "paragraphs")},
+            "computed": {k: after.get(k) for k in
+                         ("cell_height_hwp", "avail_height_hwp",
+                          "block_extent_hwp", "cached_block_extent_hwp",
+                          "offset_hwp", "paragraphs")},
+            "d_avail_height_hwp": d_avail,
+            "d_block_extent_hwp": d_block,
+            "d_block_offset_hwp": d_offset,
+            "channel": channel,
+            "formula_ok": (d_offset is not None
+                           and (after.get("offset_hwp") or 0)
+                           - (before.get("offset_hwp") or 0) == d_offset),
+        })
+
+    # The counter-example sweep: EVERY aligned cell in the form, not only the
+    # ones a class-B paragraph sits in.  A cell whose offset the recorded
+    # inputs do not reproduce would refute the equation above wherever it is.
+    checked = exact = moved = 0
+    for cell_id, after in computed["cell_valign"].items():
+        if after.get("vert_align") == "TOP":
+            continue
+        checked += 1
+        block = after.get("block_extent_hwp")
+        avail = after.get("avail_height_hwp") or 0
+        if block is None:
+            continue
+        if after["vert_align"] == "CENTER":
+            want = max(0, (avail - block) // 2)
+        else:
+            want = max(0, avail - block)
+        if want == after.get("offset_hwp"):
+            exact += 1
+        if after.get("offset_hwp"):
+            moved += 1
+    return {
+        "rows": rows,
+        "channels": dict(Counter(row["channel"] for row in rows)),
+        "formula_failures": sum(1 for row in rows if not row["formula_ok"]),
+        "aligned_cells": {"checked": checked, "formula_exact": exact,
+                          "offset_nonzero": moved},
+    }
+
+
+def line_height_table(rows):
+    """The carrier grouping over every form, then the corpus path-A score."""
+    blocks = [(stem, report["line_height"]) for stem, report in rows
+              if report.get("line_height")]
+    if not blocks:
+        return "line height: nothing measured"
+    out = []
+    names = sorted(LINE_HEIGHT_MECHANISMS)
+    width = max(len(name) for name in names)
+    totals = Counter()
+    paras = Counter()
+    carrier_of = {}
+    for stem, block in blocks:
+        for row in block["carriers"]:
+            totals[row["mechanism"]] += 1
+            paras[row["mechanism"]] += row["class_b_paragraphs"]
+            carrier_of.setdefault(row["mechanism"],
+                                  f"{stem} para {row['paragraph']}")
+    out.append(f"{'mechanism':<{width}} {'carriers':>9} {'class B':>8}  "
+               f"one carrier")
+    out.append("-" * (width + 40))
+    for name in names:
+        if not totals[name]:
+            continue
+        out.append(f"{name:<{width}} {totals[name]:>9} {paras[name]:>8}  "
+                   f"{carrier_of.get(name, '-')}")
+    exact = sum(block["path_a"]["exact"] for _stem, block in blocks)
+    total = sum(block["path_a"]["total"] for _stem, block in blocks)
+    agree = sum(block["spans"]["agree"] for _stem, block in blocks)
+    differ = sum(block["spans"]["differ"] for _stem, block in blocks)
+    out.append("")
+    out.append(f"path A (our _line_metrics on the CACHE's own spans): "
+               f"{exact} / {total} exact")
+    out.append(f"spans (our break pass vs the cache's): {agree} agree / "
+               f"{differ} differ")
+    out.append("")
+    for stem, block in blocks:
+        for row in block["carriers"]:
+            out.append(
+                f"{stem} para {row['paragraph']} p{row['page']}: "
+                f"{row['mechanism']}; class B {row['class_b_paragraphs']}; "
+                f"advance {row['cached_advance_hwp']} -> "
+                f"{row['computed_advance_hwp']} "
+                f"({row['advance_delta_hwp']:+d}); path A "
+                f"{row['path_a']['exact']}/{row['path_a']['total']}; "
+                f"lineBreak {row['line_breaks']}; "
+                f"spacing {row['line_spacing']['type']} "
+                f"{row['line_spacing']['value']}; "
+                f"snapToGrid {row['snap_to_grid']} "
+                f"grid {row['section_grid']}; "
+                f"run heights {row['run_heights_hwp']}")
+            out.append(f"    cached spans {row['cached_spans']}")
+            out.append(f"    our spans    {row['computed_spans']}")
+    return "\n".join(out)
+
+
+def valign_table(rows):
+    """Which input to the vertical-align offset moved, over every form."""
+    blocks = [(stem, report["valign"]) for stem, report in rows
+              if report.get("valign")]
+    if not blocks:
+        return "cell valign: nothing measured"
+    totals = Counter()
+    carrier_of = {}
+    for stem, block in blocks:
+        for row in block["rows"]:
+            totals[row["channel"]] += 1
+            carrier_of.setdefault(
+                row["channel"],
+                f"{stem} para {row['paragraph']} "
+                f"(table {row['table']} r{row['row']}c{row['col']})")
+    width = max([len(name) for name in totals] + [len("channel")])
+    out = [f"{'channel':<{width}} {'paras':>6}  one carrier",
+           "-" * (width + 40)]
+    for name, count in sorted(totals.items(), key=lambda kv: (-kv[1], kv[0])):
+        out.append(f"{name:<{width}} {count:>6}  {carrier_of.get(name, '-')}")
+    failures = sum(block["formula_failures"] for _stem, block in blocks)
+    checked = sum(block["aligned_cells"]["checked"] for _stem, block in blocks)
+    exact = sum(block["aligned_cells"]["formula_exact"]
+                for _stem, block in blocks)
+    out.append("")
+    out.append(f"the recorded inputs reproduce d_block_offset on "
+               f"{sum(totals.values()) - failures} of {sum(totals.values())} "
+               f"class-B rows")
+    out.append(f"offset == the vertAlign equation on {exact} of {checked} "
+               f"non-TOP cells in the corpus")
+    out.append("")
+    for stem, block in blocks:
+        for row in block["rows"]:
+            out.append(
+                f"{stem} para {row['paragraph']} "
+                f"(table {row['table']} r{row['row']}c{row['col']} "
+                f"{row['vert_align']}): {row['channel']}; "
+                f"d_offset {row['d_block_offset_hwp']:+d}; "
+                f"avail {row['cache']['avail_height_hwp']} -> "
+                f"{row['computed']['avail_height_hwp']}; "
+                f"block {row['cache']['block_extent_hwp']} -> "
+                f"{row['computed']['block_extent_hwp']}; "
+                f"declared {row['declared_height_hwp']}; "
+                f"cached first-line vertpos "
+                f"{row['cached_first_line_vertpos_hwp']}")
+    return "\n".join(out)
+
+
 def root_histogram(records):
     """One row per ROOT mechanism.  These partition the population."""
     paragraphs = Counter()
@@ -1902,7 +2589,7 @@ def histogram(records):
 def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI,
                y_tol=layout_divergence.DEFAULT_Y_TOL, tol=DEFAULT_TOL_HWP,
                repo_root=None, table_origin=False, page_top=False,
-               empty=False):
+               empty=False, line_height=False, valign=False):
     hwpx_path = Path(hwpx_path)
     cache = trace(hwpx_path, own_render.LAYOUT_POLICY_CACHE, dpi, repo_root)
     computed = trace(hwpx_path, own_render.LAYOUT_POLICY_COMPUTED, dpi,
@@ -1931,6 +2618,11 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI,
         }
     if empty:
         extra["empty"] = empty_report(cache, computed, records, tol=tol)
+    if line_height:
+        extra["line_height"] = line_height_report(cache, computed, records,
+                                                  tol=tol)
+    if valign:
+        extra["valign"] = valign_report(cache, computed, records, tol=tol)
     return {
         "tool": "class_b_probe",
         "source": hwpx_path.name,
@@ -2025,6 +2717,21 @@ def build_parser():
                              "renderer's own empty-paragraph rule makes of it "
                              "— and score the page-foot candidates for what "
                              "the cache does with one that does not fit")
+    parser.add_argument("--line-height", action="store_true",
+                        help="also score our line-height rule against the "
+                             "cached hp:lineseg ON THE CACHE'S OWN SPANS "
+                             "(path A), then name what is left over: every "
+                             "text_line_height paragraph against the carrier "
+                             "it inherited from, with the spans both passes "
+                             "produced, what the paragraph and its runs "
+                             "declare, and whether a control cell sits on the "
+                             "cached boundary")
+    parser.add_argument("--valign", action="store_true",
+                        help="also dump, for every cell_valign paragraph, the "
+                             "cell's vertAlign, its declared / cached / drawn "
+                             "height, the block extent we solve the alignment "
+                             "against and the cached first-line vertpos, and "
+                             "say which of the two inputs to the offset moved")
     parser.add_argument("--json", help="write the full per-paragraph report")
     return parser
 
@@ -2180,7 +2887,9 @@ def main(argv=None):
             report = probe_form(hwpx, dpi=args.dpi, y_tol=args.y_tol,
                                 tol=args.tol, repo_root=repo_root,
                                 table_origin=args.table_origin,
-                                page_top=args.page_top, empty=args.empty)
+                                page_top=args.page_top, empty=args.empty,
+                                line_height=args.line_height,
+                                valign=args.valign)
             if report["class_b_paragraphs"]:
                 print(summary_line(labels[hwpx.stem], report))
             rows.append((labels[hwpx.stem], report))
@@ -2197,6 +2906,12 @@ def main(argv=None):
         if args.empty:
             print()
             print(empty_table(rows))
+        if args.line_height:
+            print()
+            print(line_height_table(rows))
+        if args.valign:
+            print()
+            print(valign_table(rows))
         if args.json:
             Path(args.json).write_text(
                 json.dumps(dict(rows), ensure_ascii=False, indent=2,
@@ -2209,7 +2924,8 @@ def main(argv=None):
     report = probe_form(Path(args.input), dpi=args.dpi, y_tol=args.y_tol,
                         tol=args.tol, repo_root=repo_root,
                         table_origin=args.table_origin,
-                        page_top=args.page_top, empty=args.empty)
+                        page_top=args.page_top, empty=args.empty,
+                        line_height=args.line_height, valign=args.valign)
     print(summary_line(stem, report))
     print()
     print(corpus_table([(stem, report)]))
@@ -2225,6 +2941,12 @@ def main(argv=None):
     if args.empty:
         print()
         print(empty_table([(stem, report)]))
+    if args.line_height:
+        print()
+        print(line_height_table([(stem, report)]))
+    if args.valign:
+        print()
+        print(valign_table([(stem, report)]))
     if args.json:
         Path(args.json).write_text(
             json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)

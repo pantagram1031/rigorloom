@@ -1241,23 +1241,31 @@ def test_a_trailing_space_leaves_the_geometry_box_but_not_the_caret_box(
     carries it, because that is where a caret goes; ``x1`` does not, because
     the reference PDFs' own boxes were measured to stop at the last piece
     that draws ink.  The gap is the half-width space cell at that run's
-    declared size: 7.333 px is half of an 11 pt cell and 8.667 px half of a
-    13 pt one, at the fixture's 96 dpi.  (The 7.020 px this test pinned
-    before the measured HFT advance table landed was a line whose break
-    moved; the mechanism it demonstrated is unchanged and two other sizes
-    demonstrate it.)
+    declared size: 8.667 px is half of a 13 pt cell at the fixture's 96 dpi.
+
+    THE PINNED VALUE IS A LINE, AND A LINE CAN MOVE.  This test has now lost
+    two of them to unrelated slices: 7.020 px went when the measured HFT
+    advance table landed, and 7.333 px -- half of an 11 pt cell -- went on the
+    syllable-unit slice, where every Hangul boundary became a break
+    opportunity and that line stopped ending on a space.  Neither was a
+    failure of the mechanism, and the mechanism is what the rest of this test
+    asserts on EVERY hanging box rather than on a named one: the hang is
+    positive, it is invisible to the ink edge, and ``x1`` is the visible
+    advance.  The 13 pt value is kept as the one worked example.
 
     Since the provenance policy, an edit sends the *whole* document
-    computed, so other paragraphs' trailing spaces hang too; the two
-    documented values must still be among them, and every hang must be a
-    positive space cell that drew no ink.
+    computed, so other paragraphs' trailing spaces hang too.
     """
     boxes = [b for b in edited_render["report"]["line_boxes"]
              if b["mode"] == "computed"]
     hangs = sorted(round(b["x1_advance"] - b["x1"], 3) for b in boxes
                    if b["x1_advance"] - b["x1"] > 0.01)
     assert hangs, "no computed line ends in a space"
-    assert {7.333, 8.667} <= set(hangs), hangs
+    # Half of a 13 pt cell at 96 dpi, to a rounding step: 13 * 96 / 72 / 2.
+    assert {8.666, 8.667} & set(hangs), hangs
+    # More than one run size hangs, so the value above is an example of a
+    # rule and not the only line in the document that does this.
+    assert len(set(hangs)) >= 3, sorted(set(hangs))
     for box in boxes:
         assert box["x1"] == box["x1_visible_advance"]
         if box["x1_advance"] > box["x1"]:
@@ -2602,26 +2610,156 @@ def _breaks(renderer, draw, text, cid, column_hwp, **parapr):
     return [(line["start"], line["end"]) for line in lines], lines
 
 
-def test_break_opportunities_follow_the_paragraphs_own_break_setting():
-    """hh:breakSetting decides where a line MAY break; nothing else does."""
+def test_the_korean_break_unit_is_the_syllable_whatever_the_paragraph_declares():
+    """breakNonLatinWord is read, reported and OVERRIDDEN (#316).
+
+    The public format document makes the Korean switch one bit with no
+    exception clause, and the cache does not honour its 어절 state: 70 of the
+    204 cached line ends in KEEP_WORD paragraphs fall between two syllables
+    of one 어절, in words occupying 0.033 to 0.393 of their column, so none of
+    them is an emergency break.  So this renderer breaks Hangul at the
+    syllable under BOTH declared values, and the declaration only stays
+    readable in the sidecar.  ``breakLatinWord`` is untouched by that: the
+    same census finds zero cuts inside a Latin word and zero inside a digit
+    group, 0 of 218, under either declared value.
+    """
     hangul = "가나다라마"
-    # KEEP_WORD (어절 단위): no break inside a run of Hangul with no space.
-    assert own_render.break_opportunities(hangul, break_non_latin="KEEP_WORD") == []
-    # BREAK_WORD (글자 단위): between every pair of syllables.
+    # KEEP_WORD (어절 단위) no longer suppresses the syllable break ...
+    assert own_render.break_opportunities(
+        hangul, break_non_latin="KEEP_WORD") == [1, 2, 3, 4]
+    # ... and BREAK_WORD (글자 단위) gives exactly the same set.
     assert own_render.break_opportunities(
         hangul, break_non_latin="BREAK_WORD") == [1, 2, 3, 4]
     # A space is a break opportunity whatever the attributes say, and the
     # break goes AFTER the space, never before it.
-    assert own_render.break_opportunities("가나 다라") == [3]
+    assert own_render.break_opportunities("가나 다라") == [1, 3, 4]
+    # THE LATIN SWITCH IS STILL OBEYED, in both directions.
     latin = "abcde"
     assert own_render.break_opportunities(latin, break_latin="KEEP_WORD") == []
     assert own_render.break_opportunities(
         latin, break_latin="BREAK_WORD") == [1, 2, 3, 4]
+    # A digit group is Latin-classed, so it is kept whole the same way.
+    assert own_render.break_opportunities(
+        "123456", break_latin="KEEP_WORD") == []
     # The two attributes are independent, and the boundary between the two
-    # scripts is governed by the non-Latin one.
+    # scripts is governed by the non-Latin one -- which now always opens.
+    # 'abc' still holds together under break_latin=KEEP_WORD.
+    assert own_render.break_opportunities(
+        "가abc나", break_latin="KEEP_WORD",
+        break_non_latin="KEEP_WORD") == [1, 4]
     assert own_render.break_opportunities(
         "가abc나", break_latin="BREAK_WORD",
-        break_non_latin="KEEP_WORD") == [2, 3]
+        break_non_latin="KEEP_WORD") == [1, 2, 3, 4]
+
+
+def test_the_renderer_declares_the_break_unit_it_chose_and_what_it_cost():
+    """KOREAN_BREAK_UNIT is the readable form of the override."""
+    unit = own_render.KOREAN_BREAK_UNIT
+    assert unit["declaration_honored"] is False
+    assert "syllable" in unit["unit"]
+    assert "breakNonLatinWord" in unit["declaration"]
+    # The basis is #316's, quoted, not re-derived here.
+    assert "4.2.10" in unit["basis"]
+    assert "70 of the 204" in unit["basis"]
+    # The Latin switch is explicitly excluded from the override.
+    assert "breakLatinWord IS honoured" in unit["latin_untouched"]
+    # The one regression is named as a cost, not buried.
+    assert "kstartup" in unit["declared_cost"]
+    assert "719" in unit["declared_cost"]
+    # Path C is declared not run wherever a number is quoted.
+    assert "NOT RUN" in unit["measured"]
+
+
+def _scored_paragraph(stem, address):
+    """One corpus paragraph off ``advance_probe.break_scoreboard``, 144 dpi.
+
+    Path B: our own flow pass re-laying the ORIGINAL out, scored against the
+    document's own cached ``hp:lineseg``.  Not path C -- no licensed Hancom
+    output is rendered anywhere in this repo.
+    """
+    import advance_probe
+    path = os.path.join(CORPUS, stem + ".hwpx")
+    _need(path)
+    for row in advance_probe.break_scoreboard(path, dpi=144, repo_root=ROOT):
+        if row["address"] == address:
+            return row
+    raise AssertionError(f"{stem} has no scorable paragraph {address}")
+
+
+def test_the_syllable_unit_reproduces_the_caches_mid_word_cut():
+    """THE GAIN, on a real corpus paragraph: ``moel-2013`` ¶261.
+
+    The paragraph declares ``breakNonLatinWord="KEEP_WORD"`` and the cache
+    still cut between 예금통장 and 에 -- inside one 어절.  Under the declared
+    reading that cut is not in our opportunity set at all and the breaker
+    took the previous space, putting our line 784.3 HWPUNIT UNDER the box
+    (#316).  Under the syllable unit the cut is offered and our computed
+    breaks equal the cache's exactly.  53 corpus paragraphs move this way;
+    this is one of them, pinned so the gain is falsifiable.
+    """
+    row = _scored_paragraph("moel-pyojun-geunrogyeyakseo-2013", 261)
+    assert row["match"], (row["cache_breaks"], row["computed_breaks"])
+    assert list(row["cache_breaks"]) == list(row["computed_breaks"])
+
+
+def test_the_syllable_unit_costs_kstartup_719_and_that_is_declared():
+    """THE ONE REGRESSION, pinned as a known cost: ``kstartup`` ¶719.
+
+    A JUSTIFY, ``condense=0``, hanging-indent line whose every face is the
+    declared, installed one (맑은 고딕 / malgun.ttf), so no stand-in width can
+    be blamed for it.  The cache breaks at the space after 업; we take one
+    more syllable (관), and by our own arithmetic that span is already +58.8
+    HWPUNIT over its 44744 box -- admitted ONLY by the 96 HWPUNIT right-edge
+    budget.  #316 measured that dropping the budget to 0 recovers it, and the
+    budget was NOT moved: the other twelve of #316's thirteen need a negative
+    budget of at least 911, and at -500 the whole score collapses below the
+    shipped breaker.
+
+    So this paragraph ships broken, on purpose, and it is unexplained.  If it
+    ever starts matching, that is a real change and this test has to be the
+    thing that says so.
+    """
+    row = _scored_paragraph(
+        "kstartup-jiwon-sincheongseo-saeopgyehoekseo", 719)
+    assert not row["match"], "kstartup 719 started matching -- re-measure"
+    assert row["installed"], "the regression's value is that it is not a stand-in"
+    # We take exactly one syllable more than the cache on the deciding line.
+    cache = list(row["cache_breaks"])
+    ours = list(row["computed_breaks"])
+    assert cache != ours
+    first = next(i for i, (c, o) in enumerate(zip(cache, ours)) if c != o)
+    assert ours[first] == cache[first] + 1, (cache, ours)
+    assert own_render.RIGHT_EDGE_TOLERANCE_HWP == 96, (
+        "the budget this paragraph turns on was moved; re-measure #316's "
+        "sweep before changing this pin")
+
+
+def test_latin_words_and_digit_groups_are_still_never_split():
+    """THE SYNTHETIC COUNTER-CASE: the override stops at the Latin switch.
+
+    #316's census found ZERO cuts inside a Latin word and ZERO inside a digit
+    group over all 218 cached line ends, under either declared value, so the
+    syllable unit must not reach them.  Every opportunity in a mixed string
+    under ``breakLatinWord="KEEP_WORD"`` has to have a CJK cell on at least
+    one side.
+    """
+    text = "제61조3항abc123가나DEF456다"
+    ops = own_render.break_opportunities(text, break_latin="KEEP_WORD")
+    assert ops, "the string has Hangul in it; something must be breakable"
+    for index in ops:
+        prev, nxt = text[index - 1], text[index]
+        assert (own_render.break_class(prev) in ("CJK", "OBJECT")
+                or own_render.break_class(nxt) in ("CJK", "OBJECT")), (
+            f"broke {prev!r}|{nxt!r}, which is inside a Latin word or a "
+            f"digit group")
+    # Named explicitly: no cut inside 'abc', 'DEF', '123' or '456'.
+    for run in ("abc", "123", "DEF", "456"):
+        start = text.index(run)
+        for index in range(start + 1, start + len(run)):
+            assert index not in ops, (run, index)
+    # And the Latin switch still turns them on when the paragraph asks.
+    wider = own_render.break_opportunities(text, break_latin="BREAK_WORD")
+    assert set(ops) < set(wider)
 
 
 def test_prohibited_characters_never_start_or_end_a_line():
@@ -2632,8 +2770,11 @@ def test_prohibited_characters_never_start_or_end_a_line():
     # '(' may not end one, so the break after it is withdrawn.
     assert own_render.break_opportunities(
         "가(나다", break_non_latin="BREAK_WORD") == [1, 3]
-    # The filter applies to a space break too, not only a syllable break.
-    assert own_render.break_opportunities("가나 ”다") == []
+    # The filter applies to a space break too, not only a syllable break: the
+    # break after the space is withdrawn because '”' may not start a line.
+    # The two syllable breaks around it survive, which is the syllable unit
+    # (#316) and not a 금칙 failure -- index 2 is the one under test.
+    assert own_render.break_opportunities("가나 ”다") == [1, 4]
     for ch in ")]}.,?!。、":
         assert ch in own_render.LINE_START_PROHIBITED, ch
     for ch in "([{（「":
@@ -2667,13 +2808,23 @@ def test_a_latin_word_moves_whole_unless_the_paragraph_breaks_words(typo_probe):
 
 
 def test_a_line_with_no_permitted_break_is_cut_and_counted(typo_probe):
-    """KEEP_WORD plus one very long word: the box wins, and it is recorded."""
+    """One very long word with no permitted break: the box wins, and it is
+    recorded.
+
+    The unbreakable run has to be LATIN now.  A Hangul run is no longer
+    unbreakable under any declaration -- the syllable unit (#316) always
+    offers a break inside it -- so ``breakLatinWord="KEEP_WORD"`` on a word
+    with no space, hyphen or slash in it is the only way left to present the
+    breaker with an empty opportunity set, which is the mechanism under test.
+    """
     renderer, _image, draw = typo_probe
     cid = _synthetic_charpr(renderer, "__forced__", height=1000)
     before = renderer._forced_breaks
-    spans, lines = _breaks(renderer, draw, "가나다라마바사아자차", cid,
+    spans, lines = _breaks(renderer, draw, "abcdefghijklmnopqrst", cid,
                            own_render.HWPUNIT_PER_PT * 10 * 3,
-                           break_non_latin="KEEP_WORD")
+                           break_latin="KEEP_WORD")
+    assert own_render.break_opportunities(
+        "abcdefghijklmnopqrst", break_latin="KEEP_WORD") == []
     assert len(spans) > 1, "an unbreakable run still has to fit the page"
     assert any(line["forced"] for line in lines)
     assert renderer._forced_breaks > before
@@ -3034,21 +3185,45 @@ def test_a_tab_advances_to_the_paragraphs_next_declared_stop(typo_probe):
 LINESEG_AGREEMENT = {
     # form: (scored, line_count_exact, sequence_exact, multiline_scored,
     #        multiline_line_count_exact, cached_break_positions, matched)
+    #
+    # EVERY ROW BELOW THAT MOVED, MOVED ON THE SYLLABLE-UNIT SLICE (#316 read,
+    # #320's stand-in table underneath).  breakNonLatinWord stopped being
+    # obeyed and Hangul is now broken at the syllable under either declared
+    # value, so a paragraph whose cache cut inside an 어절 can be reproduced
+    # for the first time.  Seven of the ten forms move; NO form and NO column
+    # goes down.  The corpus totals are in
+    # ``test_the_corpus_wide_agreement_is_exactly_this``; the per-form deltas
+    # are named on each row.  The one paragraph the switch COSTS -- kstartup
+    # ¶719 -- is not visible here (it is a break-scoreboard row, pinned in
+    # ``test_the_syllable_unit_costs_kstartup_719_and_that_is_declared``),
+    # because kstartup's multiline line counts were already exact.
     "admrul-gajokdolbom-hyuga-sinchengseo": (22, 22, 22, 2, 2, 2, 2),
-    "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 0),
+    # 0 -> 1 break position: ¶63's cached cut is inside an 어절.
+    "gianmun-byeolji-1ho": (32, 32, 31, 1, 1, 2, 1),
     "gianmun-byeolji-2ho": (20, 20, 20, 2, 2, 2, 2),
-    "jeongbo-gonggae-cheongguseo": (58, 58, 53, 6, 6, 7, 2),
+    # 53 -> 56 sequences and 2 -> 5 break positions on the syllable unit.
+    "jeongbo-gonggae-cheongguseo": (58, 58, 56, 6, 6, 7, 5),
     # 130 -> 131, 24 -> 25, 12 -> 13 on the right-edge slice (#298): the fit
     # test now allows a line to run eight pen steps past its box, which is
     # what ``right_edge_probe.py --corpus`` measured the cache to allow, and
     # jumin ¶34 -- 7.5 HWPUNIT over a 43208 box -- stops being broken.
-    "jumin-deungchobon-sinchengseo": (133, 131, 117, 27, 25, 36, 13),
+    # 131 -> 133, 117 -> 131, 25 -> 27 and 13 -> 34 on the syllable unit; the
+    # largest per-form move in the table, and ¶139 (cache [0, 60, 113], ours
+    # [0, 59, 113] under the declared reading) is now exact.
+    "jumin-deungchobon-sinchengseo": (133, 133, 131, 27, 27, 36, 34),
     # 452 -> 454, 433 -> 435 on the bold-metering slice (#281): kstartup's
     # bold runs declare 맑은 고딕 and set hh:charPr@bold, and their advance is
     # now the family's REGULAR cut, which is what Hancom's own export
     # positions them by.  Every scored paragraph of this form now reproduces
     # the cached line count.  Nothing else on the row moved.
-    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 454, 435, 30, 30, 45, 19),
+    # 435 -> 441 and 19 -> 25 on the syllable unit.  This form also carries
+    # the slice's ONE regression, ¶719, which does not surface in these
+    # columns: its line COUNT was already exact and stays exact, and only its
+    # break POSITION moved -- from matching to not.  The break-position column
+    # still rises 19 -> 25 because six other kstartup paragraphs start
+    # matching, so the net is +6 and the cost is invisible here BY
+    # ARITHMETIC, not by omission.
+    "kstartup-jiwon-sincheongseo-saeopgyehoekseo": (454, 454, 441, 30, 30, 45, 25),
     # 259 -> 262, 247 -> 253, 31 -> 33 and 29 -> 34 on moel-2013, and
     # 297 -> 300, 277 -> 284, 7 -> 11 on moel-2025, from the MEASURED HFT
     # advance table.  These are the two forms whose punctuation Hancom drew
@@ -3057,14 +3232,38 @@ LINESEG_AGREEMENT = {
     # /Widths.  Both of the corpus's remaining text_rebreak:width carriers --
     # moel-2013 ¶118 and ¶141 -- now break exactly where the cache broke
     # them.  Every column that moved went up.
-    "moel-pyojun-geunrogyeyakseo-2013": (264, 262, 253, 35, 33, 50, 34),
+    # 262 -> 264, 253 -> 262, 33 -> 35 and 34 -> 46 on the syllable unit.
+    # ¶261 (예금통장|에, the cut #316 is argued from) is one of the twelve.
+    "moel-pyojun-geunrogyeyakseo-2013": (264, 264, 262, 35, 35, 50, 46),
     # 300 -> 304, 284 -> 288 on the right-edge slice (#298): four cached
     # lines of this form come out 27.1 HWPUNIT over a 44056 box and were
     # being broken; the eight-pen-step tolerance keeps them whole.  Its two
     # multiline columns do not move -- all four are one-line paragraphs.
-    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 288, 37, 27, 47, 11),
-    "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 87, 3, 3, 3, 1),
-    "saeopja-deungnok-sinchengseo": (765, 760, 750, 18, 16, 25, 8),
+    # 288 -> 296 and 11 -> 19 on the syllable unit; the two line-count columns
+    # (304, 27) do not move.
+    "moel-pyojun-geunrogyeyakseo-2025": (314, 304, 296, 37, 27, 47, 19),
+    # 89 -> 88 and 3 -> 2 on the MEASURED STAND-IN advance slice (#317): the
+    # only column that moved is the line COUNT, and it moved on exactly one
+    # paragraph, nrf ¶30.  The correction widens every 휴먼명조 syllable by
+    # about 5 % -- the bundled NanumMyeongjo stand-in advances one at 0.950 em
+    # where the reference draws the declared face at 0.996 -- and ¶30's second
+    # line no longer fits, so we lay it out in three lines where the cache
+    # used two.  ¶30 was ALREADY a break-sequence disagreement before this
+    # (cache [0, 50], ours [0, 45]): its first line breaks five characters
+    # early for a reason this slice did not touch, and the width correction
+    # only propagated that error into the line count.  No paragraph that
+    # agreed on breaks stopped agreeing -- sequence_exact held at 87 -- and
+    # the corpus break scoreboard was unchanged at 48/113 and 21/47.  (The
+    # syllable-unit slice then took the break scoreboard to 89/113 and 32/47
+    # and gave nrf ¶30 back; the row above is the current measurement.)
+    # 88 -> 89, 87 -> 88, 2 -> 3 and 1 -> 2 on the syllable unit: ¶30, the one
+    # paragraph #320's stand-in table cost, comes back -- its first line was
+    # breaking five characters early under the declared reading and now breaks
+    # where the cache broke it, so the second line fits again in two lines.
+    "nrf-gyeolgwa-bogoseo-yangsik": (89, 89, 88, 3, 3, 3, 2),
+    # 760 -> 761, 750 -> 761, 16 -> 17 and 8 -> 24 on the syllable unit.
+    # ¶189 (제61조제3|항) is one of them.
+    "saeopja-deungnok-sinchengseo": (765, 761, 761, 18, 17, 25, 24),
 }
 
 
@@ -3289,8 +3488,8 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # forms whose punctuation Hancom drew that way, and both of the corpus's
     # remaining ``text_rebreak:width`` carriers close: the root falls 165 ->
     # 100 and the corpus's proven over-measurements 49 -> 30.  Installed-face
-    # paragraphs are the control and do not move at all (48 / 113 cached
-    # break agreements before and after).  The rasters agree on the computed
+    # paragraphs were the control on that slice and did not move at all
+    # (48 / 113 cached break agreements before and after it).  The rasters agree on the computed
     # policy, which is the one that grades the breaker (line IoU +0.0192,
     # ssim +0.0045, inked +0.0074, means over the corpus).
     #
@@ -3310,7 +3509,55 @@ def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     # the one that grades the breaker (line IoU +0.00064, ssim +0.00036,
     # pair rate +0.00016, inked -0.00008, means over the corpus), and the
     # cache policy is byte-identical because it does not break lines.
-    assert totals == [2151, 2132, 2056, 161, 145, 219, 92], totals
+    #
+    # 2132 -> 2131 and 145 -> 144 on the measured-stand-in slice (#317), the
+    # ONLY two columns that move and the only slice in this list whose
+    # headline column goes down.  It is one paragraph, nrf ¶30, and it is
+    # worth the cost it names.  The corpus declares 휴먼명조 on 3529
+    # characters; this machine does not have that face, so the resolver
+    # substitutes the bundled NanumMyeongjo, which advances a Hangul syllable
+    # at 0.950 em where the reference PDFs draw the declared face at 0.996 --
+    # 60 HWPUNIT per character at 13 pt, under-measured on every line of the
+    # two moel forms.  ``standin_faces`` corrects that from the drawn glyph
+    # origins, and nrf ¶30's second line stops fitting: three computed lines
+    # where the cache has two.  ¶30 was already a break-sequence disagreement
+    # (cache [0, 50], ours [0, 45] -- its FIRST line breaks five characters
+    # early for a reason this slice does not touch), so no paragraph that
+    # agreed on breaks stopped agreeing: sequence_exact holds at 2056 and the
+    # break-position column at 92.  What the correction buys is not in these
+    # totals, because the shipped breaker cannot see it: eleven of the
+    # thirteen paragraphs #316's ``syllable`` candidate loses are lost to
+    # exactly this 5 %, and with the table they close (13 regressions -> 1,
+    # 43 gains -> 53, the non-installed half 10/47 -> 32/47), leaving only
+    # kstartup ¶719, which is installed-face throughout.  The rasters agree
+    # on BOTH policies and on every form (cache ssim +0.0070, inked +0.0246,
+    # line IoU +0.0069; computed +0.0056 / +0.0188 / +0.0059, means over the
+    # corpus; 53 pages and 10/10 exact page counts on both).
+    #
+    # 2131 -> 2137, 2056 -> 2108, 144 -> 150 and 92 -> 160 on the
+    # SYLLABLE-UNIT slice.  ``breakNonLatinWord`` is read, reported and no
+    # longer obeyed: Hangul breaks at the syllable under either declared
+    # value.  The basis is #316's, quoted not re-derived -- the public format
+    # document makes the Korean switch one bit with no exception clause, and
+    # the cache contradicts its 어절 state on its own documents (70 of the 204
+    # cached line ends in KEEP_WORD paragraphs fall inside an 어절, in words
+    # occupying 0.033 to 0.393 of their column, so none is an emergency
+    # break).  The break-position column nearly doubles, 92 -> 160, which is
+    # the largest single move any slice in this list has made on it; the two
+    # scored columns (2151, 161) and the cached-position column (219) cannot
+    # move and do not.  SEVEN of the ten forms rise and NONE falls.
+    #
+    # It is not free, and the cost is not in these totals: on
+    # ``advance_probe.break_scoreboard`` the switch is 53 gains against ONE
+    # regression, kstartup ¶719, an installed-face JUSTIFY line already 58.8
+    # HWPUNIT over its box and admitted only by the 96 HWPUNIT right-edge
+    # budget.  It is unexplained and it was NOT tuned away -- #316 measured
+    # that a budget of 0 recovers it, and the budget stays at 96 because the
+    # other twelve of #316's thirteen needed a negative budget and the score
+    # collapses below the shipped breaker before they close.  ¶719 is pinned
+    # on its own in ``test_the_syllable_unit_costs_kstartup_719_and_that_is_
+    # declared`` so it fails loudly if it ever moves.
+    assert totals == [2151, 2137, 2108, 161, 150, 219, 160], totals
 
 
 def test_the_measurement_says_which_way_each_disagreement_falls():
@@ -3750,12 +3997,26 @@ def test_the_sidecar_declares_what_the_breaker_honours_and_what_it_does_not(
     layout = gianmun_render["report"]["line_layout"]
     honored = " ".join(layout["parapr_honored"])
     not_honored = " ".join(layout["parapr_not_honored"])
-    for attribute in ("breakLatinWord", "breakNonLatinWord", "lineWrap",
+    for attribute in ("breakLatinWord", "lineWrap",
                       "condense", "lineSpacing", "intent"):
         assert attribute in honored, attribute
     for attribute in ("HYPHENATION", "widowOrphan", "keepWithNext",
                       "fontLineHeight", "snapToGrid"):
         assert attribute in not_honored, attribute
+    # breakNonLatinWord moved sides when the break unit became the syllable
+    # (#316): it is parsed and reported, and it is NOT obeyed.  A reader has
+    # to be able to see that from the sidecar alone.
+    assert "breakNonLatinWord" not in honored
+    assert "breakNonLatinWord" in not_honored
+    assert layout["break_unit"]["declaration_honored"] is False
+    assert "syllable" in layout["break_unit"]["unit"]
+    assert "kstartup" in layout["break_unit"]["declared_cost"]
+    # And the value the document itself declared stays readable next to it.
+    declared = layout["declared_break_setting"]
+    assert sum(declared["breakNonLatinWord"].values()) > 0
+    assert set(declared["breakNonLatinWord"]) <= {"KEEP_WORD", "BREAK_WORD",
+                                                  "None"}
+    assert sum(declared["breakLatinWord"].values()) > 0
     assert layout["prohibition_table"]["line_start_forbidden"]
     assert layout["prohibition_table"]["line_end_forbidden"]
     assert "not the spec" in layout["prohibition_table"]["note"]
