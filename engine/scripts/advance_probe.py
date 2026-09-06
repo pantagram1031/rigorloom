@@ -494,6 +494,13 @@ class OurMetrics:
             "cell_hwp": cell_hwp,
             "resolved": resolved,
             "source": source,
+            # The HFT face HWP meters this character off, or ``None``.  An
+            # installed DECLARED face and an HFT METRIC are not exclusive:
+            # ``source`` says the file's face is on this machine, this says
+            # Hancom answered the run out of its own HFT table instead
+            # (#288, #292).  The two have to be split before "the installed
+            # residual" means anything.
+            "hft": renderer._declared_hft_face(cid, ch),
             "slot": slot,
             "bold": bold,
             "size_pt": round(size_pt, 2),
@@ -629,6 +636,7 @@ def analyse_line(ours, boxes, metrics, keep_text=True):
                 "class": head["class"],
                 "slot": head["slot"],
                 "source": head["source"],
+                "hft": head["hft"],
                 "next_char": (nxt[1] if (nxt is not None and keep_text)
                               else None),
                 "next_class": nxt_run["class"] if nxt_run else None,
@@ -850,7 +858,7 @@ def class_table(reports):
 PUNCT_CLASSES = frozenset({"punct", "fw_punct"})
 
 
-def installed_chars(reports, classes=None):
+def installed_chars(reports, classes=None, hft=None):
     """Every anchored single-character advance drawn in an INSTALLED face.
 
     Restricted on BOTH sides of the boundary: the character's own face is the
@@ -859,6 +867,13 @@ def installed_chars(reports, classes=None):
     successor can be positioned by a metric that is not the declared face's.
     The fallback slice is measuring the other half of this population; the
     filter here is what keeps the two disjoint.
+
+    ``hft`` splits the population again, along the axis #292 opened: an
+    installed DECLARED face whose run Hancom nonetheless metered out of its
+    own HFT table is not evidence about the installed face's metrics at all.
+    ``False`` keeps only the runs metered off the installed face, ``True``
+    only the HFT ones, ``None`` (the default) both, which is what every
+    reading before #302 measured.
     """
     out = []
     for report in reports:
@@ -876,6 +891,8 @@ def installed_chars(reports, classes=None):
                         continue
                     if classes is not None and entry["class"] not in classes:
                         continue
+                    if hft is not None and bool(entry.get("hft")) != hft:
+                        continue
                     row = dict(entry)
                     row["form"] = Path(report["document"]).stem
                     row["autospace"] = auto
@@ -883,7 +900,7 @@ def installed_chars(reports, classes=None):
     return out
 
 
-def punct_char_table(reports):
+def punct_char_table(reports, hft=None):
     """Per punctuation CODE POINT, on installed faces: Hancom's em vs ours.
 
     Grouped by the character itself rather than by class, because the class
@@ -896,10 +913,11 @@ def punct_char_table(reports):
     ``hh:ratio``), so 1.0 is a full-width cell and 0.5 a half-width one.
     """
     buckets = defaultdict(list)
-    for row in installed_chars(reports, PUNCT_CLASSES):
-        buckets[(row["char"], row["class"], row["resolved"])].append(row)
+    for row in installed_chars(reports, PUNCT_CLASSES, hft=hft):
+        buckets[(row["char"], row["class"], row["resolved"],
+                 row.get("hft"))].append(row)
     rows = []
-    for (ch, klass, face), group in buckets.items():
+    for (ch, klass, face, hft_face), group in buckets.items():
         hancom = [g["hancom_hwp"] for g in group]
         ours = [g["ours_hwp"] for g in group]
         cells = [g["cell_hwp"] for g in group]
@@ -909,6 +927,7 @@ def punct_char_table(reports):
             "class": klass,
             "slot": group[0]["slot"],
             "resolved": face,
+            "hft": hft_face,
             "pdf_fonts": sorted({str(g["pdf_font"]) for g in group}),
             "forms": sorted({g["form"] for g in group}),
             "n": len(group),
@@ -1941,20 +1960,38 @@ def format_punct(rows, limit=40):
         return "\n".join(out)
     out.append(f"{'cp':<8} {'ch':<3} {'class':<9} {'slot':<8} "
                f"{'n':>5} {'hancom':>8} {'h_em':>7} {'ours':>8} {'o_em':>7} "
-               f"{'ratio':>7} {'sum d':>9}  {'resolved':<26}")
-    out.append("-" * 118)
+               f"{'ratio':>7} {'sum d':>9}  {'resolved':<22} {'hft':<12}")
+    out.append("-" * 132)
     for row in rows[:limit]:
         out.append(f"{row['codepoint'] or '?':<8} {row['char'] or '?':<3} "
                    f"{row['class']:<9} {row['slot']:<8} {row['n']:>5} "
                    f"{row['hancom_median_hwp']:>8.1f} {row['hancom_em']:>7.4f} "
                    f"{row['ours_median_hwp']:>8.1f} {row['ours_em']:>7.4f} "
                    f"{row['ratio']:>7.4f} {row['total_delta_hwp']:>9.1f}  "
-                   f"{row['resolved'][:26]:<26}")
+                   f"{row['resolved'][:22]:<22} "
+                   f"{(row.get('hft') or '-')[:12]:<12}")
     if len(rows) > limit:
         out.append(f"  ... {len(rows) - limit} further code points")
     out.append(f"  total over-measure on installed punctuation: "
                f"{sum(r['total_delta_hwp'] for r in rows):+.1f} HWPUNIT over "
                f"{sum(r['n'] for r in rows)} advances")
+    # The split #292 made necessary.  A run whose declared face is installed
+    # but which Hancom metered off its own HFT table says nothing about the
+    # installed face's own metrics, and folding the two together is what let
+    # a +197.76 HWPUNIT punctuation slot look like an installed-face term.
+    plain = [r for r in rows if not r.get("hft")]
+    inhouse = [r for r in rows if r.get("hft")]
+    for label, group in (("metered off the installed face", plain),
+                         ("metered from the HFT table", inhouse)):
+        if not group:
+            continue
+        worst = sorted(group, key=lambda r: -abs(r["total_delta_hwp"]))[:4]
+        out.append(f"    {label}: "
+                   f"{sum(r['total_delta_hwp'] for r in group):+.1f} over "
+                   f"{sum(r['n'] for r in group)} advances, carried by "
+                   + ", ".join(f"{r['codepoint'] or r['class']} "
+                               f"{r['resolved'][:12]} "
+                               f"{r['total_delta_hwp']:+.1f}" for r in worst))
     return "\n".join(out)
 
 
@@ -2234,6 +2271,10 @@ def build_parser():
                         help="the punctuation pass: per code point and per "
                              "inter-class boundary, INSTALLED faces only, "
                              "plus the candidate-rule scoreboard")
+    parser.add_argument("--installed-only", action="store_true",
+                        help="with --punct, drop the runs Hancom metered "
+                             "from its own HFT table (#292), leaving the "
+                             "residual that is the installed FACE's own")
     parser.add_argument("--fallback-rules", action="store_true",
                         help="score candidate advance rules for a run whose "
                              "declared face is not installed (#280), and run "
@@ -2278,7 +2319,9 @@ def main(argv=None):
     line_stats = line_delta_stats(reports)
     counts = comparability_counts(reports)
     sizes = pdf_size_table(reports)
-    puncts = punct_char_table(reports) if args.punct else []
+    puncts = (punct_char_table(reports,
+                               hft=False if args.installed_only else None)
+              if args.punct else [])
     gaps = gap_table(reports) if args.punct else []
     print(format_runs(rows, undrawn, zero_hancom, limit=args.runs))
     print(format_classes(classes))
