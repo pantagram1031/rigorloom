@@ -220,7 +220,7 @@ class TrackRenderer(cell_column_probe.CellColumnRenderer):
         #: ``{id(hp:tbl): xs}`` -- the solved column boundaries, in HWPUNIT.
         self.table_xs = {}
         #: ``{id(hp:tc): {"x0", "x1", "page"}}`` -- absolute, first draw wins.
-        self.cell_boxes = {}
+        self.seat_cell_boxes = {}
         self._cur_tbl = None
 
     def _table_tracks(self, draw, tbl, natural_rows=False):
@@ -237,7 +237,7 @@ class TrackRenderer(cell_column_probe.CellColumnRenderer):
             self._cur_tbl = outer
 
     def _render_cell_content(self, draw, cell, x0, y0, x1, y1):
-        self.cell_boxes.setdefault(id(cell["tc"]), {
+        self.seat_cell_boxes.setdefault(id(cell["tc"]), {
             "x0": x0, "x1": x1, "page": self._page,
             "tbl": self._cur_tbl,
         })
@@ -935,7 +935,7 @@ def probe_form(hwpx_path, dpi=own_render.DEFAULT_DPI, policy="cache",
         if base is None or tbl is None:
             continue
         table = tables[id(tbl)]
-        box = renderer.cell_boxes.get(id(tc), {})
+        box = renderer.seat_cell_boxes.get(id(tc), {})
         col, cspan = base["col"], base["col_span"]
         xs = table["xs"]
         declared = base["cell_width"]
@@ -1070,7 +1070,7 @@ def horzpos_oracle(renderer, cells):
     biggest = 0
     for record in renderer.cell_columns.values():
         cell = record["cell"]
-        box = renderer.cell_boxes.get(id(cell["tc"]), {})
+        box = renderer.seat_cell_boxes.get(id(cell["tc"]), {})
         abs_x = (box.get("x0") or 0) + cell["margin"]["left"]
         for para in cell["paras"]:
             for i, seg in enumerate(para.linesegs):
