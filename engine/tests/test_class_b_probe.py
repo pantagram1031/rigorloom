@@ -95,7 +95,7 @@ def box(address, y0, text="hello", page=1):
 
 
 def trace(origins, facts, boxes, cells=None, cell_boxes=None,
-          containers=None):
+          containers=None, flow_seats=None, cache_seats=None):
     return {
         "origins": {o["address"]: o for o in origins},
         "cell_boxes": cell_boxes or {},
@@ -103,8 +103,8 @@ def trace(origins, facts, boxes, cells=None, cell_boxes=None,
         "facts": {f["address"]: f for f in facts},
         "containers": containers or {f["address"]: "body" for f in facts},
         "cell_of": cells or {},
-        "flow_seats": {},
-        "cache_seats": {},
+        "flow_seats": flow_seats or {},
+        "cache_seats": cache_seats or {},
         "px_per_hwp": PX_PER_HWP,
     }
 
@@ -293,6 +293,118 @@ def test_a_row_that_grew_is_not_confused_with_a_table_that_moved():
     row = CB.decompose(cache, computed, y_tol=0.01)[0]
     assert row["cell"]["carrier"] == "table_row_heights"
     assert row["root_mechanism"] == "table_row_heights"
+
+
+def test_a_table_nested_in_a_cell_is_followed_up_to_the_outer_holder():
+    """One level up is not enough when a table sits in another table's cell.
+
+    ¶1 holds the outer table and is seated 1000 lower under the cache — its
+    space-before at a page top.  ¶5 lives in one of that table's cells and
+    holds the INNER table; ¶9 lives in a cell of the inner one.  ¶5 has no
+    predecessor and no step of its own: the whole of its displacement came
+    from the cell it sits in, so the only way to name ¶9 is to ask ¶5 the
+    same question again and land on ¶1.
+    """
+    facts = [fact(1, anchor_kind="inline:tbl", empty_text=True, characters=1,
+                  margin_prev_hwp=1000,
+                  objects=[{"kind": "tbl", "treat_as_char": True}]),
+             fact(5, top_level=False, anchor_kind="inline:tbl",
+                  empty_text=True, characters=1,
+                  objects=[{"kind": "tbl", "treat_as_char": True}]),
+             fact(9, top_level=False)]
+
+    def side(seat_one, mode):
+        outer_cell = 4000 + seat_one
+        inner_cell = outer_cell + 600
+        return trace(
+            [origin(1, seat_one, page=2, advance=20000, mode=mode),
+             origin(5, 0, page=2, container_y=outer_cell, mode=mode),
+             origin(9, 0, page=2, container_y=inner_cell, mode=mode)],
+            facts,
+            [box(1, 10.0, page=2), box(5, 40.0 + seat_one * PX_PER_HWP,
+                                       page=2),
+             box(9, 60.0 + seat_one * PX_PER_HWP, page=2)],
+            cells={5: "tc-outer", 9: "tc-inner"},
+            cell_boxes={
+                "tc-outer": {"row": 0, "col": 0, "y0_hwp": outer_cell,
+                             "margin_top_hwp": 0, "table": "outer",
+                             "table_y_hwp": outer_cell, "holder": 1,
+                             "page": 2},
+                "tc-inner": {"row": 0, "col": 0, "y0_hwp": inner_cell,
+                             "margin_top_hwp": 0, "table": "inner",
+                             "table_y_hwp": inner_cell, "holder": 5,
+                             "page": 2}},
+            containers={1: "body", 5: "cell-outer", 9: "cell-inner"})
+
+    cache = side(1000, "lineseg")
+    computed = side(0, "computed")
+    rows = {r["paragraph"]: r for r in CB.decompose(cache, computed,
+                                                    y_tol=0.01)}
+    inner = rows[9]
+    assert inner["carrier_term"] == "d_container_y_hwp"
+    assert inner["cell"]["carrier"] == "table_origin"
+    assert inner["cell"]["holder"] == 5
+    # ¶5 has no carriers of its own — the old walk stopped here.
+    assert inner["holder"]["carriers"] == []
+    assert inner["root_mechanism"] == "page_top:margin_prev"
+    assert "via_holder:page_top:margin_prev" in inner["mechanisms"]
+
+
+def test_a_step_is_not_charged_across_a_page_boundary():
+    """Seats are page-relative, so their difference across a break is not a
+    step anybody paid for.  ¶0 must not be charged for ¶1."""
+    facts = [fact(0), fact(1, margin_prev_hwp=1000)]
+    cache = trace([origin(0, 0, page=1, advance=1496),
+                   origin(1, 1000, page=2, advance=1496)],
+                  facts, [box(0, 10.0, page=1), box(1, 30.0, page=2)])
+    computed = trace([origin(0, 0, page=1, advance=2992, lines=2,
+                             mode="computed"),
+                      origin(1, 0, page=2, advance=1496, mode="computed")],
+                     facts, [box(0, 10.0, page=1), box(1, 10.0, page=2)])
+    row = CB.decompose(cache, computed, y_tol=0.01)[0]
+    assert row["paragraph"] == 1
+    assert row["carrier_term"] == "d_seat_hwp"
+    assert row["carriers"] == []
+    assert row["root_mechanism"] == "page_top:margin_prev"
+
+
+def test_the_space_before_at_a_page_top_is_checked_not_assumed():
+    """The margin has to ACCOUNT for the seat, or the band stays visible."""
+    facts = [fact(0), fact(1, margin_prev_hwp=40)]
+    cache = trace([origin(0, 0, page=1, advance=1496),
+                   origin(1, 1000, page=2, advance=1496)],
+                  facts, [box(0, 10.0, page=1), box(1, 30.0, page=2)])
+    computed = trace([origin(0, 0, page=1, advance=1496),
+                      origin(1, 0, page=2, advance=1496, mode="computed")],
+                     facts, [box(0, 10.0, page=1), box(1, 10.0, page=2)])
+    row = CB.decompose(cache, computed, y_tol=0.01)[0]
+    assert row["root_mechanism"] == "page_top_unattributed"
+
+
+def test_a_paragraph_carried_across_the_break_pays_for_the_page_head():
+    """The flow pass put ¶1 on page 2; the cache left it on page 1.  Its
+    computed height is exactly the room ¶2 lost, so ¶1 is the root."""
+    facts = [fact(0), fact(1, empty_text=True, characters=0), fact(2)]
+    cache = trace(
+        [origin(0, 0, page=1, advance=1496),
+         origin(2, 0, page=2, advance=1496)],
+        facts, [box(0, 10.0, page=1), box(2, 10.0, page=2)],
+        cache_seats={0: {"address": 0, "page": 1, "drawn_pages": 1},
+                     1: {"address": 1, "page": 1, "drawn_pages": 1},
+                     2: {"address": 2, "page": 2, "drawn_pages": 1}})
+    computed = trace(
+        [origin(0, 0, page=1, advance=1496, mode="computed"),
+         origin(2, 2560, page=2, advance=1496, mode="computed")],
+        facts, [box(0, 10.0, page=1), box(2, 61.2, page=2)],
+        cache_seats={0: {"address": 0, "page": 1, "drawn_pages": 1},
+                     1: {"address": 1, "page": 1, "drawn_pages": 1},
+                     2: {"address": 2, "page": 2, "drawn_pages": 1}},
+        flow_seats={(1, 2): {"address": 1, "page": 2, "top_hwp": 0,
+                             "height_hwp": 2560}})
+    row = CB.decompose(cache, computed, y_tol=0.01)[0]
+    assert row["paragraph"] == 2
+    assert row["carriers"] == []
+    assert row["root_mechanism"] == "empty_paragraph"
 
 
 def test_a_paragraph_the_policies_put_on_different_pages_is_named_not_guessed():
