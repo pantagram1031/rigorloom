@@ -14,6 +14,19 @@ thirteen while keeping the gains.
 **It does not. Nothing shipped.** `own_render.py` is untouched on this
 branch; the matrix and the thirteen diagnoses below are the deliverable.
 
+> **Superseded as a statement about the tree.** The above is #316's own
+> result and stands as written. What changed underneath it is the *cost*:
+> [#320](https://github.com/pantagram1031/rigorloom/pull/320)'s measured
+> stand-in advance table closed eleven of the thirteen, leaving one —
+> `kstartup` ¶719 — and the syllable unit then SHIPPED on
+> `claude/engine-e2-syllable-switch`. `breakNonLatinWord` is now read,
+> reported and not obeyed; see `own_render.KOREAN_BREAK_UNIT`. The break
+> score went 48/113 · 21/47 to **89/113 · 32/47**, 53 gains against that one
+> declared regression. Everything below — §1's reading of the public
+> document, §2's cut-class matrix, §3's thirteen — is the basis that shipped
+> it, and §4's narrowing table is still the reason the rule is `syllable`
+> and not one of the class-based narrowings.
+
 ## What was measured
 
 | | |
