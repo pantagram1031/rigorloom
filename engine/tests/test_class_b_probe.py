@@ -24,7 +24,17 @@ What is pinned here, and why:
     tabbed paragraph is a named gap and one without a tab is a glyph-advance
     difference, and reading them as one number hides which;
   * that a container term is followed UP to the paragraph that holds the
-    table, because "the table moved" names nothing on its own.
+    table, because "the table moved" names nothing on its own;
+  * that ``--line-height`` refuses to read a span fault as a height fault.
+    ``text_line_height`` is reached by elimination — equal line COUNT,
+    unequal advance — and a line that holds different CHARACTERS satisfies
+    that as readily as a height rule that misread the same ones.  The view
+    scores the rule on the CACHE's own spans first (path A), where no break
+    difference can participate, and only then names what is left over;
+  * that ``--valign`` says which of the two inputs to the vertical-align
+    offset moved.  A cell that faithfully re-centred a row that changed
+    height under it did nothing wrong, and reading it as an alignment fault
+    would send the fix to the wrong seam.
 
 No count of corpus paragraphs, class-B rows or mechanisms is pinned as an
 integer here: ``tests/test_no_inventory_pins.py`` forbids it, and those
@@ -586,6 +596,124 @@ def test_a_page_foot_whose_successor_only_fits_without_the_space_after():
     assert bracket["reserve_refuted"] == 0
 
 
+# -- --line-height: a height fault is not a span fault -------------------
+#
+# ``mechanism()`` reaches ``text_line_height`` by elimination — same line
+# COUNT, different total advance — and two different faults satisfy that.
+# The whole value of the view is that it refuses to call them one thing, so
+# the discrimination is what is pinned here.
+
+def span_metrics(spans, exact, controls=None):
+    """A ``_cached_span_metrics`` entry: spans, and what sits on each start."""
+    controls = controls or {}
+    return {
+        "lines": [{"span": list(span),
+                   "control_cells_before_start": controls.get(index, 0)}
+                  for index, span in enumerate(spans)],
+        "exact": exact,
+        "total": len(spans),
+    }
+
+
+def test_a_height_rule_miss_is_named_before_any_span_is_looked_at():
+    """Path A failing IS the height rule failing; nothing else can be it."""
+    path_a = span_metrics([(0, 10), (10, 20)], exact=1)
+    assert CB._line_height_mechanism(
+        path_a, [[0, 10], [10, 20]], [[0, 10], [10, 20]], 0) == "height_rule"
+
+
+def test_a_control_on_the_cached_boundary_is_a_break_fault_not_a_height():
+    """The REAL case: an hp:lineBreak takes a textpos cell and no character.
+
+    The cache breaks on it, our character stream cannot see it, and the line
+    that loses the taller run's trailing characters comes out shorter with the
+    same line count — which reads as a height difference and is not one.
+    """
+    path_a = span_metrics([(0, 7), (7, 59)], exact=2, controls={1: 1})
+    assert CB._line_height_mechanism(
+        path_a, [[0, 7], [7, 59]], [[0, 52], [52, 59]],
+        1) == "span:control_break"
+
+
+def test_the_counter_case_a_span_that_moved_with_nothing_on_the_boundary():
+    """The synthetic counter-case: same shape, no control, no lineBreak.
+
+    Without this the ``control_cells_before_start`` and ``line_breaks``
+    channels could both be ignored and every span difference would still be
+    called a control break.
+    """
+    path_a = span_metrics([(0, 7), (7, 59)], exact=2)
+    assert CB._line_height_mechanism(
+        path_a, [[0, 7], [7, 59]], [[0, 52], [52, 59]], 0) == "span:width"
+
+
+def test_a_control_the_flow_pass_also_broke_on_is_not_charged():
+    """A boundary both passes share cannot be why they disagree."""
+    path_a = span_metrics([(0, 7), (7, 59)], exact=2, controls={1: 1})
+    assert CB._line_height_mechanism(
+        path_a, [[0, 7], [7, 59]], [[0, 7], [7, 59]],
+        1) == "advance_unattributed"
+
+
+def test_an_inherited_paragraph_is_reported_against_its_carrier():
+    """Twenty paragraphs behind one cause are one row, not twenty."""
+    record = {"paragraph": 74, "carrier_term": "d_seat_hwp",
+              "carriers": [{"paragraph": 73, "step_hwp": -208,
+                            "mechanism": "text_line_height"},
+                           {"paragraph": 70, "step_hwp": -4,
+                            "mechanism": "text_line_height"}]}
+    assert CB._carrier_of(record) == 73
+    assert CB._carrier_of({"paragraph": 12,
+                           "carrier_term": "d_first_offset_hwp"}) == 12
+
+
+# -- --valign: which input to the offset moved ---------------------------
+
+def valign_cell(avail, block, offset, align="CENTER"):
+    return {"row": 0, "col": 0, "table": 0, "vert_align": align,
+            "cell_height_hwp": avail + 200, "avail_height_hwp": avail,
+            "declared_height_hwp": avail + 200, "block_extent_hwp": block,
+            "cached_block_extent_hwp": block, "offset_hwp": offset,
+            "paragraphs": 1, "page": 1}
+
+
+def valign_case(before, after, d_offset):
+    record = {"paragraph": 5, "dy_px": 1.0, "root_mechanism": "cell_valign",
+              "terms_hwp": {"d_container_y_hwp": 0,
+                            "d_block_offset_hwp": d_offset,
+                            "d_seat_hwp": 0, "d_first_offset_hwp": 0}}
+    cache = {"cell_valign": {1: before}, "cell_of": {5: 1}}
+    computed = {"cell_valign": {2: after}, "cell_of": {5: 2},
+                "facts": {5: fact(5, linesegs=[seg(0)])}}
+    return CB.valign_report(cache, computed, [record])
+
+
+def test_a_cell_that_re_centred_a_moved_row_is_not_the_cells_fault():
+    """``avail_h`` moved and the content did not: the ROW paid for this."""
+    report = valign_case(valign_cell(2148, 800, 674),
+                         valign_cell(3280, 800, 1240), 566)
+    row = report["rows"][0]
+    assert row["channel"] == "row_height"
+    assert row["formula_ok"], "the recorded inputs must explain the offset"
+    assert report["formula_failures"] == 0
+
+
+def test_a_cell_whose_own_content_grew_is_charged_to_the_block():
+    """The counter-case: the box stayed and the content moved."""
+    report = valign_case(valign_cell(24630, 15300, 4665),
+                         valign_cell(24630, 16400, 4115), -550)
+    row = report["rows"][0]
+    assert row["channel"] == "block_extent"
+    assert row["formula_ok"]
+
+
+def test_an_offset_the_recorded_inputs_do_not_explain_is_reported_not_hidden():
+    report = valign_case(valign_cell(2148, 800, 674),
+                         valign_cell(3280, 800, 1240), 999)
+    assert report["rows"][0]["formula_ok"] is False
+    assert report["formula_failures"] == 1
+
+
 # -- the CLI still parses ------------------------------------------------
 
 def test_the_parser_offers_corpus_and_a_tolerance_in_hwpunit():
@@ -594,6 +722,9 @@ def test_the_parser_offers_corpus_and_a_tolerance_in_hwpunit():
     assert args.tol == CB.DEFAULT_TOL_HWP
     assert args.page_top is False
     assert CB.build_parser().parse_args(["--corpus", "--page-top"]).page_top
+    assert CB.build_parser().parse_args(["--corpus",
+                                         "--line-height"]).line_height
+    assert CB.build_parser().parse_args(["--corpus", "--valign"]).valign
 
 
 def test_an_input_is_required_without_corpus():

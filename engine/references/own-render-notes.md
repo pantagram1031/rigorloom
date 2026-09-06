@@ -11253,3 +11253,185 @@ this subject; its not moving is a control, not a verdict.
   render of an EDITED document; the two policies are both scored against the
   same pinned reference PDFs, and every own render stays `own-uncertified`.
 - **The corpus is the training set, again.** Ten public forms, one machine.
+
+## The `text_line_height` remainder is not a height, and `cell_valign` is not an alignment — measured, 2026-09-06
+
+`class_b_probe.py --corpus` on #314 leaves 102 class-B paragraphs under five
+roots: `table_row_heights` 63 (#311/#313's), `text_line_height` 19,
+`cell_valign` 15, `page_top_unattributed` 3, `text_rebreak:width` 2. This slice
+took the 19 and the 15. Both turn out to be labels for a cause that lives
+somewhere else, and **nothing ships from either the line-height or the
+cell-alignment path**: on the corpus neither path is wrong.
+
+The instrument is two new views on the existing probe,
+`class_b_probe.py --corpus --line-height` and `--valign`. `own_render.py` is
+not touched at all by this slice.
+
+### Why `text_line_height` cannot be taken at face value
+
+`mechanism()` reaches the label by elimination: no forced break, no object, not
+inkless, the two policies drew the same NUMBER of lines, and the lines add up to
+a different total. Two different faults satisfy that description —
+
+* the height RULE misread the runs on a line, or
+* the line holds different CHARACTERS, because the break moved without changing
+  the count,
+
+— and they want opposite fixes. `_line_metrics(para, start, end)` answers for
+the characters in `[start, end)`, so the two are only separable by asking our
+rule the cache's own question.
+
+**Path A, and it is clean.** `_cached_span_metrics` reconstructs each cached
+line's span from `hp:lineseg@textpos` (`Paragraph.lineseg_spans`) and calls our
+`_line_metrics` on it. Over the ten corpus forms, every paragraph that has both
+a cached `hp:linesegarray` and at least one character:
+
+| | |
+| --- | --- |
+| our `vertsize` AND `spacing` == the cached `hp:lineseg`'s, on the cache's own spans | **2376 / 2376** |
+| paragraphs whose computed spans equal the cache's | 2057 |
+| paragraphs whose computed spans differ | 95 |
+
+No line-height rule change can improve on 2376 of 2376, so the line-height seam
+has nothing to ship. Everything left is a span.
+
+### The 19 are one paragraph, and the boundary has a control on it
+
+All 19 class-B paragraphs are `inherited`, and following each one's `d_seat`
+telescope to the predecessor that paid for it gives **one** carrier for all
+nineteen: `moel-2025` ¶73, page 3.
+
+| | cache | ours |
+| --- | --- | --- |
+| line spans | `[0,7] [7,59]` | `[0,52] [52,59]` |
+| line 1 `vertsize` + `spacing` | 1300 + 40 | 1300 + 40 |
+| line 2 `vertsize` + `spacing` | 1300 + 40 | 1100 + 32 |
+| advance | 2680 | 2472 (**−208**) |
+| path A on the cached spans | — | 2 / 2 exact |
+
+¶73 is `<hp:run charPrIDRef="10"><hp:t>6. 임  금<hp:lineBreak/>   </hp:t></hp:run>`
+followed by a second run at 11 pt. `charPr` 10 is 13 pt, `charPr` 50 is 11 pt,
+`hh:lineSpacing` is `PERCENT` 103, and `percent_leading` gives 40 on 1300 and 32
+on 1100 — both exact.
+
+The whole difference is WHICH characters line 2 holds. `hp:lineBreak` takes one
+`textpos` cell (`TEXTPOS_CELLS_CHAR`) and puts nothing into `Paragraph.chars`,
+so the cache breaks immediately after it and line 2 opens on the three 13 pt
+spaces that follow it; our breaker never sees the control, the three spaces hang
+at the end of a line 1 that runs on to character 52, and line 2 is measured from
+the 11 pt run alone. The view detects this without guessing: `cell_start` says
+how many cells sit between a cached boundary and the character before it, and a
+cached boundary our flow pass does not share with a control on it is
+`span:control_break`.
+
+| mechanism | carriers | class B | one carrier |
+| --- | --- | --- | --- |
+| `span:control_break` | 1 | 19 | `moel-2025` ¶73 |
+| `height_rule` | 0 | 0 | — |
+| `span:width` | 0 | 0 | — |
+
+Candidates the measurement refutes rather than ignores:
+
+* **`hp:paraPr@snapToGrid`.** ¶73 sets it, and the renderer declares the section
+  grid unimplemented, so it is a candidate on its face. Every `hp:secPr/hp:grid`
+  in all ten forms is `lineGrid="0" charGrid="0" wonggojiFormat="0"`: there is no
+  grid to snap to, and the flag is inert on this corpus.
+* **mixed run sizes as such.** ¶73 has two (1300, 1100), but so do many
+  paragraphs whose spans agree; the mixture is what makes the span difference
+  VISIBLE in the height, not what causes it.
+* **`hh:ratio`, `hh:relSz`, HFT metering, face substitution.** ¶73's two runs are
+  neutral on ratio and relSz, and the height rule excludes all three by
+  measurement already (`_line_metrics`' docstring).
+
+Corpus-wide, 22 paragraphs across four forms carry an `hp:lineBreak`; the two
+single-line ones agree, and every one of the other 20 has a span difference.
+The other 19 do not reach class B — their runs are the same size across the
+control, or they sit in cells whose row height absorbs the difference — so ¶73
+is the one place where a dropped control becomes a visible page shift.
+
+**Nothing ships.** The fix is to honour `hp:lineBreak` as a hard break in the
+character stream and the line-fit pass, which is the break-opportunity path a
+sibling branch holds open. This slice stays out of it by construction.
+
+### `cell_valign` is a faithful re-solve of a box somebody else moved
+
+`_render_cell_content` solves one equation: `offset` is `0` for `TOP`,
+`max(0, (avail_h - block) // 2)` for `CENTER` and `max(0, avail_h - block)` for
+`BOTTOM`. So `d_block_offset` has exactly two channels, and the `--valign` view
+records both as the renderer solves them.
+
+| channel | paragraphs | one carrier |
+| --- | --- | --- |
+| `row_height` — `avail_h` moved, the block did not | 14 | `saeopja` ¶385, table 4 r0c0 CENTER: avail 2148 → 3280, block 800 → 800, `d_offset` +566 |
+| `block_extent` — the block moved, `avail_h` did not | 1 | `moel-2013` ¶220, table 5 r17c4 CENTER: avail 24630 → 24630, block 15300 → 16400, `d_offset` −550 |
+
+Every `CENTER` cell; no `BOTTOM` one is in the population. The recorded inputs
+reproduce the drawn `d_block_offset` on **15 of 15** rows, and the equation
+reproduces the drawn offset on **1499 of 1499** non-`TOP` cells in the corpus —
+the counter-example sweep found none.
+
+So the alignment path is exact and the label is inherited twice over:
+
+* the 14 are `table_row_heights` seen from inside the cell. Their row came out
+  taller under `computed`, and a `CENTER` cell that re-centres a box that grew
+  is doing the one thing it is for. The root walk stops at `d_block_offset`
+  because that term IS the largest one for those paragraphs, which is true and
+  is not the cause;
+* the 1 is `moel-2013` ¶222 re-breaking into a fifth line inside the same cell
+  (cached advance 4400, ours 5500), which lifts the cell's block extent by
+  exactly the 1100 the offset moved by half of. That is the breaker again.
+
+**Nothing ships.** No rule in the cell-alignment path is wrong on the corpus,
+and both causes are owned elsewhere — #311/#313 for the row heights, the
+break-opportunity branch for the extra line.
+
+The root histogram is deliberately left alone. Re-rooting the 14 onto
+`table_row_heights` would be a better attribution and would also change a number
+two other open branches are quoting; the grouping above says it instead.
+
+### Before and after
+
+Nothing in the renderer changed, so nothing in the scoreboard did. Measured
+rather than assumed:
+
+| measure | #314 | this branch |
+| --- | --- | --- |
+| `render_scoreboard --corpus --dpi 144 --layout-policy cache` (ssim / inked / line-IoU) | 0.861944 / 0.393719 / 0.736589, 53 pages, 10/10 exact | identical |
+| … `--layout-policy computed` | 0.850452 / 0.373788 / 0.706026, 53 pages, 10/10 exact | identical |
+| `layout_divergence --corpus` agree / A / B / C | 1830 / 94 / 102 / 28 | identical |
+| `class_b_probe --corpus` root histogram | 63 / 19 / 15 / 3 / 2 | identical |
+| `lineseg_vs_pdf --corpus` (control) | 411 / 411 lines, 8566 / 8566 characters | identical |
+| `render_check` `render-check-01` | 6 · 37 · 6 · 2 @96, 14 · 31 · 4 · 2 @144, 9 / 9 pages | identical |
+
+`git diff --name-only origin/claude/engine-e2-converge-12 -- engine/scripts/own_render.py`
+is empty: the renderer is byte-identical to #314, so every page PNG is too, by
+construction rather than by comparison.
+
+`render_check.py` has no `--layout-policy` switch and builds its renderer at
+`auto`. On `render-check-01` that is the same run under both policies, and the
+reason is measurable rather than asserted: the document contains **0**
+`hp:lineseg` elements, so there is no cached layout for `cache` to prefer. What
+it can test is per-feature-block fidelity against a Hancom export at two
+resolutions; what it cannot test is anything in this slice, because the subject
+here is what a CACHED layout says and it has none.
+
+### Not proven
+
+- **One carrier is not a population.** `text_line_height` is nineteen
+  paragraphs behind a single `hp:lineBreak` in a single form. That the control
+  is on the boundary is measured; that honouring it would close all nineteen is
+  an inference from the cached spans, not a render that was run.
+- **The `span:control_break` label is coarse.** `TEXTPOS_CELLS_CHAR` holds four
+  controls and the corpus only exercises `hp:lineBreak`. `hp:hyphen`,
+  `hp:nbSpace` and `hp:fwSpace` would be counted the same way and nothing here
+  measures them.
+- **The valign sweep is a sweep of OUR renders.** "1499 of 1499" says the drawn
+  offset follows the equation the renderer itself applies; it is a consistency
+  check on the recording, not agreement with Hancom. What is compared against
+  Hancom is the 15 rows' `d_block_offset`, and only through the cached layout.
+- **Path A is path A.** 2376 of 2376 is our rule against the authoring engine's
+  own cache on the authoring engine's own spans. It says nothing about a
+  paragraph the cache does not describe, and nothing about an edited one.
+- **Path C is not run.** Nothing here is measured against a licensed Hancom
+  render of an edited document. Every own render stays `own-uncertified`.
+- **The corpus is the training set, again.** Ten public forms, one machine.
