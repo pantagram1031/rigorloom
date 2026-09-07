@@ -47,6 +47,16 @@
       "description": "Model ID used by the orchestrator/agent runner (e.g. gemini-3.8-flash)",
       "default": "gemini-3.8-flash"
     },
+    "approval_mode": {
+      "type": "string",
+      "enum": [
+        "human_approved",
+        "mock_approved",
+        "refuse"
+      ],
+      "default": "human_approved",
+      "description": "Approval resolution mode for agent plan gating. 'mock_approved' allows unattended QA runs to gate plan apply via mock resolution without claiming human approval or GUI/IME PASS. 'human_approved' requires real operator review."
+    },
     "metadata": {
       "type": "object",
       "description": "Arbitrary key-value metadata associated with the run",

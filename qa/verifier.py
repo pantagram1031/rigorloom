@@ -24,6 +24,8 @@ class CardVerdict:
     reason: str
     command: list[str] | None = None
     output_files: list[str] | None = None
+    approval_mode: str = "human_approved"
+    mock_approved: bool = False
     gui_claimed: bool = False  # Always False: deterministic verification never claims GUI/IME success
 
 
@@ -36,6 +38,8 @@ def verify_exit_code(
     output_files: list[str] | None = None,
     is_blocked: bool = False,
     is_not_run: bool = False,
+    approval_mode: str = "human_approved",
+    mock_approved: bool = False,
 ) -> CardVerdict:
     """Deterministically map exit codes and execution context to status."""
     if is_not_run:
@@ -66,11 +70,16 @@ def verify_exit_code(
         reason=detail,
         command=command,
         output_files=output_files or [],
+        approval_mode=approval_mode,
+        mock_approved=mock_approved,
         gui_claimed=False,
     )
 
 
-def summarize_verdicts(verdicts: list[CardVerdict]) -> dict[str, Any]:
+def summarize_verdicts(
+    verdicts: list[CardVerdict],
+    approval_mode: str = "human_approved",
+) -> dict[str, Any]:
     """Produce an aggregate verdict summary dictionary."""
     counts = {"PASS": 0, "FAIL": 0, "NOT_RUN": 0, "BLOCKED": 0}
     for v in verdicts:
@@ -84,9 +93,13 @@ def summarize_verdicts(verdicts: list[CardVerdict]) -> dict[str, Any]:
     elif counts["PASS"] == 0 and counts["NOT_RUN"] > 0:
         overall = "NOT_RUN"
 
+    mock_count = sum(1 for v in verdicts if v.mock_approved)
+
     return {
         "overall_status": overall,
         "counts": counts,
+        "approval_mode": approval_mode,
+        "mock_approved_count": mock_count,
         "gui_ime_claimed": False,
         "verdicts": [asdict(v) for v in verdicts],
     }
