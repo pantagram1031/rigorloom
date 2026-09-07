@@ -171,11 +171,14 @@ fn same_filesystem_node(left: &Path, right: &Path) -> bool {
             }
             #[cfg(windows)]
             {
-                use std::os::windows::fs::MetadataExt;
-                a.volume_serial_number() == b.volume_serial_number()
-                    && a.file_index() == b.file_index()
-                    && a.volume_serial_number().is_some()
-                    && a.file_index().is_some()
+                // `MetadataExt::volume_serial_number` / `file_index` are the
+                // unstable `windows_by_handle` feature on stable rustc, so
+                // identity is read through kernel32 directly.
+                let _ = (a, b);
+                match (win32::file_identity(left), win32::file_identity(right)) {
+                    (Some(x), Some(y)) => x == y,
+                    _ => false,
+                }
             }
             #[cfg(not(any(unix, windows)))]
             {
@@ -184,6 +187,90 @@ fn same_filesystem_node(left: &Path, right: &Path) -> bool {
             }
         }
         _ => false,
+    }
+}
+
+/// The two kernel32 calls this module needs, declared locally so the file
+/// builds with bare `rustc` (tests/desktop_export_safety_harness.rs) as well
+/// as under cargo. Signatures follow the Win32 documentation.
+#[cfg(windows)]
+mod win32 {
+    use std::fs::File;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+
+    pub const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    pub const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    struct FILETIME {
+        dwLowDateTime: u32,
+        dwHighDateTime: u32,
+    }
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    struct BY_HANDLE_FILE_INFORMATION {
+        dwFileAttributes: u32,
+        ftCreationTime: FILETIME,
+        ftLastAccessTime: FILETIME,
+        ftLastWriteTime: FILETIME,
+        dwVolumeSerialNumber: u32,
+        nFileSizeHigh: u32,
+        nFileSizeLow: u32,
+        nNumberOfLinks: u32,
+        nFileIndexHigh: u32,
+        nFileIndexLow: u32,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+        fn GetFileInformationByHandle(
+            handle: *mut core::ffi::c_void,
+            info: *mut BY_HANDLE_FILE_INFORMATION,
+        ) -> i32;
+    }
+
+    pub fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    /// (volume serial, file index) — the same node under every spelling,
+    /// hard link, or symlink target. `None` when the file cannot be opened
+    /// or the query fails, which the caller treats as "not an alias".
+    pub fn file_identity(path: &Path) -> Option<(u32, u64)> {
+        let file = File::open(path).ok()?;
+        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
+        if ok == 0 {
+            return None;
+        }
+        let info = unsafe { info.assume_init() };
+        let index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
+        Some((info.dwVolumeSerialNumber, index))
+    }
+
+    pub fn move_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+        let src = wide(from);
+        let dst = wide(to);
+        let ok = unsafe {
+            MoveFileExW(
+                src.as_ptr(),
+                dst.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if ok == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -220,35 +307,10 @@ fn atomic_replace(from: &Path, to: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 fn windows_replace(from: &Path, to: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::GetLastError;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-
-    fn wide(path: &Path) -> Vec<u16> {
-        path.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect()
-    }
     if !to.exists() {
         return fs::rename(from, to);
     }
-    let src = wide(from);
-    let dst = wide(to);
-    let ok = unsafe {
-        MoveFileExW(
-            src.as_ptr(),
-            dst.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if ok == 0 {
-        Err(io::Error::from_raw_os_error(unsafe { GetLastError() } as i32))
-    } else {
-        Ok(())
-    }
+    win32::move_replace(from, to)
 }
 
 fn remove_if_exists(path: &Path) {

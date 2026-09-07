@@ -858,6 +858,12 @@ _FONT_SEARCH = (
      "desktop/sidecar/fonts/Pretendard-Bold.ttf"),
     # 3. the system Korean UI face — present on every Windows install
     ("system", r"C:\Windows\Fonts\malgun.ttf", r"C:\Windows\Fonts\malgunbd.ttf"),
+    # 4. the bundled OFL family-map face (engine/references/fonts/LICENSES.md).
+    #    Listed AFTER malgun so a Windows machine keeps the fallback the corpus
+    #    pins were measured with; a Linux runner with no Korean face installed
+    #    (GitHub ubuntu-latest) reaches it instead of RendererUnavailable.
+    ("repo", "engine/references/fonts/family-map/NanumGothic-Regular.ttf",
+     "engine/references/fonts/family-map/NanumGothic-Bold.ttf"),
     ("system", "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
      "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"),
 )
