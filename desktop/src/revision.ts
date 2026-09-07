@@ -8,7 +8,9 @@
  * a refusal a caller can turn back into a stale selection.
  *
  * Card 3 (run-scoped edit) sits on the same lease: the click names one run
- * and a UTF-16 range inside it. See `run_map.ts`.
+ * and a UTF-16 range inside it. A multi-run paragraph is editable when the
+ * caret lands in exactly one run; other runs are not read or written. See
+ * `run_map.ts`.
  *
  * See docs/research/revision-coherence-01.md (PR #254) and this wiring on
  * the desktop-own-render tip (PR #221).
@@ -27,12 +29,14 @@ export type CaretRefusal =
   | "run_text_differs"
   | "no_inventory"
   | "revision_mismatch"
-  | "cross_run";
+  | "cross_run"
+  | "utf16_split";
 
 export { OFFSET_UNIT, type OffsetUnit } from "./run_map";
 export {
   commitRunScopedReplacement,
   fieldTextForRunEdit,
+  isUtf16Split,
   locateSpanInRuns,
   replaceUtf16Range,
   utf16Length,
@@ -226,13 +230,15 @@ export async function prepareParagraphEdit(args: {
   if (runs.length === 0) {
     return { kind: "refused", lease, refusal: "no_inventory", address, spanIndex: args.spanIndex };
   }
-  const located = locateSpanInRuns(args.spanText, runs);
+  const located = locateSpanInRuns(args.spanText, runs, args.caret);
   if (located.kind === "refused") {
     return { kind: "refused", lease, refusal: located.refusal, address, spanIndex: args.spanIndex };
   }
   const rangeLen = located.rangeEnd - located.rangeStart;
   const caret =
-    args.caret == null ? null : Math.max(0, Math.min(args.caret, rangeLen));
+    args.caret == null
+      ? null
+      : Math.max(0, Math.min(args.caret - located.spanOffset, rangeLen));
   return {
     kind: "caret",
     lease,
