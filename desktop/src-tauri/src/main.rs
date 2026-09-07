@@ -893,6 +893,86 @@ mod export_tests {
     }
 
     #[test]
+    fn an_existing_artifact_without_a_receipt_is_preserved() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) =
+            layout("existing-artifact-only");
+        let target = export_dir.join("chosen.hwpx");
+        let receipt_target = receipt_target_for(&target);
+        std::fs::write(&target, b"existing document only").unwrap();
+
+        let error = export_candidate_files(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_exists");
+        assert_eq!(std::fs::read(&target).unwrap(), b"existing document only");
+        assert!(!receipt_target.exists());
+        assert!(!has_stage_residue(&export_dir));
+    }
+
+    #[test]
+    fn an_existing_receipt_without_an_artifact_is_preserved() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) =
+            layout("existing-receipt-only");
+        let target = export_dir.join("chosen.hwpx");
+        let receipt_target = receipt_target_for(&target);
+        std::fs::write(&receipt_target, b"existing receipt only").unwrap();
+
+        let error = export_candidate_files(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_exists");
+        assert!(!target.exists());
+        assert_eq!(
+            std::fs::read(&receipt_target).unwrap(),
+            b"existing receipt only"
+        );
+        assert!(!has_stage_residue(&export_dir));
+    }
+
+    #[test]
+    fn a_destination_hard_linked_to_the_runtime_artifact_is_preserved() {
+        let (_temp, runtime_root, export_dir, artifact, receipt) =
+            layout("runtime-hard-link-alias");
+        let target = export_dir.join("chosen.hwpx");
+        let receipt_target = receipt_target_for(&target);
+        let before = std::fs::read(&artifact).unwrap();
+        std::fs::hard_link(&artifact, &target).unwrap();
+
+        let error = export_candidate_files(
+            &runtime_root,
+            &artifact,
+            &receipt,
+            "session",
+            "run",
+            "artifact.hwpx",
+            &target,
+        )
+        .unwrap_err();
+
+        assert_eq!(error["code"], "export_exists");
+        assert_eq!(std::fs::read(&artifact).unwrap(), before);
+        assert_eq!(std::fs::read(&target).unwrap(), before);
+        assert!(!receipt_target.exists());
+        assert!(!has_stage_residue(&export_dir));
+    }
+
+    #[test]
     fn a_receipt_directory_refuses_before_the_artifact_is_published() {
         let (_temp, runtime_root, export_dir, artifact, receipt) = layout("receipt-directory");
         let target = export_dir.join("chosen.hwpx");
