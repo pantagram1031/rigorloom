@@ -32,8 +32,16 @@ def test_run_map_declares_utf16_and_does_not_flatten():
     text = (REPO / "desktop" / "src" / "run_map.ts").read_text(encoding="utf-8")
     assert 'OFFSET_UNIT = "utf-16"' in text
     assert "cross_run" in text
+    assert "utf16_split" in text
     assert "replace_paragraph_text" not in text
-    assert "join(" in text  # concatenation is only a cross-run detector
+    assert "join(" in text  # concatenation is a cross-run detector / caret map
+    assert "caret" in text
+
+
+def test_prepare_passes_caret_into_run_map():
+    text = (REPO / "desktop" / "src" / "revision.ts").read_text(encoding="utf-8")
+    assert "locateSpanInRuns(args.spanText, runs, args.caret)" in text
+    assert "args.caret - located.spanOffset" in text
 
 
 def test_run_scoped_edit_harness():
