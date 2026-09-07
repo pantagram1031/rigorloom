@@ -14,6 +14,7 @@ import {
   startDocumentEvents,
   stopDocumentEvents,
 } from "./documentEvents";
+import { agentPlanCellAddresses, projectAgentPlan } from "./agent/planProjection";
 import {
   DEFAULT_PROVIDER,
   EMPTY_DRAFT,
@@ -2640,24 +2641,30 @@ async function adoptAgentPlan(
   const validation = await rt.validatePlan(planId);
   const inspect = getState().inspects[sessionId] ?? null;
   const texts = getState().texts[sessionId] ?? [];
-  const ops: QueuedOp[] = authoritative.ops.map((op) => {
-    const params = op.params as Record<string, number | string>;
-    const table = Number(params.table ?? 0);
-    const row = Number(params.row);
-    const col = Number(params.col);
-    return {
-      opId: op.opId,
-      kind: "fill_cell",
-      table,
-      row,
-      col,
-      text: String(params.text ?? ""),
-      charPr: params.charPr === undefined ? undefined : String(params.charPr),
-      before: seatText(inspect, texts, table, row, col),
-      origin: "agent",
-      proposer: authoritative.proposer,
+  const addresses = agentPlanCellAddresses(authoritative);
+  let beforeCell = (table: number, row: number, col: number) =>
+    seatText(inspect, texts, table, row, col);
+
+  // A chained plan is bound to candidate bytes, not the session source cached
+  // in `inspect`/`texts`. Read the exact parent so an overwrite review does not
+  // show stale source text as the value it will replace.
+  if (authoritative.base) {
+    const answer = await rt.readRegion(sessionId, addresses, authoritative.base.runId);
+    beforeCell = (table, row, col) => {
+      const before = regionTextAt(answer.regions, { table, row, col });
+      if (before === null) {
+        throw {
+          code: "agent_plan_before_unreadable",
+          message:
+            "에이전트 작업이 덮어쓸 현재 값을 런타임이 돌려주지 못했습니다. " +
+            "원본 값으로 짐작해서 검토 대기열을 만들지 않습니다.",
+          data: { planId, runId: authoritative.base?.runId, table, row, col },
+        };
+      }
+      return before;
     };
-  });
+  }
+  const ops: QueuedOp[] = projectAgentPlan(authoritative, beforeCell);
   const draft: Draft = {
     ops,
     plan: authoritative,
