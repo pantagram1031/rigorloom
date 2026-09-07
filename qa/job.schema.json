@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigorloom.dev/schemas/qa/job.schema.json",
+  "title": "QAJobContract",
+  "description": "Unattended QA job contract for Astra Pro FIRST_72H evidence collection",
+  "type": "object",
+  "required": [
+    "candidate_id",
+    "run_id",
+    "sha",
+    "allowed_commands",
+    "evidence_dir"
+  ],
+  "properties": {
+    "candidate_id": {
+      "type": "string",
+      "description": "Identifier for the candidate artifact or build being evaluated (e.g. c1, c2, c3, full, or release tag)"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "Unique identifier for this specific QA run instance"
+    },
+    "sha": {
+      "type": "string",
+      "description": "Git commit SHA of the tree being verified"
+    },
+    "allowed_commands": {
+      "type": "array",
+      "description": "Whitelist of allowed test runner commands or card ids that may be executed",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_dir": {
+      "type": "string",
+      "description": "Directory path (relative or absolute) where raw outputs, preflight JSON, junit XML, and jsonl records are published"
+    },
+    "cards": {
+      "type": "array",
+      "description": "Optional list of card identifiers to execute (e.g. ['c1', 'c2', 'c3'])",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requested_model": {
+      "type": "string",
+      "description": "Model ID used by the orchestrator/agent runner (e.g. gemini-3.8-flash)",
+      "default": "gemini-3.8-flash"
+    },
+    "approval_mode": {
+      "type": "string",
+      "enum": [
+        "human_approved",
+        "mock_approved",
+        "refuse"
+      ],
+      "default": "human_approved",
+      "description": "Approval resolution mode for agent plan gating. 'mock_approved' allows unattended QA runs to gate plan apply via mock resolution without claiming human approval or GUI/IME PASS. 'human_approved' requires real operator review."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary key-value metadata associated with the run",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
