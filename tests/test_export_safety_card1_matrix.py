@@ -130,7 +130,9 @@ def test_force_quit_maps_card_exit_2_to_not_run(tmp_path):
     evidence.write_text(json.dumps({"status": "NOT_RUN", "reason": "rustc_missing"}), encoding="utf-8")
 
     def fake_runner(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(argv, 2, stdout="", stderr="")
+        if "native_force_quit_export.py" in " ".join(argv):
+            return subprocess.CompletedProcess(argv, 2, stdout="", stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
 
     report = matrix.build_report(
         runner=fake_runner,

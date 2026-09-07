@@ -70,7 +70,6 @@ def test_force_kill_falls_back_to_stop_process(monkeypatch):
 def test_hold_helper_force_quit_preserves_prior_dest(tmp_path):
     evidence = tmp_path / "card1-force-quit.json"
     scratch = tmp_path / "scratch"
-    scratch.mkdir()
     report = card.run_force_quit_export(
         json_out=evidence,
         scratch=scratch,

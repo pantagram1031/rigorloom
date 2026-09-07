@@ -205,6 +205,7 @@ def run_force_quit_export(
 
     own_scratch = scratch is None
     scratch = scratch or Path(tempfile.mkdtemp(prefix="card1-force-quit-"))
+    scratch.mkdir(parents=True, exist_ok=True)
     binary = scratch / ("hold.exe" if is_windows(platform) else "hold")
     artifact = scratch / "artifact.hwpx"
     receipt = scratch / "receipt.json"
