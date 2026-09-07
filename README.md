@@ -1,518 +1,204 @@
 # Rigorloom
 
-**A general HWP/HWPX document engine with deterministic gates, graded
-render proof, and installable capability modules — Hancom-free by
-default.**
+Agent-neutral document automation for Korean HWP/HWPX government forms.
 
 [![CI](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml/badge.svg)](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Latest tag](https://img.shields.io/github/v/tag/pantagram1031/rigorloom)](https://github.com/pantagram1031/rigorloom/tags)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![OS: Windows | Linux](https://img.shields.io/badge/os-Windows%20%7C%20Linux-lightgrey.svg)](docs/golden-path.md)
 
-Rigorloom is an agent-neutral document engine for Korean HWP/HWPX forms —
-recognition, fill, assembly, verification, and delivery — with an optional,
-resumable report pipeline on top. Current release: **v0.17.0**. See
-[CHANGELOG.md](CHANGELOG.md) for the version history and
-[docs/golden-path.md](docs/golden-path.md) for an end-to-end, Hancom-free
-walkthrough.
+---
 
-**One core, six modules, seven bundles.** Since v0.16 the repo is a monorepo
-with a single general-purpose core (the `engine/` document backends, form
-recognition, render proof ladder, privacy scan, module registry, base Studio)
-and capability that ships as separately installable **distribution modules**
-behind one contract (`modules/README.md`). Six modules ship today: `report`
-(stage machine, report checkers, compose resolver, playbooks), `style`
-(translationese removal and voice consistency — never AI-detection evasion),
-and four **work-type** modules added in v0.17 — `gongmun` (공문/기안문),
-`minwon` (민원·신고 서식), `hr` (계약·인사 서식), and `grant` (지원사업 신청
-packets) — each a deterministic checker set plus a skill fragment for its task
-flow. General personalization pack types live in core, with report-flavored
-packs supplied by the report module. Core never imports a module; absence is
-not failure (the suite is green with every module disabled); the seven bundles
-(`rigorloom-core` plus one per module) are built by
-`scripts/package_module.py` at the same version.
+## What this is
 
-**Validated from outside the checkout.** A repo test suite proves the code is
-correct; it cannot prove that the *thing we ship* is complete. The clean-room
-harness at [`evals/`](evals/README.md) installs the product the way a buyer
-would — dist zips only, into a fresh temp root, enabled and skill-installed
-through the shipped CLIs — and asserts containment on five independent axes,
-with no code path that falls back to the checkout. That harness is what found
-the v0.16.0 core bundle shipping no skill surface at all. Measured tier
-guidance ships *with the product* at
-[skill/references/model-routing.md](skill/references/model-routing.md): which
-model tier to run which task class on, what was measured, and what is
-explicitly unmeasured. The end-to-end form-fill procedure is one document,
-[skill/references/fill-recipe.md](skill/references/fill-recipe.md) — the
-branch-per-cell decision rule, the four artifacts and the flag that eats each,
-the literal command sequence, and what an accepted verdict looks like.
+Rigorloom is a **report-automation pipeline** that turns a research brief and
+a blank Korean government form (.hwp/.hwpx) into a filled, verified,
+typeset document — with deterministic gates at every stage.
 
-Since 2026-05-18, Korean government systems accept HWPX-only attachments
-while published blanks are still mostly `.hwp` — rigorloom's hwp→hwpx
-conversion path is verified 10/10 on the official blank-form corpus
-(`docs/research/xc1-conversion-bench.md`), with per-family capability
-boundaries stated honestly in
-[skill/references/forms.md](skill/references/forms.md).
+It runs on any OS, with any coding-capable AI agent or a human operator,
+and does not require Hancom Office for the core workflow.
 
-The state machine is deterministic and provider-independent. Claude, Codex,
-Gemini, local models, human operators, or any other capable agent can act as
-the orchestrator or worker. Model names in examples are optional adapters,
-not requirements. For agent use, a router skill surface ships at
-[skill/SKILL.md](skill/SKILL.md) — a compact task router with a dynamic
-capability probe (`engine/scripts/probe.py`); enabled modules merge their
-own skill fragments at install time via `scripts/sync_local.py`.
-
-## Why rigorloom
-
-- **Deterministic gates that can't be post-edited.** Script verdicts are
-  computed by code and recorded as immutable inputs to state transitions —
-  the old "caller-supplied-integer" bypass was retired in v0.7 (see
-  [CHANGELOG.md](CHANGELOG.md)).
-- **A graded render proof ladder, not a single pass/fail.** Delivery is
-  ranked `none < experimental-rhwp < advisory < certified < hancom`, but
-  `certified` is a closed schema value in this release:
-  `CERTIFIED_PROOF_RELEASE_ENABLED` is false and
-  `certified_runtime_unbound` keeps certificate verification, renderer
-  execution, and PDF promotion off. `render_cert.py` is an explicit operator
-  diagnostic, not submission proof, until a separately reviewed runtime
-  binding is released.
-- **T151 exact-document certificate envelope.**
-  `render_cert_envelope_v2.py` can issue a pathless, HMAC-bound snapshot from a
-  private manifest and check only the exact document bytes. It is diagnostic
-  evidence with `runtime_binding: not_established`, `proof_grade: none`,
-  `submission_grade: false`, and `promotion: not_run`; it does not execute a
-  renderer, auto-route, or promote a PDF, and it ships no private paths,
-  operator key, or corpus bytes.
-- **T152 composite certificate receipt.**
-  `renderer_certificate_composite_v1.py` joins a captured T150 runtime receipt
-  to the T151 exact source and signed certificate checks. It writes only the
-  canonical composite receipt, with `binding_scope: captured_snapshot_only`
-  and evidence ceiling
-  `runtime_input_exact_document_certificate_binding_only`; it is not
-  HMAC-authenticated and never executes, auto-routes, or promotes. The result
-  remains `proof_grade: none`, `submission_grade: false`, and
-  `promotion: not_run`, with no paths, key, corpus, or PDF bytes published.
-- **Hancom-free HWPX assembly.** The `hwpx` backend fills a form's HWPX/OWPML
-  XML directly through the bundled engine (`engine/scripts`), without Hancom
-  or COM, on any OS.
-- **Agent-neutral.** The stage machine drives entirely through CLIs; any
-  coding-capable agent can orchestrate it, and provider roles are assigned by
-  capability, not by vendor name (see [AGENTS.md](AGENTS.md)).
-
-## Architecture
-
-```mermaid
-flowchart LR
-    A[research] --> B[design]
-    B --> C[data / sim]
-    C --> D[write]
-    D --> E[humanize]
-    E --> F["content audit\n(stage 4.5, 9 checkers)"]
-    F --> G["assemble\n(backend tiers)"]
-    G --> H[render proof]
-    H --> I["submission preflight\n(stage 6)"]
-```
-
-Stage 4.5 `content_audit` (report module) runs nine deterministic
-sub-checkers before assembly is allowed to start; any sub-checker's HARD
-finding fails the whole gate. Stage 6 `submission_preflight` grades the
-finished artifact and requires a render `proof_grade` of `hancom`,
-`certified`, or `advisory`. See
-[docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md)
-for the full stage graph and gate contracts.
-
-## Feature highlights
-
-- A config-driven pipeline kernel (stage schema version `0.6`, unchanged
-  since v0.7) with hard and human gates. The kernel is stable; everything
-  below has been layered on top of it through the v0.7–v0.17 waves.
-- **Autonomous verification** (`pipeline/scripts/visual_verify.py`, v0.17): the
-  render-judge loop merges every deterministic backstop into one findings list,
-  then prepares a vision task against a closed 12-class defect rubric
-  (`skill/references/visual-rubric.md`) and consumes the handback. It never
-  calls a model itself, an unknown rubric class is a usage error rather than a
-  finding, and `acceptance: true` is impossible while any of the five
-  `SAFETY_CHECKS` sits unwaived in `skipped[]`.
-- **A clean-room validation harness** (`evals/`, v0.17) that installs from dist
-  zips into a throwaway root, self-checks through the *packaged* verifier, and
-  treats any reference back to the source tree as a hard failure.
-- **A shipped model-routing table** (`skill/references/model-routing.md`,
-  v0.17): per-task-class tier guidance from three measured clean-room rounds,
-  with the unmeasured task classes named as unmeasured.
-- A distribution-module contract (`modules/README.md`): modules declare
-  checkers, CLI commands, pack types, run modes, gate kinds, studio
-  panels, and skill fragments in `module.yaml`; the registry enforces
-  version and inter-module (`requires_modules`) gates at enablement, and
-  adding a module later requires no core change.
-- A stage 4.5 **content audit** gate (report module) that runs nine
-  deterministic sub-checkers before assembly ever starts, and a stage 6
-  **submission preflight** gate that grades the finished artifact before
-  delivery.
-- Four pluggable Stage 5 document backends — `bundle`, `docx`, `hwpx`, `hwp`
-  — so the pipeline runs end to end without Hancom.
-- Stage playbooks and a single master workflow document.
-- Automatic handoff generation and safe archival after stage transitions.
-- A privacy-first local Studio, read-only by default, for inspecting
-  workspaces, resolved profiles, gates, evidence, document previews, and
-  evaluation results. An opt-in, token-guarded action mode exists for
-  triggering gates/builds from the UI.
-- A robust workspace scaffolder and a `sync_local` base+overlay installer for
-  shipping this pipeline as a Claude-style skill directory.
-- The document engine at `engine/` (absorbed from the former hwp-master
-  project, Wave 2 / v0.16), which supplies both the Hancom-COM assembly loop
-  and the Hancom-free HWPX XML engine.
-
-Personal reports, student data, private templates, local logs, credentials,
-and model-account configuration are intentionally excluded.
-
-### Document backends
-
-Stage 5 delivery is pluggable; pick the tier in `build.yaml` (`doc_backend:`),
-or override with `python pipeline/scripts/doc_backend.py <WS> --backend ...`.
-Only `bundle` is required — the other three are optional extras dispatched by
-`pipeline/scripts/doc_backend.py`.
-
-| Backend | Install | OS / Hancom | Deliverable | Proof-grade ceiling |
-|---|---|---|---|---|
-| `bundle` | none (stdlib) | any OS, no Hancom | frozen bundle: validated `content.md`, figures, provenance, single-file HTML preview | none — advisory artifact only; cannot satisfy the Stage 5.3 format gate (`output/out.hwpx` required) |
-| `docx` | `pip install .[docx]` | any OS, no Hancom | styled `.docx` (headings, figures, tables; equations render as literal text, not OMML; PDF conversion left to LibreOffice) | none — same reason as `bundle` |
-| `hwpx` | bundled XML engine (`engine/scripts`; `HWP_MASTER_SCRIPTS` optional override) | any OS, **no Hancom** | `output/out.hwpx` filled without COM | Terminal grade is `none` for XML and LibreOffice in this release. Equation-free LibreOffice + H2Orestart may produce an internal `advisory` candidate, but `ADVISORY_PROOF_RELEASE_ENABLED` is false and prevents terminal promotion. Equation-bearing documents (or any document when no `soffice` renderer exists) may instead get an `experimental-rhwp` SVG overflow/pagination diagnostic on Linux (sha256-pinned `rhwp` binary via `RHWP_SHA256`), never submission-grade on its own. Certified opt-in is also unavailable: `certified_render` remains diagnostic-only and `certified_runtime_unbound` prevents promotion while `CERTIFIED_PROOF_RELEASE_ENABLED` is false. |
-| `hwp` | Windows + Hancom + bundled COM loop (`engine/scripts`) | Windows + Hancom Office | native `.hwp`/`.hwpx`, fill/tidy/typeset/proof loop | `hancom` — the only submission-grade proof this pipeline recognizes |
-
-The `bundle` backend is the any-machine floor: it runs anywhere Python runs,
-with zero dependencies, but it is a preview/review artifact, not a graded
-submission. Stage 6 `submission_preflight` requires `proof_grade` to be
-`hancom`, `certified`, or `advisory` (`pipeline/scripts/submission_preflight.py`);
-a `docx` or `bundle`-only run never reaches that state.
-
-Certified remains a closed schema value in this release: the shared
-`CERTIFIED_PROOF_RELEASE_ENABLED` switch is false and
-`certified_runtime_unbound` keeps certificate verification, renderer execution,
-and PDF promotion quarantined. The `hwpx` row's historical certificate
-configuration is diagnostic-only and does not provide a current opt-in route.
-
-### Content audit and submission gates
-
-Two composite gates guard delivery, both fail-closed:
-
-- **Stage 4.5 `content_audit`** (`modules/report/scripts/content_audit.py`,
-  report distribution module) runs nine deterministic sub-checkers
-  in-process and merges their verdicts before assembly is allowed to
-  start: `verify_content.py` (web-citation / polite-ending / figure /
-  leak), `check_style.py` (banned prose patterns, signature caps —
-  resolved through the module registry from the **style** module, which
-  the report module declares via `requires_modules`), `check_numbers.py`
-  (body numerals / RNG provenance), `check_refs.py` (figure/table
-  numbering and cross-refs), `check_figdata.py` (referenced PNG checksum
-  integrity), `check_sources.py` (offline citation-reality verification
-  against a local cache), `check_units.py` (unit/dimension consistency),
-  `check_saeteuk.py` (advisory early consistency mirror), and
-  `check_claims.py` (claim-ledger evidence traceability). Any sub-checker's
-  HARD finding fails the whole gate; the worst exit code wins.
-- **Stage 6 `submission_preflight`** (`pipeline/scripts/submission_preflight.py`)
-  grades the finished artifact: it composes `check_saeteuk.py` (saeteuk/report
-  numeric-and-entity consistency), `verdict_schema.py` (rejects a
-  self-contradictory assembly verdict — `converged: true` together with
-  `status: escalate_human`), verifies the canonical artifact's identity
-  fields against `request.yaml`, recomputes the assembled HWPX's form-owned
-  structure hash and compares it against the recorded `form_baseline.json`
-  (non-destructive-form proof), and reads `output/verdict_v06.json`'s
-  `proof_grade` — requiring `hancom`, `certified`, or `advisory`,
-  cross-checked against this machine's actual render capabilities
-  (`render_probe.py`). All of this is trusted-on-record, not
-  cryptographically proven: a baseline recorded after a mutation cannot
-  detect that mutation, and full artifact-bound proof receipts are deferred
-  to later attestation work.
-- **Declared per-workspace gates** (the hybrid gate architecture's second
-  half, v0.16): a workspace may declare value-pinned gates that the
-  declared-values runner executes with canonical binding — a missing
-  pinned target is HARD `target_missing`, never a silent pass — and whose
-  kinds delegate to registry mechanisms: `check_residue.py` (forbidden
-  residue list auto-derived from the form scan's anchor inventory;
-  HARD-fails on malformed section XML before scanning any text) and
-  `check_density.py` (H5 structural gate — bold-subhead density per 10k
-  bytes of `content.md`) are core; `canonical` (the workspace's declared
-  canonical/`FINAL` pointer must exist and resolve) is provided by the
-  report module through `gate_kinds`. Additional gate kinds are
-  registry-declared by modules; a kind with no enabled provider is a loud
-  config refusal.
+**What it is not.** It is not a general-purpose word processor, a
+cloud service, or a finished desktop application. The pipeline on `main`
+is usable for report automation (private-preview maturity). A desktop
+Tauri editor exists on unmerged branches and is **pre-alpha** — do not
+rely on it.
 
 ## Quick start
 
-Only a Python 3.10+ standard library is required to run the pipeline — no
-Hancom, no Windows, and no model account for the `bundle` backend.
+Only Python 3.10+ (standard library) is required.
 
 ```sh
 git clone https://github.com/pantagram1031/rigorloom.git
 cd rigorloom
 
-# A fresh clone is core-only. The report pipeline lives in distribution
-# modules — enable everything present in modules/ first:
+# Enable the distribution modules shipped in modules/
 python pipeline/scripts/module_registry.py write-enabled --all
 
-python3 scripts/bootstrap.py   # PowerShell: python scripts\bootstrap.py
+# Bootstrap: verifies interpreter, provisions profile, runs smoke test
+python3 scripts/bootstrap.py
 
-python scripts/new_report.py --slug demo --subject math \
-  --topic "A testable question" --form /absolute/path/to/form.hwpx
+# Create and run a report workspace
+python scripts/new_report.py \
+  --slug demo --subject math \
+  --topic "A testable question" \
+  --form /path/to/form.hwpx
+
 python modules/report/scripts/pipeline_ctl.py resume ./workspaces/report-demo
 ```
 
-`bootstrap.py` verifies the interpreter, provisions a private profile, and
-runs an end-to-end smoke test, so a fresh clone is proven working (on a
-core-only install, pass `--skip-smoke` — the smoke drives the report
-pipeline). For the full stage-by-stage walkthrough to a graded artifact,
-see [docs/golden-path.md](docs/golden-path.md).
+The pipeline drives entirely through CLIs. Stage playbooks under
+`modules/report/references/playbooks/` explain each step; see
+[docs/golden-path.md](docs/golden-path.md) for the full
+clone-to-graded-artifact walkthrough.
 
-### Windows + Hancom
+### Windows + Hancom (optional)
 
-The full `.hwp` document workflow additionally needs Windows, a licensed
-Hancom Office HWP install, the COM bridge (`pip install pyhwpx pywin32` —
-see [engine/INSTALL.md](engine/INSTALL.md)), and the engine extra
-(`pip install .[engine]`). The engine itself is bundled at `engine/` — no
-external checkout needed. Verify the machine before starting an HWP
-report:
+The full `.hwp` assembly path additionally requires Windows, a licensed
+Hancom Office install, and `pip install .[engine]`. Verify with:
 
 ```powershell
 python engine\scripts\probe.py
+# Require "hancom_com": true before entering the COM path
 ```
 
-The probe reports render capability (`hancom_com`), available renderers,
-and enabled modules as one JSON object; require `"hancom_com": true`
-before entering the COM assembly path.
+Details: [engine/INSTALL.md](engine/INSTALL.md).
 
-Installing this repository does not install Hancom Office. Web Hancom
-Docs, Linux, and macOS cannot run the local COM editing backend; they can
-still run the pipeline and non-COM HWPX/XML stages.
+## How it works
 
-## Any coding-capable agent
-
-The state machine is provider-independent and drives entirely through CLIs,
-so any agent with coding ability can orchestrate it. Vendor-neutral bootstrap
-prompts and drop-in entrypoints live under [`adapters/`](adapters/); Claude
-Code skill files ship alongside them but are not required.
-
-Stage 4 includes provider-neutral, rollback-safe humanization. It freezes the
-verified draft, uses independent local reviewer/rewriter workers by default,
-and restores only paragraphs whose protected facts change. Pantadex remains
-an optional adapter; detector scores are advisory. See
-[`humanization_contract.md`](pipeline/references/humanization_contract.md).
-
-## Local Studio
-
-The Studio never uploads report data or calls a model. It reads ignored
-local workspaces and shows the live stage graph, next action, personalization
-lock, evidence ledger, drafts, PDF iterations, provenance, and scorecards.
-Older workspaces fall back to a read-only `PIPELINE.md` scan.
-
-```sh
-python -m pip install -r studio/requirements.txt
-python studio/main.py
+```
+research → design → data/sim → write → humanize
+  → content audit (9 checkers) → assemble (4 backends) → render proof → submit preflight
 ```
 
-Studio has two modes (`studio/main.py`):
+Every gate is deterministic and fail-closed. Script verdicts are immutable
+inputs to state transitions — a caller cannot override a computed result.
+Two composite gates guard delivery:
 
-- **Read-only (default)**: browsing and inspection only, no writes.
-- **Action mode (opt-in)**: set `STUDIO_ALLOW_ACTIONS=1` to enable a small
-  set of POST actions (`check-gate`, `approve-human-gate`, `run-checker`,
-  `build-bundle`, `build-hwpx`), each guarded by a per-run `X-Studio-Token`
-  CSRF header.
+- **Content audit** (stage 4.5) — nine sub-checkers covering citations,
+  prose style, numerics, cross-references, figure integrity, source
+  verification, units, consistency, and claim traceability. Any HARD
+  finding blocks assembly.
+- **Submission preflight** (stage 6) — verifies the finished artifact's
+  identity, form-structure hash, and render proof grade before delivery.
 
-## Safety model
+Four document backends are available:
 
-- Human gates cannot be approved by an agent in supervised mode.
-- Script verdicts are immutable inputs to state transitions.
-- Canonical artifacts are never moved by automatic housekeeping.
-- Only known scratch files and run logs are archived.
-- Workspace paths and slugs are validated before writes.
-- Temporary agent work is isolated by stage and archived at transition.
-- Artifact hashes and missing required files are visible before the next
-  task.
+| Backend | Requirements | Output |
+|---------|-------------|--------|
+| `bundle` | None (stdlib) | Frozen bundle + HTML preview |
+| `docx` | `pip install .[docx]` | Styled `.docx` |
+| `hwpx` | Bundled XML engine | `.hwpx` (Hancom-free, any OS) |
+| `hwp` | Windows + Hancom Office | Native `.hwp`/`.hwpx` with COM |
 
-## Repository map
-
-```text
-engine/      HWP/HWPX document engine (COM + XML backends, form inspect,
-             layout QA, eqn converter; absorbed from hwp-master in v0.16)
-pipeline/    core contracts, checkers, registry, render proof, tests
-modules/     distribution modules behind one contract (report, style,
-             gongmun, minwon, hr, grant — one bundle each)
-evals/       clean-room validation harness (bundles only, containment-asserted)
-skill/       router skill surface (SKILL.md + references: forms, operations,
-             fill-recipe, visual-rubric, model-routing, troubleshooting)
-studio/      optional read-only local viewer, extended by module panels
-scripts/     bootstrap, scaffolder, installer, packaging (package_module)
-adapters/    optional document/backend integrations
-examples/    generic, non-personal examples
-tests/       cross-cutting tests + blank-form corpus (tests/corpus/forms)
-archive/     superseded public contracts kept for history
-docs/        current architecture, research, and operating documentation
-workspaces/  local run data; ignored by Git
-```
+Only `hwp` currently provides submission-grade render proof.
 
 ## Project status
 
-Per-capability support, with an evidence pointer on every row, is in
-[`docs/support-matrix.md`](docs/support-matrix.md). It is generated from
-`pipeline/references/support-claims.yaml`, and the generator **refuses a
-`supported` row whose evidence pointers do not resolve** — the table cannot
-claim more than this tree can show. Read a pointer as *this assertion exists and
-you can run it*, not as *this assertion is strong*.
+> **Pipeline on `main`: private-preview** — usable report automation with
+> stable gates, tested across form families, validated by a clean-room
+> harness. Not yet beta.
+>
+> **Desktop editor: pre-alpha** — a Tauri-based agent-native editor lives
+> on unmerged branches (#330 → #340). It is not part of the `main` product
+> and should not be evaluated as shipped software.
 
-Two limits worth stating here rather than only in that table:
+Stable and exercised capabilities are tracked per-row with evidence
+pointers in [`docs/support-matrix.md`](docs/support-matrix.md). The
+generator refuses a `supported` row whose evidence does not resolve —
+the table cannot claim more than the tree shows.
 
-- **No committed per-task run record.** `evals/run_record.schema.json` defines
-  the shape; no records are published, so nothing in the repository shows a
-  per-task result from a clean-bundle install.
-- **The legacy v1 render-certificate custody work is unverified across lanes.**
-  It is implemented and asserted by its own suite, but has not been reproduced
-  independently, so it is classified `unknown` rather than counted as parity.
+Known limits stated honestly:
 
-- **Stable**: the stage state machine, the `bundle` backend, the nine
-  content sub-checkers, `submission_preflight`'s form-hash and proof-grade
-  checks, and the read-only Studio.
-- **Optional, well-exercised**: the `docx` backend, and the `hwpx` XML engine
-  path (Hancom-free, cross-OS) via the bundled engine at `engine/scripts`.
-- **Advisory only**: LibreOffice/H2Orestart PDF rendering is used as a
-  render-capability probe and an advisory proof source — it is never treated
-  as submission-grade proof, and it is skipped entirely for equation-bearing
-  documents (H2Orestart cannot be trusted there; see the backend table
-  above).
-- **Experimental**: `experimental-rhwp` — an SVG-based overflow/pagination
-  render check for equation-bearing HWPX documents on Linux, gated behind a
-  sha256-pinned `rhwp` binary (`RHWP_SHA256`). It is hard-blocked from
-  `submission_preflight` as diagnostic-only, and pixel-level parity with
-  Hancom rendering has not been achieved (see
-  [`docs/plans/p0-parity-report.md`](docs/plans/p0-parity-report.md)).
-- **Certified (v0.15, schema value; currently quarantined)**: `certified` is
-  retained as a closed proof value between `advisory` and `hancom`; automatic
-  certificate verification, renderer execution, and PDF promotion remain
-  disabled while `CERTIFIED_PROOF_RELEASE_ENABLED` is false.
-  The historical operator-certificate workflow is not active in this release.
-  The legacy `pipeline/scripts/render_cert.py` CLI exposes only
-  `measure`/`certify`/`check` (there is no `verify` subcommand); its Python
-  `verify_certificate(...)` API is available only to quarantined consumers.
-  Public verify summaries contain exactly `ok`, `reason_code`, `reason`, and
-  `reason_codes`; `check` adds only `eligible`, with no raw errors, paths, argv,
-  feature maps, certificate payloads, or renderer streams. Successful
-  `measure`/`certify` files remain private, pathful v1 operator artifacts and
-  are never public receipts. Only `measure`/`certify --out` uses the dedicated
-  fresh private artifact publisher: its pre-created canonical parent must be a
-  real directory; its output leaf must be absent, and the new leaf must be a
-  regular one-link file. Symlink/reparse/hardlink/pre-existing targets refuse without
-  changing foreign bytes; held-parent staging/link/final checks bind exact
-  bytes and identity, and owned-only rollback preserves foreign replacements.
-  Refusals remain pathless `operation_failed`; generic `write_json`, `check`,
-  and `doc_backend` behavior is unchanged. This custody boundary changes no
-  stdout/privacy, authentication, routing, proof, submission, or release-switch
-  semantics. `render_probe` publishes only
-  `render_certificate_configured` and closed `render_certificate_reason`.
-  T159 adds the private measurement binding boundary: each manifest id is one
-  safe non-dot segment validated before `mkdir`, `argv[0]` must be the
-  configured binary, and bounded no-follow regular one-link source, reference,
-  and candidate snapshots must match before and after render. The manifest
-  reference hash is exact; fresh candidate or alternate output is refused,
-  and `candidate_pdf` may not alias the manifest reference PDF or source
-  document. `issue_certificate` revalidates the live manifest and all
-  document/reference/candidate path and hash fields, then performs a second
-  rebind before HMAC. Measure/certify payloads and stdout remain private and
-  pathful; public verify stays at four fields and check at five. Generic
-  `write_json`/`doc_backend`, authentication, execution, eligibility, routing,
-  proof, submission, promotion, and both false release switches are unchanged.
-  `certified_runtime_unbound` prevents `submission_preflight` from accepting
-  the grade until a separately reviewed runtime binding is released. T151's
-  `rigorloom/render-cert-envelope/v2` pathless envelope is an independent
-  exact-document diagnostic; it does not revive the legacy v1 route or change
-  either release switch.
-- **Studio action mode**: opt-in and token-guarded; off by default.
+- No committed per-task agent-completion record from a clean-bundle install.
+- The legacy v1 render-certificate custody work is unverified across lanes.
+- macOS has no bench or CI job; it is inference, not evidence.
+- School and corporate form families have no corpus.
 
-v0.16.0 completed the unified-core-and-modules program (engine absorption,
-the distribution-module contract, report/style as modules, the blank-form
-corpus and skill surface, and the XC-1 conversion bench — see
-[docs/plans/v0.16-unified-core-and-modules.md](docs/plans/v0.16-unified-core-and-modules.md)
-and [docs/release-v0.16.0.md](docs/release-v0.16.0.md)), and shipped as an
-alpha: authors, authors' machine, one form-family lineage, empty forms only.
+For the full evidence record see
+[docs/release-v0.17.0.md](docs/release-v0.17.0.md).
 
-**v0.17.0 is the validation release.** Autonomous verification (visual rubric
-+ render-judge loop, an acceptance safety set, a pinned exit-code contract), the
-clean-room harness, four new work-type modules, and a fill path that reaches a
-form's genuinely empty cells and its printed seats offline. Forty defects and
-harness lessons were found by validation rather than by the suite, including
-verdict defects the independent Codex harness found that ours could not see and
-work-type blockers found only after G1/P1/H1 family runs. The evidence record —
-bundle hashes, the validation ledger, and the limits stated as limits — is
-[docs/release-v0.17.0.md](docs/release-v0.17.0.md). Known capability
-boundaries are stated per form family in
-[skill/references/forms.md](skill/references/forms.md); the two families with
-no corpus at all (school, corporate) are documented boundaries, not gaps in
-progress. See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release,
-and [docs/plans/](docs/plans/) for the design history behind each wave.
+## Architecture
 
-## Docs
+```
+engine/      HWP/HWPX document engine (COM + XML backends, form inspect)
+pipeline/    core contracts, checkers, registry, render proof
+modules/     distribution modules: report, style, gongmun, minwon, hr, grant
+evals/       clean-room validation harness (installs from dist zips only)
+skill/       router skill surface + references (forms, fill-recipe, rubric)
+studio/      optional read-only local workspace viewer
+scripts/     bootstrap, scaffolder, installer, packaging
+adapters/    provider-neutral agent entrypoints
+docs/        architecture, research, and operating documentation
+tests/       cross-cutting tests + blank-form corpus
+```
 
-- [docs/golden-path.md](docs/golden-path.md) — full clone-to-graded-artifact
-  walkthrough.
-- [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md) — the stage
-  graph and gate contract, read this before running a stage.
-- [docs/extensions.md](docs/extensions.md) — installable, data-only local
-  knowledge packs with immutable receipts and deterministic precedence.
-- [skill/references/fill-recipe.md](skill/references/fill-recipe.md) — the
-  canonical end-to-end form fill: which command per cell, one map, verify.
-- [skill/references/model-routing.md](skill/references/model-routing.md) —
-  measured per-task-class tier guidance, and what is unmeasured.
-- [evals/README.md](evals/README.md) — the clean-room harness: what a
-  clean-room run is, the evidence it must produce, containment mechanics.
-- [docs/release-v0.17.0.md](docs/release-v0.17.0.md) — the v0.17.0 evidence
-  record: bundle hashes, validation ledger, honest limits.
-- [CHANGELOG.md](CHANGELOG.md) — release history.
-- [docs/plans/](docs/plans/) — design docs and hardening-wave reports.
-- [docs/lessons-learned.md](docs/lessons-learned.md),
-  [docs/design-decisions.md](docs/design-decisions.md), and
-  [docs/troubleshooting.md](docs/troubleshooting.md) — operational knowledge
-  distilled from previous runs.
-- [docs/README.md](docs/README.md) — index of the full `docs/` directory.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup and review discipline.
+Six distribution modules ship behind one contract (`modules/README.md`):
+`report`, `style`, `gongmun` (공문/기안문), `minwon` (민원/신고),
+`hr` (계약/인사), and `grant` (지원사업 신청). Modules declare their
+checkers, CLI commands, and skill fragments in `module.yaml`; absence is
+not failure — the suite is green with every module disabled.
+
+See [docs/architecture.md](docs/architecture.md) for the full picture.
+
+## Agent integration
+
+The pipeline is provider-independent. Claude, Codex, Gemini, local
+models, or any coding-capable agent can orchestrate it. Provider roles
+are assigned by capability (`high-reasoning`, `research`, `vision`),
+not by vendor name.
+
+- **Agent bootstrap:** [AGENTS.md](AGENTS.md) — the entry point every
+  agent reads first.
+- **Adapters:** [adapters/](adapters/) — drop-in entrypoints for
+  specific providers (optional).
+- **Skill surface:** [skill/SKILL.md](skill/SKILL.md) — task router
+  with a dynamic capability probe.
+- **Model routing:** [skill/references/model-routing.md](skill/references/model-routing.md) —
+  measured per-task-class tier guidance, including what is unmeasured.
+
+## Local Studio
+
+A read-only local viewer for inspecting workspaces, gates, evidence,
+and document previews. No data leaves the machine.
+
+```sh
+pip install -r studio/requirements.txt
+python studio/main.py
+```
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [docs/golden-path.md](docs/golden-path.md) | Clone-to-artifact walkthrough |
+| [docs/pipeline-master-v0.6.md](docs/pipeline-master-v0.6.md) | Stage graph and gate contracts |
+| [docs/architecture.md](docs/architecture.md) | System architecture |
+| [docs/support-matrix.md](docs/support-matrix.md) | Per-capability status with evidence |
+| [docs/extensions.md](docs/extensions.md) | Data-only local knowledge packs |
+| [evals/README.md](evals/README.md) | Clean-room validation harness |
+| [AGENTS.md](AGENTS.md) | Agent operating instructions |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [docs/README.md](docs/README.md) | Full docs index |
 
 ## Validation
 
 ```sh
-python -m pytest -q
-python scripts/py_compile_sweep.py
+python -m pytest -q                         # full suite
+python scripts/py_compile_sweep.py          # syntax check all scripts
+python pipeline/scripts/privacy_scan.py .   # privacy scan (0 HARD required)
 ```
 
-Both are module-agnostic: `testpaths` globs `modules/*/tests` and the compile
-sweep globs `modules/*/scripts/*.py`, so a new distribution module needs no
-edit to either (`modules/README.md`, rule 4).
-
-CI runs the suite at two module-set matrix points — core-only (every
-distribution module disabled) and all-modules — so "absence is not
-failure" is continuously proven.
-
-Beyond the suite, the product is validated from *outside* the checkout. Build
-the bundles, then install and self-check them the way a buyer would:
-
-```sh
-for m in core report style gongmun minwon hr grant; do
-  python scripts/package_module.py --module "$m" --out dist
-done
-python scripts/package_module.py --verify dist/rigorloom-core-0.17.0.zip
-
-python evals/cleanroom.py prepare --root /path/to/empty/dir --enable all \
-  --bundle dist/rigorloom-core-0.17.0.zip \
-  --bundle dist/rigorloom-report-0.17.0.zip   # ... one --bundle per module
-```
-
-`prepare` refuses a non-empty root, installs from zips only, and ends with a
-five-axis containment report; any finding is exit 3. See
-[evals/README.md](evals/README.md).
+CI runs the suite at two matrix points — core-only (all modules disabled)
+and all-modules — so module isolation is continuously proven. Beyond the
+suite, the product is validated from outside the checkout via
+[evals/](evals/README.md).
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for dev
-setup, the review discipline this repo follows, and PR expectations. Please
-also read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and, for reporting a
-security issue, [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, review discipline,
+and PR expectations. Bug reports and feature requests go through
+[`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/).
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)
