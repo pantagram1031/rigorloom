@@ -2,7 +2,7 @@
 
 Status snapshot only. **Rematch freeze: ON.** No `main` merge.
 
-**Updated:** 2026-09-08 ~04:45 KST
+**Updated:** 2026-09-08 ~05:22 KST
 
 ## Current tip
 
@@ -36,10 +36,30 @@ Unique commits on #356 after that ancestor (oldest → newest):
 
 Promotion of the living tip to #356 @ `e927195b` is this green run, not the cancelled hang.
 
+Docs-only snapshot [PR #357](https://github.com/pantagram1031/rigorloom/pull/357) (`cursor/living-tip-status-356-4ce5` @ `b69eb827b8f2c50ed3310b007e21a4e1ced40b6b`) is **not** the product tip. Its CI run [34156949995](https://github.com/pantagram1031/rigorloom/actions/runs/34156949995) is **ALL PASS** (render-smoke + core/all ubuntu+windows).
+
+## Card 5 HASH on this living tip
+
+Script-owned **hash-only** evidence now exists for #356 @ `e927195b` under
+`F:\RigorloomQA\card5-e927195b\evidence\`:
+
+| Artifact | sha256 |
+| --- | --- |
+| EXE | `6df95dc3564f7e5ccebc5db44a27cbf8acb2822cbbdd7b1132cc0482889635fc` |
+| sidecar | `1346fe07bcf6fc7e9d55cb29b4c9f58926073859215f669f81aa1bd4a91a313b` |
+| NSIS | `3bbc5b820c7387b0fcc9fa7aaac4bec22cc182f9b339ae1d3635672785b15ffe` |
+
+- `installCandidatePass=true` (hash-only)
+- `card5Pass=false`
+- `guiImeClaimed=false`
+- status `HASHED_BUILD_ARTIFACTS` / verify **PASS for hashes only**
+
+Prior #355 hash evidence @ `99ad234` (`F:\RigorloomQA\card5-99ad234\evidence\`) is ancestor record only.
+
 ## Holds
 
 - Card 4 Korean IME remains **NOT_RUN / hold**. This snapshot does not claim IME PASS.
-- Card 5 GUI remains **NOT_RUN / hold**. Recorded hash evidence is hashes only (`guiImeClaimed=false`).
+- Card 5 GUI remains **NOT_RUN / hold**. The #356 hashes above are hashes only (`card5Pass=false`, `guiImeClaimed=false`).
 - Rematch / own_render / Claude renderer research pins are frozen and are not modified here.
 
-See [release-train-status.md](release-train-status.md) and [loom-ops-status.md](loom-ops-status.md) for the card board and previously recorded evidence.
+See [release-train-status.md](release-train-status.md) and [loom-ops-status.md](loom-ops-status.md) for the rest of the card board.
