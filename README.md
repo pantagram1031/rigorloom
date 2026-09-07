@@ -13,6 +13,7 @@ A report-automation pipeline for Korean HWP/HWPX government forms.
 Rigorloom is a **report-automation pipeline** that turns a research brief and
 a blank Korean government form (.hwp/.hwpx) into a filled, verified,
 typeset document — with deterministic gates at every stage.
+Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 The core workflow does not require Hancom Office. Linux and Windows
 are practiced; macOS is unproven. Any coding-capable AI agent or a
@@ -91,6 +92,9 @@ Four document backends are available:
 | `hwp` | Windows + Hancom Office | Native `.hwp`/`.hwpx` with COM |
 
 Only `hwp` currently provides submission-grade render proof.
+Terminal grade is `none` for XML and LibreOffice in this release.
+Equation-free LibreOffice may produce an internal `advisory` candidate,
+but `ADVISORY_PROOF_RELEASE_ENABLED` is false and prevents promotion.
 
 ## Project status
 
@@ -109,7 +113,7 @@ the table cannot claim more than the tree shows.
 
 Known limits stated honestly:
 
-- No committed per-task agent-completion record from a clean-bundle install.
+- No committed per-task run record from a clean-bundle install.
 - The legacy v1 render-certificate custody work is unverified across lanes.
 - macOS has no bench or CI job; it is inference, not evidence.
 - School and corporate form families have no corpus.
