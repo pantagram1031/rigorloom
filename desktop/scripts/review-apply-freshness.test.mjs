@@ -14,6 +14,7 @@ function between(startText, endText) {
 }
 
 const implementation = [
+  between("interface DraftOwner", "/** Load a session's inspect"),
   between("interface DraftFence", "/** The seat's current text"),
   between("export async function requestApprovalForDraft", "// --- apply"),
   between('const APPLY_TAG = "apply"', "/** Cooperative cancel"),
