@@ -1,0 +1,14 @@
+{
+  "candidate_id": "install-candidate",
+  "run_id": "card5-hash-verify",
+  "sha": "SET_TO_PRODUCT_TIP_SHA",
+  "allowed_commands": ["c5"],
+  "evidence_dir": null,
+  "cards": ["c5"],
+  "requested_model": null,
+  "metadata": {
+    "card": "completion-card-5",
+    "card5_evidence_dir_env": "RIGORLOOM_CARD5_EVIDENCE_DIR",
+    "note": "Set evidence_dir or RIGORLOOM_CARD5_EVIDENCE_DIR to a directory outside the checkout. Do not put a machine home path in this file."
+  }
+}
