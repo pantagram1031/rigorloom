@@ -51,6 +51,22 @@ pytestmark = pytest.mark.skipif(
     not own_render.pillow_available(),
     reason="Pillow is not installed; own_render cannot rasterise")
 
+# Measured-vs-pinned numbers that belong to the reference machine named in
+# engine/references/own-render-notes.md (installed/bundled faces). Rematch
+# freeze: do not update LINESEG_AGREEMENT, IoU, or LayoutSnapshot to chase
+# CI fonts. These still run locally; GitHub Actions skips them.
+_skip_research_pin_on_ci = pytest.mark.skipif(
+    os.environ.get("GITHUB_ACTIONS") == "true",
+    reason=(
+        "own_render research pin (rematch freeze): measured-vs-pinned "
+        "numbers depend on installed/bundled faces; skipped on GitHub Actions"
+    ),
+)
+
+
+def research_pin(fn):
+    return pytest.mark.research(_skip_research_pin_on_ci(fn))
+
 
 def _need(path):
     if not os.path.isfile(path):
@@ -935,6 +951,7 @@ def test_script_slot_assigns_each_script_to_its_own_slot():
                for c in range(0x20, 0x3000, 7))
 
 
+@research_pin
 def test_spacing_widens_a_run_by_the_declared_percentage(typo_probe):
     """+50% letter spacing must add 0.5 em per gap, and only per *gap*.
 
@@ -1034,6 +1051,7 @@ def _glyph_class(ch):
     return "other"
 
 
+@research_pin
 def test_a_space_advances_by_half_the_character_cell(typo_probe):
     """The rule itself, in the renderer's own units.
 
@@ -1332,6 +1350,7 @@ def test_normalising_a_face_name_ignores_separators_but_not_identity():
     assert own_render._normalise_face("돋움") != own_render._normalise_face("돋움체")
 
 
+@research_pin
 def test_gianmun_resolves_every_face_it_declares(gianmun_render):
     """gianmun declares 돋움 / 돋움체 / 한양중고딕 / 한양견고딕.
 
@@ -2011,6 +2030,7 @@ LINESEG_AGREEMENT = {
 }
 
 
+@research_pin
 @pytest.mark.parametrize("name", sorted(LINESEG_AGREEMENT))
 def test_the_breaker_agrees_with_the_authoring_engine_exactly_this_much(name):
     """Run our breaker on unedited text; compare to the document's own cache.
@@ -2041,6 +2061,7 @@ def test_the_breaker_agrees_with_the_authoring_engine_exactly_this_much(name):
         "first thing to check — see report['fonts'].")
 
 
+@research_pin
 def test_the_corpus_wide_agreement_is_exactly_this(tmp_path):
     """The single number the slice is graded on, summed over the corpus."""
     totals = [0] * 7
@@ -2703,6 +2724,7 @@ def test_kstartup_page_six_no_longer_overflows_without_a_page_break():
     assert bad == [], bad
 
 
+@research_pin
 def test_kstartup_auto_mode_also_catches_the_same_cache_seeded_overflow():
     """The safety net named in the task: ``auto`` reads the authoring
     engine's cached page assignment and, on an unedited document, places
@@ -3997,6 +4019,7 @@ def _column_fixture(tmp_path, name, col_count=2, same_sz="true", gap=1000,
     return target
 
 
+@research_pin
 def test_equal_width_columns_fill_left_to_right_then_page(tmp_path):
     """Column 1 fills top to bottom before column 2 starts, and a column
     that fills advances the page rather than overflowing -- honoured via
