@@ -1,6 +1,6 @@
 # Rigorloom
 
-Agent-neutral document automation for Korean HWP/HWPX government forms.
+A report-automation pipeline for Korean HWP/HWPX government forms.
 
 [![CI](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml/badge.svg)](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -14,14 +14,14 @@ Rigorloom is a **report-automation pipeline** that turns a research brief and
 a blank Korean government form (.hwp/.hwpx) into a filled, verified,
 typeset document — with deterministic gates at every stage.
 
-It runs on any OS, with any coding-capable AI agent or a human operator,
-and does not require Hancom Office for the core workflow.
+The core workflow does not require Hancom Office. Linux and Windows
+are practiced; macOS is unproven. Any coding-capable AI agent or a
+human operator can run it.
 
 **What it is not.** It is not a general-purpose word processor, a
 cloud service, or a finished desktop application. The pipeline on `main`
-is usable for report automation (private-preview maturity). A desktop
-Tauri editor exists on unmerged branches and is **pre-alpha** — do not
-rely on it.
+is usable for report automation. A desktop Tauri editor exists on
+unmerged branches and is **pre-alpha** — do not rely on it.
 
 ## Quick start
 
@@ -87,7 +87,7 @@ Four document backends are available:
 |---------|-------------|--------|
 | `bundle` | None (stdlib) | Frozen bundle + HTML preview |
 | `docx` | `pip install .[docx]` | Styled `.docx` |
-| `hwpx` | Bundled XML engine | `.hwpx` (Hancom-free, any OS) |
+| `hwpx` | Bundled XML engine | `.hwpx` (Hancom-free; OS support: see Known limits) |
 | `hwp` | Windows + Hancom Office | Native `.hwp`/`.hwpx` with COM |
 
 Only `hwp` currently provides submission-grade render proof.
@@ -95,14 +95,14 @@ Only `hwp` currently provides submission-grade render proof.
 ## Project status
 
 > **Pipeline on `main`: private-preview** — usable report automation with
-> stable gates, tested across form families, validated by a clean-room
-> harness. Not yet beta.
+> deterministic gates, tested across form families, validated by a
+> clean-room harness. Not yet beta.
 >
 > **Desktop editor: pre-alpha** — a Tauri-based agent-native editor lives
 > on unmerged branches (#330 → #340). It is not part of the `main` product
 > and should not be evaluated as shipped software.
 
-Stable and exercised capabilities are tracked per-row with evidence
+Exercised capabilities are tracked per-row with evidence
 pointers in [`docs/support-matrix.md`](docs/support-matrix.md). The
 generator refuses a `supported` row whose evidence does not resolve —
 the table cannot claim more than the tree shows.
