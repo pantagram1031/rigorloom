@@ -691,6 +691,12 @@ async function setQueue(
   setState({
     draft: {
       ...state.draft,
+      // The preceding plan belongs to the preceding queue. Leaving it visible
+      // while a replacement proposal is in flight would let the review pane
+      // offer bytes the user has already changed.
+      plan: null,
+      validation: null,
+      boundSha256: null,
       ops,
       sessionId,
       phase: "starting",
@@ -700,6 +706,17 @@ async function setQueue(
       reverses,
     },
   });
+
+  // Only this exact draft object owns the results below. A newer queue, a
+  // clear, a document switch, or a candidate-head change supersedes it. The
+  // Runtime still validates plan and approval bindings; this fence only keeps
+  // late UI work from replacing newer user intent.
+  const pendingDraft = getState().draft;
+  const pendingHead = headCandidate(getState())?.runId ?? null;
+  const ownsDraft = () =>
+    getState().draft === pendingDraft &&
+    getState().activeSessionId === sessionId &&
+    (headCandidate(getState())?.runId ?? null) === pendingHead;
 
   try {
     const plan = await rt.proposePlan(
@@ -730,7 +747,9 @@ async function setQueue(
       ),
       { baseRunId, reverses },
     );
+    if (!ownsDraft()) return;
     const validation = await rt.validatePlan(plan.planId);
+    if (!ownsDraft()) return;
     setState({
       draft: {
         ops,
@@ -746,6 +765,7 @@ async function setQueue(
       },
     });
   } catch (e) {
+    if (!ownsDraft()) return;
     // A refusal here is a real answer: `unknown_op_kind`, `unsupported_backend`
     // and `unknown_field` are raised by `plan/propose` before a plan exists at
     // all. Keep the queue, drop the plan, show the payload.

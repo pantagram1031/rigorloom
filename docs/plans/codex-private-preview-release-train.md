@@ -665,3 +665,30 @@ app launch, state recovery, source before/after hashes, uninstall exit, and
 post-uninstall absence against these exact hashes. The current licensing draft
 also still blocks onward distribution because PyMuPDF/MuPDF routing and the
 complete bundled third-party notice closure are unresolved.
+
+## 2026-09-08 frontend freshness port — TASK-CODEX-EPOCH-002
+
+The Epoch tree now owns a narrow `setQueue` completion fence. Starting a new
+queue immediately clears the preceding plan, validation, and bound hash. Only
+the exact draft object, active session, and candidate head captured for the
+request may publish proposal, validation, or error results after an await.
+Newer typing, queue clear, document switching, and head switching therefore
+supersede older work without rewriting the newer UI state. Runtime approval and
+plan binding remain unchanged.
+
+The production-function harness failed 6 of 7 cases before the port and passed
+7 of 7 afterward. It exercises immediate old-plan removal, newer-queue wins,
+clear during validation, active-session change, candidate-head change, late old
+error, and the normal Korean-text/base-candidate path. `npm run build` then
+passed TypeScript and Vite production compilation. Evidence lives under
+`private/epoch-0/8ed2d26/` as `set-queue-freshness-red.tap`,
+`set-queue-freshness-green.tap`, and `npm-build-after-draft-fence.txt`.
+The Windows Desktop CI job now runs `npm run test:draft-freshness` after its
+type-check.
+
+This slice does not port #355, the attached function-level patch, or any
+renderer/rematch/own-render file. It does not yet fence `renderCurrentPage`,
+`loadGeometry`, or `preparePages`; those layout-view completion paths remain a
+separate explicit port rather than being hidden inside this plan-draft fix.
+The existing `8c8cf8f` installer predates this source change and is not evidence
+for the new fence; a later candidate must rebuild and relink its hashes.

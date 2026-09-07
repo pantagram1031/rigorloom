@@ -330,6 +330,9 @@ jobs:
       - name: Type-check
         working-directory: desktop
         run: npx tsc --noEmit
+      - name: Draft freshness regression
+        working-directory: desktop
+        run: npm run test:draft-freshness
       # The freeze comes BEFORE cargo, not after, and this is not a style
       # choice. tauri.conf.json declares bundle.resources
       # "resources/rigorloomd/**/*"; tauri-build resolves that glob in the
