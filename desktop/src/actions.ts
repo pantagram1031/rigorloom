@@ -40,6 +40,11 @@ import {
   type QueuedOp,
 } from "./store";
 import {
+  activeApprovalBinding,
+  approvalBindingIsCurrent,
+  approvalBindingStillExists,
+} from "./workspace/reviewSummary";
+import {
   captureEditLease,
   commitParagraphClick,
   displayedRevision,
@@ -1128,16 +1133,57 @@ export async function setHead(runId: string | null): Promise<void> {
 
 // --- approval ------------------------------------------------------------------
 
+let approvalRequestGeneration = 0;
+
 export async function requestApprovalForDraft(): Promise<void> {
   const state = getState();
   const plan = state.draft.plan;
-  if (!plan || !canRequestApproval(state)) return;
+  if (
+    !plan ||
+    !state.activeSessionId ||
+    state.draft.sessionId !== state.activeSessionId ||
+    plan.sessionId !== state.activeSessionId ||
+    state.approval !== null ||
+    !canRequestApproval(state)
+  ) {
+    return;
+  }
+  const generation = ++approvalRequestGeneration;
+  const draft = state.draft;
+  const captured = {
+    sessionId: state.activeSessionId,
+    planId: plan.planId,
+    planHash: plan.planHash,
+  };
   setState({ approvalPhase: "requesting", approvalError: null });
   try {
     const approval = await rt.requestApproval(plan.planId);
+    const current = getState();
+    if (
+      generation !== approvalRequestGeneration ||
+      current.approvalPhase !== "requesting" ||
+      current.approval !== null ||
+      current.draft !== draft ||
+      current.draft.sessionId !== captured.sessionId ||
+      current.draft.plan?.sessionId !== captured.sessionId ||
+      current.draft.plan.planId !== captured.planId ||
+      current.draft.plan.planHash !== captured.planHash ||
+      approval.planId !== captured.planId ||
+      approval.planHash !== captured.planHash
+    ) {
+      return;
+    }
     setState({ approval, approvalPhase: "pending" });
   } catch (e) {
-    setState({ approvalPhase: "idle", approvalError: rt.asRuntimeError(e) });
+    const current = getState();
+    if (
+      generation === approvalRequestGeneration &&
+      current.approvalPhase === "requesting" &&
+      current.approval === null &&
+      current.draft === draft
+    ) {
+      setState({ approvalPhase: "idle", approvalError: rt.asRuntimeError(e) });
+    }
   }
 }
 
@@ -1155,24 +1201,36 @@ export async function resolveApprovalDecision(
 ): Promise<void> {
   const state = getState();
   const approval = state.approval;
-  const plan = state.draft.plan;
-  if (!approval || !plan) return;
+  const binding = activeApprovalBinding(state);
+  if (!approval || approval.state !== "pending" || !binding) return;
   setState({ approvalPhase: "resolving", approvalError: null });
   try {
     const resolved = await rt.resolveApproval(
-      approval.approvalId,
-      plan.planId,
-      plan.planHash,
+      binding.approvalId,
+      binding.planId,
+      binding.planHash,
       decision,
       approver,
     );
+    // The decision belongs only to the captured draft/approval. Its resolved
+    // record may remain on that exact preserved queue after a session switch,
+    // but it must never replace a newer queue or approval.
+    const current = getState();
+    if (!approvalBindingStillExists(current, binding)) return;
     setState({ approval: resolved, approvalPhase: "resolved" });
-    if (decision === "approved") await applyApproved();
-    else showToast("계획을 거절했습니다. 문서는 그대로입니다.", 2000);
+    // A resolved approval remains an honest Runtime fact on its preserved
+    // queue, but only the still-active exact binding may auto-apply it.
+    if (decision === "approved" && approvalBindingIsCurrent(getState(), binding)) {
+      await applyApproved();
+    } else if (decision === "rejected" && approvalBindingIsCurrent(getState(), binding)) {
+      showToast("계획을 거절했습니다. 문서는 그대로입니다.", 2000);
+    }
   } catch (e) {
     // `plan_stale` lands here when the source moved between the approval
     // request and the decision. Keep the queue; offer a re-propose.
-    setState({ approvalPhase: "pending", approvalError: rt.asRuntimeError(e) });
+    if (approvalBindingStillExists(getState(), binding)) {
+      setState({ approvalPhase: "pending", approvalError: rt.asRuntimeError(e) });
+    }
   }
 }
 
@@ -1185,7 +1243,8 @@ export async function applyApproved(): Promise<void> {
   const plan = state.draft.plan;
   const approval = state.approval;
   const sessionId = state.activeSessionId;
-  if (!plan || !approval || !sessionId) return;
+  const binding = activeApprovalBinding(state);
+  if (!plan || !approval || approval.state !== "approved" || !sessionId || !binding) return;
   const reversed = state.draft.reverses;
   setState({ applyPhase: "starting", applyError: null, recovery: null });
   try {

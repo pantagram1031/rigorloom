@@ -6,9 +6,12 @@ import { stripTypeScriptTypes } from "node:module";
 
 const source = readFileSync(new URL("../src/workspace/reviewSummary.ts", import.meta.url), "utf8");
 const implementation = stripTypeScriptTypes(source)
-  .replace(/^import type .*?;\s*$/gm, "")
+  .replace(/^import .*?;\s*$/gm, "")
   .replace(/export /g, "");
-const context = vm.createContext({});
+const context = vm.createContext({
+  draftStaleness: () => null,
+  headCandidate: () => null,
+});
 vm.runInContext(
   `${implementation}\nglobalThis.summary = { activeReviewQueueCount, activeReviewApprovalState, activeReviewVerificationState };`,
   context,
@@ -21,9 +24,10 @@ function state(overrides = {}) {
     draft: {
       sessionId: "session-A",
       ops: [{ opId: "op-1" }],
-      plan: { planId: "plan-A", planHash: "hash-A" },
+      plan: { sessionId: "session-A", planId: "plan-A", planHash: "hash-A" },
     },
     approval: {
+      approvalId: "approval-A",
       planId: "plan-A",
       planHash: "hash-A",
       state: "pending",
@@ -57,7 +61,12 @@ test("switching sessions does not expose another session's queue, approval, or v
 
 test("an approval with the wrong plan hash is not presented as this queue's approval", () => {
   const current = state({
-    approval: { planId: "plan-A", planHash: "older-hash", state: "approved" },
+    approval: {
+      approvalId: "approval-A",
+      planId: "plan-A",
+      planHash: "older-hash",
+      state: "approved",
+    },
   });
   assert.equal(summary.activeReviewApprovalState(current), null);
 });

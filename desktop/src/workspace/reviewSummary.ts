@@ -1,6 +1,76 @@
-import type { WorkspaceState } from "../store";
+import { draftStaleness, type WorkspaceState } from "../store";
 
 export type ReviewVerificationState = "not_run" | "partial" | "pass" | "fail";
+
+export interface ActiveApprovalBinding {
+  sessionId: string;
+  planId: string;
+  planHash: string;
+  approvalId: string;
+}
+
+/** The exact active document, draft plan, and approval record binding. */
+export function activeApprovalBinding(state: WorkspaceState): ActiveApprovalBinding | null {
+  const sessionId = state.activeSessionId;
+  const plan = state.draft.plan;
+  const approval = state.approval;
+  if (
+    !sessionId ||
+    state.draft.sessionId !== sessionId ||
+    !plan ||
+    plan.sessionId !== sessionId ||
+    !approval ||
+    approval.planId !== plan.planId ||
+    approval.planHash !== plan.planHash ||
+    draftStaleness(state) !== null
+  ) {
+    return null;
+  }
+  return {
+    sessionId,
+    planId: plan.planId,
+    planHash: plan.planHash,
+    approvalId: approval.approvalId,
+  };
+}
+
+/** Primitive selector for React; does not return a newly allocated binding. */
+export function hasActiveApprovalBinding(state: WorkspaceState): boolean {
+  return activeApprovalBinding(state) !== null;
+}
+
+/** Re-check a captured binding after an asynchronous runtime decision. */
+export function approvalBindingIsCurrent(
+  state: WorkspaceState,
+  expected: ActiveApprovalBinding,
+): boolean {
+  const current = activeApprovalBinding(state);
+  return (
+    current !== null &&
+    current.sessionId === expected.sessionId &&
+    current.planId === expected.planId &&
+    current.planHash === expected.planHash &&
+    current.approvalId === expected.approvalId
+  );
+}
+
+/** Whether the same draft/approval still exists even while another session is active. */
+export function approvalBindingStillExists(
+  state: WorkspaceState,
+  expected: ActiveApprovalBinding,
+): boolean {
+  const plan = state.draft.plan;
+  const approval = state.approval;
+  return (
+    state.draft.sessionId === expected.sessionId &&
+    plan?.sessionId === expected.sessionId &&
+    plan.planId === expected.planId &&
+    plan.planHash === expected.planHash &&
+    approval?.approvalId === expected.approvalId &&
+    approval.planId === expected.planId &&
+    approval.planHash === expected.planHash
+  );
+}
 
 /** Pending operations that belong to the document currently on screen. */
 export function activeReviewQueueCount(state: WorkspaceState): number {
@@ -13,19 +83,7 @@ export function activeReviewQueueCount(state: WorkspaceState): number {
  * whose binding belongs to another queue or document.
  */
 export function activeReviewApprovalState(state: WorkspaceState): string | null {
-  const plan = state.draft.plan;
-  const approval = state.approval;
-  if (
-    !state.activeSessionId ||
-    state.draft.sessionId !== state.activeSessionId ||
-    !plan ||
-    !approval ||
-    approval.planId !== plan.planId ||
-    approval.planHash !== plan.planHash
-  ) {
-    return null;
-  }
-  return approval.state;
+  return activeApprovalBinding(state) ? state.approval?.state ?? null : null;
 }
 
 /**

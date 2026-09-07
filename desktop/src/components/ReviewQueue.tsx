@@ -25,6 +25,7 @@
  *    it: propose again against what is open now.
  */
 import {
+  applyApproved,
   declareSuggestedCharPr,
   editOpValue,
   redoQueuedOp,
@@ -47,6 +48,7 @@ import {
   type QueuedOp,
 } from "../store";
 import type { PlanFinding } from "../types";
+import { hasActiveApprovalBinding } from "../workspace/reviewSummary";
 import { Tag } from "./Tag";
 
 /** Findings that name one op, keyed the way `validate_plan` writes `at`. */
@@ -197,9 +199,11 @@ export function ReviewQueue() {
   const recovery = useWorkspace((s) => s.recovery);
   const redoCount = useWorkspace((s) => s.redoStack.length);
   const activeSessionId = useWorkspace((s) => s.activeSessionId);
+  const approvalBound = useWorkspace(hasActiveApprovalBinding);
 
   const locked = approvalPhase === "resolving" || applyPhase === "starting";
   const locatable = !!activeSessionId && draft.sessionId === activeSessionId;
+  const canDecide = approvalBound && !locked;
 
   /** Put the last removed row back — the same target, the same value. */
   const redo =
@@ -363,7 +367,42 @@ export function ReviewQueue() {
 
       {/* ── the approval gate ─────────────────────────────────────────────
           The one place 단청 vermilion is spent. Everything above is teal. */}
-      {approval && approval.state === "pending" ? (
+      {approval && approval.state === "approved" ? (
+        <div className="approval-gate" data-testid="approval-resolved">
+          <div className="gate-head">
+            <span className="gate-dot" aria-hidden="true" />
+            <strong>승인됨</strong>
+          </div>
+          <p className="prose">
+            런타임에 승인 결정이 기록되었습니다. 현재 문서와 계획의 묶임을 다시 확인한 뒤
+            적용할 수 있습니다.
+          </p>
+          <div className="gate-actions">
+            <button
+              className="action point"
+              data-testid="apply-approved"
+              disabled={!approvalBound || applyPhase === "starting"}
+              title={
+                approvalBound
+                  ? "승인된 이 계획을 적용합니다"
+                  : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
+              }
+              onClick={() => void applyApproved()}
+            >
+              {applyPhase === "starting" ? "적용하는 중…" : "승인된 계획 적용"}
+            </button>
+            {applyPhase === "starting" ? (
+              <button
+                className="ghost dark-safe"
+                data-testid="cancel-apply"
+                onClick={() => void cancelApply()}
+              >
+                멈추기
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : approval && approval.state === "pending" ? (
         <div className="approval-gate" data-testid="approval-gate">
           <div className="gate-head">
             <span className="gate-dot" aria-hidden="true" />
@@ -386,7 +425,12 @@ export function ReviewQueue() {
             <button
               className="action point"
               data-testid="approve"
-              disabled={locked}
+              disabled={!canDecide}
+              title={
+                approvalBound
+                  ? "이 승인에 묶인 계획을 적용합니다"
+                  : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
+              }
               onClick={() => void resolveApprovalDecision("approved")}
             >
               {locked ? "적용하는 중…" : "승인하고 적용"}
@@ -394,7 +438,12 @@ export function ReviewQueue() {
             <button
               className="action"
               data-testid="reject"
-              disabled={locked}
+              disabled={!canDecide}
+              title={
+                approvalBound
+                  ? "이 승인 요청을 거절합니다"
+                  : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
+              }
               onClick={() => void resolveApprovalDecision("rejected")}
             >
               거절
