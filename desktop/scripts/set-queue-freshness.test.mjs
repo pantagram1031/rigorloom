@@ -5,6 +5,10 @@ import vm from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
 
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
+const ownerStart = source.indexOf("interface DraftOwner {");
+const ownerEnd = source.indexOf("/** Load a session's inspect", ownerStart);
+assert.ok(ownerStart >= 0 && ownerEnd > ownerStart, "draft owner source boundary changed");
+const ownerImplementation = source.slice(ownerStart, ownerEnd);
 const start = source.indexOf("async function setQueue(");
 const end = source.indexOf("/** Re-propose the queue", start);
 assert.ok(start >= 0 && end > start, "setQueue source boundary changed");
@@ -74,7 +78,9 @@ function fixture() {
     currentPlanGeneration: () => generation,
   });
   vm.runInContext(
-    `${stripTypeScriptTypes(implementation)}\nglobalThis.invokeSetQueue = setQueue;`,
+    `${stripTypeScriptTypes(ownerImplementation)}
+${stripTypeScriptTypes(implementation)}
+globalThis.invokeSetQueue = setQueue;`,
     context,
   );
 
@@ -201,4 +207,138 @@ test("the owning request publishes its original fields", async () => {
   assert.equal(f.read().draft.phase, "ready");
   assert.equal(f.read().draft.plan.planId, "normal");
   assert.equal(f.read().draft.ops[0].text, "한글");
+});
+
+function adoptionFixture() {
+  let state = {
+    activeSessionId: "session-A",
+    draft: { ...EMPTY_DRAFT },
+    head: null,
+    inspects: {},
+    texts: {},
+    approval: null,
+    approvalPhase: "idle",
+    approvalError: null,
+  };
+  const plans = [];
+  const validations = [];
+  const approvals = [];
+  const rt = {
+    getPlan(planId) {
+      const pending = deferred();
+      plans.push({ ...pending, planId });
+      return pending.promise;
+    },
+    validatePlan(planId) {
+      const pending = deferred();
+      validations.push({ ...pending, planId });
+      return pending.promise;
+    },
+    getApproval(approvalId) {
+      const pending = deferred();
+      approvals.push({ ...pending, approvalId });
+      return pending.promise;
+    },
+  };
+  const adoptStart = source.indexOf("async function adoptAgentPlan(");
+  const adoptEnd = source.indexOf("/** Ids are the shell's", adoptStart);
+  assert.ok(adoptStart >= 0 && adoptEnd > adoptStart, "agent adoption source boundary changed");
+  const adoptImplementation = source.slice(adoptStart, adoptEnd);
+  const context = vm.createContext({
+    rt,
+    getState: () => state,
+    setState: (patch) => {
+      state = { ...state, ...patch };
+    },
+    headCandidate: (current) =>
+      current.head ? { runId: current.head } : null,
+    seatText: () => "",
+  });
+  vm.runInContext(
+    `${stripTypeScriptTypes(ownerImplementation)}
+${stripTypeScriptTypes(adoptImplementation)}
+globalThis.captureOwner = captureDraftOwner;
+globalThis.invokeAdopt = adoptAgentPlan;`,
+    context,
+  );
+  const plan = (planId) => ({
+    planId,
+    planHash: `hash-${planId}`,
+    boundSha256: "source-A",
+    proposer: "test-agent",
+    ops: [],
+    base: null,
+    reverses: null,
+  });
+  return {
+    read: () => state,
+    patch: (patch) => {
+      state = { ...state, ...patch };
+    },
+    adopt: (approvalId = null) => {
+      const owner = context.captureOwner();
+      return context.invokeAdopt("session-A", "agent-plan", approvalId, owner);
+    },
+    plans,
+    validations,
+    approvals,
+    plan,
+    tick: () => new Promise((resolve) => setImmediate(resolve)),
+  };
+}
+
+test("agent adoption publishes when its draft owner is unchanged", async () => {
+  const f = adoptionFixture();
+  const pending = f.adopt();
+  f.plans[0].resolve(f.plan("agent-plan"));
+  await f.tick();
+  f.validations[0].resolve({ ok: true });
+  const result = await pending;
+
+  assert.equal(result.plan.planId, "agent-plan");
+  assert.equal(f.read().draft.plan.planId, "agent-plan");
+  assert.equal(f.read().draft.sessionId, "session-A");
+});
+
+test("agent adoption cannot replace a draft changed during validation", async () => {
+  const f = adoptionFixture();
+  const pending = f.adopt();
+  f.plans[0].resolve(f.plan("agent-plan"));
+  await f.tick();
+  const userDraft = { ...EMPTY_DRAFT, ops: [{ opId: "new-user-op" }] };
+  f.patch({ draft: userDraft });
+  f.validations[0].resolve({ ok: true });
+
+  assert.equal(await pending, null);
+  assert.equal(f.read().draft, userDraft);
+});
+
+test("agent adoption cannot cross a session or candidate-head change", async () => {
+  for (const patch of [{ activeSessionId: "session-B" }, { head: "new-head" }]) {
+    const f = adoptionFixture();
+    const pending = f.adopt();
+    f.patch(patch);
+    f.plans[0].resolve(f.plan("agent-plan"));
+    await f.tick();
+    f.validations[0].resolve({ ok: true });
+
+    assert.equal(await pending, null);
+    assert.equal(f.read().draft.plan, null);
+  }
+});
+
+test("agent adoption rechecks ownership after approval lookup", async () => {
+  const f = adoptionFixture();
+  const pending = f.adopt("approval-1");
+  f.plans[0].resolve(f.plan("agent-plan"));
+  await f.tick();
+  f.validations[0].resolve({ ok: true });
+  await f.tick();
+  const userDraft = { ...EMPTY_DRAFT, ops: [{ opId: "new-user-op" }] };
+  f.patch({ draft: userDraft });
+  f.approvals[0].resolve({ approvalId: "approval-1", state: "pending" });
+
+  assert.equal(await pending, null);
+  assert.equal(f.read().draft, userDraft);
+  assert.equal(f.read().approval, null);
 });

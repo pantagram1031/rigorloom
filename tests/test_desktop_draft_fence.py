@@ -66,6 +66,9 @@ ACTIONS = REPO / "desktop" / "src" / "actions.ts"
 HARNESS = Path(__file__).resolve().parent / "desktop_draft_fence_harness.cjs"
 FRESHNESS = REPO / "desktop" / "scripts" / "set-queue-freshness.test.mjs"
 TSC = REPO / "desktop" / "node_modules" / "typescript"
+DOCUMENT_CONTEXT = REPO / "desktop" / "src" / "components" / "DocumentContext.tsx"
+AGENT_VIEW = REPO / "desktop" / "src" / "views" / "AgentView.tsx"
+CONVERSATION = REPO / "desktop" / "src" / "components" / "Conversation.tsx"
 
 
 # ---------------------------------------------------------------------------
@@ -172,17 +175,66 @@ def test_set_queue_clears_stale_plan_before_propose():
 
 def test_set_queue_owns_draft_identity_session_and_head():
     """Late completions after a clear, session switch, or head change must not land."""
-    body = _setqueue_body(ACTIONS.read_text(encoding="utf-8"))
-    assert "const ownsDraft = () =>" in body
-    assert "getState().draft === pendingDraft" in body
-    assert "getState().activeSessionId === sessionId" in body
-    assert "headCandidate(getState())?.runId" in body
+    text = ACTIONS.read_text(encoding="utf-8")
+    body = _setqueue_body(text)
+    owner_start = text.index("interface DraftOwner")
+    owner_end = text.index("/** Load a session's inspect", owner_start)
+    owner = text[owner_start:owner_end]
+    assert "state.draft === owner.draft" in owner
+    assert "state.activeSessionId === owner.sessionId" in owner
+    assert "headCandidate(state)?.runId" in owner
+    assert "const owner = captureDraftOwner()" in body
     propose_pos = body.index("rt.proposePlan(")
-    owns = [i for i in range(len(body)) if body[i:].startswith("if (!ownsDraft()) return;")]
+    owns = [i for i in range(len(body)) if body[i:].startswith("if (!ownsDraft(owner)) return;")]
     assert len(owns) >= 3, f"Expected ≥3 ownsDraft guards, found {len(owns)}"
     assert any(i > propose_pos for i in owns)
     catch_pos = body.rindex("} catch (e) {")
     assert any(i > catch_pos for i in owns)
+
+
+def test_agent_plan_adoption_uses_the_same_draft_owner():
+    """Agent completions must not overwrite a newer document, head, or queue."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    start = text.index("async function adoptAgentPlan(")
+    end = text.index("/** Ids are the shell's", start)
+    body = text[start:end]
+    assert "owner: DraftOwner" in body
+    assert "if (!ownsDraft(owner)) return null;" in body
+    assert body.index("await rt.validatePlan") < body.index("if (!ownsDraft(owner))")
+
+    mock_start = text.index("export async function runAgentProposal")
+    mock_end = text.index("// --- checking", mock_start)
+    mock = text[mock_start:mock_end]
+    assert mock.index("const owner = captureDraftOwner()") < mock.index("await rt.runMockAgent")
+    assert "approval?.approvalId ?? null,\n      owner," in mock
+
+    send_start = text.index("export async function sendInstruction")
+    send_end = text.index("/** Stop the run in flight", send_start)
+    send = text[send_start:send_end]
+    assert send.index("const owner = captureDraftOwner()") < send.index("await rt.agentHostRun")
+    assert "if (adopted) patchTurn(id, { planId });" in send
+
+
+def test_agent_document_context_reads_shared_work_state():
+    """The agent pane must project the store, not hard-coded duplicate state."""
+    context = DOCUMENT_CONTEXT.read_text(encoding="utf-8")
+    assert "export function DocumentContext()" in context
+    assert "useWorkspace(activeSession)" in context
+    assert "useWorkspace(activeInspect)" in context
+    assert "useWorkspace(activeCandidates)" in context
+    assert "useWorkspace((s) => s.draft)" in context
+    assert "useWorkspace((s) => s.approval)" in context
+    assert "draft.ops.length" in context
+    assert "draft.validation" in context
+    assert "이 단계에서는 문서를 읽기만 합니다" not in context
+    assert "<DocumentContext />" in AGENT_VIEW.read_text(encoding="utf-8")
+
+
+def test_superseded_agent_plan_is_not_described_as_queued():
+    """A turn card must distinguish a runtime plan from an adopted draft."""
+    conversation = CONVERSATION.read_text(encoding="utf-8")
+    assert "turn.planId ?" in conversation
+    assert "대기열에는 넣지 않았습니다." in conversation
 
 
 def test_set_queue_error_path_is_also_fenced():

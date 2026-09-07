@@ -170,9 +170,18 @@ function TurnCard({ turn }: { turn: Turn }) {
 
         {payload?.plan ? (
           <p className="gate" data-testid="turn-gate">
-            계획 <span className="mono">{payload.plan.planId.slice(0, 12)}</span> 을(를) 냈고,
-            승인은 <strong>받지 못한 채</strong> 멈췄습니다. 오른쪽 검토 대기열에서 사람이
-            직접 승인해야 합니다.
+            계획 <span className="mono">{payload.plan.planId.slice(0, 12)}</span> 을(를) 냈고,{" "}
+            {turn.planId ? (
+              <>
+                승인은 <strong>받지 못한 채</strong> 멈췄습니다. 오른쪽 검토 대기열에서 사람이
+                직접 승인해야 합니다.
+              </>
+            ) : (
+              <>
+                도착하는 동안 문서나 검토 대기열이 바뀌어 <strong>대기열에는 넣지 않았습니다.</strong>{" "}
+                현재 상태에서 다시 요청해야 합니다.
+              </>
+            )}
           </p>
         ) : null}
 
