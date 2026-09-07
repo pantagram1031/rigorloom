@@ -5,7 +5,7 @@ This is not a rewrite of the Epoch 0 specification on
 `codex/private-preview-epoch-0`, and it does not transplant rematch /
 own_render / Claude renderer research pins.
 
-**Updated:** 2026-09-08 ~05:22 KST
+**Updated:** 2026-09-08 ~05:42 KST
 
 ## Train head
 
@@ -44,7 +44,7 @@ here.
 
 - Hung run [34152302855](https://github.com/pantagram1031/rigorloom/actions/runs/34152302855) on `4a499166` — **cancelled**.
 - Green run [34155334389](https://github.com/pantagram1031/rigorloom/actions/runs/34155334389) on `e927195b` — **success**. That green run is the **#356** product tip SHA.
-- Docs snapshot [PR #357](https://github.com/pantagram1031/rigorloom/pull/357) @ `b69eb827` run [34156949995](https://github.com/pantagram1031/rigorloom/actions/runs/34156949995) — **ALL PASS**. #357 is ops docs only; it is not the living product tip.
+- Docs snapshot [PR #357](https://github.com/pantagram1031/rigorloom/pull/357) is ops docs only; it is **not** the living product tip. Prior #357 tip `b69eb827` run [34156949995](https://github.com/pantagram1031/rigorloom/actions/runs/34156949995) was **ALL PASS**. `84bead93` (docs/ops-only vs that tip) failed all-modules ubuntu on inherited flake `test_run_child_capture_cleans_ordinary_grandchild_cross_platform` (run [34159193388](https://github.com/pantagram1031/rigorloom/actions/runs/34159193388)). Do not pin #357 HEAD as the product SHA.
 
 ## Card evidence
 

@@ -9,7 +9,7 @@ This file supersedes the 2026-09-07 12:41 KST research snapshot from
 (`docs/research/loom-ops-status.md` on that branch). It does not rewrite
 product PR #356.
 
-**Updated:** 2026-09-08 ~05:22 KST
+**Updated:** 2026-09-08 ~05:42 KST
 
 ---
 
@@ -44,7 +44,7 @@ Prior tip **[PR #355](https://github.com/pantagram1031/rigorloom/pull/355)** @
 | #354 | QA + `mock_approved` | `7341e45c61c444fc7e5ee6e8244bad8080fa3cf4` | ancestor of #355 |
 | #355 | docs + lineage fix | `99ad234cc2af4e87da54ec4d3151e62c44c424d4` | **ancestor of #356**; prior Card 5 hash PASS (superseded for living tip) |
 | #356 | epoch desktop onto #355 | `e927195baf5932c8d6f532b9d79bc65e5b71fea9` | **living product tip**; CI green run `34155334389`; Card 5 HASH now on this SHA |
-| #357 | docs-only ops snapshot | `b69eb827b8f2c50ed3310b007e21a4e1ced40b6b` | **not** the product tip; CI ALL PASS run `34156949995` |
+| #357 | docs-only ops snapshot | branch `cursor/living-tip-status-356-4ce5` | **not** the product tip. Prior green `b69eb827` run `34156949995`. `84bead93` ubuntu flake run `34159193388` |
 
 ---
 
@@ -66,7 +66,8 @@ Prior tip **[PR #355](https://github.com/pantagram1031/rigorloom/pull/355)** @
 | --- | --- | --- |
 | [34152302855](https://github.com/pantagram1031/rigorloom/actions/runs/34152302855) | `4a4991666b0c92d9e4a89e57a468525d220d4358` (#356 hang) | **cancelled** (hung windows-latest pytest) |
 | [34155334389](https://github.com/pantagram1031/rigorloom/actions/runs/34155334389) | `e927195baf5932c8d6f532b9d79bc65e5b71fea9` (#356) | **success** — living-tip promotion evidence |
-| [34156949995](https://github.com/pantagram1031/rigorloom/actions/runs/34156949995) | `b69eb827b8f2c50ed3310b007e21a4e1ced40b6b` (#357 docs) | **ALL PASS** (render-smoke + core/all ubuntu+windows) |
+| [34156949995](https://github.com/pantagram1031/rigorloom/actions/runs/34156949995) | `b69eb827b8f2c50ed3310b007e21a4e1ced40b6b` (#357 docs) | **ALL PASS** (prior docs tip) |
+| [34159193388](https://github.com/pantagram1031/rigorloom/actions/runs/34159193388) | `84bead9348a48cf100cc337d12d29a841dafe16c` (#357 Card5 HASH fold) | **failure** — all-modules ubuntu only; flake `test_run_child_capture_cleans_ordinary_grandchild_cross_platform` |
 
 ---
 
