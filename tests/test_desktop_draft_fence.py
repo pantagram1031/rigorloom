@@ -28,6 +28,12 @@ The fix
 ``rt.proposePlan``, after ``rt.validatePlan``, and before writing the error
 path.  A stale call returns without touching the store.
 
+Ported from ``4f214ace`` (epoch desktop): a replacement queue also drops the
+preceding ``plan`` / ``validation`` / ``boundSha256`` before the first await,
+and an identity/session/head ``ownsDraft`` fence ignores late completions
+after a clear, document switch, or candidate-head change.  The generation
+token still covers concurrent ``setQueue``.
+
 Test commands
 -------------
 Run from the repo root::
@@ -58,6 +64,7 @@ REPO = Path(__file__).resolve().parents[1]
 STORE = REPO / "desktop" / "src" / "store.ts"
 ACTIONS = REPO / "desktop" / "src" / "actions.ts"
 HARNESS = Path(__file__).resolve().parent / "desktop_draft_fence_harness.cjs"
+FRESHNESS = REPO / "desktop" / "scripts" / "set-queue-freshness.test.mjs"
 TSC = REPO / "desktop" / "node_modules" / "typescript"
 
 
@@ -151,6 +158,33 @@ def test_set_queue_checks_fence_after_propose_and_validate():
     assert after_validate, "No fence guard found after rt.validatePlan"
 
 
+def test_set_queue_clears_stale_plan_before_propose():
+    """A replacement queue must hide the preceding plan before the first await."""
+    body = _setqueue_body(ACTIONS.read_text(encoding="utf-8"))
+    plan_null = body.index("plan: null")
+    validation_null = body.index("validation: null")
+    bound_null = body.index("boundSha256: null")
+    propose_pos = body.index("rt.proposePlan(")
+    assert plan_null < propose_pos
+    assert validation_null < propose_pos
+    assert bound_null < propose_pos
+
+
+def test_set_queue_owns_draft_identity_session_and_head():
+    """Late completions after a clear, session switch, or head change must not land."""
+    body = _setqueue_body(ACTIONS.read_text(encoding="utf-8"))
+    assert "const ownsDraft = () =>" in body
+    assert "getState().draft === pendingDraft" in body
+    assert "getState().activeSessionId === sessionId" in body
+    assert "headCandidate(getState())?.runId" in body
+    propose_pos = body.index("rt.proposePlan(")
+    owns = [i for i in range(len(body)) if body[i:].startswith("if (!ownsDraft()) return;")]
+    assert len(owns) >= 3, f"Expected ≥3 ownsDraft guards, found {len(owns)}"
+    assert any(i > propose_pos for i in owns)
+    catch_pos = body.rindex("} catch (e) {")
+    assert any(i > catch_pos for i in owns)
+
+
 def test_set_queue_error_path_is_also_fenced():
     """The catch block in setQueue must also check the fence before setState.
 
@@ -185,6 +219,22 @@ def test_draft_fence_harness():
     completed = subprocess.run(
         [shutil.which("node") or "node", str(HARNESS)],
         cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    if completed.returncode != 0:
+        sys.stderr.write(completed.stdout)
+        sys.stderr.write(completed.stderr)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_draft_freshness_node_tests():
+    """Ported epoch freshness cases: session, head, clear, and late error."""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "--test", str(FRESHNESS)],
+        cwd=str(REPO / "desktop"),
         capture_output=True,
         text=True,
         timeout=45,

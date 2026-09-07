@@ -668,6 +668,16 @@ mod tests {
         (artifact, receipt, dest)
     }
 
+    fn has_stage_residue(dir: &Path) -> bool {
+        dir.read_dir().unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".export-")
+        })
+    }
+
     #[test]
     fn windows_drive_and_slash_spellings_are_aliases() {
         assert!(paths_are_aliases(
@@ -763,6 +773,73 @@ mod tests {
         assert_eq!(err.code, "export_alias");
         assert_eq!(fs::read(&artifact).unwrap(), b"NEW-ARTIFACT-BYTES");
         assert_eq!(fs::read(&dest).unwrap(), b"NEW-ARTIFACT-BYTES");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_existing_artifact_without_a_receipt_is_preserved_on_failure() {
+        let dir = scratch();
+        let (artifact, receipt, dest) = setup(&dir);
+        fs::write(&dest, b"existing document only").unwrap();
+        let err = publish_export_pair_at(
+            &artifact,
+            &receipt,
+            &dest,
+            Some(CrashAfter::Staged),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "export_failed");
+        assert_eq!(fs::read(&dest).unwrap(), b"existing document only");
+        assert!(!receipt_sidecar(&dest).exists());
+        assert!(!has_stage_residue(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_existing_receipt_without_an_artifact_is_preserved_on_failure() {
+        let dir = scratch();
+        let (artifact, receipt, dest) = setup(&dir);
+        let receipt_dest = receipt_sidecar(&dest);
+        fs::write(&receipt_dest, b"existing receipt only").unwrap();
+        let err = publish_export_pair_at(
+            &artifact,
+            &receipt,
+            &dest,
+            Some(CrashAfter::Staged),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "export_failed");
+        assert!(!dest.exists());
+        assert_eq!(fs::read(&receipt_dest).unwrap(), b"existing receipt only");
+        assert!(!has_stage_residue(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_destination_hard_linked_to_the_runtime_artifact_is_preserved() {
+        let dir = scratch();
+        let (artifact, receipt, dest) = setup(&dir);
+        let before = fs::read(&artifact).unwrap();
+        fs::hard_link(&artifact, &dest).unwrap();
+        let err = publish_export_pair(&artifact, &receipt, &dest).unwrap_err();
+        assert_eq!(err.code, "export_alias");
+        assert_eq!(fs::read(&artifact).unwrap(), before);
+        assert_eq!(fs::read(&dest).unwrap(), before);
+        assert!(!receipt_sidecar(&dest).exists());
+        assert!(!has_stage_residue(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_existing_receipt_without_an_artifact_becomes_a_complete_pair() {
+        let dir = scratch();
+        let (artifact, receipt, dest) = setup(&dir);
+        let receipt_dest = receipt_sidecar(&dest);
+        fs::write(&receipt_dest, b"existing receipt only").unwrap();
+        let ok = publish_export_pair(&artifact, &receipt, &dest).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"NEW-ARTIFACT-BYTES");
+        assert_eq!(fs::read(&ok.receipt_path).unwrap(), b"{\"ok\":true}");
+        assert!(!has_stage_residue(&dir));
         let _ = fs::remove_dir_all(&dir);
     }
 
