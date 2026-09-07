@@ -39,7 +39,7 @@ Promotion of the living tip to #356 @ `e927195b` is this green run, not the canc
 ## Holds
 
 - Card 4 Korean IME remains **NOT_RUN / hold**. This snapshot does not claim IME PASS.
-- Card 5 GUI remains **NOT_RUN / hold**. Hash evidence below is hashes only (`guiImeClaimed=false`).
+- Card 5 GUI remains **NOT_RUN / hold**. Recorded hash evidence is hashes only (`guiImeClaimed=false`).
 - Rematch / own_render / Claude renderer research pins are frozen and are not modified here.
 
 See [release-train-status.md](release-train-status.md) and [loom-ops-status.md](loom-ops-status.md) for the card board and previously recorded evidence.
