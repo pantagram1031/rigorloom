@@ -204,6 +204,8 @@ export function ReviewQueue() {
   const locked = approvalPhase === "resolving" || applyPhase === "starting";
   const locatable = !!activeSessionId && draft.sessionId === activeSessionId;
   const canDecide = approvalBound && !locked;
+  const recoveryBlocksApply = !!recovery && recovery.outcome !== "not_applied" &&
+    recovery.planId === draft.plan?.planId && recovery.approvalId === approval?.approvalId;
 
   /** Put the last removed row back — the same target, the same value. */
   const redo =
@@ -381,9 +383,11 @@ export function ReviewQueue() {
             <button
               className="action point"
               data-testid="apply-approved"
-              disabled={!approvalBound || applyPhase === "starting"}
+              disabled={!approvalBound || applyPhase === "starting" || recoveryBlocksApply}
               title={
-                approvalBound
+                recoveryBlocksApply
+                  ? "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다"
+                  : approvalBound
                   ? "승인된 이 계획을 적용합니다"
                   : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
               }

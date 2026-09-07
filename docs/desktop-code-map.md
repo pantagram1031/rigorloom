@@ -27,7 +27,7 @@ it does not create a new session, conversation, draft or approval.
 | State lifetime | Examples |
 | --- | --- |
 | Workspace memory, survives view replacement | selection/navigation, draft/approval, turns, unsent composer draft, candidate/receipt state |
-| Session-keyed cache in Workspace | inspects, texts, candidates |
+| Session-keyed cache in Workspace | inspects, texts, candidates, terminal apply outcomes |
 | Active-session presentation | document events, findings, current geometry/render; session replacement explicitly invalidates selected fields |
 | Component/DOM lifetime | focus, composition refs, transient editor values; these do not automatically survive remount |
 | Persisted shell preferences | settings and recents sent through the existing prefs IPC; composer text is not persisted |
@@ -39,6 +39,13 @@ memoized results. `workspace/reviewSummary.ts` uses primitive session-scoped val
 `workspace/composerDraft.ts` owns the asynchronous submission rule: only the send
 that still owns the cleared draft can restore it after refusal. New typing,
 including typing followed by clearing, supersedes that restoration.
+
+Apply completion records a session-keyed outcome. It consumes only the captured
+queue and advances the visible head only while that queue still owns the current
+document. Session changes restore only that document's apply presentation. A
+timeout remains ambiguous; the same plan/approval cannot be retried while its
+outcome is unknown or already confirmed applied. These caches are memory-only,
+not durable Runtime idempotency or crash-recovery guarantees.
 
 ## Commands and transport
 

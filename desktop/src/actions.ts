@@ -200,7 +200,9 @@ export async function selectSession(sessionId: string) {
           geometryError: null,
           overlayPick: null,
           candidateVerdict: null,
-          applied: null,
+          ...applyPresentation(sessionId),
+          // Applying is globally serial, even if its document is not visible.
+          ...(getState().applyPhase === "starting" ? { applyPhase: "starting" as const } : {}),
           receiptOpen: null,
           // A module report names the document it checked. Carrying one across
           // a document switch would put another file's verdict under this
@@ -1077,6 +1079,7 @@ export async function verifyReversal(
 ): Promise<boolean> {
   const sessionId = getState().activeSessionId;
   if (!sessionId) return false;
+  const expectedHead = getState().head;
   try {
     const receipt =
       getState().receipts[reversedRunId] ??
@@ -1091,10 +1094,13 @@ export async function verifyReversal(
       ? ({ runId: receipt.base.runId } as const)
       : ({ source: true } as const);
     const compare = await rt.compareCandidate(sessionId, runId, against, regions);
+    if (getState().activeSessionId !== sessionId || getState().head !== expectedHead) return false;
     setState({ inverseProof: { runId, reversedRunId, compare } });
     return compare.regionsEqual === true;
   } catch (e) {
-    setState({ undoError: rt.asRuntimeError(e) });
+    if (getState().activeSessionId === sessionId && getState().head === expectedHead) {
+      setState({ undoError: rt.asRuntimeError(e) });
+    }
     return false;
   }
 }
@@ -1238,62 +1244,79 @@ export async function resolveApprovalDecision(
 
 const APPLY_TAG = "apply";
 
+function applyPresentation(sessionId: string | null) {
+  const outcome = sessionId ? getState().applyOutcomes?.[sessionId] : undefined;
+  return {
+    applied: outcome?.applied ?? null,
+    applyError: outcome?.error ?? null,
+    recovery: outcome?.recovery ?? null,
+    applyPhase: outcome?.applied ? "ready" as const : outcome?.error ? "failed" as const : "idle" as const,
+  };
+}
+
 export async function applyApproved(): Promise<void> {
   const state = getState();
   const plan = state.draft.plan;
   const approval = state.approval;
   const sessionId = state.activeSessionId;
   const binding = activeApprovalBinding(state);
-  if (!plan || !approval || approval.state !== "approved" || !sessionId || !binding) return;
+  if (!plan || !approval || approval.state !== "approved" || !sessionId || !binding || state.applyPhase === "starting") return;
+  const priorRecovery = state.applyOutcomes?.[sessionId]?.recovery ?? state.recovery;
+  if (priorRecovery && priorRecovery.outcome !== "not_applied" && priorRecovery.planId === plan.planId && priorRecovery.approvalId === approval.approvalId) return;
+  const draft = state.draft;
   const reversed = state.draft.reverses;
   setState({ applyPhase: "starting", applyError: null, recovery: null });
+  let applied: AppliedCandidate;
   try {
-    const applied = await rt.applyPlan(plan.planId, approval.approvalId, APPLY_TAG);
-    setState({
-      applied,
-      applyPhase: "ready",
-      // The queue has become a candidate. Keeping the ops on screen would
-      // invite a second apply of an already-applied plan, which the runtime
-      // would refuse anyway (`approval_already_resolved`).
-      draft: EMPTY_DRAFT,
-      // The redo stack belonged to that queue. Offering to re-enqueue an op
-      // that is now inside a published candidate would put the same edit in
-      // twice, so it goes with the queue it came from.
-      redoStack: [],
-      approvalPhase: "idle",
-      approval: null,
-      candidateVerdict: { runId: applied.runId, report: applied.checks },
-      // The new candidate is what the document now is, so the next edit chains
-      // onto it. Explicit rather than implicit; the 기록 panel shows it.
-      head: applied.runId,
-      historySelected: applied.runId,
-      inverseProof: null,
-    });
-    await loadCandidates(sessionId);
-    // A reversal is not finished when it is applied — it is finished when the
-    // runtime says the value came back. Asked here, straight after, so the
-    // claim and its proof arrive together rather than the claim standing alone.
-    if (reversed) await verifyReversal(applied.runId, reversed);
-    showToast(`후보본을 만들었습니다 · ${applied.candidate.sha256.slice(0, 12)}`, 2200);
+    applied = await rt.applyPlan(plan.planId, approval.approvalId, APPLY_TAG);
   } catch (e) {
     const error = rt.asRuntimeError(e);
-    setState({ applyPhase: "failed", applyError: error });
     // A dead sidecar mid-apply is the ambiguous case: the run directory is
     // removed on any failure inside `apply_plan`, but a process that died
     // between the artifact move and the receipt write leaves neither a
     // candidate nor a signal. Record what was in flight and offer to look.
-    if (error.code === "sidecar_down" || error.code === "timeout") {
-      setState({
-        recovery: {
+    const recovery = error.code === "sidecar_down" || error.code === "timeout"
+      ? {
           planId: plan.planId,
           approvalId: approval.approvalId,
           atUtc: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
           reason: error.message,
-          outcome: "unknown",
+          outcome: "unknown" as const,
           runId: null,
-        },
-      });
-    }
+        }
+      : null;
+    setState({ applyOutcomes: {
+      ...getState().applyOutcomes,
+      [sessionId]: { applied: null, error, recovery },
+    } });
+    setState(applyPresentation(getState().activeSessionId));
+    return;
+  }
+
+  // Publication is separate from Runtime apply: a later refresh failure must
+  // never relabel a successfully receipted operation as a failed apply.
+  const current = getState();
+  const ownsQueue = current.draft === draft && approvalBindingStillExists(current, binding);
+  const ownsPresentation = ownsQueue && current.activeSessionId === sessionId;
+  setState({ applyOutcomes: {
+    ...current.applyOutcomes,
+    [sessionId]: { applied, error: null, recovery: null },
+  } });
+  setState({
+    ...applyPresentation(getState().activeSessionId),
+    ...(ownsQueue ? { draft: EMPTY_DRAFT, redoStack: [], approvalPhase: "idle" as const, approval: null } : {}),
+    ...(ownsPresentation ? {
+      candidateVerdict: { runId: applied.runId, report: applied.checks },
+      head: applied.runId,
+      historySelected: applied.runId,
+      inverseProof: null,
+    } : {}),
+  });
+  await loadCandidates(sessionId);
+  if (!ownsPresentation || getState().activeSessionId !== sessionId || getState().head !== applied.runId) return;
+  if (reversed) await verifyReversal(applied.runId, reversed);
+  if (getState().activeSessionId === sessionId && getState().head === applied.runId) {
+    showToast(`후보본을 만들었습니다 · ${applied.candidate.sha256.slice(0, 12)}`, 2200);
   }
 }
 
@@ -1304,31 +1327,123 @@ export async function cancelApply(): Promise<void> {
 }
 
 /**
- * After a crash: did the apply land or not?
+ * After a crash: can the interrupted apply be proven to have landed?
  *
- * `candidate/list` only returns runs whose receipt is on disk, which is
- * precisely the definition of "canonical" (`rt_apply.list_candidates`). So the
- * answer is a list read, not a guess — and if a new candidate is there, its
- * receipt is read to prove the bytes still bind.
+ * A list row is only a lead. It must name the captured plan, and its verifying
+ * receipt must bind the captured session, run, plan and approval. Absence is
+ * still unknown: the Runtime may still be publishing the candidate.
  */
 export async function resolveRecovery(): Promise<void> {
   const state = getState();
   const recovery = state.recovery;
   const sessionId = state.activeSessionId;
   if (!recovery || !sessionId) return;
-  const before = new Set((state.candidates[sessionId] ?? []).map((c) => c.runId));
-  await loadCandidates(sessionId);
-  const after = getState().candidates[sessionId] ?? [];
-  const fresh = after.find((c) => c.runId && !before.has(c.runId));
-  if (!fresh?.runId) {
+  const draft = state.draft;
+  const approval = state.approval;
+
+  const stillOwned = () => getState().applyOutcomes[sessionId]?.recovery === recovery;
+  const publishError = (error: RuntimeError) => {
+    const current = getState();
+    const outcome = current.applyOutcomes[sessionId];
+    if (outcome?.recovery !== recovery) return;
+    const visible = current.activeSessionId === sessionId && current.recovery === recovery && current.applyPhase !== "starting";
     setState({
-      recovery: { ...recovery, outcome: "not_applied" },
-      draft: getState().draft,
+      applyOutcomes: {
+        ...current.applyOutcomes,
+        [sessionId]: { ...outcome, error },
+      },
+      ...(visible ? { applyError: error, applyPhase: "failed" as const } : {}),
+    });
+  };
+
+  if (!stillOwned()) return;
+
+  let candidates;
+  try {
+    candidates = await rt.candidates(sessionId);
+  } catch (error) {
+    publishError(rt.asRuntimeError(error));
+    return;
+  }
+  if (!stillOwned()) return;
+
+  const matches = candidates.filter(
+    (candidate) => candidate.runId && candidate.planId === recovery.planId,
+  );
+  if (matches.length !== 1 || !matches[0].runId) return;
+  const runId = matches[0].runId;
+
+  let receipt;
+  try {
+    receipt = await rt.readReceipt(sessionId, runId);
+  } catch (error) {
+    publishError(rt.asRuntimeError(error));
+    return;
+  }
+  if (!stillOwned()) return;
+
+  const receiptMatches =
+    receipt.sessionId === sessionId &&
+    receipt.runId === runId &&
+    receipt.planId === recovery.planId &&
+    receipt.approval?.approvalId === recovery.approvalId &&
+    receipt.approval?.planId === recovery.planId;
+  if (!receiptMatches) {
+    publishError({
+      code: "recovery_receipt_mismatch",
+      message: "복구 후보의 영수증이 중단된 적용 요청과 일치하지 않습니다.",
     });
     return;
   }
-  setState({ recovery: { ...recovery, outcome: "applied", runId: fresh.runId } });
-  await loadReceipt(fresh.runId);
+
+  const applied: AppliedCandidate = {
+    runId,
+    sessionId,
+    planId: receipt.planId,
+    candidate: receipt.candidate,
+    base: receipt.base,
+    reverses: receipt.reverses,
+    checks: receipt.checks,
+    receipt: matches[0].receipt ?? `${runId}/receipt.json`,
+    canonical: true,
+  };
+  const resolved = { ...recovery, outcome: "applied" as const, runId };
+  const current = getState();
+  const outcome = current.applyOutcomes[sessionId];
+  if (outcome?.recovery !== recovery) return;
+  const visible = current.activeSessionId === sessionId && current.recovery === recovery && current.applyPhase !== "starting";
+  const ownsQueue =
+    current.draft === draft &&
+    draft.sessionId === sessionId &&
+    draft.plan?.planId === recovery.planId &&
+    current.approval === approval &&
+    approval?.approvalId === recovery.approvalId &&
+    approval.planId === recovery.planId;
+  setState({
+    applyOutcomes: {
+      ...current.applyOutcomes,
+      [sessionId]: { applied, error: null, recovery: resolved },
+    },
+    candidates: { ...current.candidates, [sessionId]: candidates },
+    receipts: { ...current.receipts, [runId]: receipt },
+    ...(ownsQueue
+      ? {
+          draft: EMPTY_DRAFT,
+          redoStack: [],
+          approval: null,
+          approvalPhase: "idle" as const,
+        }
+      : {}),
+    ...(visible
+      ? {
+          applied,
+          applyError: null,
+          applyPhase: "ready" as const,
+          recovery: resolved,
+          receiptError: null,
+        }
+      : {}),
+  });
 }
 
 // --- receipts and the candidate's verdict ---------------------------------------

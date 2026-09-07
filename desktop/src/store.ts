@@ -411,6 +411,12 @@ export interface WorkspaceState {
   /** The candidate the last apply produced, and the one 검사 실행 reads. */
   applied: AppliedCandidate | null;
   recovery: Recovery | null;
+  /** Terminal apply facts remain attached to their initiating document. */
+  applyOutcomes: Record<string, {
+    applied: AppliedCandidate | null;
+    error: RuntimeError | null;
+    recovery: Recovery | null;
+  }>;
   /** Receipts read back, keyed on runId. */
   receipts: Record<string, Receipt>;
   receiptOpen: string | null;
@@ -679,6 +685,7 @@ const initial: WorkspaceState = {
   applyError: null,
   applied: null,
   recovery: null,
+  applyOutcomes: {},
   receipts: {},
   receiptOpen: null,
   receiptError: null,
@@ -1281,6 +1288,8 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
       : null,
     approval: s.approval ? `${s.approval.approvalId}:${s.approval.state}` : null,
     applied: s.applied?.candidate.sha256 ?? null,
+    applyOutcomes: Object.entries(s.applyOutcomes).map(([sessionId, outcome]) =>
+      `${sessionId}:${outcome.applied?.runId ?? outcome.error?.code ?? "none"}:${outcome.recovery?.outcome ?? "none"}`),
     // E1.4. Undo is Workspace state like every other kind: a 되돌리기 제안
     // half-reviewed in Document view must be the same proposal in Agent view,
     // and a redo stack that emptied on Ctrl+2 would be a second history.
