@@ -265,6 +265,44 @@ def test_a_run_directory_without_a_receipt_is_not_a_candidate(tmp_path):
     assert rt_apply.list_candidates(session) == []
 
 
+def test_list_candidates_oldest_first_when_created_utc_ties(tmp_path):
+    """Same-second receipts must not fall back to random hex run-id order.
+
+    CI saw the child's id sort before the parent's (``89344e1…`` < ``c7e9a2e…``)
+    when both ``createdUtc`` stamps were the same second. Hex order is not
+    history; lineage depth is.
+    """
+    import json
+    import rt_session
+
+    store = rt_session.SessionStore(tmp_path / "root")
+    session = store.open_path(str(_source(tmp_path)))
+    parent_id = "c7e9a2e683794c17927f0e850326ae8c"
+    child_id = "89344e1db1914e62b92b9600ba77379e"
+    assert child_id < parent_id
+    stamp = "2026-09-07T09:41:00Z"
+
+    def write_receipt(run_id, base):
+        run_dir = session.candidates_dir / run_id
+        run_dir.mkdir(parents=True)
+        payload = {
+            "createdUtc": stamp,
+            "planId": "plan-" + run_id[:8],
+            "candidate": {"sha256": "a" * 64, "bytes": 1, "path": "artifact.hwpx"},
+            "base": base,
+            "reverses": None,
+            "checks": {"acceptance": True},
+            "steps": [{"kind": "fill_cell"}],
+        }
+        (run_dir / rt_apply.RECEIPT_NAME).write_text(
+            json.dumps(payload), encoding="utf-8")
+
+    write_receipt(parent_id, None)
+    write_receipt(child_id, {"runId": parent_id, "sha256": "a" * 64})
+    rows = rt_apply.list_candidates(session)
+    assert [row["runId"] for row in rows] == [parent_id, child_id]
+
+
 # --- receipt binding --------------------------------------------------------
 
 def test_mutating_one_candidate_byte_refuses_the_receipt(tmp_path):
