@@ -39,12 +39,14 @@ const {
   captureEditLease,
   commitParagraphClick,
   prepareParagraphEdit,
+  runTextAfterEdit,
 } = loadTs("desktop/src/revision.ts");
 
 const runMap = loadTs("desktop/src/run_map.ts");
 const {
   OFFSET_UNIT,
   commitRunScopedReplacement,
+  isUtf16Split,
   locateSpanInRuns,
   replaceUtf16Range,
   utf16Length,
@@ -117,7 +119,8 @@ async function main() {
     locateLine2.run !== 0 ||
     locateLine2.rangeStart !== wrappedRun.indexOf(line2) ||
     locateLine2.rangeEnd !== wrappedRun.indexOf(line2) + line2.length ||
-    locateLine2.offsetUnit !== "utf-16"
+    locateLine2.offsetUnit !== "utf-16" ||
+    locateLine2.spanOffset !== 0
   ) {
     fail("locate_wrapped_line_inside_one_run", JSON.stringify(locateLine2));
   } else pass("locate_wrapped_line_inside_one_run");
@@ -215,6 +218,71 @@ async function main() {
     fail("clicking_neighbor_run_addresses_that_run", JSON.stringify(neighborLocate));
   } else pass("clicking_neighbor_run_addresses_that_run");
 
+  // --- the visual LINE is the join of both runs: caret names one run ---
+  const fullLine = bold + plain;
+  const caretInPlain = bold.length + 6; // inside "plain rest..."
+  const fullLocate = locateSpanInRuns(fullLine, multiRuns, caretInPlain);
+  if (
+    fullLocate.kind !== "hit" ||
+    fullLocate.run !== 1 ||
+    fullLocate.rangeStart !== 0 ||
+    fullLocate.rangeEnd !== plain.length ||
+    fullLocate.spanOffset !== bold.length
+  ) {
+    fail("full_line_caret_selects_plain_run", JSON.stringify(fullLocate));
+  } else pass("full_line_caret_selects_plain_run");
+
+  const fullPrep = await prepareParagraphEdit({
+    lease,
+    spanText: fullLine,
+    spanIndex: 5,
+    caret: caretInPlain,
+    address: spanAddress(0),
+    readRegion: regionOf(multiRuns),
+  });
+  if (
+    fullPrep.kind !== "caret" ||
+    fullPrep.run !== 1 ||
+    fullPrep.rangeText !== plain ||
+    fullPrep.before !== plain ||
+    fullPrep.rangeStart !== 0 ||
+    fullPrep.rangeEnd !== plain.length ||
+    fullPrep.caret !== 6
+  ) {
+    fail("full_line_prepare_edits_selected_run_only", JSON.stringify(fullPrep));
+  } else pass("full_line_prepare_edits_selected_run_only");
+
+  const fullSpliced = runTextAfterEdit(fullPrep, "PLAIN rest of the paragraph that wraps");
+  if (fullSpliced !== "PLAIN rest of the paragraph that wraps") {
+    fail("full_line_set_run_rewrites_only_selected_run", JSON.stringify(fullSpliced));
+  } else pass("full_line_set_run_rewrites_only_selected_run");
+
+  const caretInBold = 2;
+  const boldPrep = await prepareParagraphEdit({
+    lease,
+    spanText: fullLine,
+    spanIndex: 6,
+    caret: caretInBold,
+    address: spanAddress(0),
+    readRegion: regionOf(multiRuns),
+  });
+  if (
+    boldPrep.kind !== "caret" ||
+    boldPrep.run !== 0 ||
+    boldPrep.rangeText !== bold ||
+    boldPrep.caret !== caretInBold
+  ) {
+    fail("full_line_caret_in_bold_selects_that_run", JSON.stringify(boldPrep));
+  } else pass("full_line_caret_in_bold_selects_that_run");
+  if (runTextAfterEdit(boldPrep, "Fine ") !== "Fine ") {
+    fail("bold_run_edit_leaves_plain_run_out_of_the_op", runTextAfterEdit(boldPrep, "Fine "));
+  } else pass("bold_run_edit_leaves_plain_run_out_of_the_op");
+
+  const noCaretOnJoin = locateSpanInRuns(fullLine, multiRuns, null);
+  if (noCaretOnJoin.kind !== "refused" || noCaretOnJoin.refusal !== "cross_run") {
+    fail("joined_line_without_caret_is_not_a_silent_first_run", JSON.stringify(noCaretOnJoin));
+  } else pass("joined_line_without_caret_is_not_a_silent_first_run");
+
   // --- cross-run must refuse; never flatten the paragraph ---
   const crossSpan = bold + selectedSpan;
   const crossLocate = locateSpanInRuns(crossSpan, multiRuns);
@@ -226,7 +294,7 @@ async function main() {
     lease,
     spanText: crossSpan,
     spanIndex: 4,
-    caret: 0,
+    caret: null,
     address: spanAddress(0),
     readRegion: regionOf(multiRuns),
   });
@@ -240,15 +308,72 @@ async function main() {
   } else pass("cross_run_must_not_be_a_hit_on_joined_text");
 
   // A span that sits in two runs as an exact substring of each is multi_run,
-  // not a silent pick of the first.
+  // not a silent pick of the first — even when a caret is supplied.
   const shared = "xx";
   const ambiguous = locateSpanInRuns(shared, [
     { index: 0, text: "xxONE" },
     { index: 1, text: "xxTWO" },
-  ]);
+  ], 1);
   if (ambiguous.kind !== "refused" || ambiguous.refusal !== "multi_run") {
     fail("span_in_two_runs_is_multi_run", JSON.stringify(ambiguous));
   } else pass("span_in_two_runs_is_multi_run");
+
+  // --- Hangul + surrogate pair in a multi-run paragraph ---
+  const hangulPrefix = "제목: ";
+  const hangulBody = "안녕 \u{1F600} 세계";
+  const hangulRuns = [
+    { index: 0, text: hangulPrefix },
+    { index: 1, text: hangulBody },
+  ];
+  const hangulLine = hangulPrefix + hangulBody;
+  if (utf16Length(hangulLine) !== hangulPrefix.length + hangulBody.length) {
+    fail("hangul_line_utf16_length", `${utf16Length(hangulLine)}`);
+  } else pass("hangul_line_utf16_length");
+  const caretAfterHello = hangulPrefix.length + "안녕 ".length; // at the grinning face
+  const hangulLocate = locateSpanInRuns(hangulLine, hangulRuns, caretAfterHello);
+  if (
+    hangulLocate.kind !== "hit" ||
+    hangulLocate.run !== 1 ||
+    hangulLocate.runText !== hangulBody ||
+    hangulLocate.rangeStart !== 0 ||
+    hangulLocate.rangeEnd !== hangulBody.length ||
+    hangulLocate.spanOffset !== hangulPrefix.length
+  ) {
+    fail("hangul_caret_selects_body_run", JSON.stringify(hangulLocate));
+  } else pass("hangul_caret_selects_body_run");
+
+  const hangulPrep = await prepareParagraphEdit({
+    lease,
+    spanText: hangulLine,
+    spanIndex: 7,
+    caret: caretAfterHello,
+    address: spanAddress(0),
+    readRegion: regionOf(hangulRuns),
+  });
+  if (
+    hangulPrep.kind !== "caret" ||
+    hangulPrep.run !== 1 ||
+    hangulPrep.rangeText !== hangulBody ||
+    hangulPrep.caret !== "안녕 ".length
+  ) {
+    fail("hangul_prepare_selected_run", JSON.stringify(hangulPrep));
+  } else pass("hangul_prepare_selected_run");
+  const hangulSpliced = runTextAfterEdit(hangulPrep, "안녕 \u{1F600} 지구");
+  if (hangulSpliced !== "안녕 \u{1F600} 지구") {
+    fail("hangul_splice_keeps_surrogate_and_leaves_title_run", hangulSpliced);
+  } else pass("hangul_splice_keeps_surrogate_and_leaves_title_run");
+  if (hangulPrefix !== "제목: ") {
+    fail("hangul_neighbor_run_untouched", hangulPrefix);
+  } else pass("hangul_neighbor_run_untouched");
+
+  const splitAt = hangulLine.indexOf("\u{1F600}") + 1; // between the two surrogates
+  if (!isUtf16Split(hangulLine, splitAt)) {
+    fail("is_utf16_split_detects_surrogate_midpoint", String(splitAt));
+  } else pass("is_utf16_split_detects_surrogate_midpoint");
+  const splitLocate = locateSpanInRuns(hangulLine, hangulRuns, splitAt);
+  if (splitLocate.kind !== "refused" || splitLocate.refusal !== "utf16_split") {
+    fail("caret_between_surrogates_is_utf16_split", JSON.stringify(splitLocate));
+  } else pass("caret_between_surrogates_is_utf16_split");
 
   // --- UTF-16 range inside a wrapped run that also holds an emoji ---
   const emojiRun = `aa${withEmoji} wrapped`;

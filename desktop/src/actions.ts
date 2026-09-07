@@ -399,6 +399,8 @@ const CARET_REFUSAL_TEXT: Record<CaretRefusal, string> = {
     "표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓지 않습니다",
   cross_run:
     "이 고침은 여러 글 덩어리에 걸쳐 있습니다. 문단을 하나로 합치지 않습니다",
+  utf16_split:
+    "이 위치가 한 글자의 가운데를 가릅니다. 그 글자를 쪼개서 고치지 않습니다",
 };
 
 export function caretRefusalText(reason: CaretRefusal): string {
@@ -439,8 +441,10 @@ export function caretOffsetAt(span: GeometrySpan, fraction: number): number | nu
  * `replace_paragraph_text` operation and none was invented: what writes a
  * paragraph line is `set_run`, which addresses `(atPara, run)` and preserves
  * the run's charPrIDRef. A line is not a run. The click names one run and a
- * UTF-16 range inside it — a wrap is a range of that run; a span that would
- * join neighbour runs is `cross_run`, not a flattened paragraph.
+ * UTF-16 range inside it — a wrap is a range of that run; a caret inside a
+ * multi-run line names the run that owns that code unit; a span that would
+ * join neighbour runs with no unique run is `cross_run` / `multi_run`, not
+ * a flattened paragraph.
  */
 /**
  * Prepare a paragraph caret against the displayed revision. Does not write
@@ -1505,9 +1509,9 @@ export async function loadGeometry(page?: number): Promise<void> {
  *
  * True for a paragraph address carrying an `atPara`, which is the only thing
  * `set_run` can address. It is NOT a promise that the caret will be placed:
- * which run the line sits in, and whether the span would cross runs, is a
- * question only `document/readRegion` can answer, and `beginParagraphEdit`
- * asks it at click time rather than this function guessing.
+ * which run the click names, and whether the span would cross runs, is a
+ * question only `document/readRegion` plus the caret offset can answer, and
+ * `beginParagraphEdit` asks it at click time rather than this function guessing.
  */
 export function addressIsCaretTarget(address: GeometryAddress | null | undefined): boolean {
   return !!address && address.kind === "anchor" && address.atPara != null;

@@ -33,6 +33,8 @@ def test_export_module_refuses_aliases_and_stages_first():
     assert "export_alias" in text
     assert "paths_are_aliases" in text
     assert "CrashAfter" in text
+    assert "publish_export_pair_hold" in text
+    assert "park_for_force_quit" in text
     assert "normalize_windows_path_text" in text
     assert "copy_durable" in text
     # dest is replaced last, after the receipt sidecar
