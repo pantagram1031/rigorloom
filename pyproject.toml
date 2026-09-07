@@ -38,3 +38,10 @@ testpaths = [
 # sibling imports (tests/_module_gating.py). The property is enforced instead
 # by pipeline/tests/test_module_registry.py::TestHarnessIsModuleAgnostic.
 addopts = "-ra"
+# Machine/font-sensitive own_render research pins (measured-vs-pinned
+# LINESEG / face / spacing numbers). Skipped on GitHub Actions via
+# ``@research_pin`` in engine/tests/test_own_render.py — rematch freeze.
+# Collect locally with ``pytest -m research``; CI never rematches them.
+markers = [
+    "research: own_render research pins; skipped on GITHUB_ACTIONS (rematch freeze)",
+]
