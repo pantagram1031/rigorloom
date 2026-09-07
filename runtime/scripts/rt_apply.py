@@ -301,6 +301,38 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
     }
 
 
+def _lineage_depth(rows: list[dict]) -> dict[str, int]:
+    """Hops from the source along ``base`` pointers.
+
+    ``createdUtc`` is second-resolution, so two publishes in one second share
+    a stamp. The previous tie-break was the random hex run id — directory
+    order again, and not oldest-first. Depth keeps a parent ahead of a child
+    published in the same second. Cycles and missing parents count as 0.
+    """
+    by_id = {row["runId"]: row for row in rows}
+    memo: dict[str, int] = {}
+
+    def depth(run_id: str, walking: frozenset[str] = frozenset()) -> int:
+        cached = memo.get(run_id)
+        if cached is not None:
+            return cached
+        if run_id in walking:
+            return 0
+        row = by_id.get(run_id)
+        if row is None:
+            return 0
+        base = row.get("base") or None
+        parent = base.get("runId") if isinstance(base, dict) else None
+        if not parent:
+            memo[run_id] = 0
+            return 0
+        value = 1 + depth(str(parent), walking | {run_id})
+        memo[run_id] = value
+        return value
+
+    return {row["runId"]: depth(row["runId"]) for row in rows}
+
+
 def list_candidates(session) -> list[dict]:
     """Only runs whose receipt landed. A bare artifact is not a candidate.
 
@@ -310,8 +342,9 @@ def list_candidates(session) -> list[dict]:
     NOT re-hash the artifact: that is ``receipt/read``'s job and its refusal
     (``candidate_hash_mismatch``) is the one that matters, so ``verified:
     false`` is stated on every row rather than implied. Ordered by
-    ``createdUtc``, with the run id breaking ties, because a directory listing
-    is alphabetical by a random hex id and that is not history.
+    ``createdUtc``, then lineage depth (parent before child), with the run id
+    breaking remaining ties, because a directory listing is alphabetical by a
+    random hex id and that is not history.
     """
     rows = []
     if not session.candidates_dir.is_dir():
@@ -342,7 +375,12 @@ def list_candidates(session) -> list[dict]:
                 "opKinds": [step.get("kind") for step in payload.get("steps") or []],
             })
         rows.append(row)
-    rows.sort(key=lambda row: (str(row.get("createdUtc") or ""), row["runId"]))
+    depth = _lineage_depth(rows)
+    rows.sort(key=lambda row: (
+        str(row.get("createdUtc") or ""),
+        depth.get(row["runId"], 0),
+        row["runId"],
+    ))
     return rows
 
 

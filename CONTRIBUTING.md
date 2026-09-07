@@ -1,7 +1,7 @@
 # Contributing to Rigorloom
 
-Thanks for considering a contribution. This document covers dev setup, the
-review discipline this repo follows, and what a PR is expected to include.
+Contributions are welcome. This document covers dev setup, the review
+discipline this repo follows, and what a PR is expected to include.
 
 ## Dev setup
 
@@ -9,15 +9,22 @@ review discipline this repo follows, and what a PR is expected to include.
 git clone https://github.com/pantagram1031/rigorloom.git
 cd rigorloom
 python3 scripts/bootstrap.py
-python -m pytest pipeline/tests tests -q
+python -m pytest -q
 ```
 
 `bootstrap.py` uses only the standard library and proves a fresh clone is
-wired correctly (interpreter check, private profile setup, an end-to-end
-smoke test). No Hancom, no Windows, and no model account are needed for this
-step or for the test suite. Optional extras (`docx`, `studio`, `hwp`) are
-listed with install hints at the end of `bootstrap.py`'s output; only install
-what you need for the area you're changing.
+wired correctly (interpreter check, private profile, end-to-end smoke test).
+No Hancom, no Windows, and no model account needed. Optional extras
+(`docx`, `studio`, `hwp`) are listed at the end of `bootstrap.py`'s output;
+install only what you need for the area you're changing.
+
+## Where to start
+
+If you're not sure where a change belongs, [docs/golden-path.md](docs/golden-path.md)
+walks through the full pipeline and [docs/architecture.md](docs/architecture.md)
+explains the separation of concerns. The issue templates under
+[`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) are the best place to
+propose work.
 
 ## Review discipline
 
@@ -52,8 +59,8 @@ shapes how changes get reviewed:
   have caught it is not considered complete. New checkers or gate logic need
   both a positive (passes on good input) and negative (HARD/WARN on bad
   input) test case.
-- **Full suite green.** `python -m pytest pipeline/tests tests -q` must pass
-  before requesting review.
+- **Full suite green.** `python -m pytest -q` must pass before requesting
+  review.
 - **Privacy scan clean.** Run the privacy scanner over your changes and the
   repo as a whole; it must report 0 HARD findings:
 
@@ -85,7 +92,6 @@ new style. In general:
 
 ## Questions
 
-Open an issue using the bug report or feature request template under
-[`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/), or start with
-[docs/golden-path.md](docs/golden-path.md) if you're not sure where a change
-belongs in the stage graph.
+Open an issue via [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) or
+start a discussion. See [docs/golden-path.md](docs/golden-path.md) if you're
+not sure where a change belongs in the stage graph.
