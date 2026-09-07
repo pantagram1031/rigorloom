@@ -126,7 +126,7 @@ function fixture() {
     seatText: () => "",
   });
   vm.runInContext(
-    `${stripTypeScriptTypes(implementation)}
+    `${stripTypeScriptTypes(implementation).replaceAll("export ", "")}
 globalThis.invokeRequest = requestApprovalForDraft;
 globalThis.invokeResolve = resolveApprovalDecision;
 globalThis.invokeApply = applyApproved;
