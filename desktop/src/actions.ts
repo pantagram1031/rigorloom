@@ -10,6 +10,11 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import * as rt from "./runtime";
 import {
+  forgetDocumentEvents,
+  startDocumentEvents,
+  stopDocumentEvents,
+} from "./documentEvents";
+import {
   DEFAULT_PROVIDER,
   EMPTY_DRAFT,
   activeStoreKey,
@@ -159,8 +164,12 @@ async function loadCandidates(sessionId: string) {
  * away typed work because somebody clicked another document would be the worse
  * failure of the two.
  */
+let eventSelectionGeneration = 0;
+
 export async function selectSession(sessionId: string) {
+  const eventSelection = ++eventSelectionGeneration;
   const previous = getState().activeSessionId;
+  if (previous !== sessionId) stopDocumentEvents();
   setState({
     activeSessionId: sessionId,
     ...(previous !== sessionId
@@ -191,6 +200,10 @@ export async function selectSession(sessionId: string) {
           // a document switch would put another file's verdict under this
           // file's heading, which is the same class of lie as a stale geometry.
           packRun: null,
+          events: [],
+          eventSubscription: null,
+          eventPhase: "starting" as const,
+          eventError: null,
         }
       : {}),
   });
@@ -198,6 +211,12 @@ export async function selectSession(sessionId: string) {
   await loadInspect(sessionId);
   await loadText(sessionId);
   await loadCandidates(sessionId);
+  if (
+    eventSelection !== eventSelectionGeneration ||
+    getState().activeSessionId !== sessionId
+  ) {
+    return;
+  }
   rememberRecent(sessionId);
   await startEvents(sessionId);
 }
@@ -1967,25 +1986,11 @@ async function loadReceiptQuiet(runId: string) {
  * `after: -1` replays from the beginning, so the timeline shows the document's
  * whole history — including everything that happened in a previous launch —
  * rather than starting empty and filling in only while this window happens to
- * be open. The replay and every later event arrive after the subscribe
- * response, so the subscription id is always known before its first event.
+ * be open. IPC may deliver the first notification before the response; the
+ * event owner buffers that window and authenticates it with the returned id.
  */
 export async function startEvents(sessionId: string): Promise<void> {
-  const previous = getState().eventSubscription;
-  if (previous) {
-    try {
-      await rt.unsubscribeEvents(previous);
-    } catch {
-      // A subscription that is already gone is not a failure worth surfacing.
-    }
-  }
-  setState({ eventSubscription: null, events: [], eventPhase: "starting", eventError: null });
-  try {
-    const { subscriptionId } = await rt.subscribeEvents(sessionId, -1, 250);
-    setState({ eventSubscription: subscriptionId, eventPhase: "ready" });
-  } catch (e) {
-    setState({ eventPhase: "failed", eventError: rt.asRuntimeError(e) });
-  }
+  await startDocumentEvents(sessionId);
 }
 
 // --- the agent door -------------------------------------------------------------------
@@ -2436,6 +2441,7 @@ export async function restartRuntime(): Promise<void> {
     const { status } = await rt.start(getState().root);
     // The old subscription died with the old process; it is not resumable and
     // pretending otherwise would leave the timeline silently frozen.
+    forgetDocumentEvents();
     setState({ status, capabilities: await rt.capabilities(), eventSubscription: null });
     await refreshSessions();
     if (keepSession && getState().sessions.some((s) => s.sessionId === keepSession)) {

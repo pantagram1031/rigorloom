@@ -27,6 +27,7 @@ import type {
   CandidateCompare,
   Capabilities,
   CredentialStatus,
+  EventDelivery,
   Finding,
   GeometryResult,
   HostEvent,
@@ -913,12 +914,22 @@ export function pushActivity(batch: Activity[]) {
  * happened. De-duplicating on `seq` is not defensive coding — it is the
  * property the protocol offers, used.
  */
-export function pushEvents(batch: RuntimeEvent[]) {
+export function pushEvents(batch: EventDelivery[]) {
   if (batch.length === 0) return;
+  const subscriptionId = state.eventSubscription;
+  const sessionId = state.activeSessionId;
+  if (!subscriptionId || !sessionId) return;
   const bySeq = new Map<number, RuntimeEvent>();
   for (const event of state.events) bySeq.set(event.seq, event);
   let changed = false;
-  for (const event of batch) {
+  for (const delivery of batch) {
+    if (
+      delivery.subscriptionId !== subscriptionId ||
+      delivery.sessionId !== sessionId
+    ) {
+      continue;
+    }
+    const event = delivery.event;
     if (bySeq.has(event.seq)) continue;
     bySeq.set(event.seq, event);
     changed = true;
