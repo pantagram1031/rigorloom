@@ -65,6 +65,7 @@ STORE = REPO / "desktop" / "src" / "store.ts"
 ACTIONS = REPO / "desktop" / "src" / "actions.ts"
 HARNESS = Path(__file__).resolve().parent / "desktop_draft_fence_harness.cjs"
 FRESHNESS = REPO / "desktop" / "scripts" / "set-queue-freshness.test.mjs"
+REVIEW_FRESHNESS = REPO / "desktop" / "scripts" / "review-apply-freshness.test.mjs"
 TSC = REPO / "desktop" / "node_modules" / "typescript"
 
 
@@ -208,6 +209,33 @@ def test_set_queue_error_path_is_also_fenced():
     assert guards_after_catch, "No fence guard found inside the catch block of setQueue"
 
 
+def test_review_apply_and_agent_adoption_share_draft_fence():
+    """Every async publisher in review → apply must prove it still owns the draft."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    assert "function captureDraftFence(" in text
+    assert "function ownsDraftFence(" in text
+    for start, end in (
+        ("export async function requestApprovalForDraft", "export async function resolveApprovalDecision"),
+        ("export async function resolveApprovalDecision", "// --- apply"),
+        ("export async function applyApproved", "/** Cooperative cancel"),
+        ("async function adoptAgentPlan(", "/** Ids are the shell's"),
+    ):
+        body = text[text.index(start) : text.index(end, text.index(start))]
+        assert "ownsDraftFence(" in body, f"{start} does not fence stale publication"
+
+
+def test_empty_queue_replacement_invalidates_async_publishers():
+    """Clear/last-op undo must advance the generation even without another proposal."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    clear = text[text.index("export async function clearQueue") : text.index("/**\n * Replace the queue")]
+    assert "bumpPlanGeneration()" in clear
+
+    body = _setqueue_body(text)
+    bump_pos = body.index("bumpPlanGeneration()")
+    empty_pos = body.index("if (ops.length === 0 || !sessionId)")
+    assert bump_pos < empty_pos
+
+
 # ---------------------------------------------------------------------------
 # Runtime harness — interleaved schedules and out-of-order resolve
 # ---------------------------------------------------------------------------
@@ -234,6 +262,22 @@ def test_draft_freshness_node_tests():
     """Ported epoch freshness cases: session, head, clear, and late error."""
     completed = subprocess.run(
         [shutil.which("node") or "node", "--test", str(FRESHNESS)],
+        cwd=str(REPO / "desktop"),
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    if completed.returncode != 0:
+        sys.stderr.write(completed.stdout)
+        sys.stderr.write(completed.stderr)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_review_apply_freshness_node_tests():
+    """Approval, apply, and agent adoption cannot publish into a newer draft."""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "--test", str(REVIEW_FRESHNESS)],
         cwd=str(REPO / "desktop"),
         capture_output=True,
         text=True,
