@@ -66,6 +66,37 @@ export const ZOOM_MIN = 0.5;
 export const ZOOM_MAX = 2.0;
 const ZOOM_STEPS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.35, 1.5, 1.75, 2.0];
 
+/**
+ * The exact workspace state allowed to publish a draft.
+ *
+ * Both local queue rebuilds and agent-plan adoption use this lease. Keeping
+ * the ownership rule here prevents the two paths from drifting: a different
+ * draft object, document, or candidate head means newer user intent won.
+ */
+interface DraftOwner {
+  draft: Draft;
+  sessionId: string | null;
+  headRunId: string | null;
+}
+
+function captureDraftOwner(): DraftOwner {
+  const state = getState();
+  return {
+    draft: state.draft,
+    sessionId: state.activeSessionId,
+    headRunId: headCandidate(state)?.runId ?? null,
+  };
+}
+
+function ownsDraft(owner: DraftOwner): boolean {
+  const state = getState();
+  return (
+    state.draft === owner.draft &&
+    state.activeSessionId === owner.sessionId &&
+    (headCandidate(state)?.runId ?? null) === owner.headRunId
+  );
+}
+
 /** Load a session's inspect once and cache it. */
 export async function loadInspect(sessionId: string, force = false): Promise<boolean> {
   if (!force && getState().inspects[sessionId]) {
@@ -771,18 +802,9 @@ async function setQueue(
     },
   });
 
-  // Only this exact draft object owns the results below. A newer queue, a
-  // clear, a document switch, or a candidate-head change supersedes it. The
-  // Runtime still validates plan and approval bindings; this fence only keeps
-  // late UI work from replacing newer user intent. The generation token still
-  // covers concurrent setQueue; identity/session/head cover the cases a
-  // counter cannot see.
-  const pendingDraft = getState().draft;
-  const pendingHead = headCandidate(getState())?.runId ?? null;
-  const ownsDraft = () =>
-    getState().draft === pendingDraft &&
-    getState().activeSessionId === sessionId &&
-    (headCandidate(getState())?.runId ?? null) === pendingHead;
+  // Only this exact draft object owns the results below. Agent adoption uses
+  // the same ownership rule, so neither path can overwrite newer user intent.
+  const owner = captureDraftOwner();
 
   try {
     const plan = await rt.proposePlan(
@@ -814,10 +836,10 @@ async function setQueue(
       { baseRunId, reverses },
     );
     if (currentPlanGeneration() !== gen) return;
-    if (!ownsDraft()) return;
+    if (!ownsDraft(owner)) return;
     const validation = await rt.validatePlan(plan.planId);
     if (currentPlanGeneration() !== gen) return;
-    if (!ownsDraft()) return;
+    if (!ownsDraft(owner)) return;
     setState({
       draft: {
         ops,
@@ -834,7 +856,7 @@ async function setQueue(
     });
   } catch (e) {
     if (currentPlanGeneration() !== gen) return;
-    if (!ownsDraft()) return;
+    if (!ownsDraft(owner)) return;
     // A refusal here is a real answer: `unknown_op_kind`, `unsupported_backend`
     // and `unknown_field` are raised by `plan/propose` before a plan exists at
     // all. Keep the queue, drop the plan, show the payload.
@@ -2015,6 +2037,7 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return false;
+  const owner = captureDraftOwner();
   setState({ agentPhase: "starting", agentError: null });
   try {
     const outcome = await rt.runMockAgent(sessionId, marker);
@@ -2041,11 +2064,20 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
     // The agent already requested approval on its own connection; that request
     // is a real record under this root, so it is adopted rather than
     // re-created, and its `requestedBy` keeps saying who asked.
-    const { plan: authoritative } = await adoptAgentPlan(
+    const adopted = await adoptAgentPlan(
       sessionId,
       plan.planId,
       approval?.approvalId ?? null,
+      owner,
     );
+    if (!adopted) {
+      throw {
+        code: "draft_superseded",
+        message:
+          "제안이 도착하는 동안 문서나 검토 대기열이 바뀌어 이 제안을 대기열에 넣지 않았습니다.",
+      };
+    }
+    const { plan: authoritative } = adopted;
     setState({
       agentPhase: "ready",
       agentRun: {
@@ -2629,7 +2661,8 @@ async function adoptAgentPlan(
   sessionId: string,
   planId: string,
   approvalId: string | null,
-): Promise<{ plan: OperationPlan; validation: PlanValidation }> {
+  owner: DraftOwner,
+): Promise<{ plan: OperationPlan; validation: PlanValidation } | null> {
   const authoritative = await rt.getPlan(planId);
   const validation = await rt.validatePlan(planId);
   const inspect = getState().inspects[sessionId] ?? null;
@@ -2668,9 +2701,11 @@ async function adoptAgentPlan(
     baseRunId: authoritative.base?.runId ?? null,
     reverses: authoritative.reverses?.runId ?? null,
   };
+  const approval = approvalId ? await rt.getApproval(approvalId).catch(() => null) : null;
+  if (!ownsDraft(owner)) return null;
   setState({
     draft,
-    approval: approvalId ? await rt.getApproval(approvalId).catch(() => null) : null,
+    approval,
     approvalPhase: approvalId ? "pending" : "idle",
     approvalError: null,
   });
@@ -2700,6 +2735,7 @@ export async function sendInstruction(instruction: string): Promise<boolean> {
   const sessionId = state.activeSessionId;
   const text = instruction.trim();
   if (!sessionId || text === "" || composerBlocker(state) !== null) return false;
+  const owner = captureDraftOwner();
 
   const id = newTurnId();
   const turn: Turn = {
@@ -2738,8 +2774,13 @@ export async function sendInstruction(instruction: string): Promise<boolean> {
 
     const planId = payload.plan?.planId ?? null;
     if (planId) {
-      await adoptAgentPlan(sessionId, planId, payload.approval?.approvalId ?? null);
-      patchTurn(id, { planId });
+      const adopted = await adoptAgentPlan(
+        sessionId,
+        planId,
+        payload.approval?.approvalId ?? null,
+        owner,
+      );
+      if (adopted) patchTurn(id, { planId });
     }
     setState({ activeTurn: null });
     return payload.ok;
