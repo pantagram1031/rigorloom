@@ -98,13 +98,21 @@ state; copy it from the app's report or the sidecar log for the same run.
 | s4_edit_table | Click a table cell seat, type, Enter | `shot-04-edit-table.png`, `queue-04.json` | op does not name the cell |
 | s5_undo | Undo tier one (remove last queued op). Then approve + apply one op and undo tier two (되돌리기 제안 appears in the queue) | `shot-05-undo.png`, `queue-05.json` | redo stack empty after tier one; tier two produces no proposal or reports `undoError` |
 | s6_redo | Redo. Queue equals `queue-04.json` again | `shot-06-redo.png`, `queue-06.json` | queue differs |
-| s7_ai_review | Type an instruction in the composer with a REAL provider configured (not `MOCK`). Agent Host proposal lands in the same review queue. Human approves one op and rejects one | `shot-07-ai-proposal.png`, `shot-07-ai-decision.png`, `agenthost-events.jsonl` | agent could approve its own plan; proposal lands anywhere but the queue; provider was MOCK |
+| s7_ai_review | Type an instruction in the composer with a REAL provider configured (not `MOCK`). Agent Host proposal lands in the same review queue. Human approves one op and rejects one (or `mock_approved` artifact in unattended QA test runs) | `shot-07-ai-proposal.png`, `shot-07-ai-decision.png` (or `c4-mock-approval.json`), `agenthost-events.jsonl` | agent could approve its own plan; proposal lands anywhere but the queue; provider was MOCK without mock_approved mode |
 | s8_save | Apply, export candidate. Receipt shows source sha256 unmoved and candidate sha256 | `shot-08-receipt.png`, `receipt.json`, `hashes.saved`, `files.saved` | source hash moved; candidate hash ≠ file on disk |
 | s9_reopen | Quit the process (check Task Manager: no `rigorloom-desktop.exe`, no sidecar). Relaunch cold. Open the saved file. All three edits and the approved AI op visible | `shot-09-reopen.png`, `hashes.saved_reopened` | reopen hash ≠ save hash; an edit missing |
 
 Draft-fence check (card 2, rides along): during s7, while the agent is still
 streaming, type into a seat. The typed draft must survive the agent's plan
 arriving. Note the outcome in `steps[s7].note`.
+
+### 3.1 Unattended QA Harness: `mock_approved` mode (W0 Item 8)
+
+For unattended CI / Cloud Agent evidence runs where no human operator is at the console:
+- `job.json` may specify `"approval_mode": "mock_approved"`.
+- The harness wires `approval/resolve` into plan apply gating using a deterministic mock resolution.
+- Step `s7` accepts `c4-mock-approval.json` created by `qa/approval.py` (which strictly records `is_mock_approved: true`, `is_human_approved: false`, and `gui_claimed: false`).
+- **Strict Invariant**: `mock_approved` mode is exclusively for plan apply gating in tests/harness. It **never** claims GUI/IME PASS, and card-4 verdicts remain `NOT_RUN` with clear notes: real human operator approval and an installed Windows desktop runner are required for certified completion.
 
 ## 4. After the run
 

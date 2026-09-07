@@ -285,7 +285,17 @@ def execute_card(
         # been filled in, checks it for completeness. The verdict is ALWAYS
         # NOT_RUN here: PASS is a human reading real GUI evidence from an
         # installed build, never this script.
-        from qa.card4_prep import DEFAULT_FIXTURE, probe_fixture, scaffold_manifest, validate_manifest
+        # Audit W0 Item 8: wires approval/resolve into harness with mock_approved mode.
+        from qa.card4_prep import (
+            DEFAULT_FIXTURE,
+            create_mock_approval_artifact,
+            probe_fixture,
+            scaffold_manifest,
+            validate_manifest,
+        )
+
+        approval_mode = job.get("approval_mode") or (job.get("metadata") or {}).get("approval_mode", "human_approved")
+        is_mock_approved = approval_mode == "mock_approved"
 
         fixture_rel = (job.get("metadata") or {}).get("card4_fixture") or DEFAULT_FIXTURE
         fixture = Path(fixture_rel)
@@ -296,25 +306,62 @@ def execute_card(
         with probe_file.open("w", encoding="utf-8") as f:
             json.dump(probe, f, indent=2, ensure_ascii=False)
             f.write("\n")
-        manifest_file = scaffold_manifest(evidence_dir, fixture, job.get("sha"), workspace_root)
+        manifest_file = scaffold_manifest(
+            evidence_dir, fixture, job.get("sha"), workspace_root, approval_mode=approval_mode
+        )
+
+        output_files = [str(probe_file), str(manifest_file)]
+        if is_mock_approved:
+            mock_appr_file = evidence_dir / "c4-mock-approval.json"
+            if not mock_appr_file.exists():
+                create_mock_approval_artifact(
+                    evidence_dir,
+                    plan_id=f"plan-c4-{job.get('run_id', 'mock')}",
+                    plan_hash=f"hash-{probe.get('sha256', 'mock')[:16]}",
+                )
+            output_files.append(str(mock_appr_file))
+
         check = validate_manifest(manifest_file, workspace_root)
         check_file = evidence_dir / "c4-manifest-check.json"
         with check_file.open("w", encoding="utf-8") as f:
             json.dump(check, f, indent=2, ensure_ascii=False)
             f.write("\n")
-        _write_jsonl_record(jsonl_file, card_id, 0, "card4_prep", ["probe", "scaffold", "validate"], status="NOT_RUN")
-        reason = (
-            f"Card 4 PREP only: fixture {'eligible' if probe.get('eligible') else 'NOT eligible (' + probe.get('reason', '') + ')'}; "
-            f"evidence {check['result']} ({len(check['problems'])} open items). "
-            "Verdict stays NOT_RUN until a human records a verdict on real installed-build GUI evidence."
+        output_files.extend([str(check_file), str(jsonl_file)])
+
+        _write_jsonl_record(
+            jsonl_file,
+            card_id,
+            0,
+            "card4_prep",
+            ["probe", "scaffold", "validate"],
+            status="NOT_RUN",
+            approval_mode=approval_mode,
+            mock_approved=is_mock_approved,
         )
+
+        if is_mock_approved:
+            reason = (
+                f"Card 4 PREP (approval_mode: mock_approved): fixture {'eligible' if probe.get('eligible') else 'NOT eligible (' + probe.get('reason', '') + ')'}; "
+                f"evidence {check['result']} ({len(check['problems'])} open items); "
+                "approval/resolve wired with mock_approved for unattended plan apply gating. "
+                "Verdict remains NOT_RUN: real human operator approval and installed Windows GUI/IME runner required for certified PASS."
+            )
+        else:
+            reason = (
+                f"Card 4 PREP (approval_mode: human_approved): fixture {'eligible' if probe.get('eligible') else 'NOT eligible (' + probe.get('reason', '') + ')'}; "
+                f"evidence {check['result']} ({len(check['problems'])} open items). "
+                "Verdict stays NOT_RUN until a human records a verdict on real installed-build GUI evidence; mock_approved mode is off."
+            )
+
         return verify_exit_code(
             card_id,
             None,
             reason=reason,
             command=[sys.executable, "qa/card4_prep.py", "probe|scaffold|validate"],
-            output_files=[str(probe_file), str(manifest_file), str(check_file), str(jsonl_file)],
+            output_files=output_files,
             is_not_run=True,
+            approval_mode=approval_mode,
+            mock_approved=is_mock_approved,
         )
 
     elif card_id in ("c5", "gui", "ime", "installer"):
@@ -336,7 +383,16 @@ def execute_card(
         )
 
 
-def _write_jsonl_record(path: Path, card_id: str, exit_code: int | None, runner: str, cmd: list[str], status: str | None = None) -> None:
+def _write_jsonl_record(
+    path: Path,
+    card_id: str,
+    exit_code: int | None,
+    runner: str,
+    cmd: list[str],
+    status: str | None = None,
+    approval_mode: str = "human_approved",
+    mock_approved: bool = False,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -345,6 +401,8 @@ def _write_jsonl_record(path: Path, card_id: str, exit_code: int | None, runner:
         "command": cmd,
         "exit_code": exit_code,
         "status": status or ("PASS" if exit_code == 0 else "FAIL"),
+        "approval_mode": approval_mode,
+        "mock_approved": mock_approved,
         "gui_ime_claimed": False,
     }
     with path.open("a", encoding="utf-8") as f:
@@ -355,6 +413,9 @@ def run_job(job_path: Path, workspace_root: Path) -> dict[str, Any]:
     """Execute full unattended QA job."""
     with job_path.open("r", encoding="utf-8") as f:
         job = json.load(f)
+
+    approval_mode = job.get("approval_mode") or (job.get("metadata") or {}).get("approval_mode", "human_approved")
+    is_mock_approved = approval_mode == "mock_approved"
 
     evidence_dir = Path(job.get("evidence_dir", "evidence"))
     if not evidence_dir.is_absolute():
@@ -376,11 +437,13 @@ def run_job(job_path: Path, workspace_root: Path) -> dict[str, Any]:
         verdicts.append(v)
 
     # 3. Deterministic Verdict Summary
-    summary = summarize_verdicts(verdicts)
+    summary = summarize_verdicts(verdicts, approval_mode=approval_mode)
     summary["candidate_id"] = job.get("candidate_id")
     summary["run_id"] = job.get("run_id")
     summary["sha"] = job.get("sha")
     summary["requested_model"] = job.get("requested_model", "gemini-3.8-flash")
+    summary["approval_mode"] = approval_mode
+    summary["mock_approved"] = is_mock_approved
     summary["preflight_file"] = str(preflight_file)
 
     verdict_file = evidence_dir / "verdict.json"
