@@ -5,7 +5,7 @@
 This harness produces machine-readable PASS / FAIL / NOT_RUN rows for:
 1) writer destination preservation tests,
 2) export publish crash + destination preservation matrix tests,
-3) native force-quit evidence placeholder (NOT_RUN until Windows runner executes).
+3) native force-quit during export (Windows Run-Card only).
 """
 from __future__ import annotations
 
@@ -21,6 +21,9 @@ Runner = Callable[[list[str], float], subprocess.CompletedProcess[str]]
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_TIMEOUT_SECONDS = 180.0
+FORCE_QUIT_TIMEOUT_SECONDS = 120.0
+FORCE_QUIT_CARD = ROOT / "qa" / "native_force_quit_export.py"
+FORCE_QUIT_EVIDENCE = ROOT / "qa" / "_artifacts" / "card1-force-quit.json"
 
 STATUS_PASS = "PASS"
 STATUS_FAIL = "FAIL"
@@ -76,29 +79,120 @@ def _row_for_result(spec: dict, result: subprocess.CompletedProcess[str]) -> dic
     }
 
 
+def _is_windows(platform: str) -> bool:
+    return platform.startswith("win")
+
+
+def _force_quit_not_run(*, platform: str, reason: str, detail: str, **extra: object) -> dict:
+    row = {
+        "id": "native_force_quit_export",
+        "name": "Native force-quit during export preserves prior destination",
+        "status": STATUS_NOT_RUN,
+        "reason": reason,
+        "detail": detail,
+        "platform": platform,
+    }
+    row.update(extra)
+    return row
+
+
+def _force_quit_row(
+    *,
+    runner: Runner,
+    platform: str,
+    force_quit_card: Path,
+    evidence_path: Path,
+) -> dict:
+    if not _is_windows(platform):
+        return _force_quit_not_run(
+            platform=platform,
+            reason="requires_windows_runner",
+            detail=(
+                "Native force-quit evidence is intentionally NOT_RUN until a "
+                "Windows runner executes qa/native_force_quit_export.py "
+                "(or qa/native_force_quit_export.ps1)."
+            ),
+        )
+    if not force_quit_card.is_file():
+        return _force_quit_not_run(
+            platform=platform,
+            reason="run_card_missing",
+            detail=f"Windows Run-Card is not present at {force_quit_card}",
+        )
+
+    command = [
+        sys.executable,
+        str(force_quit_card),
+        "--json-out",
+        str(evidence_path),
+    ]
+    result = runner(command, FORCE_QUIT_TIMEOUT_SECONDS)
+    evidence = None
+    if evidence_path.is_file():
+        try:
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            evidence = None
+
+    if result.returncode == 0:
+        status = STATUS_PASS
+        reason = None
+    elif result.returncode == 2:
+        status = STATUS_NOT_RUN
+        reason = (evidence or {}).get("reason") or "run_card_not_run"
+    else:
+        status = STATUS_FAIL
+        reason = (evidence or {}).get("reason") or "run_card_failed"
+
+    row = {
+        "id": "native_force_quit_export",
+        "name": "Native force-quit during export preserves prior destination",
+        "status": status,
+        "command": command,
+        "exitCode": result.returncode,
+        "stdout": result.stdout[-4000:],
+        "stderr": result.stderr[-4000:],
+        "evidencePath": str(evidence_path),
+        "platform": platform,
+    }
+    if reason:
+        row["reason"] = reason
+    if evidence:
+        row["evidence"] = {
+            "status": evidence.get("status"),
+            "reason": evidence.get("reason"),
+            "kill": evidence.get("kill"),
+            "destination": evidence.get("destination"),
+            "priorDestSha256": evidence.get("priorDestSha256"),
+            "afterDestSha256": evidence.get("afterDestSha256"),
+            "destPreserved": evidence.get("destPreserved"),
+            "exporterPid": evidence.get("exporterPid"),
+        }
+    return row
+
+
 def build_report(
     *,
     runner: Runner = run_command,
     platform: str | None = None,
+    force_quit_card: Path | None = None,
+    force_quit_evidence: Path | None = None,
 ) -> dict:
     platform = platform or sys.platform
+    card = FORCE_QUIT_CARD if force_quit_card is None else force_quit_card
+    evidence = FORCE_QUIT_EVIDENCE if force_quit_evidence is None else force_quit_evidence
     checks: list[dict] = []
     for spec in PYTEST_ROWS:
         result = runner(spec["command"], CHECK_TIMEOUT_SECONDS)
         checks.append(_row_for_result(spec, result))
 
     checks.append(
-        {
-            "id": "native_force_quit_export",
-            "name": "Native force-quit during export preserves prior destination",
-            "status": STATUS_NOT_RUN,
-            "reason": "requires_windows_runner",
-            "detail": (
-                "Native force-quit evidence is intentionally NOT_RUN until a "
-                "Windows runner executes the force-quit run-card."
-            ),
-            "platform": platform,
-        }
+        _force_quit_row(
+            runner=runner,
+            platform=platform,
+            force_quit_card=card,
+            evidence_path=evidence,
+        )
     )
 
     summary = {
@@ -106,6 +200,14 @@ def build_report(
         "fail": sum(1 for row in checks if row["status"] == STATUS_FAIL),
         "not_run": sum(1 for row in checks if row["status"] == STATUS_NOT_RUN),
     }
+    windows_note = (
+        "PASS / FAIL is script-owned. On Windows the native force-quit "
+        "Run-Card sets native_force_quit_export; Linux stays NOT_RUN."
+    )
+    linux_note = (
+        "PASS / FAIL is script-owned. Native force-quit remains NOT_RUN "
+        "until the Windows run-card executes."
+    )
     return {
         "card": "completion-card-1",
         "topic": "export-safety install-candidate matrix harness",
@@ -114,10 +216,7 @@ def build_report(
         "checks": checks,
         "summary": summary,
         "ok": summary["fail"] == 0,
-        "note": (
-            "PASS / FAIL is script-owned. Native force-quit remains NOT_RUN "
-            "until the Windows run-card executes."
-        ),
+        "note": windows_note if _is_windows(platform) else linux_note,
     }
 
 
