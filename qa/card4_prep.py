@@ -40,6 +40,12 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from qa.approval import (
+    ApprovalRecord,
+    create_approval_request,
+    resolve_approval,
+)
+
 CARD_ID = "c4"
 
 # Structural thresholds a card-4 fixture must meet. A "long paragraph" on an A4
@@ -169,7 +175,37 @@ def probe_fixture(hwpx: Path) -> dict[str, Any]:
 
 # --- scaffold ----------------------------------------------------------------
 
-def scaffold_manifest(evidence_dir: Path, fixture: Path, sha: str | None, workspace: Path | None = None) -> Path:
+def create_mock_approval_artifact(
+    evidence_dir: Path,
+    plan_id: str = "plan-c4-mock-001",
+    plan_hash: str = "hash-c4-mock-001",
+    requested_by: str = "agenthost-mock",
+) -> Path:
+    """Create a c4-mock-approval.json artifact using qa.approval wire contract."""
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    req = create_approval_request(plan_id=plan_id, plan_hash=plan_hash, requested_by=requested_by)
+    resolved = resolve_approval(
+        req,
+        plan_id=plan_id,
+        plan_hash=plan_hash,
+        decision="approved",
+        approver="mock_approved",
+        mode="mock_approved",
+    )
+    artifact_path = evidence_dir / "c4-mock-approval.json"
+    with artifact_path.open("w", encoding="utf-8") as f:
+        json.dump(resolved.to_dict(), f, indent=2, sort_keys=True)
+        f.write("\n")
+    return artifact_path
+
+
+def scaffold_manifest(
+    evidence_dir: Path,
+    fixture: Path,
+    sha: str | None,
+    workspace: Path | None = None,
+    approval_mode: str = "human_approved",
+) -> Path:
     """Write the manifest skeleton an operator fills in during the GUI run."""
     evidence_dir.mkdir(parents=True, exist_ok=True)
     fixture_ref = str(fixture)
@@ -178,11 +214,38 @@ def scaffold_manifest(evidence_dir: Path, fixture: Path, sha: str | None, worksp
             fixture_ref = fixture.resolve().relative_to(workspace.resolve()).as_posix()
         except ValueError:
             pass
+
+    is_mock = approval_mode == "mock_approved"
+    steps = []
+    for s in STEPS:
+        step_dict = {
+            "id": s["id"],
+            "title": s["title"],
+            "status": "NOT_RUN",
+            "artifacts": list(s["artifacts"]),
+            "note": None,
+        }
+        if s["id"] == "s7_ai_review":
+            if is_mock:
+                step_dict["artifacts"] = ["shot-07-ai-proposal.png", "c4-mock-approval.json", "agenthost-events.jsonl"]
+                step_dict["note"] = (
+                    "mock_approved mode: approval/resolve wired for unattended plan apply gating; "
+                    "real human approval still required for certified PASS."
+                )
+            else:
+                step_dict["note"] = (
+                    "human_approved mode: real human operator approval required; "
+                    "unattended mock approval not enabled."
+                )
+        steps.append(step_dict)
+
     manifest = {
         "schema": "rigorloom-qa-card4-evidence/v1",
         "card_id": CARD_ID,
         "created": _now(),
         "product_sha": sha,
+        "approval_mode": approval_mode,
+        "is_mock_approved": is_mock,
         "status": "NOT_RUN",
         "gui_ime_claimed": False,
         "fixture": {"path": fixture_ref, "sha256": sha256_of(fixture) if fixture.exists() else None},
@@ -190,13 +253,13 @@ def scaffold_manifest(evidence_dir: Path, fixture: Path, sha: str | None, worksp
         "install": {"exe_path": None, "installer_path": None, "sidecar_path": None},
         "hashes": {"exe": None, "fixture": None, "saved": None, "saved_reopened": None},
         "files": {"saved": None},
-        "steps": [
-            {"id": s["id"], "title": s["title"], "status": "NOT_RUN",
-             "artifacts": s["artifacts"], "note": None}
-            for s in STEPS
-        ],
-        "instructions": "Follow qa/cards/card4-korean-e2e.md. Set each step status to DONE|FAILED|SKIPPED. "
-                        "Put artifacts next to this file. Run `python qa/card4_prep.py validate` afterwards.",
+        "steps": steps,
+        "instructions": (
+            "Follow qa/cards/card4-korean-e2e.md. Set each step status to DONE|FAILED|SKIPPED. "
+            "Put artifacts next to this file. Run `python qa/card4_prep.py validate` afterwards. "
+            "Note: mock_approved mode is only for unattended plan apply gating in tests; "
+            "never claims human approval or GUI/IME PASS."
+        ),
     }
     path = evidence_dir / "c4-manifest.json"
     if path.exists():
@@ -228,6 +291,9 @@ def validate_manifest(manifest_path: Path, workspace: Path) -> dict[str, Any]:
 
     expected_ids = [s["id"] for s in STEPS]
     seen = {s.get("id"): s for s in m.get("steps", [])}
+    approval_mode = m.get("approval_mode", "human_approved")
+    is_mock = approval_mode == "mock_approved"
+
     for sid in expected_ids:
         step = seen.get(sid)
         if step is None:
@@ -236,8 +302,29 @@ def validate_manifest(manifest_path: Path, workspace: Path) -> dict[str, Any]:
         if step.get("status") != "DONE":
             problems.append(f"step {sid} status is {step.get('status')!r}, not DONE")
         for art in step.get("artifacts", []):
-            if not (ev / art).exists():
-                problems.append(f"step {sid}: artifact {art} not found in evidence dir")
+            art_path = ev / art
+            if not art_path.exists():
+                if sid == "s7_ai_review" and not is_mock:
+                    problems.append(
+                        f"step {sid}: artifact {art} not found in evidence dir "
+                        "(real human operator approval required; mock_approved mode is off)"
+                    )
+                else:
+                    problems.append(f"step {sid}: artifact {art} not found in evidence dir")
+            elif sid == "s7_ai_review" and art == "c4-mock-approval.json":
+                # Validate mock approval artifact content
+                try:
+                    mock_data = json.loads(art_path.read_text(encoding="utf-8"))
+                    if not mock_data.get("is_mock_approved"):
+                        problems.append("step s7_ai_review: c4-mock-approval.json is_mock_approved is not true")
+                    if mock_data.get("is_human_approved"):
+                        problems.append("step s7_ai_review: mock_approved artifact cannot claim is_human_approved: true")
+                    if mock_data.get("gui_claimed"):
+                        problems.append("step s7_ai_review: mock_approved artifact cannot claim gui_claimed: true")
+                    if mock_data.get("approver") not in ("mock_approved", "qa-harness-mock", "agenthost-mock"):
+                        problems.append(f"step s7_ai_review: invalid approver {mock_data.get('approver')!r} for mock_approved")
+                except Exception as exc:
+                    problems.append(f"step s7_ai_review: failed to parse c4-mock-approval.json: {exc}")
 
     hashes = m.get("hashes") or {}
     for key in ("exe", "fixture", "saved", "saved_reopened"):
@@ -267,13 +354,25 @@ def validate_manifest(manifest_path: Path, workspace: Path) -> dict[str, Any]:
     if hashes.get("fixture") and (m.get("fixture") or {}).get("sha256") and hashes["fixture"] != m["fixture"]["sha256"]:
         problems.append("fixture hash moved between scaffold and run (source must stay unmoved)")
 
+    note = (
+        "EVIDENCE_COMPLETE is not PASS. A human reads the screenshots and receipt and records the verdict. "
+        + (
+            "mock_approved mode active: approval/resolve wired for plan apply gating; "
+            "real human approval and Windows GUI/IME still required for certified PASS."
+            if is_mock
+            else "human_approved mode active: real human approval required."
+        )
+    )
+
     return {
         "timestamp": _now(),
         "manifest": str(manifest_path),
         "result": "EVIDENCE_COMPLETE" if not problems else "EVIDENCE_INCOMPLETE",
         "problems": problems,
+        "approval_mode": approval_mode,
+        "is_mock_approved": is_mock,
         "gui_ime_claimed": False,
-        "note": "EVIDENCE_COMPLETE is not PASS. A human reads the screenshots and receipt and records the verdict.",
+        "note": note,
     }
 
 
@@ -300,6 +399,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--evidence-dir", type=Path, required=True)
     s.add_argument("--hwpx", type=Path, default=None)
     s.add_argument("--sha", default=None, help="product tip SHA the operator will install")
+    s.add_argument(
+        "--approval-mode",
+        default="human_approved",
+        choices=["human_approved", "mock_approved"],
+        help="approval resolution mode (default: human_approved; mock_approved for unattended QA gating)",
+    )
+
+    ma = sub.add_parser("mock-approve", help="generate c4-mock-approval.json artifact")
+    ma.add_argument("--evidence-dir", type=Path, required=True)
+    ma.add_argument("--plan-id", default="plan-c4-mock-001")
+    ma.add_argument("--plan-hash", default="hash-c4-mock-001")
+    ma.add_argument("--requested-by", default="agenthost-mock")
 
     v = sub.add_parser("validate", help="check an operator-filled manifest for completeness")
     v.add_argument("--manifest", type=Path, required=True)
@@ -320,7 +431,16 @@ def main(argv: list[str] | None = None) -> int:
             hwpx = (a.hwpx or Path(DEFAULT_FIXTURE))
             if not hwpx.is_absolute():
                 hwpx = ws / hwpx
-            path = scaffold_manifest(a.evidence_dir.resolve(), hwpx, a.sha, ws)
+            path = scaffold_manifest(a.evidence_dir.resolve(), hwpx, a.sha, ws, approval_mode=a.approval_mode)
+            print(str(path))
+            return 0
+        if a.cmd == "mock-approve":
+            path = create_mock_approval_artifact(
+                a.evidence_dir.resolve(),
+                plan_id=a.plan_id,
+                plan_hash=a.plan_hash,
+                requested_by=a.requested_by,
+            )
             print(str(path))
             return 0
         if a.cmd == "validate":

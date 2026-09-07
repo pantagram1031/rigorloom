@@ -38,6 +38,9 @@ if (-not (Test-Path $jobPath)) {
 
 $job = Get-Content $jobPath -Raw -Encoding utf8 | ConvertFrom-Json
 
+$approvalMode = if ($job.approval_mode) { $job.approval_mode } elseif ($job.metadata -and $job.metadata.approval_mode) { $job.metadata.approval_mode } else { "human_approved" }
+$isMockApproved = ($approvalMode -eq "mock_approved")
+
 $evidenceDir = $job.evidence_dir
 if (-not [System.IO.Path]::IsPathRooted($evidenceDir)) {
     $evidenceDir = Join-Path $ws $evidenceDir
@@ -244,6 +247,7 @@ foreach ($card in $targetCards) {
     elseif ($card -eq "c4") {
         # Card 4 PREP only: probe fixture, scaffold manifest, check completeness.
         # Always NOT_RUN. PASS is a human verdict on installed-build GUI evidence.
+        # Audit W0 Item 8: wires approval/resolve into harness with mock_approved mode.
         $pyCmd = if (Test-ToolPresent "python3") { "python3" } else { "python" }
         $fixture = if ($job.metadata -and $job.metadata.card4_fixture) { $job.metadata.card4_fixture } else { "tests/corpus/forms/converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx" }
         $probeFile = Join-Path $evidenceDir "c4-fixture-probe.json"
@@ -251,7 +255,10 @@ foreach ($card in $targetCards) {
         $checkFile = Join-Path $evidenceDir "c4-manifest-check.json"
         & $pyCmd qa/card4_prep.py --workspace $ws probe --hwpx $fixture --out $probeFile *>&1 | Set-Content $logFile -Encoding utf8
         $probeExit = $LASTEXITCODE
-        & $pyCmd qa/card4_prep.py --workspace $ws scaffold --evidence-dir $evidenceDir --hwpx $fixture --sha $job.sha *>&1 | Add-Content $logFile -Encoding utf8
+        & $pyCmd qa/card4_prep.py --workspace $ws scaffold --evidence-dir $evidenceDir --hwpx $fixture --sha $job.sha --approval-mode $approvalMode *>&1 | Add-Content $logFile -Encoding utf8
+        if ($isMockApproved) {
+            & $pyCmd qa/card4_prep.py --workspace $ws mock-approve --evidence-dir $evidenceDir *>&1 | Add-Content $logFile -Encoding utf8
+        }
         & $pyCmd qa/card4_prep.py --workspace $ws validate --manifest $manifestFile --out $checkFile *>&1 | Add-Content $logFile -Encoding utf8
         $checkExit = $LASTEXITCODE
         $rec = [ordered]@{
@@ -260,6 +267,8 @@ foreach ($card in $targetCards) {
             runner = "card4_prep"
             exit_code = 0
             status = "NOT_RUN"
+            approval_mode = $approvalMode
+            mock_approved = $isMockApproved
             gui_ime_claimed = $false
             fixture_probe_exit = $probeExit
             manifest_check_exit = $checkExit
@@ -267,11 +276,18 @@ foreach ($card in $targetCards) {
         $rec | ConvertTo-Json -Compress | Add-Content $jsonlFile -Encoding utf8
         $fixtureWord = if ($probeExit -eq 0) { "eligible" } else { "NOT eligible" }
         $evidenceWord = if ($checkExit -eq 0) { "EVIDENCE_COMPLETE" } else { "EVIDENCE_INCOMPLETE" }
+        $reason = if ($isMockApproved) {
+            "Card 4 PREP (approval_mode: mock_approved): fixture $fixtureWord; evidence $evidenceWord; approval/resolve wired with mock_approved for unattended plan apply gating. Verdict remains NOT_RUN: real human operator approval and installed Windows GUI/IME runner required for certified PASS."
+        } else {
+            "Card 4 PREP (approval_mode: human_approved): fixture $fixtureWord; evidence $evidenceWord. Verdict stays NOT_RUN until a human records a verdict on installed-build GUI evidence; mock_approved mode is off."
+        }
         $verdicts += [ordered]@{
             card_id = $card
             status = "NOT_RUN"
             exit_code = $null
-            reason = "Card 4 PREP only: fixture $fixtureWord; evidence $evidenceWord. Verdict stays NOT_RUN until a human records a verdict on installed-build GUI evidence."
+            reason = $reason
+            approval_mode = $approvalMode
+            mock_approved = $isMockApproved
             gui_claimed = $false
         }
     }
@@ -316,12 +332,17 @@ if ($failCount -gt 0) { $overall = "FAIL" }
 elseif ($blockedCount -gt 0) { $overall = "BLOCKED" }
 elseif ($passCount -eq 0 -and $notRunCount -gt 0) { $overall = "NOT_RUN" }
 
+$mockApprovedCount = ($verdicts | Where-Object { $_.mock_approved -eq $true }).Count
+
 $summary = [ordered]@{
     candidate_id = $job.candidate_id
     run_id = $job.run_id
     sha = $job.sha
     requested_model = if ($job.requested_model) { $job.requested_model } else { "gemini-3.8-flash" }
     overall_status = $overall
+    approval_mode = $approvalMode
+    mock_approved = $isMockApproved
+    mock_approved_count = $mockApprovedCount
     counts = [ordered]@{
         PASS = $passCount
         FAIL = $failCount

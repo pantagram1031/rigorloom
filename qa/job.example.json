@@ -5,5 +5,6 @@
   "allowed_commands": ["c1", "c2", "c3", "pytest", "rustc"],
   "evidence_dir": "work/qa/evidence-sample-001",
   "cards": ["c1", "c2", "c3"],
-  "requested_model": "gemini-3.8-flash"
+  "requested_model": "gemini-3.8-flash",
+  "approval_mode": "human_approved"
 }

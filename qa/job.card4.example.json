@@ -6,6 +6,7 @@
   "evidence_dir": "work/qa/c4-sample-001",
   "cards": ["c4"],
   "requested_model": "gemini-3.8-flash",
+  "approval_mode": "mock_approved",
   "metadata": {
     "product_branch": "claude/same-run-offset-range-text",
     "card4_fixture": "tests/corpus/forms/converted/kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
