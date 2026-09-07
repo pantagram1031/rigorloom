@@ -7,8 +7,10 @@ matrix compiles), parks after staging, then force-kills the exporting
 process. Asserts prior destination bytes are unchanged.
 
 Windows kill is `taskkill /F /PID` with `Stop-Process -Force` as fallback.
-Linux/macOS only run when `--allow-posix-kill` is passed (SIGKILL); the
-Card1 matrix never treats that as Windows evidence.
+Linux/macOS only run when `--allow-posix-kill` is passed (SIGKILL when
+present, else SIGTERM). `signal.SIGKILL` is Unix-only and must never be
+read on a Windows host. The Card1 matrix never treats POSIX kill as
+Windows evidence.
 """
 from __future__ import annotations
 
@@ -61,66 +63,95 @@ def write_evidence(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def force_kill(pid: int, *, platform: str | None = None) -> dict:
-    """Kill `pid` with a native force-quit. Returns method + command output."""
-    platform = platform or sys.platform
-    if is_windows(platform):
-        taskkill = subprocess.run(
-            ["taskkill", "/F", "/PID", str(pid)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if taskkill.returncode == 0:
-            return {
-                "method": "taskkill /F /PID",
-                "command": ["taskkill", "/F", "/PID", str(pid)],
-                "exitCode": taskkill.returncode,
-                "stdout": (taskkill.stdout or "")[-1000:],
-                "stderr": (taskkill.stderr or "")[-1000:],
-            }
-        stop = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"Stop-Process -Id {pid} -Force",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+def posix_force_signal() -> tuple[int, str]:
+    """Portable POSIX force-terminate signal.
+
+    Windows Python has no ``signal.SIGKILL``. Callers must not evaluate
+    that attribute on a Windows host; this helper uses ``getattr``.
+    """
+    sigkill = getattr(signal, "SIGKILL", None)
+    if sigkill is not None:
+        return sigkill, "SIGKILL"
+    sigterm = getattr(signal, "SIGTERM", None)
+    if sigterm is not None:
+        return sigterm, "SIGTERM"
+    return 9, "SIGKILL"
+
+
+def _force_kill_windows(pid: int) -> dict:
+    taskkill = subprocess.run(
+        ["taskkill", "/F", "/PID", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if taskkill.returncode == 0:
         return {
-            "method": "Stop-Process -Force",
-            "command": [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"Stop-Process -Id {pid} -Force",
-            ],
-            "exitCode": stop.returncode,
-            "stdout": (stop.stdout or "")[-1000:],
-            "stderr": (stop.stderr or "")[-1000:],
-            "taskkill": {
-                "exitCode": taskkill.returncode,
-                "stdout": (taskkill.stdout or "")[-1000:],
-                "stderr": (taskkill.stderr or "")[-1000:],
-            },
+            "method": "taskkill /F /PID",
+            "command": ["taskkill", "/F", "/PID", str(pid)],
+            "exitCode": taskkill.returncode,
+            "stdout": (taskkill.stdout or "")[-1000:],
+            "stderr": (taskkill.stderr or "")[-1000:],
         }
+    stop = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"Stop-Process -Id {pid} -Force",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return {
+        "method": "Stop-Process -Force",
+        "command": [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"Stop-Process -Id {pid} -Force",
+        ],
+        "exitCode": stop.returncode,
+        "stdout": (stop.stdout or "")[-1000:],
+        "stderr": (stop.stderr or "")[-1000:],
+        "taskkill": {
+            "exitCode": taskkill.returncode,
+            "stdout": (taskkill.stdout or "")[-1000:],
+            "stderr": (taskkill.stderr or "")[-1000:],
+        },
+    }
+
+
+def _force_kill_posix(pid: int) -> dict:
+    sig, method = posix_force_signal()
     try:
-        os.kill(pid, signal.SIGKILL)
+        os.kill(pid, sig)
         exit_code = 0
         stderr = ""
     except ProcessLookupError as exc:
         exit_code = 1
         stderr = str(exc)
     return {
-        "method": "SIGKILL",
-        "command": ["kill", "-9", str(pid)],
+        "method": method,
+        "command": ["kill", "-9" if method == "SIGKILL" else "-TERM", str(pid)],
         "exitCode": exit_code,
         "stdout": "",
         "stderr": stderr,
     }
+
+
+def force_kill(pid: int, *, platform: str | None = None) -> dict:
+    """Kill `pid` with a native force-quit. Returns method + command output.
+
+    The kill mechanism follows Windows whenever the requested platform *or*
+    the real host is Windows. That keeps ``signal.SIGKILL`` off win32 even
+    if a helper test labels the run as linux.
+    """
+    requested = platform or sys.platform
+    if is_windows(requested) or is_windows(sys.platform):
+        return _force_kill_windows(pid)
+    return _force_kill_posix(pid)
 
 
 def compile_hold_helper(binary: Path, rustc: str) -> subprocess.CompletedProcess[str]:
@@ -206,7 +237,9 @@ def run_force_quit_export(
     own_scratch = scratch is None
     scratch = scratch or Path(tempfile.mkdtemp(prefix="card1-force-quit-"))
     scratch.mkdir(parents=True, exist_ok=True)
-    binary = scratch / ("hold.exe" if is_windows(platform) else "hold")
+    # Binary suffix and kill follow the real host, not the evidence platform.
+    host_is_windows = is_windows(sys.platform)
+    binary = scratch / ("hold.exe" if host_is_windows else "hold")
     artifact = scratch / "artifact.hwpx"
     receipt = scratch / "receipt.json"
     dest = scratch / "out.hwpx"
@@ -238,7 +271,7 @@ def run_force_quit_export(
             "stderr": subprocess.PIPE,
             "text": True,
         }
-        if is_windows(platform):
+        if host_is_windows:
             # Isolate the exporter so force-quit cannot tear down this card.
             create_new_process_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             popen_kwargs["creationflags"] = create_new_process_group
@@ -284,7 +317,7 @@ def run_force_quit_export(
             write_evidence(json_out, report)
             return report
 
-        kill = force_kill(proc.pid, platform=platform)
+        kill = force_kill(proc.pid)
         try:
             proc.wait(timeout=KILL_WAIT_SECONDS)
         except subprocess.TimeoutExpired:
@@ -342,7 +375,7 @@ def main() -> int:
     parser.add_argument(
         "--allow-posix-kill",
         action="store_true",
-        help="Allow SIGKILL on non-Windows for helper checks. Matrix ignores this.",
+        help="Allow POSIX force-kill on non-Windows for helper checks. Matrix ignores this.",
     )
     args = parser.parse_args()
     report = run_force_quit_export(
