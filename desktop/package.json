@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test:draft-freshness": "node --test scripts/set-queue-freshness.test.mjs",
+    "test:review-freshness": "node --test scripts/review-apply-freshness.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
