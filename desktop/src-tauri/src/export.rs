@@ -335,6 +335,53 @@ pub fn publish_export_pair_at(
     destination: &Path,
     crash: Option<CrashAfter>,
 ) -> Result<ExportOk, ExportErr> {
+    publish_export_pair_at_inner(artifact, receipt, destination, crash, None)
+}
+
+/// Parks after `hold` so an external killer can force-quit mid-flight.
+///
+/// Unlike [`CrashAfter`] handled in-process, this does not restore or
+/// return. Destination bytes stay as they were at that step until the
+/// process is killed. The ready file is written with pid + stage so a
+/// Run-Card can `taskkill` / `Stop-Process` only after staging exists.
+#[allow(dead_code)]
+pub fn publish_export_pair_hold(
+    artifact: &Path,
+    receipt: &Path,
+    destination: &Path,
+    hold: CrashAfter,
+    ready: &Path,
+) -> Result<ExportOk, ExportErr> {
+    publish_export_pair_at_inner(artifact, receipt, destination, None, Some((hold, ready)))
+}
+
+fn park_for_force_quit(ready: &Path, stage: CrashAfter) -> ! {
+    let payload = format!(
+        "{{\"pid\":{},\"stage\":\"{:?}\"}}\n",
+        std::process::id(),
+        stage
+    );
+    let _ = fs::write(ready, payload);
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
+}
+
+fn maybe_hold(hold: Option<(CrashAfter, &Path)>, here: CrashAfter) {
+    if let Some((stage, ready)) = hold {
+        if stage == here {
+            park_for_force_quit(ready, here);
+        }
+    }
+}
+
+fn publish_export_pair_at_inner(
+    artifact: &Path,
+    receipt: &Path,
+    destination: &Path,
+    crash: Option<CrashAfter>,
+    hold: Option<(CrashAfter, &Path)>,
+) -> Result<ExportOk, ExportErr> {
     let dest = destination;
     let receipt_dest = receipt_sidecar(dest);
 
@@ -461,6 +508,7 @@ pub fn publish_export_pair_at(
             vec![field("stage", "staged")],
         ));
     }
+    maybe_hold(hold, CrashAfter::Staged);
 
     if dest_existed {
         if let Err(e) = copy_durable(dest, &dest_bak) {
@@ -520,6 +568,7 @@ pub fn publish_export_pair_at(
             vec![field("stage", "receipt")],
         ));
     }
+    maybe_hold(hold, CrashAfter::ReceiptPublished);
 
     if let Err(e) = atomic_replace(&dest_tmp, dest) {
         restore(false, true);
@@ -538,6 +587,7 @@ pub fn publish_export_pair_at(
             vec![field("stage", "dest")],
         ));
     }
+    maybe_hold(hold, CrashAfter::DestReplaced);
 
     if !dest.is_file() || !receipt_dest.is_file() {
         restore(true, true);
