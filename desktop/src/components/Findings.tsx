@@ -29,6 +29,10 @@ export function Findings() {
         <h3>검사 결과</h3>
         {phase === "starting" ? (
           <Tag tone="none">읽는 중</Tag>
+        ) : phase === "failed" ? (
+          <Tag tone="bad">검사 불가</Tag>
+        ) : phase === "idle" ? (
+          <Tag tone="none">실행 안 함</Tag>
         ) : (
           <>
             {hard > 0 ? <Tag tone="bad">막힘 {hard}</Tag> : null}
@@ -50,6 +54,18 @@ export function Findings() {
       <div className="sheet-body">
         {phase === "starting" ? (
           <p className="empty">문서를 다시 읽고 있습니다.</p>
+        ) : phase === "failed" ? (
+          <p className="empty" data-testid="findings-failed">
+            검사를 완료하지 못했습니다. 지금은 검사 결과를 확인할 수 없습니다.
+          </p>
+        ) : phase === "idle" ? (
+          <p className="empty" data-testid="findings-idle">
+            아직 검사를 실행하지 않았습니다.
+          </p>
+        ) : findings.length === 0 ? (
+          <p className="empty" data-testid="findings-clear">
+            검사에서 걸린 항목이 없습니다.
+          </p>
         ) : (
           findings.map((f, i) => (
             <button
@@ -70,8 +86,8 @@ export function Findings() {
           ))
         )}
         <p className="empty">
-          여기 있는 것은 이 빌드가 문서에서 직접 읽어 낸 사실입니다. 렌더 증명과 제출
-          검사는 아직 실행할 수 없습니다 — 런타임에 그 방법이 없습니다.
+          여기 있는 것은 이 빌드가 문서 구조와 서식에서 직접 읽어 낸 검사 결과입니다.
+          렌더 증명이나 후보본 적용 시의 제출 검사 결과를 뜻하지 않습니다.
         </p>
       </div>
     </section>
