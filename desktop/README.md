@@ -181,11 +181,11 @@ PyInstaller cannot freeze from. Override with `RIGORLOOM_SIDECAR_PYTHON`.
 
 One `Workspace` object, two projections. `store.ts` holds `view` as one field
 beside `selection`, `expanded`, `page`, `zoom`, `sessions`, `inspects`,
-`candidates` and `activity`; `setView` writes only `view`. The views and their
-components hold **no state at all**, so a view switch has nothing to lose —
-the property is structural, not a discipline. `sharedStateSignature()` states it
-once, in the store, and the smoke asserts the signature is byte-identical across
-a round trip.
+`candidates`, `activity`, conversation state, and the unsent composer draft;
+`setView` writes only `view`. Components may hold ephemeral presentation state,
+but navigation and user work that must survive a view switch live in the
+Workspace. `sharedStateSignature()` states that contract once in the store, and
+the smoke asserts the signature is byte-identical across a round trip.
 
 **Document view** — structure tree · page surface · selection context ·
 verification bar.

@@ -9,9 +9,9 @@
  *
  * That is enforced structurally here rather than by discipline: `view` is one
  * field of the same object that holds `selection`, `expanded`, `page`, `zoom`
- * and everything else, and `setView` writes only `view`. There is no per-view
- * state anywhere in the tree, so a view switch cannot lose anything — the
- * components have no state of their own to lose.
+ * and the work in either room, and `setView` writes only `view`. Transient
+ * presentation details may stay component-local, but anything the user would
+ * expect to find after a view switch belongs here.
  *
  * No state library: `useSyncExternalStore` is in React 18 and does the whole
  * job. One fewer dependency in an app whose point is that it has no ambient
@@ -534,6 +534,14 @@ export interface WorkspaceState {
   turns: Turn[];
   /** The turn in flight, if any. One at a time, enforced in Rust too. */
   activeTurn: string | null;
+  /**
+   * The unsent instruction in the Agent composer.
+   *
+   * `App` unmounts the outgoing view to animate the incoming one. Keeping this
+   * value in `Composer` would therefore discard typed work on Ctrl+1, despite
+   * the product invariant that both views share one conversation state.
+   */
+  composerDraft: string;
   settingsOpen: boolean;
   /**
    * Which of Agent view's two centre panes is showing.
@@ -731,6 +739,7 @@ const initial: WorkspaceState = {
   credential: null,
   turns: [],
   activeTurn: null,
+  composerDraft: "",
   settingsOpen: false,
   agentTab: "conversation",
 
@@ -990,6 +999,25 @@ export function composerBlocker(s: WorkspaceState): string | null {
     return "no_base_url";
   }
   return null;
+}
+
+export const setComposerDraft = (composerDraft: string) => setState({ composerDraft });
+
+/**
+ * Reconcile a send completion with whatever is in the composer now.
+ *
+ * A person may start the next instruction while the preceding send is still
+ * in flight. A refusal restores the sent text only when the field is still
+ * empty; it never overwrites newer typing. A successful send leaves that newer
+ * draft alone too.
+ */
+export function composerDraftAfterSend(
+  currentDraft: string,
+  sentDraft: string,
+  succeeded: boolean,
+): string {
+  if (succeeded || currentDraft.trim() !== "") return currentDraft;
+  return sentDraft;
 }
 
 /** The inspect for the active session, or null. Both views read through this. */
@@ -1289,6 +1317,7 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     // Ctrl+1 would be a second conversation in all but name.
     turns: s.turns.map((turn) => `${turn.id}:${turn.phase}:${turn.events.length}`),
     activeTurn: s.activeTurn,
+    composerDraft: s.composerDraft,
     provider: s.provider.provider,
     agentTab: s.agentTab,
     packOpen: s.packOpen,
