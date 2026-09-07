@@ -745,6 +745,7 @@ export interface OverlayPick {
     | "no_inventory"
     | "revision_mismatch"
     | "cross_run"
+    | "utf16_split"
     | string;
 }
 
