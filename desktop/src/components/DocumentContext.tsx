@@ -7,6 +7,14 @@
  */
 import { selectionId, useWorkspace } from "../store";
 import type { Candidate, InspectResult, Session } from "../types";
+import {
+  activeReviewApprovalState,
+  activeReviewQueueCount,
+  activeReviewVerificationState,
+  type ReviewVerificationState,
+} from "../workspace/reviewSummary";
+import { History } from "./History";
+import { ReviewQueue } from "./ReviewQueue";
 import { Tag } from "./Tag";
 
 function Fact({ k, v }: { k: string; v: React.ReactNode }) {
@@ -16,6 +24,20 @@ function Fact({ k, v }: { k: string; v: React.ReactNode }) {
       <dd>{v}</dd>
     </>
   );
+}
+
+function ApprovalTag({ state }: { state: string | null }) {
+  if (state === "pending") return <Tag tone="fill">대기</Tag>;
+  if (state === "approved") return <Tag tone="ok">승인됨</Tag>;
+  if (state === "rejected") return <Tag tone="warn">거절됨</Tag>;
+  return <Tag tone="none">{state ?? "없음"}</Tag>;
+}
+
+function VerificationTag({ state }: { state: ReviewVerificationState }) {
+  if (state === "partial") return <Tag tone="bad">일부 미실행</Tag>;
+  if (state === "pass") return <Tag tone="ok">적용 시 검사 통과</Tag>;
+  if (state === "fail") return <Tag tone="warn">적용 시 검사 걸림</Tag>;
+  return <Tag tone="none">실행 안 함</Tag>;
 }
 
 export function DocumentContext({
@@ -30,6 +52,9 @@ export function DocumentContext({
   const selection = useWorkspace((s) => s.selection);
   const zoom = useWorkspace((s) => s.zoom);
   const page = useWorkspace((s) => s.page);
+  const queued = useWorkspace(activeReviewQueueCount);
+  const approvalState = useWorkspace(activeReviewApprovalState);
+  const verificationState = useWorkspace(activeReviewVerificationState);
 
   if (!session) {
     return (
@@ -100,19 +125,22 @@ export function DocumentContext({
         <div className="section">
           <h3>작업과 증명</h3>
           <dl className="kv">
-            <Fact k="제안된 작업" v={<Tag tone="none">0</Tag>} />
-            <Fact k="승인" v={<Tag tone="none">0</Tag>} />
+            <Fact
+              k="이 문서 작업"
+              v={queued > 0 ? <Tag tone="fill">{queued}건</Tag> : <Tag tone="none">0건</Tag>}
+            />
+            <Fact k="승인" v={<ApprovalTag state={approvalState} />} />
             <Fact
               k="후보본"
               v={candidates.length ? <Tag tone="ok">{candidates.length}</Tag> : <Tag tone="none">0</Tag>}
             />
-            <Fact k="검증" v={<Tag tone="none">실행 안 함</Tag>} />
+            <Fact k="제출 검사" v={<VerificationTag state={verificationState} />} />
             <Fact k="렌더 증명" v={<Tag tone="none">증명 없음</Tag>} />
           </dl>
-          <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
-            이 단계에서는 문서를 읽기만 합니다. 고치는 경로는 아직 열지 않았습니다.
-          </p>
         </div>
+
+        <ReviewQueue />
+        <History />
       </div>
     </aside>
   );

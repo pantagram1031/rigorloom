@@ -39,7 +39,10 @@ import {
 import {
   canRequestApproval,
   draftStaleness,
+  getState,
   locateSelection,
+  setCenterMode,
+  setView,
   useWorkspace,
   type QueuedOp,
 } from "../store";
@@ -51,16 +54,38 @@ function findingsFor(op: QueuedOp, rows: PlanFinding[]): PlanFinding[] {
   return rows.filter((row) => row.at === `ops[${op.opId}]`);
 }
 
+/** Reveal a queued address only when its owning document is still active. */
+export function locateQueuedOp(op: QueuedOp): boolean {
+  const state = getState();
+  if (
+    !state.activeSessionId ||
+    state.draft.sessionId !== state.activeSessionId ||
+    !state.draft.ops.some((queued) => queued.opId === op.opId)
+  ) {
+    return false;
+  }
+  setView("document");
+  setCenterMode("text");
+  locateSelection(
+    op.kind === "fill_cell"
+      ? { kind: "cell", table: op.table, row: op.row, col: op.col }
+      : { kind: "paragraph", atPara: op.atPara },
+  );
+  return true;
+}
+
 function OpRow({
   op,
   hard,
   warn,
   locked,
+  locatable,
 }: {
   op: QueuedOp;
   hard: PlanFinding[];
   warn: PlanFinding[];
   locked: boolean;
+  locatable: boolean;
 }) {
   const anomaly = hard.find((f) => f.code === "fill_charpr_script_anomaly");
   // A row names its target in the vocabulary of the address the OPERATION
@@ -74,14 +99,13 @@ function OpRow({
       <div className="queue-op-head">
         <button
           className="addr mono"
-          title="문서에서 이 자리를 찾습니다"
-          onClick={() =>
-            locateSelection(
-              op.kind === "fill_cell"
-                ? { kind: "cell", table: op.table, row: op.row, col: op.col }
-                : { kind: "paragraph", atPara: op.atPara },
-            )
+          disabled={!locatable}
+          title={
+            locatable
+              ? "문서에서 이 자리를 찾습니다"
+              : "이 작업은 다른 문서의 대기열에 있어 현재 문서에서는 찾을 수 없습니다"
           }
+          onClick={() => locateQueuedOp(op)}
         >
           {op.kind === "fill_cell"
             ? `표 ${op.table} R${op.row}C${op.col}`
@@ -172,8 +196,10 @@ export function ReviewQueue() {
   const applyError = useWorkspace((s) => s.applyError);
   const recovery = useWorkspace((s) => s.recovery);
   const redoCount = useWorkspace((s) => s.redoStack.length);
+  const activeSessionId = useWorkspace((s) => s.activeSessionId);
 
   const locked = approvalPhase === "resolving" || applyPhase === "starting";
+  const locatable = !!activeSessionId && draft.sessionId === activeSessionId;
 
   /** Put the last removed row back — the same target, the same value. */
   const redo =
@@ -194,7 +220,7 @@ export function ReviewQueue() {
       <div className="section" data-testid="review-queue-empty">
         <h3>검토 대기열</h3>
         <p className="prose">
-          비어 있습니다. 가운데 문서에서 <strong>채움 자리</strong>를 누르고 값을 쓰면 여기에
+          비어 있습니다. 문서 화면에서 <strong>채움 자리</strong>를 누르고 값을 쓰면 여기에
           쌓입니다. 승인하기 전까지 문서는 아무것도 바뀌지 않습니다.
         </p>
         {redo ? <div className="gate-actions">{redo}</div> : null}
@@ -284,6 +310,7 @@ export function ReviewQueue() {
             hard={findingsFor(op, validation?.hard ?? [])}
             warn={findingsFor(op, validation?.warn ?? [])}
             locked={locked}
+            locatable={locatable}
           />
         ))}
       </ul>
