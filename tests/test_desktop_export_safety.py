@@ -37,6 +37,9 @@ def test_export_module_refuses_aliases_and_stages_first():
     assert "park_for_force_quit" in text
     assert "normalize_windows_path_text" in text
     assert "copy_durable" in text
+    assert "an_existing_artifact_without_a_receipt_is_preserved_on_failure" in text
+    assert "an_existing_receipt_without_an_artifact_is_preserved_on_failure" in text
+    assert "a_destination_hard_linked_to_the_runtime_artifact_is_preserved" in text
     # dest is replaced last, after the receipt sidecar
     dest_replace = text.index("atomic_replace(&dest_tmp, dest)")
     receipt_replace = text.index("atomic_replace(&receipt_tmp, &receipt_dest)")
