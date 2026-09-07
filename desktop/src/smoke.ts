@@ -2406,9 +2406,10 @@ async function caretChecks(spans: GeometrySpan[]) {
   // The walk above often succeeds on its FIRST attempt — it did on this
   // machine — and "every refusal named itself" over an empty list passes
   // without proving anything. So the longest mapped lines on the page are
-  // tried on purpose: a long line is the one most likely to carry several
-  // runs, which is exactly what `set_run` cannot address. If none of them
-  // refuses, that is said rather than papered over.
+  // tried on purpose: a long line is the one most likely to refuse when the
+  // click cannot name one run (`cross_run` / `multi_run`). A caret that
+  // lands inside one run of a multi-run line is no longer a refusal. If
+  // none of them refuses, that is said rather than papered over.
   const provoke = caretSpans
     .filter((s) => s !== took)
     .sort((a, b) => b.text.length - a.text.length)
@@ -2424,7 +2425,7 @@ async function caretChecks(spans: GeometrySpan[]) {
       refusals.push(`${pick.refusal}`);
       check("a line the runtime will not address places NO caret and says why",
         getState().inlineEdit === null &&
-          ["multi_run", "run_text_differs", "no_inventory", "no_address", "revision_mismatch", "cross_run"].includes(
+          ["multi_run", "run_text_differs", "no_inventory", "no_address", "revision_mismatch", "cross_run", "utf16_split"].includes(
             `${pick.refusal}`,
           ),
         `${pick.refusal} — ${pick.label}`);
@@ -2441,7 +2442,7 @@ async function caretChecks(spans: GeometrySpan[]) {
     }
   }
   check("every line that refused a caret named WHICH refusal, from the closed set",
-    refusals.every((r) => ["multi_run", "run_text_differs", "no_inventory", "no_address", "revision_mismatch", "cross_run"].includes(r)),
+    refusals.every((r) => ["multi_run", "run_text_differs", "no_inventory", "no_address", "revision_mismatch", "cross_run", "utf16_split"].includes(r)),
     refusals.length
       ? refusals.join(", ")
       : `no line among the ${provoke.length + Math.min(CARET_ATTEMPTS, caretSpans.length)} tried on this page refused`);
@@ -2465,22 +2466,32 @@ async function caretChecks(spans: GeometrySpan[]) {
   check("the caret opened on the paragraph the SPAN carries, not a neighbour",
     !!runEdit && runEdit.atPara === took.address?.atPara,
     `${runEdit?.atPara} vs ${took.address?.atPara}`);
-  check("the field holds the run's own text, read from document/readRegion",
-    !!runEdit && runEdit.before.trim().length > 0 &&
-      runEdit.before.replace(/\s+/g, " ").trim() === took.text.replace(/\s+/g, " ").trim(),
-    `${JSON.stringify(runEdit?.before ?? null)} vs ${JSON.stringify(took.text)}`);
+  const displayedRun = runEdit ? (runEdit.rangeText ?? runEdit.before) : "";
+  const fieldSlice = runEdit
+    ? displayedRun.slice(runEdit.rangeStart ?? 0, runEdit.rangeEnd ?? displayedRun.length)
+    : "";
+  check("the field holds the selected run's text, read from document/readRegion",
+    !!runEdit && fieldSlice.trim().length > 0 &&
+      took.text.replace(/\s+/g, " ").trim().includes(fieldSlice.replace(/\s+/g, " ").trim()),
+    `${JSON.stringify(fieldSlice || runEdit?.before || null)} vs ${JSON.stringify(took.text)}`);
 
   // THE OFFSET. Measured, or honestly absent — never a plausible-looking zero.
-  const expected = took.charX
+  // On a multi-run line the field is the selected run's intersection, so the
+  // stored caret is field-relative (span offset minus that intersection).
+  const expectedSpan = took.charX
     ? caretOffsetAt(took, took.rect[0] + (took.rect[2] - took.rect[0]) * 0.6)
     : null;
+  const fieldAt = fieldSlice.length > 0 ? took.text.indexOf(fieldSlice) : 0;
+  const expected = expectedSpan == null || fieldAt < 0
+    ? expectedSpan
+    : expectedSpan - fieldAt;
   check("the caret offset is the one the runtime's own character boxes resolve",
     !!runEdit && runEdit.caret === expected,
     `caret ${runEdit?.caret} vs charX-derived ${expected} (${took.charX ? "offsets present" : "no offsets on this line"})`);
   if (took.charX) {
     check("and a click past the line's start did not silently snap to zero",
-      (runEdit?.caret ?? 0) > 0,
-      `offset ${runEdit?.caret} into a line of ${took.text.length} characters`);
+      (expectedSpan ?? 0) > 0,
+      `span offset ${expectedSpan} into a line of ${took.text.length} characters`);
   }
   const field = document.querySelector<HTMLInputElement>('[data-testid="seat-input"]');
   checkDom("the browser caret sits where the runtime said, not at the front",
@@ -2523,7 +2534,17 @@ async function caretChecks(spans: GeometrySpan[]) {
       // being impatient.
       await waitFor(() => getState().inlineEdit?.kind === "run", 12000);
       const viaPointer = getState().inlineEdit;
-      const wanted = caretOffsetAt(took, wantedFraction);
+      const wantedSpan = caretOffsetAt(took, wantedFraction);
+      const pointerField = viaPointer?.kind === "run"
+        ? (viaPointer.rangeText ?? viaPointer.before).slice(
+            viaPointer.rangeStart ?? 0,
+            viaPointer.rangeEnd ?? (viaPointer.rangeText ?? viaPointer.before).length,
+          )
+        : "";
+      const pointerAt = pointerField.length > 0 ? took.text.indexOf(pointerField) : 0;
+      const wanted = wantedSpan == null || pointerAt < 0
+        ? wantedSpan
+        : wantedSpan - pointerAt;
       check("a real pointer position resolves to the offset its x actually names",
         viaPointer?.kind === "run" && viaPointer.caret === wanted,
         `pointer at ${wantedFraction.toFixed(4)} of the page → caret ${
@@ -2578,8 +2599,8 @@ async function caretChecks(spans: GeometrySpan[]) {
   check("the queued op names the paragraph and the run, not a cell",
     !!runOp && runOp.atPara === took.address?.atPara,
     `atPara ${runOp?.atPara} run ${runOp?.run} vs span atPara ${took.address?.atPara}`);
-  check("it records what the line said before, for the queue's before → after",
-    !!runOp && runOp.before.replace(/\s+/g, " ").trim() === took.text.replace(/\s+/g, " ").trim(),
+  check("it records what the selected run said before, for the queue's before → after",
+    !!runOp && runOp.before === displayedRun,
     JSON.stringify(runOp?.before ?? null));
   check("the caret produced ONE op, not a second path's duplicate",
     getState().draft.ops.length === queuedBeforeCaret + 1,
