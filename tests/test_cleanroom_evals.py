@@ -63,10 +63,29 @@ def corpus_families() -> set[str]:
     template on disk, and a hardcoded list is exactly the coupling #26 is about.
     ``skipped[]`` entries are excluded on purpose — a recorded corpus gap (family
     ③ school, family ⑤ corp) has no document to write a task against.
+
+    Only rows whose ``path`` lives under ``tests/corpus/forms/`` count. The
+    manifest also catalogues documents that sit *beside* the form corpus
+    (``../render-check/*``: the synthetic renderer feature-comparison
+    document and its Hancom reference PDF). Those are renderer measurements,
+    not blank forms — an eval task cannot take its ``input_files`` from them
+    (``test_every_shipped_task_validates`` requires the forms prefix), so they
+    create no coverage obligation here.
     """
     manifest = json.loads(CORPUS_MANIFEST.read_text(encoding="utf-8"))
     return {row["family"] for row in manifest["documents"]
-            if isinstance(row.get("family"), str) and row["family"].strip()}
+            if isinstance(row.get("family"), str) and row["family"].strip()
+            and _lives_in_forms_corpus(row.get("path"))}
+
+
+def _lives_in_forms_corpus(path) -> bool:
+    """True when a manifest ``path`` (relative to the manifest) stays inside
+    ``tests/corpus/forms/``; ``../render-check/x.hwpx`` does not."""
+    if not isinstance(path, str) or not path.strip():
+        return False
+    forms_dir = CORPUS_MANIFEST.parent.resolve()
+    resolved = (CORPUS_MANIFEST.parent / path).resolve()
+    return resolved == forms_dir or forms_dir in resolved.parents
 
 
 def declared_skips(task: dict, enabled_modules: Iterable[str] = ()) -> dict:
@@ -497,6 +516,24 @@ class TestTaskDefinitions:
         backed = corpus_families() | {"planted-family"}
         covered = {task["family"] for task in cleanroom.load_tasks(TASKS_DIR)}
         assert backed - covered == {"planted-family"}
+
+    def test_a_manifest_row_outside_the_forms_corpus_is_not_a_family(self):
+        """The forms manifest lists the render-check documents that live in
+        ``tests/corpus/render-check/`` (path ``../render-check/...``). They
+        are renderer measurements, not blank forms, and no task can name them
+        as inputs. The family scan must not demand a task for them — and must
+        still count a row that does live under the forms corpus."""
+        manifest = json.loads(CORPUS_MANIFEST.read_text(encoding="utf-8"))
+        outside = [row for row in manifest["documents"]
+                   if isinstance(row.get("path"), str)
+                   and row["path"].startswith("../")]
+        assert outside, "the manifest no longer carries an outside-corpus row; "             "plant one here so this test stays non-vacuous"
+        for row in outside:
+            assert not _lives_in_forms_corpus(row["path"]), row["path"]
+        assert _lives_in_forms_corpus("grant/pps-hyeopeop-seungin-sinchengseo.hwpx")
+        assert not _lives_in_forms_corpus("../render-check/render-check-01.hwpx")
+        assert not _lives_in_forms_corpus(None)
+        assert "render-check" not in corpus_families()
 
     def test_no_binaries_live_under_evals(self):
         """The eval tree references corpus files by path; embedding one would
