@@ -14,10 +14,18 @@
  * the same failure the inline seat editor was built around, in a box people
  * will type paragraphs into.
  */
-import { useRef, useState } from "react";
+import { useRef } from "react";
 
 import { sendInstruction } from "../actions";
-import { activeStoreKey, composerBlocker, setState, useWorkspace } from "../store";
+import {
+  activeStoreKey,
+  composerBlocker,
+  composerDraftAfterSend,
+  getState,
+  setComposerDraft,
+  setState,
+  useWorkspace,
+} from "../store";
 
 /** One sentence and one way out, per reason. Never a bare disabled control. */
 function Blocked({ reason }: { reason: string }) {
@@ -63,27 +71,26 @@ export function Composer() {
   const blocker = useWorkspace(composerBlocker);
   const provider = useWorkspace((s) => s.provider.provider);
   const activeTurn = useWorkspace((s) => s.activeTurn);
-  const [text, setText] = useState("");
+  const draft = useWorkspace((s) => s.composerDraft);
   const composing = useRef(false);
-  const field = useRef<HTMLTextAreaElement | null>(null);
 
-  const canSend = blocker === null && text.trim() !== "";
+  const canSend = blocker === null && draft.trim() !== "";
 
   async function send() {
     if (!canSend) return;
-    const instruction = text;
-    setText("");
+    const instruction = draft;
+    setComposerDraft("");
     const ok = await sendInstruction(instruction);
-    // A refused send must not eat what the person wrote.
-    if (!ok && getComposerEmpty(field.current)) setText(instruction);
+    // A refused send must not eat the instruction, but its late completion
+    // must not overwrite the next instruction typed while it was in flight.
+    setComposerDraft(composerDraftAfterSend(getState().composerDraft, instruction, ok));
   }
 
   return (
     <div className="composer" data-testid="composer">
       <textarea
-        ref={field}
         data-testid="composer-input"
-        value={text}
+        value={draft}
         disabled={blocker === "no_document" || blocker === "no_host"}
         placeholder={
           blocker === null
@@ -91,7 +98,7 @@ export function Composer() {
             : "문서에 시킬 일을 여기에 씁니다."
         }
         aria-describedby="composer-note"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => setComposerDraft(e.target.value)}
         onCompositionStart={() => {
           composing.current = true;
         }}
@@ -136,9 +143,4 @@ export function Composer() {
       </p>
     </div>
   );
-}
-
-/** Whether the field is still empty, so restoring a refused draft is safe. */
-function getComposerEmpty(field: HTMLTextAreaElement | null): boolean {
-  return !field || field.value.trim() === "";
 }

@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test:draft-freshness": "node --test scripts/set-queue-freshness.test.mjs",
+    "test:view-state": "node --experimental-strip-types --test scripts/view-state.test.mjs",
+    "test:headless": "npm run test:draft-freshness && npm run test:view-state",
     "tauri": "tauri"
   },
   "dependencies": {
