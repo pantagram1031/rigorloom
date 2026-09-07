@@ -7,11 +7,10 @@
  * approval state, one candidate set, and one verification history. Switching
  * views must never create a new conversation or duplicate document state."
  *
- * That is enforced structurally here rather than by discipline: `view` is one
- * field of the same object that holds `selection`, `expanded`, `page`, `zoom`
- * and everything else, and `setView` writes only `view`. There is no per-view
- * state anywhere in the tree, so a view switch cannot lose anything — the
- * components have no state of their own to lose.
+ * View replacement preserves the data held here, including unsent instructions.
+ * `setView` also supersedes outstanding edit intent. Components still own
+ * transient DOM state such as focus and composition; a component-local value
+ * does not acquire Workspace persistence merely by being rendered in a view.
  *
  * No state library: `useSyncExternalStore` is in React 18 and does the whole
  * job. One fewer dependency in an app whose point is that it has no ambient
@@ -532,6 +531,8 @@ export interface WorkspaceState {
   credential: CredentialStatus | null;
   /** The conversation, newest last. One process per turn. */
   turns: Turn[];
+  /** Unsent instruction, shared across view mounts; never persisted to prefs. */
+  composerDraft: { text: string };
   /** The turn in flight, if any. One at a time, enforced in Rust too. */
   activeTurn: string | null;
   settingsOpen: boolean;
@@ -730,6 +731,7 @@ const initial: WorkspaceState = {
   probeError: null,
   credential: null,
   turns: [],
+  composerDraft: { text: "" },
   activeTurn: null,
   settingsOpen: false,
   agentTab: "conversation",
@@ -1288,6 +1290,7 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     // which turn is in flight, because a turn that lost its live events on
     // Ctrl+1 would be a second conversation in all but name.
     turns: s.turns.map((turn) => `${turn.id}:${turn.phase}:${turn.events.length}`),
+    composerDraft: s.composerDraft.text,
     activeTurn: s.activeTurn,
     provider: s.provider.provider,
     agentTab: s.agentTab,

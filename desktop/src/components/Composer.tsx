@@ -14,10 +14,11 @@
  * the same failure the inline seat editor was built around, in a box people
  * will type paragraphs into.
  */
-import { useRef, useState } from "react";
+import { useRef } from "react";
 
 import { sendInstruction } from "../actions";
-import { activeStoreKey, composerBlocker, setState, useWorkspace } from "../store";
+import { activeStoreKey, composerBlocker, getState, setState, useWorkspace } from "../store";
+import { submitComposerDraft } from "../workspace/composerDraft";
 
 /** One sentence and one way out, per reason. Never a bare disabled control. */
 function Blocked({ reason }: { reason: string }) {
@@ -63,7 +64,7 @@ export function Composer() {
   const blocker = useWorkspace(composerBlocker);
   const provider = useWorkspace((s) => s.provider.provider);
   const activeTurn = useWorkspace((s) => s.activeTurn);
-  const [text, setText] = useState("");
+  const text = useWorkspace((s) => s.composerDraft.text);
   const composing = useRef(false);
   const field = useRef<HTMLTextAreaElement | null>(null);
 
@@ -71,11 +72,11 @@ export function Composer() {
 
   async function send() {
     if (!canSend) return;
-    const instruction = text;
-    setText("");
-    const ok = await sendInstruction(instruction);
-    // A refused send must not eat what the person wrote.
-    if (!ok && getComposerEmpty(field.current)) setText(instruction);
+    await submitComposerDraft({
+      read: () => getState().composerDraft,
+      write: (composerDraft) => setState({ composerDraft }),
+      send: sendInstruction,
+    });
   }
 
   return (
@@ -91,7 +92,7 @@ export function Composer() {
             : "문서에 시킬 일을 여기에 씁니다."
         }
         aria-describedby="composer-note"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => setState({ composerDraft: { text: e.target.value } })}
         onCompositionStart={() => {
           composing.current = true;
         }}
@@ -136,9 +137,4 @@ export function Composer() {
       </p>
     </div>
   );
-}
-
-/** Whether the field is still empty, so restoring a refused draft is safe. */
-function getComposerEmpty(field: HTMLTextAreaElement | null): boolean {
-  return !field || field.value.trim() === "";
 }
