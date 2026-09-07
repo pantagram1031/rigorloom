@@ -2,7 +2,7 @@
 
 Status snapshot only. **Rematch freeze: ON.** No `main` merge.
 
-**Updated:** 2026-09-08 ~05:22 KST
+**Updated:** 2026-09-08 ~05:42 KST
 
 ## Current tip
 
@@ -36,7 +36,10 @@ Unique commits on #356 after that ancestor (oldest → newest):
 
 Promotion of the living tip to #356 @ `e927195b` is this green run, not the cancelled hang.
 
-Docs-only snapshot [PR #357](https://github.com/pantagram1031/rigorloom/pull/357) (`cursor/living-tip-status-356-4ce5` @ `b69eb827b8f2c50ed3310b007e21a4e1ced40b6b`) is **not** the product tip. Its CI run [34156949995](https://github.com/pantagram1031/rigorloom/actions/runs/34156949995) is **ALL PASS** (render-smoke + core/all ubuntu+windows).
+Docs-only snapshot [PR #357](https://github.com/pantagram1031/rigorloom/pull/357) (`cursor/living-tip-status-356-4ce5`) is **not** the product tip. Do not pin this PR's own HEAD as the living product SHA.
+
+- Prior #357 tip `b69eb827b8f2c50ed3310b007e21a4e1ced40b6b` — CI **ALL PASS** run [34156949995](https://github.com/pantagram1031/rigorloom/actions/runs/34156949995)
+- `84bead9348a48cf100cc337d12d29a841dafe16c` (Card5 HASH fold; docs/ops-only vs `b69eb827`) — all-modules ubuntu **FAILED** run [34159193388](https://github.com/pantagram1031/rigorloom/actions/runs/34159193388) on inherited flake `pipeline/tests/test_diagnostic_candidate_core.py::test_run_child_capture_cleans_ordinary_grandchild_cross_platform` (`assert not _pid_is_live`). Other four jobs passed. Not docs-contract drift.
 
 ## Card 5 HASH on this living tip
 
