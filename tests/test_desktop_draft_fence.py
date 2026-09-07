@@ -215,6 +215,29 @@ def test_agent_plan_adoption_uses_the_same_draft_owner():
     assert "if (adopted) patchTurn(id, { planId });" in send
 
 
+def test_approval_actions_keep_their_draft_owner_across_awaits():
+    """Late approval completions must not attach to a replacement draft."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    request_start = text.index("export async function requestApprovalForDraft")
+    resolve_start = text.index("export async function resolveApprovalDecision")
+    apply_start = text.index("// --- apply", resolve_start)
+    request = text[request_start:resolve_start]
+    resolve = text[resolve_start:apply_start]
+
+    assert request.index("const owner = captureDraftOwner()") < request.index(
+        "await rt.requestApproval"
+    )
+    assert request.count("!ownsDraft(owner)") >= 2
+    assert request.count("getState().draft.plan !== plan") >= 2
+
+    assert resolve.index("const owner = captureDraftOwner()") < resolve.index(
+        "await rt.resolveApproval"
+    )
+    assert resolve.count("!ownsDraft(owner)") >= 2
+    assert resolve.count("getState().draft.plan !== plan") >= 2
+    assert resolve.count("getState().approval !== approval") >= 2
+
+
 def test_agent_document_context_reads_shared_work_state():
     """The agent pane must project the store, not hard-coded duplicate state."""
     context = DOCUMENT_CONTEXT.read_text(encoding="utf-8")

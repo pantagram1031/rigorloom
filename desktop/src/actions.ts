@@ -1134,11 +1134,14 @@ export async function requestApprovalForDraft(): Promise<void> {
   const state = getState();
   const plan = state.draft.plan;
   if (!plan || !canRequestApproval(state)) return;
+  const owner = captureDraftOwner();
   setState({ approvalPhase: "requesting", approvalError: null });
   try {
     const approval = await rt.requestApproval(plan.planId);
+    if (!ownsDraft(owner) || getState().draft.plan !== plan) return;
     setState({ approval, approvalPhase: "pending" });
   } catch (e) {
+    if (!ownsDraft(owner) || getState().draft.plan !== plan) return;
     setState({ approvalPhase: "idle", approvalError: rt.asRuntimeError(e) });
   }
 }
@@ -1159,6 +1162,7 @@ export async function resolveApprovalDecision(
   const approval = state.approval;
   const plan = state.draft.plan;
   if (!approval || !plan) return;
+  const owner = captureDraftOwner();
   setState({ approvalPhase: "resolving", approvalError: null });
   try {
     const resolved = await rt.resolveApproval(
@@ -1168,10 +1172,20 @@ export async function resolveApprovalDecision(
       decision,
       approver,
     );
+    if (
+      !ownsDraft(owner) ||
+      getState().draft.plan !== plan ||
+      getState().approval !== approval
+    ) return;
     setState({ approval: resolved, approvalPhase: "resolved" });
     if (decision === "approved") await applyApproved();
     else showToast("계획을 거절했습니다. 문서는 그대로입니다.", 2000);
   } catch (e) {
+    if (
+      !ownsDraft(owner) ||
+      getState().draft.plan !== plan ||
+      getState().approval !== approval
+    ) return;
     // `plan_stale` lands here when the source moved between the approval
     // request and the decision. Keep the queue; offer a re-propose.
     setState({ approvalPhase: "pending", approvalError: rt.asRuntimeError(e) });

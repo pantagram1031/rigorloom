@@ -342,3 +342,135 @@ test("agent adoption rechecks ownership after approval lookup", async () => {
   assert.equal(f.read().draft, userDraft);
   assert.equal(f.read().approval, null);
 });
+
+function approvalFixture() {
+  const plan = { planId: "plan-A", planHash: "hash-A" };
+  const approval = { approvalId: "approval-A", planId: "plan-A", state: "pending" };
+  let state = {
+    activeSessionId: "session-A",
+    draft: { ...EMPTY_DRAFT, plan },
+    head: null,
+    approval: null,
+    approvalPhase: "idle",
+    approvalError: null,
+  };
+  const requests = [];
+  const resolutions = [];
+  let applies = 0;
+  const rt = {
+    requestApproval(planId) {
+      const pending = deferred();
+      requests.push({ ...pending, planId });
+      return pending.promise;
+    },
+    resolveApproval(approvalId, planId, planHash, decision, approver) {
+      const pending = deferred();
+      resolutions.push({
+        ...pending,
+        approvalId,
+        planId,
+        planHash,
+        decision,
+        approver,
+      });
+      return pending.promise;
+    },
+    asRuntimeError(error) {
+      return { code: "test_failure", message: String(error) };
+    },
+  };
+  const approvalStart = source.indexOf("export async function requestApprovalForDraft");
+  const approvalEnd = source.indexOf("// --- apply", approvalStart);
+  assert.ok(
+    approvalStart >= 0 && approvalEnd > approvalStart,
+    "approval action source boundary changed",
+  );
+  const approvalImplementation = source
+    .slice(approvalStart, approvalEnd)
+    .replace(/^export /gm, "");
+  const context = vm.createContext({
+    rt,
+    getState: () => state,
+    setState: (patch) => {
+      state = { ...state, ...patch };
+    },
+    headCandidate: (current) =>
+      current.head ? { runId: current.head } : null,
+    canRequestApproval: () => true,
+    applyApproved: async () => {
+      applies += 1;
+    },
+    showToast: () => {},
+  });
+  vm.runInContext(
+    `${stripTypeScriptTypes(ownerImplementation)}
+${stripTypeScriptTypes(approvalImplementation)}
+globalThis.requestDraftApproval = requestApprovalForDraft;
+globalThis.resolveDraftApproval = resolveApprovalDecision;`,
+    context,
+  );
+  return {
+    read: () => state,
+    patch: (patch) => {
+      state = { ...state, ...patch };
+    },
+    request: () => context.requestDraftApproval(),
+    resolve: (decision = "approved") =>
+      context.resolveDraftApproval(decision),
+    requests,
+    resolutions,
+    plan,
+    approval,
+    applies: () => applies,
+  };
+}
+
+test("late approval request cannot attach to a replacement draft", async () => {
+  const f = approvalFixture();
+  const pending = f.request();
+  const replacement = { ...EMPTY_DRAFT, plan: { planId: "plan-B" } };
+  f.patch({ draft: replacement, approval: null, approvalPhase: "idle" });
+  f.requests[0].resolve(f.approval);
+
+  await pending;
+  assert.equal(f.read().draft, replacement);
+  assert.equal(f.read().approval, null);
+  assert.equal(f.read().approvalPhase, "idle");
+});
+
+test("approval request publishes while its draft owner is unchanged", async () => {
+  const f = approvalFixture();
+  const pending = f.request();
+  f.requests[0].resolve(f.approval);
+
+  await pending;
+  assert.equal(f.read().approval, f.approval);
+  assert.equal(f.read().approvalPhase, "pending");
+});
+
+test("late approval resolution cannot reattach to a replacement draft", async () => {
+  const f = approvalFixture();
+  f.patch({ approval: f.approval });
+  const pending = f.resolve();
+  const replacement = { ...EMPTY_DRAFT, plan: { planId: "plan-B" } };
+  f.patch({ draft: replacement, approval: null, approvalPhase: "idle" });
+  f.resolutions[0].resolve({ ...f.approval, state: "approved" });
+
+  await pending;
+  assert.equal(f.read().draft, replacement);
+  assert.equal(f.read().approval, null);
+  assert.equal(f.read().approvalPhase, "idle");
+  assert.equal(f.applies(), 0);
+});
+
+test("approval resolution applies while its draft owner is unchanged", async () => {
+  const f = approvalFixture();
+  f.patch({ approval: f.approval });
+  const pending = f.resolve();
+  f.resolutions[0].resolve({ ...f.approval, state: "approved" });
+
+  await pending;
+  assert.equal(f.read().approval.state, "approved");
+  assert.equal(f.read().approvalPhase, "resolved");
+  assert.equal(f.applies(), 1);
+});
