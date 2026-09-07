@@ -79,3 +79,63 @@ def test_run_job_execution(tmp_path: Path):
     gui_v = next(v for v in summary["verdicts"] if v["card_id"] == "gui")
     assert gui_v["status"] == "NOT_RUN"
     assert not gui_v["gui_claimed"]
+
+
+def test_verifier_mock_approved():
+    v1 = verify_exit_code("c4", None, is_not_run=True, reason="Unattended", approval_mode="mock_approved", mock_approved=True)
+    assert v1.status == "NOT_RUN"
+    assert v1.approval_mode == "mock_approved"
+    assert v1.mock_approved is True
+    assert v1.gui_claimed is False
+
+    summary = summarize_verdicts([v1], approval_mode="mock_approved")
+    assert summary["overall_status"] == "NOT_RUN"
+    assert summary["approval_mode"] == "mock_approved"
+    assert summary["mock_approved_count"] == 1
+    assert summary["gui_ime_claimed"] is False
+
+
+def test_run_job_with_mock_approved_c4(tmp_path: Path):
+    job_spec = {
+        "candidate_id": "test-c4-mock",
+        "run_id": "test-c4-mock-run-1",
+        "sha": "HEAD",
+        "allowed_commands": ["c4"],
+        "evidence_dir": str(tmp_path / "evidence_c4"),
+        "cards": ["c4"],
+        "requested_model": "gemini-3.8-flash",
+        "approval_mode": "mock_approved",
+    }
+    job_file = tmp_path / "job.json"
+    job_file.write_text(json.dumps(job_spec), encoding="utf-8")
+
+    summary = run_job(job_file, Path.cwd())
+    assert summary["candidate_id"] == "test-c4-mock"
+    assert summary["approval_mode"] == "mock_approved"
+    assert summary["mock_approved"] is True
+    assert summary["gui_ime_claimed"] is False
+
+    ev_dir = tmp_path / "evidence_c4"
+    assert (ev_dir / "c4-fixture-probe.json").exists()
+    assert (ev_dir / "c4-manifest.json").exists()
+    assert (ev_dir / "c4-manifest-check.json").exists()
+    assert (ev_dir / "c4-mock-approval.json").exists()
+
+    manifest_data = json.loads((ev_dir / "c4-manifest.json").read_text(encoding="utf-8"))
+    assert manifest_data["approval_mode"] == "mock_approved"
+    assert manifest_data["is_mock_approved"] is True
+
+    mock_appr = json.loads((ev_dir / "c4-mock-approval.json").read_text(encoding="utf-8"))
+    assert mock_appr["is_mock_approved"] is True
+    assert mock_appr["is_human_approved"] is False
+    assert mock_appr["gui_claimed"] is False
+    assert mock_appr["approver"] == "mock_approved"
+
+    c4_v = next(v for v in summary["verdicts"] if v["card_id"] == "c4")
+    assert c4_v["status"] == "NOT_RUN"
+    assert c4_v["mock_approved"] is True
+    assert c4_v["approval_mode"] == "mock_approved"
+    assert c4_v["gui_claimed"] is False
+    assert "mock_approved for unattended plan apply gating" in c4_v["reason"]
+    assert "Verdict remains NOT_RUN" in c4_v["reason"]
+
