@@ -551,3 +551,117 @@ tree and installer.
 7. Review the attached `setQueue` freshness fence as a separate P2 slice against
    this branch's actual `actions.ts`; do not treat its #248 function-level diff
    or 37 isolated Node tests as authorization or current-tree acceptance.
+
+## 2026-09-08 resume checkpoint — TASK-CODEX-RESUME-001
+
+This one-turn checkpoint stayed on behavior/build source
+`8c8cf8fadd51b1f6e8d8dcd777e397ec88d22070`, tree
+`1eb54ed3f3ea0f4acf64acd2504ba6d9d721352e`. It did not merge or rebase PR
+#355, did not change renderer/rematch/own-render files, did not use Hancom COM
+or the foreground GUI, and did not spend a reset credit. `F:/RigorloomQA` was
+not available to this task, so no F: evidence was reused or represented as
+current-SHA proof.
+
+### Card 1 — current-tip save/quit evidence
+
+- The interrupted 2026-09-05 core-only rerun had completed on disk. With
+  `TEMP`, `TMP`, and pytest `--basetemp` all on E: it passed 3,445 tests,
+  skipped 1,201 with reasons, passed 63 subtests, and had zero failures/errors
+  in 2,241.69 s. JUnit records 4,709 test cases and zero failures/errors.
+  Evidence:
+  `private/epoch-0/8c8cf8f/ci-local/pytest-core-one-volume.{txt,xml}`.
+- The preceding split-volume run failed nine
+  `pipeline.tests.test_renderer_runtime_v2` cases because Python temporary
+  sources were on C: while pytest destinations were on E:, making hard links
+  fail with Windows error 17. Re-running that complete file with every temp
+  path on E: passed 34/34. This is classified as a local harness placement
+  error, not silently promoted to a product pass. Evidence:
+  `private/epoch-0/8c8cf8f/ci-local/pytest-renderer-runtime-v2-one-volume.txt`.
+- `cargo test --locked --release export_tests:: -- --nocapture`, using the
+  existing exact-source E: target, passed 11/11. It covers new-name export,
+  existing-pair refusal, receipt-directory refusal, source/receipt/hash drift,
+  runtime-root and role aliases, second publication failure, post-publication
+  mutation, and hard termination at staged/artifact/receipt publication
+  points. Evidence: `private/epoch-0/8c8cf8f/export-tests-20260908.txt`.
+- `python private/epoch-0/c5/epoch0_runtime_kill.py` passed all three exact-tip
+  scenarios (inspect, apply, verification). One second after Runtime death each
+  had zero child survivors; restart exposed zero incomplete candidates before
+  recovery; inspect recovered, and apply/verification each produced one
+  canonical candidate only after retry. Every source before/after/session hash
+  stayed `52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf`.
+  Evidence:
+  `private/epoch-0/c5/runtime-kill-20260908-001812/summary.json`, SHA-256
+  `5D35ADADEA97DFC17D063F84CF70DA47C4754C57530E2F6DB777BD06465A7DB2`.
+
+### Frontend async-freshness review — no port applied
+
+The current `desktop/src/actions.ts` blob is
+`69426d7e3a733d70561838ed47f59d0ec88cad41`. Its `setQueue` has no request
+generation or immutable-draft ownership check. A late proposal/validation or
+error can therefore restore an older queue after newer typing, clearing,
+session switching, or head switching. While a new proposal is pending it also
+retains the preceding `plan`, `validation`, and `boundSha256` in the draft.
+
+The attached ZIP is review input only (SHA-256
+`A2A58CC7938C95C1605BE3F31B68A50BBC5D1339276F7868813FCE5085F53B5A`).
+Its function-only observation came from PR #248 source
+`8a56ada79391a577c02319d0e2efffd6a7968a67`, blob
+`988cef43a841b6b22f3b899efcc6389817f5e9c2`; its 37 isolated Node tests are not
+current-tree acceptance. Its immutable-draft check addresses queue replacement,
+clear, session, and head changes and clears the previous plan immediately, but
+it has not been reviewed in the complete Epoch application and was not applied.
+
+PR #355 tip `99ad234cc2af4e87da54ec4d3151e62c44c424d4` is available locally but is
+context only. Its `setQueue` has a module-level generation fence, yet
+`clearQueue()` does not bump that generation and the starting draft still
+retains the preceding plan fields. It is also a broad delta in the owned
+Desktop files (623 insertions / 1,209 deletions across the five paths checked),
+so neither restacking nor function copying is justified by this review.
+
+The same stale-completion class exists outside plan drafting:
+
+- `renderCurrentPage` publishes an old session/page/run result after either
+  selection or a newer render request has changed;
+- `loadGeometry` correctly keys the cache by session/page but also installs any
+  late result or error into the current `geometry` fields without rechecking
+  the active session/page;
+- `preparePages` can publish an old note/error and launch a page render after
+  the active session or requested candidate changed.
+
+Required explicit port acceptance is therefore: newest draft wins; clear,
+session change, and head change invalidate pending draft work; pending work
+cannot expose the previous plan; keyed geometry may finish into its cache but
+may update the active view only when its session/page still owns that view; and
+render/prepare results and errors may update only the latest matching
+session/page/run request. No renderer/layout algorithm or expectation changes
+belong in that port.
+
+### Card 5 — exact linkage plan, not an install-PASS claim
+
+The existing private artifacts are linked as follows:
+
+1. Source: `8c8cf8fadd51b1f6e8d8dcd777e397ec88d22070`, tree
+   `1eb54ed3f3ea0f4acf64acd2504ba6d9d721352e`.
+2. Locks: npm
+   `E3BE83645B61EF8F8F9C6092D39F13823A6CE044E10B710F0216BBFCB4FC301C`;
+   Cargo
+   `DC365FFFBB772BE7FCE8C5759DEFB0276EAD7CAE189639FD3C950473505E2E03`.
+3. Frozen sidecar: `rigorloomd.exe` SHA-256
+   `A381F0B9A7D432DF21C14A6CB04E6EA6D49427A59872109706A0809D3C68AA0C`.
+4. Release shell (which embeds the Vite UI): SHA-256
+   `8ABD658B936BE435A2E8BA59C181D7A248265C3B79344AEDEE17F734643C11FE`.
+5. NSIS installer:
+   `private/epoch-0/8c8cf8f/installer/Rigorloom_0.1.0_x64-setup.exe`,
+   26,592,817 bytes, SHA-256
+   `883B8C13B6FE264F37977AFCF3495D1297F3655390709060ECBF6366BC72504A`.
+6. Manifest-identical installed-payload copy: 311 files / 75,411,386 bytes;
+   `private/epoch-0/8c8cf8f/installed-payload-files.json`, SHA-256
+   `D01571167E6E16489E54F91DE5FA079BCED5F772D1FBF9F18314E6F4C3457A4D`.
+
+This is an artifact linkage plan and prior exploratory install evidence, not a
+new scripted install PASS. Card 5 remains open until an acceptance script
+outside the checkout records installer launch/install, installed file manifest,
+app launch, state recovery, source before/after hashes, uninstall exit, and
+post-uninstall absence against these exact hashes. The current licensing draft
+also still blocks onward distribution because PyMuPDF/MuPDF routing and the
+complete bundled third-party notice closure are unresolved.
