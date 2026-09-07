@@ -29,6 +29,7 @@ A valid `job.json` conforms to `qa/job.schema.json`:
 | `evidence_dir` | string | Path to directory where evidence artifacts (preflight JSON, test results, logs, verifier verdict) are written. |
 | `cards` | array[string] | (Optional) List of card IDs targeted for execution (e.g. `["c1", "c2", "c3"]`). |
 | `requested_model` | string | (Optional) Model slug for tracking agent orchestrator provenance (`gemini-3.8-flash`). |
+| `approval_mode` | string | (Optional) `mock_approved` or `human_approved` (default). In `mock_approved` mode, plan apply gating is resolved for unattended card-4/agent paths without claiming human approval or GUI/IME PASS. |
 | `metadata` | object | (Optional) Arbitrary key/value tags for run context. |
 
 ### Example `job.json`
