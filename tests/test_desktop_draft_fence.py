@@ -65,7 +65,11 @@ STORE = REPO / "desktop" / "src" / "store.ts"
 ACTIONS = REPO / "desktop" / "src" / "actions.ts"
 HARNESS = Path(__file__).resolve().parent / "desktop_draft_fence_harness.cjs"
 FRESHNESS = REPO / "desktop" / "scripts" / "set-queue-freshness.test.mjs"
+REVIEW_FRESHNESS = REPO / "desktop" / "scripts" / "review-apply-freshness.test.mjs"
 TSC = REPO / "desktop" / "node_modules" / "typescript"
+DOCUMENT_CONTEXT = REPO / "desktop" / "src" / "components" / "DocumentContext.tsx"
+AGENT_VIEW = REPO / "desktop" / "src" / "views" / "AgentView.tsx"
+CONVERSATION = REPO / "desktop" / "src" / "components" / "Conversation.tsx"
 
 
 # ---------------------------------------------------------------------------
@@ -172,17 +176,89 @@ def test_set_queue_clears_stale_plan_before_propose():
 
 def test_set_queue_owns_draft_identity_session_and_head():
     """Late completions after a clear, session switch, or head change must not land."""
-    body = _setqueue_body(ACTIONS.read_text(encoding="utf-8"))
-    assert "const ownsDraft = () =>" in body
-    assert "getState().draft === pendingDraft" in body
-    assert "getState().activeSessionId === sessionId" in body
-    assert "headCandidate(getState())?.runId" in body
+    text = ACTIONS.read_text(encoding="utf-8")
+    body = _setqueue_body(text)
+    owner_start = text.index("interface DraftOwner")
+    owner_end = text.index("/** Load a session's inspect", owner_start)
+    owner = text[owner_start:owner_end]
+    assert "state.draft === owner.draft" in owner
+    assert "state.activeSessionId === owner.sessionId" in owner
+    assert "headCandidate(state)?.runId" in owner
+    assert "const owner = captureDraftOwner()" in body
     propose_pos = body.index("rt.proposePlan(")
-    owns = [i for i in range(len(body)) if body[i:].startswith("if (!ownsDraft()) return;")]
+    owns = [i for i in range(len(body)) if body[i:].startswith("if (!ownsDraft(owner)) return;")]
     assert len(owns) >= 3, f"Expected ≥3 ownsDraft guards, found {len(owns)}"
     assert any(i > propose_pos for i in owns)
     catch_pos = body.rindex("} catch (e) {")
     assert any(i > catch_pos for i in owns)
+
+
+def test_agent_plan_adoption_uses_the_same_draft_owner():
+    """Agent completions must not overwrite a newer document, head, or queue."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    start = text.index("async function adoptAgentPlan(")
+    end = text.index("/** Ids are the shell's", start)
+    body = text[start:end]
+    assert "owner: DraftOwner" in body
+    assert "if (!ownsDraft(owner)) return null;" in body
+    assert body.index("await rt.validatePlan") < body.index("if (!ownsDraft(owner))")
+
+    mock_start = text.index("export async function runAgentProposal")
+    mock_end = text.index("// --- checking", mock_start)
+    mock = text[mock_start:mock_end]
+    assert mock.index("const owner = captureDraftOwner()") < mock.index("await rt.runMockAgent")
+    assert "approval?.approvalId ?? null,\n      owner," in mock
+
+    send_start = text.index("export async function sendInstruction")
+    send_end = text.index("/** Stop the run in flight", send_start)
+    send = text[send_start:send_end]
+    assert send.index("const owner = captureDraftOwner()") < send.index("await rt.agentHostRun")
+    assert "if (adopted) patchTurn(id, { planId });" in send
+
+
+def test_approval_actions_keep_their_draft_owner_across_awaits():
+    """Late approval completions must not attach to a replacement draft."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    request_start = text.index("export async function requestApprovalForDraft")
+    resolve_start = text.index("export async function resolveApprovalDecision")
+    apply_start = text.index("// --- apply", resolve_start)
+    request = text[request_start:resolve_start]
+    resolve = text[resolve_start:apply_start]
+
+    assert request.index("const owner = captureDraftOwner()") < request.index(
+        "await rt.requestApproval"
+    )
+    assert request.count("!ownsDraft(owner)") >= 2
+    assert request.count("getState().draft.plan !== plan") >= 2
+
+    assert resolve.index("const owner = captureDraftOwner()") < resolve.index(
+        "await rt.resolveApproval"
+    )
+    assert resolve.count("!ownsDraft(owner)") >= 2
+    assert resolve.count("getState().draft.plan !== plan") >= 2
+    assert resolve.count("getState().approval !== approval") >= 2
+
+
+def test_agent_document_context_reads_shared_work_state():
+    """The agent pane must project the store, not hard-coded duplicate state."""
+    context = DOCUMENT_CONTEXT.read_text(encoding="utf-8")
+    assert "export function DocumentContext()" in context
+    assert "useWorkspace(activeSession)" in context
+    assert "useWorkspace(activeInspect)" in context
+    assert "useWorkspace(activeCandidates)" in context
+    assert "useWorkspace((s) => s.draft)" in context
+    assert "useWorkspace((s) => s.approval)" in context
+    assert "draft.ops.length" in context
+    assert "draft.validation" in context
+    assert "이 단계에서는 문서를 읽기만 합니다" not in context
+    assert "<DocumentContext />" in AGENT_VIEW.read_text(encoding="utf-8")
+
+
+def test_superseded_agent_plan_is_not_described_as_queued():
+    """A turn card must distinguish a runtime plan from an adopted draft."""
+    conversation = CONVERSATION.read_text(encoding="utf-8")
+    assert "turn.planId ?" in conversation
+    assert "대기열에는 넣지 않았습니다." in conversation
 
 
 def test_set_queue_error_path_is_also_fenced():
@@ -206,6 +282,33 @@ def test_set_queue_error_path_is_also_fenced():
     guard = "currentPlanGeneration() !== gen"
     guards_after_catch = [i for i in range(len(body)) if i > catch_pos and body[i:].startswith(guard)]
     assert guards_after_catch, "No fence guard found inside the catch block of setQueue"
+
+
+def test_review_apply_and_agent_adoption_share_draft_fence():
+    """Every async publisher in review → apply must prove it still owns the draft."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    assert "function captureDraftFence(" in text
+    assert "function ownsDraftFence(" in text
+    for start, end in (
+        ("export async function requestApprovalForDraft", "export async function resolveApprovalDecision"),
+        ("export async function resolveApprovalDecision", "// --- apply"),
+        ("export async function applyApproved", "/** Cooperative cancel"),
+        ("async function adoptAgentPlan(", "/** Ids are the shell's"),
+    ):
+        body = text[text.index(start) : text.index(end, text.index(start))]
+        assert "ownsDraftFence(" in body, f"{start} does not fence stale publication"
+
+
+def test_empty_queue_replacement_invalidates_async_publishers():
+    """Clear/last-op undo must advance the generation even without another proposal."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    clear = text[text.index("export async function clearQueue") : text.index("/**\n * Replace the queue")]
+    assert "bumpPlanGeneration()" in clear
+
+    body = _setqueue_body(text)
+    bump_pos = body.index("bumpPlanGeneration()")
+    empty_pos = body.index("if (ops.length === 0 || !sessionId)")
+    assert bump_pos < empty_pos
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +337,22 @@ def test_draft_freshness_node_tests():
     """Ported epoch freshness cases: session, head, clear, and late error."""
     completed = subprocess.run(
         [shutil.which("node") or "node", "--test", str(FRESHNESS)],
+        cwd=str(REPO / "desktop"),
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    if completed.returncode != 0:
+        sys.stderr.write(completed.stdout)
+        sys.stderr.write(completed.stderr)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_review_apply_freshness_node_tests():
+    """Approval, apply, and agent adoption cannot publish into a newer draft."""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "--test", str(REVIEW_FRESHNESS)],
         cwd=str(REPO / "desktop"),
         capture_output=True,
         text=True,

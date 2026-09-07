@@ -66,6 +66,37 @@ export const ZOOM_MIN = 0.5;
 export const ZOOM_MAX = 2.0;
 const ZOOM_STEPS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.35, 1.5, 1.75, 2.0];
 
+/**
+ * The exact workspace state allowed to publish a draft.
+ *
+ * Both local queue rebuilds and agent-plan adoption use this lease. Keeping
+ * the ownership rule here prevents the two paths from drifting: a different
+ * draft object, document, or candidate head means newer user intent won.
+ */
+interface DraftOwner {
+  draft: Draft;
+  sessionId: string | null;
+  headRunId: string | null;
+}
+
+function captureDraftOwner(): DraftOwner {
+  const state = getState();
+  return {
+    draft: state.draft,
+    sessionId: state.activeSessionId,
+    headRunId: headCandidate(state)?.runId ?? null,
+  };
+}
+
+function ownsDraft(owner: DraftOwner): boolean {
+  const state = getState();
+  return (
+    state.draft === owner.draft &&
+    state.activeSessionId === owner.sessionId &&
+    (headCandidate(state)?.runId ?? null) === owner.headRunId
+  );
+}
+
 /** Load a session's inspect once and cache it. */
 export async function loadInspect(sessionId: string, force = false): Promise<boolean> {
   if (!force && getState().inspects[sessionId]) {
@@ -308,6 +339,35 @@ export async function openDropped(paths: string[]): Promise<void> {
 // a plan binds `boundSha256` and hashes its whole op list, so there is no
 // "append to the existing plan" operation and inventing one would be a lie
 // about what was approved.
+
+interface DraftFence {
+  draft: Draft;
+  generation: number;
+  sessionId: string;
+  headRunId: string | null;
+}
+
+/** Snapshot the user intent an async review/apply operation may update. */
+function captureDraftFence(sessionId: string): DraftFence {
+  const state = getState();
+  return {
+    draft: state.draft,
+    generation: currentPlanGeneration(),
+    sessionId,
+    headRunId: headCandidate(state)?.runId ?? null,
+  };
+}
+
+/** True only while no queue, document, or candidate-head replacement won. */
+function ownsDraftFence(fence: DraftFence): boolean {
+  const state = getState();
+  return (
+    currentPlanGeneration() === fence.generation &&
+    state.draft === fence.draft &&
+    state.activeSessionId === fence.sessionId &&
+    (headCandidate(state)?.runId ?? null) === fence.headRunId
+  );
+}
 
 /** The seat's current text, from the runtime's own read, never guessed. */
 export function seatText(
@@ -694,12 +754,14 @@ function didRewriteAgent(opId: string): boolean {
 }
 
 export async function clearQueue(): Promise<void> {
+  bumpPlanGeneration();
   setState({
     draft: EMPTY_DRAFT,
     inlineEdit: null,
     approval: null,
     approvalPhase: "idle",
     approvalError: null,
+    applyPhase: "idle",
     applyError: null,
   });
 }
@@ -720,6 +782,9 @@ async function setQueue(
 ): Promise<void> {
   const state = getState();
   const sessionId = state.activeSessionId;
+  // Empty replacements and document-close replacements must invalidate async
+  // adopters/apply attempts too, even though they propose no next plan.
+  const gen = bumpPlanGeneration();
   const rewritten = state.draft.rewrittenFromAgent || options.rewritten === true;
   // THE CHAIN. A queue built while a candidate exists chains onto it, so a
   // second edit lands on top of the first rather than beside it — before
@@ -737,6 +802,7 @@ async function setQueue(
     approval: null,
     approvalPhase: "idle",
     approvalError: null,
+    applyPhase: "idle",
     applyError: null,
   });
 
@@ -750,8 +816,6 @@ async function setQueue(
   // suspension we check whether we still hold the latest token; if not, a
   // newer setQueue has taken over and this one must return silently rather
   // than overwriting the newer result.
-  const gen = bumpPlanGeneration();
-
   setState({
     draft: {
       ...state.draft,
@@ -771,18 +835,9 @@ async function setQueue(
     },
   });
 
-  // Only this exact draft object owns the results below. A newer queue, a
-  // clear, a document switch, or a candidate-head change supersedes it. The
-  // Runtime still validates plan and approval bindings; this fence only keeps
-  // late UI work from replacing newer user intent. The generation token still
-  // covers concurrent setQueue; identity/session/head cover the cases a
-  // counter cannot see.
-  const pendingDraft = getState().draft;
-  const pendingHead = headCandidate(getState())?.runId ?? null;
-  const ownsDraft = () =>
-    getState().draft === pendingDraft &&
-    getState().activeSessionId === sessionId &&
-    (headCandidate(getState())?.runId ?? null) === pendingHead;
+  // Only this exact draft object owns the results below. Agent adoption uses
+  // the same ownership rule, so neither path can overwrite newer user intent.
+  const owner = captureDraftOwner();
 
   try {
     const plan = await rt.proposePlan(
@@ -814,10 +869,10 @@ async function setQueue(
       { baseRunId, reverses },
     );
     if (currentPlanGeneration() !== gen) return;
-    if (!ownsDraft()) return;
+    if (!ownsDraft(owner)) return;
     const validation = await rt.validatePlan(plan.planId);
     if (currentPlanGeneration() !== gen) return;
-    if (!ownsDraft()) return;
+    if (!ownsDraft(owner)) return;
     setState({
       draft: {
         ops,
@@ -834,7 +889,7 @@ async function setQueue(
     });
   } catch (e) {
     if (currentPlanGeneration() !== gen) return;
-    if (!ownsDraft()) return;
+    if (!ownsDraft(owner)) return;
     // A refusal here is a real answer: `unknown_op_kind`, `unsupported_backend`
     // and `unknown_field` are raised by `plan/propose` before a plan exists at
     // all. Keep the queue, drop the plan, show the payload.
@@ -912,10 +967,12 @@ export async function proposeUndoOf(runId: string): Promise<number> {
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return 0;
+  const fence = captureDraftFence(sessionId);
   setState({ undoPhase: "starting", undoError: null });
   try {
     const receipt = state.receipts[runId] ?? (await rt.readReceipt(sessionId, runId));
     const plan = await rt.getPlan(receipt.planId);
+    if (!ownsDraftFence(fence)) return 0;
 
     const uninvertible = plan.ops.filter((op) => !INVERTIBLE_KINDS.has(op.kind));
     if (uninvertible.length > 0) {
@@ -957,6 +1014,7 @@ export async function proposeUndoOf(runId: string): Promise<number> {
       addresses.map((row) => row.address),
       parentRunId,
     );
+    if (!ownsDraftFence(fence)) return 0;
 
     const ops: QueuedOp[] = [];
     for (const { op, address } of addresses) {
@@ -1008,14 +1066,17 @@ export async function proposeUndoOf(runId: string): Promise<number> {
 
     // Chained onto the HEAD, not onto the candidate being reversed: undoing an
     // older edit must not throw away the newer ones on top of it.
+    if (!ownsDraftFence(fence)) return 0;
     await setQueue(ops, {
       baseRunId: headCandidate(getState())?.runId ?? null,
       reverses: runId,
     });
+    if (getState().draft.ops !== ops) return 0;
     setState({ undoPhase: "ready", undoError: null, inverseProof: null });
     showToast("되돌리기를 제안했습니다. 승인해야 후보본이 하나 더 생깁니다.", 2600);
     return ops.length;
   } catch (e) {
+    if (!ownsDraftFence(fence)) return 0;
     setState({ undoPhase: "failed", undoError: rt.asRuntimeError(e) });
     return 0;
   }
@@ -1111,12 +1172,17 @@ export async function setHead(runId: string | null): Promise<void> {
 export async function requestApprovalForDraft(): Promise<void> {
   const state = getState();
   const plan = state.draft.plan;
-  if (!plan || !canRequestApproval(state)) return;
+  const sessionId = state.activeSessionId;
+  if (!plan || !sessionId || !canRequestApproval(state)) return;
+  const owner = captureDraftOwner();
+  const fence = captureDraftFence(sessionId);
   setState({ approvalPhase: "requesting", approvalError: null });
   try {
     const approval = await rt.requestApproval(plan.planId);
+    if (!ownsDraft(owner) || !ownsDraftFence(fence) || getState().draft.plan !== plan) return;
     setState({ approval, approvalPhase: "pending" });
   } catch (e) {
+    if (!ownsDraft(owner) || !ownsDraftFence(fence) || getState().draft.plan !== plan) return;
     setState({ approvalPhase: "idle", approvalError: rt.asRuntimeError(e) });
   }
 }
@@ -1136,7 +1202,10 @@ export async function resolveApprovalDecision(
   const state = getState();
   const approval = state.approval;
   const plan = state.draft.plan;
-  if (!approval || !plan) return;
+  const sessionId = state.activeSessionId;
+  if (!approval || !plan || !sessionId) return;
+  const owner = captureDraftOwner();
+  const fence = captureDraftFence(sessionId);
   setState({ approvalPhase: "resolving", approvalError: null });
   try {
     const resolved = await rt.resolveApproval(
@@ -1146,10 +1215,22 @@ export async function resolveApprovalDecision(
       decision,
       approver,
     );
+    if (
+      !ownsDraft(owner) ||
+      !ownsDraftFence(fence) ||
+      getState().draft.plan !== plan ||
+      getState().approval !== approval
+    ) return;
     setState({ approval: resolved, approvalPhase: "resolved" });
     if (decision === "approved") await applyApproved();
     else showToast("계획을 거절했습니다. 문서는 그대로입니다.", 2000);
   } catch (e) {
+    if (
+      !ownsDraft(owner) ||
+      !ownsDraftFence(fence) ||
+      getState().draft.plan !== plan ||
+      getState().approval !== approval
+    ) return;
     // `plan_stale` lands here when the source moved between the approval
     // request and the decision. Keep the queue; offer a re-propose.
     setState({ approvalPhase: "pending", approvalError: rt.asRuntimeError(e) });
@@ -1166,10 +1247,22 @@ export async function applyApproved(): Promise<void> {
   const approval = state.approval;
   const sessionId = state.activeSessionId;
   if (!plan || !approval || !sessionId) return;
+  const fence = captureDraftFence(sessionId);
+  const ownsApply = () =>
+    ownsDraftFence(fence) &&
+    getState().draft.plan === plan &&
+    getState().approval === approval;
   const reversed = state.draft.reverses;
   setState({ applyPhase: "starting", applyError: null, recovery: null });
   try {
     const applied = await rt.applyPlan(plan.planId, approval.approvalId, APPLY_TAG);
+    if (!ownsApply()) {
+      // The Runtime may have completed the old, correctly bound apply, but its
+      // reply no longer owns the visible queue. Refresh history without
+      // clearing or rebasing the replacement the person is reviewing.
+      await loadCandidates(sessionId);
+      return;
+    }
     setState({
       applied,
       applyPhase: "ready",
@@ -1197,6 +1290,7 @@ export async function applyApproved(): Promise<void> {
     if (reversed) await verifyReversal(applied.runId, reversed);
     showToast(`후보본을 만들었습니다 · ${applied.candidate.sha256.slice(0, 12)}`, 2200);
   } catch (e) {
+    if (!ownsApply()) return;
     const error = rt.asRuntimeError(e);
     setState({ applyPhase: "failed", applyError: error });
     // A dead sidecar mid-apply is the ambiguous case: the run directory is
@@ -2015,6 +2109,7 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return false;
+  const owner = captureDraftOwner();
   setState({ agentPhase: "starting", agentError: null });
   try {
     const outcome = await rt.runMockAgent(sessionId, marker);
@@ -2041,11 +2136,20 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
     // The agent already requested approval on its own connection; that request
     // is a real record under this root, so it is adopted rather than
     // re-created, and its `requestedBy` keeps saying who asked.
-    const { plan: authoritative } = await adoptAgentPlan(
+    const adopted = await adoptAgentPlan(
       sessionId,
       plan.planId,
       approval?.approvalId ?? null,
+      owner,
     );
+    if (!adopted) {
+      throw {
+        code: "draft_superseded",
+        message:
+          "제안이 도착하는 동안 문서나 검토 대기열이 바뀌어 이 제안을 대기열에 넣지 않았습니다.",
+      };
+    }
+    const { plan: authoritative } = adopted;
     setState({
       agentPhase: "ready",
       agentRun: {
@@ -2629,9 +2733,14 @@ async function adoptAgentPlan(
   sessionId: string,
   planId: string,
   approvalId: string | null,
-): Promise<{ plan: OperationPlan; validation: PlanValidation }> {
+  owner: DraftOwner = captureDraftOwner(),
+): Promise<{ plan: OperationPlan; validation: PlanValidation } | null> {
+  const fence = captureDraftFence(sessionId);
+  if (!ownsDraftFence(fence)) return null;
   const authoritative = await rt.getPlan(planId);
   const validation = await rt.validatePlan(planId);
+  if (!ownsDraftFence(fence)) return null;
+  if (!ownsDraft(owner)) return null;
   const inspect = getState().inspects[sessionId] ?? null;
   const texts = getState().texts[sessionId] ?? [];
   const ops: QueuedOp[] = authoritative.ops.map((op) => {
@@ -2668,11 +2777,16 @@ async function adoptAgentPlan(
     baseRunId: authoritative.base?.runId ?? null,
     reverses: authoritative.reverses?.runId ?? null,
   };
+  const approval = approvalId ? await rt.getApproval(approvalId).catch(() => null) : null;
+  if (!ownsDraftFence(fence)) return null;
+  if (!ownsDraft(owner)) return null;
   setState({
     draft,
-    approval: approvalId ? await rt.getApproval(approvalId).catch(() => null) : null,
+    approval,
     approvalPhase: approvalId ? "pending" : "idle",
     approvalError: null,
+    applyPhase: "idle",
+    applyError: null,
   });
   return { plan: authoritative, validation };
 }
@@ -2700,6 +2814,7 @@ export async function sendInstruction(instruction: string): Promise<boolean> {
   const sessionId = state.activeSessionId;
   const text = instruction.trim();
   if (!sessionId || text === "" || composerBlocker(state) !== null) return false;
+  const owner = captureDraftOwner();
 
   const id = newTurnId();
   const turn: Turn = {
@@ -2738,8 +2853,13 @@ export async function sendInstruction(instruction: string): Promise<boolean> {
 
     const planId = payload.plan?.planId ?? null;
     if (planId) {
-      await adoptAgentPlan(sessionId, planId, payload.approval?.approvalId ?? null);
-      patchTurn(id, { planId });
+      const adopted = await adoptAgentPlan(
+        sessionId,
+        planId,
+        payload.approval?.approvalId ?? null,
+        owner,
+      );
+      if (adopted) patchTurn(id, { planId });
     }
     setState({ activeTurn: null });
     return payload.ok;
