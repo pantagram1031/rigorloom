@@ -49,9 +49,9 @@ returns `apply_outcome_unknown` and cannot rerun the plan automatically.
 Receipt publication is the commit point. A receipt published before the response
 or plan-state save still recovers on retry. Existing pre-journal candidates are
 also verified before replay. Multiple historical candidates, malformed journals,
-and tampered artifacts are refused. Event delivery is not an exactly-once log;
-a crash after receipt publication can omit a completion event, so use the receipt
-or candidate list to recover. This covers process failures; it does not claim
+and tampered artifacts are refused. Replay reconciles the plan state and unfinished completion events. Event delivery
+is at least once on recovery, not an exactly-once log: a crash between an event
+and the completion marker can repeat the event, so deduplicate by run ID. This covers process failures; it does not claim
 power-loss durability or protection against manual deletion of runtime state.
 
 CI installs frontend dependencies, runs all desktop behavioral regressions, builds

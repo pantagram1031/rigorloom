@@ -71,18 +71,24 @@ def verified_result(session, plan, approval, run_id):
     }}
 
 
-def apply_once(root, session, plan, approval, execute):
+def apply_once(root, session, plan, approval, execute, reconcile):
     binding = {"sessionId": session.id, "planId": plan.id,
                "planHash": plan.hash, "approvalId": approval.id}
     with plan_lock(root, plan.id) as journal:
+        def replay(run_id, completed):
+            result = verified_result(session, plan, approval, run_id)
+            reconcile(result, emit_events=not completed)
+            atomic_write_bytes(journal, canonical_bytes({**binding, "runId": run_id, "state": "published"}))
+            return result
+
         if journal.exists():
             try:
                 attempt = loads_strict(journal.read_text(encoding="utf-8"))
                 valid = (isinstance(attempt, dict)
-                         and all(attempt.get(k) == v for k, v in binding.items())
+                         and all(attempt.get(k) == v for k, v in binding.items() if k != "approvalId")
                          and isinstance(attempt.get("runId"), str)
                          and re.fullmatch(r"[0-9a-f]{32}", attempt["runId"])
-                         and attempt.get("state") in {"pending", "not_applied"})
+                         and attempt.get("state") in {"pending", "not_applied", "published"})
             except (OSError, ValueError, UnicodeError):
                 valid = False
             if not valid:
@@ -90,7 +96,7 @@ def apply_once(root, session, plan, approval, execute):
                                planId=plan.id)
             run_id = attempt["runId"]
             if (session.candidates_dir / run_id / RECEIPT_NAME).exists():
-                return verified_result(session, plan, approval, run_id)
+                return replay(run_id, attempt["state"] == "published")
             if attempt["state"] != "not_applied":
                 raise RpcError("apply_outcome_unknown", "previous apply has no verified receipt; reexecution is blocked",
                                planId=plan.id, runId=run_id)
@@ -99,7 +105,7 @@ def apply_once(root, session, plan, approval, execute):
             # this journal existed. Never silently duplicate its candidate.
             matches = [row for row in list_candidates(session) if row.get("planId") == plan.id]
             if len(matches) == 1:
-                return verified_result(session, plan, approval, matches[0]["runId"])
+                return replay(matches[0]["runId"], False)
             if matches or plan.state == "applied":
                 raise RpcError("apply_outcome_unknown", "historical publication is ambiguous or missing",
                                planId=plan.id)
@@ -107,7 +113,9 @@ def apply_once(root, session, plan, approval, execute):
         attempt = {**binding, "runId": run_id, "state": "pending"}
         atomic_write_bytes(journal, canonical_bytes(attempt))
         try:
-            return execute(run_id)
+            result = execute(run_id)
+            atomic_write_bytes(journal, canonical_bytes({**attempt, "state": "published"}))
+            return result
         except RpcError:
             # A handled refusal/cancellation is retryable only after the apply
             # path demonstrably removed BOTH of its private directories.

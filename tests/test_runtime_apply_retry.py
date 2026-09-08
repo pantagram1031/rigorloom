@@ -58,7 +58,9 @@ def test_receipt_recovers_publication_before_plan_state_save(tmp_path, monkeypat
     monkeypatch.setattr(core, "save_plan", interrupted)
     with pytest.raises(OSError):
         core.plan_apply(params["planId"], params["approvalId"])
-    recovered = RuntimeCore(root).plan_apply(params["planId"], params["approvalId"])
+    recovered_core = RuntimeCore(root)
+    recovered = recovered_core.plan_apply(params["planId"], params["approvalId"])
+    assert recovered_core.plan(params["planId"]).state == "applied"
     with RuntimeClient(root) as client:
         client.initialize()
         rows = client.ok("candidate/list", {"sessionId": session})["candidates"]
@@ -143,3 +145,24 @@ def test_os_lock_blocks_another_host_and_releases_after_process_death(tmp_path):
         child.wait(timeout=10)
         child.stdout.close()
     assert RuntimeCore(root).plan_apply(params["planId"], params["approvalId"])["candidate"]["canonical"]
+
+
+def test_new_approval_can_retry_only_a_proven_failed_attempt(tmp_path, monkeypatch):
+    import rt_core
+    root, source, session, params = prepared(tmp_path)
+    def refuse(*args, **kwargs):
+        raise RpcError("plan_invalid", "test prepublication refusal")
+    monkeypatch.setattr(rt_core, "apply_plan", refuse)
+    with pytest.raises(RpcError):
+        RuntimeCore(root).plan_apply(params["planId"], params["approvalId"])
+    monkeypatch.undo()
+    with RuntimeClient(root) as client:
+        client.initialize()
+        plan = client.ok("plan/get", {"planId": params["planId"]})["plan"]
+        approval = client.ok("approval/request", {"planId": params["planId"]})["approval"]
+        client.ok("approval/resolve", {"approvalId": approval["approvalId"], "planId": plan["planId"],
+                                      "planHash": plan["planHash"], "decision": "approved", "approver": "new-review"})
+        new_params = {**params, "approvalId": approval["approvalId"]}
+        result = client.ok("plan/apply", new_params)
+        assert client.ok("plan/apply", new_params) == result
+        assert client.err("plan/apply", params)["code"] == "approval_binding_mismatch"

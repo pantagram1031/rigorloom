@@ -488,6 +488,19 @@ class RuntimeCore:
                            f"the approval for this plan is {record.state}",
                            planId=plan.id, approvalId=record.id, state=record.state)
         session = self.store.get(plan.payload["sessionId"])
+        def reconcile(result, *, emit_events):
+            candidate = result["candidate"]
+            if plan.state != "applied":
+                plan.state = "applied"
+                self.save_plan(plan)
+            if emit_events:
+                append_event(session, "plan.applied", planId=plan.id,
+                             runId=candidate["runId"])
+                append_event(session, "candidate.published", runId=candidate["runId"],
+                             sha256=candidate["candidate"]["sha256"],
+                             acceptance=candidate["checks"]["acceptance"],
+                             ranAll=candidate["checks"]["ranAll"])
+
         def execute(run_id):
             report = self.validated(plan)
             if report["stale"]:
@@ -500,17 +513,11 @@ class RuntimeCore:
                                "this plan does not validate against the current document",
                                planId=plan.id, hard=report["hard"])
             result = apply_plan(self.tools, session, plan, record, checkpoint=checkpoint, run_id=run_id)
-            plan.state = "applied"
-            self.save_plan(plan)
-            append_event(session, "plan.applied", planId=plan.id,
-                         runId=result["runId"])
-            append_event(session, "candidate.published", runId=result["runId"],
-                         sha256=result["candidate"]["sha256"],
-                         acceptance=result["checks"]["acceptance"],
-                         ranAll=result["checks"]["ranAll"])
-            return {"candidate": result}
+            response = {"candidate": result}
+            reconcile(response, emit_events=True)
+            return response
 
-        return apply_once(self.store.root, session, plan, record, execute)
+        return apply_once(self.store.root, session, plan, record, execute, reconcile)
 
     # -- rendering ----------------------------------------------------------
     def document_render(self, session_id, *, page: int = 0,
