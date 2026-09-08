@@ -177,7 +177,7 @@ def candidate_artifact(session, run_id: str) -> tuple[Path, dict]:
     return path, receipt
 
 
-def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
+def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) -> dict:
     """Run the plan, publish the candidate, return the CandidateArtifact.
 
     The first step reads the plan's BASE — a published candidate when the plan
@@ -186,7 +186,7 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None) -> dict:
     """
     ops = plan.payload["ops"]
     base = plan.payload.get("base") or None
-    run_id = uuid.uuid4().hex
+    run_id = run_id or uuid.uuid4().hex
     run_dir = session.candidates_dir / run_id
     work_dir = session.work_dir / run_id
     suffix = session.source.suffix or ".bin"

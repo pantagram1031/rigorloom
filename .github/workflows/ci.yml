@@ -33,6 +33,15 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip pytest fastapi pymupdf pillow pyyaml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install desktop test dependencies
+        run: npm ci --prefix desktop
+      - name: Desktop behavioral regressions and production frontend
+        run: npm --prefix desktop run test:headless && npm --prefix desktop run build
       - name: Select distribution modules (${{ matrix.module-set }})
         shell: bash
         run: |
@@ -43,6 +52,7 @@ jobs:
           fi
           python pipeline/scripts/module_registry.py list
       - run: python -m pytest -q
+      - run: python -m pytest -q qa/tests
       # Module-agnostic by contract (modules/README.md rule 4): the sweep's
       # patterns live in the script and include modules/*/scripts/*.py, so a
       # new distribution module needs no edit here. Python does the globbing,

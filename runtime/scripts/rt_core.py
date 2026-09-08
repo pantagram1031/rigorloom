@@ -36,6 +36,7 @@ from rt_apply import (  # noqa: E402
     read_receipt,
     verification_report,
 )
+from rt_apply_once import apply_once
 from rt_codes import (  # noqa: E402
     IMPL_VERSION,
     KNOWN_BACKENDS,
@@ -487,26 +488,29 @@ class RuntimeCore:
                            f"the approval for this plan is {record.state}",
                            planId=plan.id, approvalId=record.id, state=record.state)
         session = self.store.get(plan.payload["sessionId"])
-        report = self.validated(plan)
-        if report["stale"]:
-            raise RpcError("plan_stale",
-                           "the source changed after this plan was approved",
-                           planId=plan.id, boundSha256=plan.payload["boundSha256"],
-                           currentSha256=report["currentSha256"])
-        if not report["ok"]:
-            raise RpcError("plan_invalid",
-                           "this plan does not validate against the current document",
-                           planId=plan.id, hard=report["hard"])
-        result = apply_plan(self.tools, session, plan, record, checkpoint=checkpoint)
-        plan.state = "applied"
-        self.save_plan(plan)
-        append_event(session, "plan.applied", planId=plan.id,
-                     runId=result["runId"])
-        append_event(session, "candidate.published", runId=result["runId"],
-                     sha256=result["candidate"]["sha256"],
-                     acceptance=result["checks"]["acceptance"],
-                     ranAll=result["checks"]["ranAll"])
-        return {"candidate": result}
+        def execute(run_id):
+            report = self.validated(plan)
+            if report["stale"]:
+                raise RpcError("plan_stale",
+                               "the source changed after this plan was approved",
+                               planId=plan.id, boundSha256=plan.payload["boundSha256"],
+                               currentSha256=report["currentSha256"])
+            if not report["ok"]:
+                raise RpcError("plan_invalid",
+                               "this plan does not validate against the current document",
+                               planId=plan.id, hard=report["hard"])
+            result = apply_plan(self.tools, session, plan, record, checkpoint=checkpoint, run_id=run_id)
+            plan.state = "applied"
+            self.save_plan(plan)
+            append_event(session, "plan.applied", planId=plan.id,
+                         runId=result["runId"])
+            append_event(session, "candidate.published", runId=result["runId"],
+                         sha256=result["candidate"]["sha256"],
+                         acceptance=result["checks"]["acceptance"],
+                         ranAll=result["checks"]["ranAll"])
+            return {"candidate": result}
+
+        return apply_once(self.store.root, session, plan, record, execute)
 
     # -- rendering ----------------------------------------------------------
     def document_render(self, session_id, *, page: int = 0,
