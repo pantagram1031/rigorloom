@@ -1141,6 +1141,33 @@ export function selectHistory(runId: string | null): void {
   if (runId && !getState().receipts[runId]) void loadReceipt(runId);
 }
 
+interface HeadSelectionLease {
+  generation: number;
+  sessionId: string | null;
+  runId: string | null;
+}
+
+let headSelectionGeneration = 0;
+
+/** Begin one explicit head choice; a later choice supersedes it even for the same run. */
+function captureHeadSelection(runId: string | null): HeadSelectionLease {
+  return {
+    generation: ++headSelectionGeneration,
+    sessionId: getState().activeSessionId,
+    runId,
+  };
+}
+
+/** The receipt and queue rebase may publish only for the latest unchanged choice. */
+function ownsHeadSelection(lease: HeadSelectionLease): boolean {
+  const state = getState();
+  return (
+    headSelectionGeneration === lease.generation &&
+    state.activeSessionId === lease.sessionId &&
+    state.head === lease.runId
+  );
+}
+
 /**
  * Make a candidate the one the shell stands on.
  *
@@ -1150,18 +1177,19 @@ export function selectHistory(runId: string | null): void {
  * to bytes the user has just navigated away from.
  */
 export async function setHead(runId: string | null): Promise<void> {
+  const lease = captureHeadSelection(runId);
   setState({
     head: runId,
     applied: null,
+    // A verdict for the preceding head must not remain visible while this
+    // candidate's receipt is being verified.
+    candidateVerdict: null,
     editIntentGeneration: getState().editIntentGeneration + 1,
   });
   if (runId) {
-    await loadReceipt(runId);
-    const receipt = getState().receipts[runId];
-    if (receipt) {
-      setState({ candidateVerdict: { runId, report: receipt.checks } });
-    }
+    await loadReceipt(runId, () => ownsHeadSelection(lease));
   }
+  if (!ownsHeadSelection(lease)) return;
   if (getState().draft.ops.length > 0) {
     await setQueue(getState().draft.ops, { baseRunId: runId });
   }
@@ -1348,11 +1376,15 @@ export async function resolveRecovery(): Promise<void> {
 
 // --- receipts and the candidate's verdict ---------------------------------------
 
-export async function loadReceipt(runId: string): Promise<boolean> {
+export async function loadReceipt(
+  runId: string,
+  ownsPublication: () => boolean = () => true,
+): Promise<boolean> {
   const sessionId = getState().activeSessionId;
   if (!sessionId) return false;
   try {
     const receipt = await rt.readReceipt(sessionId, runId);
+    if (getState().activeSessionId !== sessionId || !ownsPublication()) return false;
     setState({
       receipts: { ...getState().receipts, [runId]: receipt },
       receiptError: null,
@@ -1363,6 +1395,7 @@ export async function loadReceipt(runId: string): Promise<boolean> {
     // `candidate_hash_mismatch` and `receipt_body_mismatch` arrive here, and
     // they are the interesting outcomes: the receipt refuses rather than
     // reporting a verdict about bytes that drifted.
+    if (getState().activeSessionId !== sessionId || !ownsPublication()) return false;
     setState({ receiptError: rt.asRuntimeError(e) });
     return false;
   }

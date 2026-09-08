@@ -65,6 +65,7 @@ STORE = REPO / "desktop" / "src" / "store.ts"
 ACTIONS = REPO / "desktop" / "src" / "actions.ts"
 HARNESS = Path(__file__).resolve().parent / "desktop_draft_fence_harness.cjs"
 FRESHNESS = REPO / "desktop" / "scripts" / "set-queue-freshness.test.mjs"
+HEAD_FRESHNESS = REPO / "desktop" / "scripts" / "set-head-freshness.test.mjs"
 REVIEW_FRESHNESS = REPO / "desktop" / "scripts" / "review-apply-freshness.test.mjs"
 TSC = REPO / "desktop" / "node_modules" / "typescript"
 DOCUMENT_CONTEXT = REPO / "desktop" / "src" / "components" / "DocumentContext.tsx"
@@ -311,6 +312,38 @@ def test_empty_queue_replacement_invalidates_async_publishers():
     assert bump_pos < empty_pos
 
 
+def test_set_head_uses_invocation_and_identity_fence():
+    """Only the latest head choice may publish a receipt or rebase the queue."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    helper_start = text.index("interface HeadSelectionLease")
+    helper_end = text.index("/**\n * Make a candidate", helper_start)
+    helper = text[helper_start:helper_end]
+    assert "generation: ++headSelectionGeneration" in helper
+    assert "headSelectionGeneration === lease.generation" in helper
+    assert "state.activeSessionId === lease.sessionId" in helper
+    assert "state.head === lease.runId" in helper
+
+    start = text.index("export async function setHead")
+    end = text.index("// --- approval", start)
+    body = text[start:end]
+    capture = body.index("const lease = captureHeadSelection(runId)")
+    receipt = body.index("await loadReceipt")
+    final_guard = body.index("if (!ownsHeadSelection(lease)) return;", receipt)
+    rebase = body.index("await setQueue", final_guard)
+    assert capture < receipt < final_guard < rebase
+    assert "await loadReceipt(runId, () => ownsHeadSelection(lease))" in body
+
+
+def test_receipt_publication_checks_session_and_caller_lease():
+    """Receipt success and error paths must both refuse stale publication."""
+    text = ACTIONS.read_text(encoding="utf-8")
+    start = text.index("export async function loadReceipt")
+    end = text.index("export function openReceipt", start)
+    body = text[start:end]
+    guard = "getState().activeSessionId !== sessionId || !ownsPublication()"
+    assert body.count(guard) >= 2
+
+
 # ---------------------------------------------------------------------------
 # Runtime harness — interleaved schedules and out-of-order resolve
 # ---------------------------------------------------------------------------
@@ -337,6 +370,22 @@ def test_draft_freshness_node_tests():
     """Ported epoch freshness cases: session, head, clear, and late error."""
     completed = subprocess.run(
         [shutil.which("node") or "node", "--test", str(FRESHNESS)],
+        cwd=str(REPO / "desktop"),
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    if completed.returncode != 0:
+        sys.stderr.write(completed.stdout)
+        sys.stderr.write(completed.stderr)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_head_freshness_node_tests():
+    """Out-of-order head receipts cannot publish stale verdicts or queue bases."""
+    completed = subprocess.run(
+        [shutil.which("node") or "node", "--test", str(HEAD_FRESHNESS)],
         cwd=str(REPO / "desktop"),
         capture_output=True,
         text=True,
