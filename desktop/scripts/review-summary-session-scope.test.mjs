@@ -103,8 +103,13 @@ test("a just-applied candidate is scoped by its session before the list refreshe
 
 
 test("approval cannot authorize the old base during a head switch before rebase finishes", () => {
-  assert.equal(summary.activeReviewApprovalState(state({head: "new-head"})), null);
-  const rebased = state({head: "new-head"});
-  rebased.draft.plan.base = {runId: "new-head"};
+  assert.equal(summary.activeReviewApprovalState(state({head: "run-A"})), null);
+  const rebased = state({head: "run-A"});
+  rebased.draft.plan.base = {runId: "run-A"};
   assert.equal(summary.activeReviewApprovalState(rebased), "pending");
+});
+
+
+test("a previous document's head hint cannot block this document's valid approval", () => {
+  assert.equal(summary.activeReviewApprovalState(state({head: "run-B"})), "pending");
 });

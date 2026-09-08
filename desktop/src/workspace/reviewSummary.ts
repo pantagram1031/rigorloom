@@ -19,7 +19,10 @@ export function activeApprovalBinding(state: WorkspaceState): ActiveApprovalBind
     state.draft.sessionId !== sessionId ||
     !plan ||
     plan.sessionId !== sessionId ||
-    (plan.base?.runId ?? null) !== (state.head ?? null) ||
+    // `head` is a workspace hint and can still name another session's run.
+    // Only an explicit candidate in THIS session can invalidate this base.
+    (!!state.head && (state.candidates?.[sessionId] ?? []).some((row) => row.runId === state.head)
+      && (plan.base?.runId ?? null) !== state.head) ||
     !approval ||
     approval.planId !== plan.planId ||
     approval.planHash !== plan.planHash ||

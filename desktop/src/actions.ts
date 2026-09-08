@@ -1230,7 +1230,8 @@ export async function requestApprovalForDraft(): Promise<void> {
     !state.activeSessionId ||
     state.draft.sessionId !== state.activeSessionId ||
     plan.sessionId !== state.activeSessionId ||
-    (plan.base?.runId ?? null) !== (state.head ?? null) ||
+    (!!state.head && (state.candidates?.[state.activeSessionId] ?? []).some((row) => row.runId === state.head)
+      && (plan.base?.runId ?? null) !== state.head) ||
     state.approval !== null ||
     !canRequestApproval(state)
   ) {
