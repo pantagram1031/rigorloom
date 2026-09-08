@@ -2,6 +2,9 @@
 
 Tauri 2 + React/TS shell over the real Runtime as a packaged Python sidecar.
 
+For implemented frontend boundaries, shared-state lifetimes and focused test
+commands, see [Desktop code map](../docs/desktop-code-map.md).
+
 **The page is an editor now, and that is measured rather than claimed.** The
 overlay slice shipped a component that could click a seat and had no seat to
 click: `document/pageGeometry` placed zero on all ten corpus forms. The runtime

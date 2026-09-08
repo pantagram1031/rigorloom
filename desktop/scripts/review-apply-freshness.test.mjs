@@ -1,3 +1,4 @@
+import { approvalHelpers, agentPlanCellAddresses, projectAgentPlan } from "./action-test-support.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
@@ -20,7 +21,8 @@ assert.ok(lease.includes("ownsDraft(fence)"), "ownsDraftFence must reuse ownsDra
 
 const implementation = [
   lease,
-  between("export async function requestApprovalForDraft", "// --- apply"),
+  approvalHelpers,
+  between("let approvalRequestGeneration", "// --- apply"),
   between('const APPLY_TAG = "apply"', "/** Cooperative cancel"),
   between("async function adoptAgentPlan(", "/** Ids are the shell's"),
 ].join("\n");
@@ -36,7 +38,7 @@ function deferred() {
 }
 
 function fixture() {
-  const oldPlan = { planId: "plan-old", planHash: "hash-old", boundSha256: "source-old" };
+  const oldPlan = { sessionId: "session-A", planId: "plan-old", planHash: "hash-old", boundSha256: "source-old" };
   const oldDraft = {
     ops: [{ opId: "old-op", text: "old" }],
     plan: oldPlan,
@@ -115,7 +117,10 @@ function fixture() {
   };
 
   const context = vm.createContext({
+    EMPTY_DRAFT: { ops: [], plan: null, sessionId: null },
     rt,
+    agentPlanCellAddresses, projectAgentPlan,
+    draftStaleness: () => null,
     getState: () => state,
     setState: (patch) => {
       state = { ...state, ...patch };
@@ -141,6 +146,7 @@ globalThis.invokeAdopt = adoptAgentPlan;`,
 
   return {
     read: () => state,
+    head: (head) => { state = { ...state, head }; },
     replace(text = "newer") {
       generation += 1;
       state = {
@@ -148,7 +154,7 @@ globalThis.invokeAdopt = adoptAgentPlan;`,
         draft: {
           ...oldDraft,
           ops: [{ opId: `op-${text}`, text }],
-          plan: { planId: `plan-${text}`, planHash: `hash-${text}`, boundSha256: "source-new" },
+          plan: { sessionId: "session-A", planId: `plan-${text}`, planHash: `hash-${text}`, boundSha256: "source-new" },
           validation: { ok: true },
           boundSha256: "source-new",
         },
@@ -158,9 +164,9 @@ globalThis.invokeAdopt = adoptAgentPlan;`,
         applyError: null,
       };
     },
-    request: () => context.invokeRequest(),
+    request: () => { state = { ...state, approval: null }; return context.invokeRequest(); },
     resolve: (decision) => context.invokeResolve(decision),
-    apply: () => context.invokeApply(),
+    apply: () => { state = { ...state, approval: { ...oldApproval, state: "approved" } }; return context.invokeApply(); },
     adopt: () => context.invokeAdopt("session-A", "agent-plan", "agent-approval"),
     requests,
     decisions,
@@ -258,4 +264,37 @@ test("agent approval lookup cannot replace typing that won during its await", as
   assert.equal(await pending, null);
   assert.equal(f.read().draft.plan.planId, "plan-newer");
   assert.equal(f.read().approval, null);
+});
+
+
+test("an approval resolved during a head change cannot auto-apply the old base", async () => {
+  const f = fixture();
+  const pending = f.resolve("approved");
+  f.head("new-head");
+  f.decisions[0].resolve({ approvalId: "approval-old", planId: "plan-old", planHash: "hash-old", state: "approved" });
+  await pending;
+  assert.equal(f.applies.length, 0);
+  assert.equal(f.read().head, "new-head");
+});
+
+test("apply completion preserves a head chosen while the runtime was working", async () => {
+  const f = fixture();
+  const pending = f.apply();
+  f.head("new-head");
+  f.applies[0].resolve({ runId: "run-old", candidate: { sha256: "abcdef0123456789" }, checks: {} });
+  await pending;
+  assert.equal(f.read().head, "new-head");
+  assert.equal(f.read().draft.plan.planId, "plan-old");
+  assert.equal(f.read().applyOutcomes["session-A"].applied.runId, "run-old");
+});
+
+test("replacing the queue cannot start a second apply before the first returns", async () => {
+  const f = fixture();
+  const pending = f.apply();
+  f.replace();
+  await f.apply();
+  assert.equal(f.applies.length, 1);
+  f.applies[0].reject(new Error("finish original"));
+  await pending;
+  assert.equal(f.read().applyPhase, "idle");
 });

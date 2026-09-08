@@ -18,10 +18,11 @@ import { Settings } from "./components/Settings";
 import { Splash } from "./components/Splash";
 import { Toast } from "./components/Toast";
 import * as rt from "./runtime";
+import { deliverDocumentEvents, stopDocumentEvents } from "./documentEvents";
+import { RuntimeSubscriptionScope } from "./runtimeSubscriptions";
 import {
   getState,
   pushActivity,
-  pushEvents,
   pushHostEvents,
   setState,
   setView,
@@ -104,35 +105,37 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
-    const unlisteners: Array<() => void> = [];
-    let cancelled = false;
+    const subscriptions = new RuntimeSubscriptionScope();
 
     (async () => {
-      unlisteners.push(await rt.onActivity(pushActivity));
+      if (!(await subscriptions.add(rt.onActivity(pushActivity)))) return;
       // The document's own history. Arrives as batched `event` notifications,
       // already split from protocol chatter in Rust; the store de-duplicates
       // on `seq`, so a replay after a reconnect is idempotent.
-      unlisteners.push(
-        await rt.onEvents((batch) => pushEvents(batch.map((row) => row.event))),
-      );
+      if (!(await subscriptions.add(rt.onEvents(deliverDocumentEvents)))) return;
       // The Agent Host's own log, live while a turn runs. A third channel
       // rather than a filter on the second: these are the provider's events,
       // not the document's, and the store folds them into the turn that owns
       // them by id.
-      unlisteners.push(await rt.onAgentEvents(pushHostEvents));
-      unlisteners.push(await rt.onStatus((s) => setState({ status: s })));
+      if (!(await subscriptions.add(rt.onAgentEvents(pushHostEvents)))) return;
+      if (!(await subscriptions.add(rt.onStatus((s) => setState({ status: s }))))) return;
       // A Rust panic must be visible, not a silent disappearance.
-      unlisteners.push(await rt.onPanic((p) => setState({ panic: p })));
+      if (!(await subscriptions.add(rt.onPanic((p) => setState({ panic: p }))))) return;
 
       // Files dropped on the window. The webview owns the event; the runtime
       // owns everything that happens to the bytes afterwards.
       try {
-        const off = await getCurrentWebview().onDragDropEvent((event) => {
-          if (event.payload.type === "over") setState({ dragOver: true });
-          else if (event.payload.type === "drop") void openDropped(event.payload.paths);
-          else setState({ dragOver: false });
-        });
-        unlisteners.push(off);
+        if (
+          !(await subscriptions.add(
+            getCurrentWebview().onDragDropEvent((event) => {
+              if (event.payload.type === "over") setState({ dragOver: true });
+              else if (event.payload.type === "drop") void openDropped(event.payload.paths);
+              else setState({ dragOver: false });
+            }),
+          ))
+        ) {
+          return;
+        }
       } catch {
         // Drag-drop is an affordance, not a dependency: the dialog still works.
       }
@@ -140,18 +143,24 @@ export default function App() {
       // Read the launcher's intent before boot: the entrance screenshot needs
       // the splash pinned open, and it is gone 960 ms after mount otherwise.
       const intent = await smokeIntent();
+      if (subscriptions.isDisposed) return;
       if (intent?.phase === "hold-entrance") setState({ holdEntrance: true });
 
-      if (cancelled) return;
       await boot();
+      if (subscriptions.isDisposed) return;
       // Scripted evidence runs against the built app, through the same
       // actions a click uses. No-op unless the launcher asked for it.
       await runSmoke();
-    })();
+    })().catch((error) => {
+      if (subscriptions.isDisposed) return;
+      subscriptions.dispose();
+      stopDocumentEvents();
+      setState({ phase: "failed", fatal: rt.asRuntimeError(error) });
+    });
 
     return () => {
-      cancelled = true;
-      for (const off of unlisteners) off();
+      subscriptions.dispose();
+      stopDocumentEvents();
     };
   }, []);
 

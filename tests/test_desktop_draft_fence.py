@@ -226,33 +226,26 @@ def test_approval_actions_keep_their_draft_owner_across_awaits():
     request = text[request_start:resolve_start]
     resolve = text[resolve_start:apply_start]
 
-    assert request.index("const owner = captureDraftOwner()") < request.index(
-        "await rt.requestApproval"
-    )
-    assert request.count("!ownsDraft(owner)") >= 2
-    assert request.count("getState().draft.plan !== plan") >= 2
-
-    assert resolve.index("const owner = captureDraftOwner()") < resolve.index(
-        "await rt.resolveApproval"
-    )
-    assert resolve.count("!ownsDraft(owner)") >= 2
-    assert resolve.count("getState().draft.plan !== plan") >= 2
-    assert resolve.count("getState().approval !== approval") >= 2
+    assert request.index("const draft = state.draft") < request.index("await rt.requestApproval")
+    assert "current.draft !== draft" in request
+    assert "approval.planHash !== captured.planHash" in request
+    assert resolve.index("const binding = activeApprovalBinding(state)") < resolve.index("await rt.resolveApproval")
+    assert "approvalBindingStillExists(current, binding)" in resolve
+    assert "approvalBindingIsCurrent(getState(), binding)" in resolve
 
 
 def test_agent_document_context_reads_shared_work_state():
     """The agent pane must project the store, not hard-coded duplicate state."""
     context = DOCUMENT_CONTEXT.read_text(encoding="utf-8")
-    assert "export function DocumentContext()" in context
-    assert "useWorkspace(activeSession)" in context
-    assert "useWorkspace(activeInspect)" in context
-    assert "useWorkspace(activeCandidates)" in context
-    assert "useWorkspace((s) => s.draft)" in context
-    assert "useWorkspace((s) => s.approval)" in context
-    assert "draft.ops.length" in context
-    assert "draft.validation" in context
-    assert "이 단계에서는 문서를 읽기만 합니다" not in context
-    assert "<DocumentContext />" in AGENT_VIEW.read_text(encoding="utf-8")
+    assert "useWorkspace(activeReviewQueueCount)" in context
+    assert "useWorkspace(activeReviewApprovalState)" in context
+    assert "useWorkspace(activeReviewVerificationState)" in context
+    assert "<ReviewQueue" in context
+    agent = AGENT_VIEW.read_text(encoding="utf-8")
+    assert "useWorkspace(activeSession)" in agent
+    assert "useWorkspace(activeInspect)" in agent
+    assert "useWorkspace(activeCandidates)" in agent
+    assert "<DocumentContext session={session} inspect={inspect} candidates={candidates}" in agent
 
 
 def test_superseded_agent_plan_is_not_described_as_queued():
@@ -286,18 +279,14 @@ def test_set_queue_error_path_is_also_fenced():
 
 
 def test_review_apply_and_agent_adoption_share_draft_fence():
-    """Every async publisher in review → apply must prove it still owns the draft."""
+    """Adoption uses generation fencing; apply keeps exact session/approval ownership."""
     text = ACTIONS.read_text(encoding="utf-8")
-    assert "function captureDraftFence(" in text
-    assert "function ownsDraftFence(" in text
-    for start, end in (
-        ("export async function requestApprovalForDraft", "export async function resolveApprovalDecision"),
-        ("export async function resolveApprovalDecision", "// --- apply"),
-        ("export async function applyApproved", "/** Cooperative cancel"),
-        ("async function adoptAgentPlan(", "/** Ids are the shell's"),
-    ):
-        body = text[text.index(start) : text.index(end, text.index(start))]
-        assert "ownsDraftFence(" in body, f"{start} does not fence stale publication"
+    adopt = text[text.index("async function adoptAgentPlan("):text.index("/** Ids are the shell's")]
+    assert "ownsDraftFence(" in adopt
+    apply = text[text.index("export async function applyApproved"):text.index("/** Cooperative cancel")]
+    assert "current.draft === draft" in apply
+    assert "approvalBindingStillExists(current, binding)" in apply
+    assert "current.head === state.head" in apply
 
 
 def test_empty_queue_replacement_invalidates_async_publishers():
@@ -369,7 +358,7 @@ def test_draft_fence_harness():
 def test_draft_freshness_node_tests():
     """Ported epoch freshness cases: session, head, clear, and late error."""
     completed = subprocess.run(
-        [shutil.which("node") or "node", "--test", str(FRESHNESS)],
+        [shutil.which("node") or "node", "--experimental-strip-types", "--test", str(FRESHNESS)],
         cwd=str(REPO / "desktop"),
         capture_output=True,
         text=True,
@@ -385,7 +374,7 @@ def test_draft_freshness_node_tests():
 def test_head_freshness_node_tests():
     """Out-of-order head receipts cannot publish stale verdicts or queue bases."""
     completed = subprocess.run(
-        [shutil.which("node") or "node", "--test", str(HEAD_FRESHNESS)],
+        [shutil.which("node") or "node", "--experimental-strip-types", "--test", str(HEAD_FRESHNESS)],
         cwd=str(REPO / "desktop"),
         capture_output=True,
         text=True,
@@ -401,7 +390,7 @@ def test_head_freshness_node_tests():
 def test_review_apply_freshness_node_tests():
     """Approval, apply, and agent adoption cannot publish into a newer draft."""
     completed = subprocess.run(
-        [shutil.which("node") or "node", "--test", str(REVIEW_FRESHNESS)],
+        [shutil.which("node") or "node", "--experimental-strip-types", "--test", str(REVIEW_FRESHNESS)],
         cwd=str(REPO / "desktop"),
         capture_output=True,
         text=True,

@@ -1,3 +1,4 @@
+import { approvalHelpers, agentPlanCellAddresses, projectAgentPlan } from "./action-test-support.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -70,6 +71,8 @@ function fixture() {
   };
   const context = vm.createContext({
     rt,
+    agentPlanCellAddresses, projectAgentPlan,
+    draftStaleness: () => null,
     EMPTY_DRAFT,
     getState: () => state,
     setState: (patch) => {
@@ -249,6 +252,8 @@ function adoptionFixture() {
   const adoptImplementation = source.slice(adoptStart, adoptEnd);
   const context = vm.createContext({
     rt,
+    agentPlanCellAddresses, projectAgentPlan,
+    draftStaleness: () => null,
     getState: () => state,
     setState: (patch) => {
       state = { ...state, ...patch };
@@ -349,11 +354,11 @@ test("agent adoption rechecks ownership after approval lookup", async () => {
 });
 
 function approvalFixture() {
-  const plan = { planId: "plan-A", planHash: "hash-A" };
-  const approval = { approvalId: "approval-A", planId: "plan-A", state: "pending" };
+  const plan = { sessionId: "session-A", planId: "plan-A", planHash: "hash-A" };
+  const approval = { approvalId: "approval-A", planId: "plan-A", planHash: "hash-A", state: "pending" };
   let state = {
     activeSessionId: "session-A",
-    draft: { ...EMPTY_DRAFT, plan },
+    draft: { ...EMPTY_DRAFT, sessionId: "session-A", plan },
     head: null,
     approval: null,
     approvalPhase: "idle",
@@ -384,7 +389,7 @@ function approvalFixture() {
       return { code: "test_failure", message: String(error) };
     },
   };
-  const approvalStart = source.indexOf("export async function requestApprovalForDraft");
+  const approvalStart = source.indexOf("let approvalRequestGeneration");
   const approvalEnd = source.indexOf("// --- apply", approvalStart);
   assert.ok(
     approvalStart >= 0 && approvalEnd > approvalStart,
@@ -395,6 +400,8 @@ function approvalFixture() {
     .replace(/^export /gm, "");
   const context = vm.createContext({
     rt,
+    agentPlanCellAddresses, projectAgentPlan,
+    draftStaleness: () => null,
     getState: () => state,
     setState: (patch) => {
       state = { ...state, ...patch };
@@ -411,6 +418,7 @@ function approvalFixture() {
   vm.runInContext(
     `${stripTypeScriptTypes(ownerImplementation)}
 ${stripTypeScriptTypes(fenceImplementation)}
+${stripTypeScriptTypes(approvalHelpers)}
 ${stripTypeScriptTypes(approvalImplementation)}
 globalThis.requestDraftApproval = requestApprovalForDraft;
 globalThis.resolveDraftApproval = resolveApprovalDecision;`,

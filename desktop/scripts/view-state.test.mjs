@@ -19,7 +19,7 @@ test("an unsent composer draft survives a document-view round trip", () => {
   };
 
   try {
-    setState({ view: "agent", composerDraft: "검토할 표를 먼저 찾아 주세요." });
+    setState({ view: "agent", composerDraft: { text: "검토할 표를 먼저 찾아 주세요." } });
     const expected = sharedStateSignature();
 
     // Prove the signature actually covers this field; otherwise equality
@@ -29,11 +29,11 @@ test("an unsent composer draft survives a document-view round trip", () => {
     setComposerDraft("검토할 표를 먼저 찾아 주세요.");
 
     setView("document");
-    assert.equal(getState().composerDraft, "검토할 표를 먼저 찾아 주세요.");
+    assert.equal(getState().composerDraft.text, "검토할 표를 먼저 찾아 주세요.");
     assert.equal(sharedStateSignature(), expected);
 
     setView("agent");
-    assert.equal(getState().composerDraft, "검토할 표를 먼저 찾아 주세요.");
+    assert.equal(getState().composerDraft.text, "검토할 표를 먼저 찾아 주세요.");
     assert.equal(sharedStateSignature(), expected);
   } finally {
     setState(original);

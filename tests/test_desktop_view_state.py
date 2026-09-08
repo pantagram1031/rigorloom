@@ -22,11 +22,11 @@ def test_composer_draft_is_workspace_state():
     store = STORE.read_text(encoding="utf-8")
     composer = COMPOSER.read_text(encoding="utf-8")
 
-    assert "composerDraft: string;" in store
-    assert 'composerDraft: ""' in store
-    assert "composerDraft: s.composerDraft" in store
-    assert "useWorkspace((s) => s.composerDraft)" in composer
-    assert "setComposerDraft(e.target.value)" in composer
+    assert "composerDraft: { text: string };" in store
+    assert 'composerDraft: { text: "" }' in store
+    assert "composerDraft: s.composerDraft.text" in store
+    assert "useWorkspace((s) => s.composerDraft.text)" in composer
+    assert "setState({ composerDraft: { text: e.target.value } })" in composer
     assert "useState" not in composer
 
 
@@ -35,9 +35,11 @@ def test_late_send_reconciliation_is_wired():
     store = STORE.read_text(encoding="utf-8")
     composer = COMPOSER.read_text(encoding="utf-8")
 
-    assert "export function composerDraftAfterSend(" in store
-    assert 'currentDraft.trim() !== ""' in store
-    assert "composerDraftAfterSend(getState().composerDraft, instruction, ok)" in composer
+    helper = (DESKTOP / "src/workspace/composerDraft.ts").read_text(encoding="utf-8")
+    assert "await submitComposerDraft({" in composer
+    assert "read: () => getState().composerDraft" in composer
+    assert "write: (composerDraft) => setState({ composerDraft })" in composer
+    assert "port.read() === cleared" in helper
 
 
 def test_view_state_node_regressions():

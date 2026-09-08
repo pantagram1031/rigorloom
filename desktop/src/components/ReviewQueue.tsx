@@ -25,6 +25,7 @@
  *    it: propose again against what is open now.
  */
 import {
+  applyApproved,
   declareSuggestedCharPr,
   editOpValue,
   redoQueuedOp,
@@ -39,11 +40,15 @@ import {
 import {
   canRequestApproval,
   draftStaleness,
+  getState,
   locateSelection,
+  setCenterMode,
+  setView,
   useWorkspace,
   type QueuedOp,
 } from "../store";
 import type { PlanFinding } from "../types";
+import { hasActiveApprovalBinding } from "../workspace/reviewSummary";
 import { Tag } from "./Tag";
 
 /** Findings that name one op, keyed the way `validate_plan` writes `at`. */
@@ -51,16 +56,38 @@ function findingsFor(op: QueuedOp, rows: PlanFinding[]): PlanFinding[] {
   return rows.filter((row) => row.at === `ops[${op.opId}]`);
 }
 
+/** Reveal a queued address only when its owning document is still active. */
+export function locateQueuedOp(op: QueuedOp): boolean {
+  const state = getState();
+  if (
+    !state.activeSessionId ||
+    state.draft.sessionId !== state.activeSessionId ||
+    !state.draft.ops.some((queued) => queued.opId === op.opId)
+  ) {
+    return false;
+  }
+  setView("document");
+  setCenterMode("text");
+  locateSelection(
+    op.kind === "fill_cell"
+      ? { kind: "cell", table: op.table, row: op.row, col: op.col }
+      : { kind: "paragraph", atPara: op.atPara },
+  );
+  return true;
+}
+
 function OpRow({
   op,
   hard,
   warn,
   locked,
+  locatable,
 }: {
   op: QueuedOp;
   hard: PlanFinding[];
   warn: PlanFinding[];
   locked: boolean;
+  locatable: boolean;
 }) {
   const anomaly = hard.find((f) => f.code === "fill_charpr_script_anomaly");
   // A row names its target in the vocabulary of the address the OPERATION
@@ -74,14 +101,13 @@ function OpRow({
       <div className="queue-op-head">
         <button
           className="addr mono"
-          title="문서에서 이 자리를 찾습니다"
-          onClick={() =>
-            locateSelection(
-              op.kind === "fill_cell"
-                ? { kind: "cell", table: op.table, row: op.row, col: op.col }
-                : { kind: "paragraph", atPara: op.atPara },
-            )
+          disabled={!locatable}
+          title={
+            locatable
+              ? "문서에서 이 자리를 찾습니다"
+              : "이 작업은 다른 문서의 대기열에 있어 현재 문서에서는 찾을 수 없습니다"
           }
+          onClick={() => locateQueuedOp(op)}
         >
           {op.kind === "fill_cell"
             ? `표 ${op.table} R${op.row}C${op.col}`
@@ -172,8 +198,14 @@ export function ReviewQueue() {
   const applyError = useWorkspace((s) => s.applyError);
   const recovery = useWorkspace((s) => s.recovery);
   const redoCount = useWorkspace((s) => s.redoStack.length);
+  const activeSessionId = useWorkspace((s) => s.activeSessionId);
+  const approvalBound = useWorkspace(hasActiveApprovalBinding);
 
   const locked = approvalPhase === "resolving" || applyPhase === "starting";
+  const locatable = !!activeSessionId && draft.sessionId === activeSessionId;
+  const canDecide = approvalBound && !locked;
+  const recoveryBlocksApply = !!recovery && recovery.outcome !== "not_applied" &&
+    recovery.planId === draft.plan?.planId && recovery.approvalId === approval?.approvalId;
 
   /** Put the last removed row back — the same target, the same value. */
   const redo =
@@ -194,7 +226,7 @@ export function ReviewQueue() {
       <div className="section" data-testid="review-queue-empty">
         <h3>검토 대기열</h3>
         <p className="prose">
-          비어 있습니다. 가운데 문서에서 <strong>채움 자리</strong>를 누르고 값을 쓰면 여기에
+          비어 있습니다. 문서 화면에서 <strong>채움 자리</strong>를 누르고 값을 쓰면 여기에
           쌓입니다. 승인하기 전까지 문서는 아무것도 바뀌지 않습니다.
         </p>
         {redo ? <div className="gate-actions">{redo}</div> : null}
@@ -284,6 +316,7 @@ export function ReviewQueue() {
             hard={findingsFor(op, validation?.hard ?? [])}
             warn={findingsFor(op, validation?.warn ?? [])}
             locked={locked}
+            locatable={locatable}
           />
         ))}
       </ul>
@@ -336,7 +369,44 @@ export function ReviewQueue() {
 
       {/* ── the approval gate ─────────────────────────────────────────────
           The one place 단청 vermilion is spent. Everything above is teal. */}
-      {approval && approval.state === "pending" ? (
+      {approval && approval.state === "approved" ? (
+        <div className="approval-gate" data-testid="approval-resolved">
+          <div className="gate-head">
+            <span className="gate-dot" aria-hidden="true" />
+            <strong>승인됨</strong>
+          </div>
+          <p className="prose">
+            런타임에 승인 결정이 기록되었습니다. 현재 문서와 계획의 묶임을 다시 확인한 뒤
+            적용할 수 있습니다.
+          </p>
+          <div className="gate-actions">
+            <button
+              className="action point"
+              data-testid="apply-approved"
+              disabled={!approvalBound || applyPhase === "starting" || recoveryBlocksApply}
+              title={
+                recoveryBlocksApply
+                  ? "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다"
+                  : approvalBound
+                  ? "승인된 이 계획을 적용합니다"
+                  : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
+              }
+              onClick={() => void applyApproved()}
+            >
+              {applyPhase === "starting" ? "적용하는 중…" : "승인된 계획 적용"}
+            </button>
+            {applyPhase === "starting" ? (
+              <button
+                className="ghost dark-safe"
+                data-testid="cancel-apply"
+                onClick={() => void cancelApply()}
+              >
+                멈추기
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : approval && approval.state === "pending" ? (
         <div className="approval-gate" data-testid="approval-gate">
           <div className="gate-head">
             <span className="gate-dot" aria-hidden="true" />
@@ -359,7 +429,12 @@ export function ReviewQueue() {
             <button
               className="action point"
               data-testid="approve"
-              disabled={locked}
+              disabled={!canDecide}
+              title={
+                approvalBound
+                  ? "이 승인에 묶인 계획을 적용합니다"
+                  : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
+              }
               onClick={() => void resolveApprovalDecision("approved")}
             >
               {locked ? "적용하는 중…" : "승인하고 적용"}
@@ -367,7 +442,12 @@ export function ReviewQueue() {
             <button
               className="action"
               data-testid="reject"
-              disabled={locked}
+              disabled={!canDecide}
+              title={
+                approvalBound
+                  ? "이 승인 요청을 거절합니다"
+                  : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
+              }
               onClick={() => void resolveApprovalDecision("rejected")}
             >
               거절

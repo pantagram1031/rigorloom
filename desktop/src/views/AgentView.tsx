@@ -82,7 +82,7 @@ export function AgentView({
           <Composer />
         </main>
 
-        <DocumentContext />
+        <DocumentContext session={session} inspect={inspect} candidates={candidates} />
       </div>
 
       <VerificationBar session={session} inspect={inspect} candidates={candidates} />

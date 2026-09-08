@@ -118,6 +118,7 @@
   Exit codes: 0 all checks passed · 3 a check failed · 2 could not run.
 #>
 param(
+    [string]$Executable = "",
     [string]$Corpus = "",
     [string]$Corpus2 = "",
     # The form the overlay and packs phases use. NOT the same as $Corpus, and
@@ -143,7 +144,7 @@ $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DesktopDir = Split-Path -Parent $ScriptDir
 $RepoRoot   = Split-Path -Parent $DesktopDir
 $RunDir     = Join-Path $ScriptDir '_run'
-$Exe        = Join-Path $DesktopDir 'src-tauri\target\release\rigorloom-desktop.exe'
+$Exe        = if ($Executable) { (Resolve-Path -LiteralPath $Executable).Path } else { Join-Path $DesktopDir 'src-tauri\target\release\rigorloom-desktop.exe' }
 
 if (-not $Corpus) {
     $Corpus = Join-Path $RepoRoot 'tests\corpus\forms\converted\gianmun-byeolji-1ho.hwpx'
@@ -258,7 +259,7 @@ function Invoke-Phase {
 
     # Not minimised: WebView2 throttles a minimised window's timers and
     # withholds rAF entirely, which is a good way to make a harness hang.
-    $proc = Start-Process -FilePath $Exe -PassThru
+    $proc = Start-Process -FilePath $Exe -WindowStyle Hidden -PassThru
     $exited = $proc.WaitForExit($TimeoutSec * 1000)
     if (-not $exited) {
         Write-Warning "phase '$Phase' did not exit within ${TimeoutSec}s; killing"

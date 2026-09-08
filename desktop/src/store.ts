@@ -7,11 +7,10 @@
  * approval state, one candidate set, and one verification history. Switching
  * views must never create a new conversation or duplicate document state."
  *
- * That is enforced structurally here rather than by discipline: `view` is one
- * field of the same object that holds `selection`, `expanded`, `page`, `zoom`
- * and the work in either room, and `setView` writes only `view`. Transient
- * presentation details may stay component-local, but anything the user would
- * expect to find after a view switch belongs here.
+ * View replacement preserves the data held here, including unsent instructions.
+ * `setView` also supersedes outstanding edit intent. Components still own
+ * transient DOM state such as focus and composition; a component-local value
+ * does not acquire Workspace persistence merely by being rendered in a view.
  *
  * No state library: `useSyncExternalStore` is in React 18 and does the whole
  * job. One fewer dependency in an app whose point is that it has no ambient
@@ -28,6 +27,7 @@ import type {
   CandidateCompare,
   Capabilities,
   CredentialStatus,
+  EventDelivery,
   Finding,
   GeometryResult,
   HostEvent,
@@ -411,6 +411,12 @@ export interface WorkspaceState {
   /** The candidate the last apply produced, and the one 검사 실행 reads. */
   applied: AppliedCandidate | null;
   recovery: Recovery | null;
+  /** Terminal apply facts remain attached to their initiating document. */
+  applyOutcomes: Record<string, {
+    applied: AppliedCandidate | null;
+    error: RuntimeError | null;
+    recovery: Recovery | null;
+  }>;
   /** Receipts read back, keyed on runId. */
   receipts: Record<string, Receipt>;
   receiptOpen: string | null;
@@ -532,6 +538,8 @@ export interface WorkspaceState {
   credential: CredentialStatus | null;
   /** The conversation, newest last. One process per turn. */
   turns: Turn[];
+  /** Unsent instruction, shared across view mounts; never persisted to prefs. */
+  composerDraft: { text: string };
   /** The turn in flight, if any. One at a time, enforced in Rust too. */
   activeTurn: string | null;
   /**
@@ -541,7 +549,6 @@ export interface WorkspaceState {
    * value in `Composer` would therefore discard typed work on Ctrl+1, despite
    * the product invariant that both views share one conversation state.
    */
-  composerDraft: string;
   settingsOpen: boolean;
   /**
    * Which of Agent view's two centre panes is showing.
@@ -685,6 +692,7 @@ const initial: WorkspaceState = {
   applyError: null,
   applied: null,
   recovery: null,
+  applyOutcomes: {},
   receipts: {},
   receiptOpen: null,
   receiptError: null,
@@ -738,8 +746,8 @@ const initial: WorkspaceState = {
   probeError: null,
   credential: null,
   turns: [],
+  composerDraft: { text: "" },
   activeTurn: null,
-  composerDraft: "",
   settingsOpen: false,
   agentTab: "conversation",
 
@@ -920,12 +928,22 @@ export function pushActivity(batch: Activity[]) {
  * happened. De-duplicating on `seq` is not defensive coding — it is the
  * property the protocol offers, used.
  */
-export function pushEvents(batch: RuntimeEvent[]) {
+export function pushEvents(batch: EventDelivery[]) {
   if (batch.length === 0) return;
+  const subscriptionId = state.eventSubscription;
+  const sessionId = state.activeSessionId;
+  if (!subscriptionId || !sessionId) return;
   const bySeq = new Map<number, RuntimeEvent>();
   for (const event of state.events) bySeq.set(event.seq, event);
   let changed = false;
-  for (const event of batch) {
+  for (const delivery of batch) {
+    if (
+      delivery.subscriptionId !== subscriptionId ||
+      delivery.sessionId !== sessionId
+    ) {
+      continue;
+    }
+    const event = delivery.event;
     if (bySeq.has(event.seq)) continue;
     bySeq.set(event.seq, event);
     changed = true;
@@ -1001,7 +1019,7 @@ export function composerBlocker(s: WorkspaceState): string | null {
   return null;
 }
 
-export const setComposerDraft = (composerDraft: string) => setState({ composerDraft });
+export const setComposerDraft = (composerDraft: string) => setState({ composerDraft: { text: composerDraft } });
 
 /**
  * Reconcile a send completion with whatever is in the composer now.
@@ -1296,6 +1314,8 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
       : null,
     approval: s.approval ? `${s.approval.approvalId}:${s.approval.state}` : null,
     applied: s.applied?.candidate.sha256 ?? null,
+    applyOutcomes: Object.entries(s.applyOutcomes).map(([sessionId, outcome]) =>
+      `${sessionId}:${outcome.applied?.runId ?? outcome.error?.code ?? "none"}:${outcome.recovery?.outcome ?? "none"}`),
     // E1.4. Undo is Workspace state like every other kind: a 되돌리기 제안
     // half-reviewed in Document view must be the same proposal in Agent view,
     // and a redo stack that emptied on Ctrl+2 would be a second history.
@@ -1316,8 +1336,8 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     // which turn is in flight, because a turn that lost its live events on
     // Ctrl+1 would be a second conversation in all but name.
     turns: s.turns.map((turn) => `${turn.id}:${turn.phase}:${turn.events.length}`),
+    composerDraft: s.composerDraft.text,
     activeTurn: s.activeTurn,
-    composerDraft: s.composerDraft,
     provider: s.provider.provider,
     agentTab: s.agentTab,
     packOpen: s.packOpen,

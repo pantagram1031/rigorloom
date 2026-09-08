@@ -94,11 +94,11 @@ def test_async_publishers_bind_fence_to_the_same_owner():
         )
     ]
 
-    assert "const owner = captureDraftOwner()" in request
-    assert "const fence = captureDraftFence(owner)" in request
-    assert "const owner = captureDraftOwner()" in resolve
-    assert "const fence = captureDraftFence(owner)" in resolve
-    assert "const fence = captureDraftFence()" in apply_body
+    assert "const draft = state.draft" in request
+    assert "current.draft !== draft" in request
+    assert "activeApprovalBinding(state)" in resolve
+    assert "approvalBindingStillExists(current, binding)" in resolve
+    assert "current.draft === draft" in apply_body
     assert "const fence = captureDraftFence(owner)" in adopt
     assert "const fence = captureDraftFence()" in undo
     assert "captureDraftFence(sessionId)" not in text
