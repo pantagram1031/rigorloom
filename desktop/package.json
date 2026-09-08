@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test:draft-freshness": "node --test scripts/set-queue-freshness.test.mjs",
+    "test:head-freshness": "node --test scripts/set-head-freshness.test.mjs",
+    "test:owner-fence": "node --test scripts/draft-owner-fence.test.mjs",
     "test:review-freshness": "node --test scripts/review-apply-freshness.test.mjs",
     "test:view-state": "node --experimental-strip-types --test scripts/view-state.test.mjs",
-    "test:headless": "npm run test:draft-freshness && npm run test:review-freshness && npm run test:view-state",
+    "test:headless": "npm run test:draft-freshness && npm run test:head-freshness && npm run test:owner-fence && npm run test:review-freshness && npm run test:view-state",
     "tauri": "tauri"
   },
   "dependencies": {
