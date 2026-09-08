@@ -94,6 +94,12 @@ def test_run_child_capture_cleans_ordinary_grandchild_cross_platform(tmp_path: P
         time.sleep(0.01)
     assert pid_path.exists()
     pid = int(pid_path.read_text(encoding="utf-8"))
+    # SIGKILL is async: a loaded runner can still observe the PID for a
+    # few ticks after killpg. Poll the same 1s window used for the pid file.
+    for _ in range(100):
+        if not _pid_is_live(pid):
+            break
+        time.sleep(0.01)
     try:
         assert not _pid_is_live(pid)
     finally:
