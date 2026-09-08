@@ -13,9 +13,13 @@ function between(startText, endText) {
   return source.slice(start, end);
 }
 
+const lease = between("interface DraftOwner", "/** Load a session's inspect");
+assert.ok(lease.includes("interface DraftFence"), "DraftFence must live next to DraftOwner");
+assert.ok(lease.includes("...owner"), "captureDraftFence must copy a DraftOwner");
+assert.ok(lease.includes("ownsDraft(fence)"), "ownsDraftFence must reuse ownsDraft");
+
 const implementation = [
-  between("interface DraftOwner", "/** Load a session's inspect"),
-  between("interface DraftFence", "/** The seat's current text"),
+  lease,
   between("export async function requestApprovalForDraft", "// --- apply"),
   between('const APPLY_TAG = "apply"', "/** Cooperative cancel"),
   between("async function adoptAgentPlan(", "/** Ids are the shell's"),

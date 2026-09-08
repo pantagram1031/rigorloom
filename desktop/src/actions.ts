@@ -67,11 +67,15 @@ export const ZOOM_MAX = 2.0;
 const ZOOM_STEPS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.35, 1.5, 1.75, 2.0];
 
 /**
- * The exact workspace state allowed to publish a draft.
+ * The exact workspace identity allowed to publish a draft.
  *
  * Both local queue rebuilds and agent-plan adoption use this lease. Keeping
  * the ownership rule here prevents the two paths from drifting: a different
  * draft object, document, or candidate head means newer user intent won.
+ *
+ * `DraftFence` is this identity plus the plan-generation token — never a
+ * second copy of the identity rule. Capture a fence from an owner so session,
+ * head, and draft object cannot diverge between the two helpers.
  */
 interface DraftOwner {
   draft: Draft;
@@ -95,6 +99,23 @@ function ownsDraft(owner: DraftOwner): boolean {
     state.activeSessionId === owner.sessionId &&
     (headCandidate(state)?.runId ?? null) === owner.headRunId
   );
+}
+
+interface DraftFence extends DraftOwner {
+  generation: number;
+}
+
+/** Snapshot identity plus the generation token an async publisher must still hold. */
+function captureDraftFence(owner: DraftOwner = captureDraftOwner()): DraftFence {
+  return {
+    ...owner,
+    generation: currentPlanGeneration(),
+  };
+}
+
+/** True only while the owner still matches and no newer queue rebuild won. */
+function ownsDraftFence(fence: DraftFence): boolean {
+  return currentPlanGeneration() === fence.generation && ownsDraft(fence);
 }
 
 /** Load a session's inspect once and cache it. */
@@ -339,35 +360,6 @@ export async function openDropped(paths: string[]): Promise<void> {
 // a plan binds `boundSha256` and hashes its whole op list, so there is no
 // "append to the existing plan" operation and inventing one would be a lie
 // about what was approved.
-
-interface DraftFence {
-  draft: Draft;
-  generation: number;
-  sessionId: string;
-  headRunId: string | null;
-}
-
-/** Snapshot the user intent an async review/apply operation may update. */
-function captureDraftFence(sessionId: string): DraftFence {
-  const state = getState();
-  return {
-    draft: state.draft,
-    generation: currentPlanGeneration(),
-    sessionId,
-    headRunId: headCandidate(state)?.runId ?? null,
-  };
-}
-
-/** True only while no queue, document, or candidate-head replacement won. */
-function ownsDraftFence(fence: DraftFence): boolean {
-  const state = getState();
-  return (
-    currentPlanGeneration() === fence.generation &&
-    state.draft === fence.draft &&
-    state.activeSessionId === fence.sessionId &&
-    (headCandidate(state)?.runId ?? null) === fence.headRunId
-  );
-}
 
 /** The seat's current text, from the runtime's own read, never guessed. */
 export function seatText(
@@ -967,7 +959,7 @@ export async function proposeUndoOf(runId: string): Promise<number> {
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return 0;
-  const fence = captureDraftFence(sessionId);
+  const fence = captureDraftFence();
   setState({ undoPhase: "starting", undoError: null });
   try {
     const receipt = state.receipts[runId] ?? (await rt.readReceipt(sessionId, runId));
@@ -1175,7 +1167,7 @@ export async function requestApprovalForDraft(): Promise<void> {
   const sessionId = state.activeSessionId;
   if (!plan || !sessionId || !canRequestApproval(state)) return;
   const owner = captureDraftOwner();
-  const fence = captureDraftFence(sessionId);
+  const fence = captureDraftFence(owner);
   setState({ approvalPhase: "requesting", approvalError: null });
   try {
     const approval = await rt.requestApproval(plan.planId);
@@ -1205,7 +1197,7 @@ export async function resolveApprovalDecision(
   const sessionId = state.activeSessionId;
   if (!approval || !plan || !sessionId) return;
   const owner = captureDraftOwner();
-  const fence = captureDraftFence(sessionId);
+  const fence = captureDraftFence(owner);
   setState({ approvalPhase: "resolving", approvalError: null });
   try {
     const resolved = await rt.resolveApproval(
@@ -1247,7 +1239,7 @@ export async function applyApproved(): Promise<void> {
   const approval = state.approval;
   const sessionId = state.activeSessionId;
   if (!plan || !approval || !sessionId) return;
-  const fence = captureDraftFence(sessionId);
+  const fence = captureDraftFence();
   const ownsApply = () =>
     ownsDraftFence(fence) &&
     getState().draft.plan === plan &&
@@ -2735,7 +2727,7 @@ async function adoptAgentPlan(
   approvalId: string | null,
   owner: DraftOwner = captureDraftOwner(),
 ): Promise<{ plan: OperationPlan; validation: PlanValidation } | null> {
-  const fence = captureDraftFence(sessionId);
+  const fence = captureDraftFence(owner);
   if (!ownsDraftFence(fence)) return null;
   const authoritative = await rt.getPlan(planId);
   const validation = await rt.validatePlan(planId);
