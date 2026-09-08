@@ -90,7 +90,7 @@ def test_retry_reverifies_bytes_and_never_replaces_tampered_candidate(tmp_path):
     with pytest.raises(RpcError) as error:
         RuntimeCore(root).plan_apply(params["planId"], params["approvalId"])
     assert error.value.code == "candidate_hash_mismatch"
-    assert len(list(artifact.parent.parent.iterdir())) == 1
+    assert list(artifact.parent.parent.iterdir()) == [artifact.parent]
 
 
 def test_legacy_candidate_without_a_journal_is_replayed(tmp_path):
