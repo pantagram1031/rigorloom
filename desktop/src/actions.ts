@@ -1230,6 +1230,7 @@ export async function requestApprovalForDraft(): Promise<void> {
     !state.activeSessionId ||
     state.draft.sessionId !== state.activeSessionId ||
     plan.sessionId !== state.activeSessionId ||
+    (plan.base?.runId ?? null) !== (state.head ?? null) ||
     state.approval !== null ||
     !canRequestApproval(state)
   ) {
@@ -1375,8 +1376,12 @@ export async function applyApproved(): Promise<void> {
       [sessionId]: { applied: null, error, recovery },
     } });
     const current = getState();
-    if (current.applyPhase === "starting" || (current.activeSessionId === sessionId && current.draft === draft && current.head === state.head)) {
-      setState(applyPresentation(current.activeSessionId));
+    if (current.activeSessionId === sessionId && current.draft === draft && current.head === state.head) {
+      setState(applyPresentation(sessionId));
+    } else if (current.applyPhase === "starting") {
+      setState(current.activeSessionId !== sessionId
+        ? applyPresentation(current.activeSessionId)
+        : { applyPhase: "idle" });
     }
     return;
   }
@@ -1393,7 +1398,12 @@ export async function applyApproved(): Promise<void> {
     [sessionId]: { applied, error: null, recovery: null },
   } });
   setState({
-    ...((ownsPresentation || current.applyPhase === "starting") ? applyPresentation(current.activeSessionId) : {}),
+    ...(ownsPresentation ? applyPresentation(sessionId)
+      : current.applyPhase === "starting"
+        ? current.activeSessionId !== sessionId
+          ? applyPresentation(current.activeSessionId)
+          : { applyPhase: "idle" as const }
+        : {}),
     ...(ownsQueue ? { draft: EMPTY_DRAFT, redoStack: [], approvalPhase: "idle" as const, approval: null } : {}),
     ...(ownsPresentation ? {
       candidateVerdict: { runId: applied.runId, report: applied.checks },

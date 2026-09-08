@@ -100,3 +100,11 @@ test("a just-applied candidate is scoped by its session before the list refreshe
   current.applied.sessionId = "session-B";
   assert.equal(summary.activeReviewVerificationState(current), "not_run");
 });
+
+
+test("approval cannot authorize the old base during a head switch before rebase finishes", () => {
+  assert.equal(summary.activeReviewApprovalState(state({head: "new-head"})), null);
+  const rebased = state({head: "new-head"});
+  rebased.draft.plan.base = {runId: "new-head"};
+  assert.equal(summary.activeReviewApprovalState(rebased), "pending");
+});

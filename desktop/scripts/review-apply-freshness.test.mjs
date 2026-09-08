@@ -285,6 +285,8 @@ test("apply completion preserves a head chosen while the runtime was working", a
   await pending;
   assert.equal(f.read().head, "new-head");
   assert.equal(f.read().draft.plan.planId, "plan-old");
+  assert.equal(f.read().applied ?? null, null);
+  assert.equal(f.read().applyPhase, "idle");
   assert.equal(f.read().applyOutcomes["session-A"].applied.runId, "run-old");
 });
 

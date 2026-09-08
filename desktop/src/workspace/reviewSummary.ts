@@ -19,6 +19,7 @@ export function activeApprovalBinding(state: WorkspaceState): ActiveApprovalBind
     state.draft.sessionId !== sessionId ||
     !plan ||
     plan.sessionId !== sessionId ||
+    (plan.base?.runId ?? null) !== (state.head ?? null) ||
     !approval ||
     approval.planId !== plan.planId ||
     approval.planHash !== plan.planHash ||
