@@ -95,7 +95,10 @@ if ($LASTEXITCODE -ne 0) { exit 3 }
 # with runpy when the Runtime spawns them as children.
 Remove-Item -Recurse -Force $Work, $Dist -ErrorAction SilentlyContinue
 
-$runtimeScripts = Join-Path $RepoRoot 'runtime\scripts'
+$Payload = Join-Path $Work 'payload'
+& $VenvPy (Join-Path $SidecarDir 'stage_payload.py') $RepoRoot $Payload
+if ($LASTEXITCODE -ne 0) { exit 3 }
+$runtimeScripts = Join-Path $Payload 'runtime\scripts'
 $hidden = @()
 Get-ChildItem -Path $runtimeScripts -Filter '*.py' | ForEach-Object {
     $hidden += '--hidden-import'
@@ -160,13 +163,13 @@ Write-Host ("hidden imports: {0} runtime modules + {1} engine dependencies" -f `
 # role check below proves a real face resolves through it rather than trusting
 # the file copy.
 $addData = @(
-    "$RepoRoot\engine\scripts;repo\engine\scripts",
-    "$RepoRoot\pipeline\scripts;repo\pipeline\scripts",
-    "$RepoRoot\runtime\scripts;repo\runtime\scripts",
-    "$RepoRoot\agenthost\scripts;repo\agenthost\scripts",
-    "$RepoRoot\modules;repo\modules",
-    "$RepoRoot\pyproject.toml;repo",
-    "$RepoRoot\engine\references\fonts\family-map;repo\engine\references\fonts\family-map"
+    "$Payload\engine\scripts;repo\engine\scripts",
+    "$Payload\pipeline\scripts;repo\pipeline\scripts",
+    "$Payload\runtime\scripts;repo\runtime\scripts",
+    "$Payload\agenthost\scripts;repo\agenthost\scripts",
+    "$Payload\modules;repo\modules",
+    "$Payload\pyproject.toml;repo",
+    "$Payload\engine\references\fonts\family-map;repo\engine\references\fonts\family-map"
 )
 $dataArgs = @()
 foreach ($entry in $addData) { $dataArgs += '--add-data'; $dataArgs += $entry }

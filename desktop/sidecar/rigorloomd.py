@@ -43,6 +43,9 @@ import runpy
 import sys
 from pathlib import Path
 
+# Packaged scripts must not mutate their installed data tree on import.
+sys.dont_write_bytecode = True
+
 
 def _frozen_root() -> Path | None:
     """The one-dir bundle's own directory, or None when running from source."""
