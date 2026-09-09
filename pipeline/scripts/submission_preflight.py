@@ -523,6 +523,162 @@ def _json_structure_sha256(payload, parents=()) -> str | None:
     return None
 
 
+NATIVE_RESERIALIZING_BACKENDS = frozenset({"native_hancom_windows"})
+
+
+def _native_reserializing_backend(ws: Path) -> str | None:
+    """Return the receipt's execution backend when it is a native renderer that
+    re-serializes the whole document on save (Hancom COM), else None.
+
+    Measured 2026-09-09 on a pristine form copy: a plain Hancom open + save-as
+    with no edit changed the form-structure digest (charPr/paraPr records are
+    re-emitted with different attributes). The exact-digest rule therefore
+    cannot hold for any artifact that passed through the native route, so
+    that route is judged by anchor preservation instead (see
+    ``_form_anchor_findings``); the digest pair is still reported as WARN.
+    """
+    receipt_path = ws / document_evidence.RECEIPT_REL
+    if not receipt_path.is_file():
+        return None
+    try:
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    execution = payload.get("execution") if isinstance(payload, dict) else None
+    if not isinstance(execution, dict) or execution.get("state") != "succeeded":
+        return None
+    backend = execution.get("backend")
+    if backend in NATIVE_RESERIALIZING_BACKENDS \
+            and payload.get("evidence_class") == "native_render":
+        return str(backend)
+    return None
+
+
+def _form_anchor_findings(ws: Path, artifact: Path) -> list[dict]:
+    """HARD when a form-owned anchor is gone or out of order in the artifact.
+
+    Anchors come from ``form_profile.json`` (``anchors``). Guide texts the build
+    deletes (``build.yaml`` ``delete_texts``) and bracket placeholders the
+    title replaces are excluded; every remaining anchor must appear in the
+    assembled text in the form's order.
+    """
+    profile_path = ws / "form_profile.json"
+    if not profile_path.is_file():
+        return [{"code": "form_anchors_unverifiable",
+                 "msg": "native route: form_profile.json is missing, anchors cannot be checked",
+                 "at": "form_profile.json"}]
+    try:
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return [{"code": "form_anchors_unverifiable",
+                 "msg": f"native route: form_profile.json unreadable: {exc}",
+                 "at": "form_profile.json"}]
+    anchors = [str(a) for a in (profile.get("anchors") or []) if str(a).strip()]
+    deleted = set()
+    build_path = ws / "build.yaml"
+    if build_path.is_file():
+        try:
+            build_text = build_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            build_text = ""
+        block = re.search(r"(?ms)^delete_texts:\s*\n((?:\s+-\s+.*\n?)+)", build_text)
+        if block:
+            for line in block.group(1).splitlines():
+                m = re.match(r'\s+-\s+"?(.+?)"?\s*$', line)
+                if m:
+                    deleted.add(_normalized(m.group(1)))
+    expected = [a for a in anchors
+                if _normalized(a) not in deleted
+                and not (a.strip().startswith("[") and a.strip().endswith("]"))]
+    try:
+        haystack = _normalized(_hwpx_text(artifact))
+    except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
+        return [{"code": "form_anchors_unverifiable",
+                 "msg": f"native route: assembled HWPX text could not be read: {exc}",
+                 "at": artifact.relative_to(ws).as_posix()}]
+    findings = []
+    cursor = 0
+    for anchor in expected:
+        needle = _normalized(anchor)
+        at = haystack.find(needle, cursor)
+        if at < 0:
+            findings.append({"code": "form_anchor_missing",
+                             "msg": "native route: form anchor is absent or out of order in the assembled HWPX",
+                             "at": artifact.relative_to(ws).as_posix(),
+                             "anchor": anchor})
+        else:
+            cursor = at + len(needle)
+    return findings
+
+
+HEADER_PART = "Contents/header.xml"
+
+
+def _pristine_form(ws: Path, baseline_sha256: str) -> Path | None:
+    """The untouched form whose structure digest equals the recorded baseline.
+
+    Stage 5 keeps ``output/form_copy.hwpx`` untouched; ``form_baseline.json``
+    may also name the inspected file. Either is accepted only when its digest
+    IS the baseline, so a stale or substituted copy cannot vouch for itself.
+    """
+    candidates = [ws / "output" / "form_copy.hwpx"]
+    baseline_path = ws / "form_baseline.json"
+    if baseline_path.is_file():
+        try:
+            named = json.loads(baseline_path.read_text(encoding="utf-8")).get("file")
+        except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+            named = None
+        if isinstance(named, str) and named:
+            candidates.append(Path(named))
+    for candidate in candidates:
+        try:
+            if candidate.is_file() and _hwpx_form_structure_sha256(candidate) == baseline_sha256:
+                return candidate
+        except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
+            continue
+    return None
+
+
+def _section_skeleton_findings(pristine: Path, artifact: Path) -> list[dict]:
+    """Form-owned section skeletons must survive verbatim and in order.
+
+    Measured 2026-09-09: a Hancom open + save-as leaves every ``secPr`` /
+    ``ctrl`` / ``tbl`` / ``tc`` record of the section parts byte-identical in
+    order (59/59) while re-emitting header ``charPr``/``paraPr`` records, so
+    the section skeleton is the part of the digest a native round-trip can
+    still be held to. Report insertions (its own table, figures, links) are
+    allowed; a deleted or altered form record is ``form_mutated``.
+    """
+    def by_part(records):
+        parts: dict[str, list[str]] = {}
+        for record in records:
+            if record["part"] == HEADER_PART:
+                continue
+            parts.setdefault(record["part"], []).append(
+                json.dumps(record["element"], sort_keys=True, ensure_ascii=False))
+        return parts
+    form_parts = by_part(_hwpx_form_structure_records(pristine))
+    art_parts = by_part(_hwpx_form_structure_records(artifact))
+    findings = []
+    for part, expected in form_parts.items():
+        actual = art_parts.get(part, [])
+        index = 0
+        for element in actual:
+            if index < len(expected) and element == expected[index]:
+                index += 1
+        if index < len(expected):
+            findings.append({
+                "code": "form_mutated",
+                "msg": ("native route: a form-owned section skeleton record is missing, "
+                        "altered or out of order in the assembled HWPX"),
+                "at": part,
+                "preserved_in_order": index,
+                "form_records": len(expected),
+                "kind": _local_name(json.loads(expected[index])["tag"]),
+            })
+    return findings
+
+
 def _form_baseline_sha256(ws: Path) -> tuple[str | None, str | None]:
     baseline_path = ws / "form_baseline.json"
     if baseline_path.is_file():
@@ -767,13 +923,35 @@ def check(
                 })
             else:
                 if form_structure_sha256 != baseline_sha256:
-                    hard.append({
-                        "code": "form_mutated",
-                        "msg": "assembled HWPX form-owned structure differs from baseline",
-                        "at": form_structure_artifact,
-                        "expected": baseline_sha256,
-                        "actual": form_structure_sha256,
-                    })
+                    native_backend = _native_reserializing_backend(ws)
+                    pristine = (_pristine_form(ws, baseline_sha256)
+                                if native_backend else None)
+                    if native_backend is None or pristine is None:
+                        hard.append({
+                            "code": "form_mutated",
+                            "msg": "assembled HWPX form-owned structure differs from baseline",
+                            "at": form_structure_artifact,
+                            "expected": baseline_sha256,
+                            "actual": form_structure_sha256,
+                        })
+                    else:
+                        section_findings = _section_skeleton_findings(pristine, structure_target)
+                        if section_findings:
+                            hard.extend(section_findings)
+                        else:
+                            warn.append({
+                                "code": "form_structure_reserialized",
+                                "msg": (f"native renderer {native_backend} re-serializes header "
+                                        "style records on save, so the exact digest cannot match; "
+                                        "every form-owned section skeleton record is preserved in "
+                                        "order and the form anchors are checked instead"),
+                                "at": form_structure_artifact,
+                                "expected": baseline_sha256,
+                                "actual": form_structure_sha256,
+                                "pristine_form": str(pristine.relative_to(ws).as_posix()
+                                                     if _within(ws, pristine) else pristine),
+                            })
+                            hard.extend(_form_anchor_findings(ws, structure_target))
 
     grade, grade_source = _proof_grade(ws)
     # Shared-miss #5: the external proof-loop writer can emit converged:true
