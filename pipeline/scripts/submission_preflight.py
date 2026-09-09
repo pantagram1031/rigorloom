@@ -525,6 +525,41 @@ def _json_structure_sha256(payload, parents=()) -> str | None:
 
 NATIVE_RESERIALIZING_BACKENDS = frozenset({"native_hancom_windows"})
 
+HANCOM_EQUATION_SIBLINGS = frozenset({"sz", "pos", "outMargin", "shapeComment"})
+
+
+def _hancom_shaped_equations(artifact: Path) -> bool:
+    """True when every ``hp:equation`` in the artifact is the shape Hancom
+    writes on save (measured 2026-09-09): exactly one non-empty ``hp:script``
+    plus any of ``sz``/``pos``/``outMargin``/``shapeComment``, and no
+    ``hp:script`` outside an ``hp:equation``. Anything else is not the
+    native shape and stays a closed P3."""
+    seen = 0
+    with zipfile.ZipFile(artifact) as z:
+        for name in z.namelist():
+            if not (name.startswith("Contents/section") and name.endswith(".xml")):
+                continue
+            root = ElementTree.fromstring(z.read(name))
+            parents = {c: el for el in root.iter() for c in el}
+            for el in root.iter():
+                tag = el.tag.rsplit("}", 1)[-1]
+                if tag == "script":
+                    parent = parents.get(el)
+                    if parent is None or parent.tag.rsplit("}", 1)[-1] != "equation":
+                        return False
+                    continue
+                if tag != "equation":
+                    continue
+                seen += 1
+                scripts = [c for c in el if c.tag.rsplit("}", 1)[-1] == "script"]
+                others = {c.tag.rsplit("}", 1)[-1] for c in el} - {"script"}
+                if len(scripts) != 1 or not (scripts[0].text or "").strip():
+                    return False
+                if not others <= HANCOM_EQUATION_SIBLINGS:
+                    return False
+    return seen > 0
+
+
 
 def _native_reserializing_backend(ws: Path) -> str | None:
     """Return the receipt's execution backend when it is a native renderer that
@@ -874,12 +909,48 @@ def check(
         else:
             try:
                 extracted_text = _hwpx_text(artifact) if suffix == ".hwpx" else _pdf_text(artifact)
-                if suffix == ".hwpx":
-                    document_has_equations = render_probe.hwpx_has_equations(artifact)
-            except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError,
-                    hwp_equation_diagnostic.CoverageError) as exc:
+            except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
                 hard.append({"code": "P3", "msg": f"artifact reopen failed: {exc}",
                              "at": artifact_rel})
+            else:
+                if suffix == ".hwpx":
+                    try:
+                        document_has_equations = render_probe.hwpx_has_equations(artifact)
+                    except (OSError, ValueError, zipfile.BadZipFile,
+                            ElementTree.ParseError) as exc:
+                        hard.append({"code": "P3", "msg": f"artifact reopen failed: {exc}",
+                                     "at": artifact_rel})
+                    except hwp_equation_diagnostic.CoverageError as exc:
+                        # The bounded equation diagnostic accepts only the XML
+                        # engine's minimal ``hp:equation`` (one ``hp:script``
+                        # child). Hancom writes ``sz``/``pos``/``outMargin``/
+                        # ``shapeComment`` siblings on every equation it saves
+                        # (measured 2026-09-09). Only that exact shape, and only
+                        # on an artifact a succeeded native backend produced, is
+                        # a WARN; the document is then treated as equation-bearing
+                        # (fail closed on the one decision this flag feeds).
+                        # Every other refusal (orphan script, broken
+                        # container, empty input) stays a closed P3.
+                        native_shape = False
+                        if (str(exc) == "equation_script_invalid"
+                                and _native_reserializing_backend(ws)):
+                            try:
+                                native_shape = _hancom_shaped_equations(artifact)
+                            except (OSError, zipfile.BadZipFile, ElementTree.ParseError):
+                                native_shape = False
+                        if native_shape:
+                            document_has_equations = True
+                            warn.append({
+                                "code": "equation_diagnostic_strict_shape",
+                                "msg": ("bounded equation diagnostic refused the Hancom "
+                                        f"hp:equation shape ({exc}); every equation has one "
+                                        "script plus native sz/pos/outMargin/shapeComment "
+                                        "siblings; treated as equation-bearing"),
+                                "at": artifact_rel,
+                            })
+                        else:
+                            hard.append({"code": "P3", "msg": f"artifact reopen failed: {exc}",
+                                         "at": artifact_rel})
 
     baseline_sha256, baseline_source = _form_baseline_sha256(ws)
     form_structure_sha256 = None

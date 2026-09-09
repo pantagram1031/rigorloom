@@ -1017,7 +1017,11 @@ def _validate_hwpx(path: Path) -> dict[str, Any]:
                 if (qname(node) != (_OPF_NS, "item") or len(node)
                         or (node.text and node.text.strip()) or (node.tail and node.tail.strip())):
                     raise IngressError("hwpx_manifest_invalid")
-                allowed_attrs = {"id", "href", "media-type", "isEmbeded"}
+                # Hancom writes ``hashkey`` (a base64 digest) on every embedded
+                # binary item of its own HWPX output; measured on a COM
+                # save-as of an assembled report (2026-09-09). It is metadata,
+                # not a resource reference, and is accepted as such.
+                allowed_attrs = {"id", "href", "media-type", "isEmbeded", "hashkey"}
                 if set(node.attrib) - allowed_attrs:
                     raise IngressError("hwpx_manifest_invalid")
                 item_id = node.attrib.get("id", "")
