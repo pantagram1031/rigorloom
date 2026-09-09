@@ -1,9 +1,26 @@
+[build-system]
+# Declared so `pip wheel` / `pip install .` have a backend at all. Pinned to a
+# floor, never an upper bound: the wheel is pure Python and must build with
+# whatever setuptools the operator already has, offline, under
+# --no-build-isolation. setuptools < 70.1 additionally needs the separate
+# `wheel` distribution for bdist_wheel; that is an environment fact, recorded
+# in tests/test_cli_distribution.py rather than papered over by a download.
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "rigorloom"
 version = "0.17.0"
 description = "Agent-neutral, resumable report workflow"
 requires-python = ">=3.10"
 license = {text = "MIT"}
+
+[project.scripts]
+# ONE implementation. This resolves to the same ``main`` that
+# ``python runtime/scripts/cli.py`` runs -- the wheel repackages that file, it
+# does not fork it. tests/test_cli_distribution.py compares the installed
+# cli.py with the checkout's byte for byte, so a divergent copy fails there.
+rigorloom = "rigorloom_runtime.cli:main"
 
 [project.optional-dependencies]
 docx = ["python-docx>=1.1"]
@@ -45,3 +62,28 @@ addopts = "-ra"
 markers = [
     "research: own_render research pins; skipped on GITHUB_ACTIONS (rematch freeze)",
 ]
+
+# --- wheel surface ------------------------------------------------------------
+# An ALLOWLIST, not a sweep. This repository is a flat layout with twelve
+# importable top-level directories (qa, evals, skill, engine, studio, archive,
+# desktop, modules, runtime, adapters, pipeline, agenthost). Automatic discovery
+# refuses to guess among them -- "Multiple top-level packages discovered in a
+# flat-layout" -- and any fix that merely silences that refusal would ship
+# unreleased desktop work, the QA corpus, and other people's evidence.
+#
+# So the wheel carries exactly one package: the Runtime layer, installed under a
+# namespaced name because ``runtime`` is far too generic to own in site-packages.
+# Everything else stays a checkout concern and is reported unavailable at
+# runtime with a reason (see EngineTools.availability), never silently claimed.
+#
+# This does NOT replace the module/skill ZIP distribution
+# (scripts/package_module.py, scripts/sync_local.py, evals/cleanroom.py). That
+# path ships module payloads and skill fragments; this one ships a command.
+[tool.setuptools]
+packages = ["rigorloom_runtime"]
+# Explicitly false: the package list is the whole allowlist, and data sweeping
+# would quietly widen it again.
+include-package-data = false
+
+[tool.setuptools.package-dir]
+rigorloom_runtime = "runtime/scripts"

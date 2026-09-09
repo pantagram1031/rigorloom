@@ -52,6 +52,35 @@ The pipeline drives entirely through CLIs. Stage playbooks under
 [docs/golden-path.md](docs/golden-path.md) for the full
 clone-to-graded-artifact walkthrough.
 
+### Installing the `rigorloom` command (optional)
+
+The clone above is the whole pipeline and needs no install. If you want the
+Runtime CLI as an installed command instead, build and install the wheel from
+a checkout:
+
+```sh
+python -m pip wheel --no-deps --wheel-dir dist .
+python -m pip install --no-deps dist/rigorloom-0.17.0-py3-none-any.whl
+
+rigorloom --root ./rigorloom-root capabilities
+```
+
+Add `--no-build-isolation --no-index` to both commands to build and install
+offline; under `--no-build-isolation`, setuptools older than 70.1 also needs
+the separate `wheel` package for `bdist_wheel`.
+
+There is no published package index for this project — the wheel is built from
+a checkout, not downloaded. It carries the Runtime layer only: no `engine/`,
+`pipeline/`, or `modules/`. A wheel-only install therefore reports the engine
+tools, the module checkers, and the optional render backends as unavailable,
+each with a reason, in `rigorloom ... capabilities`. Point `--engine-root` at a
+checkout, or use the checkout directly, for the full pipeline.
+
+This is a different distribution from the module and skill ZIP bundles that
+`scripts/package_module.py` builds and `scripts/sync_local.py` installs. Those
+ship module payloads and skill fragments; the wheel ships one command. Neither
+replaces the other.
+
 ### Windows + Hancom (optional)
 
 The full `.hwp` assembly path additionally requires Windows, a licensed
