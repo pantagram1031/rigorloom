@@ -945,6 +945,38 @@ def stage_gate_blocks(hdr: dict, stage: str, mode: str, graph_ctx: dict | None =
     return False, None
 
 
+def own_gate_blocks_done(hdr: dict, stage: str, graph_ctx: dict | None = None):
+    """Refuse `done` when THIS stage's own header gate is dirty.
+
+    Predecessor checks cannot catch a last-stage dirty gate (build stage 6).
+    Narrow rule:
+    - explicit `gate: null` / missing gate → never blocks (legacy v0.5)
+    - `rejected` → blocks for any gate type
+    - graph type `script` and state not in GREEN_GATE_STATES → blocks
+      (`run: check`; covers pending never-checked)
+    - pending human gates do not block here (autonomous/night record
+      auto_approved via `gate`; supervised predecessor blocking is separate)
+    """
+    graph_ctx = graph_ctx or graph_context_for_header(hdr)
+    st = (hdr.get("stages") or {}).get(stage)
+    if not st:
+        return False, None
+    gate = st.get("gate")
+    if not gate:
+        return False, None
+    gname = gate.get("name")
+    gstate = gate.get("state")
+    if gstate == "rejected":
+        return True, f"stage {stage} gate '{gname}' is rejected"
+    if gstate in GREEN_GATE_STATES:
+        return False, None
+    gtype = _gate_type_for(stage, gname, graph_ctx)
+    if gtype == "script":
+        return True, (f"stage {stage} script gate '{gname}' is {gstate} "
+                      f"(blocks done — run: check)")
+    return False, None
+
+
 # ── subcommands ─────────────────────────────────────────────────────
 
 def cmd_resume(args) -> None:
@@ -1354,7 +1386,10 @@ LEGAL_TRANSITIONS = {
     # §2 in_progress stop) as a pragmatic fast-forward allowance: skipping
     # the explicit in_progress step is not itself a gate bypass since
     # GATE_CHECKED_STATUSES still validates both against predecessor gates
-    # below (and awaiting_gate's own gate resolution is handled by resume).
+    # below. awaiting_gate's own gate resolution is handled by resume;
+    # advancing to `done` additionally refuses a rejected own gate or an
+    # unresolved own script gate. Explicit header `gate: null` stays
+    # legacy-tolerant.
     "pending": {"in_progress", "awaiting_gate", "done", "blocked"},
     "in_progress": {"awaiting_gate", "done", "blocked"},
     "awaiting_gate": {"in_progress", "done", "blocked"},
@@ -1413,6 +1448,12 @@ def cmd_advance(args) -> None:
             fail(f"refuse to move stage {stage} to {status}: {block_reason}",
                  stage=stage)
             return
+        if status == "done":
+            blocked, block_reason = own_gate_blocks_done(hdr, stage, graph_ctx)
+            if blocked:
+                fail(f"refuse to move stage {stage} to {status}: {block_reason}",
+                     stage=stage)
+                return
 
     stages[stage]["status"] = status
     hdr["updated"] = now_iso()

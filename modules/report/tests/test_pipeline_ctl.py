@@ -67,6 +67,29 @@ class PipelineCtlTestCase(unittest.TestCase):
             self.assertEqual(gate_code, 0, gate_payload)
         return payload
 
+    def _edit_header(self, fn) -> None:
+        text, start, end, hdr = ctl.load_header(self.ws)
+        fn(hdr)
+        ctl.save_header(self.ws, text, start, end, hdr)
+
+    def _mark_other_stages_done_green(self, keep_pending: str) -> None:
+        """Leave `keep_pending` as-is; mark every other header stage done
+        with a green gate so predecessor blocking does not fire."""
+        def fn(hdr):
+            for sid, st in hdr["stages"].items():
+                if sid == keep_pending:
+                    continue
+                st["status"] = "done"
+                gate = st.get("gate")
+                if gate:
+                    gate.update(
+                        state="auto_approved", by="script",
+                        at="2026-09-01T00:00:00")
+        self._edit_header(fn)
+
+    def _stage_row(self, stage: str) -> dict:
+        return ctl.load_header(self.ws)[3]["stages"][stage]
+
 
 class TestInitAndResume(PipelineCtlTestCase):
     def test_init_then_resume_returns_stage_0(self):
@@ -253,8 +276,16 @@ class TestGate(PipelineCtlTestCase):
 class TestInvalidate(PipelineCtlTestCase):
     def test_invalidate_resets_downstream(self):
         self.init_ws(mode="autonomous")
-        for s in ["0", "1", "2", "3", "4"]:
+        for s in ["0", "1", "2", "4"]:
             run("advance", str(self.ws), s, "--status", "done")
+        # Stage 3's `sane` script gate must be green before `done`; do not
+        # use advance to skip an unresolved own script gate.
+        def mark_sane_done(hdr):
+            st = hdr["stages"]["3"]
+            st["status"] = "done"
+            st["gate"].update(
+                state="auto_approved", by="script", at="2026-09-01T00:00:00")
+        self._edit_header(mark_sane_done)
         run("gate", str(self.ws), "design", "--mode", "autonomous")
         run("gate", str(self.ws), "draft", "--mode", "autonomous")
 
@@ -815,8 +846,14 @@ class TestStage25Ordering(PipelineCtlTestCase):
     def test_invalidate_from_3_resets_2_5_predecessor_untouched(self):
         # invalidating from stage 3 must not reset stage 2.5 (it precedes 3).
         self.init_ws(mode="autonomous")
-        for s in ["0", "1", "2", "2.5"]:
+        for s in ["0", "1", "2"]:
             run("advance", str(self.ws), s, "--status", "done")
+        def mark_layout_done(hdr):
+            st = hdr["stages"]["2.5"]
+            st["status"] = "done"
+            st["gate"].update(
+                state="auto_approved", by="script", at="2026-09-01T00:00:00")
+        self._edit_header(mark_layout_done)
         payload, code = run("invalidate", str(self.ws), "--from", "3")
         self.assertEqual(code, 0, payload)
         self.assertNotIn("2.5", payload["reset_stages"])
@@ -1068,9 +1105,8 @@ class TestScriptGateBlocksAllModes(PipelineCtlTestCase):
         run("advance", str(self.ws), "1", "--status", "done")
         run("advance", str(self.ws), "2", "--status", "done")
         run("gate", str(self.ws), "design", "--mode", "night")  # human gate → auto
-        run("advance", str(self.ws), "2.5", "--status", "done")
-        # stage 2.5's 'layout' script gate is still pending (check never run);
-        # advancing stage 3 in night must be refused.
+        # Leave 2.5 non-done: its pending `layout` gate still blocks stage 3.
+        # Advancing 2.5 itself to done is the own-gate rule (CLI-GATE-01).
         payload, code = run("advance", str(self.ws), "3", "--status", "in_progress")
         self.assertEqual(code, 1)
         self.assertFalse(payload["ok"])
@@ -1082,11 +1118,141 @@ class TestScriptGateBlocksAllModes(PipelineCtlTestCase):
         run("advance", str(self.ws), "1", "--status", "done")
         run("advance", str(self.ws), "2", "--status", "done")
         run("gate", str(self.ws), "design", "--mode", "autonomous")
-        run("advance", str(self.ws), "2.5", "--status", "done")
         payload, code = run("advance", str(self.ws), "3", "--status", "done")
         self.assertEqual(code, 1)
         self.assertFalse(payload["ok"])
         self.assertIn("gate", payload["error"].lower())
+
+
+class TestOwnGateBlocksDone(PipelineCtlTestCase):
+    """CLI-GATE-01: `advance --status done` must inspect THIS stage's own
+    header gate. Predecessor-only checks let a pending/rejected
+    `submission_preflight` mark stage 6 done; resume then reports all done.
+
+    Narrow rule: refuse `done` for a rejected own gate (any type) or an
+    unresolved own script gate. Explicit `gate: null` stays legacy-tolerant.
+    Pending human gates in autonomous/night still advance to done.
+    """
+
+    def _green_own_gate(self, stage: str) -> None:
+        def fn(hdr):
+            hdr["stages"][stage]["gate"].update(
+                state="auto_approved", by="script", at="2026-09-01T00:00:00")
+        self._edit_header(fn)
+
+    def test_build_advance_stage6_done_refused_when_preflight_pending(self):
+        self.init_ws(mode="autonomous")
+        self._mark_other_stages_done_green("6")
+        payload, code = run("advance", str(self.ws), "6", "--status", "done")
+        self.assertEqual(code, 1, payload)
+        self.assertFalse(payload["ok"])
+        self.assertIn("submission_preflight", payload["error"])
+        self.assertIn("pending", payload["error"].lower())
+        self.assertEqual(self._stage_row("6")["status"], "pending")
+        resumed, rcode = run("resume", str(self.ws))
+        self.assertEqual(rcode, 0, resumed)
+        self.assertEqual(resumed["next_stage"], "6")
+        self.assertNotEqual(resumed.get("reason"), "all stages done")
+
+    def test_build_advance_stage6_done_refused_when_preflight_rejected(self):
+        self.init_ws(mode="autonomous")
+        self._mark_other_stages_done_green("6")
+        checked, ccode = run("check", str(self.ws), "submission_preflight")
+        self.assertEqual(ccode, 0, checked)
+        self.assertTrue(checked["ok"])
+        self.assertEqual(checked["state"], "rejected")
+        payload, code = run("advance", str(self.ws), "6", "--status", "done")
+        self.assertEqual(code, 1, payload)
+        self.assertFalse(payload["ok"])
+        self.assertIn("rejected", payload["error"].lower())
+        self.assertEqual(self._stage_row("6")["status"], "pending")
+        resumed, rcode = run("resume", str(self.ws))
+        self.assertEqual(rcode, 0, resumed)
+        self.assertEqual(resumed["next_stage"], "6")
+        self.assertNotEqual(resumed.get("reason"), "all stages done")
+
+    def test_build_advance_stage6_done_allowed_when_preflight_green(self):
+        self.init_ws(mode="autonomous")
+        self._mark_other_stages_done_green("6")
+        self._green_own_gate("6")
+        payload, code = run("advance", str(self.ws), "6", "--status", "done")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(self._stage_row("6")["status"], "done")
+        resumed, rcode = run("resume", str(self.ws))
+        self.assertEqual(rcode, 0, resumed)
+        self.assertIsNone(resumed["next_stage"])
+        self.assertEqual(resumed["reason"], "all stages done")
+        self.assertFalse(resumed["blocked"])
+
+    def test_edit_advance_4_5_done_refused_when_preflight_pending(self):
+        self.init_ws(mode="autonomous", graph="edit")
+        self._mark_other_stages_done_green("4.5")
+        payload, code = run("advance", str(self.ws), "4.5", "--status", "done")
+        self.assertEqual(code, 1, payload)
+        self.assertFalse(payload["ok"])
+        self.assertIn("submission_preflight", payload["error"])
+        self.assertEqual(self._stage_row("4.5")["status"], "pending")
+
+    def test_edit_advance_4_5_done_refused_when_preflight_rejected(self):
+        self.init_ws(mode="autonomous", graph="edit")
+        self._mark_other_stages_done_green("4.5")
+        checked, ccode = run("check", str(self.ws), "submission_preflight")
+        self.assertEqual(ccode, 0, checked)
+        self.assertEqual(checked["state"], "rejected")
+        payload, code = run("advance", str(self.ws), "4.5", "--status", "done")
+        self.assertEqual(code, 1, payload)
+        self.assertIn("rejected", payload["error"].lower())
+        self.assertEqual(self._stage_row("4.5")["status"], "pending")
+
+    def test_edit_advance_4_5_done_allowed_when_preflight_green(self):
+        self.init_ws(mode="autonomous", graph="edit")
+        self._mark_other_stages_done_green("4.5")
+        self._green_own_gate("4.5")
+        payload, code = run("advance", str(self.ws), "4.5", "--status", "done")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(self._stage_row("4.5")["status"], "done")
+
+    def test_pending_human_own_gate_still_allows_done_in_autonomous(self):
+        self.init_ws(mode="autonomous")
+        run("advance", str(self.ws), "0", "--status", "done")
+        run("advance", str(self.ws), "1", "--status", "done")
+        payload, code = run("advance", str(self.ws), "2", "--status", "done")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(self._stage_row("2")["status"], "done")
+        self.assertEqual(self._stage_row("2")["gate"]["state"], "pending")
+
+    def test_rejected_human_own_gate_refuses_done(self):
+        self.init_ws(mode="autonomous")
+        run("advance", str(self.ws), "0", "--status", "done")
+        run("advance", str(self.ws), "1", "--status", "done")
+
+        def reject(hdr):
+            hdr["stages"]["2"]["gate"].update(
+                state="rejected", by="supervised", at="2026-09-01T00:00:00")
+        self._edit_header(reject)
+        payload, code = run("advance", str(self.ws), "2", "--status", "done")
+        self.assertEqual(code, 1, payload)
+        self.assertIn("rejected", payload["error"].lower())
+        self.assertEqual(self._stage_row("2")["status"], "pending")
+
+    def test_pending_script_own_gate_still_allows_awaiting_gate(self):
+        self.init_ws(mode="autonomous")
+        self._mark_other_stages_done_green("6")
+        payload, code = run(
+            "advance", str(self.ws), "6", "--status", "awaiting_gate")
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(self._stage_row("6")["status"], "awaiting_gate")
+
+    def test_midgraph_layout_pending_refuses_own_done(self):
+        self.init_ws(mode="night")
+        run("advance", str(self.ws), "0", "--status", "done")
+        run("advance", str(self.ws), "1", "--status", "done")
+        run("advance", str(self.ws), "2", "--status", "done")
+        run("gate", str(self.ws), "design", "--mode", "night")
+        payload, code = run("advance", str(self.ws), "2.5", "--status", "done")
+        self.assertEqual(code, 1, payload)
+        self.assertIn("layout", payload["error"])
+        self.assertEqual(self._stage_row("2.5")["status"], "pending")
 
 
 class TestImportHasNoSideEffects(unittest.TestCase):
