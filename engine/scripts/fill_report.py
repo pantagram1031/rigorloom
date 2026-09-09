@@ -897,10 +897,15 @@ def _renderer_backend(renderer_id=None, engine="xml"):
 def _apply_render_quality(verdict, source_hwpx, rendered_pdf):
     """Attach quality evidence and close the grade on quality/layout gates."""
     quality = render_quality.inspect(source_hwpx, rendered_pdf)
+    # ``checks`` is a dict whose keys are always present and whose values are
+    # the anomaly lists; a clean run is {"line_spacing_uniformity": [], ...},
+    # which is truthy. Test the values, exactly as the loop's own
+    # ``checks_pass`` does — otherwise every clean native run reads as
+    # "layout_hard_failed" and the hancom grade is downgraded to none.
     quality = render_quality.apply_layout_gate(
         quality,
         converged=verdict.get("converged") is True,
-        hard_checks=not bool(verdict.get("checks") or {}),
+        hard_checks=not any((verdict.get("checks") or {}).values()),
         style_clean=not bool(verdict.get("style_anomalies") or []),
         advisory_hold=(
             verdict.get("proof_grade") == "advisory"

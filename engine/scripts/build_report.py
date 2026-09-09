@@ -33,6 +33,9 @@ from eqn import validate_equation_operation  # noqa: E402
 TAG_LINE = re.compile(r"^\[\[(/?[A-Za-z]+)(.*?)\]\]\s*$")
 KNOWN_TAGS = {"EQ", "FIG", "TABLE", "/TABLE", "URL"}
 URL_RE = re.compile(r"^https?://\S+$")
+# bundle_spec v2: a whole-line HTML comment (`<!-- budget: 40 lines -->`) is
+# human-readable annotation the builder must ignore, not body text.
+HTML_COMMENT_LINE = re.compile(r"^\s*<!--.*?-->\s*$")
 BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 
 # 인라인(문단 중간) [[TAG ...]] 스캐너: 태그 본문 안 큰따옴표로 감싼 속성값에
@@ -380,6 +383,11 @@ def parse_content(text):
 
     while i < len(lines):
         line = lines[i]
+        if HTML_COMMENT_LINE.match(line):
+            # bundle_spec v2 §budget 주석: `<!-- budget: 40 lines -->` 같은 한 줄
+            # 주석은 사람 가독용이며 빌더는 무시한다. 문단 경계도 만들지 않는다.
+            i += 1
+            continue
         sec = re.match(r"^##\s*SECTION:\s*(.+?)\s*$", line)
         if sec:
             flush_para()

@@ -701,6 +701,14 @@ def _set_char_height(hwp, pt, color=0, bold=None):
     pset.TextColor = color
     if bold is not None:
         pset.Bold = 1 if bold else 0
+    # 밑줄도 못박는다. 직전 런이 하이퍼링크(밑줄+파랑)였으면 GetDefault가 그
+    # 밑줄을 그대로 물려주어, 링크 뒤의 본문 문단 전체가 밑줄로 새어 들어간다
+    # (2026-09-09 실측: 참고문헌 첫 DOI 링크 뒤 모든 항목이 밑줄). 본문 런은
+    # 밑줄이 없는 것이 계약이므로 크기·색과 함께 명시적으로 0으로 둔다.
+    try:
+        pset.UnderlineType = 0
+    except Exception:
+        pass
     hwp.HAction.Execute("CharShape", pset.HSet)
 
 
