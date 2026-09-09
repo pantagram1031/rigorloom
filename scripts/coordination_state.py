@@ -16,6 +16,7 @@ late result.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import fnmatch
 import hashlib
 import json
@@ -25,7 +26,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,10 @@ class ScopeRefused(CoordinationError):
 
 class InvalidRequest(CoordinationError, ValueError):
     """Malformed caller input."""
+
+
+class CrashInjected(CoordinationError):
+    """Deterministic test fault raised at a transaction boundary."""
 
 
 class _Clock:
@@ -138,6 +143,92 @@ def _as_list(value: Sequence[str] | None) -> list[str]:
     return [str(item) for item in value]
 
 
+def _process_start_identity(pid: int | None = None) -> str | None:
+    """Return a process-start identity, or ``None`` when it is uninspectable.
+
+    PID reuse makes a PID-only lock unsafe.  Linux hosts expose a monotonic
+    start tick in ``/proc/<pid>/stat``.  Windows uses the kernel process
+    creation FILETIME via ``GetProcessTimes``.  Unknown/permission failures
+    deliberately return ``None`` so callers keep the lock busy rather than
+    guessing.
+    """
+    pid = os.getpid() if pid is None else int(pid)
+    if os.name == "nt":
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return None
+        try:
+            # FILETIME is two DWORDs, not one integer.  Keep a tiny compatible
+            # structure to avoid a third-party dependency.
+            class _FileTime(ctypes.Structure):
+                _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_uint32)]
+
+            created = _FileTime()
+            exited = _FileTime()
+            kernel = _FileTime()
+            user = _FileTime()
+            ok = ctypes.windll.kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user))
+            if not ok:
+                return None
+            value = (int(created.high) << 32) | int(created.low)
+            return f"win-filetime:{value}"
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    proc_stat = Path(f"/proc/{pid}/stat")
+    try:
+        raw = proc_stat.read_text(encoding="ascii")
+        # The comm field may contain spaces, so split only after the final
+        # closing parenthesis.  The first field after it is state; starttime
+        # is then field 22, i.e. offset 19 in this suffix.
+        closing = raw.rfind(")")
+        if closing < 0:
+            return None
+        fields = raw[closing + 1 :].split()
+        return f"proc-start:{fields[19]}"
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError, IndexError, ValueError):
+        return None
+
+
+def _lock_owner_alive(payload: Mapping[str, Any]) -> bool | None:
+    """Return True/False/None for exact PID+start identity liveness."""
+    try:
+        pid = int(payload["pid"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    expected = payload.get("process_start")
+    if not isinstance(expected, str) or not expected:
+        return None
+    current = _process_start_identity(pid)
+    if current is None:
+        # On POSIX a missing /proc entry is strong dead evidence.  On Windows
+        # an unavailable handle can be either dead or access denied; use a
+        # zero-time OpenProcess probe to separate the common dead case.
+        if os.name == "nt":
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return None
+            # ``OpenProcess`` failing with these errors is strong evidence
+            # that the PID no longer exists.  Other errors (notably access
+            # denied) remain unknown and must keep the lock busy.
+            error = ctypes.get_last_error() or ctypes.windll.kernel32.GetLastError()
+            if int(error) in {6, 87, 1168}:  # INVALID_HANDLE, INVALID_PARAMETER, NOT_FOUND
+                return False
+        else:
+            try:
+                os.stat(f"/proc/{pid}")
+            except FileNotFoundError:
+                return False
+            except OSError:
+                return None
+        return None
+    return current == expected
+
+
 class _FileLock:
     """A tiny cross-process lock based on atomic create.
 
@@ -153,41 +244,116 @@ class _FileLock:
         self.poll = max(0.001, float(poll))
         self._token: str | None = None
 
+    def _unlink_if_token(self, token: str, *, deadline: float) -> bool:
+        """Remove our lock, tolerating short Windows sharing violations.
+
+        A reader may briefly hold the lock path open while parsing its owner
+        record.  Re-read the token before every unlink attempt so a retry can
+        never delete a newly claimed lock.
+        """
+        delay = self.poll
+        while True:
+            try:
+                current = json.loads(self.path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                return True
+            except (OSError, json.JSONDecodeError):
+                current = None
+            if isinstance(current, Mapping) and current.get("token") != token:
+                return False
+            if current is None:
+                now = time.monotonic()
+                if now >= deadline:
+                    return False
+                time.sleep(min(delay, max(0.0, deadline - now)))
+                delay = min(delay * 2.0, 0.05)
+                continue
+            try:
+                self.path.unlink()
+                return True
+            except FileNotFoundError:
+                return True
+            except OSError:
+                now = time.monotonic()
+                if now >= deadline:
+                    return False
+                time.sleep(min(delay, max(0.0, deadline - now)))
+                delay = min(delay * 2.0, 0.05)
+
     def __enter__(self) -> "_FileLock":
         started = time.monotonic()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         token = _token()
-        payload = {"pid": os.getpid(), "token": token, "created_at": time.time()}
+        process_start = _process_start_identity()
+        if not process_start:
+            # Never publish a PID-only owner record: if start identity is not
+            # inspectable, a later process cannot safely distinguish PID reuse
+            # from the original owner.  Fail closed without creating a lock.
+            raise StateBusy("cannot acquire coordination lock without process-start identity")
+        payload = {"pid": os.getpid(), "process_start": process_start, "token": token, "created_at": time.time()}
         encoded = _json_bytes(payload)
-        while True:
-            try:
-                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        stage_path = self.path.with_name(f".{self.path.name}.{token}.tmp")
+        fd: int | None = None
+        try:
+            # Fully materialize and fsync the owner record before exposing it
+            # at the canonical lock path.  Hard-link creation is atomic and
+            # no-clobber on POSIX and NTFS, unlike replacing an existing path.
+            fd = os.open(str(stage_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            offset = 0
+            while offset < len(encoded):
+                offset += os.write(fd, encoded[offset:])
+            os.fsync(fd)
+            os.close(fd)
+            fd = None
+            while True:
                 try:
-                    os.write(fd, encoded)
-                finally:
+                    os.link(str(stage_path), str(self.path))
+                    self._token = token
+                    return self
+                except FileExistsError:
+                    # Reclaim only a lock whose exact PID + process-start
+                    # identity is proven dead.  Permission/identity failures
+                    # remain busy; an old mtime alone is never a revocation
+                    # signal.
+                    try:
+                        owner = json.loads(self.path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        owner = None
+                    if isinstance(owner, Mapping) and _lock_owner_alive(owner) is False:
+                        try:
+                            current = json.loads(self.path.read_text(encoding="utf-8"))
+                        except (OSError, json.JSONDecodeError):
+                            current = None
+                        if isinstance(current, Mapping) and current.get("token") == owner.get("token"):
+                            if self._unlink_if_token(str(owner.get("token")), deadline=started + self.timeout):
+                                continue
+                    if time.monotonic() - started >= self.timeout:
+                        raise StateBusy(f"coordination lock is busy: {self.path}")
+                    time.sleep(self.poll)
+                except OSError as exc:
+                    # Do not fall back to an unsafe overwrite/create sequence
+                    # on filesystems without atomic no-clobber links.
+                    raise CoordinationError(f"filesystem cannot atomically claim coordination lock: {self.path}") from exc
+        finally:
+            if fd is not None:
+                try:
                     os.close(fd)
-                self._token = token
-                return self
-            except FileExistsError:
-                if time.monotonic() - started >= self.timeout:
-                    raise StateBusy(f"coordination lock is busy: {self.path}")
-                time.sleep(self.poll)
+                except OSError:
+                    pass
+            try:
+                stage_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         token = self._token
         self._token = None
         if token is None:
             return
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return
-        if payload.get("token") != token:
-            return
-        try:
-            self.path.unlink()
-        except FileNotFoundError:
-            pass
+        # A brief reader sharing violation is normal on Windows.  Unlocking
+        # is best-effort after bounded retries; a later contender can reclaim
+        # the exact dead PID+start identity if this process exits meanwhile.
+        self._unlink_if_token(token, deadline=time.monotonic() + max(self.timeout, 0.5))
 
 
 class CoordinationState:
@@ -227,6 +393,8 @@ class CoordinationState:
         except OSError as exc:
             raise StateRootError(f"cannot create state root: {self.root}") from exc
         self._lock_path = self.root / ".coordination.lock"
+        self._transactions = self.root / ".transactions"
+        self._txn_hook: Callable[[str, int, str], None] | None = None
 
     # -- low-level persistence -------------------------------------------------
 
@@ -252,7 +420,10 @@ class CoordinationState:
             "outbox": "messages",
             "handoffs": "handoffs",
         }[key]
-        return {"schema": SCHEMA, "revision": 0, plural: {}}
+        value: dict[str, Any] = {"schema": SCHEMA, "revision": 0, plural: {}}
+        if key in {"inbox", "outbox"}:
+            value["acknowledged_ids"] = []
+        return value
 
     def _read(self, key: str) -> dict[str, Any]:
         path = self._path(key)
@@ -283,21 +454,88 @@ class CoordinationState:
             except FileNotFoundError:
                 pass
 
-    def _next_revision(self) -> int:
-        meta = self._read("meta")
-        revision = int(meta.get("revision", 0)) + 1
-        meta["revision"] = revision
-        self._write("meta", meta)
-        return revision
+    def _repair_event_tail(self) -> None:
+        """Discard a torn final JSONL record before any stable append."""
+        path = self.root / "events.jsonl"
+        if not path.exists():
+            return
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return
+        if not raw:
+            return
+        # A process can die after writing an incomplete line *with* its
+        # newline, so inspect the final non-empty record as JSON rather than
+        # relying on a trailing newline alone.  Only the trailing record is
+        # discarded; prior complete records remain append-only evidence.
+        chunks = raw.splitlines(keepends=True)
+        cut = len(raw)
+        last_start = None
+        last_payload = b""
+        offset = 0
+        for chunk in chunks:
+            payload = chunk.rstrip(b"\r\n")
+            if payload.strip():
+                last_start = offset
+                last_payload = payload
+            offset += len(chunk)
+        if last_start is None:
+            return
+        try:
+            parsed = json.loads(last_payload.decode("utf-8"))
+            if isinstance(parsed, Mapping):
+                # A complete record without its newline is salvageable, but
+                # must be terminated before the next append can remain valid
+                # JSONL.  Treat it as a stable standalone line.
+                if not raw.endswith(b"\n"):
+                    try:
+                        with path.open("ab") as stream:
+                            stream.write(b"\n")
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                    except OSError:
+                        raise CoordinationError(f"cannot repair events tail: {path}")
+                return
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
+        cut = int(last_start)
+        if cut == len(raw):
+            return
+        try:
+            with path.open("r+b") as stream:
+                stream.truncate(cut)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError:
+            raise CoordinationError(f"cannot repair events tail: {path}")
+
+    def _event_ids(self) -> set[str]:
+        path = self.root / "events.jsonl"
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except FileNotFoundError:
+            return set()
+        ids: set[str] = set()
+        for line in lines:
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, Mapping) and isinstance(value.get("event_id"), str):
+                ids.add(value["event_id"])
+        return ids
 
     def _event(self, kind: str, detail: Mapping[str, Any] | None = None,
-               *, revision: int | None = None) -> dict[str, Any]:
-        """Append exactly one redacted event while the caller holds the lock."""
+               *, revision: int | None = None, event_id: str | None = None,
+               at: float | None = None) -> dict[str, Any]:
+        """Append one stable redacted event while the caller holds the lock."""
+        self._repair_event_tail()
         event_path = self.root / "events.jsonl"
         event_path.parent.mkdir(parents=True, exist_ok=True)
         seq = 0
         try:
-            with event_path.open("r", encoding="utf-8") as stream:
+            with event_path.open("r", encoding="utf-8", errors="replace") as stream:
                 for line in stream:
                     if line.strip():
                         seq += 1
@@ -305,8 +543,8 @@ class CoordinationState:
             pass
         event = {
             "seq": seq,
-            "event_id": _token(),
-            "at": _now_from(self.clock),
+            "event_id": event_id or _token(),
+            "at": _now_from(self.clock) if at is None else float(at),
             "kind": _clean_id(kind, "event kind"),
             "state_revision": int(revision if revision is not None else self._read("meta").get("revision", 0)),
             "detail": _safe(dict(detail or {})),
@@ -317,24 +555,148 @@ class CoordinationState:
             os.fsync(stream.fileno())
         return event
 
+    def _write_raw_json(self, path: Path, value: Mapping[str, Any]) -> None:
+        """Atomic writer for WAL files (which are not regular state docs)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+                json.dump(_safe(value), stream, ensure_ascii=False, sort_keys=True, indent=2)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, path)
+        finally:
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+
+    def _txn_hook_call(self, stage: str, index: int, name: str) -> None:
+        hook = self._txn_hook
+        if hook is not None:
+            hook(stage, index, name)
+
+    def _atomic_transaction(self, updates: Mapping[str, Mapping[str, Any]],
+                            event_specs: Sequence[tuple[str, Mapping[str, Any]]]) -> tuple[int, list[dict[str, Any]]]:
+        """Commit a complete logical mutation through a prepared WAL.
+
+        The caller holds ``self._lock()``.  Every update and event is included
+        in one durable transaction record before any target is replaced.
+        """
+        self._ensure_locked()
+        # Canonicalize exactly what is written to the WAL.  ``_write`` also
+        # redacts, and checksumming the unsanitized in-memory value would make
+        # an otherwise valid WAL unrecoverable when a credential-like key is
+        # present.
+        docs = {key: _safe(dict(value)) for key, value in updates.items()}
+        unknown = set(docs) - set(self.FILES)
+        if unknown:
+            raise InvalidRequest(f"unknown state documents: {sorted(unknown)}")
+        meta = self._read("meta")
+        revision = int(meta.get("revision", 0)) + 1
+        meta["revision"] = revision
+        docs["meta"] = meta
+        for value in docs.values():
+            if isinstance(value, dict) and "revision" in value:
+                value["revision"] = revision
+        now = _now_from(self.clock)
+        events = [{
+            "event_id": _token(),
+            "at": now,
+            "kind": _clean_id(kind, "event kind"),
+            "state_revision": revision,
+            "detail": _safe(dict(detail)),
+        } for kind, detail in event_specs]
+        transaction = {
+            "schema": SCHEMA,
+            "transaction_id": _token(),
+            "revision": revision,
+            "updates": docs,
+            "events": events,
+        }
+        transaction["checksum"] = _sha256(transaction)
+        wal_path = self._transactions / f"tx-{transaction['transaction_id']}.json"
+        self._write_raw_json(wal_path, transaction)
+        self._txn_hook_call("prepared", 0, wal_path.name)
+        index = 0
+        for key, value in docs.items():
+            self._write(key, value)
+            index += 1
+            self._txn_hook_call("json", index, key)
+        appended: list[dict[str, Any]] = []
+        for event in events:
+            appended.append(self._event(event["kind"], event["detail"], revision=revision, event_id=event["event_id"], at=event["at"]))
+            index += 1
+            self._txn_hook_call("event", index, event["event_id"])
+        try:
+            wal_path.unlink()
+        except FileNotFoundError:
+            pass
+        self._txn_hook_call("committed", index, transaction["transaction_id"])
+        return revision, appended
+
+    def _recover_locked(self) -> None:
+        """Finish prepared WALs idempotently under the coordination lock."""
+        self._transactions.mkdir(parents=True, exist_ok=True)
+        # Repair a torn append even when no prepared transaction remains (for
+        # example, a process died while writing an informational event).
+        self._repair_event_tail()
+        for wal_path in sorted(self._transactions.glob("tx-*.json")):
+            try:
+                transaction = json.loads(wal_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise CoordinationError(f"invalid transaction WAL: {wal_path}") from exc
+            if not isinstance(transaction, dict) or transaction.get("schema") != SCHEMA:
+                raise CoordinationError(f"unsupported transaction WAL: {wal_path}")
+            checksum = transaction.get("checksum")
+            unsigned = dict(transaction)
+            unsigned.pop("checksum", None)
+            if checksum != _sha256(unsigned):
+                raise CoordinationError(f"transaction WAL checksum mismatch: {wal_path}")
+            updates = transaction.get("updates")
+            if not isinstance(updates, Mapping):
+                raise CoordinationError(f"transaction WAL updates missing: {wal_path}")
+            events = transaction.get("events", [])
+            if not isinstance(events, list):
+                raise CoordinationError(f"transaction WAL events missing: {wal_path}")
+            for key, value in updates.items():
+                if key not in self.FILES or not isinstance(value, Mapping):
+                    raise CoordinationError(f"transaction WAL target invalid: {wal_path}")
+                self._write(key, value)
+            self._repair_event_tail()
+            existing_ids = self._event_ids()
+            for event in events:
+                if not isinstance(event, Mapping):
+                    raise CoordinationError(f"transaction WAL event invalid: {wal_path}")
+                event_id = event.get("event_id")
+                kind = event.get("kind")
+                detail = event.get("detail", {})
+                if not isinstance(event_id, str) or not event_id or not isinstance(kind, str) or not isinstance(detail, Mapping):
+                    raise CoordinationError(f"transaction WAL event invalid: {wal_path}")
+                if event_id in existing_ids:
+                    continue
+                self._event(kind, detail, revision=int(event.get("state_revision", transaction.get("revision", 0))), event_id=event_id, at=float(event.get("at", _now_from(self.clock))))
+                existing_ids.add(event_id)
+            try:
+                wal_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _next_revision(self) -> int:
+        """Compatibility helper for callers that only need a meta revision."""
+        revision, _ = self._atomic_transaction({}, [])
+        return revision
+
     def _commit(self, key: str, value: dict[str, Any], kind: str,
                 detail: Mapping[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
-        revision = self._next_revision()
-        value["revision"] = revision
-        self._write(key, value)
-        event = self._event(kind, detail, revision=revision)
-        return revision, event
+        revision, events = self._atomic_transaction({key: value}, [(kind, detail or {})])
+        return revision, events[0]
 
     def initialize(self) -> dict[str, Any]:
         """Create the root and empty files atomically enough for a fresh root."""
         with self._thread_lock, self._lock():
-            for key in self.FILES:
-                path = self._path(key)
-                if not path.exists():
-                    self._write(key, self._default(key))
-            events = self.root / "events.jsonl"
-            if not events.exists():
-                events.touch()
+            self._ensure_locked()
             return {"schema": SCHEMA, "state_root": str(self.root), "revision": self._read("meta").get("revision", 0)}
 
     def _ensure_locked(self) -> None:
@@ -345,34 +707,40 @@ class CoordinationState:
         events = self.root / "events.jsonl"
         if not events.exists():
             events.touch()
+        # Recovery is part of every lock acquisition's read/modify/write
+        # boundary.  A prepared WAL therefore cannot be bypassed by a fresh
+        # process that happens to call a getter or mutator first.
+        self._recover_locked()
 
-    def read_events(self, *, after: int = -1, limit: int | None = None) -> dict[str, Any]:
+    def read_events(self, after: int = -1, limit: int | None = None) -> dict[str, Any]:
         if limit is not None and (limit <= 0 or limit > 10_000):
             raise InvalidRequest("limit must be between 1 and 10000")
-        events: list[dict[str, Any]] = []
-        next_seq = 0
-        path = self.root / "events.jsonl"
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except FileNotFoundError:
-            lines = []
-        for line in lines:
-            if not line.strip():
-                continue
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            events: list[dict[str, Any]] = []
+            next_seq = 0
+            path = self.root / "events.jsonl"
             try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                # A torn trailing line is ignored; the next append gets a new
-                # sequence and never reuses an index.
-                next_seq += 1
-                continue
-            if not isinstance(event, dict):
-                next_seq += 1
-                continue
-            seq = int(event.get("seq", next_seq))
-            next_seq = max(next_seq, seq + 1)
-            if seq > after:
-                events.append(event)
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except FileNotFoundError:
+                lines = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    # Recovery repairs only a torn trailing record; malformed
+                    # interior records are retained as evidence but ignored.
+                    next_seq += 1
+                    continue
+                if not isinstance(event, dict):
+                    next_seq += 1
+                    continue
+                seq = int(event.get("seq", next_seq))
+                next_seq = max(next_seq, seq + 1)
+                if seq > after:
+                    events.append(event)
         more = limit is not None and len(events) > limit
         if limit is not None:
             events = events[:limit]
@@ -380,9 +748,17 @@ class CoordinationState:
 
     events = read_events
 
+    def append_event(self, kind: str, detail: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Append a redacted informational event without changing a record."""
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            _, events = self._atomic_transaction({}, [(kind, detail or {})])
+            return events[0]
+
     def snapshot(self) -> dict[str, Any]:
         """Return all persisted state; useful for a restart/recovery probe."""
-        with self._thread_lock:
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
             return {
                 "schema": SCHEMA,
                 "state_root": str(self.root),
@@ -475,11 +851,19 @@ class CoordinationState:
             self._commit("workers", doc, "worker.updated", {"worker_id": worker_id, "changes": sorted(changes)})
             return dict(merged)
 
-    def worker(self, worker_id: str) -> dict[str, Any]:
+    def _worker_locked(self, worker_id: str) -> dict[str, Any]:
         worker = self._read("workers").get("workers", {}).get(_clean_id(worker_id, "worker_id"))
         if worker is None:
             raise InvalidRequest(f"unknown worker: {worker_id}")
         return dict(worker)
+
+    def worker(self, worker_id: str) -> dict[str, Any]:
+        """Read one worker through the same lock/recovery boundary as writes."""
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            return self._worker_locked(worker_id)
+
+    get_worker = worker
 
     def register_task(
         self,
@@ -530,11 +914,19 @@ class CoordinationState:
             self._commit("tasks", doc, "task.registered", {"task_id": task_id})
             return dict(task)
 
-    def task(self, task_id: str) -> dict[str, Any]:
+    def _task_locked(self, task_id: str) -> dict[str, Any]:
         task = self._read("tasks").get("tasks", {}).get(_clean_id(task_id, "task_id"))
         if task is None:
             raise InvalidRequest(f"unknown task: {task_id}")
         return dict(task)
+
+    def task(self, task_id: str) -> dict[str, Any]:
+        """Read one task through the same lock/recovery boundary as writes."""
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            return self._task_locked(task_id)
+
+    get_task = task
 
     # -- leases ----------------------------------------------------------------
 
@@ -578,88 +970,16 @@ class CoordinationState:
         kind = _clean_id(kind, "lease kind")
         resource_id = _clean_id(resource_id, "resource_id")
         holder = _clean_id(holder, "holder")
-        key = self._lease_key(kind, resource_id)
         with self._thread_lock, self._lock():
             self._ensure_locked()
-            leases_doc = self._read("leases")
-            workers = self._read("workers").get("workers", {})
-            if holder not in workers and kind != "coordinator":
-                raise InvalidRequest(f"unknown worker: {holder}")
-            current = leases_doc.get("leases", {}).get(key)
-            now = _now_from(self.clock)
-            # A recovery-required task is fail-closed even when the interrupted
-            # lease is still nominally active.  Checking this before the lease
-            # conflict gives callers the actionable recovery state rather than
-            # encouraging a blind retry.
-            if kind == "task":
-                task = self._read("tasks").get("tasks", {}).get(resource_id)
-                if task is None:
-                    raise InvalidRequest(f"unknown task: {resource_id}")
-                if task.get("recovery_required"):
-                    raise RecoveryRequired(f"task {resource_id} requires recovery before replay")
-                if task.get("status") == "checkpointed" and not handoff_id:
-                    raise FencedError(f"task {resource_id} must resume from its checkpoint")
-                if task.get("status") == "completed":
-                    raise LeaseConflict(f"task {resource_id} is already completed")
-            if current and current.get("state") == ACTIVE_LEASE:
-                if float(current.get("expires_at", 0)) > now:
-                    raise LeaseConflict(f"{key} is held by {current.get('holder')}")
-                # Expiry is not proof of death.  Reclaim only after an explicit
-                # release, a terminal worker, or an explicit dead-process bit.
-                alive = self._holder_process_alive_locked(str(current.get("holder")))
-                prior_worker = workers.get(str(current.get("holder")), {})
-                if alive is True or (alive is None and prior_worker.get("mode") not in TERMINAL_WORKER_MODES):
-                    raise LeaseConflict(f"expired {key} still needs terminal-process evidence")
-            if kind == "task":
-                task = self._read("tasks").get("tasks", {}).get(resource_id)
-                if task is None:
-                    raise InvalidRequest(f"unknown task: {resource_id}")
-                claimed_by = (task.get("handoff") or {}).get("claimed_by")
-                if claimed_by and claimed_by != holder:
-                    # A replacement may itself fail.  Reclaim is allowed only
-                    # after its lease expired and its process is explicitly
-                    # known dead; a live/unknown process stays fenced.
-                    prior_alive = self._holder_process_alive_locked(str(claimed_by))
-                    can_reclaim = bool(current and current.get("state") == ACTIVE_LEASE and float(current.get("expires_at", 0)) <= now and prior_alive is False)
-                    if not can_reclaim:
-                        raise LeaseConflict(f"task {resource_id} already resumed by {claimed_by}")
-                if expected_task_revision is not None and int(task.get("revision", 0)) != int(expected_task_revision):
-                    raise FencedError(f"task {resource_id} revision changed")
-                task_doc = self._read("tasks")
-                task = task_doc["tasks"][resource_id]
-                task["revision"] = int(task.get("revision", 0)) + 1
-                task["assignee"] = holder
-                task["status"] = "working"
-                task["blocked_reason"] = None
-                if handoff_id:
-                    if task.get("checkpoint_id") != handoff_id and (task.get("handoff") or {}).get("checkpoint_id") != handoff_id:
-                        raise FencedError("handoff checkpoint does not match task")
-                    task.setdefault("handoff", {})["claimed_by"] = holder
-                    task["handoff"]["claimed_at"] = now
-                task_revision = int(task["revision"])
-                self._commit("tasks", task_doc, "task.claimed", {"task_id": resource_id, "holder": holder, "handoff_id": handoff_id})
-            else:
-                task_revision = None
-            previous_epoch = int(current.get("epoch", 0)) if current else 0
-            lease = {
-                "lease_id": _token(),
-                "kind": kind,
-                "resource_id": resource_id,
-                "holder": holder,
-                "epoch": previous_epoch + 1,
-                "fencing_token": _token(),
-                "revision": int(self._read("meta").get("revision", 0)) + 1,
-                "state": ACTIVE_LEASE,
-                "created_at": now,
-                "expires_at": now + float(ttl),
-                "released_at": None,
-                "release_reason": None,
-                "release_proof": None,
-                "task_revision": task_revision,
-            }
-            leases_doc.setdefault("leases", {})[key] = lease
-            self._commit("leases", leases_doc, "lease.acquired", {"kind": kind, "resource_id": resource_id, "holder": holder, "epoch": lease["epoch"]})
-            return dict(lease)
+            return self._acquire_lease_locked(
+                kind,
+                resource_id,
+                holder,
+                ttl=ttl,
+                expected_task_revision=expected_task_revision,
+                handoff_id=handoff_id,
+            )
 
     def acquire_task_lease(self, task_id: str, holder: str, **kwargs: Any) -> dict[str, Any]:
         return self.acquire_lease("task", task_id, holder, **kwargs)
@@ -667,8 +987,17 @@ class CoordinationState:
     def acquire_coordinator_lease(self, holder: str, **kwargs: Any) -> dict[str, Any]:
         return self.acquire_lease("coordinator", "default", holder, **kwargs)
 
-    def lease(self, kind: str, resource_id: str) -> dict[str, Any] | None:
+    def _lease_locked(self, kind: str, resource_id: str) -> dict[str, Any] | None:
         return self._read("leases").get("leases", {}).get(self._lease_key(kind, resource_id))
+
+    def lease(self, kind: str, resource_id: str) -> dict[str, Any] | None:
+        """Read one lease through the same lock/recovery boundary as writes."""
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            value = self._lease_locked(kind, resource_id)
+            return None if value is None else dict(value)
+
+    get_lease = lease
 
     def release_lease(
         self,
@@ -695,7 +1024,9 @@ class CoordinationState:
             return current
 
     def lease_is_current(self, kind: str, resource_id: str, holder: str, epoch: int, fencing_token: str) -> bool:
-        return self._lease_current_locked(self.lease(kind, resource_id), holder, epoch, fencing_token)
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            return self._lease_current_locked(self._lease_locked(kind, resource_id), holder, epoch, fencing_token)
 
     def release(self, lease: Mapping[str, Any], *, reason: str = "released", proof: str = "explicit") -> dict[str, Any]:
         """Release a lease record returned by an acquire operation."""
@@ -724,16 +1055,22 @@ class CoordinationState:
 
     # -- checkpoints, handover and recovery -----------------------------------
 
-    def _mark_recovery_locked(self, task_id: str, reason: str, *, operation_id: str | None = None) -> dict[str, Any]:
+    def _mark_recovery_state_locked(self, task_id: str, reason: str) -> tuple[dict[str, Any], dict[str, Any]]:
         tasks_doc = self._read("tasks")
         task = tasks_doc.get("tasks", {}).get(task_id)
         if task is None:
             raise InvalidRequest(f"unknown task: {task_id}")
+        task = dict(task)
         task["revision"] = int(task.get("revision", 0)) + 1
         task["status"] = "recovery-required"
         task["recovery_required"] = True
         task["recovery_reason"] = reason
         task["blocked_reason"] = "unknown-operation-completion"
+        tasks_doc["tasks"][task_id] = task
+        return tasks_doc, task
+
+    def _mark_recovery_locked(self, task_id: str, reason: str, *, operation_id: str | None = None) -> dict[str, Any]:
+        tasks_doc, task = self._mark_recovery_state_locked(task_id, reason)
         self._commit("tasks", tasks_doc, "task.recovery_required", {"task_id": task_id, "reason": reason, "operation_id": operation_id})
         return dict(task)
 
@@ -750,7 +1087,12 @@ class CoordinationState:
         outputs: Mapping[str, Any] | None = None,
         tests: Sequence[str] | None = None,
         unrun_checks: Sequence[str] | None = None,
+        completed_commands: Sequence[str] | None = None,
         next_safe_action: str | None = None,
+        base_hash: str | None = None,
+        head: str | None = None,
+        operation_receipt: Mapping[str, Any] | None = None,
+        pipeline_state: Mapping[str, Any] | None = None,
         observe_timeout: bool = False,
         process_alive: bool | None = None,
         operation_kind: str | None = None,
@@ -771,24 +1113,35 @@ class CoordinationState:
             alive = worker.get("process_alive") if process_alive is None else process_alive
             if observe_timeout:
                 if alive is True:
-                    revision = self._next_revision()
-                    self._event("checkpoint.observation_timeout", {"task_id": task_id, "holder": holder, "duplicate_prevented": True, "process_alive": True}, revision=revision)
-                    return {"status": "observation-pending", "duplicate_prevented": True, "lease": dict(lease), "task": self.task(task_id)}
+                    self._atomic_transaction({}, [("checkpoint.observation_timeout", {"task_id": task_id, "holder": holder, "duplicate_prevented": True, "process_alive": True})])
+                    return {"status": "observation-pending", "duplicate_prevented": True, "lease": dict(lease), "task": self._task_locked(task_id)}
                 if alive is None:
-                    task = self._mark_recovery_locked(task_id, "checkpoint-observation-unknown")
+                    task_doc, task = self._mark_recovery_state_locked(task_id, "checkpoint-observation-unknown")
                     lease = dict(lease)
                     lease.update({"state": RELEASED_LEASE, "released_at": _now_from(self.clock), "release_reason": "recovery-required", "release_proof": "terminal-unknown"})
                     leases_doc["leases"][key] = lease
-                    self._commit("leases", leases_doc, "lease.released", {"kind": "task", "resource_id": task_id, "holder": holder, "reason": "recovery-required"})
+                    self._atomic_transaction(
+                        {"tasks": task_doc, "leases": leases_doc},
+                        [
+                            ("task.recovery_required", {"task_id": task_id, "reason": "checkpoint-observation-unknown"}),
+                            ("lease.released", {"kind": "task", "resource_id": task_id, "holder": holder, "reason": "recovery-required"}),
+                        ],
+                    )
                     return {"status": "recovery-required", "task": task, "lease": lease}
                 # A known-dead process still needs operation status if an
                 # irreversible operation was in flight; continue below.
             if (operation_kind or "").lower() in {"com", "hancom", "native-com"} and (operation_status or "unknown").lower() == "unknown":
-                task = self._mark_recovery_locked(task_id, "unknown-com-save-status")
+                task_doc, task = self._mark_recovery_state_locked(task_id, "unknown-com-save-status")
                 lease = dict(lease)
                 lease.update({"state": RELEASED_LEASE, "released_at": _now_from(self.clock), "release_reason": "recovery-required", "release_proof": "unknown-com"})
                 leases_doc["leases"][key] = lease
-                self._commit("leases", leases_doc, "lease.released", {"kind": "task", "resource_id": task_id, "holder": holder, "reason": "recovery-required"})
+                self._atomic_transaction(
+                    {"tasks": task_doc, "leases": leases_doc},
+                    [
+                        ("task.recovery_required", {"task_id": task_id, "reason": "unknown-com-save-status"}),
+                        ("lease.released", {"kind": "task", "resource_id": task_id, "holder": holder, "reason": "recovery-required"}),
+                    ],
+                )
                 return {"status": "recovery-required", "task": task, "lease": lease}
             task_doc = self._read("tasks")
             task = task_doc.get("tasks", {}).get(task_id)
@@ -810,12 +1163,17 @@ class CoordinationState:
                 "outputs": _safe(dict(outputs or {})),
                 "tests": _as_list(tests),
                 "unrun_checks": _as_list(unrun_checks),
+                "completed_commands": _as_list(completed_commands),
                 "next_safe_action": next_safe_action,
+                "base_hash": base_hash,
+                "head": head,
+                "operation_receipt": _safe(dict(operation_receipt or {})),
+                "pipeline_state": _safe(dict(pipeline_state or {})),
                 "safe_boundary": True,
             }
+            checkpoint["checkpoint_hash"] = _sha256(checkpoint)
             cp_doc = self._read("checkpoints")
             cp_doc.setdefault("checkpoints", {})[checkpoint_id] = checkpoint
-            self._commit("checkpoints", cp_doc, "checkpoint.written", {"task_id": task_id, "checkpoint_id": checkpoint_id, "holder": holder})
             task["revision"] = int(task.get("revision", 0)) + 1
             task["status"] = "checkpointed"
             task["checkpoint_id"] = checkpoint_id
@@ -823,11 +1181,11 @@ class CoordinationState:
             task["assignee"] = holder
             task["blocked_reason"] = None
             task_doc["tasks"][task_id] = task
-            self._commit("tasks", task_doc, "task.checkpointed", {"task_id": task_id, "checkpoint_id": checkpoint_id, "holder": holder})
             handoffs_doc = self._read("handoffs")
             handoff = {
                 "handoff_id": checkpoint_id,
                 "checkpoint_id": checkpoint_id,
+                "checkpoint_hash": checkpoint["checkpoint_hash"],
                 "task_id": task_id,
                 "from_holder": holder,
                 "from_epoch": int(epoch),
@@ -839,19 +1197,29 @@ class CoordinationState:
                 "completed_at": None,
             }
             handoffs_doc.setdefault("handoffs", {})[checkpoint_id] = handoff
-            self._commit("handoffs", handoffs_doc, "handoff.created", {"handoff_id": checkpoint_id, "task_id": task_id, "from_holder": holder})
             lease = dict(lease)
             lease.update({"state": RELEASED_LEASE, "released_at": now, "release_reason": "checkpoint", "release_proof": "signed-handoff"})
             leases_doc["leases"][key] = lease
-            self._commit("leases", leases_doc, "lease.released", {"kind": "task", "resource_id": task_id, "holder": holder, "epoch": epoch, "reason": "checkpoint"})
             # A draining worker must not be assigned new heavy work.
             workers_doc = self._read("workers")
+            worker_changed = False
             if holder in workers_doc.get("workers", {}):
                 worker = workers_doc["workers"][holder]
                 worker["mode"] = worker_mode
                 worker["availability"] = False
                 worker["revision"] = int(worker.get("revision", 0)) + 1
-                self._commit("workers", workers_doc, "worker.draining", {"worker_id": holder, "task_id": task_id})
+                worker_changed = True
+            updates = {"checkpoints": cp_doc, "tasks": task_doc, "handoffs": handoffs_doc, "leases": leases_doc}
+            event_specs: list[tuple[str, Mapping[str, Any]]] = [
+                ("checkpoint.written", {"task_id": task_id, "checkpoint_id": checkpoint_id, "holder": holder}),
+                ("task.checkpointed", {"task_id": task_id, "checkpoint_id": checkpoint_id, "holder": holder}),
+                ("handoff.created", {"handoff_id": checkpoint_id, "task_id": task_id, "from_holder": holder}),
+                ("lease.released", {"kind": "task", "resource_id": task_id, "holder": holder, "epoch": epoch, "reason": "checkpoint"}),
+            ]
+            if worker_changed:
+                updates["workers"] = workers_doc
+                event_specs.append(("worker.draining", {"worker_id": holder, "task_id": task_id}))
+            self._atomic_transaction(updates, event_specs)
             return {"status": "checkpointed", "checkpoint": checkpoint, "task": dict(task), "lease": lease, "replacement_input_revision": int(task["revision"])}
 
     request_checkpoint = checkpoint_task
@@ -859,7 +1227,9 @@ class CoordinationState:
     handover_task = checkpoint_task
 
     def claim_replacement(self, task_id: str, worker_id: str, checkpoint_id: str, *, ttl: float = 60.0,
-                          expected_task_revision: int | None = None) -> dict[str, Any]:
+                          expected_task_revision: int | None = None,
+                          expected_checkpoint_hash: str | None = None,
+                          checkpoint_hash: str | None = None) -> dict[str, Any]:
         task_id = _clean_id(task_id, "task_id")
         checkpoint_id = _clean_id(checkpoint_id, "checkpoint_id")
         with self._thread_lock, self._lock():
@@ -868,6 +1238,11 @@ class CoordinationState:
             checkpoint = self._read("checkpoints").get("checkpoints", {}).get(checkpoint_id)
             if task is None or checkpoint is None or task.get("checkpoint_id") != checkpoint_id:
                 raise FencedError("checkpoint does not match the current task")
+            expected_checkpoint_hash = expected_checkpoint_hash or checkpoint_hash
+            checkpoint_for_hash = dict(checkpoint)
+            checkpoint_for_hash.pop("checkpoint_hash", None)
+            if expected_checkpoint_hash is not None and _sha256(checkpoint_for_hash) != expected_checkpoint_hash:
+                raise FencedError("checkpoint hash changed")
             if task.get("recovery_required"):
                 raise RecoveryRequired(f"task {task_id} requires recovery before replacement")
             if task.get("status") != "checkpointed":
@@ -879,9 +1254,12 @@ class CoordinationState:
 
     def _acquire_lease_locked(self, kind: str, resource_id: str, holder: str, *, ttl: float,
                               expected_task_revision: int | None = None, handoff_id: str | None = None) -> dict[str, Any]:
-        """Internal equivalent of acquire_lease; caller owns the file lock."""
-        # This path mirrors acquire_lease and is intentionally kept private so
-        # claim_replacement remains one atomic lock/CAS operation.
+        """Single locked lease CAS used by public and routing callers."""
+        kind = _clean_id(kind, "lease kind")
+        resource_id = _clean_id(resource_id, "resource_id")
+        holder = _clean_id(holder, "holder")
+        if ttl <= 0:
+            raise InvalidRequest("lease ttl must be positive")
         key = self._lease_key(kind, resource_id)
         leases_doc = self._read("leases")
         workers = self._read("workers").get("workers", {})
@@ -889,36 +1267,62 @@ class CoordinationState:
             raise InvalidRequest(f"unknown worker: {holder}")
         current = leases_doc.get("leases", {}).get(key)
         now = _now_from(self.clock)
-        if current and current.get("state") == ACTIVE_LEASE:
-            raise LeaseConflict(f"{key} is still active")
         task_revision = None
+        task_doc: dict[str, Any] | None = None
+        handoffs_doc: dict[str, Any] | None = None
+        task: dict[str, Any] | None = None
         if kind == "task":
             task_doc = self._read("tasks")
             task = task_doc["tasks"].get(resource_id)
             if task is None:
                 raise InvalidRequest(f"unknown task: {resource_id}")
+            # Fail closed on task state before inspecting a potentially still
+            # active lease, matching the public error semantics and avoiding
+            # any invitation to replay a known recovery-required task.
             if task.get("recovery_required"):
                 raise RecoveryRequired(f"task {resource_id} requires recovery before replay")
+            if task.get("status") == "checkpointed" and not handoff_id:
+                raise FencedError(f"task {resource_id} must resume from its checkpoint")
+            if task.get("status") == "completed":
+                raise LeaseConflict(f"task {resource_id} is already completed")
+        if current and current.get("state") == ACTIVE_LEASE:
+            if float(current.get("expires_at", 0)) > now:
+                raise LeaseConflict(f"{key} is held by {current.get('holder')}")
+            prior_holder = str(current.get("holder"))
+            prior_alive = self._holder_process_alive_locked(prior_holder)
+            prior_worker = workers.get(prior_holder, {})
+            if prior_alive is True or (prior_alive is None and prior_worker.get("mode") not in TERMINAL_WORKER_MODES):
+                raise LeaseConflict(f"expired {key} still needs terminal-process evidence")
+        if kind == "task":
+            assert task_doc is not None and task is not None
+            claimed_by = (task.get("handoff") or {}).get("claimed_by")
+            if claimed_by and claimed_by != holder:
+                prior_alive = self._holder_process_alive_locked(str(claimed_by))
+                can_reclaim = bool(current and current.get("state") == ACTIVE_LEASE and float(current.get("expires_at", 0)) <= now and prior_alive is False)
+                if not can_reclaim:
+                    raise LeaseConflict(f"task {resource_id} already resumed by {claimed_by}")
             if expected_task_revision is not None and int(task.get("revision", 0)) != int(expected_task_revision):
                 raise FencedError("task revision changed")
             task["revision"] = int(task.get("revision", 0)) + 1
             task["assignee"] = holder
             task["status"] = "working"
+            task["blocked_reason"] = None
             if handoff_id:
-                task.setdefault("handoff", {})["claimed_by"] = holder
-                task["handoff"]["claimed_at"] = now
-            task_revision = int(task["revision"])
-            self._commit("tasks", task_doc, "task.claimed", {"task_id": resource_id, "holder": holder, "handoff_id": handoff_id})
-            if handoff_id:
+                if task.get("checkpoint_id") != handoff_id and (task.get("handoff") or {}).get("checkpoint_id") != handoff_id:
+                    raise FencedError("handoff checkpoint does not match task")
                 handoffs_doc = self._read("handoffs")
                 handoff = handoffs_doc.get("handoffs", {}).get(handoff_id)
                 if handoff is None:
                     raise FencedError("handoff record is missing")
+                task.setdefault("handoff", {})["claimed_by"] = holder
+                task["handoff"]["claimed_at"] = now
+            task_revision = int(task["revision"])
+            task_doc["tasks"][resource_id] = task
+            if handoff_id:
                 handoff = dict(handoff)
                 handoff["claimed_by"] = holder
                 handoff["claimed_at"] = now
                 handoffs_doc["handoffs"][handoff_id] = handoff
-                self._commit("handoffs", handoffs_doc, "handoff.claimed", {"handoff_id": handoff_id, "task_id": resource_id, "holder": holder})
         previous_epoch = int(current.get("epoch", 0)) if current else 0
         lease = {
             "lease_id": _token(), "kind": kind, "resource_id": resource_id,
@@ -929,7 +1333,16 @@ class CoordinationState:
             "task_revision": task_revision,
         }
         leases_doc.setdefault("leases", {})[key] = lease
-        self._commit("leases", leases_doc, "lease.acquired", {"kind": kind, "resource_id": resource_id, "holder": holder, "epoch": lease["epoch"], "handoff_id": handoff_id})
+        updates: dict[str, dict[str, Any]] = {"leases": leases_doc}
+        event_specs: list[tuple[str, Mapping[str, Any]]] = []
+        if kind == "task" and task_doc is not None:
+            updates["tasks"] = task_doc
+            event_specs.append(("task.claimed", {"task_id": resource_id, "holder": holder, "handoff_id": handoff_id}))
+        if handoff_id and handoffs_doc is not None:
+            updates["handoffs"] = handoffs_doc
+            event_specs.append(("handoff.claimed", {"handoff_id": handoff_id, "task_id": resource_id, "holder": holder}))
+        event_specs.append(("lease.acquired", {"kind": kind, "resource_id": resource_id, "holder": holder, "epoch": lease["epoch"], "handoff_id": handoff_id}))
+        self._atomic_transaction(updates, event_specs)
         return dict(lease)
 
     def resolve_recovery(self, task_id: str, *, resolution: str, receipt: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -1001,21 +1414,35 @@ class CoordinationState:
             operation = dict(operation)
             operation.update({"status": status, "finished_at": _now_from(self.clock), "receipt": _safe(dict(receipt or {}))})
             doc["operations"][operation_id] = operation
-            self._commit("operations", doc, "operation.finished", {"operation_id": operation_id, "status": status})
             if status == "unknown":
-                self._mark_recovery_locked(operation["task_id"], "unknown-operation-completion", operation_id=operation_id)
+                task_doc, _ = self._mark_recovery_state_locked(operation["task_id"], "unknown-operation-completion")
+                self._atomic_transaction(
+                    {"operations": doc, "tasks": task_doc},
+                    [
+                        ("operation.finished", {"operation_id": operation_id, "status": status}),
+                        ("task.recovery_required", {"task_id": operation["task_id"], "reason": "unknown-operation-completion", "operation_id": operation_id}),
+                    ],
+                )
+            else:
+                self._atomic_transaction({"operations": doc}, [("operation.finished", {"operation_id": operation_id, "status": status})])
             return operation
 
     def replay_operation(self, task_id: str, operation_id: str) -> dict[str, Any]:
-        task = self.task(task_id)
-        if task.get("recovery_required"):
-            raise RecoveryRequired(f"task {task_id} requires recovery before replay")
-        operation = self._read("operations").get("operations", {}).get(operation_id)
-        if operation is None:
-            raise InvalidRequest(f"unknown operation: {operation_id}")
-        if operation.get("status") not in {"failed"}:
-            raise RecoveryRequired("only an explicitly failed operation may be replayed")
-        return dict(operation)
+        task_id = _clean_id(task_id, "task_id")
+        operation_id = _clean_id(operation_id, "operation_id")
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            task = self._task_locked(task_id)
+            if task.get("recovery_required"):
+                raise RecoveryRequired(f"task {task_id} requires recovery before replay")
+            if task.get("status") in TERMINAL_TASK_STATUSES:
+                raise RecoveryRequired(f"task {task_id} is already terminal; replay is fenced")
+            operation = self._read("operations").get("operations", {}).get(operation_id)
+            if operation is None:
+                raise InvalidRequest(f"unknown operation: {operation_id}")
+            if operation.get("status") not in {"failed"}:
+                raise RecoveryRequired("only an explicitly failed operation may be replayed")
+            return dict(operation)
 
     # -- result publication ----------------------------------------------------
 
@@ -1061,12 +1488,11 @@ class CoordinationState:
                 "published_at": _now_from(self.clock), "integrated": True,
             }
             result_doc.setdefault("results", {})[task_id] = record
-            self._commit("results", result_doc, "result.accepted", {"task_id": task_id, "result_id": result_id, "holder": holder, "epoch": epoch})
             task["revision"] = int(task.get("revision", 0)) + 1
             task.update({"status": "completed", "result_id": result_id, "result_hash": digest, "accepted_holder": holder, "accepted_epoch": int(epoch), "accepted_token": fencing_token, "integrated_count": int(task.get("integrated_count", 0)) + 1, "last_receipt": _safe(dict(receipt or {}))})
             task_doc["tasks"][task_id] = task
-            self._commit("tasks", task_doc, "result.integrated", {"task_id": task_id, "result_id": result_id, "integrated_count": task["integrated_count"]})
             handoff_id = task.get("checkpoint_id")
+            handoffs_doc: dict[str, Any] | None = None
             if handoff_id:
                 handoffs_doc = self._read("handoffs")
                 handoff = handoffs_doc.get("handoffs", {}).get(handoff_id)
@@ -1074,12 +1500,20 @@ class CoordinationState:
                     handoff = dict(handoff)
                     handoff["completed_at"] = _now_from(self.clock)
                     handoffs_doc["handoffs"][handoff_id] = handoff
-                    self._commit("handoffs", handoffs_doc, "handoff.completed", {"handoff_id": handoff_id, "task_id": task_id, "result_id": result_id})
             lease_doc = self._read("leases")
             lease = dict(lease)
             lease.update({"state": RELEASED_LEASE, "released_at": _now_from(self.clock), "release_reason": "result-integrated", "release_proof": "canonical-result"})
             lease_doc["leases"][key] = lease
-            self._commit("leases", lease_doc, "lease.released", {"kind": "task", "resource_id": task_id, "holder": holder, "epoch": epoch, "reason": "result-integrated"})
+            updates: dict[str, dict[str, Any]] = {"results": result_doc, "tasks": task_doc, "leases": lease_doc}
+            event_specs: list[tuple[str, Mapping[str, Any]]] = [
+                ("result.accepted", {"task_id": task_id, "result_id": result_id, "holder": holder, "epoch": epoch}),
+                ("result.integrated", {"task_id": task_id, "result_id": result_id, "integrated_count": task["integrated_count"]}),
+            ]
+            if handoff_id and handoffs_doc is not None and handoff_id in handoffs_doc.get("handoffs", {}):
+                updates["handoffs"] = handoffs_doc
+                event_specs.append(("handoff.completed", {"handoff_id": handoff_id, "task_id": task_id, "result_id": result_id}))
+            event_specs.append(("lease.released", {"kind": "task", "resource_id": task_id, "holder": holder, "epoch": epoch, "reason": "result-integrated"}))
+            self._atomic_transaction(updates, event_specs)
             return {"status": "accepted", "accepted": True, "integrated": True, "result": record, "task": dict(task), "lease": lease}
 
     publish_task_result = publish_result
@@ -1118,6 +1552,13 @@ class CoordinationState:
         with self._thread_lock, self._lock():
             self._ensure_locked()
             doc = self._read("quotas")
+            workers_doc: dict[str, Any] | None = None
+            worker: dict[str, Any] | None = None
+            if worker_id is not None:
+                workers_doc = self._read("workers")
+                worker = workers_doc.get("workers", {}).get(worker_id)
+                if worker is None:
+                    raise InvalidRequest(f"unknown worker: {worker_id}")
             snapshot = {
                 "snapshot_id": snapshot_id, "service": service, "account_alias": account_alias,
                 "window": window, "window_id": window_id or window, "capture_time": captured_at,
@@ -1127,12 +1568,12 @@ class CoordinationState:
                 "stale": bool(stale), "exhausted": bool(exhausted),
             }
             doc.setdefault("snapshots", {})[snapshot_id] = snapshot
-            self._commit("quotas", doc, "quota.captured", {"snapshot_id": snapshot_id, "service": service, "account_alias": account_alias, "window": window, "stale": bool(stale), "exhausted": bool(exhausted)})
-            if worker_id is not None:
-                workers_doc = self._read("workers")
-                worker = workers_doc.get("workers", {}).get(worker_id)
-                if worker is None:
-                    raise InvalidRequest(f"unknown worker: {worker_id}")
+            updates: dict[str, dict[str, Any]] = {"quotas": doc}
+            event_specs: list[tuple[str, Mapping[str, Any]]] = [(
+                "quota.captured",
+                {"snapshot_id": snapshot_id, "service": service, "account_alias": account_alias, "window": window, "stale": bool(stale), "exhausted": bool(exhausted)},
+            )]
+            if worker_id is not None and workers_doc is not None and worker is not None:
                 worker["quota_snapshot_id"] = snapshot_id
                 worker["availability"] = not bool(exhausted) and not bool(stale)
                 if exhausted:
@@ -1140,17 +1581,27 @@ class CoordinationState:
                 elif worker.get("mode") in {"quota-blocked", "reset-pending"}:
                     worker["mode"] = "available"
                 worker["revision"] = int(worker.get("revision", 0)) + 1
-                self._commit("workers", workers_doc, "worker.quota_bound", {"worker_id": worker_id, "snapshot_id": snapshot_id, "exhausted": bool(exhausted)})
+                updates["workers"] = workers_doc
+                event_specs.append(("worker.quota_bound", {"worker_id": worker_id, "snapshot_id": snapshot_id, "exhausted": bool(exhausted)}))
+            self._atomic_transaction(updates, event_specs)
             return snapshot
 
     record_quota_snapshot = capture_quota
     record_quota = capture_quota
 
-    def quota_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+    def _quota_snapshot_locked(self, snapshot_id: str) -> dict[str, Any]:
         value = self._read("quotas").get("snapshots", {}).get(_clean_id(snapshot_id, "snapshot_id"))
         if value is None:
             raise InvalidRequest(f"unknown quota snapshot: {snapshot_id}")
         return dict(value)
+
+    def quota_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+        """Read one quota snapshot through the lock/recovery boundary."""
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            return self._quota_snapshot_locked(snapshot_id)
+
+    get_quota_snapshot = quota_snapshot
 
     def _quota_eligible_locked(self, worker: Mapping[str, Any], *, service: str | None = None,
                                account_alias: str | None = None, window: str | None = None,
@@ -1190,11 +1641,13 @@ class CoordinationState:
                          account_alias: str | None = None, window: str | None = None,
                          required_tokens: float = 0, max_age: float = 900.0,
                          purpose: str = "task") -> bool:
-        worker = self.worker(worker_id)
-        ok, _ = self._quota_eligible_locked(worker, service=service, account_alias=account_alias, window=window, required_tokens=required_tokens, max_age=max_age)
-        if purpose == "question" and worker.get("mode") == "reserve" and int(worker.get("question_budget", 0)) <= 0:
-            return False
-        return ok
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            worker = self._worker_locked(worker_id)
+            ok, _ = self._quota_eligible_locked(worker, service=service, account_alias=account_alias, window=window, required_tokens=required_tokens, max_age=max_age)
+            if purpose == "question" and worker.get("mode") == "reserve" and int(worker.get("question_budget", 0)) <= 0:
+                return False
+            return ok
 
     is_available = worker_available
 
@@ -1211,45 +1664,48 @@ class CoordinationState:
         ttl: float = 60.0,
     ) -> dict[str, Any]:
         task_id = _clean_id(task_id, "task_id")
-        task = self.task(task_id)
-        if task.get("recovery_required"):
-            return {"status": "recovery-required", "task_id": task_id, "yield": True, "busy_loop": False, "rejected": []}
-        if task.get("status") == "checkpointed":
-            return {"status": "checkpointed", "task_id": task_id, "requires_handoff": True, "handoff": task.get("handoff"), "yield": True, "busy_loop": False, "rejected": []}
-        if task.get("status") in TERMINAL_TASK_STATUSES:
-            return {"status": task.get("status"), "task_id": task_id, "already_integrated": bool(task.get("result_id")), "yield": False, "busy_loop": False, "rejected": []}
-        required = set(_as_list(capabilities)) or set(task.get("capabilities", []))
-        workers = self._read("workers").get("workers", {})
-        ordered = list(workers)
-        if preferred_worker in ordered:
-            ordered.remove(preferred_worker)
-            ordered.insert(0, preferred_worker)
-        rejected: list[dict[str, str]] = []
-        for worker_id in ordered:
-            worker = workers[worker_id]
-            if not required.issubset(set(worker.get("capabilities", []))):
-                rejected.append({"worker_id": worker_id, "reason": "capability-mismatch"})
-                continue
-            ok, reason = self._quota_eligible_locked(worker, service=service, account_alias=account_alias, window=window, required_tokens=required_tokens)
-            if not ok:
-                rejected.append({"worker_id": worker_id, "reason": reason})
-                continue
-            try:
-                lease = self.acquire_task_lease(task_id, worker_id, ttl=ttl, expected_task_revision=int(task.get("revision", 0)))
-            except LeaseConflict as exc:
-                current = self.lease("task", task_id)
-                if current and current.get("state") == ACTIVE_LEASE:
-                    return {"status": "already-routed", "task_id": task_id, "worker_id": current.get("holder"), "lease": current, "rejected": rejected}
-                rejected.append({"worker_id": worker_id, "reason": type(exc).__name__})
-                continue
-            except FencedError as exc:
-                rejected.append({"worker_id": worker_id, "reason": type(exc).__name__})
-                continue
-            return {"status": "routed", "worker_id": worker_id, "lease": lease, "rejected": rejected}
-        # Persist one blocked decision and yield.  There is intentionally no
-        # retry loop or prompt submission here.
         with self._thread_lock, self._lock():
             self._ensure_locked()
+            task = self._task_locked(task_id)
+            if task.get("recovery_required"):
+                return {"status": "recovery-required", "task_id": task_id, "yield": True, "busy_loop": False, "rejected": []}
+            if task.get("status") == "checkpointed":
+                return {"status": "checkpointed", "task_id": task_id, "requires_handoff": True, "handoff": task.get("handoff"), "yield": True, "busy_loop": False, "rejected": []}
+            if task.get("status") in TERMINAL_TASK_STATUSES:
+                return {"status": task.get("status"), "task_id": task_id, "already_integrated": bool(task.get("result_id")), "yield": False, "busy_loop": False, "rejected": []}
+            required = set(_as_list(capabilities)) or set(task.get("capabilities", []))
+            workers = self._read("workers").get("workers", {})
+            ordered = list(workers)
+            if preferred_worker in ordered:
+                ordered.remove(preferred_worker)
+                ordered.insert(0, preferred_worker)
+            rejected: list[dict[str, str]] = []
+            for worker_id in ordered:
+                worker = workers[worker_id]
+                if not required.issubset(set(worker.get("capabilities", []))):
+                    rejected.append({"worker_id": worker_id, "reason": "capability-mismatch"})
+                    continue
+                ok, reason = self._quota_eligible_locked(worker, service=service, account_alias=account_alias, window=window, required_tokens=required_tokens)
+                if not ok:
+                    rejected.append({"worker_id": worker_id, "reason": reason})
+                    continue
+                try:
+                    # Selection, quota validation and lease CAS share this
+                    # lock, so a concurrent result/quota change cannot route
+                    # from a split projection.
+                    lease = self._acquire_lease_locked("task", task_id, worker_id, ttl=ttl, expected_task_revision=int(task.get("revision", 0)))
+                except LeaseConflict as exc:
+                    current = self._lease_locked("task", task_id)
+                    if current and current.get("state") == ACTIVE_LEASE:
+                        return {"status": "already-routed", "task_id": task_id, "worker_id": current.get("holder"), "lease": dict(current), "rejected": rejected}
+                    rejected.append({"worker_id": worker_id, "reason": type(exc).__name__})
+                    continue
+                except FencedError as exc:
+                    rejected.append({"worker_id": worker_id, "reason": type(exc).__name__})
+                    continue
+                return {"status": "routed", "worker_id": worker_id, "lease": lease, "rejected": rejected}
+            # Persist one blocked decision and yield.  There is intentionally
+            # no retry loop or prompt submission here.
             doc = self._read("tasks")
             current = doc["tasks"][task_id]
             if not current.get("recovery_required"):
@@ -1259,9 +1715,8 @@ class CoordinationState:
                 doc["tasks"][task_id] = current
                 self._commit("tasks", doc, "routing.blocked", {"task_id": task_id, "rejected": rejected, "yield": True, "attempts": 1})
             else:
-                revision = self._next_revision()
-                self._event("routing.blocked", {"task_id": task_id, "reason": "recovery-required", "yield": True, "attempts": 1}, revision=revision)
-        return {"status": "blocked", "task_id": task_id, "reason": "all-providers-unavailable", "yield": True, "busy_loop": False, "rejected": rejected}
+                self._atomic_transaction({}, [("routing.blocked", {"task_id": task_id, "reason": "recovery-required", "yield": True, "attempts": 1})])
+            return {"status": "blocked", "task_id": task_id, "reason": "all-providers-unavailable", "yield": True, "busy_loop": False, "rejected": rejected}
 
     def route_question(
         self,
@@ -1284,36 +1739,43 @@ class CoordinationState:
             # keep the refusal durable without submitting any prompt.
             with self._thread_lock, self._lock():
                 self._ensure_locked()
-                revision = self._next_revision()
-                event = self._event("question.refused", {"reason": "unbounded-question", "yield": True, "busy_loop": False}, revision=revision)
+                _, events = self._atomic_transaction({}, [("question.refused", {"reason": "unbounded-question", "yield": True, "busy_loop": False})])
+                event = events[0]
             return {"status": "refused", "worker_id": None, "accepted": False, "yield": True, "busy_loop": False, "event": event, "rejected": [{"reason": "unbounded-question"}]}
         required = set(_as_list(capabilities))
-        workers = self._read("workers").get("workers", {})
-        ordered = list(workers)
-        if preferred_worker in ordered:
-            ordered.remove(preferred_worker)
-            ordered.insert(0, preferred_worker)
-        if deputy_worker in ordered:
-            ordered.remove(deputy_worker)
-            ordered.append(deputy_worker)
-        rejected: list[dict[str, str]] = []
-        for worker_id in ordered:
-            worker = workers[worker_id]
-            if required and not required.issubset(set(worker.get("capabilities", []))):
-                rejected.append({"worker_id": worker_id, "reason": "capability-mismatch"})
-                continue
-            if worker.get("mode") == "reserve":
-                if int(worker.get("question_budget", 0)) <= 0:
-                    rejected.append({"worker_id": worker_id, "reason": "question-budget-exhausted"})
+        # Selection, quota validation and the bounded reserve decrement all
+        # happen under one recovery-aware lock.  A route cannot be based on a
+        # projection that is being replaced by a concurrent publish/quota WAL.
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            workers = self._read("workers").get("workers", {})
+            ordered = list(workers)
+            if preferred_worker in ordered:
+                ordered.remove(preferred_worker)
+                ordered.insert(0, preferred_worker)
+            if deputy_worker in ordered and preferred_worker is None:
+                ordered.remove(deputy_worker)
+                ordered.insert(0, deputy_worker)
+            elif deputy_worker in ordered:
+                ordered.remove(deputy_worker)
+                ordered.append(deputy_worker)
+            rejected: list[dict[str, str]] = []
+            for worker_id in ordered:
+                worker = workers[worker_id]
+                if required and not required.issubset(set(worker.get("capabilities", []))):
+                    rejected.append({"worker_id": worker_id, "reason": "capability-mismatch"})
                     continue
-            ok, reason = self._quota_eligible_locked(worker, service=service, account_alias=account_alias, window=window, required_tokens=required_tokens)
-            if not ok:
-                rejected.append({"worker_id": worker_id, "reason": reason})
-                continue
-            # Question consumption is one bounded decision, not an open-ended
-            # worker spawn.  Persist the decrement before returning.
-            with self._thread_lock, self._lock():
-                self._ensure_locked()
+                if worker.get("mode") == "reserve":
+                    if int(worker.get("question_budget", 0)) <= 0:
+                        rejected.append({"worker_id": worker_id, "reason": "question-budget-exhausted"})
+                        continue
+                ok, reason = self._quota_eligible_locked(worker, service=service, account_alias=account_alias, window=window, required_tokens=required_tokens)
+                if not ok:
+                    rejected.append({"worker_id": worker_id, "reason": reason})
+                    continue
+                # Question consumption is one bounded decision, not an
+                # open-ended worker spawn.  Persist the decrement before
+                # returning while still holding the selection lock.
                 doc = self._read("workers")
                 current = doc["workers"][worker_id]
                 if current.get("mode") == "reserve":
@@ -1322,13 +1784,9 @@ class CoordinationState:
                     doc["workers"][worker_id] = current
                     self._commit("workers", doc, "question.reserved", {"worker_id": worker_id, "bounded": True, "task_id": task_id})
                 else:
-                    revision = self._next_revision()
-                    self._event("question.routed", {"worker_id": worker_id, "bounded": True, "task_id": task_id}, revision=revision)
-            return {"status": "routed", "worker_id": worker_id, "bounded": True, "rejected": rejected}
-        with self._thread_lock, self._lock():
-            self._ensure_locked()
-            revision = self._next_revision()
-            event = self._event("question.blocked", {"task_id": task_id, "reason": "all-providers-unavailable", "yield": True, "busy_loop": False, "rejected": rejected}, revision=revision)
+                    self._atomic_transaction({}, [("question.routed", {"worker_id": worker_id, "bounded": True, "task_id": task_id})])
+                return {"status": "routed", "worker_id": worker_id, "bounded": True, "rejected": rejected}
+            task_doc: dict[str, Any] | None = None
             if task_id:
                 task_doc = self._read("tasks")
                 task = task_doc.get("tasks", {}).get(task_id)
@@ -1337,7 +1795,16 @@ class CoordinationState:
                     task["status"] = "blocked" if not task.get("recovery_required") else task["status"]
                     task["revision"] = int(task.get("revision", 0)) + 1
                     task_doc["tasks"][task_id] = task
-                    self._commit("tasks", task_doc, "question.persisted", {"task_id": task_id, "question_hash": _sha256(question)})
+            updates: dict[str, dict[str, Any]] = {}
+            event_specs: list[tuple[str, Mapping[str, Any]]] = [(
+                "question.blocked",
+                {"task_id": task_id, "reason": "all-providers-unavailable", "yield": True, "busy_loop": False, "rejected": rejected},
+            )]
+            if task_doc is not None and task_id in task_doc.get("tasks", {}):
+                updates["tasks"] = task_doc
+                event_specs.append(("question.persisted", {"task_id": task_id, "question_hash": _sha256(question)}))
+            _, events = self._atomic_transaction(updates, event_specs)
+            event = events[0]
         return {"status": "blocked", "worker_id": None, "yield": True, "busy_loop": False, "event": event, "rejected": rejected}
 
     route = route_task
@@ -1436,7 +1903,21 @@ class CoordinationState:
         message_id = message_id or _token()
         with self._thread_lock, self._lock():
             self._ensure_locked()
-            revision = self._next_revision()
+            existing_outbox = self._read("outbox").get("messages", {}).get(message_id)
+            existing_inbox = self._read("inbox").get("messages", {}).get(message_id)
+            if existing_outbox is not None or existing_inbox is not None:
+                existing = existing_outbox or existing_inbox
+                if existing_outbox == existing_inbox and all(existing.get(field) == expected for field, expected in {
+                    "task_id": task_id,
+                    "sender": sender,
+                    "recipient": recipient,
+                    "kind": kind,
+                }.items()):
+                    # A retried send with the same immutable ID is a safe
+                    # idempotent replay after a crash/restart.
+                    return dict(existing)
+                raise FencedError(f"message id is already used: {message_id}")
+            revision = int(self._read("meta").get("revision", 0)) + 1
             message = {
                 "message_id": message_id,
                 "task_id": task_id,
@@ -1454,13 +1935,12 @@ class CoordinationState:
             inbox = self._read("inbox")
             outbox.setdefault("messages", {})[message_id] = message
             inbox.setdefault("messages", {})[message_id] = message
-            # Both files carry the same immutable message; the event is the
-            # single coordination decision for the pair.
-            outbox["revision"] = revision
-            inbox["revision"] = revision
-            self._write("outbox", outbox)
-            self._write("inbox", inbox)
-            self._event("message.sent", {"message_id": message_id, "task_id": task_id, "sender": sender, "recipient": recipient, "kind": kind}, revision=revision)
+            # Both files carry the same immutable message; the event and pair
+            # are one prepared transaction so a crash cannot split them.
+            self._atomic_transaction(
+                {"outbox": outbox, "inbox": inbox},
+                [("message.sent", {"message_id": message_id, "task_id": task_id, "sender": sender, "recipient": recipient, "kind": kind})],
+            )
             return dict(message)
 
     def acknowledge_message(self, message_id: str, recipient: str, *, state: str = "acknowledged") -> dict[str, Any]:
@@ -1478,23 +1958,32 @@ class CoordinationState:
                 raise FencedError("only the message recipient may acknowledge it")
             if message.get("acknowledged_at") is not None:
                 return dict(message)
-            revision = self._next_revision()
+            revision = int(self._read("meta").get("revision", 0)) + 1
             updated = dict(message)
             updated["state"] = state
             updated["acknowledged_at"] = _now_from(self.clock)
             updated["ack_state_revision"] = revision
             inbox["messages"][message_id] = updated
             inbox["revision"] = revision
-            self._write("inbox", inbox)
-            self._event("message.acknowledged", {"message_id": message_id, "recipient": recipient, "state": state}, revision=revision)
+            acknowledged_ids = list(inbox.get("acknowledged_ids", []))
+            if message_id not in acknowledged_ids:
+                acknowledged_ids.append(message_id)
+            inbox["acknowledged_ids"] = acknowledged_ids
+            self._atomic_transaction({"inbox": inbox}, [("message.acknowledged", {"message_id": message_id, "recipient": recipient, "state": state})])
             return updated
 
-    def message(self, message_id: str) -> dict[str, Any]:
+    def _message_locked(self, message_id: str) -> dict[str, Any]:
         message_id = _clean_id(message_id, "message_id")
         value = self._read("inbox").get("messages", {}).get(message_id)
         if value is None:
             raise InvalidRequest(f"unknown message: {message_id}")
         return dict(value)
+
+    def message(self, message_id: str) -> dict[str, Any]:
+        """Read one inbox message through the lock/recovery boundary."""
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            return self._message_locked(message_id)
 
     # -- convenience/status ----------------------------------------------------
 
@@ -1579,6 +2068,16 @@ def _parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("epoch", type=int)
     checkpoint.add_argument("fencing_token")
     checkpoint.add_argument("--state", default="{}")
+    checkpoint.add_argument("--dirty-path", action="append", default=[])
+    checkpoint.add_argument("--current-edit", action="append", default=[])
+    checkpoint.add_argument("--output", action="append", default=[])
+    checkpoint.add_argument("--test", action="append", default=[])
+    checkpoint.add_argument("--unrun-check", action="append", default=[])
+    checkpoint.add_argument("--completed-command", action="append", default=[])
+    checkpoint.add_argument("--base-hash")
+    checkpoint.add_argument("--head")
+    checkpoint.add_argument("--operation-receipt", default="{}")
+    checkpoint.add_argument("--pipeline-state", default="{}")
     checkpoint.add_argument("--observe-timeout", action="store_true")
     checkpoint.add_argument("--operation-kind")
     checkpoint.add_argument("--operation-status")
@@ -1589,6 +2088,7 @@ def _parser() -> argparse.ArgumentParser:
     claim.add_argument("worker_id")
     claim.add_argument("checkpoint_id")
     claim.add_argument("--expected-task-revision", type=int)
+    claim.add_argument("--expected-checkpoint-hash")
     claim.add_argument("--ttl", type=float, default=60.0)
 
     publish = sub.add_parser("publish-result", aliases=["result-publish"])
@@ -1674,9 +2174,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif command in {"release-lease", "lease-release"}:
             result = state.release_lease(args.kind, args.resource_id, args.holder, args.epoch, args.fencing_token, reason=args.reason)
         elif command == "checkpoint":
-            result = state.checkpoint_task(args.task_id, args.holder, args.epoch, args.fencing_token, state=_json_arg(args.state, {}), observe_timeout=args.observe_timeout, operation_kind=args.operation_kind, operation_status=args.operation_status, worker_mode=args.worker_mode)
+            result = state.checkpoint_task(args.task_id, args.holder, args.epoch, args.fencing_token, state=_json_arg(args.state, {}), dirty_paths=args.dirty_path, current_edits=args.current_edit, outputs={"paths": args.output}, tests=args.test, unrun_checks=args.unrun_check, completed_commands=args.completed_command, base_hash=args.base_hash, head=args.head, operation_receipt=_json_arg(args.operation_receipt, {}), pipeline_state=_json_arg(args.pipeline_state, {}), observe_timeout=args.observe_timeout, operation_kind=args.operation_kind, operation_status=args.operation_status, worker_mode=args.worker_mode)
         elif command == "claim-replacement":
-            result = state.claim_replacement(args.task_id, args.worker_id, args.checkpoint_id, ttl=args.ttl, expected_task_revision=args.expected_task_revision)
+            result = state.claim_replacement(args.task_id, args.worker_id, args.checkpoint_id, ttl=args.ttl, expected_task_revision=args.expected_task_revision, expected_checkpoint_hash=args.expected_checkpoint_hash)
         elif command in {"publish-result", "result-publish"}:
             result = state.publish_result(args.task_id, args.holder, args.epoch, args.fencing_token, args.input_revision, _json_arg(args.result), result_id=args.result_id)
         elif command == "quota-capture":
