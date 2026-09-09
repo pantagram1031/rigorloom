@@ -183,6 +183,27 @@ class CheckSourcesTests(unittest.TestCase):
         self.assertEqual(entry["container"], "Journal of Examples")
         self.assertEqual(entry["doi"], doi)
 
+    def test_doi_inside_url_tag_still_matches_its_cache_record(self):
+        # A reference written with the pipeline's own link tag ends the DOI with
+        # the tag's closing quote. That quote must not travel into the cache
+        # lookup key, or the source can never be verified.
+        doi = "10." + "1234/tagged-source"
+        title = "Tagged Synthetic Evidence"
+        self.write_content(
+            "# References\n\n"
+            f"- Synthetic Author (2024). {title}. Journal of Examples. "
+            f'[[URL href="https://doi.org/{doi}"]]\n'
+        )
+        self.write_doi_cache(doi, title)
+
+        verdict, code = check_sources.check(self.ws, profile_root=self.profile)
+
+        self.assertEqual(code, 0, verdict)
+        self.assertEqual(verdict["entries"][0]["doi"], doi)
+        self.assertNotIn("source_cache_unreadable", self.warn_codes(verdict))
+        self.assertNotIn("source_unverified", self.warn_codes(verdict))
+        self.assertEqual(verdict["counts"]["unverified"], 0)
+
     def test_matching_cache_without_verification_metadata_stays_unverified(self):
         doi = "10." + "1234/self-authored-source"
         title = "Self Authored Synthetic Evidence"

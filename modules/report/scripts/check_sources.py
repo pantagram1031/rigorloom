@@ -117,7 +117,11 @@ def _resolve_profile_root(profile_root) -> Path | None:
 
 
 def _clean_terminal_token(value: str) -> str:
-    return value.strip().strip("<>").rstrip(".,;:)]}")
+    # Quotes are terminal punctuation here too: a reference written with the
+    # pipeline's own link tag, `[[URL href="https://doi.org/10.x/y"]]`, ends the
+    # DOI with the tag's closing quote. Without stripping it the identifier can
+    # never match its cache record, so every such source stays unverified.
+    return value.strip().strip("<>").rstrip(".,;:)]}\"'")
 
 
 def _doi_slug(doi: str) -> str:
