@@ -48,6 +48,9 @@ anchors 목록을 tidy_blank_before로 유도해 쓴다(explicit build.yaml 키�
 항상 우선). verdict에 derived_tidy_anchors로 기록되고, 유도 앵커는
 모호/미매치를 fatal 대신 per-anchor skip+warning으로 처리한다
 (tidy_warnings).
+또한 --form-profile이 주어지면 §O 조판 기본값(전 본문 widowOrphan=1,
+anchors/캡션 keepWithNext=1)을 keep_with_next/restore 이후 PDF 변환 직전에
+적용한다(멱등). --loop와 --assemble이 같은 순서·조건으로 동작한다.
 
   (D) PROOF 단계(--loop v2, COM 필요):
       python fill_report.py --loop --form FORM.hwpx --content content.md
@@ -1365,7 +1368,8 @@ def mode_loop(args):
         args.build_yaml, form_profile, content)
     keep_with_next = read_keep_with_next(args.build_yaml)
     use_restore = baseline_has_para_formats(args.baseline)
-    use_tidy = bool(tidy_before or tidy_after) or use_restore or bool(keep_with_next)
+    use_tidy = (bool(tidy_before or tidy_after) or use_restore
+                or bool(keep_with_next) or bool(form_profile))
     tidy_soft = bool(derived_tidy_anchors)  # 유도 앵커는 모호/없음을 fatal 대신 skip.
 
     result = None
@@ -1387,6 +1391,8 @@ def mode_loop(args):
                 run_restore_para_formats(out_hwpx, args.baseline)
             if keep_with_next:
                 run_keep_with_next(out_hwpx, keep_with_next)
+            if form_profile:
+                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
             xml_para_verification = run_para_format_check(out_hwpx, form)
             if not pdf_cmd:
                 verdict = xml_only_verdict(out_hwpx, xml_para_verification, i)
@@ -1430,7 +1436,8 @@ def mode_loop(args):
         elif use_tidy:
             # edit(save hwpx만, PDF 아직 아님) -> tidy_hwpx(오프라인) ->
             # restore_para_formats(오프라인) -> keep_with_next(오프라인) ->
-            # convert(hwpx->pdf).
+            # typeset-defaults(오프라인, form_profile 있을 때) -> convert.
+            # 순서·조건은 mode_assemble과 같다(§O).
             run_com_edit(form, ops_path, out_hwpx, None, args.kill_stale)
             tidy_result = run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
                                         keep_map=tidy_keep_map)
@@ -1439,6 +1446,8 @@ def mode_loop(args):
                 run_restore_para_formats(out_hwpx, args.baseline)
             if keep_with_next:
                 run_keep_with_next(out_hwpx, keep_with_next)
+            if form_profile:
+                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
             run_com_convert(out_hwpx, out_pdf)
         else:
             # 기존 경로: edit 한 방에 save-as + export-pdf.
@@ -1806,9 +1815,12 @@ def main():
                                         "+ para_formats 있으면 tidy 이후 line_spacing/align 복원")
     ap.add_argument("--trouble-table", help="(loop) kb trouble-table 마크다운 경로")
     ap.add_argument("--form-profile",
-                    help="(loop) form_inspect.py profile JSON — build.yaml에 "
-                         "tidy_blank_before/after가 둘 다 없을 때 anchors 목록을 "
-                         "tidy_blank_before로 자동 유도(explicit build.yaml 키가 항상 우선)")
+                    help="(loop/assemble) form_inspect.py profile JSON — (1) "
+                         "build.yaml에 tidy_blank_before/after가 둘 다 없을 때 "
+                         "anchors 목록을 tidy_blank_before로 자동 유도(explicit "
+                         "build.yaml 키가 항상 우선), (2) §O 조판 기본값을 PDF 변환 "
+                         "직전에 적용(widowOrphan=1 + anchors keepWithNext=1). "
+                         "이 옵션만 주어져도 오프라인 tidy 경로를 탄다")
     ap.add_argument("--proof", action="store_true",
                     help="(loop) phase-1 FILL 루프 수렴 후 PROOF 단계 실행: "
                          "contact_sheet.py로 컨택트시트 생성 + rubric 템플릿 방출")
