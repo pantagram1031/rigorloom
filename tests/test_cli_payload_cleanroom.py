@@ -36,15 +36,24 @@ absent. Point ``RIGORLOOM_WHEEL_PYTHON`` at an interpreter carrying setuptools
 fails if the flow itself was never executed.
 
 What ``verify`` proves, and what it does not, is worth stating plainly because
-the difference is easy to overclaim. ``verify`` exits 0, which is fail-closed
-on RUNNABILITY: the residue gate genuinely ran, out of the installed core
-bundle, against the published candidate. Its VERDICT is ``fail``, because
-``check_residue`` measures a finished artifact and a Runtime plan fills cells
-rather than finishing a document — the form's own anchor labels survive, and
-the checker reports 25 of them. Both facts are asserted here. Neither is
-softened: `test_the_residue_gate_reports_the_unfinished_form_instead_of_passing_it`
-exists so a future reader cannot mistake "the gate ran" for "the document
-passed", and so nobody is tempted to reach the second by weakening the first.
+the difference is easy to overclaim. The undeclared cell-fill flow still
+exits 0, which is fail-closed on RUNNABILITY: the residue gate genuinely ran,
+out of the installed core bundle, against the published candidate. Its VERDICT
+there is ``fail``, because ``check_residue`` measures a finished artifact and a
+bare Runtime cell fill does not declare what the form may keep — the form's
+own anchor labels survive, and the checker reports them. That path is pinned
+by `test_the_residue_gate_reports_the_unfinished_form_instead_of_passing_it`.
+
+A second installed flow — `inspect --include forbidden`, ``set_run`` ops that
+keep each label as a prefix, ``propose --declares-file`` with that fillMap —
+carries a residue declaration, and reaches ``ranAll: true`` and
+``acceptance: true`` from the installed command with no mock of the checker
+(`test_declared_fill_reaches_ranAll_and_acceptance`). That is a claim about
+the DECLARATION mechanism reaching the installed consumer, not about the
+document being finished: it fills MAX_FILLED_CELLS anchors with a generic
+token, and the acceptance it reaches rests mostly on the keep derivation
+exempting the inventory entries the plan never touched. Finishing a document
+is still the assemble stage's job. The two paths must not be collapsed.
 
 Non-native by construction: the only supported backend is ``preedit``, an
 offline XML edit through ``engine/scripts/preedit.py``. No COM, no Hancom, no
@@ -409,6 +418,92 @@ def flow(payload, document) -> dict:
     return steps
 
 
+@pytest.fixture(scope="module")
+def declared_flow(payload, document) -> dict:
+    """Installed CLI: forbidden inventory -> declared set_run fill -> verify.
+
+    Addresses and fillMap keys come from ``inspect --include forbidden`` on
+    the sandbox copy, the same contract as
+    ``tests/test_runtime_residue_declarations.py`` ``_fill_ops``. The
+    declaration file is written inside the sandbox so argv never names the
+    checkout. Consumer is the venv ``rigorloom`` binary with ``--engine-root``
+    at the ZIP install.
+    """
+    steps: dict[str, dict] = {}
+
+    code, opened = _cli(payload, "open", "--path", str(document))
+    steps["open"] = {"code": code, "payload": opened}
+    assert code == 0, opened
+    session = opened["result"]["sessionId"]
+
+    code, inspected = _cli(payload, "inspect", "--session", session,
+                           "--include", "forbidden")
+    steps["inspect"] = {"code": code, "payload": inspected}
+    assert code == 0, inspected
+    inventory = inspected["result"]["forbidden"]
+    usable = [entry for entry in inventory.get("anchors") or []
+              if isinstance(entry.get("text"), str) and entry["text"].strip()
+              and isinstance(entry.get("atPara"), int) and entry["atPara"] >= 0]
+    assert usable, (
+        "inspect --include forbidden reported no addressable anchor; the "
+        "declared fill refuses to invent a paragraph")
+    chosen = usable[:MAX_FILLED_CELLS]
+    ops = []
+    fill_map = {}
+    for entry in chosen:
+        written = f"{entry['text']} {FILL_TEXT}"
+        ops.append({"kind": "set_run", "atPara": entry["atPara"],
+                    "run": 0, "text": written})
+        fill_map[entry["text"]] = written
+    steps["address"] = {"anchors": chosen, "ops": ops, "fillMap": fill_map}
+
+    declares_path = payload["documents"] / "declared-fill.json"
+    declares_path.write_text(
+        json.dumps({"fillMap": fill_map}, ensure_ascii=False), encoding="utf-8")
+    assert cleanroom._is_within(declares_path, payload["sandbox"].root)
+    steps["declares_path"] = str(declares_path)
+
+    op_args: list[str] = []
+    for op in ops:
+        op_args += ["--op", json.dumps(op, ensure_ascii=False)]
+    code, proposed = _cli(payload, "propose", "--session", session,
+                          *op_args, "--declares-file", str(declares_path))
+    steps["propose"] = {"code": code, "payload": proposed}
+    assert code == 0, proposed
+    plan = proposed["result"]["plan"]
+    assert plan.get("declares", {}).get("fillMap") == fill_map, plan.get("declares")
+
+    code, requested = _cli(payload, "request-approval", "--plan", plan["planId"])
+    steps["request-approval"] = {"code": code, "payload": requested}
+    assert code == 0, requested
+    approval = requested["result"]["approval"]
+
+    code, approved = _cli(payload, "approve",
+                          "--approval", approval["approvalId"],
+                          "--plan", plan["planId"],
+                          "--plan-hash", plan["planHash"],
+                          "--approver", "installed-positive")
+    steps["approve"] = {"code": code, "payload": approved}
+    assert code == 0, approved
+
+    code, applied = _cli(payload, "apply", "--plan", plan["planId"],
+                         "--approval", approval["approvalId"])
+    steps["apply"] = {"code": code, "payload": applied}
+    assert code == 0, applied
+    run_id = applied["result"]["candidate"]["runId"]
+
+    code, verified = _cli(payload, "verify", "--session", session,
+                          "--run", run_id)
+    steps["verify"] = {"code": code, "payload": verified}
+
+    steps["session"] = session
+    steps["runId"] = run_id
+    _EXECUTED["declared"] = sorted(
+        k for k in steps
+        if k not in ("address", "session", "runId", "declares_path"))
+    return steps
+
+
 # --------------------------------------------------------------------------- #
 # 1. both distributions installed, from bundles and a wheel
 # --------------------------------------------------------------------------- #
@@ -624,6 +719,56 @@ class TestRuntimeFlowOverThePayload:
 
 
 # --------------------------------------------------------------------------- #
+# 3b. declared fill on the same installed command (acceptance true)
+# --------------------------------------------------------------------------- #
+class TestInstalledDeclaredAcceptance:
+    """A residue declaration carried through the buyer's installed CLI.
+
+    Mirrors ``test_a_fully_declared_fill_reaches_acceptance`` but the
+    consumer is the venv ``rigorloom`` binary, ``--engine-root`` is the ZIP
+    install, and nothing here imports Runtime from the checkout or stubs
+    ``check_residue``.
+    """
+
+    def test_declared_fill_reaches_ranAll_and_acceptance(self, declared_flow):
+        assert declared_flow["apply"]["code"] == 0, declared_flow["apply"]["payload"]
+        applied = declared_flow["apply"]["payload"]["result"]["candidate"]["checks"]
+        assert applied["ranAll"] is True, applied
+        assert applied["acceptance"] is True, applied
+        row = applied["checks"][0]
+        assert row["checker"] == "check_residue"
+        assert row["state"] == "ran", row
+        assert row["ok"] is True, row
+
+        assert declared_flow["verify"]["code"] == 0, declared_flow["verify"]["payload"]
+        assert declared_flow["verify"]["payload"]["ok"] is True
+        verified = declared_flow["verify"]["payload"]["result"]["checks"]
+        assert verified["ranAll"] is True, verified
+        assert verified["acceptance"] is True, verified
+        assert verified["exemptions"]["source"] == "plan.declares"
+        states = [item["state"] for item in verified["checks"]]
+        assert states and set(states) == {"ran"}, verified["checks"]
+
+    def test_declared_plan_used_forbidden_inventory_not_a_fixture(
+            self, declared_flow):
+        anchors = declared_flow["inspect"]["payload"]["result"]["forbidden"]["anchors"]
+        chosen = declared_flow["address"]["anchors"]
+        assert chosen, "the declared fill wrote nothing"
+        assert len(chosen) == len(declared_flow["address"]["ops"])
+        for entry, op in zip(chosen, declared_flow["address"]["ops"]):
+            assert entry in anchors
+            assert op["kind"] == "set_run"
+            assert op["atPara"] == entry["atPara"]
+            assert op["text"].startswith(entry["text"])
+
+    def test_undeclared_cell_fill_still_fails_acceptance(self, flow):
+        """The new positive path must not silently green the old negative."""
+        checks = flow["verify"]["payload"]["result"]["checks"]
+        assert checks["acceptance"] is False, checks
+        assert checks["ranAll"] is True, checks
+
+
+# --------------------------------------------------------------------------- #
 # 4. containment (acceptance §3 and §6)
 # --------------------------------------------------------------------------- #
 class TestContainmentAfterTheEdit:
@@ -789,9 +934,12 @@ class TestWheelStayedNarrow:
 # --------------------------------------------------------------------------- #
 # 7. a skip is not a pass
 # --------------------------------------------------------------------------- #
-def test_no_axis_was_silently_skipped(payload, flow):
+def test_no_axis_was_silently_skipped(payload, flow, declared_flow):
     """Green here must mean the heavy path ran, not that it was skipped."""
     assert _EXECUTED.get("payload") is True
     assert _EXECUTED.get("flow") == [
         "apply", "approve", "capabilities", "inspect", "open", "propose",
         "request-approval", "verify"], _EXECUTED.get("flow")
+    assert _EXECUTED.get("declared") == [
+        "apply", "approve", "inspect", "open", "propose",
+        "request-approval", "verify"], _EXECUTED.get("declared")
