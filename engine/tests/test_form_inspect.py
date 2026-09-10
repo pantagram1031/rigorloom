@@ -4,10 +4,14 @@
 합성 hwpx(attribute-order/quote-variant robustness)는 tmp_path에 직접 zip 생성.
 `python -m pytest tests/ -q`.
 """
+import hashlib
+import json
 import os
 import re
+import subprocess
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -23,7 +27,7 @@ SONON_FORM = os.path.join(TEMPLATES_DIR, "소논문_기본양식.hwpx") if _WS e
 DAESU_FORM = os.path.join(TEMPLATES_DIR, "대수_추가탐구기록지_양식.hwpx") if _WS else ""
 OUT_HWPX = os.path.join(_WS, "work_v0.3", "out.hwpx") if _WS else ""
 
-pytestmark = pytest.mark.skipif(
+requires_sonon = pytest.mark.skipif(
     not os.path.exists(SONON_FORM),
     reason="real fixture (소논문_기본양식.hwpx) not present on this machine",
 )
@@ -33,6 +37,7 @@ pytestmark = pytest.mark.skipif(
 # BLOCKER 3: colored real heading (also anchor) must NOT land in removal_targets
 # ---------------------------------------------------------------------------
 
+@requires_sonon
 def test_colored_heading_not_removed():
     profile, _ = form_inspect.analyze(SONON_FORM, want_baseline=False)
     anchor_set = set(profile["anchors"])
@@ -46,6 +51,7 @@ def test_colored_heading_not_removed():
             )
 
 
+@requires_sonon
 def test_removal_targets_have_confidence_and_policy():
     profile, _ = form_inspect.analyze(SONON_FORM, want_baseline=False)
     assert "removal_policy" in profile
@@ -55,6 +61,7 @@ def test_removal_targets_have_confidence_and_policy():
         assert t["confidence"] in ("high", "medium")
 
 
+@requires_sonon
 def test_removal_targets_shrunk_by_anchor_exclusion():
     """실제 픽스처 회귀값: anchor와 겹치는 5개 문단이 빠져 16 -> 11."""
     profile, _ = form_inspect.analyze(SONON_FORM, want_baseline=False)
@@ -69,12 +76,14 @@ def test_removal_targets_shrunk_by_anchor_exclusion():
 # BLOCKER 4: guide-only colors must not leak into baseline `colors`
 # ---------------------------------------------------------------------------
 
+@requires_sonon
 def test_guide_only_color_flagged():
     _, baseline = form_inspect.analyze(SONON_FORM, want_baseline=True)
     assert "#FF0000" in baseline["guide_only_colors"]
     assert "#FF0000" not in baseline["colors"]
 
 
+@requires_sonon
 def test_style_diff_flags_leftover_guide_color(tmp_path):
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import style_diff  # noqa: E402
@@ -90,6 +99,7 @@ def test_style_diff_flags_leftover_guide_color(tmp_path):
     assert not result["ok"]
 
 
+@requires_sonon
 def test_style_diff_always_flags_hyperlink_blue():
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import style_diff  # noqa: E402
@@ -106,6 +116,7 @@ def test_style_diff_always_flags_hyperlink_blue():
     assert "#0000FF" in colors_flagged
 
 
+@requires_sonon
 def test_style_diff_allow_colors_suppresses_hyperlink_blue():
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import style_diff  # noqa: E402
@@ -123,6 +134,7 @@ def test_style_diff_allow_colors_suppresses_hyperlink_blue():
 # Constraint keyword-context regex (MINOR)
 # ---------------------------------------------------------------------------
 
+@requires_sonon
 def test_constraints_extracted_from_real_form():
     profile, _ = form_inspect.analyze(SONON_FORM, want_baseline=False)
     c = profile["constraints"]
@@ -154,8 +166,8 @@ def test_constraint_spacing_requires_both_keywords():
 # BUG: regex XML fragility — attribute order / quote / namespace prefix
 # ---------------------------------------------------------------------------
 
-def _build_synthetic_hwpx(tmp_path, header_xml, section_xml):
-    path = tmp_path / "synthetic.hwpx"
+def _build_synthetic_hwpx(tmp_path, header_xml, section_xml, name="synthetic.hwpx"):
+    path = tmp_path / name
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("Contents/header.xml", header_xml)
         z.writestr("Contents/section0.xml", section_xml)
@@ -214,6 +226,7 @@ def test_color_extraction_robust_to_attr_order_and_quotes():
 # form_inspect v2: page_metrics / table_map / break_audit
 # ---------------------------------------------------------------------------
 
+@requires_sonon
 def test_page_metrics_golden_numbers():
     # 손계산(소논문_기본양식.hwpx의 hp:pagePr/hp:margin 실측값 기준):
     # width=59528 height=84188, left=1417 right=4251 top=2834 bottom=2834
@@ -239,6 +252,7 @@ def test_page_metrics_golden_numbers():
     assert pm["assumptions"]["line_spacing_pct"] == 160
 
 
+@requires_sonon
 def test_page_metrics_respects_cli_args():
     profile, _ = form_inspect.analyze(SONON_FORM, want_baseline=False,
                                        base_pt=12, line_spacing_pct=200)
@@ -251,6 +265,7 @@ def test_page_metrics_respects_cli_args():
     assert pm["chars_per_line"] == 44
 
 
+@requires_sonon
 def test_break_audit_counts_real_form():
     # 손계산(소논문_기본양식.hwpx header.xml, hh:breakSetting widowOrphan="1" 등
     # 문자열 카운트 실측): widowOrphan=3 keepWithNext=8 keepLines=0
@@ -308,6 +323,7 @@ def test_table_map_classifies_cells():
     assert cells_by_addr[(0, 0)]["classification"] == "static"
 
 
+@requires_sonon
 def test_table_map_covers_all_sections():
     profile, _ = form_inspect.analyze(SONON_FORM, want_baseline=False)
     assert len(profile["table_map"]) == profile["format_hints"]["table_count"]
@@ -437,3 +453,220 @@ def test_blanks_before_ignores_nested_table_cell_paragraphs(tmp_path):
     # 표를 담은 문단은 비어있지 않다고 취급되므로(그 안 빈 문단은 무관),
     # [표뒤앵커] 바로 앞 top-level 문단은 표-문단(비어있지 않음) -> blanks_before=0.
     assert profile["anchors_blanks_before"].get("[표뒤앵커]") == 0
+
+
+# ---------------------------------------------------------------------------
+# FORM-BASELINE-PRODUCER: bind convert sidecar into baseline
+# ---------------------------------------------------------------------------
+
+_INSPECT = os.path.join(ROOT, "scripts", "form_inspect.py")
+
+
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _write_conversion_record(path, source, pdf, **over):
+    """Same shape ``com_backend.write_conversion_record`` emits. No COM."""
+    record = {
+        "schema": form_inspect.CONVERSION_RECORD_SCHEMA,
+        "tool": form_inspect.CONVERSION_RECORD_TOOL,
+        "created_utc": "2026-09-10T00:00:00Z",
+        "source": str(Path(source).resolve()),
+        "source_sha256": _sha256(source),
+        "pdf": str(Path(pdf).resolve()),
+        "pdf_sha256": _sha256(pdf),
+        "source_print_method": 0,
+        "print_method_normalized": None,
+        "pages_document": 1,
+        "pages_pdf": 1,
+    }
+    record.update(over)
+    path = Path(path)
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _producer_bundle(tmp_path, name="form"):
+    header = (
+        '<hh:charPr id="0" height="1000" textColor="#000000">'
+        '<hh:fontRef hangul="1"/></hh:charPr>'
+    )
+    section = (
+        '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0">'
+        '<hp:t>[Cover Title]</hp:t></hp:run></hp:p>'
+    )
+    hwpx = _build_synthetic_hwpx(
+        tmp_path, header, section, name=f"{name}.hwpx")
+    pdf = tmp_path / f"{name}.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%producer-fixture\n")
+    record = _write_conversion_record(
+        tmp_path / f"{name}.pdf.conversion.json", hwpx, pdf)
+    return hwpx, str(pdf), str(record)
+
+
+def _run_inspect(*args):
+    return subprocess.run(
+        [sys.executable, _INSPECT, *map(str, args)],
+        capture_output=True, text=True, encoding="utf-8")
+
+
+def test_conversion_record_schema_matches_com_backend():
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import com_backend
+    assert form_inspect.CONVERSION_RECORD_SCHEMA == com_backend.CONVERSION_RECORD_SCHEMA
+    assert form_inspect.CONVERSION_RECORD_SUFFIX == com_backend.CONVERSION_RECORD_SUFFIX
+    assert (str(form_inspect.conversion_record_path("x/y.pdf"))
+            == str(com_backend.conversion_record_path("x/y.pdf")))
+
+
+def test_analyze_without_conversion_record_omits_form_pdf_keys(tmp_path):
+    hwpx, _pdf, _record = _producer_bundle(tmp_path)
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    assert "form_pdf_hash" not in baseline
+    assert "form_pdf_export" not in baseline
+
+
+def test_apply_form_pdf_export_positive(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert err is None, err
+    assert bound["form_pdf_hash"] == _sha256(pdf)
+    export = bound["form_pdf_export"]
+    assert export["schema"] == form_inspect.CONVERSION_RECORD_SCHEMA
+    assert export["tool"] == form_inspect.CONVERSION_RECORD_TOOL
+    assert export["pdf_sha256"] == _sha256(pdf)
+    assert export["source_sha256"] == _sha256(hwpx)
+    assert "form_pdf_hash" not in baseline
+    assert "form_pdf_export" not in baseline
+
+
+def test_cli_publishes_form_pdf_hash_atomically(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    baseline_path = tmp_path / "form_baseline.json"
+    result = _run_inspect(
+        hwpx, "--baseline", baseline_path,
+        "--form-pdf", pdf, "--conversion-record", record)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert payload["form_pdf_hash"] == _sha256(pdf)
+    assert payload["form_pdf_export"]["pdf_sha256"] == _sha256(pdf)
+    assert payload["form_hash"] == _sha256(hwpx)
+    leftover = list(tmp_path.glob("form_baseline.json*.tmp"))
+    assert leftover == []
+
+
+def test_stale_source_does_not_publish(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    Path(hwpx).write_bytes(Path(hwpx).read_bytes() + b"x")
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert bound is None
+    assert "source" in err
+    assert "form_pdf_hash" not in baseline
+
+
+def test_stale_pdf_does_not_publish(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    Path(pdf).write_bytes(b"%PDF-1.4\n%changed\n")
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert bound is None
+    assert "pdf" in err
+    assert "form_pdf_hash" not in baseline
+
+
+def test_wrong_source_path_does_not_publish(tmp_path):
+    hwpx, pdf, _record = _producer_bundle(tmp_path, name="a")
+    other, _pdf_b, _ = _producer_bundle(tmp_path, name="b")
+    record = _write_conversion_record(
+        tmp_path / "wrong-source.json", other, pdf)
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert bound is None
+    assert "source path" in err
+
+
+def test_wrong_pdf_path_does_not_publish(tmp_path):
+    hwpx, pdf, _record = _producer_bundle(tmp_path, name="a")
+    _hwpx_b, other_pdf, _ = _producer_bundle(tmp_path, name="b")
+    record = _write_conversion_record(
+        tmp_path / "wrong-pdf.json", hwpx, other_pdf)
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert bound is None
+    assert "pdf path" in err
+
+
+def test_wrong_schema_does_not_publish(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    _write_conversion_record(
+        record, hwpx, pdf, schema="rigorloom/conversion-record/v0")
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert bound is None
+    assert "schema" in err
+
+
+def test_malformed_record_does_not_publish(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    Path(record).write_text("{not-json", encoding="utf-8")
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert bound is None
+    assert "unreadable" in err
+
+
+def test_unreadable_record_does_not_publish(tmp_path):
+    hwpx, pdf, _record = _producer_bundle(tmp_path)
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, tmp_path / "missing.conversion.json")
+    assert bound is None
+    assert "not found" in err
+
+
+def test_unreadable_pdf_does_not_publish(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    Path(pdf).unlink()
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert bound is None
+    assert "cannot hash pdf" in err or "pdf path" in err
+
+
+def test_cli_stale_record_leaves_existing_baseline_untouched(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    baseline_path = tmp_path / "form_baseline.json"
+    sentinel = {"ok": True, "sentinel": "keep-me", "form_hash": "old"}
+    baseline_path.write_text(json.dumps(sentinel), encoding="utf-8")
+    Path(pdf).write_bytes(b"%PDF-1.4\n%stale-pdf\n")
+    result = _run_inspect(
+        hwpx, "--baseline", baseline_path,
+        "--form-pdf", pdf, "--conversion-record", record)
+    assert result.returncode == 2, result.stdout + result.stderr
+    leftover = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert leftover == sentinel
+    assert "form_pdf_hash" not in leftover
+    assert "form_pdf_export" not in leftover
+    assert not list(tmp_path.glob("form_baseline.json*.tmp"))
+
+
+def test_cli_without_form_pdf_preserves_existing_baseline_shape(tmp_path):
+    hwpx, _pdf, _record = _producer_bundle(tmp_path)
+    baseline_path = tmp_path / "form_baseline.json"
+    result = _run_inspect(hwpx, "--baseline", baseline_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert "form_pdf_hash" not in payload
+    assert "form_pdf_export" not in payload
+    assert payload["form_hash"] == _sha256(hwpx)

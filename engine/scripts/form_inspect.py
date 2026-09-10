@@ -7,11 +7,16 @@ section*.xml(문단/런) 을 대조해, 조립(build_report.py) 전에 알아야
 (글자크기·줄간격·분량) — 를 결정론적으로 뽑아낸다.
 
     python form_inspect.py FORM.hwpx [--out form_profile.json] [--baseline form_baseline.json]
+        [--form-pdf FORM.pdf --conversion-record FORM.pdf.conversion.json]
         [--base-pt 10] [--line-spacing 160]
         [--full-text [TABLE:]ROW,COL | PARA:N ...]
 
 --baseline: form_profile.json에 더해 폰트/크기/색/줄간격/사용빈도 분포를
             form_baseline.json으로 추가 기록한다(style_diff.py의 기준선).
+--form-pdf/--conversion-record: `com_backend.py convert`가 남긴
+            `rigorloom/conversion-record/v1`을 검증한 뒤에만 baseline에
+            `form_pdf_hash`와 구조화 `form_pdf_export`를 원자적으로 기록한다.
+            생략 시 기존 baseline(해시/서식만)과 완전히 동일.
 --base-pt/--line-spacing: page_metrics의 lines_per_page/chars_per_line 계산에
             쓰는 가정값(각각 기본 10pt/160%).
 --full-text: 구조-전용 계약의 **의도적 탈출구**. 이름 붙인 셀
@@ -74,8 +79,10 @@ exit 2: 사용법/파일 오류.
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -165,6 +172,160 @@ def die(msg, code=2):
     line = json.dumps({"ok": False, "error": msg}, ensure_ascii=False) + "\n"
     sys.stdout.buffer.write(line.encode("utf-8"))
     sys.exit(code)
+
+
+# Wire contract with ``com_backend.py convert`` / ``visual_verify.py``.
+# Duplicated (not imported) so this offline inspector never depends on COM.
+CONVERSION_RECORD_SCHEMA = "rigorloom/conversion-record/v1"
+CONVERSION_RECORD_TOOL = "com_backend.py convert"
+CONVERSION_RECORD_SUFFIX = ".conversion.json"
+CONVERSION_RECORD_REQUIRED_KEYS = (
+    "schema", "tool", "created_utc", "source", "source_sha256",
+    "pdf", "pdf_sha256", "source_print_method", "print_method_normalized",
+    "pages_document", "pages_pdf",
+)
+
+
+def conversion_record_path(pdf_path):
+    """Sidecar path ``com_backend.py convert`` writes for ``pdf_path``."""
+    return Path(str(pdf_path) + CONVERSION_RECORD_SUFFIX)
+
+
+def sha256_file(path, _chunk=1024 * 1024):
+    """Streaming sha256 of a file, or None if it cannot be read."""
+    digest = hashlib.sha256()
+    try:
+        with open(str(path), "rb") as handle:
+            while True:
+                block = handle.read(_chunk)
+                if not block:
+                    break
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _same_path(a, b):
+    try:
+        left = os.path.normcase(str(Path(a).resolve()))
+        right = os.path.normcase(str(Path(b).resolve()))
+    except OSError:
+        return False
+    return left == right
+
+
+def _atomic_write_json(path, payload):
+    """Replace ``path`` with JSON only after the full document is on disk."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, indent=2))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, str(path))
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def load_bound_conversion_record(record_path, source, pdf):
+    """Bind a convert sidecar to the current form and PDF bytes.
+
+    Fail-closed: wrong schema, missing keys, path mismatch, unreadable
+    files, or a hash that no longer matches returns ``(None, error)``.
+    Never mutates the baseline. A pathname without a live hash is not
+    provenance.
+    """
+    record_path = Path(record_path)
+    if not record_path.is_file():
+        return None, f"conversion record not found: {record_path}"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        return None, f"unreadable conversion record {record_path}: {exc}"
+    if not isinstance(record, dict):
+        return None, f"conversion record {record_path} is not a JSON object"
+    schema = record.get("schema")
+    if schema != CONVERSION_RECORD_SCHEMA:
+        return None, (
+            f"conversion record {record_path} has schema {schema!r}, "
+            f"expected {CONVERSION_RECORD_SCHEMA!r}")
+    tool = record.get("tool")
+    if tool != CONVERSION_RECORD_TOOL:
+        return None, (
+            f"conversion record {record_path} has tool {tool!r}, "
+            f"expected {CONVERSION_RECORD_TOOL!r}")
+    missing = [key for key in CONVERSION_RECORD_REQUIRED_KEYS
+               if key not in record]
+    if missing:
+        return None, (
+            f"conversion record {record_path} missing keys {missing}")
+    if not _same_path(record.get("source"), source):
+        return None, (
+            f"conversion record {record_path} source path "
+            f"{record.get('source')!r} does not match form {source}")
+    if not _same_path(record.get("pdf"), pdf):
+        return None, (
+            f"conversion record {record_path} pdf path "
+            f"{record.get('pdf')!r} does not match form PDF {pdf}")
+    for label, claimed, actual_path in (
+            ("source", record.get("source_sha256"), source),
+            ("pdf", record.get("pdf_sha256"), pdf)):
+        if not claimed or not isinstance(claimed, str):
+            return None, (
+                f"conversion record {record_path} carries no {label}_sha256; "
+                "an unbound conversion record is not evidence")
+        actual = sha256_file(actual_path)
+        if actual is None:
+            return None, (
+                f"cannot hash {label} {actual_path} to check the conversion "
+                f"record {record_path}")
+        if claimed != actual:
+            return None, (
+                f"conversion record {record_path} describes a different "
+                f"{label}: record says {label}_sha256={claimed[:16]}… but "
+                f"{actual_path} hashes to {actual[:16]}…. Re-run "
+                "`com_backend.py convert` — a stale record is a claim about "
+                "bytes that no longer exist.")
+    return record, None
+
+
+def apply_form_pdf_export(baseline, source, pdf, record_path):
+    """Return a new baseline with form_pdf_hash + form_pdf_export, or error.
+
+    On failure the input mapping is left unchanged (no partial publication).
+    """
+    if not isinstance(baseline, dict):
+        return None, "no baseline to publish form PDF provenance into"
+    record, err = load_bound_conversion_record(record_path, source, pdf)
+    if err:
+        return None, err
+    pdf_digest = sha256_file(pdf)
+    source_digest = sha256_file(source)
+    out = dict(baseline)
+    out["form_pdf_hash"] = pdf_digest
+    out["form_pdf_export"] = {
+        "schema": CONVERSION_RECORD_SCHEMA,
+        "tool": record["tool"],
+        "created_utc": record["created_utc"],
+        "record": str(Path(record_path).resolve()),
+        "source": str(Path(source).resolve()),
+        "pdf": str(Path(pdf).resolve()),
+        "source_sha256": source_digest,
+        "pdf_sha256": pdf_digest,
+        "source_print_method": record["source_print_method"],
+        "print_method_normalized": record["print_method_normalized"],
+        "pages_document": record["pages_document"],
+        "pages_pdf": record["pages_pdf"],
+    }
+    return out, None
 
 
 def _charpr_body(header_xml, start):
@@ -1573,6 +1734,15 @@ def main():
     ap.add_argument("form", help=".hwpx 양식 경로")
     ap.add_argument("--out", help="form_profile.json 출력 경로(생략 시 stdout)")
     ap.add_argument("--baseline", help="form_baseline.json 출력 경로(지정 시 생성)")
+    ap.add_argument("--form-pdf",
+                    help="pristine rendered form PDF whose sha256 is published "
+                         "into --baseline. Requires --conversion-record (or the "
+                         "default <pdf>.conversion.json sidecar). Omitted: "
+                         "existing baseline without form_pdf_hash")
+    ap.add_argument("--conversion-record",
+                    help="rigorloom/conversion-record/v1 sidecar from "
+                         "com_backend.py convert. Bound to --form and --form-pdf "
+                         "bytes; stale/wrong/unreadable records fail closed")
     ap.add_argument("--base-pt", type=int, default=10,
                      help="page_metrics 계산에 쓸 기준 본문 글자크기(pt, 기본 10)")
     ap.add_argument("--line-spacing", type=int, default=160,
@@ -1614,6 +1784,23 @@ def main():
     except ValueError as e:
         die(str(e))
 
+    form_pdf = getattr(args, "form_pdf", None)
+    conversion_record = getattr(args, "conversion_record", None)
+    if conversion_record and not form_pdf:
+        die("--conversion-record requires --form-pdf")
+    if form_pdf and not args.baseline:
+        die("--form-pdf requires --baseline")
+    if form_pdf:
+        if not Path(form_pdf).is_file():
+            die(f"파일 없음: {form_pdf}")
+        if conversion_record is None:
+            conversion_record = str(conversion_record_path(form_pdf))
+        bound, err = apply_form_pdf_export(
+            baseline, args.form, form_pdf, conversion_record)
+        if err:
+            die(err)
+        baseline = bound
+
     text = json.dumps(profile, ensure_ascii=False, indent=2)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
@@ -1629,10 +1816,12 @@ def main():
         sys.stdout.buffer.write(text.encode("utf-8"))
 
     if baseline is not None:
-        btext = json.dumps(baseline, ensure_ascii=False, indent=2)
-        Path(args.baseline).write_text(btext, encoding="utf-8")
+        _atomic_write_json(args.baseline, baseline)
+        extra = ""
+        if baseline.get("form_pdf_hash"):
+            extra = f" form_pdf_hash={baseline['form_pdf_hash'][:16]}…"
         print(f"wrote {args.baseline}: fonts={baseline['fonts']} "
-              f"sizes_pt={baseline['sizes_pt']}")
+              f"sizes_pt={baseline['sizes_pt']}{extra}")
 
     sys.exit(0)
 
