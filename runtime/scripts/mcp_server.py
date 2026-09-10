@@ -169,6 +169,26 @@ TOOL_SCHEMAS: dict[str, dict] = {
                                    "candidate it produces does not carry "
                                    "earlier edits",
                 },
+                "declares": {
+                    "type": "object",
+                    "properties": {
+                        "fillMap": {"type": "object"},
+                        "keep": {"type": "array", "items": {"type": "string"}},
+                        "keepPattern": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                    "description": "residue declaration. fillMap maps a form "
+                                   "string to the value THESE ops write over "
+                                   "it, so the label surviving inside the value "
+                                   "is attributed to the fill instead of "
+                                   "counted as residue; a value the plan does "
+                                   "not write is refused. keep names whole "
+                                   "entries from inspect's forbidden inventory "
+                                   "that the form legitimately prints. Guide "
+                                   "removal targets are never keepable. Without "
+                                   "this the candidate is graded as a report "
+                                   "final, which a form fill cannot pass",
+                },
                 "reverses": {
                     "type": "object",
                     "properties": {"runId": {"type": "string"}},
@@ -441,7 +461,8 @@ class McpAdapter:
                                      arguments.get("ops"),
                                      arguments.get("proposer") or CLIENT,
                                      base_run_id=arguments.get("baseRunId"),
-                                     reverses=arguments.get("reverses"))
+                                     reverses=arguments.get("reverses"),
+                                     declares=arguments.get("declares"))
         if method == "plan/validate":
             return core.plan_validate(arguments.get("planId"))
         if method == "plan/get":

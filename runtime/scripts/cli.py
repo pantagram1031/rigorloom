@@ -68,7 +68,14 @@ from rt_jsonl import log  # noqa: E402
 EXIT_INTERNAL = 4
 
 #: Refusals that mean "you called it wrong", not "the answer is no".
-USAGE_CODES = frozenset({"invalid_params", "unknown_field"})
+#: ``ambiguous_fill_keys`` is here and not with the domain's refusals because
+#: the document was never judged: the residue DECLARATION named a fill key that
+#: claims two form strings, the keep derivation stopped rather than guessing,
+#: and only the caller can say which string it filled. Exit 2, the same as any
+#: other malformed request — mapping it to exit 3 would tell an operator the
+#: document failed a gate it never reached.
+USAGE_CODES = frozenset({"invalid_params", "unknown_field",
+                         "ambiguous_fill_keys"})
 
 CLIENT = "cli-client"
 
@@ -114,6 +121,21 @@ def _load_ops(args) -> list:
     if not ops:
         raise UsageError("propose needs --ops-file or at least one --op")
     return ops
+
+
+def _load_declares(args):
+    """``--declares-file`` -> the object, or None. Shape is the domain's job."""
+    path = getattr(args, "declares_file", None)
+    if not path:
+        return None
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise UsageError(f"--declares-file is not readable JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise UsageError("--declares-file must hold an object with fillMap, "
+                         "keep and/or keepPattern")
+    return payload
 
 
 def _parse_region(spec: str) -> dict:
@@ -244,6 +266,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reverses-run", default=None,
                    help="declare that this plan undoes that candidate; recorded "
                         "in the receipt and checkable with compare")
+    p.add_argument("--declares-file", default=None, metavar="JSON",
+                   help="residue declaration for this plan: an object with "
+                        "fillMap, keep and/or keepPattern. fillMap values must "
+                        "be text these ops actually write; keep entries must "
+                        "name whole entries from `inspect --include forbidden`")
     p.add_argument("--proposer", default=CLIENT)
 
     p = sub.add_parser("validate", help="validate a plan without executing it")
@@ -356,7 +383,8 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
         reverses = ({"runId": args.reverses_run} if args.reverses_run else None)
         return core.plan_propose(args.session, args.backend, _load_ops(args),
                                  args.proposer, base_run_id=args.base_run,
-                                 reverses=reverses), EXIT_OK
+                                 reverses=reverses,
+                                 declares=_load_declares(args)), EXIT_OK
     if command == "validate":
         return core.plan_validate(args.plan), EXIT_OK
     if command == "plan":

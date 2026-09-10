@@ -33,6 +33,7 @@ worse than the gap.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -212,6 +213,69 @@ def run_child(argv: list[str], *, cwd: Path | None = None,
     )
 
 
+#: Run in a bounded child with the engine root's ``pipeline/scripts`` on the
+#: path. Derives the keep list with the ONE implementation that owns the
+#: formula, then runs the gate with it, and reports both. Nothing here decides
+#: residue on its own: every verdict field comes from ``check_residue.check``.
+_DECLARATION_BRIDGE = r"""
+import json, sys
+request = json.loads(open(sys.argv[1], encoding="utf-8").read())
+sys.path.insert(0, request["scripts"])
+try:
+    import check_residue, visual_verify
+except Exception as exc:
+    print(json.dumps({"ok": False, "code": "capability_unavailable",
+                      "detail": "%s: %s" % (type(exc).__name__, exc)}))
+    raise SystemExit(0)
+
+profile = json.loads(open(request["profile"], encoding="utf-8").read())
+raw_map = request.get("fillMap") or {}
+flat, error = check_residue.normalize_fill_map(raw_map)
+if error:
+    print(json.dumps({"ok": False, "code": "invalid_params", "detail": error}))
+    raise SystemExit(0)
+scopes = check_residue.fill_map_scopes(raw_map)
+haystack = check_residue.artifact_text(request["artifact"])
+
+derived, consumed, unfilled = [], [], []
+if flat:
+    try:
+        derived, consumed, unfilled = visual_verify.derive_form_keep(
+            profile, flat, haystack, scopes)
+    except visual_verify.AmbiguousFillKeyError as exc:
+        print(json.dumps({"ok": False, "code": "ambiguous_fill_keys",
+                          "detail": str(exc), "keys": exc.keys},
+                         ensure_ascii=False))
+        raise SystemExit(0)
+
+keep = list(dict.fromkeys(list(derived) + list(request.get("keep") or [])))
+pattern = request.get("keepPattern") or check_residue.DEFAULT_KEEP_PATTERN
+try:
+    forbidden, kept = check_residue.derive_forbidden(profile, pattern, keep)
+except Exception as exc:
+    print(json.dumps({"ok": False, "code": "invalid_params",
+                      "detail": "%s: %s" % (type(exc).__name__, exc)}))
+    raise SystemExit(0)
+if not forbidden:
+    print(json.dumps({"ok": False, "code": "exemption_too_broad",
+                      "detail": "the declaration keeps every inventory entry, "
+                                "so the residue gate would have nothing left to "
+                                "judge and its pass would mean nothing",
+                      "kept": len(kept)}, ensure_ascii=False))
+    raise SystemExit(0)
+
+verdict, code = check_residue.check(
+    request["profile"], request["artifact"],
+    keep_pattern=pattern, keep=tuple(keep), fill_map=flat or None)
+print(json.dumps({"ok": True, "verdict": verdict, "exitCode": code,
+                  "derivedKeep": list(derived), "rawKeep":
+                  list(request.get("keep") or []),
+                  "consumed": list(consumed), "unfilled": list(unfilled),
+                  "forbiddenAfter": len(forbidden), "keptAfter": len(kept)},
+                 ensure_ascii=False))
+"""
+
+
 class EngineTools:
     """Resolved paths to the shipped entrypoints, with honest availability."""
 
@@ -233,6 +297,113 @@ class EngineTools:
                 "path": path.relative_to(self.root).as_posix() if present else None,
             }
         return rows
+
+    def _residue_declared(self, profile: Path, artifact: Path,
+                          declaration: dict) -> dict:
+        """The declared path: derive, gate, and report what was exempted."""
+        scripts = self.root / "pipeline" / "scripts"
+        if not (scripts / "visual_verify.py").is_file():
+            return {"checker": "check_residue", "state": "unavailable",
+                    "reason": "pipeline/scripts/visual_verify.py is not in this "
+                              "install, so the keep derivation this declaration "
+                              "needs cannot run",
+                    "verdict": None, "ok": None}
+        request = {
+            "scripts": str(scripts),
+            "profile": str(profile),
+            "artifact": str(artifact),
+            "fillMap": declaration.get("fillMap") or {},
+            "keep": declaration.get("keep") or [],
+            "keepPattern": declaration.get("keepPattern"),
+        }
+        # Beside the profile, which already lives under the Runtime root: the
+        # child reads one file and the sandbox gains nothing outside it.
+        request_path = Path(profile).with_name(f"{Path(profile).stem}-declares.json")
+        try:
+            request_path.write_text(
+                json.dumps(request, ensure_ascii=False), encoding="utf-8")
+        except OSError as exc:
+            return {"checker": "check_residue", "state": "unavailable",
+                    "reason": f"could not stage the declaration: {exc}",
+                    "verdict": None, "ok": None}
+
+        result = run_child([child_python(), "-c", _DECLARATION_BRIDGE,
+                            str(request_path)])
+        if result.timed_out:
+            return {"checker": "check_residue", "state": "unavailable",
+                    "reason": "the keep derivation exceeded its time bound",
+                    "verdict": None, "ok": None}
+        text = result.text.strip()
+        try:
+            payload = json.loads(text[text.index("{"):]) if "{" in text else None
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return {"checker": "check_residue", "state": "unavailable",
+                    "reason": f"the keep derivation produced no verdict object "
+                              f"(exit {result.returncode})",
+                    "verdict": None, "ok": None}
+
+        if not payload.get("ok"):
+            code = payload.get("code") or "invalid_params"
+            if code == "ambiguous_fill_keys":
+                # Structured, not a message a client has to parse: ``keys``
+                # carries each offending key with every inventory string it
+                # claimed and how often that string is present, which is the
+                # whole repair. Declared in ``rt_codes.DOMAIN_CODES`` and mapped
+                # to exit 2 by ``cli.USAGE_CODES`` — the document was never
+                # judged, so this is not a gate refusal.
+                raise RpcError(
+                    "ambiguous_fill_keys",
+                    "a declared fill key claims more than one form string, so "
+                    "the keep derivation cannot tell which one this plan "
+                    "actually filled; name a key that matches exactly one, or "
+                    'declare {"text": VALUE, "other_occurrences": '
+                    '"form_text"|"seats"} to say what the others are',
+                    keys=payload.get("keys") or [], detail=payload.get("detail"))
+            if code == "exemption_too_broad":
+                raise RpcError("invalid_params", payload.get("detail") or code,
+                               kept=payload.get("kept"))
+            if code == "capability_unavailable":
+                return {"checker": "check_residue", "state": "unavailable",
+                        "reason": "the keep derivation is not importable in this "
+                                  f"install: {payload.get('detail')}",
+                        "verdict": None, "ok": None}
+            raise RpcError("invalid_params",
+                           payload.get("detail") or "the declaration was refused",
+                           code=code)
+
+        verdict = payload["verdict"] or {}
+        return {
+            "checker": "check_residue",
+            "state": "ran",
+            "exitCode": payload.get("exitCode"),
+            "verdict": verdict.get("verdict"),
+            "ok": verdict.get("ok"),
+            "counts": verdict.get("counts"),
+            "hard": (verdict.get("hard") or [])[:50],
+            "warn": (verdict.get("warn") or [])[:50],
+            # THE AUDIT TRAIL. A verdict that was reached with exemptions must
+            # say which ones, or "clean" is unreviewable: derivedKeep is what
+            # the form legitimately prints, consumed is what this plan filled,
+            # unfilled is what it claimed to fill and did not, and rawKeep is
+            # the operator's own additions. forbiddenAfter is what the gate was
+            # still holding the document to.
+            "exemptions": {
+                "source": "plan.declares",
+                "derivation": "visual_verify.derive_form_keep",
+                "derivedKeep": payload.get("derivedKeep") or [],
+                "rawKeep": payload.get("rawKeep") or [],
+                "consumed": payload.get("consumed") or [],
+                "unfilled": payload.get("unfilled") or [],
+                "forbiddenAfter": payload.get("forbiddenAfter"),
+                "keptAfter": payload.get("keptAfter"),
+                "note": ("an exempted entry is removed from the forbidden list "
+                         "or attributed to a declared value's span; attribution "
+                         "stays per occurrence, so a second unfilled occurrence "
+                         "of the same string is still residue"),
+            },
+        }
 
     def _require(self, name: str, path: Path) -> None:
         if not path.is_file():
@@ -320,13 +491,38 @@ class EngineTools:
                          "these, see capabilities.render.converter")}
 
     # -- check_residue ------------------------------------------------------
-    def residue(self, profile: Path, artifact: Path) -> dict:
-        """Run the residue gate. NEVER raises for a finding — a finding is data."""
+    def residue(self, profile: Path, artifact: Path,
+                declaration: dict | None = None) -> dict:
+        """Run the residue gate. NEVER raises for a finding — a finding is data.
+
+        Without a ``declaration`` this is byte-for-byte the call it always was:
+        no keep list, no keep pattern, no fill map, which grades the artifact as
+        a REPORT FINAL. That default is right for a report and wrong for a form
+        fill, and it is what produced DIST-PAYLOAD-02's 25 ``form_residue``
+        findings on a document whose only sin was being a form. Keeping it as
+        the default means nothing grades more leniently by accident: a plan that
+        declares nothing is judged exactly as before.
+
+        With a declaration the gate is given the three policy inputs it has
+        always accepted, and the keep list is DERIVED by
+        ``visual_verify.derive_form_keep`` — the one implementation of
+        ``(anchors ∪ placeholders) − consumed``, its ambiguity refusal, and its
+        rule that guide text is never keepable. The Runtime does not restate
+        that formula; it spawns it, for the reason ``rt_module`` gives for
+        spawning engine scripts rather than importing them (``visual_verify``
+        imports ``preedit`` at module scope and rewrites ``sys.path`` on the way
+        in — that belongs in a child, not in the Runtime process).
+
+        The child returns the derivation AND the verdict together, so the two
+        cannot disagree about which keep list produced which finding.
+        """
         if not self.check_residue.is_file():
             return {"checker": "check_residue", "state": "unavailable",
                     "reason": "pipeline/scripts/check_residue.py not found under "
                               "the engine root",
                     "verdict": None, "ok": None}
+        if declaration:
+            return self._residue_declared(profile, artifact, declaration)
         result = run_child([child_python(), str(self.check_residue),
                             "--form-profile", str(profile),
                             "--artifact", str(artifact)])

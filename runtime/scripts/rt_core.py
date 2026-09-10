@@ -79,6 +79,7 @@ from rt_session import (  # noqa: E402
     document_graph,
     document_summary,
     editable_regions,
+    forbidden_inventory,
     full_text_spec,
     load_profile,
     region_runs_with_faces,
@@ -127,7 +128,16 @@ HOST_ONLY_METHODS: tuple[str, ...] = (
 METHODS: tuple[str, ...] = (AGENT_METHODS + PROTOCOL_ONLY_METHODS
                             + HOST_ONLY_METHODS)
 
-INCLUDE_SECTIONS = ("summary", "graph", "regions")
+#: ``forbidden`` is opt-in and deliberately NOT in the default set: it answers
+#: a different question from the other three ("what will be held against me",
+#: not "what is here"), it is the larger payload, and every existing caller
+#: must keep getting exactly the document it got before.
+INCLUDE_SECTIONS = ("summary", "graph", "regions", "forbidden")
+
+#: What ``inspect`` answers with when a caller names nothing. Unchanged, and
+#: separate from the valid set on purpose: widening what a caller MAY ask for
+#: must never widen what an existing caller GETS.
+DEFAULT_INCLUDE_SECTIONS = ("summary", "graph", "regions")
 
 
 def _text_by_spec(profile: dict) -> dict:
@@ -238,7 +248,7 @@ class RuntimeCore:
     # -- documents ----------------------------------------------------------
     def document_inspect(self, session_id, include=None) -> dict:
         session = self.store.get(session_id)
-        include = list(include) if include else list(INCLUDE_SECTIONS)
+        include = list(include) if include else list(DEFAULT_INCLUDE_SECTIONS)
         if not all(item in INCLUDE_SECTIONS for item in include):
             raise RpcError("invalid_params",
                            f"include must be a subset of {list(INCLUDE_SECTIONS)}",
@@ -252,6 +262,8 @@ class RuntimeCore:
             out["graph"] = document_graph(profile, session)
         if "regions" in include:
             out["regions"] = editable_regions(profile, session)
+        if "forbidden" in include:
+            out["forbidden"] = forbidden_inventory(profile, session)
         return out
 
     @staticmethod
@@ -332,8 +344,26 @@ class RuntimeCore:
         path, receipt = candidate_artifact(session, str(base["runId"]))
         return path, receipt["candidate"]["sha256"]
 
+    def _declaration_inventory(self, session) -> dict:
+        """Folded inventory texts, so a keep entry can be checked before approval.
+
+        Read from the session's own base profile — the same document the gate
+        will judge — so "this keep names nothing" is a fact about THIS form and
+        not a guess. Only loaded when a plan actually declares a keep list, so
+        an ordinary propose still costs no extra profile read.
+        """
+        profile = load_profile(self.tools, session, tag="base")
+        inventory = forbidden_inventory(profile, session)
+        keepable = {" ".join(str(entry["text"]).split())
+                    for entry in inventory["anchors"] + inventory["placeholders"]
+                    if isinstance(entry.get("text"), str)}
+        guide = {" ".join(str(entry["text"]).split())
+                 for entry in inventory["removalTargets"]
+                 if isinstance(entry.get("text"), str)}
+        return {"keepable": keepable, "guide": guide}
+
     def plan_propose(self, session_id, backend, ops, proposer,
-                     base_run_id=None, reverses=None) -> dict:
+                     base_run_id=None, reverses=None, declares=None) -> dict:
         """Build a plan against the session source, or onto a published candidate.
 
         ``baseRunId`` is the chain. Without it every apply starts from the
@@ -364,9 +394,13 @@ class RuntimeCore:
                                                      self._bare_run_id(reversal_id))
             reversal = {"runId": reversal_id,
                         "sha256": reversed_receipt["candidate"]["sha256"]}
+        inventory = None
+        if isinstance(declares, dict) and declares.get("keep"):
+            inventory = self._declaration_inventory(session)
         plan = build_plan(session_id=session.id, backend=backend, ops=ops,
                           proposer=proposer, bound_sha256=bound,
-                          base=base, reverses=reversal)
+                          base=base, reverses=reversal, declares=declares,
+                          inventory=inventory)
         self.save_plan(plan)
         append_event(session, "plan.proposed", planId=plan.id,
                      opsHash=plan.payload["opsHash"], backend=backend,
@@ -758,6 +792,12 @@ class RuntimeCore:
         artifact = session.candidates_dir / run_id / receipt["candidate"]["path"]
         profile = session.profile_dir / f"verify-{run_id}-recheck.json"
         self.tools.profile(session.source, profile)
-        checks = verification_report(self.tools, profile, artifact)
+        # The declaration comes from the RECEIPT, never from this call. A
+        # candidate that passed under a declared keep list must be re-checkable
+        # under the same one, and letting a re-check supply its own policy would
+        # make "verify" mean "verify against whatever I now claim".
+        recorded = receipt.get("exemptions") or {}
+        declaration = recorded.get("declares") or None
+        checks = verification_report(self.tools, profile, artifact, declaration)
         return {"sessionId": session.id, "runId": run_id,
                 "candidate": receipt["candidate"], "checks": checks}

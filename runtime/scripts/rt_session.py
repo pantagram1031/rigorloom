@@ -706,6 +706,112 @@ def editable_regions(profile: dict, session: Session) -> dict:
             "regions": regions}
 
 
+def forbidden_inventory(profile: dict, session: Session) -> dict:
+    """What the residue gate will judge, projected from the profile as-is.
+
+    ``editable_regions`` answers "where may I write"; this answers "what will
+    be held against me", and until now only the first question had an answer on
+    the wire. An agent could see nine fill-target cells and never learn that
+    twenty-six anchor strings and a removable guide paragraph were the actual
+    forbidden inventory — so no plan it could compose was gradeable, and the
+    residue verdict read as a mystery instead of a checklist
+    (DIST-PAYLOAD-02: 25 ``form_residue`` findings, none of them a field the
+    agent had left empty).
+
+    Nothing here is derived. ``anchors``/``anchor_records``, ``placeholders``,
+    ``guide_text`` and ``removal_targets`` are the form scan's own inventory,
+    reprojected with the names the rest of the Runtime uses. The keep
+    derivation stays in ``visual_verify.derive_form_keep``; this is the input
+    an agent needs to write a declaration, not a second opinion about it.
+
+    ``keepable`` is the one judgement, and it is the scan's, restated: an
+    anchor or placeholder may legitimately survive a fill and is therefore
+    keep-listable, while a removal target is instruction prose that a correct
+    fill REPLACES. ``check_residue`` enforces exactly that asymmetry
+    (guide-sourced rows are never attributable and never keepable); saying it
+    here as well means a caller learns it before composing a declaration that
+    the gate would refuse.
+    """
+    anchors: list[dict] = []
+    records = profile.get("anchor_records")
+    if isinstance(records, list) and records:
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(
+                    record.get("text"), str):
+                continue
+            anchors.append({
+                "kind": "anchor",
+                "text": record["text"],
+                "atPara": record.get("at_para"),
+                "paraIdx": record.get("para_idx"),
+                "section": record.get("section"),
+                "keepable": True,
+            })
+    else:
+        # A legacy profile carries text-only anchors. Report them rather than
+        # nothing: an address-less anchor is still an anchor the gate forbids,
+        # and a caller that needs the address can ask readRegion for it.
+        for text in profile.get("anchors") or []:
+            if isinstance(text, str):
+                anchors.append({"kind": "anchor", "text": text,
+                                "atPara": None, "paraIdx": None,
+                                "section": None, "keepable": True})
+
+    placeholders: list[dict] = []
+    for entry in profile.get("placeholders") or []:
+        text = entry if isinstance(entry, str) else (
+            entry.get("text") if isinstance(entry, dict) else None)
+        if isinstance(text, str):
+            placeholders.append({"kind": "placeholder", "text": text,
+                                 "keepable": True})
+
+    guides = {}
+    for entry in profile.get("guide_text") or []:
+        if isinstance(entry, dict) and isinstance(entry.get("text"), str):
+            para_idx = entry.get("para_idx")
+            if isinstance(para_idx, int) and not isinstance(para_idx, bool):
+                guides[para_idx] = entry
+
+    removal: list[dict] = []
+    for target in profile.get("removal_targets") or []:
+        if not isinstance(target, dict):
+            continue
+        para_idx = target.get("para_idx")
+        entry = guides.get(para_idx, {})
+        removal.append({
+            "kind": "removalTarget",
+            "text": entry.get("text"),
+            "atPara": entry.get("at_para"),
+            "paraIdx": para_idx,
+            "section": entry.get("section"),
+            "confidence": target.get("confidence"),
+            # A reason is required by the caller-facing contract, so fall back
+            # to the policy's own words rather than emitting a bare null: a
+            # removal target with no stated reason is a target a caller cannot
+            # act on.
+            "reason": entry.get("reason") or "declared a removal target by the "
+                                             "form scan's removal policy",
+            "keepable": False,
+        })
+
+    return {
+        "sessionId": session.id,
+        "documentHash": profile.get("form_hash"),
+        "anchors": anchors,
+        "placeholders": placeholders,
+        "removalTargets": removal,
+        "counts": {
+            "anchors": len(anchors),
+            "placeholders": len(placeholders),
+            "removalTargets": len(removal),
+        },
+        "note": ("the residue gate's forbidden list is auto-derived from this "
+                 "inventory; anchors and placeholders may be keep-listed or "
+                 "attributed to a declared fill value, removal targets may be "
+                 "neither"),
+    }
+
+
 def full_text_spec(entry: dict) -> str:
     """A readRegion entry -> the form_inspect --full-text spelling."""
     if "atPara" in entry:

@@ -418,7 +418,7 @@ class RuntimeServer:
 
     def _m_plan_propose(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "backend", "ops", "proposer",
-                                  "baseRunId", "reverses"},
+                                  "baseRunId", "reverses", "declares"},
                          required=("sessionId", "backend", "ops"),
                          where="plan/propose.params",
                          policy=self.unknown_field_policy)
@@ -430,7 +430,11 @@ class RuntimeServer:
         return self.core.plan_propose(
             params["sessionId"], _text(params["backend"], "backend"),
             params["ops"], params.get("proposer") or f"{self.entry}-client",
-            base_run_id=params.get("baseRunId"), reverses=reverses)
+            base_run_id=params.get("baseRunId"), reverses=reverses,
+            # Field-level strictness stays with the domain: ``declares`` has one
+            # allow-list (rt_plan.DECLARES_FIELDS) and one refusal, so the wire
+            # and the CLI cannot drift into two dialects of the same object.
+            declares=params.get("declares"))
 
     def _m_plan_validate(self, params: dict, _id) -> dict:
         params = _object(params, {"planId"}, required=("planId",),

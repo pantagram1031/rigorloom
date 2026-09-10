@@ -35,6 +35,7 @@ refusal payload is passed through verbatim at apply.
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -101,6 +102,217 @@ _OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 }
 
 
+#: The declaration a plan may carry beside its ops. Exactly the three inputs
+#: ``check_residue`` already accepts — this adds no policy vocabulary of its
+#: own, it stops the Runtime from withholding the three it had.
+DECLARES_FIELDS = ("fillMap", "keep", "keepPattern")
+
+#: ``check_residue.fill_map_scopes`` interprets exactly these two answers to
+#: "what are the OTHER occurrences of a key that claims several strings".
+FILL_MAP_SCOPES = ("form_text", "seats")
+
+
+def _fold(text: str) -> str:
+    """Whitespace-fold for comparing CALLER INPUT against the inventory.
+
+    Deliberately not a second copy of the gate's matching rule: nothing here
+    decides residue. It exists so ``"수 신"`` and ``"수신"`` in a hand-written
+    declaration are recognised as naming the same inventory entry, the same
+    tolerance ``check_residue._normalize`` applies before it compares. If the
+    two ever disagree the consequence is a refusal at propose time, never a
+    silent exemption at verify time — the safe direction.
+    """
+    return " ".join(str(text).split())
+
+
+def _declared_value(entry, key: str):
+    """``(text, scope)`` for one fill-map entry, or a loud refusal.
+
+    Two shapes, both ``check_residue``'s (``normalize_fill_map`` flattens the
+    scoped one for every downstream consumer): a bare string, or
+    ``{"text": V, "other_occurrences": "form_text"|"seats"}`` for a key that
+    claims more than one inventory string and needs to say what the rest are.
+    """
+    if isinstance(entry, str):
+        return entry, None
+    if isinstance(entry, dict):
+        text = entry.get("text")
+        scope = entry.get("other_occurrences")
+        unknown = sorted(set(entry) - {"text", "other_occurrences"})
+        if unknown:
+            raise RpcError("unknown_field",
+                           f"declares.fillMap[{key!r}] carries fields a scoped "
+                           "value does not define",
+                           key=key, unknown=unknown,
+                           allowed=["text", "other_occurrences"])
+        if not isinstance(text, str) or not text:
+            raise RpcError("invalid_params",
+                           f"declares.fillMap[{key!r}].text must be a non-empty "
+                           "string", key=key)
+        if scope is not None and scope not in FILL_MAP_SCOPES:
+            raise RpcError("invalid_params",
+                           f"declares.fillMap[{key!r}].other_occurrences must be "
+                           f"one of {list(FILL_MAP_SCOPES)}",
+                           key=key, offered=scope,
+                           allowed=list(FILL_MAP_SCOPES))
+        return text, scope
+    raise RpcError("invalid_params",
+                   f"declares.fillMap[{key!r}] must be a string, or an object "
+                   'with "text" and optional "other_occurrences"', key=key)
+
+
+def written_texts(ops: list) -> set:
+    """Every string the plan's operations actually put into the document.
+
+    This is what makes a declaration a RECORD rather than a request. A fill map
+    tells the residue gate "an occurrence inside this value is text I wrote, not
+    form text I left behind" — a claim that is only true if the plan wrote it.
+    Without this binding the mechanism is a wildcard: declaring
+    ``{"수신": "수신"}`` would lay a value span over the form's own label and
+    attribute the label to itself, exempting it document-wide while changing
+    nothing. Every value is therefore checked against the ops here, before the
+    plan exists to be approved.
+    """
+    written: set = set()
+    for op in ops:
+        params = op.get("params") or {}
+        text = params.get("text")
+        if isinstance(text, str):
+            written.add(_fold(text))
+        lines = params.get("lines")
+        if isinstance(lines, list):
+            for line in lines:
+                if isinstance(line, str):
+                    written.add(_fold(line))
+            if all(isinstance(line, str) for line in lines):
+                written.add(_fold(" ".join(lines)))
+    return written
+
+
+def normalise_declares(declares, ops: list, *, inventory: dict | None = None):
+    """Validate a plan's residue declaration, or refuse it. ``None`` stays None.
+
+    ``inventory`` — ``{"keepable": {...}, "guide": {...}}`` of folded inventory
+    strings — enables the checks that need to know what the form actually
+    contains. It is optional so the binding rules can be exercised without a
+    profile; when it is absent those two checks simply do not run, and the
+    caller has not been told anything untrue.
+
+    What this refuses, and why each one is a way the gate could have been
+    turned off rather than informed:
+
+    * a value the ops never wrote — the wildcard above;
+    * a ``keepPattern`` that keeps everything — a gate with an empty forbidden
+      list proves nothing, and ``.*`` is the shortest way to write that;
+    * a ``keep`` entry that names no inventory entry — ``check_residue``
+      compares a keep against the WHOLE normalized entry, so a prefix keeps
+      nothing and does it silently; silence is the defect;
+    * a ``keep`` entry that names a removal target — instruction prose is never
+      keepable, and a caller who tries should be told, not quietly ignored.
+
+    Everything it accepts is still subject to the gate itself: keeping an entry
+    only removes it from the forbidden list, and attribution remains per
+    occurrence.
+    """
+    if declares is None:
+        return None
+    if not isinstance(declares, dict):
+        raise RpcError("invalid_params", "declares must be an object")
+    unknown = sorted(set(declares) - set(DECLARES_FIELDS))
+    if unknown:
+        raise RpcError("unknown_field",
+                       "declares carries fields it does not define",
+                       unknown=unknown, allowed=list(DECLARES_FIELDS))
+    if not any(declares.get(name) for name in DECLARES_FIELDS):
+        raise RpcError(
+            "invalid_params",
+            "declares is empty; omit it rather than declaring nothing — an "
+            "empty declaration and no declaration must not grade differently",
+            allowed=list(DECLARES_FIELDS))
+
+    written = written_texts(ops)
+    out: dict = {}
+
+    raw_map = declares.get("fillMap")
+    if raw_map is not None:
+        if not isinstance(raw_map, dict):
+            raise RpcError("invalid_params", "declares.fillMap must be an object")
+        fill_map: dict = {}
+        for key, entry in raw_map.items():
+            if not isinstance(key, str) or not key.strip():
+                raise RpcError("invalid_params",
+                               "declares.fillMap keys must be non-empty strings",
+                               key=key)
+            text, scope = _declared_value(entry, key)
+            if _fold(text) not in written:
+                raise RpcError(
+                    "invalid_params",
+                    f"declares.fillMap[{key!r}] declares a value this plan does "
+                    "not write; a fill map records what the operations put in "
+                    "the document, and a value the plan never writes would "
+                    "exempt form text on no authority",
+                    key=key, value=text)
+            fill_map[key] = ({"text": text, "other_occurrences": scope}
+                             if scope is not None else text)
+        out["fillMap"] = fill_map
+
+    raw_keep = declares.get("keep")
+    if raw_keep is not None:
+        if not isinstance(raw_keep, list):
+            raise RpcError("invalid_params", "declares.keep must be an array")
+        keep: list = []
+        for index, entry in enumerate(raw_keep):
+            if not isinstance(entry, str) or not entry.strip():
+                raise RpcError("invalid_params",
+                               f"declares.keep[{index}] must be a non-empty "
+                               "string", at=f"declares.keep[{index}]")
+            folded = _fold(entry)
+            if inventory is not None:
+                if folded in inventory.get("guide", ()):
+                    raise RpcError(
+                        "invalid_params",
+                        f"declares.keep[{index}] names a guide removal target; "
+                        "instruction prose is never keepable, because a correct "
+                        "fill REPLACES it rather than keeping it as a prefix",
+                        at=f"declares.keep[{index}]", text=entry)
+                if folded not in inventory.get("keepable", ()):
+                    raise RpcError(
+                        "invalid_params",
+                        f"declares.keep[{index}] names no inventory entry; a "
+                        "keep is matched against the WHOLE entry, so a prefix "
+                        "or an invented string keeps nothing and would do it "
+                        "silently",
+                        at=f"declares.keep[{index}]", text=entry)
+            keep.append(entry)
+        out["keep"] = keep
+
+    pattern = declares.get("keepPattern")
+    if pattern is not None:
+        if not isinstance(pattern, str):
+            raise RpcError("invalid_params",
+                           "declares.keepPattern must be a string")
+        try:
+            compiled = re.compile(pattern)
+        except re.error as exc:
+            raise RpcError("invalid_params",
+                           f"declares.keepPattern is not a valid regex: {exc}",
+                           pattern=pattern) from exc
+        # A pattern that matches at position 0 of the empty string matches the
+        # start of EVERY entry, so ``check_residue``'s ``keep_re.match`` keeps
+        # the whole inventory and the gate is left with nothing to judge. That
+        # is a disabled gate wearing a policy's clothes.
+        if compiled.match("") is not None:
+            raise RpcError(
+                "invalid_params",
+                "declares.keepPattern matches every inventory entry, which "
+                "would leave the residue gate with an empty forbidden list; "
+                "name the entries that legitimately survive instead",
+                pattern=pattern)
+        out["keepPattern"] = pattern
+
+    return out
+
+
 def _finding(code: str, msg: str, at: str, **extra) -> dict:
     row = {"code": code, "msg": msg, "at": at}
     row.update(extra)
@@ -151,7 +363,8 @@ def _classify_foreign_kind(kind: str) -> str | None:
 
 def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
                bound_sha256: str, base: dict | None = None,
-               reverses: dict | None = None) -> OperationPlan:
+               reverses: dict | None = None, declares=None,
+               inventory: dict | None = None) -> OperationPlan:
     """Create a plan. Refuses an unservable backend or op kind before anything else.
 
     ``base`` is the published candidate these ops are chained onto, or ``None``
@@ -235,6 +448,15 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
         "proposer": proposer,
         "implVersion": IMPL_VERSION,
         "ops": normalised,
+        # The residue declaration rides BESIDE the ops, never inside them, and
+        # ``opsHash`` is computed over ``ops`` alone — so two identical edits
+        # still hash identically whether or not one of them declared a keep
+        # list, and the Phase 2 parity property survives untouched
+        # (tests/test_runtime_parity.py). ``planHash`` covers the whole payload
+        # and therefore DOES move, which is the point: an approval binds the
+        # exemptions as tightly as it binds the edits.
+        "declares": normalise_declares(declares, normalised,
+                                       inventory=inventory),
         "state": "proposed",
     }
     payload["opsHash"] = ops_hash(backend, bound_sha256, normalised)

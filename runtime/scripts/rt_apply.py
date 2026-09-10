@@ -139,9 +139,18 @@ def _publish_receipt(run_dir: Path, receipt: dict) -> Path:
     return target
 
 
-def verification_report(tools, source_profile: Path, candidate: Path) -> dict:
-    """Run the offline checkers we have; report the ones we do not as unavailable."""
-    checks = [tools.residue(source_profile, candidate)]
+def verification_report(tools, source_profile: Path, candidate: Path,
+                        declaration: dict | None = None) -> dict:
+    """Run the offline checkers we have; report the ones we do not as unavailable.
+
+    ``declaration`` is the approved plan's residue declaration, or ``None``.
+    It is lifted to the report's own ``exemptions`` field rather than left
+    buried in a checker row, because "was this verdict reached with exemptions,
+    and which" is a question about the ACCEPTANCE, not about one checker's
+    internals. A report with no exemptions carries ``None`` there, so the two
+    cases are distinguishable without inspecting a checker payload.
+    """
+    checks = [tools.residue(source_profile, candidate, declaration)]
     by_name = {row["checker"]: row for row in checks}
     ran_all = all(by_name.get(name, {}).get("state") == "ran"
                   for name in REQUIRED_CHECKS)
@@ -152,15 +161,24 @@ def verification_report(tools, source_profile: Path, candidate: Path) -> dict:
         reason = "a required check reported findings"
     else:
         reason = None
+    exemptions = None
+    for row in checks:
+        if isinstance(row.get("exemptions"), dict):
+            exemptions = row["exemptions"]
+            break
     return {
         "required": list(REQUIRED_CHECKS),
         "ranAll": ran_all,
         "acceptance": bool(ran_all and clean),
         "reason": reason,
         "checks": checks,
+        # None when the plan declared nothing — the strict, report-final grade.
+        "exemptions": exemptions,
         "note": ("acceptance asserts that every required check RAN and was "
                  "clean; a check that could not run is reported unavailable and "
-                 "never counted as a pass"),
+                 "never counted as a pass. When exemptions is not null the "
+                 "verdict was reached with a declared keep list or fill map, "
+                 "and that block names every entry it exempted"),
     }
 
 
@@ -241,7 +259,9 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
 
         source_profile = session.profile_dir / f"verify-{run_id}.json"
         tools.profile(session.source, source_profile)
-        checks = verification_report(tools, source_profile, artifact)
+        declaration = plan.payload.get("declares") or None
+        checks = verification_report(tools, source_profile, artifact,
+                                     declaration)
 
         receipt = {
             "schema": RECEIPT_SCHEMA,
@@ -275,6 +295,18 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
             "approval": approval.public(),
             "steps": steps,
             "checks": checks,
+            # The exemptions this candidate was graded WITH, bound to the plan
+            # hash the approval signed. A later ``verify`` reads them from here
+            # rather than trusting a caller to re-supply the policy: a candidate
+            # that passed under a declaration must be re-checkable under the
+            # SAME declaration, and an operator reviewing a pass must be able to
+            # see what it was excused from without holding the plan.
+            "exemptions": ({"source": "plan.declares",
+                            "planId": plan.id,
+                            "planHash": plan.hash,
+                            "declares": declaration,
+                            **checks["exemptions"]}
+                           if checks.get("exemptions") else None),
             "evidence": {
                 "class": "structural_only",
                 "note": ("no renderer ran; this receipt binds bytes and offline "
@@ -296,6 +328,13 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
         "base": receipt["base"],
         "reverses": receipt["reverses"],
         "checks": checks,
+        # Deliberately NOT repeated here. ``checks.exemptions`` already answers
+        # "was this graded with exemptions, and which"; the receipt's own block
+        # adds the plan binding and is read through ``receipt/read``. Putting it
+        # in this response too would make a fresh apply and a REPLAYED one
+        # (rt_apply_once.verified_result, which rebuilds from the receipt)
+        # differ by a field, and tests/test_runtime_apply_retry.py exists to
+        # catch exactly that divergence.
         "receipt": f"{run_id}/{RECEIPT_NAME}",
         "canonical": True,
     }

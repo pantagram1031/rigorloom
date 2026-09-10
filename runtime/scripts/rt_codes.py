@@ -133,6 +133,23 @@ DOMAIN_CODES = frozenset({
     "needs_hancom",
     "convert_failed",
     "not_convertible",
+    # A plan's residue declaration named a fill key that claims more than ONE
+    # string in the form's anchor/placeholder inventory, so the keep derivation
+    # cannot tell which of them this plan actually filled
+    # (visual_verify.AmbiguousFillKeyError, T41). It is its own code rather than
+    # an `invalid_params`: the params are well formed and the caller has a
+    # specific, documented repair — name a key that matches exactly one entry,
+    # or declare {"text": V, "other_occurrences": "form_text"|"seats"} — and a
+    # client that has to regex a message to find that out will not find it.
+    # The refusal carries `keys`, each with the strings it claimed and how often
+    # each is present, so the repair is mechanical.
+    #
+    # It is a USAGE error at every adapter boundary: only the caller can resolve
+    # the ambiguity. `cli.USAGE_CODES` maps it to exit 2 for that reason, beside
+    # `invalid_params` and `unknown_field`, and never to the refusal exit 3 —
+    # exit 3 means the domain said no about the document, and here the document
+    # was never judged.
+    "ambiguous_fill_keys",
 })
 
 ERROR_CODES = TRANSPORT_CODES | DOMAIN_CODES
