@@ -623,6 +623,95 @@ def test_malformed_record_does_not_publish(tmp_path):
         baseline, hwpx, pdf, record)
     assert bound is None
     assert "unreadable" in err
+    assert "form_pdf_hash" not in baseline
+
+
+@pytest.mark.parametrize("field,value", [
+    ("source", None),
+    ("source", ""),
+    ("source", "   "),
+    ("source", 12),
+    ("source", {"path": "x.hwpx"}),
+    ("pdf", None),
+    ("pdf", ""),
+    ("pdf", ["a.pdf"]),
+    ("created_utc", None),
+    ("created_utc", ""),
+    ("created_utc", "2026-09-10 00:00:00Z"),
+    ("created_utc", "2026-09-10T00:00:00+00:00"),
+    ("created_utc", "2026/09/10T00:00:00Z"),
+    ("created_utc", 0),
+    ("source_print_method", True),
+    ("source_print_method", False),
+    ("source_print_method", -1),
+    ("source_print_method", "0"),
+    ("source_print_method", 1.5),
+    ("source_print_method", {}),
+    ("print_method_normalized", False),
+    ("print_method_normalized", 0),
+    ("print_method_normalized", "none"),
+    ("print_method_normalized", {}),
+    ("print_method_normalized", {"from": 4}),
+    ("print_method_normalized", {"from": 4, "to": 1}),
+    ("print_method_normalized", {"from": 4, "to": 0, "extra": 1}),
+    ("print_method_normalized", {"from": True, "to": 0}),
+    ("print_method_normalized", {"from": -1, "to": 0}),
+    ("print_method_normalized", {"from": 4, "to": False}),
+    ("print_method_normalized", {"from": 4, "to": "0"}),
+    ("pages_document", True),
+    ("pages_document", 0),
+    ("pages_document", -1),
+    ("pages_document", "1"),
+    ("pages_document", 1.0),
+    ("pages_pdf", False),
+    ("pages_pdf", 0),
+    ("pages_pdf", -3),
+    ("pages_pdf", {}),
+])
+def test_malformed_typed_fields_do_not_publish(tmp_path, field, value):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    payload = json.loads(Path(record).read_text(encoding="utf-8"))
+    payload[field] = value
+    Path(record).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert bound is None, err
+    assert err
+    assert "Traceback" not in err
+    assert "form_pdf_hash" not in baseline
+    assert "form_pdf_export" not in baseline
+
+
+def test_writer_normalized_dict_is_accepted(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    _write_conversion_record(
+        record, hwpx, pdf,
+        print_method_normalized={"from": 4, "to": 0})
+    _profile, baseline = form_inspect.analyze(hwpx, want_baseline=True)
+    bound, err = form_inspect.apply_form_pdf_export(
+        baseline, hwpx, pdf, record)
+    assert err is None, err
+    assert bound["form_pdf_export"]["print_method_normalized"] == {
+        "from": 4, "to": 0}
+
+
+def test_cli_malformed_record_leaves_baseline_bytes_unchanged(tmp_path):
+    hwpx, pdf, record = _producer_bundle(tmp_path)
+    baseline_path = tmp_path / "form_baseline.json"
+    raw = b'{"ok": true, "sentinel": "keep-me", "form_hash": "old"}\n'
+    baseline_path.write_bytes(raw)
+    _write_conversion_record(
+        record, hwpx, pdf, created_utc="not-a-timestamp")
+    result = _run_inspect(
+        hwpx, "--baseline", baseline_path,
+        "--form-pdf", pdf, "--conversion-record", record)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "Traceback" not in (result.stdout or "")
+    assert "Traceback" not in (result.stderr or "")
+    assert baseline_path.read_bytes() == raw
+    assert not list(tmp_path.glob("form_baseline.json*.tmp"))
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_unreadable_record_does_not_publish(tmp_path):

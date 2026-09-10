@@ -77,6 +77,7 @@ exit 0: 정상. exit 1: anomaly 없음(항상 0, 이 스크립트는 진단 전�
 exit 2: 사용법/파일 오류.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -184,6 +185,7 @@ CONVERSION_RECORD_REQUIRED_KEYS = (
     "pdf", "pdf_sha256", "source_print_method", "print_method_normalized",
     "pages_document", "pages_pdf",
 )
+CREATED_UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def conversion_record_path(pdf_path):
@@ -210,9 +212,72 @@ def _same_path(a, b):
     try:
         left = os.path.normcase(str(Path(a).resolve()))
         right = os.path.normcase(str(Path(b).resolve()))
-    except OSError:
+    except (OSError, TypeError, ValueError):
         return False
     return left == right
+
+
+def _nonempty_path_string(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _non_bool_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _valid_created_utc(value):
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        datetime.datetime.strptime(value, CREATED_UTC_FORMAT)
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_source_print_method(value):
+    return value is None or (_non_bool_int(value) and value >= 0)
+
+
+def _valid_print_method_normalized(value):
+    if value is None:
+        return True
+    if not isinstance(value, dict) or set(value) != {"from", "to"}:
+        return False
+    origin = value.get("from")
+    dest = value.get("to")
+    return _non_bool_int(origin) and origin >= 0 and _non_bool_int(dest) and dest == 0
+
+
+def _valid_page_count(value):
+    return value is None or (_non_bool_int(value) and value >= 1)
+
+
+def _conversion_shape_error(record, record_path):
+    """Reject malformed typed fields before any Path() on record paths."""
+    for label in ("source", "pdf"):
+        if not _nonempty_path_string(record.get(label)):
+            return (
+                f"conversion record {record_path} {label} must be a "
+                "nonempty string path")
+    if not _valid_created_utc(record.get("created_utc")):
+        return (
+            f"conversion record {record_path} created_utc must be a UTC "
+            f"timestamp {CREATED_UTC_FORMAT}")
+    if not _valid_source_print_method(record.get("source_print_method")):
+        return (
+            f"conversion record {record_path} source_print_method must be "
+            "null or a nonnegative integer")
+    if not _valid_print_method_normalized(record.get("print_method_normalized")):
+        return (
+            f"conversion record {record_path} print_method_normalized must "
+            'be null or {"from": <nonnegative int>, "to": 0}')
+    for label in ("pages_document", "pages_pdf"):
+        if not _valid_page_count(record.get(label)):
+            return (
+                f"conversion record {record_path} {label} must be null or "
+                "a positive integer")
+    return None
 
 
 def _atomic_write_json(path, payload):
@@ -238,12 +303,14 @@ def _atomic_write_json(path, payload):
 def load_bound_conversion_record(record_path, source, pdf):
     """Bind a convert sidecar to the current form and PDF bytes.
 
-    Fail-closed: wrong schema, missing keys, path mismatch, unreadable
-    files, or a hash that no longer matches returns ``(None, error)``.
-    Never mutates the baseline. A pathname without a live hash is not
-    provenance.
+    Fail-closed: wrong schema, missing/malformed keys, path mismatch,
+    unreadable files, or a hash that no longer matches returns
+    ``(None, error)`` with no traceback. Never mutates the baseline.
     """
-    record_path = Path(record_path)
+    try:
+        record_path = Path(record_path)
+    except (TypeError, ValueError):
+        return None, f"conversion record path is unusable: {record_path!r}"
     if not record_path.is_file():
         return None, f"conversion record not found: {record_path}"
     try:
@@ -267,6 +334,17 @@ def load_bound_conversion_record(record_path, source, pdf):
     if missing:
         return None, (
             f"conversion record {record_path} missing keys {missing}")
+    shape_err = _conversion_shape_error(record, record_path)
+    if shape_err:
+        return None, shape_err
+    if isinstance(source, Path):
+        source = str(source)
+    if isinstance(pdf, Path):
+        pdf = str(pdf)
+    if not _nonempty_path_string(source):
+        return None, f"form path is not a nonempty string: {source!r}"
+    if not _nonempty_path_string(pdf):
+        return None, f"form PDF path is not a nonempty string: {pdf!r}"
     if not _same_path(record.get("source"), source):
         return None, (
             f"conversion record {record_path} source path "
