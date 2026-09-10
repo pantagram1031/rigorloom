@@ -18,6 +18,15 @@ studio/studio.log
 Thumbs.db
 # Release bundles built by scripts/package_module.py; never committed.
 dist/
+# setuptools staging and metadata from an in-place `pip wheel .` / build.
+# NOT cosmetic: tests/test_cli_distribution.py and
+# tests/test_cli_payload_cleanroom.py export a "clean source tree" with
+# `git ls-files --cached --others --exclude-standard`, so anything untracked
+# and unignored here is copied into the tree the wheel is built FROM.
+# build/lib/ is setuptools' own staging directory; building from a tree that
+# already contains one risks reusing stale staged bytes.
+build/
+*.egg-info/
 # Card1 / Card5 Run-Card evidence (regenerated on the Windows runner).
 qa/_artifacts/
 # Unattended QA harness evidence (qa/run_cards.py job.json runs).

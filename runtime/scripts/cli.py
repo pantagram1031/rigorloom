@@ -169,13 +169,25 @@ def build_parser() -> argparse.ArgumentParser:
         prog="runtime/scripts/cli.py",
         description="Drive the Runtime domain layer from the command line. "
                     "One JSON document per invocation on stdout.")
-    parser.add_argument("--root", required=True,
+    parser.add_argument("--root", default=None,
                         help="directory the Runtime may write under (sessions, "
                              "plans, approvals, candidates). No default, ever.")
     parser.add_argument("--engine-root", default=None,
                         help="repo root holding engine/scripts and "
                              "pipeline/scripts (default: this checkout)")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_inst = sub.add_parser("install", help="bootstrap engine and distribution modules from bundle zips")
+    p_inst.add_argument("--engine-root", required=True,
+                        help="target directory to install the engine into")
+    p_inst.add_argument("--bundles-dir", required=True,
+                        help="directory containing core and module bundle zips")
+    p_inst.add_argument("--modules", default="style,report",
+                        help="comma-separated list of modules to enable (default: style,report)")
+    p_inst.add_argument("--skills-root", default=None,
+                        help="agent skills root (must not exist; newly provisioned)")
+    p_inst.add_argument("--replace", action="store_true",
+                        help="replace an existing valid rigorloom engine installation")
 
     sub.add_parser("capabilities", help="what this build can do")
     sub.add_parser("sessions", help="list sessions under the root")
@@ -433,6 +445,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command
+
+    if command == "install":
+        try:
+            from .install import run_install
+        except ImportError:
+            from install import run_install
+        return run_install(args)
+
+    if not args.root:
+        parser.error("the following arguments are required: --root")
+
     root = Path(args.root).expanduser()
     try:
         root.mkdir(parents=True, exist_ok=True)
