@@ -73,13 +73,54 @@ There is no published package index for this project — the wheel is built from
 a checkout, not downloaded. It carries the Runtime layer only: no `engine/`,
 `pipeline/`, or `modules/`. A wheel-only install therefore reports the engine
 tools, the module checkers, and the optional render backends as unavailable,
-each with a reason, in `rigorloom ... capabilities`. Point `--engine-root` at a
-checkout, or use the checkout directly, for the full pipeline.
+each with a reason, in `rigorloom ... capabilities`.
 
-This is a different distribution from the module and skill ZIP bundles that
-`scripts/package_module.py` builds and `scripts/sync_local.py` installs. Those
-ship module payloads and skill fragments; the wheel ships one command. Neither
-replaces the other.
+### Giving the command an engine: the ZIP payload
+
+The wheel is one half of the product. The other half is the ZIP bundles that
+`scripts/package_module.py` builds — they carry `engine/`, `pipeline/scripts`,
+the skill surface, and the distribution modules. Install them into a directory
+of your own and point the command at it; **`--engine-root` takes an install
+root, not a checkout.**
+
+```sh
+# 1. build the bundles (from a checkout, once)
+python scripts/package_module.py --module core   --out dist
+python scripts/package_module.py --module style  --out dist
+python scripts/package_module.py --module report --out dist
+
+# 2. install them into an INSTALL ROOT of your choosing
+mkdir -p ~/rigorloom-install
+cd ~/rigorloom-install
+unzip /path/to/dist/rigorloom-core-0.17.0.zip
+unzip /path/to/dist/rigorloom-style-0.17.0.zip  'modules/*'
+unzip /path/to/dist/rigorloom-report-0.17.0.zip 'modules/*'
+python pipeline/scripts/module_registry.py write-enabled --all
+
+# 3. drive the install root with the installed command
+rigorloom --root ~/rigorloom-work --engine-root ~/rigorloom-install capabilities
+```
+
+`report` declares `requires_modules: [style]`, so a report payload is three
+zips; the registry refuses to enable `report` alone rather than half-enabling
+it. With the payload installed, `capabilities` reports `form_inspect`,
+`preedit`, `check_residue` and the module registry as available with paths
+under the install root, and the enabled modules by name. The `xml` and `com`
+backends stay unavailable with reasons — they are protocol vocabulary this
+build does not execute.
+
+What the installed command then does is cell-level document editing on the
+`preedit` backend: `open`, `inspect`, `propose`, `request-approval`,
+`approve`, `apply`, `verify`. `verify` is fail-closed on runnability — it exits
+non-zero when a required checker could not run — and it reports the residue
+gate's verdict rather than assuming it. That verdict measures a *finished*
+artifact, so a document that has only had some cells filled will still be
+reported as carrying the form's own anchor text. Finishing a document is the
+full pipeline's job, not one plan's.
+
+This is a different distribution from the module and skill ZIP bundles, not a
+replacement for them: those ship module payloads and skill fragments, the
+wheel ships one command, and each is built and installed on its own terms.
 
 ### Windows + Hancom (optional)
 
