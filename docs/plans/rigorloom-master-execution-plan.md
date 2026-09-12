@@ -1,15 +1,22 @@
 # Rigorloom master execution plan
 
-Status: **PAUSED BY USER — planning handoff only**  
-Updated: 2026-09-12 KST  
+Status: **ACTIVE BY USER — coordinator resume and live-state reconciliation authorized**
+Updated: 2026-09-13 KST
 Planning owner: Astra  
-Routine execution coordinator when resumed: Sol task `01a08756-2564-7aa1-bcc9-d6e853f372b8`
+Routine execution coordinator: existing Herdr agent `rigorloom-sol-coordinator` in named
+session `rigorloom`; do not create a replacement session while it remains usable.
 
 This is the top-level plan for the whole Rigorloom product, not only its CLI.
 It is deliberately written so an agent can recover the product direction without
 reconstructing old conversations. It does not authorize work while the status above is
 paused. Resume, assignment, COM use, integration, push, release, or publication each still
 requires the authority described below.
+
+The user explicitly resumed coordinator work on 2026-09-13. Resume begins with the
+read-only discrepancy reconciliation in section 8; it does not automatically reactivate
+stale cards or grant file, COM, integration, push, release, or publication authority.
+Role-specific session goals and prompt contracts are in
+`docs/plans/rigorloom-herdr-session-prompts.md`.
 
 ## 1. Required reading order
 
