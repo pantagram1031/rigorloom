@@ -1,5 +1,9 @@
 # Agent instructions
 
+Before product planning or orchestration, read
+`docs/plans/rigorloom-master-execution-plan.md`. Its current status is authoritative for
+whether execution is active; the plan itself does not grant an assignment or resume a pause.
+
 Read `docs/pipeline-master-v0.6.md` before operating a workspace.
 
 1. Run `python modules/report/scripts/pipeline_ctl.py resume <absolute-workspace>`.
