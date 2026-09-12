@@ -83,6 +83,14 @@ For the maintained external runner this means `--sandbox --add-dir <resolved-wor
 denied, report the requested operation and resolved path. A write-mode change requires a
 new exact card and explicit ownership; never loosen permissions merely to silence a prompt.
 
+Windows Herdr interactive exception: AGY 1.2.2 soft-denies even a harmless `run_command`
+as `escalate_admin` when launched with `--sandbox`. The verified interactive policy in
+`~/.gemini/antigravity-cli/settings.json` therefore uses `agentMode=accept-edits`, no
+terminal sandbox, and a `command(*)` allow rule, with explicit deny rules for push, hard
+reset, recursive deletion, and process termination. This exception is for existing
+interactive AGY sessions; the maintained external read-only runner stays sandboxed and
+must not run commands that need escalation.
+
 ### Luna mechanical verification
 
 Goal: Perform high-volume deterministic inventories, test-log classification, hashes, and
