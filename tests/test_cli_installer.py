@@ -338,6 +338,41 @@ def test_rollback_on_post_swap_failure_restores_prior_engine(tmp_path):
         assert original_marker.read_text(encoding="utf-8") == "# original v1"
 
 
+def test_keyboardinterrupt_during_post_swap_restores_prior_engine(tmp_path):
+    """A2: KeyboardInterrupt after the swap still rolls back to the prior engine.
+
+    ``except Exception`` would skip rollback and leave a new engine whose origin
+    split was never verified. The interrupt must propagate *after* restore.
+    """
+    bundles_dir = tmp_path / "bundles"
+    bundles_dir.mkdir()
+    engine_root = tmp_path / "engine"
+    (engine_root / "engine" / "scripts").mkdir(parents=True)
+    (engine_root / "pipeline" / "scripts").mkdir(parents=True)
+    original_marker = engine_root / "engine" / "scripts" / "form_inspect.py"
+    original_marker.write_text("# original v1", encoding="utf-8")
+    (engine_root / "pipeline" / "scripts" / "module_registry.py").write_text("# reg", encoding="utf-8")
+
+    core_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    _make_dummy_bundle(core_zip, "core", {
+        "engine/scripts/probe.py": b"print('probe')",
+        "engine/scripts/form_inspect.py": b"# new v2",
+        "pipeline/scripts/module_registry.py": b"print('reg')",
+        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n"
+    })
+
+    with patch("install._probe_origin_split", side_effect=KeyboardInterrupt):
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            with pytest.raises(KeyboardInterrupt):
+                cli.main(["install", "--engine-root", str(engine_root), "--bundles-dir", str(bundles_dir),
+                          "--modules", "", "--replace"])
+
+    assert original_marker.is_file()
+    assert original_marker.read_text(encoding="utf-8") == "# original v1"
+    assert not buf.getvalue().strip(), "KeyboardInterrupt must not be wrapped as a JSON install error"
+
+
 # --------------------------------------------------------------------------- #
 # Skills Directory Discipline (Refuse Existing Even If Empty)
 # --------------------------------------------------------------------------- #
@@ -546,6 +581,7 @@ def test_wheel_installed_consumer_e2e_and_origin_split(tmp_path, built_artifacts
     replace_res = json.loads(replace_proc.stdout)
     backup_path = replace_res["result"].get("backup_path")
     assert backup_path and Path(backup_path).is_dir(), "Backup directory must be preserved on replacement!"
+    assert "operator's to remove" in (replace_res["result"].get("backup_note") or "")
 
 
 def test_origin_split_intentional_leak_failure(tmp_path):
@@ -654,3 +690,92 @@ def test_origin_probe_reports_a_real_leak_as_containment_breach(tmp_path):
 
     assert excinfo.value.exit_code == install.EXIT_REFUSED
     assert excinfo.value.error_code == "containment_breach"
+
+
+def test_provision_skills_manifest_lives_outside_engine(tmp_path):
+    """A1: the skill-sync manifest must not be written inside engine_root."""
+    engine_root = tmp_path / "engine"
+    (engine_root / "scripts").mkdir(parents=True)
+    (engine_root / "scripts" / "sync_local.py").write_text("# stub\n", encoding="utf-8")
+    skills_root = tmp_path / "skills"
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        captured["engine_dotfiles"] = [
+            p.name for p in engine_root.glob(".skill_sync_manifest_*")
+        ]
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return Result()
+
+    with patch("install.subprocess.run", side_effect=fake_run):
+        result = install._provision_skills(engine_root, skills_root)
+
+    assert result["installed"] is True
+    manifest_arg = captured["cmd"][captured["cmd"].index("--manifest") + 1]
+    manifest_path = Path(manifest_arg)
+    assert manifest_path.is_absolute()
+    engine_resolved = engine_root.resolve()
+    assert manifest_path.resolve() != engine_resolved
+    assert engine_resolved not in manifest_path.resolve().parents
+    assert captured["engine_dotfiles"] == []
+    assert not list(engine_root.glob(".skill_sync_manifest_*"))
+    assert not manifest_path.exists()
+
+
+def test_missing_style_bundle_names_modules_none(tmp_path):
+    """A4: a core-only bundles-dir must name --modules none on the default path."""
+    bundles_dir = tmp_path / "bundles"
+    bundles_dir.mkdir()
+    _make_dummy_bundle(bundles_dir / "rigorloom-core-0.17.0.zip", "core",
+                       {"engine/scripts/probe.py": b"print('probe')"})
+    engine_root = tmp_path / "engine"
+
+    buf = io.StringIO()
+    with patch("sys.stdout", buf):
+        code = cli.main(["install", "--engine-root", str(engine_root),
+                         "--bundles-dir", str(bundles_dir)])
+    assert code == 2
+    message = json.loads(buf.getvalue())["error"]["message"]
+    assert "required bundle for 'style' not found" in message
+    assert "--modules none" in message
+
+
+def test_replace_backup_note_tells_operator_to_remove(tmp_path):
+    """A3: --replace keeps the backup and says the operator may remove it."""
+    bundles_dir = tmp_path / "bundles"
+    bundles_dir.mkdir()
+    engine_root = tmp_path / "engine"
+    (engine_root / "engine" / "scripts").mkdir(parents=True)
+    (engine_root / "pipeline" / "scripts").mkdir(parents=True)
+    original_marker = engine_root / "engine" / "scripts" / "form_inspect.py"
+    original_marker.write_text("# original v1", encoding="utf-8")
+    (engine_root / "pipeline" / "scripts" / "module_registry.py").write_text("# reg", encoding="utf-8")
+
+    core_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    _make_dummy_bundle(core_zip, "core", {
+        "engine/scripts/probe.py": b"print('probe')",
+        "engine/scripts/form_inspect.py": b"# new v2",
+        "pipeline/scripts/module_registry.py": b"print('reg')",
+        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n"
+    })
+
+    with patch("install._probe_origin_split", return_value={"ok": True}):
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            code = cli.main(["install", "--engine-root", str(engine_root),
+                             "--bundles-dir", str(bundles_dir),
+                             "--modules", "", "--replace"])
+    assert code == 0
+    result = json.loads(buf.getvalue())["result"]
+    backup_path = result.get("backup_path")
+    assert backup_path and Path(backup_path).is_dir()
+    note = result.get("backup_note") or ""
+    assert "operator's to remove" in note
+    assert (engine_root / "engine" / "scripts" / "form_inspect.py").read_text(
+        encoding="utf-8") == "# new v2"
+    assert (Path(backup_path) / "engine" / "scripts" / "form_inspect.py").read_text(
+        encoding="utf-8") == "# original v1"

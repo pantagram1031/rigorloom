@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import zipfile
@@ -360,7 +361,6 @@ def _provision_skills(engine_root: Path, skills_root: Path) -> dict[str, Any]:
                            f"sync_local.py missing from installed core at {sync_script}")
     target_install = skills_root / "rigorloom-hwp"
     target_install.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path = engine_root / f".skill_sync_manifest_{uuid.uuid4().hex}.yaml"
     manifest_content = (
         f'install_root: "{str(target_install).replace(chr(92), "/")}"\n'
         'merge_skill_fragments: true\n'
@@ -380,11 +380,18 @@ def _provision_skills(engine_root: Path, skills_root: Path) -> dict[str, Any]:
         '  - "*.pyc"\n'
         '  - ".sync*"\n'
     )
-    manifest_path.write_text(manifest_content, encoding="utf-8")
+    # Keep the sync manifest outside engine_root. A kill between write and
+    # unlink must not leave a stray dotfile in the installed engine.
+    fd, manifest_name = tempfile.mkstemp(
+        prefix="skill_sync_manifest_", suffix=".yaml", text=True
+    )
+    manifest_path = Path(manifest_name)
     try:
+        os.close(fd)
+        manifest_path.write_text(manifest_content, encoding="utf-8")
         cmd = [
             sys.executable, str(sync_script),
-            "--manifest", str(manifest_path),
+            "--manifest", str(manifest_path.resolve()),
             "--checkout-root", str(engine_root)
         ]
         env = dict(os.environ)
@@ -588,8 +595,10 @@ def run_install(args: argparse.Namespace) -> int:
             skills_info: dict[str, Any] | None = None
             if skills_root is not None:
                 skills_info = _provision_skills(engine_root, skills_root)
-        except Exception as post_exc:
-            # Post-swap failure: rollback engine!
+        except BaseException as post_exc:
+            # Post-swap failure: rollback engine. BaseException so a
+            # KeyboardInterrupt during the probe or skill provision still
+            # restores the prior engine instead of leaving an unverified swap.
             try:
                 if engine_root.exists():
                     shutil.rmtree(engine_root, ignore_errors=True)
@@ -603,6 +612,8 @@ def run_install(args: argparse.Namespace) -> int:
                 )
             if isinstance(post_exc, InstallError):
                 raise post_exc
+            if not isinstance(post_exc, Exception):
+                raise
             raise InstallError(
                 EXIT_REFUSED, "post_swap_failed",
                 f"Post-swap step failed: {post_exc}. Prior engine restored from {bak_dir}."
@@ -610,10 +621,16 @@ def run_install(args: argparse.Namespace) -> int:
             )
 
         # SUCCESS: Do NOT delete bak_dir! Leave for operator recovery.
+        backup_path = str(bak_dir) if prior_existed and bak_dir.exists() else None
         result_payload = {
             "engine_root": str(engine_root),
             "modules": module_names,
-            "backup_path": str(bak_dir) if prior_existed and bak_dir.exists() else None,
+            "backup_path": backup_path,
+            "backup_note": (
+                "Prior engine retained at backup_path for recovery; "
+                "it is the operator's to remove."
+                if backup_path else None
+            ),
             "skills_installed": bool(skills_info and skills_info.get("installed")),
             "skills_path": skills_info.get("path") if skills_info else None,
         }
