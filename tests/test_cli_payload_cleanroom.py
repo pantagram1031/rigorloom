@@ -154,18 +154,44 @@ raise SystemExit(1)
 
 BUILD_TIMEOUT = 900
 
+#: The interpreter capability probe runs `python -c` and must answer fast or be
+#: treated as unusable; it does not get the build bound. It is a module constant
+#: rather than a literal at the call site so ``tests/test_subprocess_bounds.py``
+#: can read it — see ``_probe_run``.
+PROBE_TIMEOUT = 120
+
 #: Filled by the payload fixture so the closing test can prove the heavy path
 #: actually executed rather than skipping into a green run.
 _EXECUTED: dict[str, object] = {}
 
 
-def _plain_run(argv, timeout=BUILD_TIMEOUT):
-    """A build-side subprocess. Sandbox subprocesses go through Sandbox.run."""
+def _run_env() -> dict:
+    """Shared child environment. PYTHONPATH is dropped, never inherited."""
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     env.pop("PYTHONPATH", None)
+    return env
+
+
+def _plain_run(argv):
+    """A build-side subprocess. Sandbox subprocesses go through Sandbox.run.
+
+    The bound is named at the ``subprocess.run`` call rather than threaded
+    through a parameter. ``tests/test_subprocess_bounds.py`` resolves a spawn
+    bound only from a numeric literal or a module-level constant AT the call
+    site, so ``timeout=timeout`` read as unresolvable and the guard failed
+    closed — correctly, because a reader auditing spawn bounds could not see
+    this one either. Two bounds, two call sites, both legible.
+    """
     return subprocess.run(argv, capture_output=True, text=True,
                           encoding="utf-8", errors="replace",
-                          env=env, timeout=timeout)
+                          env=_run_env(), timeout=BUILD_TIMEOUT)
+
+
+def _probe_run(argv):
+    """A capability probe. Short bound: a probe that hangs IS the answer."""
+    return subprocess.run(argv, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace",
+                          env=_run_env(), timeout=PROBE_TIMEOUT)
 
 
 def _wheel_python() -> str | None:
@@ -176,7 +202,7 @@ def _wheel_python() -> str | None:
     candidates.append(sys.executable)
     for candidate in candidates:
         try:
-            probe = _plain_run([candidate, "-c", _TOOLCHAIN_PROBE], timeout=120)
+            probe = _probe_run([candidate, "-c", _TOOLCHAIN_PROBE])
         except (OSError, subprocess.SubprocessError):
             continue
         if probe.returncode == 0:
