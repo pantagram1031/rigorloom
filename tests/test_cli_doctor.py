@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from _runtime_client import runtime_scripts_on_path
 
 runtime_scripts_on_path()
@@ -29,6 +31,15 @@ def _invoke(*argv: str) -> tuple[int, dict, str, str]:
         code = cli.main(list(argv))
     payload = json.loads(stdout.getvalue())
     return code, payload, stdout.getvalue(), stderr.getvalue()
+
+
+def _argparse_failure(*argv: str) -> tuple[int, str, str]:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main(list(argv))
+    return int(excinfo.value.code), stdout.getvalue(), stderr.getvalue()
 
 
 def _engine_fixture(tmp_path: Path, *, probe_source: bytes | None = None) -> Path:
@@ -173,6 +184,67 @@ def test_doctor_usage_error_is_exit_two_and_one_json_document():
     decoded, end = json.JSONDecoder().raw_decode(stdout)
     assert decoded == payload
     assert stdout[end:].strip() == ""
+
+
+@pytest.mark.parametrize(
+    ("argv", "diagnostic"),
+    [
+        (("capabilities", "doctor"), "unrecognized arguments: doctor"),
+        (("--root", "doctor"), "required: command"),
+        (
+            ("install", "--engine-root", "doctor"),
+            "required: --bundles-dir",
+        ),
+    ],
+)
+def test_non_doctor_parse_failures_are_not_mislabeled(argv, diagnostic):
+    code, stdout, stderr = _argparse_failure(*argv)
+
+    assert code == 2
+    assert stdout == ""
+    assert diagnostic in stderr
+    assert '"command": "doctor"' not in stdout
+
+
+def test_doctor_bogus_argument_is_typed_usage_and_one_json_document():
+    code, payload, stdout, stderr = _invoke("doctor", "--bogus")
+
+    assert code == 2
+    assert payload["ok"] is False
+    assert payload["command"] == "doctor"
+    assert payload["error"]["code"] == "invalid_params"
+    assert "unrecognized arguments: --bogus" in stderr
+    decoded, end = json.JSONDecoder().raw_decode(stdout)
+    assert decoded == payload
+    assert stdout[end:].strip() == ""
+
+
+@pytest.mark.parametrize("equals_form", [False, True])
+def test_global_options_reach_doctor_without_creating_runtime_root(
+    tmp_path, equals_form
+):
+    runtime_root = tmp_path / "must-not-be-created"
+    engine_root = tmp_path / "missing-engine"
+    argv = (
+        [
+            f"--root={runtime_root}",
+            f"--engine-root={engine_root}",
+            "doctor",
+        ]
+        if equals_form
+        else [
+            "--root", str(runtime_root),
+            "--engine-root", str(engine_root),
+            "doctor",
+        ]
+    )
+
+    code, payload, _stdout, _stderr = _invoke(*argv)
+
+    assert code == 3
+    assert payload["command"] == "doctor"
+    assert _check(payload, "engine")["reason"]["code"] == "engine_markers_missing"
+    assert not runtime_root.exists()
 
 
 def test_malformed_utf8_probe_output_is_typed_failure(tmp_path):

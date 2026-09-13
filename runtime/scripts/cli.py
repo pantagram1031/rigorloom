@@ -446,6 +446,25 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
     raise UsageError(f"unknown command {command!r}")
 
 
+def _top_level_command(argv: list[str]) -> str | None:
+    """Return the command-position token after valid global option pairs."""
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in ("--root", "--engine-root"):
+            if index + 1 >= len(argv) or argv[index + 1].startswith("-"):
+                return None
+            index += 2
+            continue
+        if token.startswith("--root=") or token.startswith("--engine-root="):
+            index += 1
+            continue
+        if token.startswith("-"):
+            return None
+        return token
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     utf8_stdio()
     parser = build_parser()
@@ -453,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parser.parse_args(raw_argv)
     except SystemExit as exc:
-        if exc.code and "doctor" in raw_argv:
+        if exc.code and _top_level_command(raw_argv) == "doctor":
             return emit({
                 "ok": False,
                 "command": "doctor",
