@@ -527,7 +527,8 @@ def test_wheel_installed_consumer_e2e_and_origin_split(tmp_path, built_artifacts
         "--bundles-dir", str(dist_dir),
         "--modules", "style,report",
         "--skills-root", str(skills_root)
-    ], capture_output=True, text=True, env=env, encoding="utf-8")
+    ], capture_output=True, text=True, env=env, encoding="utf-8",
+        cwd=str(tmp_path))
 
     assert proc.returncode == 0, f"rigorloom install failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
     install_res = json.loads(proc.stdout)
@@ -541,17 +542,27 @@ def test_wheel_installed_consumer_e2e_and_origin_split(tmp_path, built_artifacts
         "import rigorloom_runtime\n"
         f"engine_root = Path(r'{engine_root}').resolve()\n"
         f"venv_dir = Path(r'{venv_dir}').resolve()\n"
+        f"repo_root = Path(r'{REPO_ROOT}').resolve()\n"
         "sys.path.insert(0, str(engine_root / 'pipeline' / 'scripts'))\n"
         "import module_registry, privacy_scan\n"
         "rt_file = Path(rigorloom_runtime.__file__).resolve()\n"
         "reg_file = Path(module_registry.__file__).resolve()\n"
         "assert rt_file.is_relative_to(venv_dir), f'Runtime not in venv: {rt_file}'\n"
         "assert reg_file.is_relative_to(engine_root), f'Registry not in engine: {reg_file}'\n"
-        f"assert r'{REPO_ROOT}' not in sys.path\n"
+        "cwd_resolved = Path.cwd().resolve()\n"
+        "for entry in sys.path:\n"
+        "    resolved = (cwd_resolved if not entry else Path(entry).resolve())\n"
+        "    assert resolved != repo_root and not resolved.is_relative_to(repo_root), "
+        "f'Checkout leak in sys.path: {entry!r} resolved to {resolved}'\n"
         "print(json.dumps({'ok': True, 'runtime': str(rt_file), 'registry': str(reg_file)}))\n"
     )
-    proc_probe = subprocess.run([venv_py, "-c", probe_code], env=env, capture_output=True, text=True,
-                                encoding="utf-8")
+    env_probe = dict(env)
+    for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "RIGORLOOM_BACKENDS", "RIGORLOOM_PROFILE_ROOT"):
+        env_probe.pop(key, None)
+    proc_probe = subprocess.run(
+        [venv_py, "-c", probe_code], env=env_probe, capture_output=True,
+        text=True, encoding="utf-8", cwd=str(tmp_path)
+    )
     assert proc_probe.returncode == 0, f"origin-split probe failed:\n{proc_probe.stderr}"
 
     # 5. Run installed capabilities command
@@ -560,7 +571,8 @@ def test_wheel_installed_consumer_e2e_and_origin_split(tmp_path, built_artifacts
         "--root", str(work_root),
         "--engine-root", str(engine_root),
         "capabilities"
-    ], capture_output=True, text=True, env=env, encoding="utf-8")
+    ], capture_output=True, text=True, env=env, encoding="utf-8",
+        cwd=str(tmp_path))
     assert cap_proc.returncode == 0, f"capabilities failed:\n{cap_proc.stderr}"
     cap_res = json.loads(cap_proc.stdout)
     assert cap_res["ok"] is True
@@ -576,12 +588,162 @@ def test_wheel_installed_consumer_e2e_and_origin_split(tmp_path, built_artifacts
         "--bundles-dir", str(dist_dir),
         "--modules", "style,report",
         "--replace"
-    ], capture_output=True, text=True, env=env, encoding="utf-8")
+    ], capture_output=True, text=True, env=env, encoding="utf-8",
+        cwd=str(tmp_path))
     assert replace_proc.returncode == 0
     replace_res = json.loads(replace_proc.stdout)
     backup_path = replace_res["result"].get("backup_path")
     assert backup_path and Path(backup_path).is_dir(), "Backup directory must be preserved on replacement!"
     assert "operator's to remove" in (replace_res["result"].get("backup_note") or "")
+
+
+def test_failure_before_swap_preserves_recognized_engine_without_backup(tmp_path):
+    """A failed module extraction leaves an existing install untouched."""
+    bundles_dir = tmp_path / "bundles"
+    bundles_dir.mkdir()
+    engine_root = tmp_path / "engine"
+    (engine_root / "engine" / "scripts").mkdir(parents=True)
+    (engine_root / "pipeline" / "scripts").mkdir(parents=True)
+    inspect_marker = engine_root / "engine" / "scripts" / "form_inspect.py"
+    inspect_marker.write_text("# original v1 inspect", encoding="utf-8")
+    registry_marker = engine_root / "pipeline" / "scripts" / "module_registry.py"
+    registry_marker.write_text("# original v1 registry", encoding="utf-8")
+
+    _make_dummy_bundle(
+        bundles_dir / "rigorloom-core-0.17.0.zip", "core", {
+            "engine/scripts/probe.py": b"print('{}')",
+            "engine/scripts/form_inspect.py": b"# new v2 inspect",
+            "pipeline/scripts/module_registry.py": b"print('{}')",
+            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n",
+        }
+    )
+    _make_dummy_bundle(
+        bundles_dir / "rigorloom-style-0.17.0.zip", "style", {
+            "unexpected_dir/some_file.txt": b"wrong layout",
+        }
+    )
+
+    buf = io.StringIO()
+    with patch("sys.stdout", buf):
+        code = cli.main([
+            "install", "--engine-root", str(engine_root),
+            "--bundles-dir", str(bundles_dir), "--modules", "style",
+            "--replace",
+        ])
+
+    out = json.loads(buf.getvalue())
+    assert code == 3
+    assert out["error"]["code"] == "tamper_detected"
+    assert "missing required modules/style/ payload" in out["error"]["message"]
+    assert inspect_marker.read_text(encoding="utf-8") == "# original v1 inspect"
+    assert registry_marker.read_text(encoding="utf-8") == "# original v1 registry"
+    assert not list(engine_root.parent.glob(f"{engine_root.name}.bak-*"))
+    assert not list(engine_root.parent.glob(f"{engine_root.name}.staging-*"))
+
+
+def test_real_install_forwards_confirmed_checkout_roots_and_rolls_back(tmp_path, monkeypatch):
+    """The post-swap probe receives source-checkout roots from run_install."""
+    monkeypatch.chdir(REPO_ROOT)
+    bundles_dir = tmp_path / "bundles"
+    bundles_dir.mkdir()
+    engine_root = tmp_path / "engine"
+    _make_dummy_bundle(
+        bundles_dir / "rigorloom-core-0.17.0.zip", "core", {
+            "engine/scripts/probe.py": b"print('{}')",
+            "engine/scripts/form_inspect.py": b"# inspect",
+            "pipeline/scripts/module_registry.py": b"print('{}')",
+            "pipeline/scripts/privacy_scan.py": b"# scan",
+            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n",
+        }
+    )
+
+    buf = io.StringIO()
+    with patch("sys.stdout", buf):
+        code = cli.main([
+            "install", "--engine-root", str(engine_root),
+            "--bundles-dir", str(bundles_dir), "--modules", "none",
+        ])
+
+    out = json.loads(buf.getvalue())
+    assert code == 3
+    assert out["error"]["code"] == "containment_breach"
+    assert "Checkout leak in sys.path" in out["error"]["message"]
+    assert str(REPO_ROOT.resolve()) in out["error"]["message"]
+    assert not engine_root.exists()
+
+
+def test_undecodable_probe_output_stays_typed_and_replacement_decoded(tmp_path):
+    """Invalid child bytes cannot escape as an internal UnicodeDecodeError."""
+    bundles_dir = tmp_path / "bundles"
+    bundles_dir.mkdir()
+    engine_root = tmp_path / "engine"
+    probe = (
+        b"import os, sys\n"
+        b"sys.stderr.buffer.write(b'utf8=' + os.environ.get('PYTHONUTF8', '').encode() + b';bad=\\xff')\n"
+        b"raise SystemExit(7)\n"
+    )
+    _make_dummy_bundle(
+        bundles_dir / "rigorloom-core-0.17.0.zip", "core", {
+            "engine/scripts/probe.py": probe,
+            "engine/scripts/form_inspect.py": b"# inspect",
+            "pipeline/scripts/module_registry.py": b"print('{}')",
+            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n",
+        }
+    )
+
+    buf = io.StringIO()
+    with patch("sys.stdout", buf):
+        code = cli.main([
+            "install", "--engine-root", str(engine_root),
+            "--bundles-dir", str(bundles_dir), "--modules", "none",
+        ])
+
+    out = json.loads(buf.getvalue())
+    assert code == 3
+    assert out["error"]["code"] == "probe_failed"
+    assert "utf8=1" in out["error"]["message"]
+    assert "\ufffd" in out["error"]["message"]
+    assert "internal_error" not in buf.getvalue()
+
+
+def test_installer_children_force_utf8_and_keep_replacement_decode(tmp_path):
+    """All three decoded child calls share the deliberate UTF-8 policy."""
+    staging = tmp_path / "staging"
+    (staging / "pipeline" / "scripts").mkdir(parents=True)
+    (staging / "pipeline" / "scripts" / "module_registry.py").write_text(
+        "print('{}')", encoding="utf-8"
+    )
+    (staging / "engine" / "scripts").mkdir(parents=True)
+    (staging / "engine" / "scripts" / "probe.py").write_text(
+        "print('{}')", encoding="utf-8"
+    )
+    (staging / "scripts").mkdir()
+    (staging / "scripts" / "sync_local.py").write_text(
+        "print('{}')", encoding="utf-8"
+    )
+    calls: list[dict] = []
+
+    def fake_run(_cmd, **kwargs):
+        calls.append(kwargs)
+
+        class Result:
+            returncode = 0
+            stdout = "{}"
+            stderr = ""
+
+        return Result()
+
+    with patch("install.subprocess.run", side_effect=fake_run):
+        install._enable_modules_in_staging(staging, [])
+        install._probe_in_staging(staging)
+        install._provision_skills(staging, tmp_path / "skills")
+
+    assert len(calls) == 3
+    for call in calls:
+        assert call["env"]["PYTHONUTF8"] == "1"
+        assert call["env"]["PYTHONIOENCODING"] == "utf-8"
+        assert call["encoding"] == "utf-8"
+        assert call["errors"] == "replace"
 
 
 def test_origin_split_intentional_leak_failure(tmp_path):
@@ -605,12 +767,51 @@ def test_origin_split_intentional_leak_failure(tmp_path):
     assert "Checkout leaked!" in proc.stderr
 
 
-def test_truthful_residue_distinction(tmp_path):
-    """check_residue / verify reports acceptance: false on incomplete forms, and this is NOT a tool failure."""
+def test_origin_split_sys_path_empty_string_and_aliases_fail_closed(tmp_path):
+    """Empty and relative aliases cannot bypass checkout containment."""
+    engine_root = tmp_path / "engine"
+    violations = install.check_sys_path_containment(
+        ["", str(Path("pipeline") / ".."), str(engine_root)],
+        [REPO_ROOT],
+        cwd=REPO_ROOT,
+        allowed_roots=[engine_root],
+    )
+    assert len(violations) == 2
+    assert "''" in violations[0]
+    assert all("resolved to" in violation for violation in violations)
+
+
+def test_external_cwd_and_site_packages_are_not_checkout_roots(tmp_path):
+    """Ordinary external paths are neither discovered nor refused as checkouts."""
+    external_cwd = tmp_path / "outside"
+    site_packages = tmp_path / "venv" / "Lib" / "site-packages"
+    runtime_module = site_packages / "rigorloom_runtime" / "install.py"
+    runtime_module.parent.mkdir(parents=True)
+    runtime_module.write_text("# installed wheel module", encoding="utf-8")
+    external_cwd.mkdir()
+    engine_root = tmp_path / "installed-engine"
+
+    roots = install._confirmed_rigorloom_checkout_roots(
+        engine_root,
+        module_file=runtime_module,
+        sys_path=["", str(site_packages)],
+        cwd=external_cwd,
+    )
+    assert roots == []
+    assert install.check_sys_path_containment(
+        ["", str(site_packages)],
+        [REPO_ROOT],
+        cwd=external_cwd,
+        allowed_roots=[engine_root],
+    ) == []
+
+
+def test_residue_tool_presence_and_schema_boundary(tmp_path):
+    """Presence is installer evidence; residue acceptance is checker evidence."""
     engine_root = tmp_path / "engine_res"
     (engine_root / "pipeline" / "scripts").mkdir(parents=True)
     check_residue_file = engine_root / "pipeline" / "scripts" / "check_residue.py"
-    check_residue_file.write_text("# mock residue", encoding="utf-8")
+    check_residue_file.write_text("# mock residue tool presence", encoding="utf-8")
     assert check_residue_file.is_file()
 
 

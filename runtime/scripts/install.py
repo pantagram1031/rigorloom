@@ -284,6 +284,7 @@ def _enable_modules_in_staging(staging_dir: Path, module_names: list[str]) -> di
     env["RIGORLOOM_ROOT"] = str(staging_dir)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
 
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
@@ -307,6 +308,7 @@ def _probe_in_staging(staging_dir: Path) -> dict[str, Any]:
     env["RIGORLOOM_ROOT"] = str(staging_dir)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise InstallError(EXIT_REFUSED, "probe_failed",
@@ -317,15 +319,100 @@ def _probe_in_staging(staging_dir: Path) -> dict[str, Any]:
         return {}
 
 
-def _probe_origin_split(engine_root: Path, target_python: str | None = None) -> dict[str, Any]:
+def _resolve_path_entry(entry: str | Path, cwd: Path) -> Path:
+    path = Path(entry) if entry else cwd
+    if not path.is_absolute():
+        path = cwd / path
+    return path.resolve()
+
+
+def check_sys_path_containment(
+    sys_path: list[str],
+    forbidden_roots: list[Path | str],
+    cwd: Path | None = None,
+    allowed_roots: list[Path | str] | None = None,
+) -> list[str]:
+    """Resolve path aliases and report entries contained by checkout roots."""
+    effective_cwd = (cwd or Path.cwd()).resolve()
+    forbidden = [_resolve_path_entry(root, effective_cwd) for root in forbidden_roots if root]
+    allowed = [_resolve_path_entry(root, effective_cwd) for root in (allowed_roots or []) if root]
+    violations: list[str] = []
+    for entry in sys_path:
+        resolved = _resolve_path_entry(entry, effective_cwd)
+        if any(resolved == root or resolved.is_relative_to(root) for root in allowed):
+            continue
+        for root in forbidden:
+            if resolved == root or resolved.is_relative_to(root):
+                violations.append(
+                    f"sys.path entry {entry!r} resolved to {resolved} within forbidden root {root}"
+                )
+    return violations
+
+
+def _is_confirmed_rigorloom_checkout(root: Path) -> bool:
+    """Require both Git and Rigorloom source-layout evidence."""
+    if not (root / ".git").exists():
+        return False
+    required = (
+        root / "pyproject.toml",
+        root / "runtime" / "scripts" / "install.py",
+        root / "pipeline" / "scripts" / "module_registry.py",
+    )
+    if not all(path.is_file() for path in required):
+        return False
+    try:
+        pyproject = required[0].read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    project = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", pyproject)
+    return bool(project and re.search(
+        r"(?m)^\s*name\s*=\s*['\"]rigorloom['\"]\s*$", project.group(1)
+    ))
+
+
+def _confirmed_rigorloom_checkout_roots(
+    engine_root: Path,
+    *,
+    module_file: Path | None = None,
+    sys_path: list[str] | None = None,
+    cwd: Path | None = None,
+) -> list[Path]:
+    """Discover only source roots supported by checkout-specific evidence."""
+    effective_cwd = (cwd or Path.cwd()).resolve()
+    locations = [
+        _resolve_path_entry(module_file or Path(__file__), effective_cwd),
+        effective_cwd,
+    ]
+    locations.extend(
+        _resolve_path_entry(entry, effective_cwd)
+        for entry in (list(sys.path) if sys_path is None else sys_path)
+    )
+    installed_root = engine_root.resolve()
+    roots: dict[str, Path] = {}
+    for location in locations:
+        start = location.parent if location.is_file() else location
+        for candidate in (start, *start.parents):
+            if candidate == installed_root:
+                continue
+            if _is_confirmed_rigorloom_checkout(candidate):
+                roots[os.path.normcase(str(candidate))] = candidate
+                break
+    return [roots[key] for key in sorted(roots)]
+
+
+def _probe_origin_split(
+    engine_root: Path,
+    target_python: str | None = None,
+    forbidden_roots: list[Path | str] | None = None,
+) -> dict[str, Any]:
     exe = target_python or sys.executable
     # The path travels in the ENVIRONMENT, never in the source text. Embedding
     # it produced a SyntaxError for any root containing an apostrophe
     # (C:\\Users\\O'Brien\\...) or ending in a backslash (a drive root such as
     # C:\\), because a raw string cannot end with one — and the child's non-zero
     # exit was then reported as "containment_breach", which named a security
-    # failure for what was a quoting bug. RIGORLOOM_ROOT is already set to
-    # engine_root below, so there is nothing to interpolate.
+    # failure for what was a quoting bug. RIGORLOOM_ROOT and the confirmed
+    # checkout roots are passed in env, so there is nothing to interpolate.
     code = (
         "import json, os, sys\n"
         "from pathlib import Path\n"
@@ -336,14 +423,28 @@ def _probe_origin_split(engine_root: Path, target_python: str | None = None) -> 
         "priv_file = Path(privacy_scan.__file__).resolve()\n"
         "assert reg_file.is_relative_to(engine_root), f'module_registry leaked: {reg_file}'\n"
         "assert priv_file.is_relative_to(engine_root), f'privacy_scan leaked: {priv_file}'\n"
+        "forbidden_roots = [Path(p).resolve() for p in json.loads(os.environ.get('RIGORLOOM_FORBIDDEN_ROOTS', '[]'))]\n"
+        "cwd_resolved = Path.cwd().resolve()\n"
+        "for entry in sys.path:\n"
+        "    resolved = (cwd_resolved if not entry else Path(entry).resolve())\n"
+        "    if resolved == engine_root or resolved.is_relative_to(engine_root):\n"
+        "        continue\n"
+        "    for forbidden_root in forbidden_roots:\n"
+        "        if resolved == forbidden_root or resolved.is_relative_to(forbidden_root):\n"
+        "            raise AssertionError(f'Checkout leak in sys.path: {entry!r} resolved to {resolved} under {forbidden_root}')\n"
         "print(json.dumps({'ok': True, 'registry': str(reg_file), 'sys_executable': sys.executable}))\n"
     )
     env = dict(os.environ)
-    for k in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "RIGORLOOM_BACKENDS", "RIGORLOOM_PROFILE_ROOT"):
+    for k in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "RIGORLOOM_BACKENDS", "RIGORLOOM_PROFILE_ROOT", "RIGORLOOM_FORBIDDEN_ROOTS"):
         env.pop(k, None)
     env["RIGORLOOM_ROOT"] = str(engine_root)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    if forbidden_roots:
+        env["RIGORLOOM_FORBIDDEN_ROOTS"] = json.dumps(
+            [str(Path(root).resolve()) for root in forbidden_roots if root]
+        )
     proc = subprocess.run([exe, "-c", code], env=env, capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         raise InstallError(EXIT_REFUSED, "containment_breach",
@@ -400,6 +501,7 @@ def _provision_skills(engine_root: Path, skills_root: Path) -> dict[str, Any]:
         env["RIGORLOOM_ROOT"] = str(engine_root)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         proc = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if proc.returncode != 0:
             raise InstallError(EXIT_REFUSED, "skill_install_failed",
@@ -443,6 +545,7 @@ def run_install(args: argparse.Namespace) -> int:
     try:
         engine_root = Path(args.engine_root).resolve()
         bundles_dir = Path(args.bundles_dir).resolve()
+        forbidden_roots = _confirmed_rigorloom_checkout_roots(engine_root)
 
         if not bundles_dir.is_dir():
             raise InstallError(EXIT_USAGE, "invalid_params",
@@ -590,7 +693,7 @@ def run_install(args: argparse.Namespace) -> int:
 
         # Post-swap steps: origin split and optional skills
         try:
-            _probe_origin_split(engine_root)
+            _probe_origin_split(engine_root, forbidden_roots=forbidden_roots)
 
             skills_info: dict[str, Any] | None = None
             if skills_root is not None:
