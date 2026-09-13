@@ -184,6 +184,12 @@ Antigravity pool:
 3. `claude-opus-4-6-thinking` independently checks high-risk conclusions from the Gemini
    run. Gemini and Claude must receive distinct evidence questions, not duplicate prompts.
 
+Treat AGY's `Gemini Models` and `Claude and GPT models` `/usage` rows as separate weekly and
+five-hour pools. Capture all four remaining/reset values at a card boundary. Gemini 3.8 Flash
+remains the default high-volume worker, but when the Claude/GPT pool is materially less used,
+route the next suitable high-risk independent question to Claude Opus 4.6 Thinking. Never
+invent a high-risk question solely to consume that pool.
+
 ### Luna mechanical verification
 
 Goal: Perform high-volume deterministic inventories, test-log classification, hashes, and
