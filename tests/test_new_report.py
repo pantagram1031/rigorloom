@@ -11,11 +11,17 @@ from pathlib import Path
 from _module_gating import core_only, requires_report_module
 
 
-MODULE_PATH = Path(__file__).parents[1] / "scripts" / "new_report.py"
+REPO_ROOT = Path(__file__).parents[1]
+MODULE_PATH = REPO_ROOT / "modules" / "report" / "scripts" / "new_report.py"
+SHIM_PATH = REPO_ROOT / "scripts" / "new_report.py"
 SPEC = importlib.util.spec_from_file_location("new_report", MODULE_PATH)
 new_report = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(new_report)
+
+
+def _profile_args(tmp_path: Path) -> list[str]:
+    return ["--profile-root", str(tmp_path / "personalization")]
 
 
 def _ingress_pair(tmp_path: Path) -> tuple[Path, Path]:
@@ -85,7 +91,7 @@ def test_scaffolder_refuses_binary_hwp_before_creating_workspace(tmp_path: Path)
         [
             sys.executable, str(MODULE_PATH), "--slug", "hwp-refusal",
             "--subject", "science", "--topic", "topic", "--form", str(form),
-            "--workspace-root", str(root),
+            "--workspace-root", str(root), *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -108,6 +114,7 @@ def test_scaffolder_refuses_claimed_hwp_ingress_without_valid_receipt(tmp_path: 
             sys.executable, str(MODULE_PATH), "--slug", "hwp-ingress-refusal",
             "--subject", "science", "--topic", "topic", "--form", str(form),
             "--ingress-receipt", str(receipt), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -129,6 +136,7 @@ def test_scaffolder_rejects_foreign_diagnostic_receipt_without_workspace(
             sys.executable, str(MODULE_PATH), "--slug", "foreign-diagnostic",
             "--subject", "science", "--topic", "topic", "--form", str(form),
             "--ingress-receipt", str(receipt), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -152,6 +160,7 @@ def test_scaffolder_rejects_raw_quarantined_diagnostic_candidate(
             sys.executable, str(MODULE_PATH), "--slug", "raw-diagnostic",
             "--subject", "science", "--topic", "topic", "--form",
             str(diagnostic_form), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -177,6 +186,7 @@ def test_scaffolder_rejects_raw_java_diagnostic_candidate(
             sys.executable, str(MODULE_PATH), "--slug", "raw-java-diagnostic",
             "--subject", "science", "--topic", "topic", "--form",
             str(diagnostic_form), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -202,6 +212,7 @@ def test_scaffolder_rejects_raw_semantic_oracle_candidate_without_workspace(
             sys.executable, str(MODULE_PATH), "--slug", "raw-semantic-oracle",
             "--subject", "science", "--topic", "topic", "--form",
             str(diagnostic_form), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -227,6 +238,7 @@ def test_scaffolder_rejects_reserved_source_coverage_candidate_layout(
             sys.executable, str(MODULE_PATH), "--slug", "raw-source-coverage",
             "--subject", "science", "--topic", "topic", "--form",
             str(diagnostic_form), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -252,6 +264,7 @@ def test_scaffolder_rejects_reserved_docinfo_coverage_candidate_layout(
             sys.executable, str(MODULE_PATH), "--slug", "raw-docinfo-coverage",
             "--subject", "science", "--topic", "topic", "--form",
             str(diagnostic_form), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -278,6 +291,7 @@ def test_scaffolder_rejects_reserved_equation_diagnostic_candidate_layout(
             sys.executable, str(MODULE_PATH), "--slug", "raw-equation-diagnostic",
             "--subject", "science", "--topic", "topic", "--form",
             str(diagnostic_form), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -300,6 +314,7 @@ def test_scaffolder_rejects_java_diagnostic_receipt_without_workspace(
             sys.executable, str(MODULE_PATH), "--slug", "foreign-java-diagnostic",
             "--subject", "science", "--topic", "topic", "--form", str(form),
             "--ingress-receipt", str(receipt), "--workspace-root", str(root),
+            *_profile_args(tmp_path),
         ],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -320,7 +335,8 @@ def test_scaffolder_retains_verified_ingress_pair_and_canonical_path(tmp_path: P
         "print('{}')\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(new_report, "_module_cli_script", lambda command: stub)
+    monkeypatch.setattr(new_report, "PIPELINE_CTL", stub)
+    monkeypatch.setattr(new_report, "ORGANIZE_WORKSPACE", stub)
     monkeypatch.setattr(new_report, "PERSONALIZATION_CTL", stub)
     root = tmp_path / "runs"
     monkeypatch.setattr(sys, "argv", [
@@ -352,7 +368,7 @@ def test_scaffolder_refuses_clearly_without_report_module(tmp_path: Path):
     form.write_bytes(b"fixture")
     proc = subprocess.run(
         [
-            sys.executable, str(MODULE_PATH), "--slug", "demo",
+            sys.executable, str(SHIM_PATH), "--slug", "demo",
             "--subject", "science", "--topic", "topic", "--form", str(form),
             "--workspace-root", str(tmp_path / "runs"),
         ],
@@ -372,9 +388,7 @@ def test_scaffolder_initializes_atomically(tmp_path: Path):
             sys.executable, str(MODULE_PATH), "--slug", "demo", "--subject", "science: one",
             "--topic", "line one # literal\nline two", "--form", str(form),
             "--workspace-root", str(root),
-            # Pin the personalization store to tmp_path: new_report falls back
-            # to REPO_ROOT/.local/personalization when --profile-root is
-            # omitted, so this test wrote into the repo checkout (issue #12).
+            # The installed module surface has no profile default.
             "--profile-root", str(tmp_path / "personalization"),
         ],
         capture_output=True, text=True, encoding="utf-8",

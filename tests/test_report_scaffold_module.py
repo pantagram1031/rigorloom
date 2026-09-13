@@ -242,20 +242,49 @@ def test_checkout_shim_delegates_and_adds_only_omitted_defaults(monkeypatch):
     assert forwarded.count("--workspace-root") == 1
     assert forwarded.count("--profile-root") == 1
     assert str(REPO_ROOT / "workspaces") in forwarded
-    assert str(REPO_ROOT / ".local" / "personalization") in forwarded
+    default_profile = Path(
+        forwarded[forwarded.index("--profile-root") + 1]
+    ).resolve()
+    assert default_profile == (
+        Path.home() / ".rigorloom" / "personalization"
+    ).resolve()
+    assert default_profile != REPO_ROOT.resolve()
+    assert REPO_ROOT.resolve() not in default_profile.parents
 
     calls.clear()
     explicit_workspace = REPO_ROOT.parent / "explicit-workspace"
     explicit_profile = REPO_ROOT.parent / "explicit-profile"
     assert shim.main([
         *base,
-        f"--workspace-root={explicit_workspace}",
+        "--workspace-root", str(explicit_workspace),
         "--profile-root", str(explicit_profile),
     ]) == 0
     forwarded = calls[0][2:]
-    assert not any(
-        token == "--workspace-root" for token in forwarded
-    )
+    assert forwarded.count("--workspace-root") == 1
     assert forwarded.count("--profile-root") == 1
+    assert forwarded[forwarded.index("--workspace-root") + 1] == str(
+        explicit_workspace
+    )
+    assert forwarded[forwarded.index("--profile-root") + 1] == str(
+        explicit_profile
+    )
     assert str(REPO_ROOT / "workspaces") not in forwarded
-    assert str(REPO_ROOT / ".local" / "personalization") not in forwarded
+    assert str(default_profile) not in forwarded
+
+    calls.clear()
+    assert shim.main([
+        *base,
+        f"--workspace-root={explicit_workspace}",
+        f"--profile-root={explicit_profile}",
+    ]) == 0
+    forwarded = calls[0][2:]
+    assert sum(
+        token.startswith("--workspace-root=") for token in forwarded
+    ) == 1
+    assert sum(
+        token.startswith("--profile-root=") for token in forwarded
+    ) == 1
+    assert "--workspace-root" not in forwarded
+    assert "--profile-root" not in forwarded
+    assert str(REPO_ROOT / "workspaces") not in forwarded
+    assert str(default_profile) not in forwarded

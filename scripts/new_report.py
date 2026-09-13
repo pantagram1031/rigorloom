@@ -33,15 +33,23 @@ def _has_option(argv: list[str], name: str) -> bool:
     return any(token == name or token.startswith(name + "=") for token in argv)
 
 
+def _default_profile_root() -> Path:
+    profile = (Path.home() / ".rigorloom" / "personalization").resolve()
+    repo = REPO_ROOT.resolve()
+    if profile == repo or repo in profile.parents:
+        raise RuntimeError(
+            f"default profile root {profile} must remain outside checkout {repo}"
+        )
+    return profile
+
+
 def main(argv: list[str] | None = None) -> int:
     forwarded = list(sys.argv[1:] if argv is None else argv)
     if not _has_option(forwarded, "--workspace-root"):
         forwarded += ["--workspace-root", str(REPO_ROOT / "workspaces")]
-    if not _has_option(forwarded, "--profile-root"):
-        forwarded += [
-            "--profile-root", str(REPO_ROOT / ".local" / "personalization")
-        ]
     try:
+        if not _has_option(forwarded, "--profile-root"):
+            forwarded += ["--profile-root", str(_default_profile_root())]
         script = _module_cli_script("new-report")
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
