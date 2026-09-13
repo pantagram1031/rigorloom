@@ -5,6 +5,7 @@ never contact a provider or deliberately consume a real subscription quota.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -20,6 +21,7 @@ from coordination_state import (  # noqa: E402
     CrashInjected,
     CoordinationState,
     FencedError,
+    InvalidRequest,
     LeaseConflict,
     RecoveryRequired,
     ScopeRefused,
@@ -71,9 +73,33 @@ def quota(state: CoordinationState, worker_id: str, *, window: str = "w1",
     )
 
 
-def task(state: CoordinationState, task_id: str = "task-1", *, capability: str = "coding",
-         allowed_paths: list[str] | None = None) -> dict:
-    return state.register_task(task_id, capability=[capability], allowed_paths=allowed_paths or ["src/**"])
+def task(state: CoordinationState, task_id: str = "task-1", *,
+         capability: str = "coding", allowed_paths: list[str] | None = None,
+         dependencies: list[str] | None = None) -> dict:
+    return state.register_task(
+        task_id,
+        capability=[capability],
+        allowed_paths=allowed_paths or ["src/**"],
+        dependencies=dependencies,
+    )
+
+
+def publish(
+    state: CoordinationState,
+    task_id: str,
+    worker_id: str,
+    result_id: str,
+) -> dict:
+    lease = state.acquire_task_lease(task_id, worker_id)
+    return state.publish_result(
+        task_id,
+        worker_id,
+        lease["epoch"],
+        lease["fencing_token"],
+        lease["task_revision"],
+        {"verdict": "PASS"},
+        result_id=result_id,
+    )
 
 
 def crash_after(stage: str, index: int):
@@ -652,3 +678,642 @@ def test_cli_requires_explicit_state_root_and_can_initialize(tmp_path: Path) -> 
     created = subprocess.run([sys.executable, str(script), "--state-root", str(root), "init"], capture_output=True, text=True)
     assert created.returncode == 0
     assert json.loads(created.stdout)["schema"] == "rigorloom/coordination-state-v1"
+
+
+def test_task_registration_refuses_self_and_closed_cycles_but_allows_forward_refs(
+    tmp_path: Path,
+) -> None:
+    state, _ = make_state(tmp_path)
+
+    forward = task(state, "forward", dependencies=["future"])
+    assert forward["dependencies"] == ["future"]
+    with pytest.raises(InvalidRequest, match="depend on itself"):
+        task(state, "self", dependencies=["self"])
+    with pytest.raises(InvalidRequest, match="dependency cycle"):
+        task(state, "future", dependencies=["forward"])
+
+    snapshot = state.recover()
+    assert "forward" in snapshot["tasks"]
+    assert "self" not in snapshot["tasks"]
+    assert "future" not in snapshot["tasks"]
+
+
+@pytest.mark.parametrize(
+    ("condition", "expected_reason"),
+    [
+        ("missing", "dependency-missing"),
+        ("incomplete", "dependency-not-completed"),
+        ("undecided", "dependency-undecided"),
+        ("rejected", "dependency-rejected"),
+        ("superseded", "dependency-superseded"),
+    ],
+)
+def test_direct_and_routed_leases_require_accepted_dependencies(
+    tmp_path: Path, condition: str, expected_reason: str
+) -> None:
+    state, _ = make_state(tmp_path)
+    worker(state, "worker")
+    quota(state, "worker")
+    if condition != "missing":
+        task(state, "dependency")
+    if condition in {"undecided", "rejected", "superseded"}:
+        publish(state, "dependency", "worker", "dependency-result")
+    if condition == "superseded":
+        task(state, "replacement")
+        publish(state, "replacement", "worker", "replacement-result")
+    if condition in {"rejected", "superseded"}:
+        coordinator = state.acquire_coordinator_lease("coordinator")
+        state.decide_result(
+            "dependency",
+            "dependency-result",
+            condition,
+            "coordinator",
+            coordinator["epoch"],
+            coordinator["fencing_token"],
+            superseding_task_id=(
+                "replacement" if condition == "superseded" else None
+            ),
+            superseding_result_id=(
+                "replacement-result" if condition == "superseded" else None
+            ),
+        )
+    task(state, "direct", dependencies=["dependency"])
+    task(state, "routed", dependencies=["dependency"])
+
+    with pytest.raises(LeaseConflict, match=expected_reason):
+        state.acquire_task_lease("direct", "worker")
+    routed = state.route_task("routed", service="fake", window="w1")
+
+    assert routed["status"] == "blocked"
+    assert routed["reason"] == "dependencies-not-accepted"
+    assert routed["dependencies"] == [
+        {"task_id": "dependency", "reason": expected_reason}
+    ]
+    assert state.task("routed")["status"] == "queued"
+
+
+def test_accepted_dependencies_allow_direct_and_routed_leases(
+    tmp_path: Path,
+) -> None:
+    state, _ = make_state(tmp_path)
+    worker(state, "worker")
+    quota(state, "worker")
+    task(state, "dependency")
+    publish(state, "dependency", "worker", "dependency-result")
+    coordinator = state.acquire_coordinator_lease("coordinator")
+    state.decide_result(
+        "dependency",
+        "dependency-result",
+        "accepted",
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+    )
+    task(state, "direct", dependencies=["dependency"])
+    task(state, "routed", dependencies=["dependency"])
+
+    direct = state.acquire_task_lease("direct", "worker")
+    state.release(direct)
+    routed = state.route_task("routed", service="fake", window="w1")
+
+    assert direct["holder"] == "worker"
+    assert routed["status"] == "routed"
+    assert routed["worker_id"] == "worker"
+
+
+def test_checkpoint_replacement_remains_exempt_from_dependency_recheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state, _ = make_state(tmp_path)
+    worker(state, "original", alive=False)
+    worker(state, "replacement", alive=False)
+    task(state, "dependency")
+    publish(state, "dependency", "original", "dependency-result")
+    coordinator = state.acquire_coordinator_lease("coordinator")
+    state.decide_result(
+        "dependency",
+        "dependency-result",
+        "accepted",
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+    )
+    task(state, "resumable", dependencies=["dependency"])
+    lease = state.acquire_task_lease("resumable", "original")
+    checkpoint = state.checkpoint_task(
+        "resumable",
+        "original",
+        lease["epoch"],
+        lease["fencing_token"],
+    )
+
+    def unexpected_recheck(_task: dict) -> tuple[bool, list[dict[str, str]]]:
+        raise AssertionError("checkpoint replacement rechecked dependencies")
+
+    monkeypatch.setattr(state, "_dependencies_ready_locked", unexpected_recheck)
+    replacement = state.claim_replacement(
+        "resumable",
+        "replacement",
+        checkpoint["checkpoint"]["checkpoint_id"],
+    )
+    assert replacement["holder"] == "replacement"
+
+
+def test_decide_result_is_coordinator_fenced_bound_structured_and_immutable(
+    tmp_path: Path,
+) -> None:
+    state, _ = make_state(tmp_path)
+    worker(state, "worker")
+    task(state, "candidate")
+    publish(state, "candidate", "worker", "candidate-result")
+    coordinator = state.acquire_coordinator_lease("coordinator")
+    args = (
+        "candidate",
+        "candidate-result",
+        "accepted",
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+    )
+
+    with pytest.raises(FencedError):
+        state.decide_result(*args[:3], "foreign", *args[4:])
+    with pytest.raises(FencedError):
+        state.decide_result(*args[:4], coordinator["epoch"] + 1, args[5])
+    with pytest.raises(FencedError):
+        state.decide_result(*args[:5], "stale-token")
+    with pytest.raises(InvalidRequest, match="not canonical"):
+        state.decide_result(
+            "candidate",
+            "wrong-result",
+            "accepted",
+            "coordinator",
+            coordinator["epoch"],
+            coordinator["fencing_token"],
+        )
+
+    authority = {"card_sha256": "abc123"}
+    receipt = {"path": "receipt.md", "verdict": "PASS"}
+    facets = {
+        "focused-tests": {
+            "passed": 3,
+            "failed": 0,
+            "unrun": ["broad-tests"],
+        }
+    }
+    decided = state.decide_result(
+        *args,
+        decider="sol-coordinator",
+        authority=authority,
+        receipt=receipt,
+        evidence_facets=facets,
+    )
+    event_count = [
+        event["kind"] for event in state.read_events()["events"]
+    ].count("result.decided")
+    duplicate = state.decide_result(
+        *args,
+        decider="sol-coordinator",
+        authority=authority,
+        receipt=receipt,
+        evidence_facets=facets,
+    )
+
+    assert decided["status"] == "decided"
+    assert decided["decision"]["disposition"] == "accepted"
+    assert decided["decision"]["decider"] == "sol-coordinator"
+    assert decided["decision"]["authority"] == authority
+    assert decided["decision"]["receipt"] == receipt
+    assert decided["decision"]["evidence_facets"] == facets
+    assert "coordinator_accepted" not in decided["decision"]
+    assert duplicate["status"] == "duplicate"
+    assert duplicate["decision"] == decided["decision"]
+    assert [
+        event["kind"] for event in state.read_events()["events"]
+    ].count("result.decided") == event_count == 1
+    assert state.task("candidate")["decision"] == decided["decision"]
+    assert state.recover()["results"]["candidate"]["decision"] == decided["decision"]
+    with pytest.raises(FencedError, match="immutable"):
+        state.decide_result(
+            *args,
+            decider="sol-coordinator",
+            authority=authority,
+            receipt=receipt,
+            evidence_facets={"focused-tests": {"passed": 4}},
+        )
+    state.clock.advance(61)
+    with pytest.raises(FencedError, match="no longer current"):
+        state.decide_result(
+            *args,
+            decider="sol-coordinator",
+            authority=authority,
+            receipt=receipt,
+            evidence_facets=facets,
+        )
+
+
+def test_decision_dispositions_enforce_targets_and_terminal_statuses(
+    tmp_path: Path,
+) -> None:
+    state, _ = make_state(tmp_path)
+    worker(state, "worker")
+    for task_id in ("accepted", "rejected", "superseded", "replacement"):
+        task(state, task_id)
+        publish(state, task_id, "worker", f"{task_id}-result")
+    coordinator = state.acquire_coordinator_lease("coordinator")
+
+    accepted = state.decide_result(
+        "accepted",
+        "accepted-result",
+        "accepted",
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+    )
+    rejected = state.decide_result(
+        "rejected",
+        "rejected-result",
+        "rejected",
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+        terminal=True,
+    )
+    with pytest.raises(InvalidRequest, match="requires superseding"):
+        state.decide_result(
+            "superseded",
+            "superseded-result",
+            "superseded",
+            "coordinator",
+            coordinator["epoch"],
+            coordinator["fencing_token"],
+        )
+    with pytest.raises(InvalidRequest, match="not canonical"):
+        state.decide_result(
+            "superseded",
+            "superseded-result",
+            "superseded",
+            "coordinator",
+            coordinator["epoch"],
+            coordinator["fencing_token"],
+            superseding_task_id="replacement",
+            superseding_result_id="wrong-result",
+        )
+    superseded = state.decide_result(
+        "superseded",
+        "superseded-result",
+        "superseded",
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+        superseding_task_id="replacement",
+        superseding_result_id="replacement-result",
+    )
+
+    assert accepted["task"]["status"] == "completed"
+    assert rejected["task"]["status"] == "failed"
+    assert superseded["task"]["status"] == "completed"
+    assert superseded["decision"]["superseding_task_id"] == "replacement"
+    assert superseded["decision"]["superseding_result_id"] == "replacement-result"
+
+
+def test_one_holder_cannot_hold_two_active_task_leases_including_race(
+    tmp_path: Path,
+) -> None:
+    state, _ = make_state(tmp_path)
+    worker(state, "worker")
+    task(state, "first")
+    task(state, "second")
+    state.acquire_task_lease("first", "worker")
+    with pytest.raises(LeaseConflict, match="already has active task lease"):
+        state.acquire_task_lease("second", "worker")
+
+    race_state, _ = make_state(tmp_path / "race")
+    worker(race_state, "worker")
+    task(race_state, "left")
+    task(race_state, "right")
+    barrier = threading.Barrier(2)
+    results: list[object] = []
+
+    def acquire(task_id: str) -> None:
+        contender = CoordinationState(
+            race_state.root, clock=race_state.clock, lock_timeout=5
+        )
+        barrier.wait()
+        try:
+            results.append(contender.acquire_task_lease(task_id, "worker"))
+        except Exception as exc:
+            results.append(exc)
+
+    threads = [
+        threading.Thread(target=acquire, args=(task_id,))
+        for task_id in ("left", "right")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert sum(isinstance(value, dict) for value in results) == 1
+    assert sum(isinstance(value, LeaseConflict) for value in results) == 1
+    active = [
+        lease
+        for lease in race_state.recover()["leases"].values()
+        if lease["state"] == "active" and lease["kind"] == "task"
+    ]
+    assert len(active) == 1
+    assert active[0]["holder"] == "worker"
+
+
+def _all_keys(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return [
+            key
+            for name, item in value.items()
+            for key in [str(name), *_all_keys(item)]
+        ]
+    if isinstance(value, list):
+        return [key for item in value for key in _all_keys(item)]
+    return []
+
+
+def test_export_snapshot_is_one_lock_coherent_atomic_and_token_stripped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state, _ = make_state(tmp_path)
+    worker(state, "worker")
+    task(state, "published")
+    publish(state, "published", "worker", "published-result")
+    state.send_message(
+        "published",
+        "worker",
+        "coordinator",
+        "evidence",
+        payload={
+            "api_key": "raw-api-secret",
+            "nested": {"token": "raw-fencing-secret", "lease_id": "kept-id"},
+        },
+    )
+    coordinator = state.acquire_coordinator_lease("coordinator")
+    canonical_paths = {
+        **{
+            filename: state.root / filename
+            for filename in state.FILES.values()
+        },
+        "events.jsonl": state.root / "events.jsonl",
+    }
+    before = {
+        name: path.read_bytes() for name, path in canonical_paths.items()
+    }
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    snapshot_path = export_dir / "snapshot.json"
+    manifest_path = export_dir / "manifest.json"
+    snapshot_path.write_bytes(b"old snapshot")
+    manifest_path.write_bytes(b"old manifest")
+    lock_calls = 0
+    replace_calls: list[tuple[Path, Path]] = []
+    original_lock = state._lock
+    original_replace = os.replace
+
+    def counted_lock():
+        nonlocal lock_calls
+        lock_calls += 1
+        return original_lock()
+
+    def recorded_replace(source, target) -> None:
+        replace_calls.append((Path(source), Path(target)))
+        original_replace(source, target)
+
+    monkeypatch.setattr(state, "_lock", counted_lock)
+    monkeypatch.setattr("coordination_state.os.replace", recorded_replace)
+    exported = state.export_snapshot(
+        snapshot_path,
+        manifest_path,
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+    )
+
+    snapshot_bytes = snapshot_path.read_bytes()
+    snapshot = json.loads(snapshot_bytes)
+    manifest = json.loads(manifest_path.read_bytes())
+    after = {
+        name: path.read_bytes() for name, path in canonical_paths.items()
+    }
+    assert lock_calls == 1
+    assert [target for _, target in replace_calls] == [
+        snapshot_path.resolve(),
+        manifest_path.resolve(),
+    ]
+    assert not list(export_dir.glob("*.tmp"))
+    assert before == after
+    assert exported["snapshot_sha256"] == hashlib.sha256(snapshot_bytes).hexdigest()
+    assert manifest["snapshot_sha256"] == exported["snapshot_sha256"]
+    assert manifest["ledger_revision"] == snapshot["ledger_revision"]
+    assert manifest["event_count"] == len(snapshot["events"])
+    assert manifest["last_event_seq"] == snapshot["events"][-1]["seq"]
+    assert manifest["redaction_policy_version"] == "1"
+    assert manifest["export_implementation_version"] == "1"
+    assert manifest["source_sha256"] == {
+        name: hashlib.sha256(payload).hexdigest()
+        for name, payload in before.items()
+    }
+    forbidden = {
+        "fencing_token",
+        "accepted_token",
+        "token",
+        "api_key",
+        "password",
+        "credential",
+        "secret",
+    }
+    assert forbidden.isdisjoint(set(_all_keys(snapshot)))
+    assert b"raw-api-secret" not in snapshot_bytes
+    assert b"raw-fencing-secret" not in snapshot_bytes
+    leases = snapshot["documents"]["leases"]["leases"].values()
+    assert any(lease.get("lease_id") for lease in leases)
+    assert any(
+        lease.get("release_proof") == "canonical-result" for lease in leases
+    )
+
+
+def test_export_snapshot_recovers_prepared_wal_and_refuses_leftover_wal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state, _ = make_state(tmp_path)
+    coordinator = state.acquire_coordinator_lease("coordinator")
+    state._txn_hook = crash_after("prepared", 0)
+    with pytest.raises(CrashInjected):
+        state.append_event("recover.before.export", {"ok": True})
+    state._txn_hook = None
+    assert list((state.root / ".transactions").glob("tx-*.json"))
+
+    snapshot_path = tmp_path / "recovered-snapshot.json"
+    manifest_path = tmp_path / "recovered-manifest.json"
+    state.export_snapshot(
+        snapshot_path,
+        manifest_path,
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+    )
+
+    assert not list((state.root / ".transactions").glob("tx-*.json"))
+    snapshot = json.loads(snapshot_path.read_bytes())
+    assert snapshot["events"][-1]["kind"] == "recover.before.export"
+
+    stuck = state.root / ".transactions" / "tx-stuck.json"
+    stuck.write_text("{}", encoding="utf-8")
+    refused_snapshot = tmp_path / "refused-snapshot.json"
+    refused_manifest = tmp_path / "refused-manifest.json"
+    monkeypatch.setattr(state, "_recover_locked", lambda: None)
+    with pytest.raises(RecoveryRequired, match="pending transactions"):
+        state.export_snapshot(
+            refused_snapshot,
+            refused_manifest,
+            "coordinator",
+            coordinator["epoch"],
+            coordinator["fencing_token"],
+        )
+    assert not refused_snapshot.exists()
+    assert not refused_manifest.exists()
+
+
+def test_export_snapshot_refuses_unsafe_or_ambiguous_targets(
+    tmp_path: Path,
+) -> None:
+    state, _ = make_state(tmp_path)
+    coordinator = state.acquire_coordinator_lease("coordinator")
+    fence = (
+        "coordinator",
+        coordinator["epoch"],
+        coordinator["fencing_token"],
+    )
+    safe_manifest = tmp_path / "safe-manifest.json"
+
+    fenced_snapshot = tmp_path / "fenced-snapshot.json"
+    fenced_manifest = tmp_path / "fenced-manifest.json"
+    with pytest.raises(FencedError, match="no longer current"):
+        state.export_snapshot(
+            fenced_snapshot,
+            fenced_manifest,
+            "coordinator",
+            coordinator["epoch"],
+            "stale-token",
+        )
+    assert not fenced_snapshot.exists()
+    assert not fenced_manifest.exists()
+
+    with pytest.raises(ScopeRefused, match="state root"):
+        state.export_snapshot(
+            state.root / "snapshot.json",
+            safe_manifest,
+            *fence,
+        )
+
+    checkout = tmp_path / "other-checkout"
+    checkout.mkdir()
+    (checkout / "pyproject.toml").write_text(
+        "[project]\nname = \"rigorloom\"\nversion = \"9.9\"\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ScopeRefused, match="Rigorloom checkout"):
+        state.export_snapshot(
+            checkout / "snapshot.json",
+            checkout / "manifest.json",
+            *fence,
+        )
+
+    with pytest.raises(InvalidRequest, match="root"):
+        state.export_snapshot(
+            Path(tmp_path.anchor),
+            safe_manifest,
+            *fence,
+        )
+
+    ambiguous_snapshot = tmp_path / "ambiguous-snapshot.json"
+    ambiguous_snapshot.write_text("old", encoding="utf-8")
+    with pytest.raises(InvalidRequest, match="both exist or both be absent"):
+        state.export_snapshot(
+            ambiguous_snapshot,
+            tmp_path / "missing-manifest.json",
+            *fence,
+        )
+
+    directory_target = tmp_path / "directory-target"
+    directory_target.mkdir()
+    with pytest.raises(InvalidRequest, match="ambiguous export target"):
+        state.export_snapshot(
+            directory_target,
+            tmp_path / "directory-manifest.json",
+            *fence,
+        )
+
+
+def test_cli_decide_result_and_export_snapshot_commands(tmp_path: Path) -> None:
+    script = Path(__file__).resolve().parents[1] / "scripts" / "coordination_state.py"
+    state = CoordinationState(tmp_path / "cli-ledger")
+    worker(state, "worker")
+    task(state, "candidate")
+    publish(state, "candidate", "worker", "candidate-result")
+    coordinator = state.acquire_coordinator_lease("coordinator")
+    common = [sys.executable, str(script), "--state-root", str(state.root)]
+
+    decided = subprocess.run(
+        [
+            *common,
+            "decide-result",
+            "candidate",
+            "candidate-result",
+            "accepted",
+            "coordinator",
+            str(coordinator["epoch"]),
+            coordinator["fencing_token"],
+            "--authority",
+            '{"source":"coordinator"}',
+            "--evidence-facets",
+            '{"focused-tests":{"passed":1}}',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    snapshot_path = tmp_path / "cli-snapshot.json"
+    manifest_path = tmp_path / "cli-manifest.json"
+    exported = subprocess.run(
+        [
+            *common,
+            "export-snapshot",
+            "coordinator",
+            str(coordinator["epoch"]),
+            coordinator["fencing_token"],
+            str(snapshot_path),
+            str(manifest_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert decided.returncode == 0, decided.stderr
+    assert json.loads(decided.stdout)["decision"]["disposition"] == "accepted"
+    assert exported.returncode == 0, exported.stderr
+    assert json.loads(exported.stdout)["status"] == "exported"
+    assert snapshot_path.is_file()
+    assert manifest_path.is_file()
+
+
+def test_legacy_published_result_without_decision_stays_dependency_undecided(
+    tmp_path: Path,
+) -> None:
+    state, _ = make_state(tmp_path)
+    worker(state, "worker")
+    task(state, "legacy")
+    publish(state, "legacy", "worker", "legacy-result")
+    task(state, "dependent", dependencies=["legacy"])
+
+    assert "decision" not in state.task("legacy")
+    assert "decision" not in state.recover()["results"]["legacy"]
+    with pytest.raises(LeaseConflict, match="dependency-undecided"):
+        state.acquire_task_lease("dependent", "worker")

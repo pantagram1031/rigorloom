@@ -21,6 +21,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -32,6 +33,10 @@ from typing import Any
 
 
 SCHEMA = "rigorloom/coordination-state-v1"
+EXPORT_SCHEMA = "rigorloom/coordination-snapshot-v1"
+EXPORT_MANIFEST_SCHEMA = "rigorloom/coordination-export-manifest-v1"
+EXPORT_IMPLEMENTATION_VERSION = "1"
+REDACTION_POLICY_VERSION = "1"
 MODES = {
     "working",
     "reserve",
@@ -133,6 +138,67 @@ def _safe(value: Any, *, _key: str = "") -> Any:
     if isinstance(value, Path):
         return value.as_posix()
     return value
+
+
+def _export_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return lowered in {"fencing_token", "accepted_token", "token"} or any(
+        word in lowered
+        for word in (
+            "secret",
+            "password",
+            "passwd",
+            "cookie",
+            "credential",
+            "access_token",
+            "refresh_token",
+            "api_key",
+        )
+    )
+
+
+def _export_safe(value: Any) -> Any:
+    """Remove secret-bearing keys recursively from exported snapshots."""
+    if isinstance(value, Mapping):
+        return {
+            str(key): _export_safe(item)
+            for key, item in value.items()
+            if not _export_sensitive_key(str(key))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_export_safe(item) for item in value]
+    if isinstance(value, Path):
+        return value.as_posix()
+    return value
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _is_rigorloom_checkout(root: Path) -> bool:
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    project = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", text)
+    return bool(
+        project
+        and re.search(
+            r"(?m)^\s*name\s*=\s*['\"]rigorloom['\"]\s*$",
+            project.group(1),
+        )
+    )
+
+
+def _rigorloom_checkout_containing(path: Path) -> Path | None:
+    for candidate in (path, *path.parents):
+        if _is_rigorloom_checkout(candidate):
+            return candidate
+    return None
 
 
 def _as_list(value: Sequence[str] | None) -> list[str]:
@@ -776,6 +842,207 @@ class CoordinationState:
                 "handoffs": self._read("handoffs").get("handoffs", {}),
             }
 
+    def _validated_export_targets(
+        self,
+        snapshot_path: os.PathLike[str] | str,
+        manifest_path: os.PathLike[str] | str,
+    ) -> tuple[Path, Path]:
+        raw_targets = (
+            Path(snapshot_path).expanduser(),
+            Path(manifest_path).expanduser(),
+        )
+        if raw_targets[0] == raw_targets[1]:
+            raise InvalidRequest("snapshot and manifest targets must differ")
+        targets: list[Path] = []
+        state_root = self.root.resolve()
+        for raw in raw_targets:
+            if raw == Path(raw.anchor):
+                raise InvalidRequest(
+                    f"filesystem root is not an export target: {raw}"
+                )
+            if raw.is_symlink():
+                raise InvalidRequest(f"ambiguous export target: {raw}")
+            target = raw.resolve()
+            if target == Path(target.anchor):
+                raise InvalidRequest(f"filesystem root is not an export target: {target}")
+            if _is_within(target, state_root):
+                raise ScopeRefused(
+                    f"export target {target} must remain outside state root {state_root}"
+                )
+            checkout = _rigorloom_checkout_containing(target)
+            if checkout is not None:
+                raise ScopeRefused(
+                    f"export target {target} must remain outside Rigorloom "
+                    f"checkout {checkout}"
+                )
+            if target.exists() and not target.is_file():
+                raise InvalidRequest(f"ambiguous export target: {target}")
+            if target.parent.exists() and not target.parent.is_dir():
+                raise InvalidRequest(
+                    f"export target parent is not a directory: {target.parent}"
+                )
+            targets.append(target)
+        if targets[0] == targets[1]:
+            raise InvalidRequest("snapshot and manifest targets must differ")
+        if targets[0].exists() != targets[1].exists():
+            raise InvalidRequest(
+                "ambiguous export generation: snapshot and manifest must "
+                "both exist or both be absent"
+            )
+        return targets[0], targets[1]
+
+    @staticmethod
+    def _write_export_pair(
+        snapshot_path: Path,
+        snapshot_bytes: bytes,
+        manifest_path: Path,
+        manifest_bytes: bytes,
+    ) -> None:
+        staged: list[tuple[Path, Path]] = []
+        try:
+            for target, payload in (
+                (snapshot_path, snapshot_bytes),
+                (manifest_path, manifest_bytes),
+            ):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                fd, temp_name = tempfile.mkstemp(
+                    prefix=f".{target.name}.",
+                    suffix=".tmp",
+                    dir=str(target.parent),
+                )
+                temp_path = Path(temp_name)
+                staged.append((temp_path, target))
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            # The manifest is the commit marker.  A crash after the snapshot
+            # replacement but before this replacement leaves a hash mismatch
+            # that every consumer must refuse.
+            for temp_path, target in staged:
+                os.replace(temp_path, target)
+        finally:
+            for temp_path, _ in staged:
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
+
+    def export_snapshot(
+        self,
+        snapshot_path: os.PathLike[str] | str,
+        manifest_path: os.PathLike[str] | str,
+        coordinator_holder: str,
+        coordinator_epoch: int,
+        coordinator_fencing_token: str,
+    ) -> dict[str, Any]:
+        """Capture one locked, recovered, token-stripped ledger generation."""
+        coordinator_holder = _clean_id(
+            coordinator_holder, "coordinator holder"
+        )
+        snapshot_target, manifest_target = self._validated_export_targets(
+            snapshot_path, manifest_path
+        )
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            if list(self._transactions.glob("tx-*.json")):
+                raise RecoveryRequired(
+                    "snapshot export refused with pending transactions"
+                )
+            coordinator = self._lease_locked("coordinator", "default")
+            captured_at = _now_from(self.clock)
+            if (
+                not self._lease_current_locked(
+                    coordinator,
+                    coordinator_holder,
+                    coordinator_epoch,
+                    coordinator_fencing_token,
+                )
+                or float(coordinator.get("expires_at", 0)) <= captured_at
+            ):
+                raise FencedError("coordinator lease is no longer current")
+
+            raw_sources = {
+                self.FILES[key]: self._path(key).read_bytes()
+                for key in self.FILES
+            }
+            events_name = "events.jsonl"
+            raw_sources[events_name] = (self.root / events_name).read_bytes()
+            documents: dict[str, Any] = {}
+            for key, filename in self.FILES.items():
+                try:
+                    document = json.loads(raw_sources[filename].decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise CoordinationError(
+                        f"cannot export invalid canonical file: {filename}"
+                    ) from exc
+                documents[key] = _export_safe(document)
+            events: list[dict[str, Any]] = []
+            try:
+                event_text = raw_sources[events_name].decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise CoordinationError("cannot export invalid events.jsonl") from exc
+            for line in event_text.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise CoordinationError(
+                        "cannot export malformed canonical event"
+                    ) from exc
+                if not isinstance(event, Mapping):
+                    raise CoordinationError(
+                        "cannot export non-object canonical event"
+                    )
+                events.append(_export_safe(event))
+            meta = json.loads(raw_sources[self.FILES["meta"]].decode("utf-8"))
+            ledger_revision = int(meta.get("revision", 0))
+            last_event_seq = (
+                int(events[-1].get("seq", len(events) - 1)) if events else -1
+            )
+            source_sha256 = {
+                filename: hashlib.sha256(payload).hexdigest()
+                for filename, payload in raw_sources.items()
+            }
+            snapshot = {
+                "schema": EXPORT_SCHEMA,
+                "ledger_schema": SCHEMA,
+                "ledger_revision": ledger_revision,
+                "captured_at": captured_at,
+                "documents": documents,
+                "events": events,
+            }
+            snapshot_bytes = _json_bytes(snapshot) + b"\n"
+            manifest = {
+                "schema": EXPORT_MANIFEST_SCHEMA,
+                "ledger_schema": SCHEMA,
+                "ledger_revision": ledger_revision,
+                "captured_at": captured_at,
+                "source_sha256": source_sha256,
+                "snapshot_sha256": hashlib.sha256(snapshot_bytes).hexdigest(),
+                "last_event_seq": last_event_seq,
+                "event_count": len(events),
+                "export_implementation_version": EXPORT_IMPLEMENTATION_VERSION,
+                "redaction_policy_version": REDACTION_POLICY_VERSION,
+            }
+            manifest_bytes = _json_bytes(manifest) + b"\n"
+        self._write_export_pair(
+            snapshot_target,
+            snapshot_bytes,
+            manifest_target,
+            manifest_bytes,
+        )
+        return {
+            "status": "exported",
+            "snapshot": str(snapshot_target),
+            "manifest": str(manifest_target),
+            "snapshot_sha256": manifest["snapshot_sha256"],
+            "ledger_revision": ledger_revision,
+            "event_count": len(events),
+            "last_event_seq": last_event_seq,
+        }
+
     # -- workers and tasks -----------------------------------------------------
 
     def register_worker(
@@ -865,6 +1132,91 @@ class CoordinationState:
 
     get_worker = worker
 
+    @staticmethod
+    def _registration_closes_cycle(
+        task_id: str,
+        dependencies: Sequence[str],
+        tasks: Mapping[str, Mapping[str, Any]],
+    ) -> bool:
+        graph = {
+            str(existing_id): list(existing.get("dependencies", []))
+            for existing_id, existing in tasks.items()
+        }
+        graph[task_id] = list(dependencies)
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node: str) -> bool:
+            if node in visiting:
+                return True
+            if node in visited or node not in graph:
+                return False
+            visiting.add(node)
+            for dependency in graph[node]:
+                if dependency in graph and visit(str(dependency)):
+                    return True
+            visiting.remove(node)
+            visited.add(node)
+            return False
+
+        return visit(task_id)
+
+    def _dependencies_ready_locked(
+        self, task: Mapping[str, Any]
+    ) -> tuple[bool, list[dict[str, str]]]:
+        """Return canonical readiness from registered tasks and dispositions."""
+        tasks = self._read("tasks").get("tasks", {})
+        results = self._read("results").get("results", {})
+        failures: list[dict[str, str]] = []
+        for dependency_id in task.get("dependencies", []):
+            dependency_id = str(dependency_id)
+            dependency = tasks.get(dependency_id)
+            if dependency is None:
+                failures.append({
+                    "task_id": dependency_id,
+                    "reason": "dependency-missing",
+                })
+                continue
+            if dependency.get("status") != "completed":
+                failures.append({
+                    "task_id": dependency_id,
+                    "reason": "dependency-not-completed",
+                })
+                continue
+            result_id = dependency.get("result_id")
+            result = results.get(dependency_id)
+            if (
+                not result_id
+                or not isinstance(result, Mapping)
+                or result.get("task_id") != dependency_id
+                or result.get("result_id") != result_id
+            ):
+                failures.append({
+                    "task_id": dependency_id,
+                    "reason": "dependency-undecided",
+                })
+                continue
+            decision = result.get("decision")
+            if (
+                not isinstance(decision, Mapping)
+                or dependency.get("decision") != decision
+            ):
+                failures.append({
+                    "task_id": dependency_id,
+                    "reason": "dependency-undecided",
+                })
+                continue
+            disposition = decision.get("disposition")
+            if disposition == "accepted":
+                continue
+            reason = (
+                f"dependency-{disposition}"
+                if disposition in {"rejected", "superseded"}
+                else "dependency-undecided"
+            )
+            failures.append({"task_id": dependency_id, "reason": reason})
+        return not failures, failures
+
     def register_task(
         self,
         task_id: str,
@@ -879,6 +1231,12 @@ class CoordinationState:
         max_spawn: int = 3,
     ) -> dict[str, Any]:
         task_id = _clean_id(task_id, "task_id")
+        dependency_ids = list(dict.fromkeys(
+            _clean_id(value, "dependency")
+            for value in _as_list(dependencies)
+        ))
+        if task_id in dependency_ids:
+            raise InvalidRequest(f"task {task_id} cannot depend on itself")
         if int(max_spawn) < 0:
             raise InvalidRequest("max_spawn cannot be negative")
         with self._thread_lock, self._lock():
@@ -887,9 +1245,13 @@ class CoordinationState:
             old = doc.get("tasks", {}).get(task_id)
             if old is not None:
                 return dict(old)
+            if self._registration_closes_cycle(
+                task_id, dependency_ids, doc.get("tasks", {})
+            ):
+                raise InvalidRequest(f"dependency cycle closed by task {task_id}")
             task = {
                 "task_id": task_id,
-                "dependencies": _as_list(dependencies),
+                "dependencies": dependency_ids,
                 "allowed_paths": _as_list(allowed_paths),
                 "input_hashes": dict(input_hashes or {}),
                 "base_hashes": dict(input_hashes or {}),
@@ -1283,8 +1645,17 @@ class CoordinationState:
                 raise RecoveryRequired(f"task {resource_id} requires recovery before replay")
             if task.get("status") == "checkpointed" and not handoff_id:
                 raise FencedError(f"task {resource_id} must resume from its checkpoint")
-            if task.get("status") == "completed":
-                raise LeaseConflict(f"task {resource_id} is already completed")
+            if task.get("status") in TERMINAL_TASK_STATUSES:
+                raise LeaseConflict(
+                    f"task {resource_id} is already {task.get('status')}"
+                )
+            if not handoff_id:
+                ready, failures = self._dependencies_ready_locked(task)
+                if not ready:
+                    raise LeaseConflict(
+                        "dependencies not accepted: "
+                        + json.dumps(failures, sort_keys=True)
+                    )
         if current and current.get("state") == ACTIVE_LEASE:
             if float(current.get("expires_at", 0)) > now:
                 raise LeaseConflict(f"{key} is held by {current.get('holder')}")
@@ -1294,6 +1665,19 @@ class CoordinationState:
             if prior_alive is True or (prior_alive is None and prior_worker.get("mode") not in TERMINAL_WORKER_MODES):
                 raise LeaseConflict(f"expired {key} still needs terminal-process evidence")
         if kind == "task":
+            for active_key, active in leases_doc.get("leases", {}).items():
+                if active_key == key:
+                    continue
+                if (
+                    active.get("kind") == "task"
+                    and active.get("holder") == holder
+                    and active.get("state") == ACTIVE_LEASE
+                    and float(active.get("expires_at", 0)) > now
+                ):
+                    raise LeaseConflict(
+                        f"holder {holder} already has active task lease "
+                        f"{active.get('resource_id')}"
+                    )
             assert task_doc is not None and task is not None
             claimed_by = (task.get("handoff") or {}).get("claimed_by")
             if claimed_by and claimed_by != holder:
@@ -1520,6 +1904,172 @@ class CoordinationState:
     integrate_result = publish_result
     publish_output = publish_result
 
+    def decide_result(
+        self,
+        task_id: str,
+        result_id: str,
+        disposition: str,
+        coordinator_holder: str,
+        coordinator_epoch: int,
+        coordinator_fencing_token: str,
+        *,
+        decider: str | None = None,
+        terminal: bool = False,
+        authority: Mapping[str, Any] | None = None,
+        receipt: Mapping[str, Any] | None = None,
+        evidence_facets: Mapping[str, Any] | None = None,
+        superseding_task_id: str | None = None,
+        superseding_result_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record one immutable coordinator-fenced result disposition."""
+        task_id = _clean_id(task_id, "task_id")
+        result_id = _clean_id(result_id, "result_id")
+        disposition = _clean_id(disposition, "disposition").lower()
+        coordinator_holder = _clean_id(coordinator_holder, "coordinator holder")
+        decider = _clean_id(decider or coordinator_holder, "decider")
+        if disposition not in {"accepted", "rejected", "superseded"}:
+            raise InvalidRequest(
+                "disposition must be accepted, rejected, or superseded"
+            )
+        for label, value in (
+            ("authority", authority),
+            ("receipt", receipt),
+            ("evidence_facets", evidence_facets),
+        ):
+            if value is not None and not isinstance(value, Mapping):
+                raise InvalidRequest(f"{label} must be a JSON object")
+        if disposition == "superseded":
+            if not superseding_task_id or not superseding_result_id:
+                raise InvalidRequest(
+                    "superseded disposition requires superseding task and result"
+                )
+            superseding_task_id = _clean_id(
+                superseding_task_id, "superseding_task_id"
+            )
+            superseding_result_id = _clean_id(
+                superseding_result_id, "superseding_result_id"
+            )
+            if (
+                superseding_task_id == task_id
+                and superseding_result_id == result_id
+            ):
+                raise InvalidRequest("a result cannot supersede itself")
+        elif superseding_task_id is not None or superseding_result_id is not None:
+            raise InvalidRequest(
+                "superseding task and result require superseded disposition"
+            )
+
+        with self._thread_lock, self._lock():
+            self._ensure_locked()
+            coordinator = self._lease_locked("coordinator", "default")
+            if (
+                not self._lease_current_locked(
+                    coordinator,
+                    coordinator_holder,
+                    coordinator_epoch,
+                    coordinator_fencing_token,
+                )
+                or float(coordinator.get("expires_at", 0))
+                <= _now_from(self.clock)
+            ):
+                raise FencedError("coordinator lease is no longer current")
+
+            task_doc = self._read("tasks")
+            task = task_doc.get("tasks", {}).get(task_id)
+            result_doc = self._read("results")
+            record = result_doc.get("results", {}).get(task_id)
+            if (
+                task is None
+                or not isinstance(record, Mapping)
+                or task.get("result_id") != result_id
+                or record.get("task_id") != task_id
+                or record.get("result_id") != result_id
+            ):
+                raise InvalidRequest(
+                    f"result {result_id} is not canonical for task {task_id}"
+                )
+            if disposition == "superseded":
+                superseding_task = task_doc.get("tasks", {}).get(
+                    superseding_task_id
+                )
+                superseding_result = result_doc.get("results", {}).get(
+                    superseding_task_id
+                )
+                if (
+                    superseding_task is None
+                    or not isinstance(superseding_result, Mapping)
+                    or superseding_task.get("result_id")
+                    != superseding_result_id
+                    or superseding_result.get("task_id")
+                    != superseding_task_id
+                    or superseding_result.get("result_id")
+                    != superseding_result_id
+                ):
+                    raise InvalidRequest(
+                        "superseding task/result binding is not canonical"
+                    )
+
+            proposed = {
+                "disposition": disposition,
+                "decider": decider,
+                "authority": _safe(dict(authority or {})),
+                "receipt": _safe(dict(receipt or {})),
+                "evidence_facets": _safe(dict(evidence_facets or {})),
+                "terminal": bool(terminal),
+                "superseding_task_id": superseding_task_id,
+                "superseding_result_id": superseding_result_id,
+            }
+            existing = record.get("decision")
+            if existing is not None:
+                existing_comparable = dict(existing)
+                existing_comparable.pop("decided_at", None)
+                if existing_comparable == proposed:
+                    return {
+                        "status": "duplicate",
+                        "task_id": task_id,
+                        "result_id": result_id,
+                        "decision": dict(existing),
+                    }
+                raise FencedError(
+                    f"result {result_id} already has an immutable decision"
+                )
+
+            decision = dict(proposed)
+            decision["decided_at"] = _now_from(self.clock)
+            record = dict(record)
+            record["decision"] = decision
+            result_doc["results"][task_id] = record
+            task = dict(task)
+            task["decision"] = dict(decision)
+            task["revision"] = int(task.get("revision", 0)) + 1
+            if disposition == "rejected" and terminal:
+                task["status"] = "failed"
+            else:
+                task["status"] = "completed"
+            task_doc["tasks"][task_id] = task
+            self._atomic_transaction(
+                {"results": result_doc, "tasks": task_doc},
+                [(
+                    "result.decided",
+                    {
+                        "task_id": task_id,
+                        "result_id": result_id,
+                        "disposition": disposition,
+                        "decider": decider,
+                        "terminal": bool(terminal),
+                        "superseding_task_id": superseding_task_id,
+                        "superseding_result_id": superseding_result_id,
+                    },
+                )],
+            )
+            return {
+                "status": "decided",
+                "task_id": task_id,
+                "result_id": result_id,
+                "decision": decision,
+                "task": task,
+            }
+
     # -- quota and routing -----------------------------------------------------
 
     def capture_quota(
@@ -1673,6 +2223,27 @@ class CoordinationState:
                 return {"status": "checkpointed", "task_id": task_id, "requires_handoff": True, "handoff": task.get("handoff"), "yield": True, "busy_loop": False, "rejected": []}
             if task.get("status") in TERMINAL_TASK_STATUSES:
                 return {"status": task.get("status"), "task_id": task_id, "already_integrated": bool(task.get("result_id")), "yield": False, "busy_loop": False, "rejected": []}
+            ready, dependency_failures = self._dependencies_ready_locked(task)
+            if not ready:
+                self._atomic_transaction({}, [(
+                    "routing.blocked",
+                    {
+                        "task_id": task_id,
+                        "reason": "dependencies-not-accepted",
+                        "dependencies": dependency_failures,
+                        "yield": True,
+                        "attempts": 1,
+                    },
+                )])
+                return {
+                    "status": "blocked",
+                    "task_id": task_id,
+                    "reason": "dependencies-not-accepted",
+                    "dependencies": dependency_failures,
+                    "yield": True,
+                    "busy_loop": False,
+                    "rejected": [],
+                }
             required = set(_as_list(capabilities)) or set(task.get("capabilities", []))
             workers = self._read("workers").get("workers", {})
             ordered = list(workers)
@@ -2100,6 +2671,30 @@ def _parser() -> argparse.ArgumentParser:
     publish.add_argument("result")
     publish.add_argument("--result-id")
 
+    decide = sub.add_parser("decide-result")
+    decide.add_argument("task_id")
+    decide.add_argument("result_id")
+    decide.add_argument(
+        "disposition", choices=["accepted", "rejected", "superseded"]
+    )
+    decide.add_argument("coordinator_holder")
+    decide.add_argument("coordinator_epoch", type=int)
+    decide.add_argument("coordinator_fencing_token")
+    decide.add_argument("--decider")
+    decide.add_argument("--terminal", action="store_true")
+    decide.add_argument("--authority", default="{}")
+    decide.add_argument("--receipt", default="{}")
+    decide.add_argument("--evidence-facets", default="{}")
+    decide.add_argument("--superseding-task-id")
+    decide.add_argument("--superseding-result-id")
+
+    export = sub.add_parser("export-snapshot")
+    export.add_argument("coordinator_holder")
+    export.add_argument("coordinator_epoch", type=int)
+    export.add_argument("coordinator_fencing_token")
+    export.add_argument("snapshot_path", type=Path)
+    export.add_argument("manifest_path", type=Path)
+
     quota = sub.add_parser("quota-capture")
     quota.add_argument("service")
     quota.add_argument("account_alias")
@@ -2179,6 +2774,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = state.claim_replacement(args.task_id, args.worker_id, args.checkpoint_id, ttl=args.ttl, expected_task_revision=args.expected_task_revision, expected_checkpoint_hash=args.expected_checkpoint_hash)
         elif command in {"publish-result", "result-publish"}:
             result = state.publish_result(args.task_id, args.holder, args.epoch, args.fencing_token, args.input_revision, _json_arg(args.result), result_id=args.result_id)
+        elif command == "decide-result":
+            result = state.decide_result(
+                args.task_id,
+                args.result_id,
+                args.disposition,
+                args.coordinator_holder,
+                args.coordinator_epoch,
+                args.coordinator_fencing_token,
+                decider=args.decider,
+                terminal=args.terminal,
+                authority=_json_arg(args.authority, {}),
+                receipt=_json_arg(args.receipt, {}),
+                evidence_facets=_json_arg(args.evidence_facets, {}),
+                superseding_task_id=args.superseding_task_id,
+                superseding_result_id=args.superseding_result_id,
+            )
+        elif command == "export-snapshot":
+            result = state.export_snapshot(
+                args.snapshot_path,
+                args.manifest_path,
+                args.coordinator_holder,
+                args.coordinator_epoch,
+                args.coordinator_fencing_token,
+            )
         elif command == "quota-capture":
             result = state.capture_quota(args.service, args.account_alias, args.window, direction=args.direction, value=args.value, reset_at=args.reset_at, stale=args.stale, exhausted=True if args.exhausted else None, snapshot_id=args.snapshot_id, worker_id=args.worker_id)
         elif command == "route-task":
