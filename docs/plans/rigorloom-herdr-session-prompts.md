@@ -90,11 +90,13 @@ receipt path. Do not infer broader scope from tool access.
 
 Windows Herdr interactive exception: AGY 1.2.2 soft-denies even a harmless `run_command`
 as `escalate_admin` when launched with `--sandbox`. The verified interactive policy in
-`~/.gemini/antigravity-cli/settings.json` therefore uses `agentMode=accept-edits`, no
-terminal sandbox, and a `command(*)` allow rule, with explicit deny rules for push, hard
-reset, recursive deletion, and process termination. This exception is for existing
-interactive AGY sessions; the maintained external read-only runner stays sandboxed and
-must not run commands that need escalation.
+`~/.gemini/antigravity-cli/settings.json` therefore uses the current
+`toolPermission=always-proceed` and `artifactReviewPolicy=always-proceed` keys, retains
+`agentMode=accept-edits` for compatibility, disables the terminal sandbox, and includes a
+`command(*)` allow rule with explicit deny rules for push, hard reset, recursive deletion,
+and process termination. `useG1Credits=false` prevents fallback to personal paid credits.
+This exception is for existing interactive AGY sessions; the maintained external read-only
+runner stays sandboxed and must not run commands that need escalation.
 
 When Sol must relaunch the existing AGY pane to apply this unattended policy, it reuses the
 same Herdr session and AGY conversation with `--continue`, selects
