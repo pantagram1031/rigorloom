@@ -96,6 +96,13 @@ reset, recursive deletion, and process termination. This exception is for existi
 interactive AGY sessions; the maintained external read-only runner stays sandboxed and
 must not run commands that need escalation.
 
+When Sol must relaunch the existing AGY pane to apply this unattended policy, it reuses the
+same Herdr session and AGY conversation with `--continue`, selects
+`gemini-3.8-flash-high`, keeps `--mode accept-edits`, and may add
+`--dangerously-skip-permissions` because the user explicitly authorized unattended work.
+The flag removes prompts; it does not expand the card, path ownership, or prohibited-action
+boundaries below. Do not create a replacement Herdr session merely to apply it.
+
 ## Autonomous permissions and usage management
 
 The user explicitly authorized unattended local execution for this Rigorloom goal because
@@ -114,12 +121,13 @@ as the stop boundary for deliberate quota consumption unless a later live accoun
 changes it.
 
 Sol maintains `F:\RigorloomQA\cli-first-success-20260909\codex-review\usage-ledger.tsv`
-with one row per card: provider, exact model ID, task class, start and end time,
-tool-reported token/context usage when available, receipt path, verdict, and
-whether the run was primary work or independent verification. Do not duplicate a task only
-to consume quota. When provider dashboards do not expose a machine-readable remaining
-percentage, allocate new non-overlapping cards by task class and elapsed share rather than
-inventing a quota number.
+with one row per card and `provider-usage-snapshots.tsv` with one row per live quota capture.
+The card ledger records provider, exact model ID, task class, start and end time,
+tool-reported token/context usage when available, receipt path, verdict, and whether the run
+was primary work or independent verification. Do not duplicate a task only to consume
+quota. When provider dashboards do not expose a machine-readable remaining percentage,
+allocate new non-overlapping cards by task class and elapsed share rather than inventing a
+quota number.
 
 At every card boundary Sol runs the following routing loop without asking the user:
 
