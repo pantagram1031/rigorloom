@@ -121,6 +121,35 @@ to consume quota. When provider dashboards do not expose a machine-readable rema
 percentage, allocate new non-overlapping cards by task class and elapsed share rather than
 inventing a quota number.
 
+At every card boundary Sol runs the following routing loop without asking the user:
+
+1. Close the prior ledger row and capture each provider's live `/usage`, quota, or dashboard
+   value when it is available. Record `unknown`, never a guessed percentage, when it is not.
+2. Exclude any provider that is exhausted, rate-limited, outside its reset window, or already
+   owns an overlapping card. A quota error causes one checkpoint and route change, not a
+   retry loop.
+3. Select the best-fit model from the pools below. Before 2026-09-23 KST, prefer applicable
+   Cursor included capacity over a provider with a later reset; never enable on-demand spend.
+4. Keep at most one primary and one genuinely independent verifier on a card. Add another
+   review only after a failed check, unresolved disagreement, or explicit acceptance gate.
+5. When exact remaining percentages are visible, compute daily target burn as
+   `remaining included percent / calendar days to reset`. If actual burn is more than 20%
+   behind that pace, route the next eligible non-overlapping card to that provider; if it is
+   more than 20% ahead, place that provider in reserve until pace recovers. This is a routing
+   decision, never authority to manufacture duplicate work.
+6. When percentages are unavailable, rotate new eligible cards by task class in this order:
+   architecture, implementation, independent verification, bulk inventory, mechanical
+   verification. Skip a slot whose model is not suitable or whose provider is unavailable.
+7. Re-check after each milestone and on any quota error. Do not poll more often than every
+   15 minutes, do not busy-loop, and persist a checkpoint if every provider is unavailable.
+
+The intended share of new applicable Cursor cards during the current included period is
+25% Opus architecture, 25% Sol implementation, 20% Grok verification, 20% Gemini Flash
+inventory, and 10% Sonnet/Luna mechanical or secondary review. These are pacing targets,
+not reasons to assign unsuitable or redundant work. For Antigravity, start with 60% Gemini
+3.8 Flash high-volume work, 25% Gemini 3.1 Pro synthesis, and 15% Claude Opus independent
+high-risk review, again counting only applicable non-overlapping cards.
+
 Cursor Pro+ quality pool, using non-fast variants by default:
 
 1. `claude-opus-5-thinking-xhigh` for architecture and adversarial review.
