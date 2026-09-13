@@ -153,6 +153,14 @@ At every card boundary Sol runs the following routing loop without asking the us
 7. Re-check after each milestone and on any quota error. Do not poll more often than every
    15 minutes, do not busy-loop, and persist a checkpoint if every provider is unavailable.
 
+For Cursor Pro+, treat the dashboard's `Cursor Models` and `Other Models` percentages as
+separate included pools. Route the next suitable card to the lower-used pool whenever their
+used percentages differ by more than 2 percentage points; once they are within 2 points,
+alternate by task fit and the lower current percentage. `cursor-grok-4.6-high` serves the
+Cursor Models pool. Opus, Sol, Gemini, and Sonnet quality variants serve the Other Models
+pool unless the live dashboard classifies them differently. High/xhigh variants are the
+default; do not select a `fast` variant except for an explicitly latency-only card.
+
 The intended share of new applicable Cursor cards during the current included period is
 25% Opus architecture, 25% Sol implementation, 20% Grok verification, 20% Gemini Flash
 inventory, and 10% Sonnet/Luna mechanical or secondary review. These are pacing targets,
