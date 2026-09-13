@@ -795,6 +795,60 @@ class TestInstalledDeclaredAcceptance:
 
 
 # --------------------------------------------------------------------------- #
+# 3c. report workspace scaffold from the installed report module
+# --------------------------------------------------------------------------- #
+class TestReportScaffoldOverThePayload:
+    def test_installed_module_scaffolds_only_inside_explicit_sandbox_roots(
+            self, payload, document):
+        sandbox = payload["sandbox"]
+        script = (
+            payload["install"] / "modules" / "report" / "scripts"
+            / "new_report.py"
+        )
+        pipeline = (
+            payload["install"] / "modules" / "report" / "scripts"
+            / "pipeline_ctl.py"
+        ).resolve()
+        workspace_root = sandbox.root / "report-workspaces"
+        profile_root = sandbox.root / "report-profile"
+        venv_python = _exe(payload["venv"], "python")
+        assert script.is_file()
+        assert pipeline.is_file()
+        proc = sandbox.run([
+            str(venv_python), str(script),
+            "--slug", "installed",
+            "--subject", "science",
+            "--topic", "installed portable scaffold",
+            "--form", str(document),
+            "--workspace-root", str(workspace_root),
+            "--profile-root", str(profile_root),
+        ], timeout=BUILD_TIMEOUT)
+
+        assert proc.returncode == 0, proc.stderr or proc.stdout
+        result = json.loads(proc.stdout)
+        assert result["ok"] is True
+        workspace = Path(result["workspace"]).resolve()
+        assert cleanroom._is_within(workspace, workspace_root)
+        assert (workspace / "PIPELINE.md").is_file()
+        assert str(pipeline) in result["next"]
+        assert str(workspace) in result["next"]
+        for emitted in (workspace, pipeline):
+            assert cleanroom._is_within(emitted, sandbox.root), emitted
+
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        assert str(REPO_ROOT) not in combined
+        assert str(REPO_ROOT).replace("\\", "/") not in combined
+        report = cleanroom.containment_report(
+            sandbox,
+            reported_paths=[
+                ("report_scaffold.workspace", str(workspace)),
+                ("report_scaffold.pipeline", str(pipeline)),
+            ],
+        )
+        assert report["contained"] is True, report["findings"]
+
+
+# --------------------------------------------------------------------------- #
 # 4. containment (acceptance §3 and §6)
 # --------------------------------------------------------------------------- #
 class TestContainmentAfterTheEdit:
