@@ -190,6 +190,11 @@ remains the default high-volume worker, but when the Claude/GPT pool is material
 route the next suitable high-risk independent question to Claude Opus 4.6 Thinking. Never
 invent a high-risk question solely to consume that pool.
 
+For the Codex account, preserve the continuity protocol's 25% weekly coordinator reserve.
+Sol High remains the coordinator even when another Codex bucket has more unused quota; do
+not swap in Spark or redeem a reset credit merely to increase consumption. Prefer applicable
+Cursor or AGY included capacity for independent cards before spending the Sol reserve.
+
 ### Luna mechanical verification
 
 Goal: Perform high-volume deterministic inventories, test-log classification, hashes, and
