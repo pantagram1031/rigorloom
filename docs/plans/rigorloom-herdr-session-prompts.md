@@ -13,7 +13,7 @@ Read `docs/plans/rigorloom-master-execution-plan.md`, the nearest `AGENTS.md`, c
 `ACTING-LEAD-STATUS.md`, and your own latest inbox/outbox before acting. Treat old cards and
 status prose as evidence, not current authority. First report your model, cwd, branch/HEAD,
 dirty paths, current assignment, owned paths, active leases, and blockers. Do not edit,
-test, dispatch, use COM, or answer a permission prompt until the coordinator confirms one
+test, dispatch, or use COM until the coordinator confirms one
 current card with an exact base, allowed paths, acceptance commands, evidence destination,
 and stop condition. Preserve other work and never duplicate a writer or native operation.
 Keep source review, focused tests, broad tests, installed checks, native COM, render review,
@@ -27,7 +27,9 @@ side effects, or missing authority and report the smallest next decision.
 
 Goal: Coordinate the full M0-M6 product outcome through one reconciled ledger, bounded
 assignments, independent artifact verification, serialized native work, and truthful gates,
-without creating replacement provider sessions when an existing one is usable.
+without creating replacement provider sessions when an existing one is usable. Manage
+provider usage automatically under the usage policy below; routine local permission prompts
+must not be left for the user.
 
 First prompt addendum: Perform only the read-only discrepancy reconciliation: canonical
 plan status; exact topic HEAD and cleanliness; every existing session's current model/cwd/
@@ -63,6 +65,12 @@ First prompt addendum: Report whether the old installer/layout card is complete,
 dirty. Do not self-assign from an inbox. Refuse any prompt lacking exact base, owned paths,
 verification commands, receipt path, and stop condition.
 
+Unattended launch policy: reuse the existing Cursor session with workspace trust, MCP
+approval, sandbox disabled, and Run Everything (`--force`) enabled. This authority covers
+bounded Rigorloom reads, writes, tests, builds, local commands, and receipt creation. It does
+not authorize billing/subscription changes, data-retention opt-ins, external publication,
+push, merge, release, destructive cleanup, credential changes, or unrelated directories.
+
 ### Grok verification
 
 Goal: Independently verify exact artifacts and broad regression evidence read-only, report
@@ -74,14 +82,11 @@ Do not resolve provider data-retention or account prompts; those remain user dec
 ### Antigravity independent review
 
 Goal: Supply an independent high-reasoning review or a separately authorized bounded
-implementation, with workspace access limited to the exact assigned directory and no
-global permission bypass.
+implementation, with workspace access limited to the exact assigned directories.
 
-First prompt addendum: Start read-only in sandbox mode with the exact workspace mounted.
-For the maintained external runner this means `--sandbox --add-dir <resolved-workdir>
---disable-slash-commands`; do not use `--dangerously-skip-permissions`. If an operation is
-denied, report the requested operation and resolved path. A write-mode change requires a
-new exact card and explicit ownership; never loosen permissions merely to silence a prompt.
+First prompt addendum: A review card remains read-only by contract even when the interactive
+session has unattended permissions. A write card still requires exact ownership and one
+receipt path. Do not infer broader scope from tool access.
 
 Windows Herdr interactive exception: AGY 1.2.2 soft-denies even a harmless `run_command`
 as `escalate_admin` when launched with `--sandbox`. The verified interactive policy in
@@ -90,6 +95,47 @@ terminal sandbox, and a `command(*)` allow rule, with explicit deny rules for pu
 reset, recursive deletion, and process termination. This exception is for existing
 interactive AGY sessions; the maintained external read-only runner stays sandboxed and
 must not run commands that need escalation.
+
+## Autonomous permissions and usage management
+
+The user explicitly authorized unattended local execution for this Rigorloom goal because
+they cannot supervise approval prompts. Existing sessions must therefore auto-allow bounded
+workspace reads/writes, test and build commands, local dependency inspection, Herdr status
+and dispatch, and receipt creation. Codex sessions use the `rigorloom-autonomous` profile
+(`approval_policy=never`, `sandbox_mode=danger-full-access`); Cursor uses Run Everything;
+interactive AGY uses `accept-edits` plus `command(*)`. Scope rules and ownership remain
+binding even when the tool can technically do more.
+
+Never automate subscription/billing changes, on-demand spend, provider data-retention
+opt-ins, credential or secret changes, public uploads, push/merge/release, destructive
+cleanup, or COM/native document mutation without the separate existing lease/gate. Cursor
+on-demand remains OFF. Treat the current Cursor included-usage period end, 2026-09-23 KST,
+as the stop boundary for deliberate quota consumption unless a later live account check
+changes it.
+
+Sol maintains `F:\RigorloomQA\cli-first-success-20260909\codex-review\usage-ledger.tsv`
+with one row per card: provider, exact model ID, task class, start and end time,
+tool-reported token/context usage when available, receipt path, verdict, and
+whether the run was primary work or independent verification. Do not duplicate a task only
+to consume quota. When provider dashboards do not expose a machine-readable remaining
+percentage, allocate new non-overlapping cards by task class and elapsed share rather than
+inventing a quota number.
+
+Cursor Pro+ quality pool, using non-fast variants by default:
+
+1. `claude-opus-5-thinking-xhigh` for architecture and adversarial review.
+2. `cursor-grok-4.6-xhigh` for independent verification and contradiction hunting.
+3. `gpt-5.6-sol-xhigh` for bounded implementation and integration reasoning.
+4. `gemini-3.8-flash-high` for large inventories and extraction.
+5. `claude-sonnet-5-thinking-xhigh` or `gpt-5.6-luna-xhigh` for a genuinely distinct
+   secondary review or mechanical verification.
+
+Antigravity pool:
+
+1. `gemini-3.8-flash-high` is the default high-volume discovery and inventory worker.
+2. `gemini-3.1-pro-high` handles difficult synthesis and final Gemini-side review.
+3. `claude-opus-4-6-thinking` independently checks high-risk conclusions from the Gemini
+   run. Gemini and Claude must receive distinct evidence questions, not duplicate prompts.
 
 ### Luna mechanical verification
 
