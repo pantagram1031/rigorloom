@@ -1,0 +1,1169 @@
+{
+  "$schema": "./hancom-operation-catalog.schema.json",
+  "schema_version": "rigorloom/hancom-operation-catalog-v1",
+  "product_candidate_commit": "e53e99abc994cd5aa2780e5d184220dea8c03708",
+  "planning_contract_commit": "609f834ce21e55f481604559f26a8d52aeeaf15f",
+  "operations": [
+    {
+      "id": "preedit:fill_cell",
+      "operation_key": "fill_cell",
+      "surface": "cli.py plan/apply",
+      "backend": "preedit",
+      "target_kinds": [
+        "cell_address"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/preedit.py",
+        "line": 1291,
+        "symbol": "fill_cells"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_preedit.py",
+          "node": "test_truly_empty_cell_is_routed_to_fill_cells"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "templates/forms"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "non_empty_cell_without_overwrite",
+        "missing_table_index",
+        "duplicate_address",
+        "out_of_range_row_col"
+      ],
+      "missing_evidence": [
+        "native_parity_proof",
+        "visual_render_evidence"
+      ]
+    },
+    {
+      "id": "preedit:replace_at_cell",
+      "operation_key": "replace_at_cell",
+      "surface": "cli.py plan/apply",
+      "backend": "preedit",
+      "target_kinds": [
+        "cell_address"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/preedit.py",
+        "line": 1681,
+        "symbol": "replace_at_cells"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_preedit.py",
+          "node": "test_replace_nested_cell_precision"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "templates/forms"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "at_cell_expect_mismatch",
+        "multi_run_cell_without_run_index",
+        "missing_cell"
+      ],
+      "missing_evidence": [
+        "native_parity_proof",
+        "visual_render_evidence"
+      ]
+    },
+    {
+      "id": "preedit:set_run",
+      "operation_key": "set_run",
+      "surface": "cli.py plan/apply",
+      "backend": "preedit",
+      "target_kinds": [
+        "paragraph_run_index"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/preedit.py",
+        "line": 848,
+        "symbol": "set_runs"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_preedit.py",
+          "node": "test_named_run_edits_only_that_run"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "out_of_range_run_index",
+        "out_of_range_paragraph_index",
+        "duplicate_address"
+      ],
+      "missing_evidence": [
+        "native_parity_proof",
+        "visual_render_evidence"
+      ]
+    },
+    {
+      "id": "preedit:delete_guides",
+      "operation_key": "delete_guides",
+      "surface": "cli.py plan/apply",
+      "backend": "preedit",
+      "target_kinds": [
+        "document"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/preedit.py",
+        "line": 1928,
+        "symbol": "delete_guide_paragraphs"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_preedit.py",
+          "node": "test_plain_guide_para_deleted_black_stays"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "templates/forms"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "missing_guide_selector"
+      ],
+      "missing_evidence": [
+        "native_parity_proof",
+        "visual_render_evidence"
+      ]
+    },
+    {
+      "id": "native:replace_all",
+      "operation_key": "replace_all",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "document"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 418,
+        "symbol": "op_replace_all"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "missing_find_param",
+        "missing_replace_param"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:put_field",
+      "operation_key": "put_field",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "field"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 424,
+        "symbol": "op_put_field"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "fields/references"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "missing_field_name"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:goto_text",
+      "operation_key": "goto_text",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "text_anchor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 451,
+        "symbol": "op_goto_text"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "text_not_found"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:find_delete",
+      "operation_key": "find_delete",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "text_anchor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 513,
+        "symbol": "op_find_delete"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "text_not_found"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:collapse_empty_paragraphs",
+      "operation_key": "collapse_empty_paragraphs",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "document"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 597,
+        "symbol": "op_collapse_empty_paragraphs"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:delete_blank_after",
+      "operation_key": "delete_blank_after",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 623,
+        "symbol": "op_delete_blank_after"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:delete_blank_before",
+      "operation_key": "delete_blank_before",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 654,
+        "symbol": "op_delete_blank_before"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:move",
+      "operation_key": "move",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 683,
+        "symbol": "op_move"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_com_backend_offline.py",
+          "node": "test_walk_aborts_when_the_cursor_does_not_move"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "cursor_does_not_move"
+      ],
+      "missing_evidence": [
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:insert_text",
+      "operation_key": "insert_text",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 753,
+        "symbol": "op_insert_text"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "missing_text_param"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:set_para_align",
+      "operation_key": "set_para_align",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 844,
+        "symbol": "op_set_para_align"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "invalid_alignment"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:insert_equation",
+      "operation_key": "insert_equation",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 878,
+        "symbol": "op_insert_equation"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "equations"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "malformed_equation_script"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:edit_equation",
+      "operation_key": "edit_equation",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 908,
+        "symbol": "op_edit_equation"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "equations"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "equation_not_at_cursor"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:insert_table",
+      "operation_key": "insert_table",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1002,
+        "symbol": "op_insert_table"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "tables"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "non_numeric_ratios",
+        "invalid_dimensions"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:insert_picture",
+      "operation_key": "insert_picture",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1108,
+        "symbol": "op_insert_picture"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "images/drawings"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "missing_image_path",
+        "missing_aspect_ratio"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:set_char_color",
+      "operation_key": "set_char_color",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1157,
+        "symbol": "op_set_char_color"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "invalid_color_format"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:delete_ctrls",
+      "operation_key": "delete_ctrls",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "document"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1189,
+        "symbol": "op_delete_ctrls"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "embedded objects"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "missing_ctrl_type"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:set_cell",
+      "operation_key": "set_cell",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cell_address"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1366,
+        "symbol": "op_set_cell"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_com_backend_offline.py",
+          "node": "test_op_set_cell_writes_to_the_celladdr_target"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "tables"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "covered_merged_cell",
+        "expect_empty_mismatch",
+        "expect_text_mismatch"
+      ],
+      "missing_evidence": [
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:insert_blank_before",
+      "operation_key": "insert_blank_before",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1445,
+        "symbol": "op_insert_blank_before"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:page_break_before",
+      "operation_key": "page_break_before",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1467,
+        "symbol": "op_page_break_before"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "pages/sections"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:insert_hyperlink",
+      "operation_key": "insert_hyperlink",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1513,
+        "symbol": "op_insert_hyperlink"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "fields/references"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "missing_url"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:page_binding",
+      "operation_key": "page_binding",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "page"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1557,
+        "symbol": "op_page_binding"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "pages/sections"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "invalid_margins"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:set_line_spacing",
+      "operation_key": "set_line_spacing",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1580,
+        "symbol": "op_set_line_spacing"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "invalid_spacing_percent"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "portable:goto_text",
+      "operation_key": "goto_text",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "text_anchor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 242,
+        "symbol": "goto_text"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_goto_text_finds_single_run_anchor"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "anchor_missing"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    },
+    {
+      "id": "portable:replace_all",
+      "operation_key": "replace_all",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "document"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 275,
+        "symbol": "replace_all"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_replace_all_is_literal_per_text_node_and_reports_count"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "literal_node_only"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    },
+    {
+      "id": "portable:insert_blank_before",
+      "operation_key": "insert_blank_before",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 302,
+        "symbol": "insert_blank_before"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_insert_blank_before_precedes_anchor_and_inherits_refs"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "anchor_missing"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    },
+    {
+      "id": "portable:page_binding",
+      "operation_key": "page_binding",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "page"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 325,
+        "symbol": "page_binding"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_page_binding_submit_updates_section_margin_and_reports_note"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "pages/sections"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "invalid_binding_spec"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    },
+    {
+      "id": "portable:insert_text",
+      "operation_key": "insert_text",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 471,
+        "symbol": "insert_text"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_insert_text_adds_paragraphs_with_inherited_refs_and_bold_run"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "Unicode text/ranges"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "anchor_missing"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    },
+    {
+      "id": "portable:set_line_spacing",
+      "operation_key": "set_line_spacing",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 557,
+        "symbol": "set_line_spacing"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_set_line_spacing_only_repoints_inserted_paragraphs_and_is_partial"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 165,
+        "topic": "character and paragraph formatting"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "only_repoints_inserted_paragraphs"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    },
+    {
+      "id": "portable:insert_equation",
+      "operation_key": "insert_equation",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 597,
+        "symbol": "insert_equation"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_latex_equation_is_converted_and_inserted"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "equations"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "unbalanced_equation_script"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    },
+    {
+      "id": "portable:insert_picture",
+      "operation_key": "insert_picture",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 857,
+        "symbol": "insert_picture"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_insert_picture_registers_package_and_preserves_png_aspect"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "images/drawings"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "missing_image_data",
+        "unsupported_image_format"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    },
+    {
+      "id": "portable:insert_table",
+      "operation_key": "insert_table",
+      "surface": "xml_backend.py edit",
+      "backend": "xml",
+      "target_kinds": [
+        "cursor"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/xml_backend.py",
+        "line": 988,
+        "symbol": "insert_table"
+      },
+      "test_references": [
+        {
+          "path": "engine/tests/test_xml_backend.py",
+          "node": "test_table_ratios_cells_and_caption_are_emitted"
+        }
+      ],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "tables"
+      },
+      "strongest_evidence_category": "focused",
+      "refusals": [
+        "non_integer_ratios",
+        "anchor_missing"
+      ],
+      "missing_evidence": [
+        "native_parity_proof"
+      ]
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:headers_footers_numbering",
+      "family": "headers/footers/numbering",
+      "promise_type": "explicit_plan_promise",
+      "planning_source": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "headers/footers/numbering"
+      },
+      "source_reference": null,
+      "status": "promised_absent",
+      "description": "Header, footer, and page numbering control operations promised by master execution plan section 6C but absent from all dispatch dictionaries.",
+      "minimum_closure_evidence": [
+        "operation_definition",
+        "native_com_fixture",
+        "portable_xml_support",
+        "round_trip_tests"
+      ]
+    },
+    {
+      "id": "gap:review_tools",
+      "family": "review tools",
+      "promise_type": "explicit_plan_promise",
+      "planning_source": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 167,
+        "topic": "review tools"
+      },
+      "source_reference": null,
+      "status": "promised_absent",
+      "description": "Review and track-changes operations (comments, revisions, annotations) promised by master execution plan section 6C.",
+      "minimum_closure_evidence": [
+        "operation_definition",
+        "native_com_fixture",
+        "portable_xml_support",
+        "round_trip_tests"
+      ]
+    },
+    {
+      "id": "gap:document_application_settings",
+      "family": "document/application settings",
+      "promise_type": "explicit_plan_promise",
+      "planning_source": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 168,
+        "topic": "document/application settings"
+      },
+      "source_reference": null,
+      "status": "promised_absent",
+      "description": "Document-level and application-level settings configuration operations promised by master execution plan section 6C.",
+      "minimum_closure_evidence": [
+        "operation_definition",
+        "native_com_fixture",
+        "portable_xml_support",
+        "round_trip_tests"
+      ]
+    },
+    {
+      "id": "gap:protection_states",
+      "family": "protection states",
+      "promise_type": "explicit_plan_promise",
+      "planning_source": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 168,
+        "topic": "protection states"
+      },
+      "source_reference": null,
+      "status": "promised_absent",
+      "description": "Document protection, password-lock, and read-only state inspection/enforcement operations promised by master execution plan section 6C.",
+      "minimum_closure_evidence": [
+        "operation_definition",
+        "fail_closed_guard_tests",
+        "native_com_fixture"
+      ]
+    },
+    {
+      "id": "gap:guarded_advanced_actions",
+      "family": "guarded advanced actions",
+      "promise_type": "explicit_plan_promise",
+      "planning_source": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 168,
+        "topic": "guarded advanced actions"
+      },
+      "source_reference": null,
+      "status": "promised_absent",
+      "description": "Guarded advanced automation actions with explicit risk boundaries promised by master execution plan section 6C.",
+      "minimum_closure_evidence": [
+        "capability_catalog_entry",
+        "explicit_risk_declaration",
+        "isolation_gate"
+      ]
+    },
+    {
+      "id": "gap:normalize_clones",
+      "family": "templates/forms",
+      "promise_type": "unimplemented_source_constant",
+      "planning_source": null,
+      "source_reference": {
+        "path": "runtime/scripts/rt_plan.py",
+        "line": 68,
+        "symbol": "PREEDIT_NOT_IMPLEMENTED"
+      },
+      "status": "unimplemented_constant",
+      "description": "Preedit subcommand normalize-clones for header-level charPr rewrite with post-check (engine/scripts/preedit.py:2526), deliberately not exposed in runtime plan slice.",
+      "minimum_closure_evidence": [
+        "dedicated_plan_shape",
+        "header_charpr_rewrite_verification",
+        "guards_assertion_test"
+      ]
+    }
+  ]
+}

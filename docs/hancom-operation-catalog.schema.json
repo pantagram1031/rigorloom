@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HancomOperationCatalog",
+  "description": "Canonical machine-readable M3 operation catalog and gap matrix for Rigorloom",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "product_candidate_commit",
+    "planning_contract_commit",
+    "operations",
+    "gaps"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "rigorloom/hancom-operation-catalog-v1"
+    },
+    "product_candidate_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "planning_contract_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/operation"
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/gap"
+      }
+    }
+  },
+  "$defs": {
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "operation_key",
+        "surface",
+        "backend",
+        "target_kinds",
+        "implementation_reference",
+        "test_references",
+        "documentation_claim",
+        "strongest_evidence_category",
+        "refusals",
+        "missing_evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(preedit|native|portable):[a-z0-9_]+$"
+        },
+        "operation_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "surface": {
+          "type": "string",
+          "enum": [
+            "cli.py plan/apply",
+            "com_backend.py edit",
+            "xml_backend.py edit"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "preedit",
+            "com",
+            "xml"
+          ]
+        },
+        "target_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "implementation_reference": {
+          "$ref": "#/$defs/implementation_ref"
+        },
+        "test_references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/test_ref"
+          }
+        },
+        "documentation_claim": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/doc_claim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strongest_evidence_category": {
+          "type": "string",
+          "enum": [
+            "source",
+            "focused",
+            "broad",
+            "native_parity",
+            "visual",
+            "installed",
+            "user"
+          ]
+        },
+        "refusals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "missing_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "implementation_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "line",
+        "symbol"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "symbol": {
+          "type": "string"
+        }
+      }
+    },
+    "test_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "node"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        }
+      }
+    },
+    "doc_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "line"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "topic": {
+          "type": "string"
+        }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "promise_type",
+        "planning_source",
+        "source_reference",
+        "status",
+        "description",
+        "minimum_closure_evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^gap:[a-z0-9_]+$"
+        },
+        "family": {
+          "type": "string"
+        },
+        "promise_type": {
+          "type": "string",
+          "enum": [
+            "explicit_plan_promise",
+            "unimplemented_source_constant"
+          ]
+        },
+        "planning_source": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/doc_claim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_reference": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/implementation_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "promised_absent",
+            "unimplemented_constant"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "minimum_closure_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      }
+    }
+  }
+}
