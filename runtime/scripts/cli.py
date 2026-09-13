@@ -189,6 +189,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_inst.add_argument("--replace", action="store_true",
                         help="replace an existing valid rigorloom engine installation")
 
+    p_doctor = sub.add_parser(
+        "doctor", help="read-only installed-product prerequisites and engine checks")
+    p_doctor.add_argument(
+        "--engine-root", dest="doctor_engine_root", default=None,
+        help="installed engine root to inspect (optional; no checkout default)")
+
     sub.add_parser("capabilities", help="what this build can do")
     sub.add_parser("sessions", help="list sessions under the root")
 
@@ -443,8 +449,50 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
 def main(argv: list[str] | None = None) -> int:
     utf8_stdio()
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        args = parser.parse_args(raw_argv)
+    except SystemExit as exc:
+        if exc.code and "doctor" in raw_argv:
+            return emit({
+                "ok": False,
+                "command": "doctor",
+                "error": {
+                    "code": "invalid_params",
+                    "message": "invalid doctor command arguments; see stderr",
+                },
+            }, EXIT_USAGE)
+        raise
     command = args.command
+
+    if command == "doctor":
+        try:
+            from .doctor import DOCTOR_SCHEMA, run_doctor
+        except ImportError:
+            from doctor import DOCTOR_SCHEMA, run_doctor
+        engine_root = args.doctor_engine_root or args.engine_root
+        try:
+            result, code = run_doctor(engine_root)
+        except Exception as exc:  # fail closed under the doctor's 0/2/3 contract
+            result = {
+                "schema": DOCTOR_SCHEMA,
+                "requiredPassed": False,
+                "checks": [{
+                    "id": "doctor",
+                    "required": True,
+                    "state": "fail",
+                    "reason": {
+                        "code": "doctor_check_failed",
+                        "message": f"Doctor could not complete: {type(exc).__name__}.",
+                    },
+                }],
+            }
+            code = EXIT_REFUSED
+        return emit({
+            "ok": code == EXIT_OK,
+            "command": command,
+            "result": result,
+        }, code)
 
     if command == "install":
         try:
