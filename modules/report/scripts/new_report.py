@@ -144,6 +144,21 @@ def _rigorloom_checkout_containing(path: Path) -> Path | None:
     return None
 
 
+def _validate_workspace_root(workspace_root: Path) -> Path:
+    workspace = workspace_root.expanduser().resolve()
+    engine = ENGINE_ROOT.resolve()
+    if _is_within(workspace, engine):
+        raise ValueError(
+            f"workspace root {workspace} must not be inside installed engine {engine}"
+        )
+    checkout = _rigorloom_checkout_containing(workspace)
+    if checkout is not None:
+        raise ValueError(
+            f"workspace root {workspace} must not be inside Rigorloom checkout {checkout}"
+        )
+    return workspace
+
+
 def _validate_profile_root(profile_root: Path) -> Path:
     profile = profile_root.expanduser().resolve()
     engine = ENGINE_ROOT.resolve()
@@ -211,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         print("error: --min-figures must be non-negative", file=sys.stderr)
         return 2
     try:
-        workspace_root = Path(args.workspace_root).expanduser().resolve()
+        workspace_root = _validate_workspace_root(Path(args.workspace_root))
         final = _assert_safe_workspace(workspace_root, args.slug)
         profile_root = _validate_profile_root(Path(args.profile_root))
     except (OSError, RuntimeError, ValueError) as exc:

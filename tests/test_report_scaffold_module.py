@@ -164,6 +164,45 @@ def test_profile_inside_engine_or_checkout_is_refused(
     assert not (installed_module["engine"].parent / "workspaces").exists()
 
 
+@pytest.mark.parametrize(
+    "location",
+    ["engine", "engine-dotdot", "checkout"],
+)
+def test_workspace_inside_engine_or_checkout_is_refused(
+    installed_module, tmp_path, location
+):
+    if location == "engine":
+        workspace_root = installed_module["engine"] / "inside-workspaces"
+        named_root = installed_module["engine"]
+    elif location == "engine-dotdot":
+        workspace_root = (
+            installed_module["engine"] / "modules" / ".." / "inside-workspaces"
+        )
+        named_root = installed_module["engine"]
+    else:
+        checkout = tmp_path / "other-checkout"
+        checkout.mkdir()
+        (checkout / "pyproject.toml").write_text(
+            "[project]\nname = \"rigorloom\"\nversion = \"9.9\"\n",
+            encoding="utf-8",
+        )
+        workspace_root = checkout / "inside-workspaces"
+        named_root = checkout
+
+    proc = _run(
+        installed_module,
+        "--workspace-root", str(workspace_root),
+    )
+
+    resolved_root = workspace_root.resolve()
+    assert proc.returncode == 2
+    assert str(resolved_root) in proc.stderr
+    assert str(named_root.resolve()) in proc.stderr
+    assert not resolved_root.exists()
+    assert not (resolved_root / "report-demo").exists()
+    assert not (installed_module["engine"].parent / "workspaces").exists()
+
+
 def test_temp_root_scaffold_is_atomic_and_next_is_absolute(installed_module):
     proc = _run(installed_module)
 
@@ -220,15 +259,19 @@ def test_registry_discovers_new_report_on_enabled_report_module(tmp_path):
     assert Path(new_report[0]["script"]).resolve() == MODULE_SOURCE.resolve()
 
 
-def test_checkout_shim_delegates_and_adds_only_omitted_defaults(monkeypatch):
+def test_checkout_shim_delegates_and_adds_only_omitted_defaults(
+    monkeypatch, tmp_path
+):
     shim = _load("_report_scaffold_checkout_shim", SHIM_SOURCE)
     registered = REPO_ROOT / "modules" / "report" / "scripts" / "new_report.py"
+    fake_home = tmp_path / "home"
     calls: list[list[str]] = []
 
     def fake_run(argv):
         calls.append([str(item) for item in argv])
         return SimpleNamespace(returncode=0)
 
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
     monkeypatch.setattr(shim, "_module_cli_script", lambda command: registered)
     monkeypatch.setattr(shim.subprocess, "run", fake_run)
     base = [
@@ -241,19 +284,29 @@ def test_checkout_shim_delegates_and_adds_only_omitted_defaults(monkeypatch):
     forwarded = calls[0][2:]
     assert forwarded.count("--workspace-root") == 1
     assert forwarded.count("--profile-root") == 1
-    assert str(REPO_ROOT / "workspaces") in forwarded
+    default_workspace = Path(
+        forwarded[forwarded.index("--workspace-root") + 1]
+    ).resolve()
     default_profile = Path(
         forwarded[forwarded.index("--profile-root") + 1]
     ).resolve()
-    assert default_profile == (
-        Path.home() / ".rigorloom" / "personalization"
+    assert default_workspace == (
+        fake_home / ".rigorloom" / "workspaces"
     ).resolve()
+    assert default_profile == (
+        fake_home / ".rigorloom" / "personalization"
+    ).resolve()
+    assert forwarded.count(str(default_workspace)) == 1
+    assert forwarded.count(str(default_profile)) == 1
+    assert default_workspace != REPO_ROOT.resolve()
+    assert REPO_ROOT.resolve() not in default_workspace.parents
     assert default_profile != REPO_ROOT.resolve()
     assert REPO_ROOT.resolve() not in default_profile.parents
+    assert str(REPO_ROOT / "workspaces") not in forwarded
 
     calls.clear()
-    explicit_workspace = REPO_ROOT.parent / "explicit-workspace"
-    explicit_profile = REPO_ROOT.parent / "explicit-profile"
+    explicit_workspace = tmp_path / "explicit-workspace"
+    explicit_profile = tmp_path / "explicit-profile"
     assert shim.main([
         *base,
         "--workspace-root", str(explicit_workspace),
@@ -288,3 +341,30 @@ def test_checkout_shim_delegates_and_adds_only_omitted_defaults(monkeypatch):
     assert "--profile-root" not in forwarded
     assert str(REPO_ROOT / "workspaces") not in forwarded
     assert str(default_profile) not in forwarded
+
+
+def test_shim_default_workspace_refuses_checkout_home(
+    monkeypatch, capsys
+):
+    shim = _load("_report_scaffold_checkout_shim_checkout_home", SHIM_SOURCE)
+    registered = REPO_ROOT / "modules" / "report" / "scripts" / "new_report.py"
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: REPO_ROOT))
+    monkeypatch.setattr(shim, "_module_cli_script", lambda command: registered)
+    monkeypatch.setattr(
+        shim.subprocess,
+        "run",
+        lambda argv: calls.append([str(item) for item in argv]),
+    )
+
+    result = shim.main([
+        "--slug", "shim", "--subject", "science",
+        "--topic", "topic", "--form", "form.hwpx",
+    ])
+
+    assert result == 2
+    assert calls == []
+    stderr = capsys.readouterr().err
+    assert str((REPO_ROOT / ".rigorloom" / "workspaces").resolve()) in stderr
+    assert str(REPO_ROOT.resolve()) in stderr
