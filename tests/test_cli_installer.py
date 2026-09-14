@@ -533,6 +533,9 @@ def test_wheel_installed_consumer_e2e_and_origin_split(tmp_path, built_artifacts
     assert proc.returncode == 0, f"rigorloom install failed:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
     install_res = json.loads(proc.stdout)
     assert install_res["ok"] is True
+    assert install_res["command"] == "install"
+    assert Path(install_res["result"]["engine_root"]).resolve() == engine_root.resolve()
+    assert install_res["result"]["backup_path"] is None
     assert install_res["result"]["skills_installed"] is True
 
     # 4. Verify origin split on installed tree
@@ -547,8 +550,10 @@ def test_wheel_installed_consumer_e2e_and_origin_split(tmp_path, built_artifacts
         "import module_registry, privacy_scan\n"
         "rt_file = Path(rigorloom_runtime.__file__).resolve()\n"
         "reg_file = Path(module_registry.__file__).resolve()\n"
+        "privacy_file = Path(privacy_scan.__file__).resolve()\n"
         "assert rt_file.is_relative_to(venv_dir), f'Runtime not in venv: {rt_file}'\n"
         "assert reg_file.is_relative_to(engine_root), f'Registry not in engine: {reg_file}'\n"
+        "assert privacy_file.is_relative_to(engine_root), f'Privacy scanner not in engine: {privacy_file}'\n"
         "cwd_resolved = Path.cwd().resolve()\n"
         "for entry in sys.path:\n"
         "    resolved = (cwd_resolved if not entry else Path(entry).resolve())\n"
@@ -581,7 +586,83 @@ def test_wheel_installed_consumer_e2e_and_origin_split(tmp_path, built_artifacts
     assert tools["preedit"]["state"] == "available"
     assert tools["check_residue"]["state"] == "available"
 
-    # 6. Verify replace preserves backup
+    # 6. Prove the installed doctor recognizes the installed report payload.
+    external_cwd = tmp_path / "external-consumer"
+    external_cwd.mkdir()
+    doctor_proc = subprocess.run([
+        rigorloom_exe, "doctor", "--engine-root", str(engine_root)
+    ], capture_output=True, text=True, env=env, encoding="utf-8",
+        cwd=str(external_cwd))
+    assert doctor_proc.returncode == 0, (
+        f"installed doctor failed:\nSTDOUT:\n{doctor_proc.stdout}\n"
+        f"STDERR:\n{doctor_proc.stderr}"
+    )
+    doctor_res = json.loads(doctor_proc.stdout)
+    assert doctor_res["ok"] is True
+    assert doctor_res["command"] == "doctor"
+    assert doctor_res["result"]["schema"] == "rigorloom-doctor/v1"
+    assert doctor_res["result"]["requiredPassed"] is True
+    engine_check = next(
+        row for row in doctor_res["result"]["checks"] if row["id"] == "engine"
+    )
+    assert engine_check["state"] == "pass"
+    assert all(engine_check["facts"]["markers"].values())
+    assert engine_check["facts"]["enabledModules"] == ["style", "report"]
+    assert engine_check["facts"]["enabledState"] == "configured"
+    assert engine_check["facts"]["probeSchema"] == "rigorloom-capability-probe/v1"
+
+    missing_engine = tmp_path / "missing-engine"
+    missing_doctor = subprocess.run([
+        rigorloom_exe, "doctor", "--engine-root", str(missing_engine)
+    ], capture_output=True, text=True, env=env, encoding="utf-8",
+        cwd=str(external_cwd))
+    assert missing_doctor.returncode == 3
+    missing_res = json.loads(missing_doctor.stdout)
+    assert missing_res["ok"] is False
+    assert missing_res["result"]["requiredPassed"] is False
+    missing_check = next(
+        row for row in missing_res["result"]["checks"] if row["id"] == "engine"
+    )
+    assert missing_check["state"] == "fail"
+    assert missing_check["reason"]["code"] == "engine_markers_missing"
+    assert not missing_engine.exists()
+
+    # 7. Scaffold through the report module from the installed engine only.
+    source_form = REPO_ROOT / "tests" / "corpus" / "forms" / "converted" / "gianmun-byeolji-1ho.hwpx"
+    consumer_form = external_cwd / "form.hwpx"
+    shutil.copy2(source_form, consumer_form)
+    installed_scaffolder = engine_root / "modules" / "report" / "scripts" / "new_report.py"
+    workspace_root = tmp_path / "report-workspaces"
+    profile_root = tmp_path / "report-profile"
+    scaffold_proc = subprocess.run([
+        venv_py, str(installed_scaffolder),
+        "--slug", "installed",
+        "--subject", "science",
+        "--topic", "installed integration",
+        "--form", str(consumer_form),
+        "--workspace-root", str(workspace_root),
+        "--profile-root", str(profile_root),
+    ], capture_output=True, text=True, env=env, encoding="utf-8",
+        cwd=str(external_cwd))
+    assert scaffold_proc.returncode == 0, (
+        f"installed report scaffolder failed:\nSTDOUT:\n{scaffold_proc.stdout}\n"
+        f"STDERR:\n{scaffold_proc.stderr}"
+    )
+    scaffold_res = json.loads(scaffold_proc.stdout)
+    assert scaffold_res["ok"] is True
+    workspace = Path(scaffold_res["workspace"]).resolve()
+    assert workspace.is_relative_to(workspace_root.resolve())
+    assert not workspace.is_relative_to(engine_root.resolve())
+    assert not workspace.is_relative_to(REPO_ROOT.resolve())
+    assert (workspace / "PIPELINE.md").is_file()
+    assert str(installed_scaffolder.parent / "pipeline_ctl.py") in scaffold_res["next"]
+    assert str(workspace) in scaffold_res["next"]
+
+    checkout_text = str(REPO_ROOT.resolve()).casefold()
+    for completed in (proc, proc_probe, cap_proc, doctor_proc, missing_doctor, scaffold_proc):
+        assert checkout_text not in (completed.stdout + completed.stderr).casefold()
+
+    # 8. Verify replace preserves backup
     replace_proc = subprocess.run([
         rigorloom_exe, "install",
         "--engine-root", str(engine_root),
