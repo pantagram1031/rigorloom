@@ -28,6 +28,7 @@ provides:
     - {name: check_sources, script: scripts/check_sources.py, subject: workspace}
     - {name: check_saeteuk, script: scripts/check_saeteuk.py, subject: workspace}
   cli:
+    - {command: new-report, script: scripts/new_report.py}
     - {command: source-fetch, script: scripts/source_fetch.py}
     - {command: organize-workspace, script: scripts/workspace_organizer.py}
     - {command: claims-ledger, script: scripts/claims_ledger.py}
