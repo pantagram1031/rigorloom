@@ -681,20 +681,20 @@ mod tests {
     #[test]
     fn windows_drive_and_slash_spellings_are_aliases() {
         assert!(paths_are_aliases(
-            Path::new(r"C:\Users\a\out.hwpx"),
-            Path::new("c:/users/a/out.hwpx"),
+            Path::new(r"C:\profiles\a\out.hwpx"),
+            Path::new("c:/profiles/a/out.hwpx"),
         ));
         assert!(paths_are_aliases(
-            Path::new(r"\\?\C:\Users\a\out.hwpx"),
-            Path::new(r"C:\Users\a\out.hwpx"),
+            Path::new(r"\\?\C:\profiles\a\out.hwpx"),
+            Path::new(r"C:\profiles\a\out.hwpx"),
         ));
         assert!(paths_are_aliases(
-            Path::new(r"C:\Users\a\out.hwpx"),
-            Path::new(r"C:\Users\a\.\out.hwpx"),
+            Path::new(r"C:\profiles\a\out.hwpx"),
+            Path::new(r"C:\profiles\a\.\out.hwpx"),
         ));
         assert!(!paths_are_aliases(
-            Path::new(r"C:\Users\a\out.hwpx"),
-            Path::new(r"C:\Users\a\other.hwpx"),
+            Path::new(r"C:\profiles\a\out.hwpx"),
+            Path::new(r"C:\profiles\a\other.hwpx"),
         ));
         assert!(paths_are_aliases(
             Path::new(r"\\?\UNC\server\share\out.hwpx"),
@@ -709,8 +709,8 @@ mod tests {
             Path::new(r"C:\foo"),
         ));
         assert!(paths_are_aliases(
-            Path::new(r"C:\Users\a\out.hwpx."),
-            Path::new(r"C:\Users\a\out.hwpx"),
+            Path::new(r"C:\profiles\a\out.hwpx."),
+            Path::new(r"C:\profiles\a\out.hwpx"),
         ));
     }
 

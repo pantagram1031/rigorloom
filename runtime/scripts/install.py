@@ -408,7 +408,7 @@ def _probe_origin_split(
     exe = target_python or sys.executable
     # The path travels in the ENVIRONMENT, never in the source text. Embedding
     # it produced a SyntaxError for any root containing an apostrophe
-    # (C:\\Users\\O'Brien\\...) or ending in a backslash (a drive root such as
+    # (<user>\\O'Brien\\...) or ending in a backslash (a drive root such as
     # C:\\), because a raw string cannot end with one — and the child's non-zero
     # exit was then reported as "containment_breach", which named a security
     # failure for what was a quoting bug. RIGORLOOM_ROOT and the confirmed

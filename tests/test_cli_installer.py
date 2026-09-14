@@ -23,10 +23,7 @@ if str(RUNTIME_SCRIPTS) not in sys.path:
 import cli  # noqa: E402
 import install  # noqa: E402
 
-CODEX_PRIMARY_PYTHON = r"C:\Users\user\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-WHEEL_PYTHON = os.environ.get("RIGORLOOM_WHEEL_PYTHON") or (
-    CODEX_PRIMARY_PYTHON if os.path.isfile(CODEX_PRIMARY_PYTHON) else sys.executable
-)
+WHEEL_PYTHON = os.environ.get("RIGORLOOM_WHEEL_PYTHON") or sys.executable
 
 
 def _make_dummy_bundle(out_path: Path, name: str, files: dict[str, bytes],
@@ -939,7 +936,7 @@ def test_single_bundle_still_resolves(tmp_path):
 def test_origin_probe_survives_an_apostrophe_in_the_engine_root(tmp_path):
     """F1: the engine root must not be interpolated into generated source.
 
-    ``C:\\Users\\O'Brien\\...`` is a legal Windows path. Embedding it in a raw
+    ``<user>\\O'Brien\\...`` is a legal Windows path. Embedding it in a raw
     string literal produced a SyntaxError in the probe child, whose non-zero
     exit was then reported as ``containment_breach`` — a security-sounding
     verdict for a quoting bug, on an install that was in fact fine.

@@ -82,7 +82,7 @@ behavior across unfamiliar documents and structurally different templates.
 ## 4. Current verified baseline
 
 The current integration candidate is the clean topic worktree
-`C:/Users/user/dev/rigorloom-cli-report-essentials`, branch
+`<worktree-root>/rigorloom-cli-report-essentials`, branch
 `codex/cli-report-essentials`, at `3252ac7e0a17783e918dc01cb1a08a3072e1c3d7`.
 It contains the accepted gate-integrity, distribution payload, residue declaration,
 installed-declaration plumbing, installer, form-baseline, malformed-receipt, and loop
@@ -106,7 +106,7 @@ Important limits on that baseline:
   acceptance under a declared keep/fill map; it is not meaningful finished-report quality.
 - No full repository suite, clean-machine external-user installation, broad Hancom operation
   corpus, Korean GUI/IME flow, or release acceptance is claimed here.
-- `C:/Users/user/dev/rigorloom-cli-product-payload` currently has an uncommitted advisory
+- `<worktree-root>/rigorloom-cli-product-payload` currently has an uncommitted advisory
   follow-up in `runtime/scripts/install.py` and `tests/test_cli_installer.py` on top of
   `6e4b2af`. It is not canonical and must be preserved and reconciled against `3252ac7`
   before any reuse. Do not overwrite, discard, or integrate it by assumption.
@@ -333,14 +333,14 @@ Agents must state the strongest category actually proven:
 
 ## 11. Canonical locations
 
-- Master plan: `C:/Users/user/dev/rigorloom-cli-product-plan/docs/plans/rigorloom-master-execution-plan.md`
+- Master plan: `<worktree-root>/rigorloom-cli-product-plan/docs/plans/rigorloom-master-execution-plan.md`
 - Detailed product vision: `.../docs/plans/cli-first-product-vision.md`
 - Architecture convergence: `.../docs/plans/v0.16-unified-core-and-modules.md`
 - Continuity protocol: `.../docs/plans/agent-continuity-protocol.md`
-- Current integrated topic: `C:/Users/user/dev/rigorloom-cli-report-essentials`
+- Current integrated topic: `<worktree-root>/rigorloom-cli-report-essentials`
 - Evidence and coordination: `F:/RigorloomQA/cli-first-success-20260909/codex-review/`
 - Second-case native evidence: `F:/RigorloomQA/cli-second-case-20260910/`
-- Private/native working copies: `C:/Users/user/RigorloomQA/`
+- Private/native working copies: `<user-profile>/RigorloomQA/`
 
 Generated reports, private forms, credentials, personal profiles, and native workspaces do
 not belong in the source repository.

@@ -12,17 +12,17 @@ User priorities: preserve useful previous effort; CLI first; full feasible Hanco
 
 ## 2. Authoritative workspace and ownership
 
-Planning worktree: `C:/Users/user/dev/rigorloom-cli-product-plan`, branch `codex/cli-product-plan`, created from `8e1a1ea`. This document is versioned here. It does not overwrite existing plans or generated capability tables.
+Planning worktree: `<worktree-root>/rigorloom-cli-product-plan`, branch `codex/cli-product-plan`, created from `8e1a1ea`. This document is versioned here. It does not overwrite existing plans or generated capability tables.
 
 | Responsibility | Location / owner | Rule |
 |---|---|---|
 | Product plan and acceptance changes | this branch / Astra | Major tradeoffs and milestone acceptance; brief reviews |
 | Routine orchestration | separate Sol task `01a08756-2564-7aa1-bcc9-d6e853f372b8` | Own queue, usage routing, review and local integration |
-| Current report integration candidate | `C:/Users/user/dev/rigorloom-cli-report-essentials`, `codex/cli-report-essentials` | Clean `8e1a1ea` at planning baseline; recheck before each integration |
-| Gate integrity card | `C:/Users/user/dev/rigorloom-cli-gate-integrity` | Existing Cursor owner; no concurrent edits to its two files |
-| Historical unified preview | `C:/Users/user/dev/rigorloom-unified-working`, `ea02604` | Preserve; do not describe as finished CLI product |
-| Historical report checkpoints | `C:/Users/user/Downloads/agenthwpx/reports/` | Originals immutable; sanitize new fixtures; no personal identifiers in repository |
-| Native report workspaces | `C:/Users/user/RigorloomQA/` | NTFS for link-sensitive operations; one COM writer at a time |
+| Current report integration candidate | `<worktree-root>/rigorloom-cli-report-essentials`, `codex/cli-report-essentials` | Clean `8e1a1ea` at planning baseline; recheck before each integration |
+| Gate integrity card | `<worktree-root>/rigorloom-cli-gate-integrity` | Existing Cursor owner; no concurrent edits to its two files |
+| Historical unified preview | `<worktree-root>/rigorloom-unified-working`, `ea02604` | Preserve; do not describe as finished CLI product |
+| Historical report checkpoints | `<private-root>/agenthwpx/reports/` | Originals immutable; sanitize new fixtures; no personal identifiers in repository |
+| Native report workspaces | `<user-profile>/RigorloomQA/` | NTFS for link-sensitive operations; one COM writer at a time |
 | Evidence / live coordination | `F:/RigorloomQA/cli-first-success-20260909/codex-review/` | Logs, routing ledger, Herdr board and handoffs; not product source |
 
 Each implementation card gets one owner and an isolated `codex/` worktree. Before integration: verify exact source SHA, clean target, ownership, patch scope and dependencies; review full diff and targeted tests; locally integrate only accepted commits. Preserve dirty or unrelated work. No remote push, release, main merge, credential change or paid overage is implied by this plan.
@@ -158,7 +158,7 @@ Immediate next review: accept or reject the gate-integrity patch; assign scoped 
 
 - Existing `docs/architecture.md`, generated `docs/capability-matrix.md`, workspace/branch inventory and current source/hand-offs.
 - Local `cursor-windpath-benchmark.txt`, `cursor-grok-controller-review.txt`, `cursor-gemini-cli-audit.txt`: advisory audits, not independent release certification.
-- Native/first and second report evidence under `F:/RigorloomQA/` and `C:/Users/user/RigorloomQA/`.
+- Native/first and second report evidence under `F:/RigorloomQA/` and `<user-profile>/RigorloomQA/`.
 - Claude context/cost guidance: https://code.claude.com/docs/en/costs and https://code.claude.com/docs/en/sub-agents . Use bounded contexts and account for subagent overhead.
 - Cursor model/agent references: https://cursor.com/docs/agent/overview and https://prod.cursor.com/help/models-and-usage/available-models . Runtime account model listings remain authoritative for availability.
 - Herdr automation: https://herdr.dev/docs/agent-automation/ . Native Windows Herdr is already installed; tmux is optional and not a prerequisite.
