@@ -1,10 +1,18 @@
 # Rigorloom master execution plan
 
 Status: **ACTIVE BY USER — coordinator resume and live-state reconciliation authorized**
-Updated: 2026-09-13 KST
+Updated: 2026-09-14 KST
 Planning owner: Astra
 Routine execution coordinator: existing Herdr agent `rigorloom-sol-coordinator` in named
 session `rigorloom`; do not create a replacement session while it remains usable.
+
+Release-through-GA direction: [product, brand, and release plan](rigorloom-release-product-brand-plan.md).
+The 2026-09-14 user request continues delivery responsibility through release acceptance:
+CLI/tool API and Desktop are primary; Studio is supporting/legacy. The linked plan adds
+premium UX, policy-driven low-friction approvals, branding/icons, marketing site, and exact
+release gates. Its planning input is main `6b99cdf36f71224aedcdabce1eab263152913ee3`;
+older baseline/status claims below require live reconciliation. This update does not waive
+specific freezes, sole-COM ownership, or the final publishing approval.
 
 This is the top-level plan for the whole Rigorloom product, not only its CLI.
 It is deliberately written so an agent can recover the product direction without
