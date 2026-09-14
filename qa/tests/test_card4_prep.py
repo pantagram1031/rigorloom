@@ -219,4 +219,3 @@ def test_human_approved_mode_demands_human_artifact(tmp_path: Path):
     r = validate_manifest(manifest, REPO)
     assert r["result"] == "EVIDENCE_INCOMPLETE"
     assert any("real human operator approval required; mock_approved mode is off" in p for p in r["problems"])
-

@@ -69,7 +69,7 @@ def test_run_job_execution(tmp_path: Path):
     assert summary["candidate_id"] == "test-c1"
     assert summary["requested_model"] == "gemini-3.8-flash"
     assert summary["gui_ime_claimed"] is False
-    
+
     # Evidence files created
     ev_dir = tmp_path / "evidence"
     assert (ev_dir / "preflight.json").exists()
@@ -138,4 +138,3 @@ def test_run_job_with_mock_approved_c4(tmp_path: Path):
     assert c4_v["gui_claimed"] is False
     assert "mock_approved for unattended plan apply gating" in c4_v["reason"]
     assert "Verdict remains NOT_RUN" in c4_v["reason"]
-

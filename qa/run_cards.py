@@ -157,7 +157,7 @@ def execute_card(
                     stderr=subprocess.STDOUT,
                     check=False,
                 )
-            
+
             # Record jsonl stub
             _write_jsonl_record(jsonl_file, card_id, proc.returncode, "pytest", cmd)
 

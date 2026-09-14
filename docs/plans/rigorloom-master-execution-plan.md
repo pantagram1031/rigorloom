@@ -2,7 +2,7 @@
 
 Status: **ACTIVE BY USER — coordinator resume and live-state reconciliation authorized**
 Updated: 2026-09-13 KST
-Planning owner: Astra  
+Planning owner: Astra
 Routine execution coordinator: existing Herdr agent `rigorloom-sol-coordinator` in named
 session `rigorloom`; do not create a replacement session while it remains usable.
 
