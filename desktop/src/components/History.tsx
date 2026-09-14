@@ -75,6 +75,9 @@ function Row({
       <button
         className="history-head"
         data-testid={`history-select-${runId}`}
+        aria-expanded={selected}
+        aria-controls={selected ? `history-detail-${runId}` : undefined}
+        aria-current={isHead ? "true" : undefined}
         onClick={() => selectHistory(selected ? null : runId)}
       >
         <span className="mono">{runId.slice(0, 12)}</span>
@@ -114,7 +117,11 @@ function Row({
       </p>
 
       {selected ? (
-        <div className="history-detail" data-testid={`history-detail-${runId}`}>
+        <div
+          className="history-detail"
+          id={`history-detail-${runId}`}
+          data-testid={`history-detail-${runId}`}
+        >
           {/* The listing does not re-hash the artifact and says so; the receipt
               read below is the one that does, and its refusal is the answer
               that matters when bytes have drifted. */}

@@ -179,3 +179,98 @@ test("the current receipt failure remains visible and preserves rebase behavior"
   assert.equal(f.read().receiptError.code, "receipt_failed");
   assert.deepEqual(f.rebases.map((row) => row.options.baseRunId), ["run-A"]);
 });
+
+// --- 기록 panel: the head and the open row are announced, not only coloured ---
+
+import { createRequire } from "node:module";
+import ts from "typescript";
+
+const nodeRequire = createRequire(import.meta.url);
+
+/** Transpile one TS/TSX module in this realm with an explicit import map. */
+function loadComponentModule(path, stubs) {
+  const text = readFileSync(new URL(path, import.meta.url), "utf8");
+  const { outputText } = ts.transpileModule(text, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
+    },
+  });
+  const exports = {};
+  const load = (name) => (name in stubs ? stubs[name] : nodeRequire(name));
+  vm.runInThisContext(`(function (exports, require) {\n${outputText}\n})`)(exports, load);
+  return exports;
+}
+
+function renderHistory(statePatch) {
+  const store = loadComponentModule("../src/store.ts", {
+    react: { useSyncExternalStore: (_subscribe, snapshot) => snapshot() },
+  });
+  const tag = loadComponentModule("../src/components/Tag.tsx", {});
+  const actions = {
+    exportApplied: () => {},
+    loadReceipt: () => {},
+    proposeUndoOf: () => {},
+    selectHistory: () => {},
+    setHead: () => {},
+  };
+  const { History } = loadComponentModule("../src/components/History.tsx", {
+    "../actions": actions,
+    "../store": store,
+    "./Tag": tag,
+  });
+  store.setState({
+    activeSessionId: "session-A",
+    candidates: {
+      "session-A": [
+        { runId: "run-1", sha256: "a".repeat(64), base: null, createdUtc: "2026-09-14T01:00:00Z" },
+        {
+          runId: "run-2",
+          sha256: "b".repeat(64),
+          base: { runId: "run-1", sha256: "a".repeat(64) },
+          createdUtc: "2026-09-14T02:00:00Z",
+        },
+      ],
+    },
+    head: null,
+    historySelected: null,
+    undoError: null,
+    inverseProof: null,
+    ...statePatch,
+  });
+  const { renderToStaticMarkup } = nodeRequire("react-dom/server");
+  const { createElement } = nodeRequire("react");
+  return renderToStaticMarkup(createElement(History));
+}
+
+function rowButton(html, runId) {
+  const match = html.match(
+    new RegExp(`<button class="history-head" data-testid="history-select-${runId}"[^>]*>`),
+  );
+  assert.ok(match, `history row button for ${runId} not rendered`);
+  return match[0];
+}
+
+test("the open history row announces its expanded state and names its detail region", () => {
+  const html = renderHistory({ historySelected: "run-1" });
+  const open = rowButton(html, "run-1");
+  assert.match(open, /aria-expanded="true"/);
+  assert.match(open, /aria-controls="history-detail-run-1"/);
+  assert.match(html, /<div class="history-detail" id="history-detail-run-1"/);
+  const closed = rowButton(html, "run-2");
+  assert.match(closed, /aria-expanded="false"/);
+  // A collapsed row must not point assistive tech at a region that is not in the DOM.
+  assert.doesNotMatch(closed, /aria-controls/);
+  assert.doesNotMatch(html, /id="history-detail-run-2"/);
+});
+
+test("only the head row is announced as current, following the shell's head choice", () => {
+  const byDefault = renderHistory({});
+  assert.match(rowButton(byDefault, "run-2"), /aria-current="true"/);
+  assert.doesNotMatch(rowButton(byDefault, "run-1"), /aria-current/);
+
+  const chosen = renderHistory({ head: "run-1" });
+  assert.match(rowButton(chosen, "run-1"), /aria-current="true"/);
+  assert.doesNotMatch(rowButton(chosen, "run-2"), /aria-current/);
+});
