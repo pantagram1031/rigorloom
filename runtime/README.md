@@ -85,6 +85,32 @@ validation verdict, and — once a host approves — the same candidate SHA-256.
 
 One JSON document per invocation on stdout, diagnostics on stderr.
 
+### Installed-product doctor
+
+`doctor` runs before `--root` and never creates a Runtime workspace:
+
+```sh
+rigorloom doctor
+rigorloom doctor --engine-root /path/to/installed-engine
+```
+
+It exits `0` when every required check passes, `2` for command usage, and `3`
+when a required prerequisite fails. Output is one
+`rigorloom-doctor/v1` JSON document. Checks cover:
+
+- Runtime and child-Python compatibility with Python `>=3.10`;
+- configured `RIGORLOOM_CHILD_PYTHON` resolution and execution;
+- offline wheel-builder availability as informational evidence only (a
+  consumer does not need a builder);
+- optional installed-engine markers and `modules/enabled.yaml`;
+- the installed `engine/scripts/probe.py --json` render block as observed
+  capability facts, not as renderer acceptance.
+
+Without `--engine-root`, the engine check is explicitly `unavailable` with
+reason `engine_root_not_configured`; no checkout is used as a default. Doctor
+does not import installed engine modules into the wheel process and does not
+open a document, Hancom, COM, or a renderer.
+
 ```sh
 R=./work
 python runtime/scripts/cli.py --root $R open --path /abs/form.hwpx
