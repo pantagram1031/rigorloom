@@ -1191,6 +1191,23 @@ export function canRequestApproval(s: WorkspaceState): boolean {
  * has gone is still a candidate, and hiding it would hide the loss.
  */
 export function lineage(rows: Candidate[]): Candidate[] {
+  const cached = lineageCache.get(rows);
+  if (cached) return cached;
+  const ordered = computeLineage(rows);
+  lineageCache.set(rows, ordered);
+  return ordered;
+}
+
+/**
+ * One ordering per candidates array. A session's list is replaced wholesale
+ * whenever the runtime republishes it and is never mutated in place, so the
+ * array's identity is the cache key. Every `useWorkspace(headCandidate)`
+ * subscriber re-runs its selector on every store notification; without this
+ * each keystroke re-walked the whole history once per subscriber.
+ */
+const lineageCache = new WeakMap<Candidate[], Candidate[]>();
+
+function computeLineage(rows: Candidate[]): Candidate[] {
   const byId = new Map<string, Candidate>();
   for (const row of rows) if (row.runId) byId.set(row.runId, row);
   const children = new Map<string | null, Candidate[]>();
@@ -1202,16 +1219,34 @@ export function lineage(rows: Candidate[]): Candidate[] {
     children.set(key, bucket);
   }
   const out: Candidate[] = [];
-  const walk = (key: string | null) => {
-    for (const row of children.get(key) ?? []) {
-      out.push(row);
-      if (row.runId) walk(row.runId);
+  const seen = new Set<Candidate>();
+  // Depth-first in publication order, on an explicit stack: a straight chain
+  // is one frame per candidate when recursed, and the WebView's call stack is
+  // not the limit on how long a history may be.
+  const stack: Candidate[] = [];
+  const pushChildren = (key: string | null) => {
+    const bucket = children.get(key);
+    if (!bucket) return;
+    for (let i = bucket.length - 1; i >= 0; i--) {
+      const child = bucket[i];
+      if (child) stack.push(child);
     }
   };
-  walk(null);
+  pushChildren(null);
+  while (stack.length > 0) {
+    const row = stack.pop();
+    if (!row || seen.has(row)) continue;
+    seen.add(row);
+    out.push(row);
+    if (row.runId) pushChildren(row.runId);
+  }
   // Anything a cycle in the data would have stranded. Cannot happen with
   // runtime-written receipts; appended rather than silently lost if it does.
-  for (const row of rows) if (!out.includes(row)) out.push(row);
+  for (const row of rows) {
+    if (seen.has(row)) continue;
+    seen.add(row);
+    out.push(row);
+  }
   return out;
 }
 

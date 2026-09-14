@@ -274,3 +274,84 @@ test("only the head row is announced as current, following the shell's head choi
   assert.match(rowButton(chosen, "run-1"), /aria-current="true"/);
   assert.doesNotMatch(rowButton(chosen, "run-2"), /aria-current/);
 });
+
+// --- lineage: one walk per published history, not one per notification ---
+
+function loadStore() {
+  return loadComponentModule("../src/store.ts", {
+    react: { useSyncExternalStore: (_subscribe, snapshot) => snapshot() },
+  });
+}
+
+function candidate(runId, baseRunId) {
+  return {
+    runId,
+    sha256: `sha-${runId}`,
+    base: baseRunId === null ? null : { runId: baseRunId, sha256: `sha-${baseRunId}` },
+  };
+}
+
+function chain(length) {
+  const rows = [];
+  for (let i = 0; i < length; i++) rows.push(candidate(`run-${i}`, i === 0 ? null : `run-${i - 1}`));
+  return rows;
+}
+
+test("lineage order is unchanged for chains, forks, orphans and stranded cycles", () => {
+  const { lineage } = loadStore();
+  const rows = [
+    candidate("r1", null),
+    candidate("r2", "r1"),
+    candidate("r3", "r1"),
+    candidate("orphan", "missing-parent"),
+    candidate("c1", "c2"),
+    candidate("c2", "c1"),
+  ];
+  assert.deepEqual(
+    lineage(rows).map((row) => row.runId),
+    ["r1", "r2", "r3", "orphan", "c1", "c2"],
+  );
+});
+
+test("an unchanged history is not re-walked across store notifications", () => {
+  const store = loadStore();
+  let rowReads = 0;
+  const rows = new Proxy(chain(50), {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/.test(key)) rowReads += 1;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  store.setState({ activeSessionId: "session-A", candidates: { "session-A": rows }, head: null });
+  assert.equal(store.headCandidate(store.getState())?.runId, "run-49");
+  assert.ok(rowReads > 0, "the first selection walks the history");
+  const afterFirst = rowReads;
+  for (let i = 0; i < 100; i++) {
+    store.setState({ composerDraft: { text: `keystroke ${i}` } });
+    assert.equal(store.headCandidate(store.getState())?.runId, "run-49");
+  }
+  assert.equal(rowReads - afterFirst, 0, "later notifications reuse the walked ordering");
+});
+
+test("a republished history is walked again and its newest candidate becomes the default head", () => {
+  const store = loadStore();
+  const first = chain(3);
+  store.setState({ activeSessionId: "session-A", candidates: { "session-A": first }, head: null });
+  const before = store.lineage(first);
+  assert.equal(store.headCandidate(store.getState())?.runId, "run-2");
+
+  const republished = [...first, candidate("run-3", "run-2")];
+  store.setState({ candidates: { "session-A": republished } });
+  assert.notEqual(store.lineage(republished), before);
+  assert.equal(store.headCandidate(store.getState())?.runId, "run-3");
+  assert.equal(store.lineage(first), before, "the earlier list keeps its own ordering");
+});
+
+test("a straight chain longer than the call stack still orders every candidate", () => {
+  const { lineage } = loadStore();
+  const rows = chain(20000);
+  const ordered = lineage(rows);
+  assert.equal(ordered.length, rows.length);
+  assert.equal(ordered[0]?.runId, "run-0");
+  assert.equal(ordered[ordered.length - 1]?.runId, "run-19999");
+});
