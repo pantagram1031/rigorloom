@@ -71,6 +71,7 @@ TSC = REPO / "desktop" / "node_modules" / "typescript"
 DOCUMENT_CONTEXT = REPO / "desktop" / "src" / "components" / "DocumentContext.tsx"
 AGENT_VIEW = REPO / "desktop" / "src" / "views" / "AgentView.tsx"
 CONVERSATION = REPO / "desktop" / "src" / "components" / "Conversation.tsx"
+CONTEXT_PANEL = REPO / "desktop" / "src" / "components" / "ContextPanel.tsx"
 
 
 # ---------------------------------------------------------------------------
@@ -235,17 +236,25 @@ def test_approval_actions_keep_their_draft_owner_across_awaits():
 
 
 def test_agent_document_context_reads_shared_work_state():
-    """The agent pane must project the store, not hard-coded duplicate state."""
+    """The agent pane must project the store, not hard-coded duplicate state.
+
+    Since Stage 4b R2 the agent pane is the inspector's 에이전트 tab: DocumentContext
+    reads the shared selectors itself, the single ReviewQueue is mounted once by
+    ContextPanel (검토 tab), and AgentView is only a re-export of DocumentView, so
+    no second copy of session/queue state can exist.
+    """
     context = DOCUMENT_CONTEXT.read_text(encoding="utf-8")
-    assert "useWorkspace(activeReviewQueueCount)" in context
-    assert "useWorkspace(activeReviewApprovalState)" in context
-    assert "useWorkspace(activeReviewVerificationState)" in context
-    assert "<ReviewQueue" in context
+    for selector in ("activeSession", "activeInspect", "activeCandidates",
+                     "activeReviewQueueCount", "activeReviewApprovalState",
+                     "activeReviewVerificationState"):
+        assert f"useWorkspace({selector})" in context, selector
+    assert "<ReviewQueue" not in context  # approvals live in the 검토 tab only
+    panel = CONTEXT_PANEL.read_text(encoding="utf-8")
+    assert panel.count("<ReviewQueue") == 1
+    assert "<DocumentContext" in panel and "<Conversation" in panel
     agent = AGENT_VIEW.read_text(encoding="utf-8")
-    assert "useWorkspace(activeSession)" in agent
-    assert "useWorkspace(activeInspect)" in agent
-    assert "useWorkspace(activeCandidates)" in agent
-    assert "<DocumentContext session={session} inspect={inspect} candidates={candidates}" in agent
+    assert 'export { DocumentView as AgentView } from "./DocumentView"' in agent
+    assert "useWorkspace(" not in agent
 
 
 def test_superseded_agent_plan_is_not_described_as_queued():
