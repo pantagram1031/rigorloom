@@ -107,3 +107,6 @@ done only when the screenshot matches the intent; "tests pass" alone is not acce
 | 2026-09-17 | R5 landed; gemini-3.8-flash C1 row recorded | commit below |
 | 2026-09-17 | R6 landed with 24 reference captures; Fable review found four small defects → R7 | commit below |
 | 2026-09-17 | R7 landed; Stage 4b closed | commit below |
+| 2026-09-17 03:50 | N1 native smoke (cursor-grok-4.6-high-fast, 42 min incl. two release builds, 465k in / 33k out / 9.1M cache): `npx tauri build` + NSIS ok; first built-app smoke 516/26 (driver never opened the new tabs, copied exe lost its sidecar, one stale status string); after driver fixes **SMOKE PASS 549/0** across open/reattach/edit/agent/page(needs_hancom designed refusal)/own/own-reattach/overlay/undo/packs/composer/settings/chrome/chrome-reattach; headless 193. Native entrance screenshot reviewed by Fable | commit below |
+| 2026-09-17 03:50 | Full pytest sweep on the branch tip: 5219 passed, 182 skipped, 81 subtests; two stale/guard hits fixed at the cause (agent-pane structure test → single-inspector invariant; two integer inventory pins → discovery comparisons) | green |
+
