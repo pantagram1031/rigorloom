@@ -41,7 +41,7 @@ guide-text residue and a native Hancom proof receipt.
 | Report pipeline (`modules/report`, stage machine 0 → 6) | usable; the demo above ran through every gate |
 | Native Hancom assembly + proof (Windows) | usable; boxed equations, equation captions, poster line |
 | Pure-XML assembly (any OS) | usable; structural proof only, boxed equations refused with a named reason |
-| Runtime CLI for agents (`rigorloom open/inspect/...`) | in progress on the CLI-first branches; Hancom backend not yet wired |
+| Runtime CLI for agents (`rigorloom open/inspect/propose/approve/apply/...`) | usable for the `preedit` backend; `com` backend executes a first wave of seven ops through Hancom with a `native_com_session` receipt (one recorded live run); `xml` backend not yet routed |
 | Desktop editor (Tauri) | pre-alpha on unmerged branches; do not rely on it |
 
 The core workflow does not require Hancom Office. Linux and Windows

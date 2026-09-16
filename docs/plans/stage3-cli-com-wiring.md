@@ -40,16 +40,18 @@ known registry for `servedBy` classification but is refused for execution (`defe
       accepts `backend: com` only when available and only first-wave ops; foreign-op mix refused; `opsHash`
       includes the backend. Owned: `rt_codes.py`, `rt_plan.py`, `rt_core.py`, `rt_engine.py` (capability only),
       `tests/test_runtime_plan.py`, `tests/test_runtime_cli.py`, new `tests/test_runtime_com_capability.py`.
-- [ ] S2 COM child adapter: `EngineTools.com_edit_run(argv)` (serialized, bounded, no kill-stale, busy check via
+- [x] S2+S3 done together (grok-4.6-xhigh, 18 min, 172k in / 54k out / 4.6M cache; 35 + 112 tests green; committed 1bc5ae8). Follow-up f043275: the bounded child env lacked `ProgramData`, which Hancom's COM server needs — found by bisecting the environment against a manual replay; one variable fixes it.
+- [x] S5 live smoke recorded 2026-09-16 on this PC (Hancom 13.0.0.2986, pyhwpx): `open` 소논문_기본양식.hwpx (source sha 21ddd062…) → `propose --backend com` (replace_all 논문제목→title, goto_text "I.  서론", insert_text) → `request-approval` → `approve` → `apply` rc 0. Candidate `artifact.hwpx` 54,244 bytes sha256 4309bef10e17102bcd198eb30686e6a92c776c6c464c4d333ea87c637465df52; receipt `backend: com`, `evidence.class: native_com_session` with `post_inspect`; title replaced and sentence present in the candidate; session source hash unchanged; residue checker honestly reports the form anchors still present (partial edit, `acceptance: false`); no Hwp.exe left running.
+- [ ] S2 (superseded, see above) COM child adapter: `EngineTools.com_edit_run(argv)` (serialized, bounded, no kill-stale, busy check via
       the existing process probe), ops-file writer for the engine's JSON shape. Owned: `rt_engine.py`,
       `rt_convert.py` (reuse probe), new `tests/test_runtime_com_adapter.py`.
 - [ ] S3 COM apply + native receipt: `apply_plan` branches on `plan.payload["backend"] == "com"`: opened copy →
       one `edit` batch → save-as → optional export-pdf → residue checks on bytes → receipt with
       `native_com_session` evidence. Owned: `rt_apply.py`, `rt_apply_once.py`, new `tests/test_runtime_com_apply.py`.
-- [ ] S4 cross-surface regression (test-only): parity/authority/mcp suites still pass; xml stays unserved.
+- [x] S4 cross-surface regression: parity/authority/mcp suites (112 tests) green after S2+S3; xml stays unserved.
 - [ ] S5 opt-in live smoke: `tests/test_runtime_com_live.py`, default skipped; one recorded run on this PC with
       a `replace_all` + `insert_text` plan on 소논문_기본양식.hwpx; receipt and candidate hashes pasted here.
-- [ ] S6 README status row flips "Runtime CLI … Hancom backend not yet wired" once S5 is recorded.
+- [x] S6 README status row flipped (commit below) "Runtime CLI … Hancom backend not yet wired" once S5 is recorded.
 
 ## Ledger
 

@@ -80,6 +80,15 @@ Add two catalog entries + refresh ~35 implementation line references + bump two 
 
 Two cheap models asked for the same design note (read-only). Usage: gpt-5.6-sol-high-fast 6.1 min, 15.7k output, 1.85M cache; cursor-grok-4.6-low-fast 4.4 min, 9.4k output, 632k cache. Quality assessment: pending Fable review of the two notes.
 
+### Stage 3 production tasks (grok-4.6-xhigh-fast, 2026-09-16)
+
+| task | wall | in / out / cache tokens | outcome |
+|---|---|---|---|
+| S1 capability + plan contract | 17 min | 285k / 50k / 6.4M | 59 + 55 tests green first run; committed |
+| S2+S3 adapter + apply + receipt | 18 min | 172k / 54k / 4.6M | 35 + 112 tests green first run; live smoke then exposed a child-env gap (`ProgramData`) that no unit test could see — fixed by Fable after bisecting |
+
+Reading: grok-xhigh delivers spec-shaped runtime code with green suites in one pass; the residual risk is host integration, which only a live run reveals. A1's two cheap notes (sol, grok-low) were accurate enough to plan S1–S3 without Fable reading the runtime code itself.
+
 ## Verdicts so far (Stage 1 experience, all cursor-grok-4.6-xhigh-fast)
 
 - T1–T7, H1: 9/9 bounded engine tasks accepted after my review; typical
