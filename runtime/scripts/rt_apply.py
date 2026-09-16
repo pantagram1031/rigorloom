@@ -123,6 +123,26 @@ def _argv_for(kind: str, params: dict, source: Path, target: Path) -> list[str]:
     raise RpcError("unknown_op_kind", f"no preedit mapping for {kind!r}", kind=kind)
 
 
+
+def _first_malformed_xml_part(path: Path) -> tuple[str, str] | None:
+    """Return (part name, parser error) for the first XML part of an HWPX zip
+    that does not parse, or None when every ``*.xml`` part is well-formed.
+    A non-zip file is reported as the part ``<zip>``."""
+    import xml.etree.ElementTree as ET  # noqa: PLC0415
+    import zipfile  # noqa: PLC0415
+    try:
+        with zipfile.ZipFile(path) as zf:
+            for name in zf.namelist():
+                if not name.lower().endswith(".xml"):
+                    continue
+                try:
+                    ET.fromstring(zf.read(name))
+                except ET.ParseError as exc:
+                    return name, str(exc)
+    except zipfile.BadZipFile as exc:
+        return "<zip>", str(exc)
+    return None
+
 def _atomic_move(source: Path, target: Path) -> None:
     """Stream the finished work file into place, durably.
 
@@ -217,9 +237,13 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
     ``backend: com`` copies the origin to ``work/<runId>/opened*``, runs ONE
     ``com_backend.py edit`` batch with a distinct save-as, optionally exports
     ``native.pdf``, then publishes like the preedit path.
+
+    ``backend: xml`` is the same opened-copy shape through
+    ``xml_backend.py edit`` (no renderer); the receipt's evidence class is
+    ``structural_only`` plus ``evidence.xml``.
     """
     backend = plan.payload.get("backend")
-    if backend not in ("preedit", "com"):
+    if backend not in ("preedit", "com", "xml"):
         raise RpcError(
             "unsupported_backend",
             (f"backend {backend!r} has no apply path in this build"),
@@ -255,6 +279,8 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
     current = origin
     native_pdf_src = None
     post_inspect = None
+    xml_child_payload: dict | None = None
+    xml_well_formed = False
     try:
         if backend == "com":
             from rt_engine import (  # noqa: PLC0415
@@ -279,6 +305,38 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
             current = edited
             native_pdf_src = pdf_target
             post_inspect = strip_equation_source(payload.get("post_inspect"))
+            tick()
+        elif backend == "xml":
+            from rt_engine import (  # noqa: PLC0415
+                stage_xml_ops, write_xml_ops_file,
+            )
+            tick()
+            opened = work_dir / f"opened{suffix}"
+            shutil.copyfile(origin, opened)
+            edited = work_dir / f"edited{suffix}"
+            rows = stage_xml_ops(ops, work_dir)
+            ops_path = write_xml_ops_file(rows, work_dir / "ops.json")
+            outcome = tools.xml_edit_run(opened, ops_path, edited)
+            payload = outcome["payload"]
+            xml_child_payload = payload
+            steps.append({
+                "subcommand": "edit",
+                "exitCode": outcome["exitCode"],
+                "results": payload.get("results") or [],
+            })
+            # The child never asserts well-formedness; the Runtime checks it
+            # before the receipt claims it. A candidate whose XML parts do not
+            # parse is refused, never published.
+            bad_part = _first_malformed_xml_part(edited)
+            if bad_part is not None:
+                raise RpcError(
+                    "backend_refused",
+                    f"xml_backend produced a candidate whose part {bad_part[0]} "
+                    f"is not well-formed XML",
+                    backend="xml", reason="xml_not_well_formed",
+                    part=bad_part[0], detail=bad_part[1][:400])
+            xml_well_formed = True
+            current = edited
             tick()
         else:
             for index, op in enumerate(ops):
@@ -331,6 +389,27 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
                     "pdf": pdf_record,
                 },
                 "note": NATIVE_COM_NOTE,
+            }
+        elif backend == "xml":
+            # structural_only: the pure-XML path never runs a renderer.
+            # evidence.xml carries the child's wellFormedness and proofGrade
+            # from its JSON payload when the child reported them.
+            xml_ev: dict = {"proofGrade": "structural",
+                            "wellFormed": xml_well_formed}
+            if isinstance(xml_child_payload, dict):
+                nested = []
+                for key in ("xml", "evidence"):
+                    block = xml_child_payload.get(key)
+                    if isinstance(block, dict):
+                        nested.append(block)
+                for src in (xml_child_payload, *nested):
+                    if "proofGrade" in src:
+                        xml_ev["proofGrade"] = src["proofGrade"]
+            evidence = {
+                "class": "structural_only",
+                "xml": xml_ev,
+                "note": ("no renderer ran; this receipt binds bytes and offline "
+                         "checker results, and claims no render proof"),
             }
         else:
             evidence = {

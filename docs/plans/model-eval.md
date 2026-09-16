@@ -103,3 +103,13 @@ The primary Cursor account (`pantagram1031`) returned `ActionRequiredError: You'
   wall-clock 6–15 min; every acceptance suite passed on first run; one design
   miss (T4 whole-paragraph rule) that was a spec gap, not a model error.
   Grok 4.6 xhigh-fast is sufficient for spec-driven code with tests.
+
+### S7b / G6 outcomes (2026-09-17, cursor-grok-4.6-high-fast)
+- S7b (finish xml routing left by Antigravity): 13.5 min, 436k in / 35k out / 3.0M cache. Found the real blocker
+  (`plan_apply` gate) rather than patching tests, ran both acceptance suites and a real CLI e2e unprompted. Gap it
+  did not see: the receipt claimed `wellFormed: true` without any parse (Fable fixed). Verdict: grok-high is a
+  reliable finisher for a half-done, well-specified task.
+- G6 (desktop region source + smoke retarget): 11 min, 515k in / 33k out / 2.9M cache, tests 140 → 149, build ok,
+  visually verified in vite dev-mock (tree click → 자리 원문 pane shows address/access/text, cell highlighted).
+  Pre-existing dev-mock console error (Tauri drag-drop unsubscribe under StrictMode) noted, not G6's.
+

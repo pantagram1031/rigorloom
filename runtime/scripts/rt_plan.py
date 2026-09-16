@@ -3,11 +3,14 @@
 """OperationPlan, PlanValidation, ApprovalRequest/ApprovalRecord.
 
 A plan declares its backend (orchestrator decision D9). This slice executes
-``preedit`` always, and ``com`` when the host capability is available.
-``xml`` plans are refused with ``unsupported_backend``.
-``com`` plans are accepted at propose when ``capabilities.backends.com`` is
-``available`` (Hancom probe plus ``engine/scripts/com_backend.py``); apply
-runs one ``com_backend.py edit`` batch (see ``rt_engine.com_edit_run``).
+``preedit`` always, ``xml`` when ``engine/scripts/xml_backend.py`` resolves
+under the engine root, and ``com`` when the host capability is available.
+``xml`` plans are accepted at propose when ``capabilities.backends.xml`` is
+``available``; apply runs one ``xml_backend.py edit`` batch (see
+``rt_engine.xml_edit_run``). ``com`` plans are accepted at propose when
+``capabilities.backends.com`` is ``available`` (Hancom probe plus
+``engine/scripts/com_backend.py``); apply runs one ``com_backend.py edit``
+batch (see ``rt_engine.com_edit_run``).
 Op kinds those backends own, mixed into a preedit plan, are refused with
 ``unsupported_backend`` that NAMES the backend which would serve them, so the
 refusal is a routing answer rather than a wall.
@@ -78,6 +81,14 @@ XML_OP_KINDS = frozenset({
     "page_binding", "replace_all", "insert_blank_before", "insert_picture",
     "set_line_spacing",
 })
+#: First wave = intersection of xml_backend.SUPPORTED_OPS with what the plan
+#: layer already knows. Order follows the task spec (requirement 1).
+XML_FIRST_WAVE: tuple[str, ...] = (
+    "goto_text", "insert_text", "replace_all", "insert_blank_before",
+    "set_line_spacing", "page_binding", "insert_table",
+    "insert_picture", "insert_equation",
+)
+XML_FIRST_WAVE_SET = frozenset(XML_FIRST_WAVE)
 #: engine/scripts/com_backend.py:1902 (24 entries, verified against OPS)
 COM_OP_KINDS = frozenset({
     "replace_all", "put_field", "goto_text", "find_delete", "move",
@@ -110,6 +121,13 @@ COM_DEFERRED_REFUSALS = (
     "set_cell_expect_mismatch",
     "anchor_not_found",
 )
+#: XML apply-time refusals the plan layer does not preflight. Boxed display
+#: equations are structurally refused by xml_backend with
+#: ``equation_box_unsupported_xml``; well-formedness is the child's job.
+XML_DEFERRED_REFUSALS = (
+    "equation_box_unsupported_xml",
+    "xml_wellformedness",
+)
 
 _OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # kind: (required, optional)
@@ -134,6 +152,24 @@ _COM_OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "insert_picture": (("path",), ("width_mm", "height_mm",
                                    "treat_as_char", "own_paragraph")),
     "insert_hyperlink": (("url",), ("text", "pt")),
+}
+
+#: Closed first-wave XML schemas — the intersection of xml_backend.SUPPORTED_OPS
+#: with the plan layer's field definitions. ``boxed`` equations are structurally
+#: refused by the engine with ``equation_box_unsupported_xml``; the plan layer
+#: lets them through so the engine's own named reason surfaces at apply time.
+_XML_OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "goto_text": (("text",), ("after", "line_end", "cell_below", "next_para")),
+    "insert_text": (("text",), ("pt", "segments", "break_after", "align")),
+    "replace_all": (("find", "replace"), ("regex",)),
+    "insert_blank_before": (("text",), ()),
+    "set_line_spacing": ((), ("ratio", "unit", "value")),
+    "page_binding": ((), ("mode",)),
+    "insert_table": ((), ("rows", "cols", "width_mm", "header_rows", "caption")),
+    "insert_picture": (("path",), ("width_mm", "height_mm",
+                                   "treat_as_char", "own_paragraph")),
+    "insert_equation": ((), ("latex", "hwpeqn", "display", "boxed",
+                             "base_pt", "font", "box_height_mm")),
 }
 
 
@@ -404,6 +440,14 @@ def _foreign_owner(kind: str, backend: str) -> str | None:
         if kind in XML_OP_KINDS and kind not in COM_OP_KINDS:
             return "xml"
         return None
+    if backend == "xml":
+        if kind in XML_FIRST_WAVE_SET:
+            return None  # xml's own kind
+        if kind in PREEDIT_OP_KINDS:
+            return "preedit"
+        if kind in COM_OP_KINDS:
+            return "com"
+        return None
     return _classify_foreign_kind(kind)
 
 
@@ -474,10 +518,15 @@ def _refuse_unservable_kind(kind: str, backend: str, at: str) -> None:
             at=at, kind=kind, servedBy="com",
             knownKinds=list(COM_FIRST_WAVE),
             notImplemented=sorted(COM_DEFERRED_OP_KINDS))
-    known = (sorted(PREEDIT_OP_KINDS) if backend == "preedit"
-             else list(COM_FIRST_WAVE))
-    not_implemented = (list(PREEDIT_NOT_IMPLEMENTED) if backend == "preedit"
-                       else sorted(COM_DEFERRED_OP_KINDS))
+    if backend == "preedit":
+        known = sorted(PREEDIT_OP_KINDS)
+        not_implemented = list(PREEDIT_NOT_IMPLEMENTED)
+    elif backend == "xml":
+        known = list(XML_FIRST_WAVE)
+        not_implemented = []
+    else:
+        known = list(COM_FIRST_WAVE)
+        not_implemented = sorted(COM_DEFERRED_OP_KINDS)
     raise RpcError(
         "unknown_op_kind",
         f"op kind {kind!r} is not known to the "
@@ -486,9 +535,17 @@ def _refuse_unservable_kind(kind: str, backend: str, at: str) -> None:
         notImplemented=not_implemented)
 
 
+
 def _normalise_ops(backend: str, ops: list) -> list:
-    field_table = _OP_FIELDS if backend == "preedit" else _COM_OP_FIELDS
-    accepted = PREEDIT_OP_KINDS if backend == "preedit" else COM_FIRST_WAVE_SET
+    if backend == "preedit":
+        field_table = _OP_FIELDS
+        accepted = PREEDIT_OP_KINDS
+    elif backend == "xml":
+        field_table = _XML_OP_FIELDS
+        accepted = XML_FIRST_WAVE_SET
+    else:
+        field_table = _COM_OP_FIELDS
+        accepted = COM_FIRST_WAVE_SET
     normalised = []
     seen_ids: set[str] = set()
     for index, op in enumerate(ops):
@@ -532,7 +589,8 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
                bound_sha256: str, base: dict | None = None,
                reverses: dict | None = None, declares=None,
                inventory: dict | None = None,
-               com_capability: dict | None = None) -> OperationPlan:
+               com_capability: dict | None = None,
+               xml_capability: dict | None = None) -> OperationPlan:
     """Create a plan. Refuses an unservable backend or op kind before anything else.
 
     ``base`` is the published candidate these ops are chained onto, or ``None``
@@ -548,6 +606,10 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
 
     ``com_capability`` is the produced ``backends.com`` snapshot. A ``com``
     plan is accepted only when that snapshot's ``state`` is ``available``.
+
+    ``xml_capability`` is the produced ``backends.xml`` snapshot. An ``xml``
+    plan is accepted only when that snapshot's ``state`` is ``available``
+    (i.e. ``engine/scripts/xml_backend.py`` is present under the engine root).
     """
     if backend not in KNOWN_BACKENDS:
         raise RpcError(
@@ -565,6 +627,13 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
             if cap.get("missing") is not None:
                 data["missing"] = cap["missing"]
             raise RpcError("capability_unavailable", reason, **data)
+    elif backend == "xml":
+        cap = xml_capability or {}
+        if cap.get("state") != "available":
+            reason = cap.get("reason") or (
+                "the xml backend is not available on this host")
+            raise RpcError("capability_unavailable", reason,
+                           backend="xml", state="unavailable")
     elif backend not in SUPPORTED_BACKENDS:
         raise RpcError(
             "unsupported_backend",
@@ -730,6 +799,30 @@ def validate_plan(plan: OperationPlan, *, profile: dict,
             "plan",
             boundSha256=plan.payload["boundSha256"],
             currentSha256=current_sha256))
+
+    if plan.payload.get("backend") == "xml":
+        return {
+            "planId": plan.id,
+            "planHash": plan.hash,
+            "backend": plan.payload["backend"],
+            "boundSha256": plan.payload["boundSha256"],
+            "currentSha256": current_sha256,
+            "stale": stale,
+            "ok": not hard,
+            "verdict": "pass" if not hard else "fail",
+            "hard": hard,
+            "warn": warn,
+            "counts": {"hard": len(hard), "warn": len(warn),
+                       "ops": len(plan.payload["ops"])},
+            "preflight": {
+                "level": "structural+backend-schema",
+                "source": "runtime XML first-wave schema; xml_backend is not executed",
+                "deferred": list(XML_DEFERRED_REFUSALS),
+                "note": ("XML validation does not open the archive; boxed "
+                         "equations and well-formedness are apply-time "
+                         "refusals listed in deferred"),
+            },
+        }
 
     if plan.payload.get("backend") == "com":
         for op in plan.payload["ops"]:

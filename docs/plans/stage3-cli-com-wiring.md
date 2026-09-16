@@ -52,6 +52,21 @@ known registry for `servedBy` classification but is refused for execution (`defe
 - [ ] S5 opt-in live smoke: `tests/test_runtime_com_live.py`, default skipped; one recorded run on this PC with
       a `replace_all` + `insert_text` plan on 소논문_기본양식.hwpx; receipt and candidate hashes pasted here.
 - [x] S6 README status row flipped (commit below) "Runtime CLI … Hancom backend not yet wired" once S5 is recorded.
+- [x] S7 xml backend routed (2026-09-17). Started on Antigravity claude-sonnet-4-6 (24.5 min, quota killed it at
+      46/50 tests), finished by cursor-grok-4.6-high-fast S7b (13.5 min, 436k in / 35k out / 3.0M cache): the real gap
+      was `RuntimeCore.plan_apply` refusing `xml` before the apply branch ran. First wave = goto_text, insert_text,
+      replace_all, insert_blank_before, set_line_spacing, page_binding, insert_table, insert_picture, insert_equation;
+      boxed equations surface `equation_box_unsupported_xml` as `backend_refused`. `EngineTools.xml_edit_run` →
+      `xml_backend.py --file/--ops/--save-as --json`; capability `backends.xml` = available with `proofGrade:
+      structural` when the script resolves. Receipt `backend: xml`, `evidence.class: structural_only`, `evidence.xml
+      {proofGrade, wellFormed}`. Fable hardening: the child never asserts well-formedness, so `rt_apply` now parses
+      every `*.xml` part of the candidate itself and refuses (`xml_not_well_formed`, nothing published) when one fails;
+      test `test_fake_xml_malformed_candidate_is_refused_not_published`. Recorded e2e on this PC without Hancom:
+      `open` 소논문_기본양식.hwpx → `propose --backend xml` (replace_all 논문제목→"XML 스모크", goto_text "I.  서론",
+      insert_text) → approve → apply rc 0, run 73920efcd67b41b38593a6f86640a703, candidate 48,844 bytes sha256
+      7b2f7cd16997e49f63409e71d45dcf6159e322e0639af940481918f361a92c5f, source sha unchanged, residue checker
+      honestly `acceptance: false` on the unfilled form. Suites: 128 passed (xml/com/capability/plan/cli/parity/
+      authority/mcp/cleanroom), py_compile 140/0. Not done: `runtime/README.md` still says preedit-only.
 
 ## Ledger
 

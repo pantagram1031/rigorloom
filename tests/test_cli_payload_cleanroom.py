@@ -596,18 +596,21 @@ class TestCapabilitiesOverThePayload:
         assert "report" in modules["discovered"]
         assert sorted(modules["enabled"]) == ["report", "style"]
 
-    def test_preedit_backend_is_available_and_is_the_only_supported_one(self, flow):
+    def test_preedit_and_xml_are_supported_without_a_host_probe(self, flow):
         result = flow["capabilities"]["payload"]["result"]
-        assert result["supportedBackends"] == ["preedit"]
+        assert result["supportedBackends"] == ["preedit", "xml"]
         assert result["backends"]["preedit"]["state"] == "available"
+        assert result["backends"]["xml"]["state"] == "available"
+        assert result["backends"]["xml"]["proofGrade"] == "structural"
 
     def test_declared_but_unexecuted_backends_stay_unavailable_with_reasons(
             self, flow):
-        """XML and COM are protocol vocabulary, not capability."""
+        """COM stays host-probed; xml is available when xml_backend.py resolves."""
         backends = flow["capabilities"]["payload"]["result"]["backends"]
-        for name in ("xml", "com"):
-            assert backends[name]["state"] == "unavailable"
-            assert backends[name]["reason"], f"{name} unavailable with no reason"
+        assert backends["xml"]["state"] == "available"
+        assert backends["xml"]["proofGrade"] == "structural"
+        assert backends["com"]["state"] == "unavailable"
+        assert backends["com"]["reason"], "com unavailable with no reason"
 
     def test_nothing_negative_is_reported_without_a_reason(self, flow):
         negative = {"unavailable", "no", "not_established", "false"}

@@ -664,10 +664,19 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 ## 9. Implementation status (Phase 1 slice)
 
 Implemented in `runtime/` on this branch. Everything not listed is still GAP.
-The slice executes the offline `preedit` backend (orchestrator decision D9).
-`xml` plans stay `unsupported_backend`. Op kinds owned by xml or com, mixed
+The slice executes the offline `preedit` backend (orchestrator decision D9)
+and the pure-XML `xml` backend when `engine/scripts/xml_backend.py` resolves
+under the engine root. Op kinds owned by xml or com, mixed
 into a preedit plan, are refused with `unsupported_backend` naming the
-backend that would serve them. `com`
+backend that would serve them. `capabilities.backends.xml` is produced
+from path resolution of `xml_backend.py` (no host probe); `state` is
+`available` only when the script is present, `proofGrade` is `structural`,
+and `opKinds` equals the XML first wave. Propose accepts `backend: "xml"`
+only when that capability is available; otherwise it refuses with
+`capability_unavailable`. A xml plan that reaches `plan/apply` runs one
+bounded `xml_backend.py edit` batch against a work copy (`opened*` →
+`edited*`); the session source is unchanged. Receipt `evidence.class` is
+`structural_only` plus `evidence.xml: {proofGrade, wellFormed}`. `com`
 is not a constant `unavailable`: `capabilities.backends.com` is produced
 from `rt_convert.hancom_facts()` plus resolution of
 `engine/scripts/com_backend.py`. `state` is `available` only when the probe
@@ -685,7 +694,7 @@ batch against a work copy (`opened*` → `edited*`); the session source is
 never opened by Hancom. Receipt `evidence.class` is the closed token
 `native_com_session` — COM `post_inspect` is Hancom's own inspection, not a
 render certificate. An optional exported PDF is hashed as export evidence
-only. `xml` stays `unsupported_backend`.
+only.
 
 ### Methods
 
@@ -697,12 +706,12 @@ only. `xml` stays `unsupported_backend`.
 | `workspace/openPath` (host) | implemented — size + zip sanity; no HWP5 CFB walk | `runtime/scripts/rt_session.py` `validate_source` |
 | `document/inspect` | implemented — summary + graph + regions | `_m_document_inspect` |
 | `document/readRegion` | implemented, bounded, refuses rather than truncates | `_m_document_read_region` |
-| `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan`. `com` only when `backends.com` is available; first-wave kinds only. |
+| `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan`. `xml` when `xml_backend.py` resolves; `com` only when `backends.com` is available; first-wave kinds only. |
 | `plan/validate` | implemented, profile-derived (see below) | `rt_plan.validate_plan` |
 | `plan/get`, `approval/get` | implemented | `rt_server` |
 | `approval/request` (agent) | implemented | `rt_plan.request_approval` |
 | `approval/resolve` (host) | implemented, binds plan id + plan hash | `rt_plan.resolve_approval` |
-| `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan`; `backend: com` is one `com_backend.py edit` batch (`native_com_session`); xml stays `unsupported_backend` |
+| `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan`; `backend: xml` is one `xml_backend.py edit` batch (`structural_only` + `evidence.xml`); `backend: com` is one `com_backend.py edit` batch (`native_com_session`) |
 | `candidate/list`, `receipt/read` | implemented; the receipt refuses on drift | `rt_apply` |
 | cancellation | implemented, cooperative between ops | `rt_server._checkpoint` |
 | `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`, `workspace/delete`, `verify/*` | GAP | — |

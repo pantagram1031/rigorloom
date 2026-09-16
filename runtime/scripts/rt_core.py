@@ -185,9 +185,7 @@ class RuntimeCore:
                 "opKinds": sorted(PREEDIT_OP_KINDS),
                 "notImplemented": list(PREEDIT_NOT_IMPLEMENTED),
             },
-            "xml": {"state": "unavailable",
-                    "reason": "declared by the protocol; not executed by this build",
-                    "opKinds": sorted(XML_OP_KINDS)},
+            "xml": self.tools.xml_capability(),
             "com": self.tools.com_capability(),
         }
         return {
@@ -399,7 +397,9 @@ class RuntimeCore:
                           base=base, reverses=reversal, declares=declares,
                           inventory=inventory,
                           com_capability=(self.tools.com_capability()
-                                          if backend == "com" else None))
+                                          if backend == "com" else None),
+                          xml_capability=(self.tools.xml_capability()
+                                          if backend == "xml" else None))
         self.save_plan(plan)
         append_event(session, "plan.proposed", planId=plan.id,
                      opsHash=plan.payload["opsHash"], backend=backend,
@@ -521,7 +521,7 @@ class RuntimeCore:
                            f"the approval for this plan is {record.state}",
                            planId=plan.id, approvalId=record.id, state=record.state)
         backend = plan.payload.get("backend")
-        if backend not in ("preedit", "com"):
+        if backend not in ("preedit", "com", "xml"):
             raise RpcError(
                 "unsupported_backend",
                 (f"backend {backend!r} has no apply path "

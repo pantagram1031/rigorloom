@@ -155,32 +155,46 @@ def test_com_apply_failure_publishes_nothing(tmp_path, hancom_ok, monkeypatch):
     assert list(session.candidates_dir.iterdir()) == []
 
 
-def test_xml_backend_is_still_refused_at_apply(tmp_path):
+def test_xml_backend_routes_to_xml_edit_run_not_refused(tmp_path, monkeypatch):
+    """S7: xml apply no longer refuses; it routes to xml_edit_run.
+
+    Use a fake xml_edit_run that returns a success payload. This verifies
+    the apply branch exists and the source is unchanged after it runs.
+    """
     source = _hwpx(tmp_path)
-    store = SessionStore(tmp_path / "root")
-    session = store.open_path(str(source))
-    plan = rt_plan.OperationPlan({
-        "planId": "a" * 32,
-        "planHash": "h" * 64,
-        "backend": "xml",
-        "ops": [{"opId": "op-1", "kind": "replace_all",
-                 "params": {"find": "a", "replace": "b"}}],
-        "base": None,
-        "declares": None,
-        "reverses": None,
-    })
-    approval = rt_plan.ApprovalRecord({
-        "approvalId": "b" * 32,
-        "planId": plan.id,
-        "planHash": plan.hash,
-        "state": "approved",
-        "approver": "test",
-    })
-    with pytest.raises(RpcError) as caught:
-        apply_plan(rt_engine.EngineTools(), session, plan, approval)
-    assert caught.value.code == "unsupported_backend"
-    assert caught.value.data["declared"] == "xml"
-    assert not session.candidates_dir.exists() or list(session.candidates_dir.iterdir()) == []
+    before = _sha(source)
+    core = RuntimeCore(tmp_path / "root")
+    session_id = core.open_path(str(source))["sessionId"]
+    session = core.store.get(session_id)
+    calls = []
+
+    def fake_xml_edit_run(file, ops_path, save_as, timeout=None):
+        Path(save_as).parent.mkdir(parents=True, exist_ok=True)
+        Path(save_as).write_bytes(Path(file).read_bytes())
+        calls.append({"file": str(file), "save_as": str(save_as)})
+        return {"exitCode": 0,
+                "payload": {"ok": True, "applied": 1, "unsupported": [],
+                            "anchors_missing": [], "results": [{"op": "replace_all"}]},
+                "argv": []}
+
+    monkeypatch.setattr(core.tools, "xml_edit_run", fake_xml_edit_run)
+
+    plan = core.plan_propose(
+        session_id, "xml",
+        [{"kind": "replace_all", "find": "a", "replace": "b"}],
+        "test")["plan"]
+    approval = core.approval_request(plan["planId"], "test")["approval"]
+    core.approval_resolve(
+        approval["approvalId"], plan["planId"], plan["planHash"],
+        "approved", "test-operator")
+    result = core.plan_apply(plan["planId"], approval["approvalId"])
+    assert result["candidate"]["canonical"] is True
+    assert len(calls) == 1
+    # source unchanged
+    assert _sha(source) == before
+    receipt = read_receipt(session, result["candidate"]["runId"])
+    assert receipt["backend"] == "xml"
+    assert receipt["evidence"]["class"] == "structural_only"
 
 
 def test_apply_once_replays_the_same_com_candidate(tmp_path, hancom_ok, monkeypatch):

@@ -171,11 +171,13 @@ APPROVAL_DECISIONS = ("approved", "rejected")
 
 #: Backends this build always executes without a host probe. ``com`` may be
 #: proposed and applied when ``capabilities.backends.com.state`` is
-#: ``available`` (Hancom facts plus ``com_backend.py``). ``xml`` stays unserved.
+#: ``available`` (Hancom facts plus ``com_backend.py``). ``xml`` is available
+#: when ``engine/scripts/xml_backend.py`` resolves under the engine root
+#: (it needs no host facts, so the check is just a path resolve).
 #: ``com`` and ``xml`` op kinds on a *preedit* plan are refused with
 #: ``unsupported_backend`` naming which backend would serve them
 #: (orchestrator decision D9).
-SUPPORTED_BACKENDS = ("preedit",)
+SUPPORTED_BACKENDS = ("preedit", "xml")
 KNOWN_BACKENDS = ("preedit", "xml", "com")
 
 #: Closed evidence classes on a Runtime candidate receipt.

@@ -66,12 +66,16 @@ def test_the_plan_hash_covers_the_ops(client, session):
 
 
 def test_a_declared_but_unserved_backend_is_refused_by_name(client, session):
-    """xml stays unserved. com is capability-gated in test_runtime_com_capability."""
-    error = client.err("plan/propose", {"sessionId": session, "backend": "xml",
-                                        "ops": [CLEAN_OP]})
-    assert error["code"] == "unsupported_backend"
-    assert error["data"]["declared"] == "xml"
-    assert error["data"]["supported"] == ["preedit"]
+    """xml is now capability-gated (like com). In this repo xml_backend.py is
+    present, so xml plans succeed at propose. This test verifies the plan layer
+    accepts replace_all on the xml backend (the first-wave op schema)."""
+    # xml_backend.py is present in engine/scripts/ so the capability is available.
+    plan = client.ok("plan/propose", {"sessionId": session, "backend": "xml",
+                                      "ops": [{"kind": "replace_all",
+                                               "find": "a", "replace": "b"}]})
+    assert plan["plan"]["backend"] == "xml"
+    assert plan["plan"]["ops"][0]["kind"] == "replace_all"
+
 
 
 def test_an_unknown_backend_is_refused(client, session):

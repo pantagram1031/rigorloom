@@ -305,6 +305,15 @@ def com_edit_argv(script, file, ops_path, save_as, export_pdf=None) -> list[str]
     return argv
 
 
+def xml_edit_argv(script, file, ops_path, save_as) -> list[str]:
+    """The one argv shape: edit --file --ops --save-as --json."""
+    return [child_python(), str(script), "edit",
+            "--file", str(file),
+            "--ops", str(ops_path),
+            "--save-as", str(save_as),
+            "--json"]
+
+
 def stage_com_ops(ops: list, work_dir: Path) -> list[dict]:
     """Runtime plan ops → engine ops JSON list. Pictures land under work/assets/."""
     from rt_plan import COM_FIRST_WAVE, COM_FIRST_WAVE_SET  # noqa: PLC0415
@@ -347,6 +356,77 @@ def write_com_ops_file(rows: list, path: Path) -> Path:
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2),
                     encoding="utf-8")
     return path
+
+
+#: XML backend uses "op" key (not "kind") and accepts a flat params dict merged
+#: directly into the op row. The first-wave intersection is defined in rt_plan.
+_XML_PARAM_KEYS: dict[str, tuple[str, ...]] = {
+    "goto_text": ("text", "after", "line_end", "cell_below", "next_para"),
+    "insert_text": ("text", "pt", "segments", "break_after", "align"),
+    "replace_all": ("find", "replace", "regex"),
+    "insert_blank_before": ("text",),
+    "set_line_spacing": ("ratio", "unit", "value"),
+    "page_binding": ("mode",),
+    "insert_table": ("rows", "cols", "width_mm", "header_rows", "caption"),
+    "insert_picture": ("path", "width_mm", "height_mm",
+                       "treat_as_char", "own_paragraph"),
+    "insert_equation": ("latex", "hwpeqn", "display", "boxed",
+                        "base_pt", "font", "box_height_mm"),
+}
+
+
+def stage_xml_ops(ops: list, work_dir: Path) -> list[dict]:
+    """Runtime plan ops → xml_backend ops JSON list.
+
+    xml_backend uses ``"op"`` (not ``"kind"``) as the discriminator and merges
+    params directly into the op row (flat layout). Pictures land under
+    work/assets/ as with COM.
+    """
+    from rt_plan import XML_FIRST_WAVE_SET  # noqa: PLC0415
+
+    import uuid as _uuid
+    staged: list[dict] = []
+    assets = Path(work_dir) / "assets"
+    for op in ops:
+        kind = op.get("kind") or op.get("op")
+        if kind not in XML_FIRST_WAVE_SET:
+            raise RpcError(
+                "unknown_op_kind",
+                f"op kind {kind!r} is not in the xml first wave",
+                kind=kind, servedBy="xml",
+                knownKinds=list(XML_FIRST_WAVE_SET))
+        params = dict(op.get("params") or {})
+        if kind == "insert_picture":
+            src = Path(params.get("path") or "")
+            if not src.is_file():
+                raise RpcError(
+                    "invalid_params",
+                    "insert_picture path is not a file",
+                    kind=kind, path=src.name or None)
+            assets.mkdir(parents=True, exist_ok=True)
+            dest = assets / src.name
+            if dest.exists() and dest.resolve() != src.resolve():
+                import shutil as _shutil
+                dest = assets / f"{dest.stem}-{_uuid.uuid4().hex[:8]}{dest.suffix}"
+            import shutil as _shutil
+            _shutil.copyfile(src, dest)
+            params["path"] = str(dest)
+        row: dict = {"op": kind}
+        allowed = _XML_PARAM_KEYS.get(kind, ())
+        for key in allowed:
+            if key in params:
+                row[key] = params[key]
+        staged.append(row)
+    return staged
+
+
+def write_xml_ops_file(rows: list, path: Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+    return path
+
 
 
 def _ops_kinds_from_file(ops_path: Path) -> list[str]:
@@ -451,13 +531,15 @@ class EngineTools:
         self.preedit = self.root / "engine" / "scripts" / "preedit.py"
         self.check_residue = self.root / "pipeline" / "scripts" / "check_residue.py"
         self.com_backend = self.root / "engine" / "scripts" / "com_backend.py"
+        self.xml_backend = self.root / "engine" / "scripts" / "xml_backend.py"
 
     def availability(self) -> dict[str, dict]:
         rows = {}
         for name, path in (("form_inspect", self.form_inspect),
                            ("preedit", self.preedit),
                            ("check_residue", self.check_residue),
-                           ("com_backend", self.com_backend)):
+                           ("com_backend", self.com_backend),
+                           ("xml_backend", self.xml_backend)):
             present = path.is_file()
             rows[name] = {
                 "state": "available" if present else "unavailable",
@@ -501,6 +583,97 @@ class EngineTools:
         if missing is not None:
             payload["missing"] = missing
         return payload
+
+    def xml_capability(self) -> dict:
+        """``capabilities.backends.xml`` — available when xml_backend.py resolves.
+
+        No host probe needed: the pure-Python XML editor works on every OS.
+        ``state: available`` only when ``engine/scripts/xml_backend.py`` is a
+        file under this engine root. ``proofGrade: structural`` is the standing
+        evidence class for the XML path.
+        """
+        from rt_plan import XML_FIRST_WAVE  # noqa: PLC0415
+
+        script_present = self.xml_backend.is_file()
+        available = script_present
+        reason = (None if available
+                  else "engine/scripts/xml_backend.py is not in this install")
+        payload: dict = {
+            "state": "available" if available else "unavailable",
+            "reason": reason,
+            "proofGrade": "structural",
+            "opKinds": list(XML_FIRST_WAVE),
+        }
+        return payload
+
+    def xml_edit_run(self, file, ops_path, save_as,
+                     timeout: float = CHILD_TIMEOUT_SECONDS) -> dict:
+        """One bounded ``xml_backend.py edit`` child.
+
+        Refuses before spawn when xml_backend.py is missing or when file and
+        save-as resolve to the same path. Parses exactly one JSON object from
+        stdout. Non-zero exit → ``backend_refused`` with path-redacted
+        diagnostics.
+        """
+        self._require("xml_backend", self.xml_backend)
+        src = Path(file)
+        ops = Path(ops_path)
+        dest = Path(save_as)
+
+        try:
+            same = src.resolve() == dest.resolve()
+        except OSError:
+            same = str(src) == str(dest)
+        if same:
+            raise RpcError(
+                "invalid_params",
+                "XML edit save-as must be a different path from the input file",
+                file=src.name, saveAs=dest.name)
+
+        argv = xml_edit_argv(self.xml_backend, src, ops, dest)
+        paths = (src, ops, dest, self.xml_backend)
+        result = run_child(argv, timeout=timeout)
+        raw = result.text
+        parsed = one_json_object(raw)
+        redacted_out = redact_paths(raw[:4000], *paths)
+        redacted_err = redact_paths(
+            result.stderr.decode("utf-8", errors="replace")[:4000], *paths)
+        if result.timed_out:
+            raise RpcError(
+                "backend_refused", "xml_backend edit exceeded its time bound",
+                tool="xml_backend", timedOut=True,
+                stdout=redacted_out, stderr=redacted_err)
+        if result.returncode != 0 or parsed is None or not parsed.get("ok"):
+            # Surface the engine's named reason (e.g. equation_box_unsupported_xml)
+            # when the backend reports unsupported ops.
+            message = None
+            if isinstance(parsed, dict):
+                unsupported = parsed.get("unsupported") or []
+                if unsupported:
+                    # First named reason surfaces as the primary message.
+                    message = redact_paths(str(unsupported[0]), *paths)
+                else:
+                    message = parsed.get("error") or parsed.get("reason")
+            if message:
+                message = redact_paths(str(message), *paths)
+            raise RpcError(
+                "backend_refused",
+                message or f"xml_backend edit refused this batch (exit {result.returncode})",
+                tool="xml_backend", exitCode=result.returncode,
+                timedOut=False,
+                stdout=redacted_out, stderr=redacted_err,
+                unsupported=(parsed.get("unsupported") or [] if isinstance(parsed, dict) else []))
+        if not dest.is_file():
+            raise RpcError(
+                "backend_refused",
+                "xml_backend edit left no save-as file",
+                tool="xml_backend", exitCode=result.returncode,
+                stdout=redacted_out, stderr=redacted_err)
+        return {
+            "exitCode": result.returncode,
+            "payload": parsed,
+            "argv": list(argv),
+        }
 
     def _residue_declared(self, profile: Path, artifact: Path,
                           declaration: dict) -> dict:
