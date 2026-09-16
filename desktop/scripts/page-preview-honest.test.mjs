@@ -7,6 +7,7 @@ import vm from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import { Icon } from "./icon-stub.mjs";
 
 const require = createRequire(import.meta.url);
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
@@ -266,6 +267,7 @@ function renderPreview(statePatch = {}) {
             React.createElement("span", { "data-tone": tone }, children),
         };
       }
+      if (id === "./Icon") return { Icon };
       throw new Error(`unexpected import: ${id}`);
     },
   });

@@ -14,6 +14,7 @@ import { runAgentProposal, stopInstruction } from "../actions";
 import { selectInspectorTab, setState, useWorkspace } from "../store";
 import type { HostEvent, Turn } from "../types";
 import { EmptyIconChat, EmptyState } from "./EmptyState";
+import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
 /** Korean product language for each Agent Host event kind. Closed set. */
@@ -73,12 +74,7 @@ function assistantText(turn: Turn): string {
 }
 
 function ToolIcon() {
-  return (
-    <svg className="system-icon" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-      <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M6 3.8v2.4M6 8.2h.01" fill="none" stroke="currentColor" strokeWidth="1.2" />
-    </svg>
-  );
+  return <Icon name="bot" className="system-icon" />;
 }
 
 function PlanArrivalCard({

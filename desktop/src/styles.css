@@ -34,6 +34,7 @@
      a dense web dashboard rather than as a document tool. Nothing below 12px
      survives, and the text people work in is 14px. */
   --text-xs: 12px;
+  --text-tiny: 12px;
   --text-sm: 13px;
   --text-base: 14px;
   --text-md: 15px;
@@ -140,9 +141,8 @@
     --bg-active: rgba(250, 248, 244, 0.085);
 
     --fg: #e8e5df;
-    --fg-muted: #a2a09b;
-    --fg-faint: #76747017;
-    --fg-faint: #787671;
+    --fg-muted: #c4c2bc;
+    --fg-faint: #a4a29c;
     --fg-on-ink: #e8e5df;
 
     --line: #32343a;
@@ -211,8 +211,18 @@ button {
 
 :focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: 2px;
   border-radius: 3px;
+}
+
+button:focus-visible,
+[role="tab"]:focus-visible,
+[role="treeitem"]:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+.home-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Tracking is allowed on exactly one class, and it is Latin-only by
@@ -354,8 +364,20 @@ button.docchip[aria-current="page"] {
 }
 
 .ghost:hover {
+  background: var(--bg-hover);
+}
+
+.ghost:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.titlebar .ghost:hover {
   background: rgba(250, 248, 244, 0.12);
   color: var(--fg-on-ink);
+}
+
+.titlebar .ghost:active:not(:disabled) {
+  background: rgba(250, 248, 244, 0.18);
 }
 
 .action {
@@ -609,6 +631,15 @@ button.docchip[aria-current="page"] {
   background: var(--bg-hover);
 }
 
+.node:active {
+  background: var(--bg-active);
+}
+
+.node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .node[aria-selected="true"] {
   background: var(--accent-soft);
   color: var(--fg);
@@ -629,10 +660,11 @@ button.docchip[aria-current="page"] {
 .node .twisty {
   flex: none;
   width: 16px;
-  text-align: center;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--fg-faint);
-  font-size: 9px;
-  transition: transform var(--t-micro) var(--ease);
 }
 
 .node .label {
@@ -1032,6 +1064,7 @@ button.docchip[aria-current="page"] {
   font-size: var(--text-md);
   line-height: var(--leading-body);
   color: var(--fg-muted);
+  word-break: keep-all;
 }
 
 .home-onboarding {
@@ -1126,10 +1159,11 @@ body.dragging .drop {
 
 .recent {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--s3);
   width: 100%;
-  padding: var(--s3);
+  min-height: var(--row-h);
+  padding: 0 var(--s3);
   border-radius: var(--radius);
   text-align: left;
   transition: background var(--t-micro) var(--ease);
@@ -1139,8 +1173,15 @@ button.recent:hover {
   background: var(--bg-hover);
 }
 
+button.recent:active {
+  background: var(--bg-active);
+}
+
 .recent .name {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
   font-weight: var(--weight-emph);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1360,23 +1401,43 @@ button.recent:hover {
 
 .prose {
   font-size: var(--text-base);
-  line-height: 1.6;
+  line-height: var(--leading-body);
   color: var(--fg-muted);
   margin: 0;
   max-width: 52ch;
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 
+.prose.selectable {
+  user-select: text;
+  color: var(--fg);
+}
+
+.prose.danger {
+  color: var(--bad);
+}
+
+.stack-s2 { margin-top: var(--s2); }
+.stack-s3 { margin-top: var(--s3); }
+
 .panel .prose,
-.panel .empty {
-  line-height: 1.6;
+.panel .empty,
+.panel-body {
+  line-height: var(--leading-body);
 }
 
 .empty {
   padding: var(--s6) var(--s4);
   font-size: var(--text-base);
-  line-height: 1.6;
+  line-height: var(--leading-body);
   color: var(--fg-faint);
   max-width: 48ch;
+  word-break: keep-all;
+}
+
+.empty.tight {
+  padding: var(--s2) 0 0;
 }
 
 .empty-state {
@@ -1405,9 +1466,10 @@ button.recent:hover {
 .empty-state-body {
   margin: 0;
   font-size: var(--text-base);
-  line-height: 1.6;
+  line-height: var(--leading-body);
   letter-spacing: 0;
   color: var(--fg-muted);
+  word-break: keep-all;
 }
 
 .empty-state .action {
@@ -1538,8 +1600,10 @@ button.recent:hover {
 .row {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 1px;
-  padding: var(--s2) var(--s3);
+  min-height: var(--row-h);
+  padding: var(--s1) var(--s3);
   text-align: left;
   border-bottom: 1px solid var(--line);
   position: relative;
@@ -1547,6 +1611,7 @@ button.recent:hover {
 }
 
 .row:hover { background: var(--bg-hover); }
+.row:active { background: var(--bg-active); }
 
 .row[aria-selected="true"] { background: var(--accent-soft); }
 
@@ -1701,13 +1766,17 @@ button.recent:hover {
   min-width: 6ch;
   padding: 5px 7px;
   border: none;
-  outline: none;
   background: var(--bg-paper);
   color: var(--fg);
   font: inherit;
   line-height: var(--leading-doc);
   /* Hangul is never letter-spaced, and an input inherits nothing by default. */
   letter-spacing: normal;
+}
+
+.seat-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
 }
 
 .paper .doc-table td.has-edit {
@@ -1814,7 +1883,7 @@ button.recent:hover {
 .hunk-card.is-focused,
 .hunk-card:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 
 .hunk-head {
@@ -1910,8 +1979,9 @@ button.recent:hover {
   font-size: var(--text-sm);
 }
 
-.queue-value:focus {
-  outline: none;
+.queue-value:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
@@ -2071,7 +2141,7 @@ button.recent:hover {
 
 .action.point {
   background: var(--point);
-  color: #fefdfb;
+  color: var(--accent-fg);
   border-color: transparent;
   font-weight: var(--weight-emph);
 }
@@ -2256,7 +2326,10 @@ button.recent:hover {
   color: var(--fg);
 }
 
-.ov-seat-input:focus { outline: none; }
+.ov-seat-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
 
 /* An interpolated seat is a guess about WHERE, made from a neighbour. It is
    allowed to be clicked and it is not allowed to look as certain as one snapped
@@ -2306,7 +2379,10 @@ button.recent:hover {
   line-height: 1;
 }
 
-.ov-caret-input:focus { outline: none; }
+.ov-caret-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
 
 /* Mapped, but not a seat the editor will open. No affordance at all — it takes
    a click to find out what it is, and it says so rather than opening nothing. */
@@ -2374,7 +2450,10 @@ button.recent:hover {
   text-align: left;
 }
 
-.ov-chooser:focus { outline: none; }
+.ov-chooser:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .ov-chooser-head {
   display: flex;
@@ -2650,10 +2729,9 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .toolmenu > summary::-webkit-details-marker { display: none; }
 
-.toolmenu > summary::after {
-  content: "▾";
+.toolmenu > summary .icon {
+  margin-left: 2px;
   color: var(--fg-faint);
-  font-size: var(--text-xs);
 }
 
 .toolmenu > summary:hover { background: var(--bg-hover); }
@@ -2943,16 +3021,18 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   padding: var(--s2) var(--s3);
   border-radius: 12px;
   letter-spacing: 0;
-  line-height: 1.6;
+  line-height: var(--leading-body);
+  word-break: keep-all;
 }
 
 .bubble p {
   margin: 0;
   font-size: var(--text-base);
-  line-height: 1.6;
+  line-height: var(--leading-body);
   letter-spacing: 0;
   white-space: pre-wrap;
   user-select: text;
+  word-break: keep-all;
 }
 
 .bubble-user {
@@ -3110,7 +3190,8 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 .composer textarea:not(:disabled) { color: var(--fg); }
 
 .composer textarea:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
   border-color: var(--accent-line);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
@@ -3206,7 +3287,8 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 }
 
 .field input:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
   border-color: var(--accent-line);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
@@ -3411,13 +3493,13 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .checkpoint-list {
   position: relative;
-  padding-left: 14px;
+  padding-left: 22px;
 }
 
 .checkpoint-list::before {
   content: "";
   position: absolute;
-  left: 5px;
+  left: 7px;
   top: 10px;
   bottom: 10px;
   width: 2px;
@@ -3438,25 +3520,25 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .checkpoint-dot {
   position: absolute;
-  left: -12px;
-  top: 10px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  left: -20px;
+  top: 6px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-faint);
   background: var(--bg-panel);
-  border: 2px solid var(--line-strong);
+  border: none;
 }
 
 .checkpoint-row.is-source .checkpoint-dot {
-  background: var(--fg-faint);
-  border-color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .checkpoint-row.is-head .checkpoint-dot,
 .history-row.head .checkpoint-dot {
-  background: var(--ok);
-  border-color: var(--ok);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 28%, transparent);
+  color: var(--ok);
 }
 
 .checkpoint-actions {
@@ -3582,9 +3664,18 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   color: var(--fg);
 }
 
+.icon-rail-btn:active {
+  background: var(--bg-active);
+}
+
+.icon-rail-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .icon-rail-count {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
   color: var(--fg-faint);
 }
@@ -3659,6 +3750,15 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   background: var(--bg-hover);
 }
 
+.inspector-tabs button:active {
+  background: var(--bg-active);
+}
+
+.inspector-tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .inspector-tabs button[aria-selected="true"] {
   color: var(--fg);
   font-weight: var(--weight-emph);
@@ -3673,7 +3773,7 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   line-height: 1.4;
@@ -3719,6 +3819,10 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   margin: var(--s2) var(--s3) 0;
 }
 
+.inspector-pane {
+  animation: rise-in var(--t-view) var(--ease);
+}
+
 .verify-summary {
   display: flex;
   align-items: center;
@@ -3743,6 +3847,9 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .verify-pill,
 .verify-engine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
   white-space: nowrap;
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
@@ -3776,4 +3883,73 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .verifybar {
   position: relative;
+}
+
+/* ══ R6 polish: icons, density, focus, Korean type ═════════════════════ */
+
+.icon {
+  display: block;
+  flex: none;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s1);
+}
+
+.home-link.btn-icon {
+  gap: var(--s1);
+}
+
+.panel-head {
+  min-height: var(--row-h);
+}
+
+.home-onboarding {
+  word-break: keep-all;
+}
+
+.hash,
+.count,
+.mono,
+.verify-pill,
+.history-facts {
+  font-variant-numeric: tabular-nums;
+}
+
+.hunk-pane {
+  word-break: keep-all;
+}
+
+.view-document,
+.welcome {
+  animation: rise-in var(--t-view) var(--ease);
+}
+
+.tabs button {
+  min-height: 44px;
+}
+
+.tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tool-actions .action:active:not(:disabled),
+.inspector-tabs button:active,
+.icon-rail-btn:active,
+.node:active,
+.recent:active,
+.row:active {
+  background: var(--bg-active);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inspector-pane,
+  .view-document,
+  .welcome {
+    animation: none;
+  }
 }

@@ -238,6 +238,9 @@ function renderHistory(statePatch) {
     "./Timeline": {
       Timeline: () => nodeRequire("react").createElement("div", { "data-testid": "timeline" }),
     },
+    "./Icon": {
+      Icon: ({ name }) => nodeRequire("react").createElement("svg", { "data-icon": name }),
+    },
   });
   store.setState({
     activeSessionId: "session-A",

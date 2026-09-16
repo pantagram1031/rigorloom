@@ -8,6 +8,7 @@
 import { exportApplied, openReceipt, reopenExported, runCheck } from "../actions";
 import { setState, useWorkspace } from "../store";
 import type { Candidate, InspectResult, Session } from "../types";
+import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
 const GLOSSARY = {
@@ -448,6 +449,9 @@ export function VerificationBar({
         </span>
         <span className="sep" />
         <span className="verify-pill" data-testid="verify-pill" title={PILL_CAVEAT}>
+          <Icon
+            name={pill.tone === "ok" ? "check" : pill.tone === "bad" ? "x" : pill.tone === "warn" ? "warn" : "search"}
+          />
           <Tag tone={pill.tone}>{pill.label}</Tag>
         </span>
         <span className="sep" />
@@ -463,14 +467,15 @@ export function VerificationBar({
         <div className={`verify-popover${detailsOpen ? " is-open" : ""}`}>
           <button
             type="button"
-            className="action"
+            className="action btn-icon"
             data-testid="verify-details-toggle"
             aria-expanded={detailsOpen}
             aria-controls="verify-details-popover"
             title="쪽, 위치, 원본, 후보본 등 자세한 상태"
             onClick={() => setState({ verifyDetailsOpen: !detailsOpen })}
           >
-            ⋯ 자세히
+            <Icon name="list" />
+            자세히
           </button>
           <div
             id="verify-details-popover"

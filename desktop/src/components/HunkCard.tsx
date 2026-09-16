@@ -22,6 +22,7 @@ import {
 import { setState, type QueuedOp } from "../store";
 import type { PlanFinding, RegionText } from "../types";
 import { Tag } from "./Tag";
+import { Icon } from "./Icon";
 
 function copyPlanHash(hash: string, showToast: (msg: string, ms: number) => void): void {
   const clip = navigator.clipboard;
@@ -200,24 +201,26 @@ export function HunkCard({
       <div className="hunk-foot">
         <button
           type="button"
-          className="action point"
+          className="action point btn-icon"
           data-testid={`hunk-approve-${slug}`}
           disabled={!canDecide}
           title={decideTitle}
           aria-label="이 항목 승인"
           onClick={onApprove}
         >
+          <Icon name="check" />
           승인
         </button>
         <button
           type="button"
-          className="action"
+          className="action btn-icon"
           data-testid={`hunk-reject-${slug}`}
           disabled={!canDecide}
           title={decideTitle}
           aria-label="이 항목 거부"
           onClick={onReject}
         >
+          <Icon name="x" />
           거부
         </button>
         <details

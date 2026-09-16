@@ -6,6 +6,7 @@ import vm from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import { Icon } from "./icon-stub.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -60,6 +61,7 @@ function renderHome(state) {
           Logo: () => React.createElement("svg", { "data-testid": "logo" }),
         };
       }
+      if (id === "./Icon") return { Icon };
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -224,6 +226,7 @@ test("VerificationBar on Home shows only the engine connection", () => {
           Tag: ({ children, title }) => React.createElement("span", { title }, children),
         };
       }
+      if (id === "./Icon") return { Icon };
       throw new Error(`unexpected import: ${id}`);
     },
   });

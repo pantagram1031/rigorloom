@@ -125,7 +125,7 @@ export function DocumentContext() {
               <Fact k="제출 검사" v={<VerificationTag state={verificationState} />} />
               <Fact k="렌더 증명" v={<Tag tone="none">증명 없음</Tag>} />
             </dl>
-            <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
+              <p className="empty tight">
               승인은 검토 탭에서만 합니다. 에이전트 연결에는 그 기능이 없습니다.
             </p>
           </div>

@@ -6,6 +6,7 @@ import vm from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import { Icon } from "./icon-stub.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -45,6 +46,7 @@ const emptyState = loadCompiled("../src/components/EmptyState.tsx", "EmptyState.
   const known = nodeRequireReact(id);
   if (known) return known;
   if (id === "../label") return label;
+  if (id === "./Icon") return { Icon };
   throw new Error(`unexpected import: ${id}`);
 });
 
@@ -164,6 +166,7 @@ function renderQueue(state, actions = {}) {
     if (id === "../store") return store;
     if (id === "../types") return {};
     if (id === "./Tag") return tag;
+    if (id === "./Icon") return { Icon };
     throw new Error(`unexpected import: ${id}`);
   });
   const exports = loadCompiled("../src/components/ReviewQueue.tsx", "ReviewQueue.tsx", (id) => {

@@ -30,6 +30,7 @@ import {
 } from "../store";
 import type { Candidate, CandidateCompare } from "../types";
 import { EmptyIconHistory, EmptyState } from "./EmptyState";
+import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 import { Timeline } from "./Timeline";
 
@@ -72,9 +73,11 @@ function Row({
       className={`history-row checkpoint-row${selected ? " selected" : ""}${isHead ? " head is-head" : ""}`}
       data-testid={`history-${runId}`}
       data-depth={depth}
-      style={{ paddingLeft: `calc(var(--s3) + ${Math.min(depth, 4) * 12}px)` }}
+      style={{ paddingLeft: `calc(var(--s3) + ${Math.min(depth, 4)} * var(--s3))` }}
     >
-      <span className="checkpoint-dot" aria-hidden="true" />
+      <span className="checkpoint-dot" aria-hidden="true">
+        <Icon name={isHead ? "check" : "history"} />
+      </span>
       <button
         className="history-head"
         data-testid={`history-select-${runId}`}
@@ -134,26 +137,29 @@ function Row({
 
       <div className="checkpoint-actions">
         <button
-          className="ghost dark-safe"
+          className="ghost dark-safe btn-icon"
           data-testid={`history-receipt-${runId}`}
           onClick={() => void loadReceipt(runId)}
         >
+          <Icon name="receipt" />
           자세히
         </button>
         <button
-          className="action"
+          className="action btn-icon"
           data-testid={`history-restore-${runId}`}
           disabled={undoPhase === "starting"}
           title="이 후보본을 되돌리는 계획을 제안합니다. 승인하고 적용해야 후보본이 하나 더 생깁니다. 원본은 바꾸지 않습니다."
           onClick={() => void restoreRun(runId)}
         >
+          <Icon name="undo" />
           여기로 되돌리기
         </button>
         <button
-          className="ghost dark-safe"
+          className="ghost dark-safe btn-icon"
           data-testid={`history-compare-${runId}`}
           onClick={() => setCompareLeft(runId)}
         >
+          <Icon name="compare" />
           비교
         </button>
       </div>
@@ -269,11 +275,12 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
       </label>
       <div className="gate-actions">
         <button
-          className="ghost dark-safe"
+          className="ghost dark-safe btn-icon"
           data-testid="compare-run"
           disabled={!leftRunId || phase === "starting"}
           onClick={() => void runCompareInspect()}
         >
+          <Icon name="compare" />
           {phase === "starting" ? "비교 중…" : "비교"}
         </button>
       </div>
@@ -380,7 +387,9 @@ export function History() {
       <ul className="history-rows checkpoint-list">
         {sourceHash ? (
           <li className="history-row checkpoint-row is-source" data-testid="history-source">
-            <span className="checkpoint-dot" aria-hidden="true" />
+            <span className="checkpoint-dot" aria-hidden="true">
+              <Icon name="open" />
+            </span>
             <p className="history-head">
               <span>원본</span>
               <span className="mono">{sourceHash.slice(0, 12)}</span>

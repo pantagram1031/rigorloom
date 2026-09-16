@@ -56,6 +56,7 @@ import {
   type Selection,
 } from "../store";
 import type { InspectResult, RegionText, TypefaceByLang } from "../types";
+import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
 /**
@@ -90,6 +91,7 @@ function ToolMenu({
       <summary>
         <span className="tool-label">{label}</span>
         {summary ? <span className="tool-value">{summary}</span> : null}
+        <Icon name="chevron-down" />
       </summary>
       <div className="toolmenu-body">{children}</div>
     </details>
@@ -264,25 +266,27 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           silence. */}
       <div className="tool-actions" data-testid="tool-actions">
         <button
-          className="action"
+          className="action btn-icon"
           data-testid="toggle-left-rail"
           title={railCollapsed ? "구조 레일 펼치기 (Ctrl+B)" : "구조 레일 접기 (Ctrl+B)"}
           aria-pressed={railCollapsed}
           aria-label={railCollapsed ? "구조 레일 펼치기" : "구조 레일 접기"}
           onClick={() => toggleLeftRail()}
         >
+          <Icon name={railCollapsed ? "chevron-right" : "chevron-left"} />
           {railCollapsed ? "구조 펼치기" : "구조 접기"}
         </button>
         <button
-          className="action"
+          className="action btn-icon"
           data-testid="act-open"
           title="문서 열기 (Ctrl+O)"
           onClick={() => void openViaDialog()}
         >
+          <Icon name="open" />
           열기
         </button>
         <button
-          className="action"
+          className="action btn-icon"
           data-testid="act-export"
           disabled={!applied || exportPhase === "starting"}
           title={
@@ -292,23 +296,26 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           }
           onClick={() => void exportApplied()}
         >
+          <Icon name="save" />
           {exportPhase === "starting" ? "내보내는 중…" : "저장/내보내기"}
         </button>
         <button
-          className="action"
+          className="action btn-icon"
           data-testid="act-undo"
           title="되돌리기와 후보본 계보를 봅니다"
           onClick={() => selectInspectorTab("history")}
         >
+          <Icon name="undo" />
           되돌리기
         </button>
         <button
-          className="action"
+          className="action btn-icon"
           data-testid="toolbar-check"
           disabled={!inspect || checkPhase === "starting"}
           title="서식 검사를 돌립니다"
           onClick={() => void runCheck()}
         >
+          <Icon name="search" />
           {checkPhase === "starting"
             ? "검사 중…"
             : checkPhase === "idle"
@@ -318,7 +325,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
                 : `검사 ${findings.length}`}
         </button>
         <button
-          className={approvalPhase === "pending" ? "action point" : "action"}
+          className={approvalPhase === "pending" ? "action point btn-icon" : "action btn-icon"}
           data-testid="act-approve"
           disabled={approvalPhase !== "pending" && !canApprove}
           title={
@@ -338,6 +345,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
             void requestApprovalForDraft();
           }}
         >
+          <Icon name="check" />
           {approvalPhase === "pending" ? "승인 대기" : "승인"}
         </button>
       </div>

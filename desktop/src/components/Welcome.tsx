@@ -6,6 +6,7 @@
 import { openPath, openViaDialog } from "../actions";
 import { setState, useWorkspace } from "../store";
 import type { Recent } from "../types";
+import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 
 export function relativeOpened(iso: string, now = Date.now()): string {
@@ -42,7 +43,10 @@ function RecentRow({ recent }: { recent: Recent }) {
   const backend = recentBackend(recent);
   const body = (
     <>
-      <span className="name">{recent.name}</span>
+      <span className="name">
+        <Icon name="open" />
+        {recent.name}
+      </span>
       {folder ? (
         <span className="folder" title={folder} dir="rtl">
           <span>{folder}</span>
@@ -105,10 +109,11 @@ export function Home() {
         </div>
 
         <button
-          className="action primary big"
+          className="action primary big btn-icon"
           data-testid="home-open"
           onClick={() => void openViaDialog()}
         >
+          <Icon name="open" />
           문서 열기
         </button>
 
@@ -120,7 +125,7 @@ export function Home() {
         </div>
 
         {error ? (
-          <p className="prose" style={{ color: "var(--bad)", textAlign: "center" }}>
+          <p className="prose danger" style={{ textAlign: "center" }}>
             {error.message}
           </p>
         ) : null}
@@ -153,10 +158,11 @@ export function Home() {
           </span>
           <button
             type="button"
-            className="home-link"
+            className="home-link btn-icon"
             data-testid="home-settings"
             onClick={() => setState({ settingsOpen: true })}
           >
+            <Icon name="settings" />
             설정
           </button>
         </div>

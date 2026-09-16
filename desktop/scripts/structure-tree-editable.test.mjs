@@ -6,6 +6,7 @@ import vm from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import { Icon } from "./icon-stub.mjs";
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL("../src/components/StructureTree.tsx", import.meta.url), "utf8");
@@ -90,6 +91,7 @@ function render(inspect, expanded = ["t:0"]) {
           },
         };
       }
+      if (id === "./Icon") return { Icon };
       throw new Error(`unexpected import: ${id}`);
     },
   });

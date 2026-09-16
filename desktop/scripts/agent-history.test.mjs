@@ -6,6 +6,7 @@ import vm from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import { Icon } from "./icon-stub.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -90,6 +91,7 @@ function renderConversation(state) {
         EmptyIconChat: () => null,
       };
     }
+    if (id === "./Icon") return { Icon };
     throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.Conversation));
@@ -171,6 +173,7 @@ function renderHistory(state) {
     if (id === "./Timeline") {
       return { Timeline: () => React.createElement("div", { "data-testid": "timeline" }) };
     }
+    if (id === "./Icon") return { Icon };
     throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.History));

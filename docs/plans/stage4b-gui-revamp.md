@@ -72,8 +72,14 @@ The tokens are fine (Pretendard, warm paper, teal accent). What reads as "vibe c
       sticky composer with 입력 중 … indicator and inert send while composing/disconnected, 문서 정보 as collapsed
       details; 기록 = 원본 → candidates timeline with head marker, 자세히 / 여기로 되돌리기 (reverse plan, never apply) /
       비교, protocol events under a collapsed 이벤트 (N). DOM-verified in dev-mock.
-- [ ] R6 Polish pass: density, focus rings, icon set (inline SVG, no new deps), Korean line-height/letter
-      spacing per R0 §glossary, dark mode check, 1280×800 and 1920×1080 screenshots into docs/demo/desktop/.
+- [x] R6 Polish pass (cursor-grok-4.6-high-fast, 17 min, 226k in / 57k out / 9.0M cache; tests 187 → 190): 19-glyph
+      inline `Icon.tsx` wired through header, toolbar, tabs, tree, timeline, hunk cards, empty states; focus-visible
+      rings, hover/pressed tokens, Korean type rules, dark-mode coverage with contrast fixes, reduced-motion; 24
+      reference PNGs (home / workspace / review / history / agent / popover × 1280×800, 1920×1080 × light, dark)
+      captured from the dev-mock via CDP into `docs/demo/desktop/` with `capture.mjs` + README. Fable reviewed the
+      captures: accepted. Defects seen → R7: rail footer overlap with the 문서/작업 팩 disclosure, 기록 header count
+      spacing, 서식 control clipping at 1280 px, popover density.
+- [ ] R7 Fit and finish: the four defects above; recapture the six 1280×800 light PNGs.
 
 ## Verification per slice
 
@@ -91,3 +97,4 @@ done only when the screenshot matches the intent; "tests pass" alone is not acce
 | 2026-09-17 | R3 home screen landed | commit below |
 | 2026-09-17 | R4 hunk review landed; T9 runtime README (composer) committed 233270e | commit below |
 | 2026-09-17 | R5 landed; gemini-3.8-flash C1 row recorded | commit below |
+| 2026-09-17 | R6 landed with 24 reference captures; Fable review found four small defects → R7 | commit below |

@@ -60,6 +60,7 @@ import type {
   SkippedElement,
 } from "../types";
 import { GeometryLegend, PageOverlay } from "./PageOverlay";
+import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
 /** HWPUNIT is 1/7200 inch. */
@@ -699,25 +700,25 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
 
         <div className="pager">
           <button
-            className="ghost"
+            className="ghost btn-icon"
             data-testid="page-prev"
             aria-label="이전 쪽"
             disabled={page <= 1}
             onClick={() => void renderCurrentPage(page - 1)}
           >
-            ◀
+            <Icon name="chevron-left" />
           </button>
           <span className="mono" data-testid="page-indicator">
             {page}쪽 / 전체 {pageCount}
           </span>
           <button
-            className="ghost"
+            className="ghost btn-icon"
             data-testid="page-next"
             aria-label="다음 쪽"
             disabled={page >= pageCount}
             onClick={() => void renderCurrentPage(page + 1)}
           >
-            ▶
+            <Icon name="chevron-right" />
           </button>
         </div>
 

@@ -35,6 +35,7 @@ import {
 } from "../store";
 import type { Capabilities, ForbiddenInventory, InspectResult } from "../types";
 import { CLASSIFICATION_LABEL, CLASSIFICATION_TONE, Tag } from "./Tag";
+import { Icon } from "./Icon";
 
 function Row({
   id,
@@ -80,7 +81,9 @@ function Row({
         if (selection !== undefined) selectStructureNode(selection);
       }}
     >
-      <span className="twisty">{expandable ? (expanded ? "▼" : "▶") : ""}</span>
+      <span className="twisty">
+        {expandable ? <Icon name={expanded ? "chevron-down" : "chevron-right"} /> : null}
+      </span>
       <span className="label">
         {label}
         {hint ? <span className="dim">　{hint}</span> : null}

@@ -13,6 +13,7 @@ import {
   toggleFullscreen,
   toggleLeftRail,
 } from "./actions";
+import { Icon } from "./components/Icon";
 import { Logo } from "./components/Logo";
 import { Settings } from "./components/Settings";
 import { Splash } from "./components/Splash";
@@ -87,20 +88,6 @@ function canBindDragDrop(): boolean {
     __TAURI_INTERNALS__?: { metadata?: { currentWebview?: { label?: string } } };
   }).__TAURI_INTERNALS__;
   return typeof internals?.metadata?.currentWebview?.label === "string";
-}
-
-function HomeIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-      <path
-        d="M2.75 7.25 8 2.75l5.25 4.5V13.25H9.4v-3.1H6.6v3.1H2.75z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
 }
 
 export default function App() {
@@ -300,7 +287,7 @@ export default function App() {
             aria-pressed={homeOpen}
             onClick={() => goHome()}
           >
-            <HomeIcon />
+            <Icon name="home" />
           </button>
         ) : null}
 
@@ -344,15 +331,17 @@ export default function App() {
           </>
         ) : null}
 
-        <button className="ghost" title="Ctrl+O" onClick={() => void openViaDialog()}>
+        <button className="ghost btn-icon" title="Ctrl+O" onClick={() => void openViaDialog()}>
+          <Icon name="open" />
           문서 열기
         </button>
         <button
-          className="ghost"
+          className="ghost btn-icon"
           data-testid="open-settings"
           title="에이전트 제공자 설정"
           onClick={() => setState({ settingsOpen: true })}
         >
+          <Icon name="settings" />
           설정
         </button>
       </header>

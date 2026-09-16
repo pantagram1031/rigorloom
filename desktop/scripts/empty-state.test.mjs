@@ -34,6 +34,8 @@ function loadCompiled(relPath, fileName, requireImpl) {
   return module.exports;
 }
 
+import { Icon } from "./icon-stub.mjs";
+
 const label = loadCompiled("../src/label.ts", "label.ts", () => {
   throw new Error("label.ts has no imports");
 });
@@ -42,6 +44,7 @@ const emptyState = loadCompiled("../src/components/EmptyState.tsx", "EmptyState.
   if (id === "react/jsx-runtime") return nodeRequire(id);
   if (id === "react") return nodeRequire(id);
   if (id === "../label") return label;
+  if (id === "./Icon") return { Icon };
   throw new Error(`unexpected import: ${id}`);
 });
 
@@ -49,6 +52,7 @@ function jsxRequire(id) {
   if (id === "react/jsx-runtime") return nodeRequire(id);
   if (id === "react") return nodeRequire(id);
   if (id === "./EmptyState") return emptyState;
+  if (id === "./Icon") return { Icon };
   if (id === "../label") return label;
   return null;
 }

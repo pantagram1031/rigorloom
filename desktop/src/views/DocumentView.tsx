@@ -10,6 +10,7 @@
  */
 import { openViaDialog, selectSession, toggleLeftRail } from "../actions";
 import { ContextPanel } from "../components/ContextPanel";
+import { Icon } from "../components/Icon";
 import { EditorToolbar } from "../components/EditorToolbar";
 import { Findings } from "../components/Findings";
 import { PagePreview } from "../components/PagePreview";
@@ -37,16 +38,6 @@ function CenterCaveat() {
           : "페이지 보기 — 실제로 그려진 지면입니다. 그림은 증거가 아닙니다"}
       </span>
     </div>
-  );
-}
-
-function StructureIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-      <rect x="2" y="3" width="14" height="2.2" rx="0.6" fill="currentColor" />
-      <rect x="2" y="8" width="10" height="2.2" rx="0.6" fill="currentColor" />
-      <rect x="2" y="13" width="12" height="2.2" rx="0.6" fill="currentColor" />
-    </svg>
   );
 }
 
@@ -99,7 +90,7 @@ export function DocumentView() {
                 aria-pressed="true"
                 onClick={() => toggleLeftRail()}
               >
-                <StructureIcon />
+                <Icon name="list" />
                 {inspect ? (
                   <span className="icon-rail-count" aria-hidden="true">
                     {paraCount}
@@ -122,7 +113,7 @@ export function DocumentView() {
                   aria-label="구조 레일 접기"
                   onClick={() => toggleLeftRail()}
                 >
-                  ⟨
+                  <Icon name="chevron-left" />
                 </button>
               </div>
               <div className="panel-body">

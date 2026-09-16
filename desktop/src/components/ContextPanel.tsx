@@ -27,6 +27,7 @@ import { DocumentContext } from "./DocumentContext";
 import { History } from "./History";
 import { ApproveAllButton, ReviewQueue } from "./ReviewQueue";
 import { CLASSIFICATION_LABEL, Tag } from "./Tag";
+import { Icon } from "./Icon";
 
 function Fact({ k, v }: { k: string; v: React.ReactNode }) {
   return (
@@ -117,7 +118,7 @@ function RegionSourceSection() {
         </p>
       ) : forbidden ? (
         <div data-testid="region-source-forbidden">
-          <p className="prose" style={{ userSelect: "text", color: "var(--fg)" }}>
+          <p className="prose selectable">
             {text || "(빈 자리)"}
           </p>
           {source.region.runs && source.region.runs.length > 0 ? (
@@ -126,7 +127,7 @@ function RegionSourceSection() {
         </div>
       ) : (
         <div data-testid="region-source-text">
-          <p className="prose" style={{ userSelect: "text", color: "var(--fg)" }}>
+          <p className="prose selectable">
             {text || "(빈 자리)"}
           </p>
           {source.region.runs && source.region.runs.length > 0 ? (
@@ -169,11 +170,11 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
       {cell.textPreview ? (
         <div className="section">
           <h3>미리보기{cell.truncated ? " (잘림)" : ""}</h3>
-          <p className="prose" style={{ userSelect: "text" }}>
+          <p className="prose selectable">
             {cell.textPreview}
           </p>
           {cell.truncated ? (
-            <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
+            <p className="empty tight">
               전체 글자는 요청해야 옵니다. 구조만 보내는 것이 기본값입니다.
             </p>
           ) : null}
@@ -215,15 +216,14 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
           </p>
         )}
         {seat?.colorAnomaly ? (
-          <p className="prose" style={{ color: "var(--bad)", marginTop: "var(--s2)" }}>
+          <p className="prose danger stack-s2">
             글자색이 본문 기준과 다릅니다. 이대로 채우면 색이 남습니다.
           </p>
         ) : null}
         {seat ? (
           <button
-            className="action primary"
+            className="action primary stack-s3"
             data-testid="edit-seat"
-            style={{ marginTop: "var(--s3)" }}
             onClick={() => beginEdit(sel.table, sel.row, sel.col)}
           >
             이 자리에 값 넣기
@@ -250,7 +250,7 @@ function ParagraphDetail({ inspect, atPara }: { inspect: InspectResult; atPara: 
       </div>
       <div className="section">
         <h3>본문</h3>
-        <p className="prose" style={{ userSelect: "text", color: "var(--fg)" }}>
+        <p className="prose selectable">
           {para.text || "(빈 문단)"}
         </p>
       </div>
@@ -258,11 +258,11 @@ function ParagraphDetail({ inspect, atPara }: { inspect: InspectResult; atPara: 
   );
 }
 
-const TABS: { id: InspectorTab; label: string }[] = [
-  { id: "selection", label: "선택" },
-  { id: "review", label: "검토" },
-  { id: "history", label: "기록" },
-  { id: "agent", label: "에이전트" },
+const TABS: { id: InspectorTab; label: string; icon: "cell" | "list" | "history" | "bot" }[] = [
+  { id: "selection", label: "선택", icon: "cell" },
+  { id: "review", label: "검토", icon: "list" },
+  { id: "history", label: "기록", icon: "history" },
+  { id: "agent", label: "에이전트", icon: "bot" },
 ];
 
 function SelectionPane({ inspect }: { inspect: InspectResult | null }) {
@@ -415,6 +415,7 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
                 if (typeof selectInspectorTab === "function") selectInspectorTab(row.id);
               }}
             >
+              <Icon name={row.icon} />
               {row.label}
               {badge}
             </button>
@@ -439,7 +440,8 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
         {tab === "review" ? <ApproveAllButton /> : null}
       </div>
       <div
-        className={`panel-body inspector-body${tab === "agent" ? " is-agent" : ""}`}
+        key={tab}
+        className={`panel-body inspector-body inspector-pane${tab === "agent" ? " is-agent" : ""}`}
         role="tabpanel"
         id={`inspector-panel-${tab}`}
         aria-labelledby={`inspector-tab-${tab}`}
