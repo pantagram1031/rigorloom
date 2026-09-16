@@ -579,11 +579,30 @@ class _FakeFindDeleteHwp:
 
     def Run(self, action):
         self.actions.append(action)
+        para = self.paragraphs[self.para]
         if action == "MoveParaBegin":
             self.pos = 0
             self.sel = None
         elif action == "MoveSelParaEnd":
-            self.sel = (self.pos, len(self.paragraphs[self.para]))
+            self.sel = (self.pos, len(para))
+        elif action == "MoveSelRight":
+            # Stay inside this paragraph: never select a para mark.
+            if self.sel is None:
+                if self.pos < len(para):
+                    self.sel = (self.pos, self.pos + 1)
+            else:
+                start, end = self.sel
+                if end < len(para):
+                    self.sel = (start, end + 1)
+        elif action == "MoveSelLeft":
+            # Stay inside this paragraph: never walk into the previous one.
+            if self.sel is None:
+                if self.pos > 0:
+                    self.sel = (self.pos - 1, self.pos)
+            else:
+                start, end = self.sel
+                if start > 0:
+                    self.sel = (start - 1, end)
         return True
 
     def get_selected_text(self):
@@ -608,14 +627,16 @@ def test_find_delete_strip_residual_removes_whitespace_remainder():
     }
 
 
-def test_find_delete_strip_residual_leaves_nonwhitespace_remainder():
-    hwp = _FakeFindDeleteHwp([_GUIDE + " 초록 본문"])
+def test_find_delete_strip_residual_removes_adjacent_space_before_text():
+    """F2: remainder is ' ' + body in the same para — strip the space, keep body."""
+    body = "초록 본문"
+    hwp = _FakeFindDeleteHwp([_GUIDE + " " + body])
     result = com_backend.op_find_delete(
         hwp, {"text": _GUIDE, "strip_residual": True})
-    assert hwp.paragraphs == [" 초록 본문"]
-    assert hwp.deleted == [_GUIDE]
+    assert hwp.paragraphs == [body]
+    assert hwp.deleted == [_GUIDE, " "]
     assert result == {
-        "deleted": 1, "residual_stripped": False, "residual_text": "",
+        "deleted": 1, "residual_stripped": True, "residual_text": " ",
     }
     assert "ParagraphShapeAlignJustify" not in hwp.actions
 

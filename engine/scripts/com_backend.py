@@ -517,31 +517,101 @@ def _is_whitespace_residual(text):
     return not text.strip()
 
 
-def _strip_para_whitespace_residual(hwp):
-    """같은 문단에 남은 공백 문자만 지운다. 문단 자체는 건드리지 않는다.
+def _is_ws_char(ch):
+    """True iff ch is same-paragraph leftover whitespace, not a para mark."""
+    return bool(ch) and ch not in "\r\n" and not ch.strip()
 
-    find_delete 이후 표 셀에 안내문 charPr의 공백 런이 남는 경우(초록
-    placeholder 뒤 빨간 스페이스)를 겨냥한다. 문단에 비공백이 있으면 그대로
-    둔다. 셀의 유일한 문단 마크를 Delete하면 한글이 셀을 깨므로, 잔여 글자만
-    지운다. ParagraphShapeAlignJustify는 비공백이 없을 때 시각적으로 중립이라
-    쓰지 않는다 — 글자를 지우는 것으로 안내문 charPr 런이 사라지면 충분.
-    반환: (stripped: bool, residual_text: str, 최대 40자).
+
+def _delete_adjacent_ws_chars(hwp, action, count):
+    """Delete up to count whitespace chars one selection-step at a time.
+
+    action is MoveSelRight (leading, at the cursor) or MoveSelLeft (trailing,
+    immediately before it). Stops before non-whitespace, a para mark, or an
+    empty/failed selection — never deletes the paragraph mark, never crosses
+    a paragraph boundary. MoveSelLeft deletes nearest-first; the returned
+    string is left-to-right in the original paragraph.
     """
-    text = _cursor_para_text(hwp)
-    if not _is_whitespace_residual(text):
-        return False, ""
-    try:
-        _run(hwp, "MoveParaBegin")
-        _run(hwp, "MoveSelParaEnd")
-        selected = hwp.get_selected_text() if hasattr(hwp, "get_selected_text") else text
+    chunks = []
+    for _ in range(count):
+        _run(hwp, action)
+        selected = (
+            hwp.get_selected_text() if hasattr(hwp, "get_selected_text") else "")
         if not _is_whitespace_residual(selected):
             try:
                 hwp.Cancel()
             except Exception:
                 pass
-            return False, ""
+            break
         hwp.Delete()
-        return True, selected[:40]
+        chunks.append(selected)
+    if action == "MoveSelLeft":
+        chunks.reverse()
+    return "".join(chunks)
+
+
+def _strip_para_whitespace_residual(hwp):
+    """같은 문단에 남은 공백 문자만 지운다. 문단 마크는 건드리지 않는다.
+
+    find_delete 이후 표 셀에 안내문 charPr의 공백 런이 남는 경우(초록
+    placeholder 뒤 빨간 스페이스)를 겨냥한다. 남은 문단이 공백뿐이면 그
+    글자 전부를 지우고, 본문이 이어져 있어도 삭제 지점에 맞닿은 선행·후행
+    공백은 지운다. 비공백은 유지하고 문단 경계를 넘지 않는다. 셀의 유일한
+    문단 마크를 Delete하면 한글이 셀을 깨므로, 잔여 글자만 지운다.
+    ParagraphShapeAlignJustify는 비공백이 없을 때 시각적으로 중립이라
+    쓰지 않는다 — 글자를 지우는 것으로 안내문 charPr 런이 사라지면 충분.
+    반환: (stripped: bool, residual_text: str, 최대 40자).
+    """
+    pos = None
+    try:
+        pos = hwp.get_pos()
+    except Exception:
+        pos = None
+    text = _cursor_para_text(hwp)
+    if text is None:
+        return False, ""
+    if _is_whitespace_residual(text):
+        try:
+            _run(hwp, "MoveParaBegin")
+            _run(hwp, "MoveSelParaEnd")
+            selected = hwp.get_selected_text() if hasattr(hwp, "get_selected_text") else text
+            if not _is_whitespace_residual(selected):
+                try:
+                    hwp.Cancel()
+                except Exception:
+                    pass
+                return False, ""
+            hwp.Delete()
+            return True, selected[:40]
+        except Exception:
+            return False, ""
+
+    if pos is None:
+        return False, ""
+    try:
+        offset = int(pos[2])
+    except (TypeError, IndexError, ValueError):
+        return False, ""
+    if offset < 0:
+        offset = 0
+    if offset > len(text):
+        offset = len(text)
+    left = offset
+    while left > 0 and _is_ws_char(text[left - 1]):
+        left -= 1
+    right = offset
+    while right < len(text) and _is_ws_char(text[right]):
+        right += 1
+    n_left = offset - left
+    n_right = right - offset
+    if n_left == 0 and n_right == 0:
+        return False, ""
+    try:
+        removed_right = _delete_adjacent_ws_chars(hwp, "MoveSelRight", n_right)
+        removed_left = _delete_adjacent_ws_chars(hwp, "MoveSelLeft", n_left)
+        residual = removed_left + removed_right
+        if not residual:
+            return False, ""
+        return True, residual[:40]
     except Exception:
         return False, ""
 
@@ -557,9 +627,11 @@ def op_find_delete(hwp, o):
     **명시**해야 한다(그 플래그가 없으면 나머지 발생은 그대로 남는다). 같은
     문구가 여러 장에 인쇄된 문단 팩에서 한 장만 손대는 스코프가 이것이다.
 
-    strip_residual(opt-in): 매칭분을 지운 뒤 커서가 있는 문단이 공백뿐이면
-    그 잔여 글자를 이어서 지운다. delete_texts_after용 — 안내문 뒤에 붙은
-    같은 charPr 공백 런이 F2(near-red)로 남는 것을 막는다.
+    strip_residual(opt-in): 매칭분을 지운 뒤 같은 문단의 잔여 공백을 이어서
+    지운다. 문단이 공백뿐이면 그 글자 전부, 본문이 남아 있으면 삭제 지점에
+    맞닿은 선행·후행 공백만(문단 마크·비공백·문단 경계는 유지).
+    delete_texts_after용 — 안내문 뒤에 붙은 같은 charPr 공백 런이 F2(near-red)로
+    남는 것을 막는다.
     """
     n = 0
     strip = bool(o.get("strip_residual"))
