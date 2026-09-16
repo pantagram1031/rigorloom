@@ -176,11 +176,24 @@ def parse_front_matter(text):
 
 
 # build.yaml에서 meta로 병합할 빌드 노브(문자열/불리언 스칼라). fill 블록은 별도 처리.
+# margin_*: 쪽 여백(HWP 단위 정수). nested `margins:` 블록은 평탄 키로 접는다.
 BUILD_YAML_KEYS = {
     "base_pt", "caption_pt", "line_spacing", "binding", "abstract",
+    "margin_top", "margin_bottom", "margin_left", "margin_right",
+    "margin_gutter",
     "title", "title_anchor", "collapse_blank_runs", "box_display_equations",
     "header_text", "header_series", "page_numbers",
 }
+# flat margin_* → page_binding margins dict 키. 둘 다 있으면 평탄 키가 이긴다.
+MARGIN_FLAT_KEYS = (
+    ("margin_top", "top"),
+    ("margin_bottom", "bottom"),
+    ("margin_left", "left"),
+    ("margin_right", "right"),
+    ("margin_gutter", "gutter"),
+)
+MARGIN_NESTED_KEYS = frozenset(dst for _src, dst in MARGIN_FLAT_KEYS)
+MARGIN_FLAT_KEY_SET = frozenset(src for src, _dst in MARGIN_FLAT_KEYS)
 # 리스트 값으로 파싱할 최상위 키(style_diff.py의 색 허용 목록 등).
 # delete_texts: 삭제할 안내문 문자열 목록(양식 잔재 정리, find_delete op로 변환).
 # delete_texts_after: 같은 형태이나 섹션·그림·표·수식 삽입이 끝난 맨 끝에 발행.
@@ -251,6 +264,14 @@ BUILD_YAML_BLOCK_LIST_KEYS = {
 }
 
 
+def _as_hwp_unit(value, key):
+    """쪽 여백 값을 HWP 단위 정수로 강제. 침묵 변환 없음."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        die(f"{key} must be an integer (HWP units): {value!r}")
+
+
 def parse_build_yaml(path):
     """build.yaml(플랫 + fill: 블록)을 stdlib로 파싱. pyyaml 미사용.
 
@@ -259,10 +280,15 @@ def parse_build_yaml(path):
 
     BUILD_YAML_BLOCK_LIST_KEYS(예: delete_texts)는 flat `[a, b]` 대신
     들여쓰기된 `- "item"` 블록 리스트로만 파싱한다(항목에 콤마가 흔함).
+
+    `margins:` nested 블록(top/bottom/left/right/gutter)은 평탄 `margin_*`
+    키로 접는다. 같은 축에 둘 다 있으면 평탄 키가 이긴다.
     """
     text = Path(path).read_text(encoding="utf-8")
     result, fill = {}, {}
     in_fill = False
+    in_margins = False
+    nested_margins = {}
     in_block_list = None  # 현재 수집 중인 BUILD_YAML_BLOCK_LIST_KEYS 키 이름
     lines = text.splitlines()
     i = 0
@@ -279,6 +305,15 @@ def parse_build_yaml(path):
             i += 1
             continue
         in_block_list = None  # 블록 리스트는 들여쓰기 끊기거나 '-' 아니면 종료
+        if in_margins and indented and ":" in line:
+            mk, mv = line.split(":", 1)
+            mk, mv = mk.strip(), mv.strip()
+            if mk in MARGIN_NESTED_KEYS:
+                nested_margins[mk] = _as_hwp_unit(
+                    _yaml_scalar(mv), f"margins.{mk}")
+            i += 1
+            continue
+        in_margins = False
         if line.rstrip() == "fill:" or line.rstrip().startswith("fill:"):
             in_fill = True
             i += 1
@@ -307,11 +342,22 @@ def parse_build_yaml(path):
         if k in BUILD_YAML_BLOCK_LIST_KEYS and not re.sub(r"#.*$", "", v).strip():
             in_block_list = k
             result.setdefault(k, [])
+        elif k == "margins" and not re.sub(r"#.*$", "", v).strip():
+            in_margins = True
         elif k in BUILD_YAML_LIST_KEYS:
             result[k] = _yaml_list(v)
         elif k in BUILD_YAML_KEYS:
-            result[k] = _yaml_scalar(v)
+            sv = _yaml_scalar(v)
+            if k in MARGIN_FLAT_KEY_SET:
+                result[k] = _as_hwp_unit(sv, k)
+            else:
+                result[k] = sv
         i += 1
+    if nested_margins:
+        result["margins"] = nested_margins
+        for src, dst in MARGIN_FLAT_KEYS:
+            if dst in nested_margins and src not in result:
+                result[src] = nested_margins[dst]
     if fill:
         result["fill"] = fill
     return result
@@ -348,7 +394,26 @@ def merge_meta(meta, build_cfg):
         merged["keep_with_next"] = build_cfg["keep_with_next"]
     if "strip_guide_ws_colors" in build_cfg:
         merged["strip_guide_ws_colors"] = build_cfg["strip_guide_ws_colors"]
+    if isinstance(build_cfg.get("margins"), dict):
+        merged["margins"] = dict(build_cfg["margins"])
+        for src, dst in MARGIN_FLAT_KEYS:
+            if dst in merged["margins"] and src not in merged:
+                merged[src] = _as_hwp_unit(merged["margins"][dst], src)
     return merged
+
+
+def _page_margins(meta):
+    """nested `margins:` 다음 평탄 `margin_*`. 평탄 키가 이긴다. 값은 HWP 단위."""
+    margins = {}
+    nested = meta.get("margins")
+    if isinstance(nested, dict):
+        for key in ("top", "bottom", "left", "right", "gutter"):
+            if key in nested:
+                margins[key] = _as_hwp_unit(nested[key], f"margins.{key}")
+    for src, dst in MARGIN_FLAT_KEYS:
+        if src in meta:
+            margins[dst] = _as_hwp_unit(meta[src], src)
+    return margins
 
 
 def parse_content(text):
@@ -540,9 +605,15 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
     binding = (meta.get("binding") or "book").strip().lower()
     abstract = _is_true(meta.get("abstract"), default=True)
     ops = []
-    # BUG3: 제출용이면 좌우 대칭 여백으로 먼저 전환.
-    if binding == "submit":
-        ops.append({"op": "page_binding", "mode": "submit"})
+    # 제출/제본 모드와 명시 여백을 가장 먼저 적용한다. 원본 3번 보고서는
+    # 왼쪽이 넓은 제본형이므로 margins가 있으면 submit이 아니어도 실행한다.
+    # binding=book 이고 여백이 없으면 오늘과 바이트 동일(page_binding 없음).
+    margins = _page_margins(meta)
+    if binding == "submit" or margins:
+        op = {"op": "page_binding", "mode": binding}
+        if margins:
+            op["margins"] = margins
+        ops.append(op)
     # delete_texts(build.yaml): 양식 안내문 잔재 제거. title replace_all보다
     # 먼저 발행한다 — 안내문에 placeholder 단어(예: 논문제목)가 들어 있으면
     # 제목 치환이 안내문까지 바꿔 find_delete가 매칭에 실패한다.

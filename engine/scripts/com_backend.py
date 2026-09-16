@@ -1778,6 +1778,7 @@ def op_page_binding(hwp, o):
     book(기본): 원본 그대로(안쪽/바깥쪽 미러링 + 제본 여백 유지).
     submit: 좌우 여백을 (좌+우+제본)/2로 대칭화하고 제본 여백을 0으로 — 인쇄폭은
     동일하게 두면서 홀짝 페이지 좌우가 같아진다(일반 제출 파일).
+    margins dict가 있으면 submit/book과 독립적으로 PageDef를 덮어쓴다.
     """
     mode = (o.get("mode") or "submit").lower()
     hwp.MoveDocBegin()
@@ -1790,9 +1791,19 @@ def op_page_binding(hwp, o):
         pd.LeftMargin = half
         pd.RightMargin = total - half
         pd.GutterLen = 0
+    margins = o.get("margins") or {}
+    # build.yaml의 값은 한/글 기본 단위(HwpUnit). 원본 보고서의 비대칭
+    # 제본 여백까지 재현해야 하므로 submit/book 모드와 독립적으로 덮어쓴다.
+    for key, attr in (("left", "LeftMargin"), ("right", "RightMargin"),
+                      ("top", "TopMargin"), ("bottom", "BottomMargin"),
+                      ("gutter", "GutterLen")):
+        if key in margins:
+            setattr(pd, attr, int(margins[key]))
+    if mode == "submit" or margins:
         hwp.HAction.Execute("PageSetup", pset.HSet)
     return {"binding": mode, "left": int(pd.LeftMargin),
-            "right": int(pd.RightMargin), "gutter": int(pd.GutterLen)}
+            "right": int(pd.RightMargin), "top": int(pd.TopMargin),
+            "bottom": int(pd.BottomMargin), "gutter": int(pd.GutterLen)}
 
 
 def op_set_line_spacing(hwp, o):

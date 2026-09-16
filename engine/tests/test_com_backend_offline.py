@@ -914,6 +914,114 @@ def test_xml_backend_refuses_page_numbers_with_named_reason(tmp_path):
     assert not dst.exists()
 
 
+# ---------------------------------------------------------------------------
+# page_binding margins (PageSetup / HPageDef)
+# ---------------------------------------------------------------------------
+
+class _FakePageBindingHwp:
+    """op_page_binding: record PageSetup GetDefault/Execute and PageDef writes."""
+
+    class _PageDef:
+        def __init__(self):
+            self.LeftMargin = 4000
+            self.RightMargin = 5000
+            self.TopMargin = 3000
+            self.BottomMargin = 2000
+            self.GutterLen = 1000
+
+    class _SecDef:
+        def __init__(self, page_def):
+            self.HSet = self
+            self.PageDef = page_def
+
+    class _HAction:
+        def __init__(self, record, page_def):
+            self._record = record
+            self._page_def = page_def
+
+        def GetDefault(self, name, hset):
+            self._record.append(("GetDefault", name))
+
+        def Execute(self, name, hset):
+            pd = hset.PageDef
+            self._record.append(("Execute", name, {
+                "LeftMargin": pd.LeftMargin,
+                "RightMargin": pd.RightMargin,
+                "TopMargin": pd.TopMargin,
+                "BottomMargin": pd.BottomMargin,
+                "GutterLen": pd.GutterLen,
+            }))
+            return True
+
+    def __init__(self):
+        self.actions = []
+        self._page_def = self._PageDef()
+        self.HParameterSet = types.SimpleNamespace(
+            HSecDef=self._SecDef(self._page_def))
+        self.HAction = self._HAction(self.actions, self._page_def)
+
+    def MoveDocBegin(self):
+        self.actions.append("MoveDocBegin")
+
+
+def test_op_page_binding_applies_margins_dict_parameter_names():
+    hwp = _FakePageBindingHwp()
+    result = com_backend.op_page_binding(hwp, {
+        "op": "page_binding", "mode": "book",
+        "margins": {"top": 4252, "bottom": 2835, "left": 7087,
+                    "right": 7087, "gutter": 0},
+    })
+    assert hwp.actions[0] == "MoveDocBegin"
+    assert ("GetDefault", "PageSetup") in hwp.actions
+    executed = [a for a in hwp.actions if a[0] == "Execute"]
+    assert executed == [("Execute", "PageSetup", {
+        "LeftMargin": 7087, "RightMargin": 7087, "TopMargin": 4252,
+        "BottomMargin": 2835, "GutterLen": 0,
+    })]
+    assert result == {
+        "binding": "book", "left": 7087, "right": 7087,
+        "top": 4252, "bottom": 2835, "gutter": 0,
+    }
+
+
+def test_op_page_binding_submit_without_margins_still_symmetrizes():
+    hwp = _FakePageBindingHwp()
+    result = com_backend.op_page_binding(hwp, {
+        "op": "page_binding", "mode": "submit"})
+    executed = [a for a in hwp.actions if a[0] == "Execute"]
+    assert executed == [("Execute", "PageSetup", {
+        "LeftMargin": 5000, "RightMargin": 5000, "TopMargin": 3000,
+        "BottomMargin": 2000, "GutterLen": 0,
+    })]
+    assert result["binding"] == "submit"
+    assert result["left"] == 5000
+    assert result["right"] == 5000
+    assert result["gutter"] == 0
+
+
+def test_op_page_binding_submit_then_overlays_margins():
+    hwp = _FakePageBindingHwp()
+    result = com_backend.op_page_binding(hwp, {
+        "op": "page_binding", "mode": "submit",
+        "margins": {"left": 7087, "right": 7087, "gutter": 0},
+    })
+    executed = [a for a in hwp.actions if a[0] == "Execute"]
+    assert executed[-1][2]["LeftMargin"] == 7087
+    assert executed[-1][2]["RightMargin"] == 7087
+    assert executed[-1][2]["GutterLen"] == 0
+    assert result["left"] == 7087
+    assert result["gutter"] == 0
+
+
+def test_op_page_binding_book_without_margins_does_not_execute():
+    hwp = _FakePageBindingHwp()
+    result = com_backend.op_page_binding(hwp, {
+        "op": "page_binding", "mode": "book"})
+    assert not any(a[0] == "Execute" for a in hwp.actions if isinstance(a, tuple))
+    assert result["binding"] == "book"
+    assert result["left"] == 4000
+
+
 def test_xml_backend_refuses_set_header_with_named_reason(tmp_path):
     src = tmp_path / "in.hwpx"
     src.write_bytes(b"not-a-real-hwpx")

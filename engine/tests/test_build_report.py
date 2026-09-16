@@ -556,6 +556,162 @@ def test_merge_meta_no_page_chrome_keys_when_absent():
     assert "header_series" not in merged
 
 
+# ── page margins (build.yaml margin_* / nested margins:) ────────────────
+
+HAWKES_MARGINS = {
+    "top": 4252, "bottom": 2835, "left": 7087, "right": 7087, "gutter": 0,
+}
+
+
+def test_parse_build_yaml_registers_flat_margin_keys_as_ints(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        "margin_top: 4252",
+        "margin_bottom: 2835",
+        "margin_left: 7087",
+        "margin_right: 7087",
+        "margin_gutter: 0",
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["margin_top"] == 4252
+    assert cfg["margin_bottom"] == 2835
+    assert cfg["margin_left"] == 7087
+    assert cfg["margin_right"] == 7087
+    assert cfg["margin_gutter"] == 0
+    merged = br.merge_meta({}, cfg)
+    assert merged["margin_gutter"] == 0
+
+
+def test_parse_build_yaml_folds_nested_margins_block(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        "margins:",
+        "  top: 4252",
+        "  bottom: 2835",
+        "  left: 7087",
+        "  right: 7087",
+        "  gutter: 0",
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["margins"] == HAWKES_MARGINS
+    assert cfg["margin_top"] == 4252
+    assert cfg["margin_bottom"] == 2835
+    assert cfg["margin_left"] == 7087
+    assert cfg["margin_right"] == 7087
+    assert cfg["margin_gutter"] == 0
+
+
+def test_parse_build_yaml_flat_margin_keys_win_over_nested(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        "margins:",
+        "  top: 1",
+        "  bottom: 2",
+        "  left: 3",
+        "  right: 4",
+        "  gutter: 5",
+        "margin_top: 4252",
+        "margin_left: 7087",
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["margin_top"] == 4252
+    assert cfg["margin_left"] == 7087
+    assert cfg["margin_bottom"] == 2
+    assert cfg["margin_right"] == 4
+    assert cfg["margin_gutter"] == 5
+
+
+def test_parse_build_yaml_flat_wins_when_nested_follows_flat(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        "margin_top: 4252",
+        "margin_bottom: 2835",
+        "margins:",
+        "  top: 1",
+        "  bottom: 2",
+        "  left: 3",
+        "  right: 4",
+        "  gutter: 5",
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["margin_top"] == 4252
+    assert cfg["margin_bottom"] == 2835
+    assert cfg["margin_left"] == 3
+    assert cfg["margin_right"] == 4
+    assert cfg["margin_gutter"] == 5
+
+
+def test_build_ops_emits_margins_only_when_set():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["binding"] = "book"
+    for src, dst in br.MARGIN_FLAT_KEYS:
+        meta[src] = HAWKES_MARGINS[dst]
+    ops = br.build_ops(meta, secs, FIX)
+    pb = next(o for o in ops if o["op"] == "page_binding")
+    assert pb == {"op": "page_binding", "mode": "book",
+                  "margins": HAWKES_MARGINS}
+    assert ops[0] is pb
+
+
+def test_build_ops_nested_margins_fold_into_page_binding():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["binding"] = "book"
+    meta["margins"] = dict(HAWKES_MARGINS)
+    ops = br.build_ops(meta, secs, FIX)
+    pb = next(o for o in ops if o["op"] == "page_binding")
+    assert pb["margins"] == HAWKES_MARGINS
+
+
+def test_build_ops_flat_margin_keys_win_at_emit():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["margins"] = {"top": 1, "bottom": 2, "left": 3, "right": 4, "gutter": 5}
+    meta["margin_top"] = 4252
+    meta["margin_left"] = 7087
+    ops = br.build_ops(meta, secs, FIX)
+    pb = next(o for o in ops if o["op"] == "page_binding")
+    assert pb["margins"] == {
+        "top": 4252, "bottom": 2, "left": 7087, "right": 4, "gutter": 5,
+    }
+
+
+def test_auralab_build_yaml_without_margins_is_byte_identical(tmp_path):
+    """AURALAB-style build.yaml has no margin keys → ops match today's golden."""
+    p = _write_build_yaml(tmp_path, [
+        "base_pt: 11",
+        "binding: book",
+        "abstract: true",
+        "page_numbers: false",
+        'header_text: ""',
+    ])
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    merged = br.merge_meta(dict(meta), br.parse_build_yaml(p))
+    ops_with = br.build_ops(merged, secs, FIX)
+    ops_without = br.build_ops(meta, secs, FIX)
+    assert ops_with == ops_without
+    assert not any("margins" in o for o in ops_with)
+    assert not any(o["op"] == "page_binding" for o in ops_with)
+    golden = json.loads(json.dumps(ops_with))
+    for o in golden:
+        if o.get("op") == "insert_picture":
+            o["path"] = os.path.basename(o["path"])
+    expected = json.load(open(EXPECTED, encoding="utf-8"))
+    assert golden == expected["ops"]
+
+
+def test_submit_without_margins_omits_margins_key():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["binding"] = "submit"
+    ops = br.build_ops(meta, secs, FIX)
+    pb = next(o for o in ops if o["op"] == "page_binding")
+    assert pb == {"op": "page_binding", "mode": "submit"}
+    assert "margins" not in pb
+
+
 def test_validate_ops_accepts_page_numbers_and_set_header():
     ops = [
         {"op": "page_numbers", "position": "bottom_center",

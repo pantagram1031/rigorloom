@@ -107,6 +107,17 @@ base_pt: 10                        # 본문 글자 크기(기본 10). 본문·�
 caption_pt: 9                      # 캡션 글자 크기(기본 9). FIG/TABLE/EQ(display) 캡션에 적용. 미지정 시 9.
 line_spacing: 160                  # 줄간격(%). 미지정 시 양식 기본값 유지. 지정 시 양식 기본을 덮어씀.
 binding: submit                    # book(기본,제본용 미러여백) | submit(제출용 좌우대칭)
+margin_top: 4252                   # 쪽 여백(HWP 단위 정수). 미지정 시 양식 여백 유지
+margin_bottom: 2835
+margin_left: 7087
+margin_right: 7087
+margin_gutter: 0
+# margins:                         # 같은 값의 nested 블록. 평탄 키와 둘 다 있으면 평탄 키가 이긴다
+#   top: 4252
+#   bottom: 2835
+#   left: 7087
+#   right: 7087
+#   gutter: 0
 abstract: false                    # true(기본) | false → 양식의 초록 표를 통째로 제거
 abstract_table_index: 1            # abstract:false일 때 지울 표 index(기본 1=초록표)
 page_numbers: true                 # true면 바닥글 가운데 쪽번호(`- n -`). 글자 크기 caption_pt(기본 9). 미지정/false면 없음
@@ -119,6 +130,14 @@ header_series: ""                  # 머리말 옆 시리즈명. header_text가 
 - **line_spacing**: 본문 줄간격(%). **미지정 시 양식 기본값을 그대로 유지**하고, 값이 있으면
   조립 시 본문 문단에 강제 적용해 양식 기본을 덮어쓴다. 기본양식은 180. (v3→v5 재작업의 핵심 노브.)
 - **binding**: `submit`이면 조립 시 `page_binding` op으로 좌우 여백을 대칭화(인쇄폭 동일).
+- **margin_top / margin_bottom / margin_left / margin_right / margin_gutter**:
+  쪽 여백(HWP 단위 정수). 하나라도 지정되면 `page_binding`에
+  `margins: {top,bottom,left,right,gutter}`를 실어 binding이 `book`이어도 맨 앞에
+  방출한다. 미지정·전부 부재면 양식 여백을 건드리지 않는다(`book`+무여백은 기존과
+  바이트 동일).
+- **margins**: 같은 다섯 값의 nested 블록(`top`/`bottom`/`left`/`right`/`gutter`).
+  Hawkes `build.yaml`처럼 평탄 키와 둘 다 있으면 **평탄 `margin_*` 키가 이긴다**.
+  파서는 nested 블록을 평탄 키로 접는다.
 - **abstract**: `false`면 `delete_ctrls`(tbl, abstract_table_index)로 초록 표 제거 →
   I.서론부터 시작. content.md에 초록 섹션을 아예 빼면 된다.
 - **page_numbers**: `true`면 조립 초반(`page_binding`/`delete_ctrls` 이후, 섹션 삽입 이전)에
@@ -145,7 +164,8 @@ header_series: ""                  # 머리말 옆 시리즈명. header_text가 
 1. content.md 파싱 → 섹션/수식/그림/표/URL 추출 (정규식 기반, 미지 태그는 에러)
 2. 양식 inspect 결과와 SECTION 앵커 대조 — 하나라도 불일치면 **중단·보고** (우회 금지)
 3. ops JSON 생성(순서 보존):
-   - binding:submit → `page_binding`(맨 앞)
+   - binding:submit → `page_binding`(맨 앞). 여백이 있으면 binding이 book이어도
+     `page_binding` + `margins`를 맨 앞에 방출
    - `delete_texts` → `find_delete` (**title `replace_all` 이전**)
    - title `replace_all`, abstract:false → `delete_ctrls`(초록표)
    - 섹션마다 `insert_blank_before`(제목 앞 빈 문단 1개 보장) → `goto_text`(next_para,

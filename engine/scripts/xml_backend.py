@@ -331,6 +331,10 @@ class HwpxDocument:
         mode = str(op.get("mode") or "submit").lower()
         if mode not in {"submit", "book"}:
             raise LookupError("page_binding")
+        raw_margins = op.get("margins") or {}
+        if raw_margins and not isinstance(raw_margins, dict):
+            raise LookupError("page_margins_unsupported_xml")
+        margins = raw_margins if isinstance(raw_margins, dict) else {}
         page_defs = []
         for section_name, tree in self.sections.items():
             for page_pr in (node for node in tree.getroot().iter()
@@ -345,6 +349,11 @@ class HwpxDocument:
                     gutter = int(margin.get("gutter", "0"))
                 except (TypeError, ValueError):
                     continue
+                try:
+                    top = int(margin.get("top", "0"))
+                    bottom = int(margin.get("bottom", "0"))
+                except (TypeError, ValueError):
+                    top, bottom = 0, 0
                 if mode == "submit":
                     total = left + right + gutter
                     left = total // 2
@@ -354,14 +363,30 @@ class HwpxDocument:
                     margin.set("right", str(right))
                     margin.set("gutter", "0")
                     self.dirty.add(section_name)
+                if margins:
+                    for key, attr in (("left", "left"), ("right", "right"),
+                                      ("top", "top"), ("bottom", "bottom"),
+                                      ("gutter", "gutter")):
+                        if key in margins:
+                            margin.set(attr, str(int(margins[key])))
+                    left = int(margin.get("left"))
+                    right = int(margin.get("right"))
+                    top = int(margin.get("top", "0"))
+                    bottom = int(margin.get("bottom", "0"))
+                    gutter = int(margin.get("gutter", "0"))
+                    self.dirty.add(section_name)
                 page_defs.append({"section": section_name, "left": left,
-                                  "right": right, "gutter": gutter})
+                                  "right": right, "top": top, "bottom": bottom,
+                                  "gutter": gutter})
+        if margins and not page_defs:
+            raise LookupError("page_margins_unsupported_xml")
         if not page_defs:
             note = "page binding is not representable: no numeric section page definition"
             return {"binding": mode, "sections": 0, "partial": True, "note": note}
         result = {"binding": mode, "sections": len(page_defs),
                   "note": "applied to section page definition"}
-        result.update({key: page_defs[0][key] for key in ("left", "right", "gutter")})
+        result.update({key: page_defs[0][key]
+                       for key in ("left", "right", "top", "bottom", "gutter")})
         return result
 
     def _ensure_table_border_fill(self):

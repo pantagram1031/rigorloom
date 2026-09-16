@@ -34,7 +34,7 @@ def tiny_png(path, width=4, height=2):
     return data
 
 
-def make_hwpx(path, table_label=False, solid_border=False):
+def make_hwpx(path, table_label=False, solid_border=False, page_setup=True):
     borders = ('<hh:borderFills itemCnt="2"><hh:borderFill id="0"/>'
                '<hh:borderFill id="4"><hh:leftBorder type="SOLID"/>'
                '<hh:rightBorder type="SOLID"/><hh:topBorder type="SOLID"/>'
@@ -54,7 +54,8 @@ def make_hwpx(path, table_label=False, solid_border=False):
 </hh:binDataList></hh:head>'''.encode()
     secpr = ('<hp:secPr><hp:pagePr width="60000" height="84000">'
              '<hp:margin left="4000" right="5000" top="5000" bottom="5000" '
-             'header="0" footer="0" gutter="1000"/></hp:pagePr></hp:secPr>')
+             'header="0" footer="0" gutter="1000"/></hp:pagePr></hp:secPr>'
+             if page_setup else '')
     anchor = ('<hp:p id="10" paraPrIDRef="0"><hp:run charPrIDRef="0">'
               '<hp:t>Generic anchor</hp:t></hp:run></hp:p>')
     if table_label:
@@ -88,9 +89,10 @@ def make_hwpx(path, table_label=False, solid_border=False):
     return members
 
 
-def run_cli(tmp_path, ops, table_label=False, solid_border=False):
+def run_cli(tmp_path, ops, table_label=False, solid_border=False,
+            page_setup=True):
     src, dst, ops_file = (tmp_path / n for n in ("in.hwpx", "out.hwpx", "ops.json"))
-    members = make_hwpx(src, table_label, solid_border)
+    members = make_hwpx(src, table_label, solid_border, page_setup=page_setup)
     ops_file.write_text(json.dumps(ops), encoding="utf-8")
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "edit", "--file", str(src),
@@ -417,6 +419,47 @@ def test_page_binding_submit_updates_section_margin_and_reports_note(tmp_path):
     op_result = json.loads(result.stdout)["results"][0]
     assert op_result["binding"] == "submit"
     assert "section page definition" in op_result["note"]
+
+
+def test_page_binding_applies_margins_to_section_page_definition(tmp_path):
+    result, dst, _ = run_cli(tmp_path, [{
+        "op": "page_binding", "mode": "book",
+        "margins": {"top": 4252, "bottom": 2835, "left": 7087,
+                    "right": 7087, "gutter": 0},
+    }])
+    assert result.returncode == 0, result.stdout
+    margin = local_nodes(section(dst), "margin")[0]
+    assert {key: margin.get(key)
+            for key in ("left", "right", "top", "bottom", "gutter")} == {
+        "left": "7087", "right": "7087", "top": "4252",
+        "bottom": "2835", "gutter": "0"}
+    op_result = json.loads(result.stdout)["results"][0]
+    assert op_result["binding"] == "book"
+    assert op_result["left"] == 7087
+    assert op_result["top"] == 4252
+    assert op_result["gutter"] == 0
+
+
+def test_page_binding_submit_then_overlays_margins(tmp_path):
+    result, dst, _ = run_cli(tmp_path, [{
+        "op": "page_binding", "mode": "submit",
+        "margins": {"left": 7087, "right": 7087, "gutter": 0},
+    }])
+    assert result.returncode == 0, result.stdout
+    margin = local_nodes(section(dst), "margin")[0]
+    assert {key: margin.get(key) for key in ("left", "right", "gutter")} == {
+        "left": "7087", "right": "7087", "gutter": "0"}
+
+
+def test_page_binding_with_margins_refuses_without_page_definition(tmp_path):
+    result, dst, _ = run_cli(tmp_path, [{
+        "op": "page_binding", "mode": "book",
+        "margins": {"top": 4252, "left": 7087},
+    }], page_setup=False)
+    assert result.returncode == 4, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["unsupported"] == ["page_margins_unsupported_xml"]
+    assert not dst.exists()
 
 
 def test_set_line_spacing_only_repoints_inserted_paragraphs_and_is_partial(tmp_path):
