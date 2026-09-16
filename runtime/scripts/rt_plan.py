@@ -2,8 +2,12 @@
 # -*- coding: utf-8 -*-
 """OperationPlan, PlanValidation, ApprovalRequest/ApprovalRecord.
 
-A plan declares its backend (orchestrator decision D9). This slice can execute
-``preedit`` only; ``xml`` and ``com`` plans are refused with
+A plan declares its backend (orchestrator decision D9). This slice executes
+``preedit`` only. ``xml`` plans are refused with ``unsupported_backend``.
+``com`` plans are accepted at propose when ``capabilities.backends.com`` is
+``available`` (Hancom probe plus ``engine/scripts/com_backend.py``); apply
+still refuses them with ``unsupported_backend`` until the COM child is wired.
+Op kinds those backends own, mixed into a preedit plan, are refused with
 ``unsupported_backend`` that NAMES the backend which would serve them, so the
 refusal is a routing answer rather than a wall.
 
@@ -73,7 +77,7 @@ XML_OP_KINDS = frozenset({
     "page_binding", "replace_all", "insert_blank_before", "insert_picture",
     "set_line_spacing",
 })
-#: engine/scripts/com_backend.py:1598 (22 entries, verified against the source)
+#: engine/scripts/com_backend.py:1902 (24 entries, verified against OPS)
 COM_OP_KINDS = frozenset({
     "replace_all", "put_field", "goto_text", "find_delete", "move",
     "insert_text", "insert_equation", "edit_equation", "insert_table",
@@ -81,7 +85,16 @@ COM_OP_KINDS = frozenset({
     "collapse_empty_paragraphs", "delete_blank_after", "delete_blank_before",
     "set_para_align", "insert_blank_before", "insert_hyperlink",
     "page_binding", "set_line_spacing", "page_break_before",
+    "page_numbers", "set_header",
 })
+#: First wave the Runtime will propose when the COM capability is available.
+#: Order is the capability catalog order (docs/plans/stage3-cli-com-wiring.md).
+COM_FIRST_WAVE: tuple[str, ...] = (
+    "replace_all", "goto_text", "insert_text", "set_cell",
+    "insert_equation", "insert_picture", "insert_hyperlink",
+)
+COM_FIRST_WAVE_SET = frozenset(COM_FIRST_WAVE)
+COM_DEFERRED_OP_KINDS = frozenset(COM_OP_KINDS - COM_FIRST_WAVE_SET)
 
 #: Refusals only the engine can raise, listed so a clean validation is never
 #: read as "apply cannot refuse".
@@ -89,6 +102,12 @@ DEFERRED_REFUSALS = (
     "replace_key_ambiguous",
     "at_cell_expect_mismatch",
     "xml_wellformedness",
+)
+#: COM apply-time refusals this slice does not preflight (Hancom is not started).
+COM_DEFERRED_REFUSALS = (
+    "equation_preflight",
+    "set_cell_expect_mismatch",
+    "anchor_not_found",
 )
 
 _OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
@@ -99,6 +118,21 @@ _OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
                         ("table", "run", "mode", "expect", "charPr")),
     "set_run": (("atPara", "run", "text"), ()),
     "delete_guides": ((), ("color", "charPrIds")),
+}
+
+#: Closed first-wave COM schemas. ``set_cell`` requires ``text`` here; ``addr``
+#: is required after row/col translation and ``raw_traversal`` is never allowed.
+_COM_OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "replace_all": (("find", "replace"), ("regex",)),
+    "goto_text": (("text",), ("after", "line_end", "cell_below", "next_para")),
+    "insert_text": (("text",), ("pt", "segments", "break_after", "align")),
+    "set_cell": (("text",), ("addr", "row", "col", "table",
+                             "expect_empty", "expect")),
+    "insert_equation": ((), ("latex", "hwpeqn", "display", "boxed",
+                             "base_pt", "font", "box_height_mm")),
+    "insert_picture": (("path",), ("width_mm", "height_mm",
+                                   "treat_as_char", "own_paragraph")),
+    "insert_hyperlink": (("url",), ("text", "pt")),
 }
 
 
@@ -361,35 +395,99 @@ def _classify_foreign_kind(kind: str) -> str | None:
     return None
 
 
-def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
-               bound_sha256: str, base: dict | None = None,
-               reverses: dict | None = None, declares=None,
-               inventory: dict | None = None) -> OperationPlan:
-    """Create a plan. Refuses an unservable backend or op kind before anything else.
+def _foreign_owner(kind: str, backend: str) -> str | None:
+    """Which other backend owns this kind, from this plan's point of view."""
+    if backend == "com":
+        if kind in PREEDIT_OP_KINDS:
+            return "preedit"
+        if kind in XML_OP_KINDS and kind not in COM_OP_KINDS:
+            return "xml"
+        return None
+    return _classify_foreign_kind(kind)
 
-    ``base`` is the published candidate these ops are chained onto, or ``None``
-    for the session source. ``bound_sha256`` is that subject's digest either
-    way, so a plan on a candidate binds the candidate's bytes and ``opsHash``
-    separates two identical edits made at different points in the chain — the
-    Phase 2 parity property survives unchanged because the subject is still one
-    digest.
 
-    ``reverses`` names the candidate this plan undoes, when it undoes one. The
-    runtime records the claim; it does not derive it. What makes the claim
-    checkable is ``candidate/compare`` after the apply, not this field.
-    """
-    if backend not in SUPPORTED_BACKENDS:
-        known = backend in KNOWN_BACKENDS
+def _is_nonneg_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _normalise_com_set_cell(params: dict, at: str) -> dict:
+    """Require cellAddr; translate row/col to addr; never accept raw_traversal."""
+    if "raw_traversal" in params:
         raise RpcError(
-            "unsupported_backend",
-            (f"backend {backend!r} is declared by the protocol but this build "
-             f"executes only {', '.join(SUPPORTED_BACKENDS)}")
-            if known else f"unknown backend {backend!r}",
-            declared=backend, supported=list(SUPPORTED_BACKENDS),
-            known=list(KNOWN_BACKENDS))
-    if not isinstance(ops, list) or not ops:
-        raise RpcError("invalid_params", "ops must be a non-empty array")
+            "invalid_params",
+            "set_cell on the com backend never accepts raw_traversal (T28); "
+            "use addr:[row,col]",
+            at=at, kind="set_cell", field="raw_traversal")
+    out = dict(params)
+    addr = out.get("addr")
+    if addr is None:
+        row, col = out.get("row"), out.get("col")
+        if _is_nonneg_int(row) and _is_nonneg_int(col):
+            out["addr"] = [row, col]
+            out.pop("row", None)
+            out.pop("col", None)
+        else:
+            raise RpcError("invalid_params", f"{at} is missing required fields",
+                           at=at, kind="set_cell", missing=["addr"])
+    else:
+        if (not isinstance(addr, (list, tuple)) or len(addr) != 2
+                or not all(_is_nonneg_int(value) for value in addr)):
+            raise RpcError(
+                "invalid_params",
+                f"{at}.addr must be [row, col] non-negative integers",
+                at=at, kind="set_cell")
+        out["addr"] = [int(addr[0]), int(addr[1])]
+        out.pop("row", None)
+        out.pop("col", None)
+    return out
 
+
+def _normalise_com_equation(params: dict, at: str) -> dict:
+    has_latex = isinstance(params.get("latex"), str) and params["latex"]
+    has_hwpeqn = isinstance(params.get("hwpeqn"), str) and params["hwpeqn"]
+    if has_latex == has_hwpeqn:
+        raise RpcError(
+            "invalid_params",
+            f"{at} insert_equation needs exactly one of latex or hwpeqn",
+            at=at, kind="insert_equation", missing=["latex|hwpeqn"])
+    return params
+
+
+def _refuse_unservable_kind(kind: str, backend: str, at: str) -> None:
+    owner = _foreign_owner(kind, backend)
+    if owner is not None:
+        if backend == "preedit":
+            message = (f"op kind {kind!r} is served by the {owner} backend, which "
+                       "this build does not execute")
+        else:
+            message = (f"op kind {kind!r} is served by the {owner} backend, "
+                       f"not {backend}")
+        raise RpcError(
+            "unsupported_backend", message,
+            at=at, kind=kind, servedBy=owner,
+            supported=list(SUPPORTED_BACKENDS))
+    if backend == "com" and kind in COM_DEFERRED_OP_KINDS:
+        raise RpcError(
+            "unknown_op_kind",
+            f"op kind {kind!r} is deferred on the com backend in this wave",
+            at=at, kind=kind, servedBy="com",
+            knownKinds=list(COM_FIRST_WAVE),
+            notImplemented=sorted(COM_DEFERRED_OP_KINDS))
+    known = (sorted(PREEDIT_OP_KINDS) if backend == "preedit"
+             else list(COM_FIRST_WAVE))
+    not_implemented = (list(PREEDIT_NOT_IMPLEMENTED) if backend == "preedit"
+                       else sorted(COM_DEFERRED_OP_KINDS))
+    raise RpcError(
+        "unknown_op_kind",
+        f"op kind {kind!r} is not known to the "
+        f"{backend} backend",
+        at=at, kind=kind, knownKinds=known,
+        notImplemented=not_implemented)
+
+
+def _normalise_ops(backend: str, ops: list) -> list:
+    field_table = _OP_FIELDS if backend == "preedit" else _COM_OP_FIELDS
+    accepted = PREEDIT_OP_KINDS if backend == "preedit" else COM_FIRST_WAVE_SET
     normalised = []
     seen_ids: set[str] = set()
     for index, op in enumerate(ops):
@@ -399,22 +497,9 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
         kind = op.get("kind")
         if not isinstance(kind, str):
             raise RpcError("invalid_params", f"{at}.kind must be a string")
-        if kind not in PREEDIT_OP_KINDS:
-            owner = _classify_foreign_kind(kind)
-            if owner is not None:
-                raise RpcError(
-                    "unsupported_backend",
-                    f"op kind {kind!r} is served by the {owner} backend, which "
-                    "this build does not execute",
-                    at=at, kind=kind, servedBy=owner,
-                    supported=list(SUPPORTED_BACKENDS))
-            raise RpcError(
-                "unknown_op_kind",
-                f"op kind {kind!r} is not known to the "
-                f"{', '.join(SUPPORTED_BACKENDS)} backend",
-                at=at, kind=kind, knownKinds=sorted(PREEDIT_OP_KINDS),
-                notImplemented=list(PREEDIT_NOT_IMPLEMENTED))
-        required, optional = _OP_FIELDS[kind]
+        if kind not in accepted:
+            _refuse_unservable_kind(kind, backend, at)
+        required, optional = field_table[kind]
         allowed = set(required) | set(optional) | {"kind", "opId"}
         unknown = sorted(set(op) - allowed)
         if unknown:
@@ -434,7 +519,62 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
         seen_ids.add(op_id)
         params = {key: value for key, value in op.items()
                   if key not in ("kind", "opId")}
+        if backend == "com" and kind == "set_cell":
+            params = _normalise_com_set_cell(params, at)
+        elif backend == "com" and kind == "insert_equation":
+            params = _normalise_com_equation(params, at)
         normalised.append({"opId": op_id, "kind": kind, "params": params})
+    return normalised
+
+
+def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
+               bound_sha256: str, base: dict | None = None,
+               reverses: dict | None = None, declares=None,
+               inventory: dict | None = None,
+               com_capability: dict | None = None) -> OperationPlan:
+    """Create a plan. Refuses an unservable backend or op kind before anything else.
+
+    ``base`` is the published candidate these ops are chained onto, or ``None``
+    for the session source. ``bound_sha256`` is that subject's digest either
+    way, so a plan on a candidate binds the candidate's bytes and ``opsHash``
+    separates two identical edits made at different points in the chain — the
+    Phase 2 parity property survives unchanged because the subject is still one
+    digest.
+
+    ``reverses`` names the candidate this plan undoes, when it undoes one. The
+    runtime records the claim; it does not derive it. What makes the claim
+    checkable is ``candidate/compare`` after the apply, not this field.
+
+    ``com_capability`` is the produced ``backends.com`` snapshot. A ``com``
+    plan is accepted only when that snapshot's ``state`` is ``available``.
+    """
+    if backend not in KNOWN_BACKENDS:
+        raise RpcError(
+            "unsupported_backend",
+            f"unknown backend {backend!r}",
+            declared=backend, supported=list(SUPPORTED_BACKENDS),
+            known=list(KNOWN_BACKENDS))
+    if backend == "com":
+        cap = com_capability or {}
+        if cap.get("state") != "available":
+            reason = cap.get("reason") or (
+                "the com backend is not available on this host")
+            data = {"backend": "com", "state": "unavailable",
+                    "facts": dict(cap.get("facts") or {})}
+            if cap.get("missing") is not None:
+                data["missing"] = cap["missing"]
+            raise RpcError("capability_unavailable", reason, **data)
+    elif backend not in SUPPORTED_BACKENDS:
+        raise RpcError(
+            "unsupported_backend",
+            (f"backend {backend!r} is declared by the protocol but this build "
+             f"executes only {', '.join(SUPPORTED_BACKENDS)}"),
+            declared=backend, supported=list(SUPPORTED_BACKENDS),
+            known=list(KNOWN_BACKENDS))
+    if not isinstance(ops, list) or not ops:
+        raise RpcError("invalid_params", "ops must be a non-empty array")
+
+    normalised = _normalise_ops(backend, ops)
 
     payload = {
         "schema": PLAN_SCHEMA,
@@ -589,6 +729,46 @@ def validate_plan(plan: OperationPlan, *, profile: dict,
             "plan",
             boundSha256=plan.payload["boundSha256"],
             currentSha256=current_sha256))
+
+    if plan.payload.get("backend") == "com":
+        for op in plan.payload["ops"]:
+            at = f"ops[{op['opId']}]"
+            kind, params = op["kind"], op["params"]
+            if kind == "set_cell":
+                if params.get("raw_traversal"):
+                    hard.append(_finding(
+                        "op_field_invalid",
+                        "set_cell never accepts raw_traversal (T28); use addr",
+                        at))
+                addr = params.get("addr")
+                if (not isinstance(addr, list) or len(addr) != 2
+                        or not all(_is_nonneg_int(value) for value in addr)):
+                    hard.append(_finding(
+                        "op_field_invalid",
+                        "set_cell needs addr:[row,col] non-negative integers",
+                        at))
+        return {
+            "planId": plan.id,
+            "planHash": plan.hash,
+            "backend": plan.payload["backend"],
+            "boundSha256": plan.payload["boundSha256"],
+            "currentSha256": current_sha256,
+            "stale": stale,
+            "ok": not hard,
+            "verdict": "pass" if not hard else "fail",
+            "hard": hard,
+            "warn": warn,
+            "counts": {"hard": len(hard), "warn": len(warn),
+                       "ops": len(plan.payload["ops"])},
+            "preflight": {
+                "level": "structural+backend-schema",
+                "source": "runtime COM first-wave schema; Hancom is not started",
+                "deferred": list(COM_DEFERRED_REFUSALS),
+                "note": ("COM validation does not start Hancom; equation "
+                         "preflight, set_cell expect, and missing anchors are "
+                         "apply-time refusals listed in deferred"),
+            },
+        }
 
     cells = _cell_index(profile)
     ft_cells, ft_paras = _full_text_lookup(profile)

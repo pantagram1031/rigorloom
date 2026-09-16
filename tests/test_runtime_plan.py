@@ -65,12 +65,12 @@ def test_the_plan_hash_covers_the_ops(client, session):
     assert first["planHash"] != second["planHash"]
 
 
-@pytest.mark.parametrize("backend", ["xml", "com"])
-def test_a_declared_but_unserved_backend_is_refused_by_name(client, session, backend):
-    error = client.err("plan/propose", {"sessionId": session, "backend": backend,
+def test_a_declared_but_unserved_backend_is_refused_by_name(client, session):
+    """xml stays unserved. com is capability-gated in test_runtime_com_capability."""
+    error = client.err("plan/propose", {"sessionId": session, "backend": "xml",
                                         "ops": [CLEAN_OP]})
     assert error["code"] == "unsupported_backend"
-    assert error["data"]["declared"] == backend
+    assert error["data"]["declared"] == "xml"
     assert error["data"]["supported"] == ["preedit"]
 
 

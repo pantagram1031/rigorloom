@@ -115,7 +115,7 @@ def test_usage_refusal_and_domain_refusal_have_different_exit_codes(root, source
     assert usage.code == 2
     assert usage.error["code"] == "unknown_field"
 
-    refusal = run_cli(root, "propose", "--session", session, "--backend", "com",
+    refusal = run_cli(root, "propose", "--session", session, "--backend", "xml",
                       "--op", CLEAN_OP)
     assert refusal.code == 3
     assert refusal.error["code"] == "unsupported_backend"

@@ -272,9 +272,14 @@ three registries, and they are not the same set:
 `goto_text, insert_text, insert_equation, insert_table, page_binding,
 replace_all, insert_blank_before, insert_picture, set_line_spacing`.
 
-**COM (Windows + Hancom only) — `engine/scripts/com_backend.py:1598`**
-22 ops in `OPS`, required keys in `OP_REQUIRED_KEYS` (`:1626`), validated
-before Hancom launches by `_validate_ops` (`:1670`).
+**COM (Windows + Hancom only) — `engine/scripts/com_backend.py:1902`**
+24 ops in `OPS`, required keys in `OP_REQUIRED_KEYS` (`:1932`), validated
+before Hancom launches by `_validate_ops` (`:1977`). The Runtime first wave
+(propose, when `backends.com` is available) is `replace_all`, `goto_text`,
+`insert_text`, `set_cell`, `insert_equation`, `insert_picture`,
+`insert_hyperlink`. `set_cell` carries `addr:[row,col]` (row/col is
+translated to addr); `raw_traversal` is refused. Other known COM ops stay
+in the registry for `servedBy` classification and are `deferredOpKinds`.
 
 Only the COM registry can insert native equations, pictures, hyperlinks and
 tables into an arbitrary position; only the offline registries run on a machine
@@ -655,9 +660,24 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 ## 9. Implementation status (Phase 1 slice)
 
 Implemented in `runtime/` on this branch. Everything not listed is still GAP.
-The slice serves the offline `preedit` backend only (orchestrator decision D9);
-`xml` and `com` plans, and op kinds those backends own, are refused with
-`unsupported_backend` naming the backend that would serve them.
+The slice executes the offline `preedit` backend (orchestrator decision D9).
+`xml` plans stay `unsupported_backend`. Op kinds owned by xml or com, mixed
+into a preedit plan, are refused with `unsupported_backend` naming the
+backend that would serve them. `com`
+is not a constant `unavailable`: `capabilities.backends.com` is produced
+from `rt_convert.hancom_facts()` plus resolution of
+`engine/scripts/com_backend.py`. `state` is `available` only when the probe
+is `yes` and the script is present; otherwise it is `unavailable` with the
+probe's own reason (never "declared by the protocol; not executed by this
+build"), a `facts` object (`platform`, `pyhwpx`, `progid`), `opKinds` equal
+to the first wave, and `deferredOpKinds` for the rest of `COM_OP_KINDS`.
+Propose accepts `backend: "com"` only when that capability is available;
+otherwise it refuses with `capability_unavailable` whose data names the
+missing fact. Ops outside the first wave are refused with the deferred
+`unknown_op_kind` pattern; mixing preedit kinds into a com plan is the
+foreign-mix `unsupported_backend` rule. `opsHash` includes the backend. A
+com plan that reaches `plan/apply` still fails closed with
+`unsupported_backend` — this slice does not execute COM.
 
 ### Methods
 
@@ -669,12 +689,12 @@ The slice serves the offline `preedit` backend only (orchestrator decision D9);
 | `workspace/openPath` (host) | implemented — size + zip sanity; no HWP5 CFB walk | `runtime/scripts/rt_session.py` `validate_source` |
 | `document/inspect` | implemented — summary + graph + regions | `_m_document_inspect` |
 | `document/readRegion` | implemented, bounded, refuses rather than truncates | `_m_document_read_region` |
-| `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan` |
+| `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan`. `com` only when `backends.com` is available; first-wave kinds only. |
 | `plan/validate` | implemented, profile-derived (see below) | `rt_plan.validate_plan` |
 | `plan/get`, `approval/get` | implemented | `rt_server` |
 | `approval/request` (agent) | implemented | `rt_plan.request_approval` |
 | `approval/resolve` (host) | implemented, binds plan id + plan hash | `rt_plan.resolve_approval` |
-| `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan` |
+| `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan`; com still `unsupported_backend` |
 | `candidate/list`, `receipt/read` | implemented; the receipt refuses on drift | `rt_apply` |
 | cancellation | implemented, cooperative between ops | `rt_server._checkpoint` |
 | `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`, `workspace/delete`, `verify/*` | GAP | — |

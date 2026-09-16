@@ -49,7 +49,6 @@ from rt_codes import (  # noqa: E402
 )
 from rt_engine import EngineTools, child_python_facts  # noqa: E402
 from rt_plan import (  # noqa: E402
-    COM_OP_KINDS,
     DEFERRED_REFUSALS,
     PREEDIT_NOT_IMPLEMENTED,
     PREEDIT_OP_KINDS,
@@ -189,9 +188,7 @@ class RuntimeCore:
             "xml": {"state": "unavailable",
                     "reason": "declared by the protocol; not executed by this build",
                     "opKinds": sorted(XML_OP_KINDS)},
-            "com": {"state": "unavailable",
-                    "reason": "declared by the protocol; not executed by this build",
-                    "opKinds": sorted(COM_OP_KINDS)},
+            "com": self.tools.com_capability(),
         }
         return {
             "methods": sorted(methods),
@@ -400,7 +397,9 @@ class RuntimeCore:
         plan = build_plan(session_id=session.id, backend=backend, ops=ops,
                           proposer=proposer, bound_sha256=bound,
                           base=base, reverses=reversal, declares=declares,
-                          inventory=inventory)
+                          inventory=inventory,
+                          com_capability=(self.tools.com_capability()
+                                          if backend == "com" else None))
         self.save_plan(plan)
         append_event(session, "plan.proposed", planId=plan.id,
                      opsHash=plan.payload["opsHash"], backend=backend,
@@ -521,6 +520,14 @@ class RuntimeCore:
             raise RpcError("plan_not_approved",
                            f"the approval for this plan is {record.state}",
                            planId=plan.id, approvalId=record.id, state=record.state)
+        if plan.payload.get("backend") != "preedit":
+            raise RpcError(
+                "unsupported_backend",
+                (f"backend {plan.payload.get('backend')!r} has no apply path "
+                 "in this build"),
+                declared=plan.payload.get("backend"),
+                supported=list(SUPPORTED_BACKENDS),
+                known=list(KNOWN_BACKENDS))
         session = self.store.get(plan.payload["sessionId"])
         def reconcile(result, *, emit_events):
             candidate = result["candidate"]

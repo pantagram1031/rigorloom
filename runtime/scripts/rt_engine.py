@@ -276,6 +276,22 @@ print(json.dumps({"ok": True, "verdict": verdict, "exitCode": code,
 """
 
 
+def _com_missing_fact(hancom: dict, script_present: bool) -> str | None:
+    """Which availability fact failed, or None when COM may be proposed."""
+    if hancom.get("state") == "yes" and script_present:
+        return None
+    if hancom.get("state") != "yes":
+        reason = hancom.get("reason") or ""
+        if "not Windows" in reason:
+            return "platform"
+        if not hancom.get("pyhwpx"):
+            return "pyhwpx"
+        if not hancom.get("progid"):
+            return "progid"
+        return "hancom"
+    return "script"
+
+
 class EngineTools:
     """Resolved paths to the shipped entrypoints, with honest availability."""
 
@@ -284,12 +300,14 @@ class EngineTools:
         self.form_inspect = self.root / "engine" / "scripts" / "form_inspect.py"
         self.preedit = self.root / "engine" / "scripts" / "preedit.py"
         self.check_residue = self.root / "pipeline" / "scripts" / "check_residue.py"
+        self.com_backend = self.root / "engine" / "scripts" / "com_backend.py"
 
     def availability(self) -> dict[str, dict]:
         rows = {}
         for name, path in (("form_inspect", self.form_inspect),
                            ("preedit", self.preedit),
-                           ("check_residue", self.check_residue)):
+                           ("check_residue", self.check_residue),
+                           ("com_backend", self.com_backend)):
             present = path.is_file()
             rows[name] = {
                 "state": "available" if present else "unavailable",
@@ -297,6 +315,42 @@ class EngineTools:
                 "path": path.relative_to(self.root).as_posix() if present else None,
             }
         return rows
+
+    def com_capability(self) -> dict:
+        """``capabilities.backends.com`` — produced, never a constant.
+
+        ``available`` only when ``hancom_facts()["state"] == "yes"`` AND
+        ``engine/scripts/com_backend.py`` resolves under this engine root.
+        Does not start Hancom, does not import pyhwpx, does not spawn a child.
+        """
+        from rt_convert import hancom_facts  # noqa: PLC0415
+        from rt_plan import COM_DEFERRED_OP_KINDS, COM_FIRST_WAVE  # noqa: PLC0415
+
+        hancom = hancom_facts()
+        script_present = self.com_backend.is_file()
+        facts = {
+            "platform": sys.platform,
+            "pyhwpx": hancom["pyhwpx"],
+            "progid": hancom["progid"],
+        }
+        missing = _com_missing_fact(hancom, script_present)
+        available = missing is None
+        if available:
+            reason = None
+        elif hancom["state"] != "yes":
+            reason = hancom["reason"]
+        else:
+            reason = "engine/scripts/com_backend.py is not in this install"
+        payload = {
+            "state": "available" if available else "unavailable",
+            "reason": reason,
+            "opKinds": list(COM_FIRST_WAVE),
+            "deferredOpKinds": sorted(COM_DEFERRED_OP_KINDS),
+            "facts": facts,
+        }
+        if missing is not None:
+            payload["missing"] = missing
+        return payload
 
     def _residue_declared(self, profile: Path, artifact: Path,
                           declaration: dict) -> dict:

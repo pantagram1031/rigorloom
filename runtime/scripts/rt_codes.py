@@ -169,8 +169,11 @@ APPROVAL_STATES = ("pending", "approved", "auto_approved", "rejected")
 #: refuses to (modules/report/scripts/pipeline_ctl.py:1159).
 APPROVAL_DECISIONS = ("approved", "rejected")
 
-#: The only backend this slice can execute. ``com`` and ``xml`` op kinds are
-#: refused with ``unsupported_backend`` naming which backend would serve them
+#: Backends this build always executes. ``com`` may be proposed when
+#: ``capabilities.backends.com.state`` is ``available``; apply still refuses
+#: it until the COM child adapter lands. ``xml`` stays unserved.
+#: ``com`` and ``xml`` op kinds on a *preedit* plan are refused with
+#: ``unsupported_backend`` naming which backend would serve them
 #: (orchestrator decision D9).
 SUPPORTED_BACKENDS = ("preedit",)
 KNOWN_BACKENDS = ("preedit", "xml", "com")
