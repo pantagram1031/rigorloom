@@ -57,7 +57,7 @@ from rt_codes import (  # noqa: E402
     RpcError,
 )
 from rt_jsonl import canonical_bytes  # noqa: E402
-from rt_session import atomic_write_bytes, now_utc, sha256_file  # noqa: E402
+from rt_session import atomic_write_bytes, now_utc, residue_profile, sha256_file  # noqa: E402
 
 RECEIPT_NAME = "receipt.json"
 REQUIRED_CHECKS = ("check_residue",)
@@ -373,8 +373,7 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
             digest, size = sha256_file(pdf_dest)
             pdf_record = {"path": pdf_dest.name, "sha256": digest, "bytes": size}
 
-        source_profile = session.profile_dir / f"verify-{run_id}.json"
-        tools.profile(session.source, source_profile)
+        _, source_profile, residue_meta = residue_profile(tools, session)
         declaration = plan.payload.get("declares") or None
         checks = verification_report(tools, source_profile, artifact,
                                      declaration)
@@ -450,6 +449,11 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
             "approval": approval.public(),
             "steps": steps,
             "checks": checks,
+            # Which form inventory graded this candidate. Bound when open
+            # supplied an explicit form; otherwise a self-derived scan of the
+            # opened document. Origin paths stay in session metadata — receipts
+            # carry the digest only, same redaction as elsewhere.
+            "residue": residue_meta,
             # The exemptions this candidate was graded WITH, bound to the plan
             # hash the approval signed. A later ``verify`` reads them from here
             # rather than trusting a caller to re-supply the policy: a candidate

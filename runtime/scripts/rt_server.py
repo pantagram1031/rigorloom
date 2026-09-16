@@ -377,10 +377,12 @@ class RuntimeServer:
                                       probe_renderers=probe)
 
     def _m_open_path(self, params: dict, _id) -> dict:
-        params = _object(params, {"path"}, required=("path",),
+        params = _object(params, {"path", "formProfile", "form"}, required=("path",),
                          where="workspace/openPath.params",
                          policy=self.unknown_field_policy)
-        return self.core.open_path(params["path"])
+        return self.core.open_path(params["path"],
+                                   form_profile=params.get("formProfile"),
+                                   form=params.get("form"))
 
     def _m_session_list(self, params: dict, _id) -> dict:
         _object(params, set(), where="session/list.params",

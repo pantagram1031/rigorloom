@@ -1731,3 +1731,39 @@ a client is ever opened.
   `check_residue.normalize_text` in this path, so two texts that differ only in
   whitespace compare unequal. Correct for a reversal, and stated so a caller
   does not read it as a semantic match.
+
+---
+
+## 16. Bound form profile
+
+A session may be judged against a blank form instead of against a
+`form_inspect` of the opened document itself. `workspace/openPath` (CLI
+`open --path P`) accepts one of:
+
+| Param | CLI | Meaning |
+| --- | --- | --- |
+| `formProfile` | `--form-profile F` | a `form_inspect` JSON of the blank form (the same object `engine/scripts/form_inspect.py` writes) |
+| `form` | `--form FORM_HWPX` | a blank form file; the Runtime derives the profile through the existing `form_inspect` child with tag `form` |
+
+The two are mutually exclusive. The binding is stored in session metadata with
+the profile's SHA-256 and origin path. Receipts and other public surfaces
+carry the digest and the origin *basename* only — the absolute path is
+redacted as elsewhere (`rt_engine.redact_paths`).
+
+Residue judgement (`plan/apply`, `verify`) and `_declaration_inventory` use
+the bound profile when present, else the self-derived base profile of the
+opened document, as before. `document/inspect` `forbidden` follows the same
+rule; `summary` / `graph` / `regions` still describe the opened document.
+
+Both the inspect `forbidden` payload and every apply receipt carry
+`residue.profileSource: "bound_form" | "self_derived"` plus the profile
+SHA-256. When `self_derived` and the opened document has zero placeholders, or
+any removal target whose confidence is below `high`, `residue.note` states
+that the inventory is heuristic. The note is informational; it does not
+change the verdict.
+
+This is **not** a proof that the form matches the document. The Runtime
+parses `form_hash` and the profile's list structure and refuses a profile
+that does not parse. It does not compare layout, anchors, or page count to
+the opened file. A mismatched form is a caller error the residue gate will
+still score.

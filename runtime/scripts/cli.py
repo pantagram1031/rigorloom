@@ -200,6 +200,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("open", help="validate and copy a document into a session")
     p.add_argument("--path", required=True, help="absolute path to the source")
+    form = p.add_mutually_exclusive_group()
+    form.add_argument(
+        "--form-profile", default=None,
+        help="form_inspect JSON of the blank form; residue is judged against "
+             "this inventory instead of a scan of the opened document")
+    form.add_argument(
+        "--form", default=None,
+        help="blank form HWPX; the Runtime derives its profile (tag form) and "
+             "binds that as the residue inventory")
 
     p = sub.add_parser("inspect", help="summary, graph and editable regions")
     p.add_argument("--session", required=True)
@@ -355,7 +364,8 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
         return {"protocolVersion": PROTOCOL_VERSION, "implVersion": IMPL_VERSION,
                 **core.capability_snapshot(methods=list(METHODS))}, EXIT_OK
     if command == "open":
-        return core.open_path(args.path), EXIT_OK
+        return core.open_path(args.path, form_profile=args.form_profile,
+                              form=args.form), EXIT_OK
     if command == "sessions":
         return core.session_list(), EXIT_OK
     if command == "inspect":

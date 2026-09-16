@@ -201,10 +201,7 @@ class Session:
             "sourceBytes": size,
             "ingress": facts,
         }
-        atomic_write_bytes(
-            session.meta_path,
-            json.dumps(session.meta, ensure_ascii=False, indent=2,
-                       allow_nan=False).encode("utf-8"))
+        session.persist_meta()
         return session
 
     @classmethod
@@ -241,8 +238,14 @@ class Session:
     def current_source_sha256(self) -> str:
         return sha256_file(self.source)[0]
 
+    def persist_meta(self) -> None:
+        atomic_write_bytes(
+            self.meta_path,
+            json.dumps(self.meta, ensure_ascii=False, indent=2,
+                       allow_nan=False).encode("utf-8"))
+
     def summary(self) -> dict:
-        return {
+        out = {
             "sessionId": self.id,
             "openedUtc": self.meta["openedUtc"],
             "source": {
@@ -252,6 +255,10 @@ class Session:
                 "documentKind": self.meta["ingress"].get("documentKind", "opaque"),
             },
         }
+        public = public_form_binding(self)
+        if public is not None:
+            out["formProfile"] = public
+        return out
 
 
 #: One closed set, so a UI can switch on it exhaustively rather than matching
@@ -547,6 +554,174 @@ def load_profile(tools, session: Session, *, tag: str = "base",
     except (OSError, ValueError) as exc:
         raise RpcError("backend_refused", "form_inspect wrote an unreadable profile",
                        tool="form_inspect", detail=str(exc)) from exc
+
+
+PROFILE_SOURCE_BOUND = "bound_form"
+PROFILE_SOURCE_SELF = "self_derived"
+FORM_PROFILE_TAG = "form"
+HEURISTIC_RESIDUE_NOTE = (
+    "inventory is heuristic: this document was profiled as its own form "
+    "(zero placeholders, or a removal target with confidence below high)"
+)
+
+
+def _require_absolute_file(raw, *, what: str) -> Path:
+    if not isinstance(raw, str) or not raw.strip():
+        raise RpcError("invalid_params", f"{what} must be a non-empty string")
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise RpcError("invalid_params",
+                       f"{what} must be absolute; the Runtime has no ambient cwd")
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise RpcError("invalid_params", f"{what} cannot be read",
+                       detail=str(exc)) from exc
+    if stat.S_ISLNK(info.st_mode) or is_reparse(info):
+        raise RpcError("invalid_params",
+                       f"{what} is a symlink or reparse point; open the real file")
+    if not stat.S_ISREG(info.st_mode):
+        raise RpcError("invalid_params", f"{what} is not a regular file")
+    return path
+
+
+def parse_form_profile(raw: bytes) -> dict:
+    """Refuse a profile whose form_hash or list structure does not parse.
+
+    This is a parse check, not a match check: a profile of a different form
+    than the opened document is accepted if it is a form_inspect object.
+    """
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError) as exc:
+        raise RpcError("invalid_params",
+                       "form profile is not valid JSON",
+                       detail=str(exc)) from exc
+    if not isinstance(payload, dict):
+        raise RpcError("invalid_params", "form profile must be a JSON object")
+    form_hash = payload.get("form_hash")
+    if not isinstance(form_hash, str) or not form_hash.strip():
+        raise RpcError("invalid_params",
+                       "form profile is missing a parseable form_hash")
+    for key in ("anchors", "placeholders", "guide_text", "removal_targets",
+                "anchor_records"):
+        if key in payload and not isinstance(payload[key], list):
+            raise RpcError("invalid_params",
+                           f"form profile {key} is not a list")
+    return payload
+
+
+def bound_form_binding(session: Session) -> dict | None:
+    binding = session.meta.get("formProfile")
+    if isinstance(binding, dict) and isinstance(binding.get("sha256"), str):
+        return binding
+    return None
+
+
+def public_form_binding(session: Session) -> dict | None:
+    """Binding facts a caller may see. Origin path is the basename only."""
+    binding = bound_form_binding(session)
+    if binding is None:
+        return None
+    return {
+        "bound": True,
+        "sha256": binding["sha256"],
+        "origin": binding.get("originName") or Path(
+            str(binding.get("originPath") or "")).name,
+        "kind": binding.get("kind"),
+    }
+
+
+def _store_form_binding(session: Session, *, sha256: str, origin: Path,
+                        kind: str) -> None:
+    session.meta["formProfile"] = {
+        "kind": kind,
+        "sha256": sha256,
+        "originPath": str(origin),
+        "originName": origin.name,
+    }
+    session.persist_meta()
+
+
+def bind_form_profile_json(session: Session, raw_path) -> dict:
+    """Copy a form_inspect profile JSON into the session as the residue authority."""
+    source = _require_absolute_file(raw_path, what="formProfile")
+    try:
+        raw = source.read_bytes()
+    except OSError as exc:
+        raise RpcError("invalid_params", "form profile cannot be read",
+                       detail=str(exc)) from exc
+    parse_form_profile(raw)
+    session.ensure_dirs()
+    target = _profile_path(session, FORM_PROFILE_TAG)
+    atomic_write_bytes(target, raw)
+    digest, _ = sha256_file(target)
+    _store_form_binding(session, sha256=digest, origin=source, kind="profile")
+    return public_form_binding(session)
+
+
+def bind_form_hwpx(tools, session: Session, raw_path) -> dict:
+    """Derive a form profile from a blank form file (form_inspect tag ``form``)."""
+    source = _require_absolute_file(raw_path, what="form")
+    validate_source(source)
+    session.ensure_dirs()
+    out = _profile_path(session, FORM_PROFILE_TAG)
+    tools.profile(source, out)
+    try:
+        raw = out.read_bytes()
+    except OSError as exc:
+        raise RpcError("backend_refused",
+                       "form_inspect wrote an unreadable form profile",
+                       tool="form_inspect", detail=str(exc)) from exc
+    parse_form_profile(raw)
+    digest, _ = sha256_file(out)
+    _store_form_binding(session, sha256=digest, origin=source, kind="form")
+    return public_form_binding(session)
+
+
+def _heuristic_self_derived(profile: dict) -> bool:
+    placeholders = profile.get("placeholders") or []
+    if not isinstance(placeholders, list) or len(placeholders) == 0:
+        return True
+    for target in profile.get("removal_targets") or []:
+        if not isinstance(target, dict):
+            return True
+        if target.get("confidence") != "high":
+            return True
+    return False
+
+
+def residue_profile(tools, session: Session) -> tuple[dict, Path, dict]:
+    """Profile the residue gate will judge, plus ``residue`` metadata.
+
+    Bound when ``open`` supplied ``formProfile``/``form``; otherwise the
+    self-derived base profile of the opened document, as before.
+    """
+    binding = bound_form_binding(session)
+    if binding is not None:
+        path = _profile_path(session, FORM_PROFILE_TAG)
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise RpcError("backend_refused",
+                           "bound form profile is missing from the session",
+                           detail=str(exc)) from exc
+        profile = parse_form_profile(raw)
+        meta = {
+            "profileSource": PROFILE_SOURCE_BOUND,
+            "sha256": binding["sha256"],
+        }
+        return profile, path, meta
+    profile = load_profile(tools, session, tag="base")
+    path = _profile_path(session, "base")
+    digest, _ = sha256_file(path)
+    meta = {
+        "profileSource": PROFILE_SOURCE_SELF,
+        "sha256": digest,
+    }
+    if _heuristic_self_derived(profile):
+        meta["note"] = HEURISTIC_RESIDUE_NOTE
+    return profile, path, meta
 
 
 def charpr_faces(profile: dict) -> dict:

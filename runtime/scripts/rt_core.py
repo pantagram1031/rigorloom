@@ -73,6 +73,8 @@ from rt_session import (  # noqa: E402
     MAX_EVENTS_PER_POLL_DEFAULT,
     SessionStore,
     append_event,
+    bind_form_hwpx,
+    bind_form_profile_json,
     read_events,
     bound_region_result,
     document_graph,
@@ -82,6 +84,7 @@ from rt_session import (  # noqa: E402
     full_text_spec,
     load_profile,
     region_runs_with_faces,
+    residue_profile,
 )
 
 #: Every method an agent connection may reach, ``initialize`` included.
@@ -229,8 +232,16 @@ class RuntimeCore:
                 "entry": entry, **snapshot}
 
     # -- sessions -----------------------------------------------------------
-    def open_path(self, path) -> dict:
+    def open_path(self, path, form_profile=None, form=None) -> dict:
+        if form_profile is not None and form is not None:
+            raise RpcError(
+                "invalid_params",
+                "formProfile and form are mutually exclusive")
         session = self.store.open_path(path)
+        if form_profile is not None:
+            bind_form_profile_json(session, form_profile)
+        elif form is not None:
+            bind_form_hwpx(self.tools, session, form)
         append_event(session, "session.opened",
                      sourceName=session.meta["sourceName"],
                      sourceSha256=session.meta["sourceSha256"],
@@ -248,9 +259,13 @@ class RuntimeCore:
             raise RpcError("invalid_params",
                            f"include must be a subset of {list(INCLUDE_SECTIONS)}",
                            offered=include)
-        profile = load_profile(self.tools, session, tag="base")
-        out: dict = {"sessionId": session.id,
-                     "documentHash": profile.get("form_hash")}
+        profile = None
+        if any(section in include for section in ("summary", "graph", "regions")):
+            profile = load_profile(self.tools, session, tag="base")
+            out: dict = {"sessionId": session.id,
+                         "documentHash": profile.get("form_hash")}
+        else:
+            out = {"sessionId": session.id, "documentHash": None}
         if "summary" in include:
             out["summary"] = document_summary(profile, session)
         if "graph" in include:
@@ -258,7 +273,12 @@ class RuntimeCore:
         if "regions" in include:
             out["regions"] = editable_regions(profile, session)
         if "forbidden" in include:
-            out["forbidden"] = forbidden_inventory(profile, session)
+            residue_prof, _, residue_meta = residue_profile(self.tools, session)
+            if out.get("documentHash") is None:
+                out["documentHash"] = session.meta["sourceSha256"]
+            inventory = forbidden_inventory(residue_prof, session)
+            inventory["residue"] = residue_meta
+            out["forbidden"] = inventory
         return out
 
     @staticmethod
@@ -342,12 +362,13 @@ class RuntimeCore:
     def _declaration_inventory(self, session) -> dict:
         """Folded inventory texts, so a keep entry can be checked before approval.
 
-        Read from the session's own base profile — the same document the gate
-        will judge — so "this keep names nothing" is a fact about THIS form and
+        Read from the bound form profile when the session has one, otherwise
+        the session's own base profile — the same document the gate will
+        judge — so "this keep names nothing" is a fact about THIS form and
         not a guess. Only loaded when a plan actually declares a keep list, so
         an ordinary propose still costs no extra profile read.
         """
-        profile = load_profile(self.tools, session, tag="base")
+        profile, _, _ = residue_profile(self.tools, session)
         inventory = forbidden_inventory(profile, session)
         keepable = {" ".join(str(entry["text"]).split())
                     for entry in inventory["anchors"] + inventory["placeholders"]
@@ -798,14 +819,14 @@ class RuntimeCore:
         session = self.store.get(session_id)
         receipt = read_receipt(session, run_id)
         artifact = session.candidates_dir / run_id / receipt["candidate"]["path"]
-        profile = session.profile_dir / f"verify-{run_id}-recheck.json"
-        self.tools.profile(session.source, profile)
+        _, profile_path, residue_meta = residue_profile(self.tools, session)
         # The declaration comes from the RECEIPT, never from this call. A
         # candidate that passed under a declared keep list must be re-checkable
         # under the same one, and letting a re-check supply its own policy would
         # make "verify" mean "verify against whatever I now claim".
         recorded = receipt.get("exemptions") or {}
         declaration = recorded.get("declares") or None
-        checks = verification_report(self.tools, profile, artifact, declaration)
+        checks = verification_report(self.tools, profile_path, artifact, declaration)
         return {"sessionId": session.id, "runId": run_id,
-                "candidate": receipt["candidate"], "checks": checks}
+                "candidate": receipt["candidate"], "checks": checks,
+                "residue": residue_meta}
