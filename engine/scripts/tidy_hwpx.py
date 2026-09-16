@@ -68,12 +68,18 @@ exit 2: 사용법/파일 오류.
     오프라인 XML로 결정론적으로 걷어낸다. 표 셀 안 중첩 문단도 대상으로 한다
     (delete-guides의 top-level 전용과 달리, 초록 표 안의 잔여 공백 런이
     바로 그 사례). 비공백 텍스트 런·ctrl/table/secPr/object 런은 건드리지
-    않는다. 그런 런이 문단의 유일한 런이면 문단 자체는 지우지 않고, 같은
+    않는다.     그런 런이 문단의 유일한 런이면 문단 자체는 지우지 않고, 같은
     문단의 다른 런 charPr(있으면) 또는 --profile의 body_black_charpr id로
-    빈 런을 남겨 치환한다(둘 다 없으면 그대로 두고 skipped). 수정한 문단의
+    빈 런을 남겨 치환한다(둘 다 없으면 그대로 두고 skipped). 스트립 뒤,
+    요청 색과 textColor가 같고 Contents/section*.xml의 어떤 런에서도
+    참조되지 않는 header.xml charPr은 요소·id·itemCnt를 유지한 채
+    textColor만 #000000으로 바꾼다(verify_format F2가 런이 아니라
+    정의의 near-red를 세기 때문). 비공백 텍스트 런이 아직 참조하면
+    그대로 두고 kept_referenced_charpr로 보고한다. 수정한 문단의
     linesegarray만 제거(T24)하고 손대지 않은 문단의 것은 바이트 그대로.
     쓰기 전 수정 멤버 well-formed 검사. 자기 출력에 재적용하면 멤버 내용이
-    동일(멱등). 요약 JSON: {stripped, replaced, skipped}.
+    동일(멱등). 요약 JSON: {stripped, replaced, skipped, neutralized_charpr,
+    kept_referenced_charpr}.
 
     다른 플래그와 조합 가능. 실행 순서(고정): --before/--after(빈 문단 정리)
     → --strip-guide-ws-runs(안내문 공백 런 제거) → --restore-formats(줄간격/
@@ -1157,6 +1163,73 @@ def _is_guide_ws_run(run, guide_ids):
             and not run["protected"])
 
 
+def _iter_runs_in_para(p_xml):
+    """문단의 직접 자식 런 + 중첩 문단(표 셀) 안의 런."""
+    for run in _direct_child_runs(p_xml):
+        yield run
+    om = P_OPEN_RE.match(p_xml)
+    if not om:
+        return
+    close_idx = p_xml.rfind("</")
+    if close_idx <= om.end():
+        return
+    inner = p_xml[om.end():close_idx]
+    for _s, _e, nested_p in _find_paragraphs(inner):
+        yield from _iter_runs_in_para(nested_p)
+
+
+def _iter_all_runs_in_xml(xml):
+    for _s, _e, p_xml in _find_paragraphs(xml):
+        yield from _iter_runs_in_para(p_xml)
+
+
+def _neutralize_unreferenced_guide_charprs(header_xml, section_xmls, guide_ids):
+    """요청 색 charPr 중 런 참조가 0개인 정의의 textColor를 #000000으로 패치.
+
+    요소를 지우거나 id/itemCnt를 바꾸지 않는다(댕글링 참조 원천 차단).
+    비공백 텍스트 런이 아직 가리키면 손대지 않고 kept로 센다.
+    반환: (new_header_xml, neutralized_count, kept_referenced_count)
+    """
+    if not guide_ids:
+        return header_xml, 0, 0
+
+    ref_counts = {cid: 0 for cid in guide_ids}
+    has_non_ws = {cid: False for cid in guide_ids}
+    cref_re = re.compile(r'\bcharPrIDRef\s*=\s*"(\d+)"')
+    for xml in section_xmls:
+        for cid in cref_re.findall(xml):
+            if cid in ref_counts:
+                ref_counts[cid] += 1
+        for run in _iter_all_runs_in_xml(xml):
+            cid = run["charpr"]
+            if cid in has_non_ws and run["text"].strip():
+                has_non_ws[cid] = True
+
+    replacements = []
+    neutralized = 0
+    kept = 0
+    open_re = re.compile(r'<' + NS + r':charPr\b[^>]*\bid="(\d+)"[^>]*>')
+    for m in open_re.finditer(header_xml):
+        cid = m.group(1)
+        if cid not in guide_ids:
+            continue
+        if ref_counts.get(cid, 0) == 0:
+            new_tag, n = re.subn(
+                r'(\btextColor\s*=\s*")#?[0-9A-Fa-f]{6}(")',
+                r'\g<1>#000000\2',
+                m.group(0),
+                count=1,
+            )
+            if n:
+                replacements.append((m.start(), m.end(), new_tag))
+                neutralized += 1
+        elif has_non_ws.get(cid):
+            kept += 1
+    for start, end, new_tag in reversed(replacements):
+        header_xml = header_xml[:start] + new_tag + header_xml[end:]
+    return header_xml, neutralized, kept
+
+
 def _strip_direct_runs(p_xml, guide_ids, fallback_id):
     """직접 자식 안내-공백 런을 지우거나(다른 런이 남으면) 빈 런으로 치환.
 
@@ -1237,14 +1310,17 @@ def strip_guide_ws_runs(path, colors, out_path=None, profile_path=None):
 
     colors: ['#RRGGBB', ...] (대소문자 무시, # 생략 허용).
     profile_path: 유일한 런 치환용 body_black_charpr.id 출처.
-    반환: {"ok": True, "stripped": n, "replaced": n, "skipped": n}
+    반환: {"ok": True, "stripped": n, "replaced": n, "skipped": n,
+            "neutralized_charpr": n, "kept_referenced_charpr": n}
     """
     path = Path(path)
     out_path = Path(out_path) if out_path else path
+    empty = {"ok": True, "stripped": 0, "replaced": 0, "skipped": 0,
+             "neutralized_charpr": 0, "kept_referenced_charpr": 0}
     if not colors:
         if out_path.resolve() != path.resolve():
             shutil.copy2(path, out_path)
-        return {"ok": True, "stripped": 0, "replaced": 0, "skipped": 0}
+        return empty
 
     norm_colors = [_normalize_guide_color(c) for c in colors]
     fallback_id = _body_black_charpr_id(profile_path)
@@ -1269,6 +1345,7 @@ def strip_guide_ws_runs(path, colors, out_path=None, profile_path=None):
     )
     stripped = replaced = skipped = 0
     changed = False
+    section_texts = []
     for sname in section_names:
         xml = contents[sname].decode("utf-8")
         new_xml, s, r, k = _strip_guide_ws_in_xml(xml, guide_ids, fallback_id)
@@ -1279,16 +1356,30 @@ def strip_guide_ws_runs(path, colors, out_path=None, profile_path=None):
             _assert_xml_well_formed(new_xml, sname)
             contents[sname] = new_xml.encode("utf-8")
             changed = True
+        section_texts.append(new_xml)
 
-    if not changed:
+    new_header, neutralized, kept = _neutralize_unreferenced_guide_charprs(
+        header_xml, section_texts, guide_ids)
+    header_changed = new_header != header_xml
+    if header_changed:
+        _assert_xml_well_formed(new_header, header_name)
+        contents[header_name] = new_header.encode("utf-8")
+
+    summary = {
+        "ok": True,
+        "stripped": stripped,
+        "replaced": replaced,
+        "skipped": skipped,
+        "neutralized_charpr": neutralized,
+        "kept_referenced_charpr": kept,
+    }
+    if not changed and not header_changed:
         if out_path.resolve() != path.resolve():
             shutil.copy2(path, out_path)
-        return {"ok": True, "stripped": stripped, "replaced": replaced,
-                "skipped": skipped}
+        return summary
 
     _write_hwpx(path, out_path, contents)
-    return {"ok": True, "stripped": stripped, "replaced": replaced,
-            "skipped": skipped}
+    return summary
 
 
 def main():
@@ -1367,6 +1458,8 @@ def main():
         result["stripped"] = strip_result["stripped"]
         result["replaced"] = strip_result["replaced"]
         result["skipped"] = strip_result["skipped"]
+        result["neutralized_charpr"] = strip_result["neutralized_charpr"]
+        result["kept_referenced_charpr"] = strip_result["kept_referenced_charpr"]
         cur = out
 
     if args.restore_formats:

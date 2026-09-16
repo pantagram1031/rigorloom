@@ -890,9 +890,17 @@ def _zip_members(path):
         return {n: z.read(n) for n in z.namelist()}
 
 
-def _build_guide_ws_hwpx(tmp_path):
-    """charPr 3=#000000, 27=#FF0000. 세 문단: 혼합(공백+본문), 유일한 빨간
-    공백 런, 빨간 실문. 혼합은 표 셀 안(초록 표 F2 재현)."""
+def _header_xml(path):
+    with zipfile.ZipFile(path) as z:
+        return z.read("Contents/header.xml").decode("utf-8")
+
+
+def _build_guide_ws_hwpx(tmp_path, include_real_text=True):
+    """charPr 3=#000000, 27=#FF0000. 문단: 혼합(공백+본문), 유일한 빨간
+    공백 런, (선택) 빨간 실문. 혼합은 표 셀 안(초록 표 F2 재현).
+
+    include_real_text=False 면 스트립 후 charPr 27 참조가 0이 되어
+    정의를 #000000으로 중화하는 T7 경로를 탄다."""
     header = (
         '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head">'
         '<hh:refList>'
@@ -908,6 +916,11 @@ def _build_guide_ws_hwpx(tmp_path):
              '<hp:run charPrIDRef="3"><hp:t>text</hp:t></hp:run>')
     sole = '<hp:run charPrIDRef="27"><hp:t> </hp:t></hp:run>'
     real = '<hp:run charPrIDRef="27"><hp:t>real text</hp:t></hp:run>'
+    real_para = (
+        f'<hp:p paraPrIDRef="0">{real}'
+        '<hp:linesegarray><hp:lineseg vertpos="99"/></hp:linesegarray>'
+        '</hp:p>'
+    ) if include_real_text else ""
     section = (
         '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
         ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
@@ -919,9 +932,7 @@ def _build_guide_ws_hwpx(tmp_path):
         '<hp:linesegarray><hp:lineseg vertpos="1"/></hp:linesegarray>'
         '</hp:p>'
         f'<hp:p paraPrIDRef="0">{sole}</hp:p>'
-        f'<hp:p paraPrIDRef="0">{real}'
-        '<hp:linesegarray><hp:lineseg vertpos="99"/></hp:linesegarray>'
-        '</hp:p>'
+        f'{real_para}'
         '</hs:sec>'
     )
     path = tmp_path / "guide_ws.hwpx"
@@ -944,11 +955,15 @@ def test_strip_guide_ws_runs_mixed_sole_and_real_text(tmp_path):
     assert result["stripped"] == 1
     assert result["replaced"] == 1
     assert result["skipped"] == 0
+    # 실문 런이 아직 27을 가리키므로 정의는 빨강 유지.
+    assert result["neutralized_charpr"] == 0
+    assert result["kept_referenced_charpr"] == 1
 
     with zipfile.ZipFile(out1) as z:
         xml = z.read("Contents/section0.xml").decode("utf-8")
     import xml.etree.ElementTree as ET
     ET.fromstring(xml)
+    ET.fromstring(_header_xml(out1))
 
     # 혼합: 빨간 공백 런 제거, 본문 런 보존(표 셀 안).
     assert '<hp:run charPrIDRef="27"><hp:t> </hp:t></hp:run>' not in xml
@@ -967,6 +982,8 @@ def test_strip_guide_ws_runs_mixed_sole_and_real_text(tmp_path):
     assert result2["stripped"] == 0
     assert result2["replaced"] == 0
     assert result2["skipped"] == 0
+    assert result2["neutralized_charpr"] == 0
+    assert result2["kept_referenced_charpr"] == 1
     assert _zip_members(out1) == _zip_members(out2)
 
 
@@ -990,7 +1007,86 @@ def test_strip_guide_ws_runs_cli_json(tmp_path):
     assert payload["stripped"] == 1
     assert payload["replaced"] == 1
     assert payload["skipped"] == 0
+    assert payload["neutralized_charpr"] == 0
+    assert payload["kept_referenced_charpr"] == 1
     with zipfile.ZipFile(out) as z:
         xml = z.read("Contents/section0.xml").decode("utf-8")
     assert 'charPrIDRef="27"><hp:t>real text</hp:t>' in xml
     assert xml.count('charPrIDRef="27"') == 1
+
+
+def _guide_profile(tmp_path):
+    profile = tmp_path / "form_profile.json"
+    profile.write_text(
+        json.dumps({"body_black_charpr": {"id": 3}}), encoding="utf-8")
+    return profile
+
+
+def test_strip_guide_ws_runs_neutralizes_unreferenced_red_charpr(tmp_path):
+    """(a) 스트립 후 빨간 charPr을 가리키는 런이 없으면 정의 textColor만
+    #000000 — 요소 삭제·id 재번호·itemCnt 변경 없음."""
+    src = _build_guide_ws_hwpx(tmp_path, include_real_text=False)
+    profile = _guide_profile(tmp_path)
+    out = tmp_path / "out.hwpx"
+    result = tidy_hwpx.strip_guide_ws_runs(
+        src, ["#FF0000"], out_path=out, profile_path=str(profile))
+    assert result["ok"] is True
+    assert result["stripped"] == 1
+    assert result["replaced"] == 1
+    assert result["skipped"] == 0
+    assert result["neutralized_charpr"] == 1
+    assert result["kept_referenced_charpr"] == 0
+
+    header = _header_xml(out)
+    import xml.etree.ElementTree as ET
+    ET.fromstring(header)
+    with zipfile.ZipFile(out) as z:
+        ET.fromstring(z.read("Contents/section0.xml").decode("utf-8"))
+
+    assert tidy_hwpx._charpr_ids_for_colors(header, ["#FF0000"]) == set()
+    assert tidy_hwpx._charpr_ids_for_colors(header, ["#000000"]) == {"3", "27"}
+    assert 'itemCnt="2"' in header
+    assert len(tidy_hwpx.re.findall(r'<hh:charPr\b', header)) == 2
+    assert tidy_hwpx.re.search(r'<hh:charPr\b[^>]*\bid="27"', header)
+    with zipfile.ZipFile(out) as z:
+        xml = z.read("Contents/section0.xml").decode("utf-8")
+    assert 'charPrIDRef="27"' not in xml
+
+
+def test_strip_guide_ws_runs_keeps_referenced_red_charpr(tmp_path):
+    """(b) 비공백 텍스트 런이 아직 빨간 charPr을 가리키면 정의는 빨강
+    유지, kept_referenced_charpr로 보고."""
+    src = _build_guide_ws_hwpx(tmp_path, include_real_text=True)
+    profile = _guide_profile(tmp_path)
+    out = tmp_path / "out.hwpx"
+    result = tidy_hwpx.strip_guide_ws_runs(
+        src, ["#FF0000"], out_path=out, profile_path=str(profile))
+    assert result["neutralized_charpr"] == 0
+    assert result["kept_referenced_charpr"] == 1
+
+    header = _header_xml(out)
+    assert tidy_hwpx._charpr_ids_for_colors(header, ["#FF0000"]) == {"27"}
+    assert 'itemCnt="2"' in header
+    with zipfile.ZipFile(out) as z:
+        xml = z.read("Contents/section0.xml").decode("utf-8")
+    assert '<hp:run charPrIDRef="27"><hp:t>real text</hp:t></hp:run>' in xml
+
+
+def test_strip_guide_ws_runs_neutralize_idempotent(tmp_path):
+    """(c) 중화 포함 두 번째 실행은 0 changes, 멤버 바이트 동일."""
+    src = _build_guide_ws_hwpx(tmp_path, include_real_text=False)
+    profile = _guide_profile(tmp_path)
+    out1 = tmp_path / "out1.hwpx"
+    result1 = tidy_hwpx.strip_guide_ws_runs(
+        src, ["#FF0000"], out_path=out1, profile_path=str(profile))
+    assert result1["neutralized_charpr"] == 1
+
+    out2 = tmp_path / "out2.hwpx"
+    result2 = tidy_hwpx.strip_guide_ws_runs(
+        out1, ["#FF0000"], out_path=out2, profile_path=str(profile))
+    assert result2["stripped"] == 0
+    assert result2["replaced"] == 0
+    assert result2["skipped"] == 0
+    assert result2["neutralized_charpr"] == 0
+    assert result2["kept_referenced_charpr"] == 0
+    assert _zip_members(out1) == _zip_members(out2)

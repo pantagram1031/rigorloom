@@ -130,6 +130,7 @@ abstract_table_index: 1            # abstract:false일 때 지울 표 index(기�
   COM `find_delete`가 안내문 문구만 지우고 같은 문단 앞머리에 남긴 빨간 스페이스 런(verify_format F2)용.
   `tidy_blank_*`가 없어도 이 키만 있으면 fill 루프는 오프라인 tidy 경로를 탄다.
   유일한 런인 문단은 지우지 않고 `--form-profile`의 `body_black_charpr` id(또는 같은 문단의 다른 런 charPr)로 빈 런을 남긴다.
+  스트립 뒤, 요청 색과 textColor가 같고 `Contents/section*.xml`의 어떤 런에서도 참조되지 않는 `header.xml` charPr은 요소·id·`itemCnt`를 유지한 채 `textColor`만 `#000000`으로 바꾼다 — `verify_format` F2는 런이 아니라 header 정의의 near-red를 세기 때문이다. 비공백 텍스트 런이 아직 참조하면 그대로 둔다.
 
 ## build_report.py 의무 동작
 1. content.md 파싱 → 섹션/수식/그림/표/URL 추출 (정규식 기반, 미지 태그는 에러)
