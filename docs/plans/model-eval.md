@@ -62,6 +62,16 @@ Reading: for a 6k-char Korean section with worked numbers, sol/codex/composer/gr
 
 Reading: every model that finished produced a passing, spec-shaped implementation; the differences were robustness (raw-action fallback) and diff economy. For spec-driven, test-gated engine work the cheap tier (composer, codex-high, sol-high) is sufficient; pick grok-xhigh/opus when the COM surface is uncertain. Live Hancom proof of the adopted op is pending the next assembly.
 
+### W2 (results section) and W3 (methods + discussion), 2026-09-16, three models each
+
+Deterministic checks: all six drafts kept every FIG/TABLE block and anchor (FIG width attributes differed only because Fable capped widths after launch; normalized at merge), 0 polite endings. Sizes: W2 opus 9.9k / sonnet 7.1k / sol 7.0k chars; W3 opus 5.9k+4.6k / sonnet 4.8k+3.1k / sol 6.1k+4.5k.
+
+Judge (gpt-5.6-sol-high-fast, agent mode, reads results.json / gates.py to verify):
+- W2: sol 22 > sonnet 19 > opus 13. The judge caught two rounding errors in the ORIGINAL 표 5 that every draft copied (36.25 → 36.2 not 36.3; −5.115 → −5.11 not −5.12) — a real find, fixed in body/claims/evidence. Opus contradicted itself on the 125 Hz vs 1000 Hz crossover and leaked gate names. **sol adopted**.
+- W3: opus 20 > sol 19 > sonnet 17. All three over-stated the height argument (defaults are 1.2 m, so wording was softened rather than removed) and one claimed hash-based tamper detection more strongly than the pipeline does (softened). Opus's V is the best reflection; its "renovation order is robust" claim was hedged with the gap/flanking caveat. **opus adopted**.
+
+Reading: a cheap judge (sol, ~8 min, ~260k cache tokens) reliably finds arithmetic/rounding slips and register leaks, including in the human-written baseline; its rankings agreed with Fable's spot checks. Writing quality ordering differed by task (grok-xhigh best on theory, sol on results, opus on reflection), so no single cheap model wins across kinds; sol-high-fast is the best value per token for prose so far.
+
 ## Verdicts so far (Stage 1 experience, all cursor-grok-4.6-xhigh-fast)
 
 - T1–T7, H1: 9/9 bounded engine tasks accepted after my review; typical
