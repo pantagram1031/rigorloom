@@ -27,6 +27,34 @@ the kernel's contract shape.
   `[poster]`). `docs/demo/` holds the sanitized AURALAB classroom report pages
   and poster produced through every stage gate on `main`'s pipeline.
 
+- **Runtime backends `com` and `xml` (2026-09-16/17):** `propose --backend com`
+  executes a first wave of seven ops through Hancom with a `native_com_session`
+  receipt (Hancom post-inspect, optional PDF); `propose --backend xml` executes
+  nine ops through the pure-Python `xml_backend` on any OS with a
+  `structural_only` receipt whose well-formedness the Runtime verifies itself
+  (`xml_not_well_formed` refusal, nothing published). `capabilities` reports
+  each backend's state, opKinds and proofGrade; engine children receive
+  `ProgramData` (Hancom needs it). Recorded end to end on this PC, including a
+  COM edit of the 20-page AURALAB report followed by `render-prepare`/`render`
+  of the candidate (`docs/demo/cli-com-edit-page1.png`).
+
+- **Engine build.yaml keys `page_numbers`, `header_text`, `header_series`:**
+  footer page numbers ("- n -") and an optional running header, ported from
+  the report fork with offline tests; XML backend refuses both with named
+  reasons.
+
+- **Desktop (Stage 4 + 4b, 2026-09-16/17):** plan review queue with IME-inert
+  approve, per-hunk provenance and approve ≠ apply; receipt/compare inspector;
+  honest on-demand page preview; structure tree with region source
+  (`read-region`); history with reverse-plan restore. Then the revamp: home
+  screen with recents, one workspace with a tabbed inspector (선택 / 검토 / 기록 /
+  에이전트), collapsible outline rail, three-item status bar with a grouped
+  자세히 popover, review as diff hunks with keyboard review and hash-bound
+  approve-all, agent chat with plan-arrival card, checkpoint timeline, icon set,
+  focus/hover states, Korean typography rules, dark mode. Headless tests
+  113 → 193; built-app smoke passes 549 checks on the release build;
+  reference captures under `docs/demo/desktop/`.
+
 - **T126:** a cross-lane reproduction of the private-capture custody claims from
   PRs #134-#137, written from this side against the shipped code rather than
   derived from the PR text. Reproduced: a clean one-link file is captured with an
