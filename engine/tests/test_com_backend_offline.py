@@ -521,6 +521,115 @@ def test_validate_ops_rejects_malformed_addr_and_double_guard(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# find_delete strip_residual (guide-colored leftover space run)
+# ---------------------------------------------------------------------------
+
+_GUIDE = "(초록: 논문의 주요 내용의 요약)"
+
+
+class _FakeFindDeleteHwp:
+    """op_find_delete가 만지는 표면만 갖춘 가짜 한글 — 문단 문자열 + 선택 삭제."""
+
+    def __init__(self, paragraphs):
+        self.paragraphs = list(paragraphs)
+        self.para = 0
+        self.pos = 0
+        self.sel = None  # (start, end) in current paragraph
+        self.actions = []
+        self.deleted = []
+
+    def MoveDocBegin(self):
+        self.actions.append("MoveDocBegin")
+        self.para = 0
+        self.pos = 0
+        self.sel = None
+
+    def find(self, text):
+        self.actions.append(f"find:{text}")
+        for i, para in enumerate(self.paragraphs):
+            idx = para.find(text)
+            if idx != -1:
+                self.para = i
+                self.pos = idx
+                self.sel = (idx, idx + len(text))
+                return True
+        self.sel = None
+        return False
+
+    def Delete(self):
+        self.actions.append("Delete")
+        if self.sel is None:
+            raise AssertionError("Delete with no selection")
+        start, end = self.sel
+        chunk = self.paragraphs[self.para][start:end]
+        self.deleted.append(chunk)
+        self.paragraphs[self.para] = (
+            self.paragraphs[self.para][:start]
+            + self.paragraphs[self.para][end:])
+        self.pos = start
+        self.sel = None
+
+    def get_pos(self):
+        return (0, self.para, self.pos)
+
+    def set_pos(self, list_id, para, pos):
+        self.para = para
+        self.pos = pos
+        self.sel = None
+
+    def Run(self, action):
+        self.actions.append(action)
+        if action == "MoveParaBegin":
+            self.pos = 0
+            self.sel = None
+        elif action == "MoveSelParaEnd":
+            self.sel = (self.pos, len(self.paragraphs[self.para]))
+        return True
+
+    def get_selected_text(self):
+        if self.sel is None:
+            return ""
+        start, end = self.sel
+        return self.paragraphs[self.para][start:end]
+
+    def Cancel(self):
+        self.actions.append("Cancel")
+        self.sel = None
+
+
+def test_find_delete_strip_residual_removes_whitespace_remainder():
+    hwp = _FakeFindDeleteHwp([_GUIDE + " "])
+    result = com_backend.op_find_delete(
+        hwp, {"text": _GUIDE, "strip_residual": True})
+    assert hwp.paragraphs == [""]
+    assert hwp.deleted == [_GUIDE, " "]
+    assert result == {
+        "deleted": 1, "residual_stripped": True, "residual_text": " ",
+    }
+
+
+def test_find_delete_strip_residual_leaves_nonwhitespace_remainder():
+    hwp = _FakeFindDeleteHwp([_GUIDE + " 초록 본문"])
+    result = com_backend.op_find_delete(
+        hwp, {"text": _GUIDE, "strip_residual": True})
+    assert hwp.paragraphs == [" 초록 본문"]
+    assert hwp.deleted == [_GUIDE]
+    assert result == {
+        "deleted": 1, "residual_stripped": False, "residual_text": "",
+    }
+    assert "ParagraphShapeAlignJustify" not in hwp.actions
+
+
+def test_find_delete_without_strip_residual_matches_today():
+    hwp = _FakeFindDeleteHwp([_GUIDE + " "])
+    result = com_backend.op_find_delete(hwp, {"text": _GUIDE})
+    assert hwp.paragraphs == [" "]
+    assert result == {"deleted": 1}
+    assert hwp.deleted == [_GUIDE]
+    assert "MoveSelParaEnd" not in hwp.actions
+
+
+# ---------------------------------------------------------------------------
 # boxed display equations (COM layout; XML refuses)
 # ---------------------------------------------------------------------------
 

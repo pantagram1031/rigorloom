@@ -238,12 +238,27 @@ def test_delete_texts_after_ops_are_last(tmp_path):
     meta["delete_texts_after"] = ["나중 안내 X", "나중 안내 Y"]
     ops = br.build_ops(meta, secs, FIX)
     assert ops[-2:] == [
-        {"op": "find_delete", "text": "나중 안내 X", "all": True, "required": False},
-        {"op": "find_delete", "text": "나중 안내 Y", "all": True, "required": False},
+        {"op": "find_delete", "text": "나중 안내 X", "all": True,
+         "required": False, "strip_residual": True},
+        {"op": "find_delete", "text": "나중 안내 Y", "all": True,
+         "required": False, "strip_residual": True},
     ]
     replace_idx = next(i for i, o in enumerate(ops) if o["op"] == "replace_all")
     early = [o for o in ops[:replace_idx] if o["op"] == "find_delete"]
     assert [o["text"] for o in early] == ["안내문 A"]
+
+
+def test_delete_texts_after_ops_carry_strip_residual_delete_texts_do_not():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["delete_texts"] = ["안내문 A"]
+    meta["delete_texts_after"] = ["나중 안내 X"]
+    ops = br.build_ops(meta, secs, FIX)
+    early = [o for o in ops if o["op"] == "find_delete" and o["text"] == "안내문 A"]
+    late = [o for o in ops if o["op"] == "find_delete" and o["text"] == "나중 안내 X"]
+    assert len(early) == 1 and "strip_residual" not in early[0]
+    assert len(late) == 1 and late[0].get("strip_residual") is True
 
 
 def test_merge_meta_carries_delete_texts_after():

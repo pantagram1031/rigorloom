@@ -124,6 +124,7 @@ abstract_table_index: 1            # abstract:false일 때 지울 표 index(기�
 - **delete_texts_after** (build.yaml): `delete_texts`와 같은 목록 형태(flat `[a, b]` 또는
   block `- "…"`). `find_delete`를 섹션·그림·표·수식 삽입이 끝난 **맨 끝**에 발행한다.
   섹션 앵커로 쓰인 안내문(예: 초록 placeholder)처럼 본문 삽입 전에 지우면 안 되는 문구용.
+  이 경로의 `find_delete`는 `strip_residual: true`를 붙여, 문구 삭제 후 같은 문단에 남은 안내문 charPr 공백 런까지 지운다.
 
 ## build_report.py 의무 동작
 1. content.md 파싱 → 섹션/수식/그림/표/URL 추출 (정규식 기반, 미지 태그는 에러)

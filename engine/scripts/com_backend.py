@@ -510,6 +510,42 @@ def op_goto_text(hwp, o):
     return {"found": True}
 
 
+def _is_whitespace_residual(text):
+    """True iff text is leftover spaces/tabs and does not include a para break."""
+    if not text or "\r" in text or "\n" in text:
+        return False
+    return not text.strip()
+
+
+def _strip_para_whitespace_residual(hwp):
+    """같은 문단에 남은 공백 문자만 지운다. 문단 자체는 건드리지 않는다.
+
+    find_delete 이후 표 셀에 안내문 charPr의 공백 런이 남는 경우(초록
+    placeholder 뒤 빨간 스페이스)를 겨냥한다. 문단에 비공백이 있으면 그대로
+    둔다. 셀의 유일한 문단 마크를 Delete하면 한글이 셀을 깨므로, 잔여 글자만
+    지운다. ParagraphShapeAlignJustify는 비공백이 없을 때 시각적으로 중립이라
+    쓰지 않는다 — 글자를 지우는 것으로 안내문 charPr 런이 사라지면 충분.
+    반환: (stripped: bool, residual_text: str, 최대 40자).
+    """
+    text = _cursor_para_text(hwp)
+    if not _is_whitespace_residual(text):
+        return False, ""
+    try:
+        _run(hwp, "MoveParaBegin")
+        _run(hwp, "MoveSelParaEnd")
+        selected = hwp.get_selected_text() if hasattr(hwp, "get_selected_text") else text
+        if not _is_whitespace_residual(selected):
+            try:
+                hwp.Cancel()
+            except Exception:
+                pass
+            return False, ""
+        hwp.Delete()
+        return True, selected[:40]
+    except Exception:
+        return False, ""
+
+
 def op_find_delete(hwp, o):
     """find()로 문구를 선택(콤마 분리 없음)한 뒤 선택분을 삭제.
 
@@ -520,19 +556,35 @@ def op_find_delete(hwp, o):
     발생 하나**다 — 추측이 아니라 정의된 동작. 전부를 지우려면 "all": true 로
     **명시**해야 한다(그 플래그가 없으면 나머지 발생은 그대로 남는다). 같은
     문구가 여러 장에 인쇄된 문단 팩에서 한 장만 손대는 스코프가 이것이다.
+
+    strip_residual(opt-in): 매칭분을 지운 뒤 커서가 있는 문단이 공백뿐이면
+    그 잔여 글자를 이어서 지운다. delete_texts_after용 — 안내문 뒤에 붙은
+    같은 charPr 공백 런이 F2(near-red)로 남는 것을 막는다.
     """
     n = 0
+    strip = bool(o.get("strip_residual"))
+    residual_stripped = False
+    residual_text = ""
     while o.get("all", False) or n == 0:
         hwp.MoveDocBegin()
         if not (hwp.find(o["text"]) if hasattr(hwp, "find") else False):
             break
         hwp.Delete()
         n += 1
+        if strip:
+            did, txt = _strip_para_whitespace_residual(hwp)
+            if did:
+                residual_stripped = True
+                residual_text = txt
         if not o.get("all", False):
             break
     if n == 0 and o.get("required", True):
         raise RuntimeError(f"삭제할 문구를 찾지 못함: {o['text']!r}")
-    return {"deleted": n}
+    result = {"deleted": n}
+    if strip:
+        result["residual_stripped"] = residual_stripped
+        result["residual_text"] = residual_text
+    return result
 
 
 def _count_blank_runs(hwp):

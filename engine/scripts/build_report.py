@@ -731,8 +731,12 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
     # delete_texts_after(build.yaml): 섹션 앵커로 쓰인 안내문(예: 초록
     # placeholder)처럼 본문 삽입이 끝난 뒤에야 지울 수 있는 문구. 모든 섹션·
     # 그림·표·수식 및 line_spacing/collapse 이후 맨 끝에 find_delete.
+    # strip_residual: 같은 문단에 남은 안내문-charPr 공백 런을 이어서 지운다
+    # (find_delete만으로는 빨간 스페이스가 남아 F2). delete_texts는 문단
+    # 통째 삭제 대상이라 이 플래그를 켜지 않는다.
     for dt in meta.get("delete_texts_after") or []:
-        ops.append({"op": "find_delete", "text": dt, "all": True, "required": False})
+        ops.append({"op": "find_delete", "text": dt, "all": True,
+                    "required": False, "strip_residual": True})
     return ops
 
 
