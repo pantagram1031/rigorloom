@@ -28,3 +28,6 @@ Outward actions (push, closing PRs, editing GitHub state) wait for the user's ex
 
 | When | What | Result |
 |---|---|---|
+| 2026-09-16 | H1 reproduced on Linux (WSL Ubuntu, clone of main, pytest user-site): `assert 'containment_breach' == 'engine_root_locked'`. Cursor H1 dispatched with the WSL commands | pending |
+| 2026-09-16 | H2 classification of 100 open PRs vs `origin/main`: **18 fully contained** (0 ahead: #330 #333 #336 #339 #340 #344 #346 #348 #349 #350 #353 #354 #355 #356 #360 #361 #363 #365 → close with "content integrated into main via codex/unified-latest-20260914"); **63 renderer/desktop research line** (`engine-e2-*`, `desktop-on-renderer-*`, `docs-checkpoint-*`, kept under the renderer freeze; propose converting to one tracking issue and closing the per-round PRs); **19 other** (docs/QA/living-tip, 1–4 commits ahead; review individually). No PR touched | awaiting user go for any close |
+| 2026-09-16 | H3 README: new "What this is", 30-second demo table (4 images), status table. H4 CHANGELOG Unreleased entry. H5 `docs/demo/` (6 PNG, 2.1 MB). Committed b35639b | local only |

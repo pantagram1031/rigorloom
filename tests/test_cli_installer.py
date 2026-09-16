@@ -268,8 +268,16 @@ def test_nonempty_target_recognized_and_unrecognized(tmp_path):
     assert "pass --replace" in json.loads(buf.getvalue())["error"]["message"]
 
 
-def test_locked_engine_root_aborts_and_preserves(tmp_path):
-    """When existing engine-root cannot be renamed (locked file on Windows), install aborts and preserves target."""
+def test_locked_engine_root_aborts_and_preserves(tmp_path, monkeypatch):
+    """When the live engine-root cannot be renamed, install aborts and preserves it.
+
+    Windows can fail ``os.rename`` of a directory while a descendant is open;
+    POSIX does not — the rename succeeds, the dummy tree is swapped in, and
+    the origin probe then fails for missing ``privacy_scan`` (reported as
+    ``containment_breach``). Inject ``PermissionError`` on the live-root
+    rename so every OS exercises ``engine_root_locked`` without weakening
+    the containment check.
+    """
     bundles_dir = tmp_path / "bundles"
     bundles_dir.mkdir()
     engine_root = tmp_path / "engine"
@@ -287,16 +295,24 @@ def test_locked_engine_root_aborts_and_preserves(tmp_path):
         "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n"
     })
 
-    # Hold an exclusive open file handle in engine_root
-    with open(lock_file, "r+", encoding="utf-8") as handle:
-        buf = io.StringIO()
-        with patch("sys.stdout", buf):
-            code = cli.main(["install", "--engine-root", str(engine_root), "--bundles-dir", str(bundles_dir),
-                             "--modules", "", "--replace"])
-        assert code == 3
-        out = json.loads(buf.getvalue())
-        assert out["error"]["code"] == "engine_root_locked"
-        assert lock_file.read_text(encoding="utf-8") == "# original content"
+    real_rename = os.rename
+    locked_root = os.path.normcase(str(engine_root.resolve()))
+
+    def rename_unless_live_engine(src, dst, *args, **kwargs):
+        if os.path.normcase(str(Path(src).resolve())) == locked_root:
+            raise PermissionError(13, "Permission denied", str(src))
+        return real_rename(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", rename_unless_live_engine)
+
+    buf = io.StringIO()
+    with patch("sys.stdout", buf):
+        code = cli.main(["install", "--engine-root", str(engine_root), "--bundles-dir", str(bundles_dir),
+                         "--modules", "", "--replace"])
+    assert code == 3
+    out = json.loads(buf.getvalue())
+    assert out["error"]["code"] == "engine_root_locked"
+    assert lock_file.read_text(encoding="utf-8") == "# original content"
 
 
 # --------------------------------------------------------------------------- #
