@@ -10,6 +10,23 @@ the kernel's contract shape.
 
 ### Added
 
+- **Stage 1 report demo (2026-09-16):** the engine features that the shipped
+  Hawkes/WindPath reports depended on but that lived only in workspace forks
+  are now on the branch, each with offline tests:
+  `box_display_equations` (1×1 double-border box around display equations,
+  XML backend refuses with `equation_box_unsupported_xml`); `[[EQ ... caption=]]`
+  emits a right-aligned caption under display equations; `delete_texts`
+  `find_delete` ops run before the title `replace_all` (a placeholder word inside
+  guide text can no longer be replaced first); new build.yaml key
+  `delete_texts_after` (deleted after all sections, with `strip_residual` so no
+  guide-coloured whitespace survives); `tidy_hwpx --strip-guide-ws-runs COLOR`
+  wired via build.yaml `strip_guide_ws_colors` (removes whitespace-only runs in
+  a guide colour and neutralizes unreferenced guide charPr definitions, which is
+  what `verify_format` F2 counts); the poster line
+  (`poster` / `poster-verify` CLI in the report module, optional extra
+  `[poster]`). `docs/demo/` holds the sanitized AURALAB classroom report pages
+  and poster produced through every stage gate on `main`'s pipeline.
+
 - **T126:** a cross-lane reproduction of the private-capture custody claims from
   PRs #134-#137, written from this side against the shipped code rather than
   derived from the PR text. Reproduced: a clean one-link file is captured with an

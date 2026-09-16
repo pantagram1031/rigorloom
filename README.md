@@ -10,10 +10,39 @@ A report-automation pipeline for Korean HWP/HWPX government forms.
 
 ## What this is
 
-Rigorloom is a **report-automation pipeline** that turns a research brief and
-a blank Korean government form (.hwp/.hwpx) into a filled, verified,
-typeset document — with deterministic gates at every stage.
+Rigorloom turns a topic, a blank Korean **.hwpx form**, and your data into a
+finished, natively typeset report — equations, figures, tables, captions —
+and refuses to call it done until every stage gate (independent recomputation
+of the numbers, content audit, format check, submission preflight) has passed.
+It is built for the documents Korean schools and offices actually require, and
+it drives Hancom Office when present and a pure-XML engine when not.
 Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
+
+### 30-second demo
+
+A classroom-acoustics inquiry report (14 pages, 12 figures, 5 tables, 8 boxed
+equations) produced end-to-end by the pipeline on 2026-09-16 from a simulation
+data set and the standard 소논문 form, plus the poster built from the same
+workspace:
+
+| Report page 1 | Boxed equations with captions | Field maps | Poster |
+|---|---|---|---|
+| ![page 1](docs/demo/report-page-01.png) | ![page 3](docs/demo/report-page-03.png) | ![page 10](docs/demo/report-page-10.png) | ![poster](docs/demo/poster.png) |
+
+All 14 pages: [docs/demo/report-all-pages.png](docs/demo/report-all-pages.png).
+Every number in the body was re-derived without the engine (51 checks) before
+the text was frozen; the assembled file passed the format gate with zero
+guide-text residue and a native Hancom proof receipt.
+
+### Status at a glance
+
+| Surface | State |
+|---|---|
+| Report pipeline (`modules/report`, stage machine 0 → 6) | usable; the demo above ran through every gate |
+| Native Hancom assembly + proof (Windows) | usable; boxed equations, equation captions, poster line |
+| Pure-XML assembly (any OS) | usable; structural proof only, boxed equations refused with a named reason |
+| Runtime CLI for agents (`rigorloom open/inspect/...`) | in progress on the CLI-first branches; Hancom backend not yet wired |
+| Desktop editor (Tauri) | pre-alpha on unmerged branches; do not rely on it |
 
 The core workflow does not require Hancom Office. Linux and Windows
 are practiced; macOS is unproven. Any coding-capable AI agent or a
