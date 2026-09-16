@@ -21,14 +21,29 @@ inspects and proposes against.
 
 ## What this build does
 
-The offline `preedit` backend only. A plan declares its backend; `xml` and
-`com` plans — and op kinds those backends own — are refused with
-`unsupported_backend` naming which backend would serve them. No COM, no
-Hancom, no renderer, no network, no localhost server.
+Three apply backends, chosen at propose time with `--backend`:
+
+| Backend | Needs | Ops (first wave) | Receipt evidence class | Proof |
+| --- | --- | --- | --- | --- |
+| `preedit` | `engine/scripts/preedit.py` | `fill_cell`, `replace_at_cell`, `set_run`, `delete_guides` | `structural_only` | none — no renderer |
+| `com` | Windows, Hancom (`hancom_facts`), `engine/scripts/com_backend.py` | `replace_all`, `goto_text`, `insert_text`, `set_cell`, `insert_equation`, `insert_picture`, `insert_hyperlink` | `native_com_session` | Hancom post-inspect only; no render certificate |
+| `xml` | `engine/scripts/xml_backend.py` (any OS) | `goto_text`, `insert_text`, `replace_all`, `insert_blank_before`, `set_line_spacing`, `page_binding`, `insert_table`, `insert_picture`, `insert_equation` | `structural_only` plus `evidence.xml` `{proofGrade, wellFormed}` | structural — Runtime parses every XML part of the candidate; boxed equations refused at apply with `equation_box_unsupported_xml` |
+
+`preedit` runs one bounded `preedit.py` child per op. `com` and `xml` each run
+one batch child (`com_backend.py edit` / `xml_backend.py edit`) against a
+session copy — never the operator's original.
+
+`capabilities/list` reports each backend's `state`, `opKinds`, and — for `xml`
+— `proofGrade: structural`. `com` additionally carries Hancom host facts;
+`xml` needs only the script under the engine root. A plan declares its
+backend; op kinds outside that backend's first wave are refused. No renderer
+runs during apply; nothing here claims render proof.
 
 One vertical path, end to end: open a document → inspect it → propose a plan →
 validate it → request approval → (host) resolve it → apply it → publish a
 candidate with a hash-bound receipt and an offline verification report.
+Receipts are written last — a failed apply rolls back the run directory and
+publishes nothing; the session source is never modified.
 
 ## Layout
 
