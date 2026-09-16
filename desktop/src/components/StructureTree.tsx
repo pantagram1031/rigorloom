@@ -26,8 +26,8 @@
  */
 import { useMemo } from "react";
 
+import { selectStructureNode } from "../actions";
 import {
-  locateSelection,
   selectionId,
   toggleExpanded,
   useWorkspace,
@@ -74,9 +74,10 @@ function Row({
       onClick={() => {
         if (expandable) toggleExpanded(id);
         // locate, not just select: picking a node in the tree scrolls the
-        // document to it and flashes it. Clicking in the document uses
-        // setSelection so the page does not move under the pointer.
-        if (selection !== undefined) locateSelection(selection);
+        // document to it and flashes it, and loads that region's exact
+        // document/readRegion text. Clicking in the document uses setSelection
+        // so the page does not move under the pointer.
+        if (selection !== undefined) selectStructureNode(selection);
       }}
     >
       <span className="twisty">{expandable ? (expanded ? "▼" : "▶") : ""}</span>

@@ -7,7 +7,7 @@
  */
 import { beginEdit } from "../actions";
 import { selectionId, useWorkspace, type Selection } from "../store";
-import type { InspectResult, SidecarStatus } from "../types";
+import type { InspectResult, RegionText, SidecarStatus } from "../types";
 import { History } from "./History";
 import { ReviewQueue } from "./ReviewQueue";
 import { CLASSIFICATION_LABEL, Tag } from "./Tag";
@@ -18,6 +18,107 @@ function Fact({ k, v }: { k: string; v: React.ReactNode }) {
       <dt>{k}</dt>
       <dd>{v}</dd>
     </>
+  );
+}
+
+function formatRegionAddress(address: {
+  table?: number;
+  row?: number;
+  col?: number;
+  atPara?: number;
+}): string {
+  if (address.atPara !== undefined) return `at_para ${address.atPara}`;
+  if (address.row !== undefined && address.col !== undefined) {
+    return `표 ${address.table ?? 0} R${address.row}C${address.col}`;
+  }
+  return "";
+}
+
+function RegionRuns({ runs }: { runs: NonNullable<RegionText["runs"]> }) {
+  return (
+    <ul className="deferred" data-testid="region-source-runs">
+      {runs.map((run) => (
+        <li key={run.index} className="mono tiny">
+          #{run.index}
+          {run.charpr ? ` · charPr ${run.charpr}` : ""}
+          {": "}
+          {run.text}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Exact document/readRegion text for the tree selection.
+ *
+ * Always a display: no input, so no IME composition guard belongs here.
+ * Approve/apply gating stays on the review queue. Forbidden rows never mount
+ * an edit control.
+ */
+function RegionSourceSection() {
+  const source = useWorkspace((s) => s.selectedRegionSource);
+  if (!source) return null;
+  const forbidden = source.access === "forbidden";
+  const editable = source.access === "editable";
+  const text = source.region?.text ?? "";
+  const accessLabel =
+    source.access === "editable" ? "가능" : source.access === "forbidden" ? "금지" : "읽기 전용";
+  return (
+    <div
+      className="section"
+      data-testid="region-source"
+      data-editable={editable ? "true" : "false"}
+      data-forbidden={forbidden ? "true" : "false"}
+      data-phase={source.phase}
+    >
+      <h3>자리 원문</h3>
+      <dl className="kv">
+        <Fact
+          k="주소"
+          v={
+            <span className="mono" data-testid="region-source-address">
+              {formatRegionAddress(source.address)}
+            </span>
+          }
+        />
+        <Fact
+          k="쓰기"
+          v={
+            <Tag tone={forbidden ? "bad" : editable ? "fill" : "none"}>{accessLabel}</Tag>
+          }
+        />
+      </dl>
+      {source.phase === "starting" ? (
+        <p className="empty">이 자리의 글을 읽는 중입니다.</p>
+      ) : source.error ? (
+        <p className="prose" data-testid="region-source-error">
+          {source.error.message}
+        </p>
+      ) : !source.region ? (
+        <p className="empty" data-testid="region-source-missing">
+          런타임이 이 자리의 글을 돌려주지 않았습니다. 없는 자리를 만들지 않습니다.
+        </p>
+      ) : forbidden ? (
+        <div data-testid="region-source-forbidden">
+          <p className="prose" style={{ userSelect: "text", color: "var(--fg)" }}>
+            {text || "(빈 자리)"}
+          </p>
+          {source.region.runs && source.region.runs.length > 0 ? (
+            <RegionRuns runs={source.region.runs} />
+          ) : null}
+        </div>
+      ) : (
+        <div data-testid="region-source-text">
+          <p className="prose" style={{ userSelect: "text", color: "var(--fg)" }}>
+            {text || "(빈 자리)"}
+          </p>
+          {source.region.runs && source.region.runs.length > 0 ? (
+            <RegionRuns runs={source.region.runs} />
+          ) : null}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -166,9 +267,15 @@ export function ContextPanel({
             보여 줍니다.
           </p>
         ) : selection.kind === "cell" ? (
-          <CellDetail inspect={inspect} sel={selection} />
+          <>
+            <RegionSourceSection />
+            <CellDetail inspect={inspect} sel={selection} />
+          </>
         ) : selection.kind === "paragraph" ? (
-          <ParagraphDetail inspect={inspect} atPara={selection.atPara} />
+          <>
+            <RegionSourceSection />
+            <ParagraphDetail inspect={inspect} atPara={selection.atPara} />
+          </>
         ) : (
           <div className="section">
             <h3>표 {selection.table}</h3>

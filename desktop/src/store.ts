@@ -71,6 +71,26 @@ export type Selection =
   | { kind: "table"; table: number }
   | null;
 
+/** Whether the selected region may be written, is forbidden, or is display-only. */
+export type RegionAccess = "editable" | "forbidden" | "readonly";
+
+/**
+ * Exact `document/readRegion` answer for the structure-tree selection.
+ *
+ * `region` is what the runtime returned, or null when it returned none — never
+ * a graph preview filled in as if it were a read. Forbidden vs editable is
+ * taken from inspect, not invented from summary anchors.
+ */
+export interface SelectedRegionSource {
+  sessionId: string;
+  selectionId: string;
+  address: { table?: number; row?: number; col?: number; atPara?: number };
+  region: RegionText | null;
+  access: RegionAccess;
+  phase: Phase;
+  error: RuntimeError | null;
+}
+
 /** A stable id for a selection, used for tree keys and equality in the smoke. */
 export function selectionId(s: Selection): string {
   if (!s) return "none";
@@ -341,6 +361,8 @@ export interface WorkspaceState {
   texts: Record<string, RegionText[]>;
   textPhase: Phase;
   textError: RuntimeError | null;
+  /** Exact text/runs for the tree selection. Null when no single region is selected. */
+  selectedRegionSource: SelectedRegionSource | null;
 
   // --- editing (Phase 4) ----------------------------------------------------
   /** The cell open for typing, or null. */
@@ -701,6 +723,7 @@ const initial: WorkspaceState = {
   texts: {},
   textPhase: "idle",
   textError: null,
+  selectedRegionSource: null,
 
   inlineEdit: null,
   lastCommit: null,
@@ -1552,6 +1575,9 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     activity: s.activity.length,
     candidates: Object.keys(s.candidates).length,
     texts: Object.keys(s.texts).length,
+    regionSource: s.selectedRegionSource
+      ? `${s.selectedRegionSource.selectionId}:${s.selectedRegionSource.access}:${s.selectedRegionSource.region?.text ?? ""}`
+      : null,
     findings: s.findings.length,
     uiZoom: s.uiZoom,
     recents: s.recents.map((r) => r.sha256),

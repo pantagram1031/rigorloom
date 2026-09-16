@@ -37,11 +37,14 @@ Status: ACTIVE 2026-09-16. Owner: Fable. Source: `docs/plans/analyses/stage4-gui
       image with the JSON reason, prepare IME-inert with refusal chrome (cursor-grok-4.6-**high**-fast, 19 min,
       214k in / 55k out / 9.5M cache; tests 131 → 140). Follow-up: scripted smoke still targets the old
       `history-undo` button id; grade strip copy untouched (no new renderer claims).
-- [x] G4 Structure tree + region source — done in the G2 session (editable only when the payload says so;
-      `forbidden` rows when the Runtime returns them). Region source view (`read-region` beside the tree) is the
-      remaining part.
+- [x] G4 Structure tree + region source — editable/forbidden marking done in the G2 session; region source view
+      done in G6 (cursor-grok-4.6-high-fast, 11 min, 515k in / 33k out / 2.9M cache; tests 140 → 149): a tree
+      click sends exactly that address to `document/readRegion`, the selection pane shows the exact text/runs,
+      a missing region stays missing (graph preview is never copied in), forbidden rows stay read-only.
 - [x] G5 Session history + reverse — events merged with candidates; Restore = propose with `reverses` → normal
       approve/apply; test proves apply is never called directly.
+- [x] G6 Follow-ups — scripted smoke restores through `history-restore-*` then approve → `applyApproved`
+      (commit with G4 region source). Not done: in-app smoke run (headless only), native IME smoke.
 
 Default screen: reuse the desktop `DocumentView` layout from `docs/desktop-code-map.md`: StructureTree (G4) |
 TextView + optional PagePreview (G4, G3) | ReviewQueue + ReceiptPanel + History (G1, G2, G5); VerificationBar

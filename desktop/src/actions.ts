@@ -21,12 +21,14 @@ import {
   activeStoreKey,
   canRequestApproval,
   composerBlocker,
+  activeInspect,
   getState,
   headCandidate,
   locateSelection,
   mergePolledEvents,
   patchTurn,
   providerConfigFields,
+  selectionId,
   setCenterMode,
   setState,
   setSelection,
@@ -39,6 +41,7 @@ import {
   currentPlanGeneration,
   type Draft,
   type QueuedOp,
+  type RegionAccess,
   type Selection,
 } from "./store";
 import {
@@ -205,6 +208,153 @@ export async function loadText(sessionId: string, force = false): Promise<boolea
   return true;
 }
 
+/**
+ * G4 region source: the address `document/readRegion` takes for one tree node.
+ *
+ * Tables are not a single region; those clicks do not invent a cell.
+ */
+export function selectionToReadRegions(
+  selection: Selection,
+): Array<{ table?: number; row?: number; col?: number; atPara?: number }> | null {
+  if (!selection) return null;
+  if (selection.kind === "paragraph") return [{ atPara: selection.atPara }];
+  if (selection.kind === "cell") {
+    return [{ table: selection.table, row: selection.row, col: selection.col }];
+  }
+  return null;
+}
+
+/**
+ * Editable only from fill seats / fill_target. Forbidden only from inspect.forbidden.
+ * Summary anchors are not a substitute when that section is absent.
+ */
+export function regionAccess(
+  inspect: InspectResult | null,
+  selection: Selection,
+): RegionAccess {
+  if (!inspect || !selection) return "readonly";
+  if (selection.kind === "paragraph" && inspect.forbidden) {
+    const at = selection.atPara;
+    const forbidden =
+      inspect.forbidden.anchors.some((anchor) => anchor.atPara === at) ||
+      inspect.forbidden.removalTargets.some((target) => target.atPara === at);
+    if (forbidden) return "forbidden";
+  }
+  if (selection.kind === "cell") {
+    const seat = inspect.regions.regions.some(
+      (region) =>
+        region.kind === "cell" &&
+        region.table === selection.table &&
+        region.row === selection.row &&
+        region.col === selection.col,
+    );
+    const fill = inspect.graph.tables
+      .find((table) => table.index === selection.table)
+      ?.cells.some(
+        (cell) =>
+          cell.addr.row === selection.row &&
+          cell.addr.col === selection.col &&
+          cell.classification === "fill_target",
+      );
+    if (seat || fill) return "editable";
+  }
+  if (selection.kind === "paragraph") {
+    const seat = inspect.regions.regions.some((region) => region.atPara === selection.atPara);
+    if (seat) return "editable";
+  }
+  return "readonly";
+}
+
+function regionAtAddress(
+  regions: RegionText[],
+  address: { table?: number; row?: number; col?: number; atPara?: number },
+): RegionText | null {
+  if (address.atPara !== undefined) {
+    return regions.find((region) => region.at_para === address.atPara) ?? null;
+  }
+  if (address.row === undefined || address.col === undefined) return null;
+  return (
+    regions.find(
+      (region) =>
+        (region.table ?? 0) === (address.table ?? 0) &&
+        region.addr?.row === address.row &&
+        region.addr?.col === address.col,
+    ) ?? null
+  );
+}
+
+let regionSourceGeneration = 0;
+
+/**
+ * Load exact text and runs for the selected address through document/readRegion.
+ *
+ * A missing region in the payload stays missing: the graph preview is not
+ * copied in as if the runtime had answered.
+ */
+export async function loadSelectedRegion(selection: Selection): Promise<void> {
+  const generation = ++regionSourceGeneration;
+  const addresses = selectionToReadRegions(selection);
+  const sessionId = getState().activeSessionId;
+  if (!sessionId || !selection || !addresses) {
+    setState({ selectedRegionSource: null });
+    return;
+  }
+  const address = addresses[0];
+  if (!address) {
+    setState({ selectedRegionSource: null });
+    return;
+  }
+  setState({
+    selectedRegionSource: {
+      sessionId,
+      selectionId: selectionId(selection),
+      address,
+      region: null,
+      access: regionAccess(activeInspect(getState()), selection),
+      phase: "starting",
+      error: null,
+    },
+  });
+  try {
+    const runId = headCandidate(getState())?.runId ?? null;
+    const answer = await rt.readRegion(sessionId, addresses, runId);
+    if (generation !== regionSourceGeneration) return;
+    if (getState().activeSessionId !== sessionId) return;
+    if (selectionId(getState().selection) !== selectionId(selection)) return;
+    setState({
+      selectedRegionSource: {
+        sessionId,
+        selectionId: selectionId(selection),
+        address,
+        region: regionAtAddress(answer.regions, address),
+        access: regionAccess(activeInspect(getState()), selection),
+        phase: "ready",
+        error: null,
+      },
+    });
+  } catch (e) {
+    if (generation !== regionSourceGeneration) return;
+    if (getState().activeSessionId !== sessionId) return;
+    setState({
+      selectedRegionSource: {
+        sessionId,
+        selectionId: selectionId(selection),
+        address,
+        region: null,
+        access: regionAccess(activeInspect(getState()), selection),
+        phase: "failed",
+        error: rt.asRuntimeError(e),
+      },
+    });
+  }
+}
+
+/** Tree click: locate in the centre and fetch that region's exact source. */
+export function selectStructureNode(selection: Selection): void {
+  locateSelection(selection);
+  void loadSelectedRegion(selection);
+}
+
 async function loadCandidates(sessionId: string) {
   try {
     const list = await rt.candidates(sessionId);
@@ -275,6 +425,7 @@ export async function selectSession(sessionId: string) {
           eventSubscription: null,
           eventPhase: "starting" as const,
           eventError: null,
+          selectedRegionSource: null,
         }
       : {}),
   });

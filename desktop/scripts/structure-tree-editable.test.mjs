@@ -68,6 +68,9 @@ function render(inspect, expanded = ["t:0"]) {
           selectionId: (s) => (s ? JSON.stringify(s) : "none"),
         };
       }
+      if (id === "../actions") {
+        return { selectStructureNode: () => {} };
+      }
       if (id === "../types") return {};
       if (id === "./Tag") {
         return {

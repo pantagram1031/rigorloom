@@ -29,7 +29,6 @@ import {
   openPath,
   openReceipt,
   preparePages,
-  proposeUndoOf,
   redoQueuedOp,
   removeOp,
   renderCurrentPage,
@@ -174,6 +173,34 @@ async function applyApprovedPlan() {
   for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
     await settled(500);
   }
+}
+
+/**
+ * Restore through the history-restore control: propose with reverses, then the
+ * caller runs approve and applyApproved. Never the old history-undo id, and
+ * never an in-place mutation of the original.
+ */
+async function restoreViaHistory(runId: string) {
+  selectHistory(runId);
+  await settled(240);
+  checkDom(
+    "restore uses history-restore, not the old history-undo id",
+    !!document.querySelector(`[data-testid="history-restore-${runId}"]`) &&
+      !document.querySelector(`[data-testid="history-undo-${runId}"]`) &&
+      !document.querySelector('[data-testid="history-undo"]'),
+    document.querySelector(`[data-testid="history-restore-${runId}"]`)?.getAttribute("data-testid") ??
+      "missing",
+  );
+  const button = document.querySelector<HTMLButtonElement>(
+    `[data-testid="history-restore-${runId}"]`,
+  );
+  button?.click();
+  await waitFor(
+    () =>
+      (getState().draft.ops.length > 0 && Boolean(getState().draft.plan?.reverses)) ||
+      getState().undoPhase === "failed",
+    20_000,
+  );
 }
 
 function hasHangul(text: string): boolean {
@@ -1001,8 +1028,9 @@ async function phaseUndo(config: SmokeConfig) {
     chained.subject.kind === "candidate" && chained.subject.runId === chainRun,
     JSON.stringify(chained.subject));
 
-  // --- 4. TIER TWO: undo the first edit, on top of the chain ----------------
-  const queued = await proposeUndoOf(editRun);
+  // --- 4. TIER TWO: restore via history-restore (propose with reverses) -----
+  await restoreViaHistory(editRun);
+  const queued = getState().draft.ops.length;
   await settled(300);
   check("되돌리기 제안 queued the inverse", queued === 1 && getState().draft.ops.length === 1,
     `${queued} ops · ${JSON.stringify(getState().undoError)}`);
@@ -3293,10 +3321,8 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   // arranged — if the reversal failed to apply, the shot photographs that.
   if (stop === "history" && getState().applied) {
     const edited = getState().applied!.runId;
-    const { proposeUndoOf, selectHistory } = await import("./actions");
-    const queued = await proposeUndoOf(edited);
-    await settled(500);
-    if (queued > 0) {
+    await restoreViaHistory(edited);
+    if (getState().draft.ops.length > 0) {
       await requestApprovalForDraft();
       await settled(300);
       await resolveApprovalDecision("approved", "host-operator");

@@ -136,6 +136,7 @@ function CellBody({
 
 export function TextView({ inspect }: { inspect: InspectResult }) {
   const texts = useWorkspace(activeText);
+  const selectedSource = useWorkspace((s) => s.selectedRegionSource);
   const currentId = useWorkspace((s) => selectionId(s.selection));
   const locateNonce = useWorkspace((s) => s.locateNonce);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
@@ -174,8 +175,16 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
         map.set(`p:${region.at_para}`, region);
       }
     }
+    const selected = selectedSource?.region;
+    if (selected) {
+      if (selected.addr) {
+        map.set(`${selected.table ?? 0}:${selected.addr.row}:${selected.addr.col}`, selected);
+      } else if (selected.at_para !== undefined) {
+        map.set(`p:${selected.at_para}`, selected);
+      }
+    }
     return map;
-  }, [texts]);
+  }, [texts, selectedSource]);
 
   /** Every string that already appears inside a table cell. */
   const covered = useMemo(() => {
