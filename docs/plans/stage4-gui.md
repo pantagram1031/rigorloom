@@ -27,8 +27,12 @@ Status: ACTIVE 2026-09-16. Owner: Fable. Source: `docs/plans/analyses/stage4-gui
       provenance strip, approve decoupled from apply; headless tests 113 → 120, build ok. Follow-up: `smoke.ts`
       still expects approve to apply (scripted smoke needs a separate `applyApproved()`), Composer composition
       does not yet set `isComposing`.
-- [ ] G2 Receipt / verify / compare inspector — `receipt`, `verify`, `compare`, `candidates`; `acceptance: false`
-      and exit 3 stay visible as refusals.
+- [x] G2 Receipt / compare inspector — `receipt`, `compare`, `candidates`; `acceptance: false` and exit 3 shown as
+      refusals; compare picker (run vs source/other run, optional selection) on `candidate/compare` only, no
+      `verify/*` wire (grok-4.6-xhigh, 18 min, 63k in / 35k out / 4.9M cache; tests 120 → 131; commit b9b1aea).
+- [x] G4 (partial, same session) Structure tree marks regions editable only when the inspect payload says so and
+      renders `forbidden` rows non-editable when the Runtime returns that section; documented protocol gap
+      otherwise. G1 follow-ups done: Composer sets `isComposing`; scripted smoke applies after approve.
 - [ ] G3 Honest page preview — `render`, `render-prepare` (host-only, explicit button), `geometry` when present.
 - [ ] G4 Structure tree + region source — `inspect`, `read-region`.
 - [ ] G5 Session history + reverse — `events`, `candidates`, `propose --reverses-run`.
