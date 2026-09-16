@@ -77,6 +77,8 @@ SIMPLE_MAP = {
     r"\parallel": "parallel",
     r"\circ": "circ",
     r"\prime": "prime",
+    r"\dprime": "dprime",
+    r"\mid": "|",
     r"\hbar": "hbar",
     r"\ell": "ell",
     r"\emptyset": "emptyset",
@@ -243,6 +245,64 @@ _LATEX_ORIGIN_RESERVED_V1 = frozenset(
     token.casefold()
     for token in (_HWP_EQN_OFFICIAL_TOKENS | _HWP_EQN_ENGINE_ALIASES)
 )
+
+
+_PRIME_PREDECESSORS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)]}")
+
+
+def _rewrite_prime_apostrophes(source):
+    """Rewrite apostrophe primes into ``\\prime`` / ``\\dprime`` commands.
+
+    HwpEqn has no apostrophe token (the cheatsheet form is ``x^{prime}``),
+    so a postfix ``'`` / ``''`` must become an explicit superscript before
+    the origin punctuation gate runs.  Apostrophes inside text-command
+    arguments stay literal.  A prime after ``]``, ``)``, or ``}`` attaches
+    to that group.  Stray apostrophes are left in place so origin-check
+    still refuses them.
+    """
+    out = []
+    i = 0
+    n = len(source)
+    while i < n:
+        ch = source[i]
+        if ch == "\\":
+            match = re.match(r"\\([A-Za-z]+\*?|[,;!])", source[i:])
+            if match:
+                command = match.group(1)
+                out.append(match.group(0))
+                i += match.end()
+                if command in _LATEX_TEXT_COMMANDS:
+                    j = i
+                    while j < n and source[j] in " \t":
+                        j += 1
+                    if j < n and source[j] == "{":
+                        try:
+                            _arg, end = _read_group(source, j)
+                        except (AssertionError, ValueError, IndexError):
+                            out.append(source[i:])
+                            break
+                        out.append(source[i:end])
+                        i = end
+                continue
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "'" and out and out[-1][-1] in _PRIME_PREDECESSORS:
+            count = 1
+            i += 1
+            while i < n and source[i] == "'":
+                count += 1
+                i += 1
+            if count == 1:
+                out.append(r"^{\prime}")
+            elif count == 2:
+                out.append(r"^{\dprime}")
+            else:
+                out.append("^{" + (r"\prime" * count) + "}")
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _latex_origin_issue(source):
@@ -784,10 +844,11 @@ def latex_to_hwpeqn(latex):
         return "", ["control_character"]
     if _latex_max_nesting(latex) > LATEX_MAX_DEPTH:
         return "", ["too_deep"]
-    origin_issue = _latex_origin_issue(latex)
+    rewritten = _rewrite_prime_apostrophes(latex)
+    origin_issue = _latex_origin_issue(rewritten)
     if origin_issue:
         return latex, [origin_issue]
-    s = latex.strip()
+    s = rewritten.strip()
     if "$" in s:
         if (len(s) >= 2 and s.startswith("$") and s.endswith("$")
                 and not s.startswith("$$") and not s.endswith("$$")

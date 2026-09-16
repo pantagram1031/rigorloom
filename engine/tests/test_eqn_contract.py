@@ -237,7 +237,7 @@ def test_latex_commands_are_allowed_when_their_origin_is_explicit(source):
 
 
 @pytest.mark.parametrize("source", [
-    "x%SECRET", "x#y", "x&y", "x`y", 'x"y', "x'", "x''", "x~y",
+    "x%SECRET", "x#y", "x&y", "x`y", 'x"y', "x~y",
     "x->y", "x<-y", "x<->y", "x=>y", "x<=>y", "x+-y", "x-+y",
     "x<=y", "x>=y", "x!=y", "x==y",
 ])
