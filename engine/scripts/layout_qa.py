@@ -40,6 +40,13 @@ OBJECT_CAPTION_RE = re.compile(
 CITATION_RE = re.compile(r"\[\d{1,2}\]")
 GUIDE_RE = re.compile(r"(작성하세요|여기에\s*입력|예시\s*[):]|【안내|<안내)")
 LATEX_LEAK_RE = re.compile(r"\\\\|pmatrix|\\frac")
+# 참고문헌 절 제목. "VI.  참고문헌", "참고 문헌", "References" 형태.
+BIB_HEADING_RE = re.compile(
+    r"^\s*(?:[IVXLCDM]+\.|[Ⅰ-Ⅻ]+\.?|\d+\.)?\s*(?:참고\s*문헌|References)\s*$",
+    re.IGNORECASE,
+)
+# 번호 붙은 참고문헌 항목: "[13] …" 또는 "13. …"
+BIB_ENTRY_RE = re.compile(r"^\s*(?:\[(\d{1,2})\]|(\d{1,2})\.)")
 
 
 def _blocks(page):
@@ -426,15 +433,95 @@ def check_tables(pdf_or_page):
     return violations
 
 
-def check_body_markers(page):
-    """본문 청결 규칙: 방치된 인용 번호 `[N]`, 안내문 잔재 탐지."""
+def collect_bibliography(pages):
+    """PDF 페이지들에서 참고문헌 절과 항목 번호를 수집한다.
+
+    제목 줄(참고문헌 / 참고 문헌 / References) 이후의 항목을 모은다.
+    줄이 `[N]` 또는 `N.` 으로 시작하면 그 번호를 항목으로 본다. 번호가
+    하나도 없으면(저자·연도형 목록) 제목 이후 비어 있지 않은 비-footer
+    줄을 등장 순으로 1..k 항목으로 센다 — 본문 `[k]` 가 항목 개수로
+    해소되도록.
+
+    반환: {has_section, numbers: set[int], start_page, start_y}.
+    start_page 는 fitz 0-based page.number.
+    """
+    info = {
+        "has_section": False,
+        "numbers": set(),
+        "start_page": None,
+        "start_y": None,
+    }
+    found = False
+    explicit = set()
+    unnumbered = 0
+    for page in pages:
+        pno = getattr(page, "number", 0)
+        page_h = page.rect.height if getattr(page, "rect", None) else None
+        for y0, y1, _size, text in _text_line_records(page):
+            if not found:
+                if BIB_HEADING_RE.match(text or ""):
+                    found = True
+                    info["has_section"] = True
+                    info["start_page"] = pno
+                    info["start_y"] = y0
+                continue
+            if not (text or "").strip():
+                continue
+            if _is_footer_line(text, y0, page_h):
+                continue
+            m = BIB_ENTRY_RE.match(text)
+            if m:
+                explicit.add(int(m.group(1) or m.group(2)))
+            else:
+                unnumbered += 1
+    if explicit:
+        info["numbers"] = explicit
+    elif unnumbered:
+        info["numbers"] = set(range(1, unnumbered + 1))
+    return info
+
+
+def _in_bibliography(page_number, y0, bibliography):
+    """(page.number, y0) 가 참고문헌 절(제목 줄 포함 이후)에 있는지."""
+    if not bibliography or not bibliography.get("has_section"):
+        return False
+    start_page = bibliography.get("start_page")
+    start_y = bibliography.get("start_y")
+    if start_page is None or start_y is None:
+        return False
+    if page_number > start_page:
+        return True
+    return page_number == start_page and y0 >= start_y
+
+
+def check_body_markers(page, bibliography=None):
+    """본문 청결 규칙: 방치된 인용 번호 `[N]`, 안내문 잔재 탐지.
+
+    `[N]` 은 문서의 참고문헌 항목과 대조한다. 본문 마커는 참고문헌 절이
+    없거나(reason=no_bibliography) N에 해당하는 항목이 없을 때만
+    (reason=unresolved) citation_marker 로 flag 한다. 참고문헌 절 안의
+    마커는 flag 하지 않는다. bibliography 생략 시 이 페이지 텍스트만으로
+    참고문헌을 수집한다(페이지 단위 호출용).
+    """
+    if bibliography is None:
+        bibliography = collect_bibliography([page])
+    pno = getattr(page, "number", 0)
     violations = []
     for y0, y1, _size, text in _text_line_records(page):
-        if CITATION_RE.search(text):
-            violations.append({
-                "page": None, "kind": "citation_marker",
-                "at_y": round(y0, 1), "text": text[:80],
-            })
+        if not _in_bibliography(pno, y0, bibliography):
+            for m in CITATION_RE.finditer(text or ""):
+                n = int(m.group(0)[1:-1])
+                if not bibliography.get("has_section"):
+                    reason = "no_bibliography"
+                elif n not in bibliography.get("numbers", ()):
+                    reason = "unresolved"
+                else:
+                    continue
+                violations.append({
+                    "page": None, "kind": "citation_marker",
+                    "at_y": round(y0, 1), "text": text[:80],
+                    "reason": reason, "number": n,
+                })
         if GUIDE_RE.search(text):
             violations.append({
                 "page": None, "kind": "guide_remnant",
@@ -492,6 +579,7 @@ def run_new_checks(pdf_path, expect_eq=0, guide_strings=None, spacing_skip_pages
     체크는 기존 동작과 완전히 동일(가산적) — 지정 시 해당 페이지를 건너뛴다.
     """
     doc = fitz.open(pdf_path)
+    bibliography = collect_bibliography(doc)
     checks = {
         "line_spacing_uniformity": [],
         "figure_placement": [],
@@ -511,7 +599,7 @@ def run_new_checks(pdf_path, expect_eq=0, guide_strings=None, spacing_skip_pages
         for v in check_tables(page):
             v["page"] = pno
             checks["tables"].append(v)
-        for v in check_body_markers(page):
+        for v in check_body_markers(page, bibliography=bibliography):
             v["page"] = pno
             checks["body_markers"].append(v)
         if guide_strings:
