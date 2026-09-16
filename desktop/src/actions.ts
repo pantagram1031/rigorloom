@@ -3053,7 +3053,9 @@ export async function boot(): Promise<void> {
       (remembered && sessions.find((s) => s.sessionId === remembered)?.sessionId) ??
       sessions[0]?.sessionId;
 
-    setState({ view: prefs.lastView === "agent" ? "agent" : "document" });
+    if (prefs.leftRailCollapsed === true) setState({ leftRailCollapsed: true });
+    if (prefs.lastView === "agent") setView("agent");
+    else setState({ view: "document" });
 
     if (target) {
       setState({ phaseNote: "문서를 다시 읽는 중" });
@@ -3562,6 +3564,12 @@ export async function toggleFullscreen(): Promise<void> {
  * first — so a person pressing Esc twice does not find the second press
  * closing something they were not looking at.
  */
+export function toggleLeftRail(): void {
+  const next = !getState().leftRailCollapsed;
+  setState({ leftRailCollapsed: next });
+  void rt.savePrefs({ leftRailCollapsed: next });
+}
+
 export function closeTopmostOverlay(): boolean {
   const state = getState();
   if (state.inlineEdit) {
@@ -3570,6 +3578,10 @@ export function closeTopmostOverlay(): boolean {
   }
   if (state.receiptOpen) {
     openReceipt(null);
+    return true;
+  }
+  if (state.verifyDetailsOpen) {
+    setState({ verifyDetailsOpen: false });
     return true;
   }
   if (state.settingsOpen) {

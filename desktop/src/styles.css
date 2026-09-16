@@ -3203,3 +3203,242 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .history-detail { animation: none; }
 }
+
+/* ══ R2 shell: inspector tabs, icon rail, verify popover ═══════════════ */
+
+.panel.rail:not(.is-collapsed) .panel-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel.rail .tree {
+  flex: 1;
+  min-height: 0;
+}
+
+.view-document .columns.is-rail-collapsed {
+  grid-template-columns: 40px minmax(0, 1fr) 320px;
+}
+
+.panel.rail.is-collapsed {
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  overflow: hidden;
+}
+
+.icon-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--s2) 0;
+  gap: var(--s2);
+}
+
+.icon-rail-btn {
+  width: 40px;
+  min-width: 40px;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--fg-muted);
+  letter-spacing: 0;
+}
+
+.icon-rail-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.icon-rail-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+}
+
+.rail-toggle {
+  margin-left: var(--s1);
+  min-height: 28px;
+  padding: 0 var(--s2);
+  color: var(--fg-muted);
+}
+
+.work-disclosure {
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding: 0;
+}
+
+.work-disclosure > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--s3);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-emph);
+  color: var(--fg-muted);
+  letter-spacing: 0;
+  list-style: none;
+}
+
+.work-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.work-disclosure > summary:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.work-disclosure[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.inspector {
+  min-width: 0;
+}
+
+.inspector-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(44px, 1fr));
+  flex: none;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.inspector-tabs button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 var(--s1);
+  font-size: var(--text-sm);
+  letter-spacing: 0;
+  color: var(--fg-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-bottom: 2px solid transparent;
+}
+
+.inspector-tabs button:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.inspector-tabs button[aria-selected="true"] {
+  color: var(--fg);
+  font-weight: var(--weight-emph);
+  background: var(--bg-panel);
+  border-bottom-color: var(--accent);
+}
+
+.tab-badge {
+  min-width: 1.25em;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 1.4;
+}
+
+.tab-badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--point);
+  flex: none;
+}
+
+.inspector-head {
+  min-height: 34px;
+}
+
+.inspector-body.is-agent {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.inspector-body.is-agent .conversation {
+  flex: 1;
+  min-height: 0;
+  padding: var(--s3);
+}
+
+.inspector-body.is-agent .composer {
+  flex: none;
+  border-top: 1px solid var(--line);
+}
+
+.inspector-body.is-agent .document-facts {
+  flex: none;
+  margin: var(--s2) var(--s3) 0;
+}
+
+.verify-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+.verify-doc {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.verify-doc .name {
+  font-weight: var(--weight-emph);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 28ch;
+}
+
+.verify-pill,
+.verify-engine {
+  white-space: nowrap;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.verify-popover {
+  position: relative;
+}
+
+.verify-popover-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  width: min(720px, 90vw);
+  max-height: 50vh;
+  overflow: auto;
+  padding: var(--s3);
+  background: var(--bg-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+.verify-details-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.verifybar {
+  position: relative;
+}

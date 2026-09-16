@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import {
@@ -9,9 +9,9 @@ import {
   openViaDialog,
   resetUiZoom,
   restartRuntime,
-  selectSession,
   stepUiZoom,
   toggleFullscreen,
+  toggleLeftRail,
 } from "./actions";
 import { Logo } from "./components/Logo";
 import { Settings } from "./components/Settings";
@@ -29,7 +29,6 @@ import {
   useWorkspace,
   type View,
 } from "./store";
-import { AgentView } from "./views/AgentView";
 import { DocumentView } from "./views/DocumentView";
 import { runSmoke, smokeIntent } from "./smoke";
 
@@ -73,8 +72,11 @@ function Fatal({
   );
 }
 
-/** Document sits left of Agent on one axis, so the slide direction has meaning. */
-const AXIS: Record<View, number> = { document: 0, agent: 1 };
+function switchView(next: View) {
+  if (getState().view === next) return;
+  setView(next);
+  void rt.savePrefs({ lastView: next });
+}
 
 /** Real Tauri windows expose this; the browser devMock only stubs `invoke`. */
 function canBindDragDrop(): boolean {
@@ -84,14 +86,7 @@ function canBindDragDrop(): boolean {
   return typeof internals?.metadata?.currentWebview?.label === "string";
 }
 
-function switchView(next: View) {
-  if (getState().view === next) return;
-  setView(next);
-  void rt.savePrefs({ lastView: next });
-}
-
 export default function App() {
-  const view = useWorkspace((s) => s.view);
   const phase = useWorkspace((s) => s.phase);
   const phaseNote = useWorkspace((s) => s.phaseNote);
   const fatal = useWorkspace((s) => s.fatal);
@@ -103,14 +98,6 @@ export default function App() {
   const session = useWorkspace(
     (s) => s.sessions.find((x) => x.sessionId === s.activeSessionId) ?? null,
   );
-
-  // Which way the incoming view travels. Held in a ref so a re-render for any
-  // other reason does not replay the transition.
-  const previousAxis = useRef(AXIS[view]);
-  const direction = AXIS[view] >= previousAxis.current ? "right" : "left";
-  useEffect(() => {
-    previousAxis.current = AXIS[view];
-  }, [view]);
 
   useEffect(() => {
     const subscriptions = new RuntimeSubscriptionScope();
@@ -234,6 +221,11 @@ export default function App() {
           // Only intercept when there is no real text selection to copy.
           void copySelection();
           break;
+        case "b":
+        case "B":
+          e.preventDefault();
+          toggleLeftRail();
+          break;
         default:
           break;
       }
@@ -278,25 +270,6 @@ export default function App() {
           <span className="wordmark">Rigorloom</span>
         </div>
 
-        <div className="viewswitch" role="group" aria-label="화면 전환">
-          <button
-            aria-pressed={view === "document"}
-            data-testid="switch-document"
-            title="문서 (Ctrl+1)"
-            onClick={() => switchView("document")}
-          >
-            문서
-          </button>
-          <button
-            aria-pressed={view === "agent"}
-            data-testid="switch-agent"
-            title="작업 (Ctrl+2)"
-            onClick={() => switchView("agent")}
-          >
-            작업
-          </button>
-        </div>
-
         {session ? (
           <div className="docchip">
             <span className="name" data-testid="doc-name">
@@ -339,16 +312,7 @@ export default function App() {
       </header>
 
       <div className="viewport">
-        <div key={view} className={`view-enter-from-${direction}`} style={{ height: "100%" }}>
-          {view === "document" ? (
-            <DocumentView />
-          ) : (
-            <AgentView
-              onOpen={() => void openViaDialog()}
-              onSelectSession={(id) => void selectSession(id)}
-            />
-          )}
-        </div>
+        <DocumentView />
       </div>
 
       {/* One mount, outside the view switch: the settings pane is chrome, not

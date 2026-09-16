@@ -5,11 +5,27 @@
  * precursor — the selection's own facts, and a statement of what the agent
  * surface will be and is not yet. It does not mock a conversation.
  */
+import { useEffect } from "react";
+
 import { beginEdit } from "../actions";
-import { selectionId, useWorkspace, type Selection } from "../store";
-import type { InspectResult, RegionText, SidecarStatus } from "../types";
+import {
+  inspectorAgentUnread,
+  inspectorHistoryBadge,
+  markAgentTurnsSeen,
+  selectInspectorTab,
+  selectionId,
+  useWorkspace,
+  visibleInspectorTab,
+  type InspectorTab,
+  type Selection,
+} from "../store";
+import type { InspectResult, RegionText } from "../types";
+import { Composer } from "./Composer";
+import { Conversation } from "./Conversation";
+import { DocumentContext } from "./DocumentContext";
 import { History } from "./History";
 import { ReviewQueue } from "./ReviewQueue";
+import { Timeline } from "./Timeline";
 import { CLASSIFICATION_LABEL, Tag } from "./Tag";
 
 function Fact({ k, v }: { k: string; v: React.ReactNode }) {
@@ -242,87 +258,199 @@ function ParagraphDetail({ inspect, atPara }: { inspect: InspectResult; atPara: 
   );
 }
 
-export function ContextPanel({
-  inspect,
-  status,
-}: {
-  inspect: InspectResult | null;
-  status: SidecarStatus | null;
-}) {
+const TABS: { id: InspectorTab; label: string }[] = [
+  { id: "selection", label: "선택" },
+  { id: "review", label: "검토" },
+  { id: "history", label: "기록" },
+  { id: "agent", label: "에이전트" },
+];
+
+function SelectionPane({ inspect }: { inspect: InspectResult | null }) {
   const selection = useWorkspace((s) => s.selection);
+  if (!inspect || !selection) {
+    return (
+      <p className="empty">
+        왼쪽에서 문단이나 표의 칸을 고르면 그 자리에 대해 아는 것을 여기에 모아
+        보여 줍니다.
+      </p>
+    );
+  }
+  if (selection.kind === "cell") {
+    return (
+      <>
+        <RegionSourceSection />
+        <CellDetail inspect={inspect} sel={selection} />
+      </>
+    );
+  }
+  if (selection.kind === "paragraph") {
+    return (
+      <>
+        <RegionSourceSection />
+        <ParagraphDetail inspect={inspect} atPara={selection.atPara} />
+      </>
+    );
+  }
+  return (
+    <div className="section">
+      <h3>표 {selection.table}</h3>
+      <dl className="kv">
+        <Fact
+          k="칸"
+          v={String(
+            inspect.graph.tables.find((t) => t.index === selection.table)?.cells.length ?? 0,
+          )}
+        />
+      </dl>
+    </div>
+  );
+}
+
+export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
+  const selection = useWorkspace((s) => s.selection);
+  const tab = useWorkspace((s) =>
+    typeof visibleInspectorTab === "function" ? visibleInspectorTab(s) : "selection",
+  );
+  const reviewCount = useWorkspace((s) => s.draft?.ops?.length ?? 0);
+  const reviewPending = useWorkspace((s) => s.approvalPhase === "pending");
+  const historyCount = useWorkspace((s) =>
+    typeof inspectorHistoryBadge === "function" ? inspectorHistoryBadge(s) : 0,
+  );
+  const agentUnread = useWorkspace((s) =>
+    typeof inspectorAgentUnread === "function" ? inspectorAgentUnread(s) : 0,
+  );
+  const turnCount = useWorkspace((s) => s.turns?.length ?? 0);
   const id = selectionId(selection);
 
+  useEffect(() => {
+    if (tab === "agent" && typeof markAgentTurnsSeen === "function") markAgentTurnsSeen();
+  }, [tab, turnCount]);
+
+  function onTabListKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    const idx = TABS.findIndex((row) => row.id === tab);
+    if (idx < 0) return;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      if (typeof selectInspectorTab === "function") {
+        selectInspectorTab(TABS[(idx + 1) % TABS.length]!.id);
+      }
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (typeof selectInspectorTab === "function") {
+        selectInspectorTab(TABS[(idx - 1 + TABS.length) % TABS.length]!.id);
+      }
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      if (typeof selectInspectorTab === "function") selectInspectorTab(TABS[0]!.id);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      if (typeof selectInspectorTab === "function") {
+        selectInspectorTab(TABS[TABS.length - 1]!.id);
+      }
+    }
+  }
+
   return (
-    <aside className="panel" aria-label="선택 항목">
-      <div className="panel-head">
-        <span className="panel-title">선택 항목</span>
-        <span className="count" data-testid="selection-id">
-          {id}
-        </span>
+    <aside className="panel inspector" aria-label="검사기" data-testid="context-panel">
+      <div
+        className="inspector-tabs"
+        role="tablist"
+        aria-label="검사기"
+        data-testid="inspector-tabs"
+        onKeyDown={onTabListKey}
+      >
+        {TABS.map((row) => {
+          const selected = tab === row.id;
+          let badge: React.ReactNode = null;
+          if (row.id === "review") {
+            badge = (
+              <>
+                {reviewCount > 0 ? (
+                  <span className="tab-badge" data-testid="badge-review">
+                    {reviewCount}
+                  </span>
+                ) : null}
+                {reviewPending ? (
+                  <span
+                    className="tab-badge-dot"
+                    data-testid="badge-review-pending"
+                    title="승인 대기"
+                  />
+                ) : null}
+              </>
+            );
+          } else if (row.id === "history" && historyCount > 0) {
+            badge = (
+              <span className="tab-badge" data-testid="badge-history">
+                {historyCount}
+              </span>
+            );
+          } else if (row.id === "agent" && agentUnread > 0) {
+            badge = (
+              <span className="tab-badge" data-testid="badge-agent">
+                {agentUnread}
+              </span>
+            );
+          }
+          return (
+            <button
+              key={row.id}
+              type="button"
+              role="tab"
+              id={`inspector-tab-${row.id}`}
+              aria-selected={selected}
+              aria-controls={`inspector-panel-${row.id}`}
+              tabIndex={selected ? 0 : -1}
+              data-testid={`inspector-tab-${row.id}`}
+              onClick={() => {
+                if (typeof selectInspectorTab === "function") selectInspectorTab(row.id);
+              }}
+            >
+              {row.label}
+              {badge}
+            </button>
+          );
+        })}
       </div>
-      <div className="panel-body">
-        {!inspect || !selection ? (
-          <p className="empty">
-            왼쪽에서 문단이나 표의 칸을 고르면 그 자리에 대해 아는 것을 여기에 모아
-            보여 줍니다.
-          </p>
-        ) : selection.kind === "cell" ? (
+      <div className="panel-head inspector-head">
+        <span className="panel-title">
+          {tab === "selection"
+            ? "선택 항목"
+            : tab === "review"
+              ? "검토"
+              : tab === "history"
+                ? "기록"
+                : "에이전트"}
+        </span>
+        {tab === "selection" ? (
+          <span className="count" data-testid="selection-id">
+            {id}
+          </span>
+        ) : null}
+      </div>
+      <div
+        className={`panel-body inspector-body${tab === "agent" ? " is-agent" : ""}`}
+        role="tabpanel"
+        id={`inspector-panel-${tab}`}
+        aria-labelledby={`inspector-tab-${tab}`}
+        data-testid="inspector-panel"
+        data-tab={tab}
+      >
+        {tab === "selection" ? <SelectionPane inspect={inspect} /> : null}
+        {tab === "review" ? <ReviewQueue /> : null}
+        {tab === "history" ? (
           <>
-            <RegionSourceSection />
-            <CellDetail inspect={inspect} sel={selection} />
+            <History />
+            <Timeline />
           </>
-        ) : selection.kind === "paragraph" ? (
+        ) : null}
+        {tab === "agent" ? (
           <>
-            <RegionSourceSection />
-            <ParagraphDetail inspect={inspect} atPara={selection.atPara} />
+            <DocumentContext />
+            <Conversation />
+            <Composer />
           </>
-        ) : (
-          <div className="section">
-            <h3>표 {selection.table}</h3>
-            <dl className="kv">
-              <Fact
-                k="칸"
-                v={String(
-                  inspect.graph.tables.find((t) => t.index === selection.table)?.cells.length ?? 0,
-                )}
-              />
-            </dl>
-          </div>
-        )}
-
-        {/* The queue is the reason this column exists in Phase 4. It sits
-            below the selection's facts because the order of work is: look at
-            the seat, decide, then review what you decided. */}
-        <ReviewQueue />
-
-        {/* 기록 sits under the queue for the same reason the queue sits under
-            the selection: the order of work is decide, review, then look at
-            what has already been decided — and undo is reached from what has
-            already been decided, never from the queue. */}
-        <History />
-
-        <div className="section">
-          <h3>연결</h3>
-          <dl className="kv">
-            <Fact
-              k="세션"
-              v={
-                status?.initialized ? (
-                  <Tag tone="ok">연결됨</Tag>
-                ) : status?.running ? (
-                  <Tag tone="warn">준비 중</Tag>
-                ) : (
-                  <Tag tone="bad">끊김</Tag>
-                )
-              }
-            />
-            <Fact k="권한" v={<Tag tone="ok">호스트</Tag>} />
-          </dl>
-          <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
-            이 창은 호스트 권한으로 붙어 있습니다. 승인은 여기에서만 할 수 있고, 에이전트
-            연결에는 그 기능 자체가 없습니다.
-          </p>
-        </div>
+        ) : null}
       </div>
     </aside>
   );

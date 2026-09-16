@@ -1,32 +1,31 @@
 /**
- * The always-visible truth strip, and the only place proof state may appear.
+ * Status bar: three facts, then 자세히 for the former chip strip.
  *
- * The proof-grade vocabulary is the strongest concept in the codebase and is
- * kept verbatim: three states, read from one canonical file, and an advisory
- * render never displayed without its qualification.
- *
- * Phase 4 moved exactly one of these badges and left the rest alone, which is
- * the discipline worth recording:
- *
- * - **제출 검사** now reports a real verdict once a candidate exists, because
- *   one really ran: `check_residue` executes inside `plan/apply`, and
- *   `receipt/read` re-hashes the artifact against its binding before handing
- *   the result over. The badge says 적용 시 검사 rather than 검사됨, because
- *   what it can show is the verdict from the apply, not a fresh re-run.
- *   `verify/*` is still GAP, and a button that pretended to re-run it would be
- *   the exact lie this bar exists to prevent.
- * - **렌더 증명** did NOT move. `document/render` can now produce a raster, and
- *   a raster is still not evidence: `rt_render` stamps every result
- *   `structural_only` / `proofGrade: none`, and this badge repeats that rather
- *   than promoting a picture to a proof.
- * - **원본** and **후보본** sit next to each other with both digests visible,
- *   so "the source is unchanged" is something the user reads off the screen
- *   rather than something the application asserts.
+ * Visible: document · verification pill · runtime connection.
+ * Popover keeps every previous testid so honesty and overlay checks still
+ * resolve. Glossary labels live on the chips; CLI/JSON keys are unchanged.
  */
 import { exportApplied, openReceipt, reopenExported, runCheck } from "../actions";
 import { setState, useWorkspace } from "../store";
 import type { Candidate, InspectResult, Session } from "../types";
 import { Tag } from "./Tag";
+
+const GLOSSARY = {
+  render:
+    "페이지 그림은 보여줄 수 있어도 증거가 아닙니다. 런타임은 모든 렌더에 증명 없음(structural_only)을 붙입니다.",
+  applyCheck:
+    "후보본을 만들 때 돌린 검사입니다. 지금 다시 돌리는 버튼은 없습니다.",
+  seats: "값을 넣도록 열린 칸입니다. 승인 전에는 파일이 바뀌지 않습니다.",
+  format:
+    "색·글꼴 등 서식 이상을 읽습니다. 제출용 검사가 아닙니다.",
+  engine: "문서 엔진 연결 상태입니다. 프로세스 번호는 자세히에서 봅니다.",
+  job: "창이 강제 종료돼도 엔진 자식 프로세스를 함께 끝낼 수 있는지입니다.",
+  candidate: "승인·적용 후 생긴 사본입니다. 원본 파일은 그대로입니다.",
+  source: "연 파일의 해시입니다. 이 앱은 원본을 고치지 않습니다.",
+} as const;
+
+const PILL_CAVEAT =
+  "서식 점검입니다. 색·글꼴 등 서식 이상을 읽습니다. 제출용 검사가 아니며, 페이지 그림은 증거가 아닙니다.";
 
 function Fact({
   k,
@@ -37,7 +36,6 @@ function Fact({
   k: string;
   v: React.ReactNode;
   title?: string;
-  /** Changing this cross-fades the value instead of snapping it. */
   nonce?: string | number;
 }) {
   return (
@@ -48,6 +46,24 @@ function Fact({
       </span>
     </div>
   );
+}
+
+function verificationPill(args: {
+  checkPhase: string;
+  hard: number;
+  warn: number;
+  seatWarnings: number;
+}): { label: string; tone: "none" | "ok" | "warn" | "bad" } {
+  const { checkPhase, hard, warn, seatWarnings } = args;
+  if (checkPhase === "starting") return { label: "검사 중", tone: "none" };
+  if (checkPhase === "idle") {
+    if (seatWarnings > 0) return { label: `주의 ${seatWarnings}`, tone: "warn" };
+    return { label: "검사 안 함", tone: "none" };
+  }
+  if (checkPhase === "failed") return { label: hard > 0 ? `실패 ${hard}` : "실패", tone: "bad" };
+  if (hard > 0) return { label: `실패 ${hard}`, tone: "bad" };
+  if (warn > 0) return { label: `주의 ${warn}`, tone: "warn" };
+  return { label: "통과", tone: "ok" };
 }
 
 export function VerificationBar({
@@ -78,14 +94,9 @@ export function VerificationBar({
   const overlayPick = useWorkspace((s) => s.overlayPick);
   const geometry = useWorkspace((s) => s.geometry);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
+  const detailsOpen = useWorkspace((s) => s.verifyDetailsOpen);
   const caret = inlineEdit?.kind === "run" ? inlineEdit : null;
 
-  // The address, spelled the way the runtime addresses it. Never a line and
-  // column — the document has no such coordinate — but where a caret IS
-  // standing in a line, the character offset it stands at is a measured
-  // number and is printed. `null` there means the line carried no per-
-  // character boxes, so the offset says 줄 앞 rather than 0: a fallback
-  // dressed as a measurement is the failure this whole feature avoids.
   const where = !selection
     ? "선택 없음"
     : selection.kind === "cell"
@@ -104,16 +115,13 @@ export function VerificationBar({
   const seatWarnings = inspect
     ? inspect.regions.regions.filter((r) => r.colorAnomaly || r.scriptAnomaly).length
     : 0;
+  const pill = verificationPill({ checkPhase, hard, warn, seatWarnings });
+  const engineUp = Boolean(status?.running);
+  const docName = session?.source.name ?? "문서 없음";
+  const backendTag = session?.source.documentKind ?? "—";
 
-  return (
-    <footer className="verifybar" data-testid="verification-bar">
-      {/* Hangul-editor status conventions, and only where there is a real
-          answer. 쪽 is the renderer's own page number and reads — in 본문 보기,
-          where the runtime maps no text to any page; 위치 is the selection's
-          address, which is the only cursor this build has; and the insert /
-          overwrite indicator every Hangul editor carries says NEITHER, because
-          there is no caret to be in a mode — editing happens per seat. An
-          indicator that said 삽입 would be inventing a caret. */}
+  const chips = (
+    <div className="verify-details-body" data-testid="verify-details">
       <Fact
         k="쪽"
         nonce={`${mode}-${page}-${pageCount}`}
@@ -146,22 +154,13 @@ export function VerificationBar({
           </span>
         }
       />
-      {/* 삽입/수정, and it used to be neither.
-          The old copy read "이 빌드에는 글자 단위 커서가 없어" and it was
-          true: the only editor was a seat, opened whole and replaced whole.
-          With a caret standing in a paragraph line there IS a character-level
-          cursor, and it is in insert mode because the field is a real `<input>`
-          — so the indicator says so while one is open, and goes back to saying
-          there is none the moment it closes. It never says 수정: nothing in
-          this build overwrites, and an indicator offering a mode that does not
-          exist is the same fabrication as a font name nobody declared. */}
       <Fact
         k="입력"
         nonce={caret ? `caret-${caret.atPara}-${caret.run}` : "none"}
         title={
           caret
             ? "지면의 줄 안에 커서가 있습니다. 이 편집기는 삽입만 하며 덮어쓰기 모드는 없습니다."
-            : "한글의 삽입/수정 표시에 해당하는 자리입니다. 커서가 놓인 줄이 없으면 둘 중 어느 상태도 아닙니다."
+            : "한글의 삽입/수정 표시에 해당하는 자리입니다. 커서가 놓인 줄이 없으면 표시하지 않습니다."
         }
         v={
           caret ? (
@@ -169,27 +168,22 @@ export function VerificationBar({
               삽입
             </Tag>
           ) : (
-            <Tag tone="none">삽입/수정 없음</Tag>
+            <span className="mono">—</span>
           )
         }
       />
-      {/* WHOSE LAYOUT the seats and the caret are standing on. It matters now
-          in a way it did not before: a tier-3 page used to be visibly inert —
-          rectangles and nothing else — so nobody could mistake it for a page
-          read out of a Hancom render. It is editable now, with the same seats
-          and the same caret, and the only thing separating the two is that our
-          own raster is 검증 안 됨. So the bar says which one it is, always,
-          rather than leaving it to the render badge above the paper. */}
-      {mode === "page" && geometry?.available ? (
-        <Fact
-          k="지면 출처"
-          nonce={geometry.geometrySource ?? "pdf"}
-          title={
-            geometry.geometrySource === "own"
-              ? "이 지면은 자체 렌더러가 그렸습니다. 자리와 커서는 서식 스캔으로 같은 규칙에 따라 맞춘 것이고, 렌더러가 스스로 밝힌 주소는 그 스캔과 맞을 때만 확정으로 칩니다. 그림 자체는 검증되지 않았습니다."
-              : "이 지면은 한컴이 만든 PDF에서 읽은 것입니다. 글자 위치는 그 PDF 자신의 것입니다."
-          }
-          v={
+      <Fact
+        k="지면 출처"
+        nonce={geometry?.geometrySource ?? "none"}
+        title={
+          geometry?.available && geometry.geometrySource === "own"
+            ? "이 지면은 자체 렌더러가 그렸습니다. 자리와 커서는 서식 스캔으로 같은 규칙에 따라 맞춘 것이고, 렌더러가 스스로 밝힌 주소는 그 스캔과 맞을 때만 확정으로 칩니다. 그림 자체는 검증되지 않았습니다."
+            : geometry?.available
+              ? "이 지면은 한컴이 만든 PDF에서 읽은 것입니다. 글자 위치는 그 PDF 자신의 것입니다."
+              : "본문 보기이거나 지면 좌표가 아직 없습니다."
+        }
+        v={
+          mode === "page" && geometry?.available ? (
             <span
               className={geometry.geometrySource === "own" ? "mono warnish" : "mono"}
               data-testid="status-geometry-source"
@@ -197,14 +191,13 @@ export function VerificationBar({
             >
               {geometry.geometrySource === "own" ? "자체 렌더 · 미검증" : "한컴 PDF"}
             </span>
-          }
-        />
-      ) : null}
-      {/* What the last click ON THE PAGE resolved to. Only in 페이지 보기,
-          because that is the only mode where a click has a rectangle to have
-          landed in — and an ambiguous one says 후보 N개 rather than an
-          address, because there is no address yet and there will not be one
-          until a person picks. */}
+          ) : (
+            <span className="mono" data-testid="status-geometry-source" data-geometry-source="">
+              —
+            </span>
+          )
+        }
+      />
       {mode === "page" && overlayPick ? (
         <Fact
           k="지면 선택"
@@ -219,11 +212,7 @@ export function VerificationBar({
                 : overlayPick.kind === "no_caret"
                   ? "이 줄은 주소가 잡혔지만, 고쳐 쓸 글 덩어리를 하나로 특정할 수 없어 커서를 놓지 않았습니다."
                   : overlayPick.derivation
-                    ? // The derivation belongs where the address is, not only
-                      // in a hover: a seat is one of two overlay classes a
-                      // person types into, and how its rectangle was found is
-                      // how much to trust it.
-                      `지면에서 누른 곳이 가리키는 주소입니다. 이 자리의 위치는 ${overlayPick.derivation} 로 잡혔습니다.`
+                    ? `지면에서 누른 곳이 가리키는 주소입니다. 이 자리의 위치는 ${overlayPick.derivation} 로 잡혔습니다.`
                     : "지면에서 누른 곳이 가리키는 주소입니다."
           }
           v={
@@ -244,21 +233,17 @@ export function VerificationBar({
           }
         />
       ) : null}
-      <div className="sep" />
       <Fact
         k="원본"
         v={hash ? <span title={hash}>{hash.slice(0, 12)}</span> : "—"}
-        title={hash ?? undefined}
+        title={hash ? `${GLOSSARY.source} ${hash}` : GLOSSARY.source}
         nonce={hash ?? "none"}
       />
-      <div className="sep" />
       <Fact
         k="후보본"
         nonce={applied?.candidate.sha256 ?? candidates.length}
         title={
-          applied
-            ? `후보본 ${applied.candidate.sha256}`
-            : "승인된 계획을 적용하면 후보본이 생깁니다."
+          applied ? `${GLOSSARY.candidate} ${applied.candidate.sha256}` : GLOSSARY.candidate
         }
         v={
           applied ? (
@@ -283,20 +268,18 @@ export function VerificationBar({
           )
         }
       />
-      <div className="sep" />
-      {/* Never a bare colour: the label is the signal, the tone is support. */}
       <Fact
-        k="렌더 증명"
+        k="그림 증명"
         v={<Tag tone="none">증명 없음</Tag>}
-        title="페이지를 그릴 수는 있어도 그림은 증거가 아닙니다. 런타임은 모든 렌더 결과에 structural_only / proofGrade none 을 붙입니다."
+        title={GLOSSARY.render}
       />
       <Fact
-        k="제출 검사"
+        k="적용 시 검사"
         nonce={verdict ? `${verdict.runId}-${verdict.report.acceptance}` : "none"}
         title={
           verdict
             ? `${verdict.report.note}${verdict.report.reason ? ` — ${verdict.report.reason}` : ""}`
-            : "후보본이 있어야 검사 결과가 있습니다. verify/* 로 지금 다시 돌리는 방법은 아직 없습니다."
+            : GLOSSARY.applyCheck
         }
         v={
           !verdict ? (
@@ -310,23 +293,19 @@ export function VerificationBar({
           )
         }
       />
-      <div className="sep" />
       {queued > 0 ? (
-        <>
-          <Fact
-            k="대기"
-            nonce={queued}
-            title="승인을 기다리는 작업. 아직 문서는 바뀌지 않았습니다."
-            v={<Tag tone="fill">{queued}건</Tag>}
-          />
-          <div className="sep" />
-        </>
+        <Fact
+          k="검토 대기"
+          nonce={queued}
+          title="승인을 기다리는 작업. 아직 문서는 바뀌지 않았습니다."
+          v={<Tag tone="fill">{queued}건</Tag>}
+        />
       ) : null}
-      <Fact k="채움 자리" v={inspect ? String(inspect.summary.fillTargetCount) : "—"} />
+      <Fact k="입력 칸" v={inspect ? String(inspect.summary.fillTargetCount) : "—"} title={GLOSSARY.seats} />
       <Fact
-        k="서식 검사"
+        k="서식 점검"
         nonce={`${checkPhase}-${findings.length}`}
-        title={checkedAt ? `마지막 검사 ${checkedAt}` : "아직 검사하지 않았습니다"}
+        title={checkedAt ? `${GLOSSARY.format} 마지막 검사 ${checkedAt}` : GLOSSARY.format}
         v={
           checkPhase === "starting" ? (
             <Tag tone="none">읽는 중</Tag>
@@ -345,103 +324,148 @@ export function VerificationBar({
           )
         }
       />
-
-      <div className="right">
-        {applied ? (
-          <>
-            <button
-              className="action"
-              data-testid="open-receipt"
-              onClick={() => openReceipt(applied.runId)}
-            >
-              영수증 보기
-            </button>
-            <button
-              className="action"
-              data-testid="export-candidate"
-              disabled={exportPhase === "starting"}
-              title="후보본과 영수증을 함께 저장합니다"
-              onClick={() => void exportApplied()}
-            >
-              {exportPhase === "starting" ? "내보내는 중…" : "내보내기"}
-            </button>
-          </>
-        ) : null}
-        {exportResult && !reopened ? (
+      <Fact
+        k="엔진"
+        nonce={`${status?.running}-${status?.pid}`}
+        title={GLOSSARY.engine}
+        v={
+          !status?.running ? (
+            <Tag tone="bad">끊김</Tag>
+          ) : !status.initialized ? (
+            <Tag tone="warn">준비 중</Tag>
+          ) : (
+            <span>
+              pid {status.pid} · {status.mode === "packaged" ? "패키지" : "개발"}
+            </span>
+          )
+        }
+      />
+      <Fact
+        k="종료 시 정리"
+        v={
+          status?.jobConfined === true ? (
+            <Tag tone="ok">보장됨</Tag>
+          ) : status?.jobConfined === false ? (
+            <Tag tone="bad">실패</Tag>
+          ) : (
+            <Tag tone="none">확인 안 됨</Tag>
+          )
+        }
+        title={status?.jobError ?? GLOSSARY.job}
+      />
+      {applied ? (
+        <>
           <button
             className="action"
-            data-testid="reopen-export"
-            title={exportResult.path}
-            onClick={() => void reopenExported()}
+            data-testid="open-receipt"
+            onClick={() => openReceipt(applied.runId)}
           >
-            내보낸 파일 열어 확인
+            영수증 보기
           </button>
-        ) : null}
-        {reopened ? (
-          <Fact
-            k="내보냄"
-            nonce={reopened.sha256}
-            title={`${reopened.path}\n${reopened.sha256}`}
-            v={<Tag tone="ok">다시 열림</Tag>}
-          />
-        ) : null}
-        {exportError ? (
-          <Fact
-            k="내보내기"
-            nonce={exportError.code}
-            title={exportError.message}
-            v={<Tag tone="bad">실패</Tag>}
-          />
-        ) : null}
-        {findings.length > 0 && !sheetOpen ? (
           <button
             className="action"
-            data-testid="open-findings"
-            onClick={() => setState({ sheetOpen: true })}
+            data-testid="export-candidate"
+            disabled={exportPhase === "starting"}
+            title="후보본과 영수증을 함께 저장합니다"
+            onClick={() => void exportApplied()}
           >
-            결과 보기
+            {exportPhase === "starting" ? "내보내는 중…" : "내보내기"}
           </button>
-        ) : null}
+        </>
+      ) : null}
+      {exportResult && !reopened ? (
         <button
           className="action"
-          data-testid="run-check"
-          disabled={!inspect || checkPhase === "starting"}
-          onClick={() => void runCheck()}
+          data-testid="reopen-export"
+          title={exportResult.path}
+          onClick={() => void reopenExported()}
         >
-          {checkPhase === "starting" ? "검사 중…" : "검사 실행"}
+          내보낸 파일 열어 확인
         </button>
-        <div className="sep" />
+      ) : null}
+      {reopened ? (
         <Fact
-          k="런타임"
-          nonce={`${status?.running}-${status?.pid}`}
-          v={
-            !status?.running ? (
-              <Tag tone="bad">끊김</Tag>
-            ) : !status.initialized ? (
-              <Tag tone="warn">준비 중</Tag>
-            ) : (
-              <span>
-                pid {status.pid} · {status.mode === "packaged" ? "패키지" : "개발"}
-              </span>
-            )
-          }
+          k="내보냄"
+          nonce={reopened.sha256}
+          title={`${reopened.path}\n${reopened.sha256}`}
+          v={<Tag tone="ok">다시 열림</Tag>}
         />
+      ) : null}
+      {exportError ? (
         <Fact
-          k="자식 정리"
-          v={
-            status?.jobConfined === true ? (
-              <Tag tone="ok">보장됨</Tag>
-            ) : status?.jobConfined === false ? (
-              <Tag tone="bad">실패</Tag>
-            ) : (
-              <Tag tone="none">확인 안 됨</Tag>
-            )
-          }
-          title={
-            status?.jobError ??
-            "작업 개체로 사이드카를 묶어 두었습니다. 셸이 강제 종료되어도 함께 정리됩니다."
-          }
+          k="내보내기"
+          nonce={exportError.code}
+          title={exportError.message}
+          v={<Tag tone="bad">실패</Tag>}
         />
+      ) : null}
+      {findings.length > 0 && !sheetOpen ? (
+        <button
+          className="action"
+          data-testid="open-findings"
+          onClick={() => setState({ sheetOpen: true })}
+        >
+          결과 보기
+        </button>
+      ) : null}
+      <button
+        className="action"
+        data-testid="run-check"
+        disabled={!inspect || checkPhase === "starting"}
+        onClick={() => void runCheck()}
+      >
+        {checkPhase === "starting" ? "검사 중…" : "검사 실행"}
+      </button>
+    </div>
+  );
+
+  return (
+    <footer className="verifybar" data-testid="verification-bar">
+      <div className="verify-summary" data-testid="verify-summary">
+        <span className="verify-doc" title={hash ?? undefined}>
+          <span className="name" data-testid="verify-doc-name">
+            {docName}
+          </span>
+          <span className="latin-caps" data-testid="verify-backend">
+            {backendTag}
+          </span>
+        </span>
+        <span className="sep" />
+        <span className="verify-pill" data-testid="verify-pill" title={PILL_CAVEAT}>
+          <Tag tone={pill.tone}>{pill.label}</Tag>
+        </span>
+        <span className="sep" />
+        <span
+          className="verify-engine"
+          data-testid="verify-engine"
+          title={GLOSSARY.engine}
+        >
+          {engineUp ? "엔진 연결됨" : "끊김"}
+        </span>
+      </div>
+      <div className="right">
+        <div className={`verify-popover${detailsOpen ? " is-open" : ""}`}>
+          <button
+            type="button"
+            className="action"
+            data-testid="verify-details-toggle"
+            aria-expanded={detailsOpen}
+            aria-controls="verify-details-popover"
+            title="쪽, 위치, 원본, 후보본 등 자세한 상태"
+            onClick={() => setState({ verifyDetailsOpen: !detailsOpen })}
+          >
+            ⋯ 자세히
+          </button>
+          <div
+            id="verify-details-popover"
+            className="verify-popover-panel"
+            hidden={!detailsOpen}
+            role="dialog"
+            aria-label="검사 자세히"
+          >
+            {chips}
+          </div>
+        </div>
       </div>
     </footer>
   );

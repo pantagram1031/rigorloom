@@ -58,6 +58,7 @@ import {
   setSelection,
   setState,
   setView,
+  selectInspectorTab,
   setZoom,
   sharedStateSignature,
   type QueuedFillOp,
@@ -126,7 +127,7 @@ function domState(): string {
   if (document.querySelector('[data-testid="boot"]')) return "still booting";
   const view =
     document.querySelector('[data-testid="view-document"]') ??
-    document.querySelector('[data-testid="view-agent"]');
+    document.querySelector('[data-testid="context-panel"]');
   if (!view) return `no view mounted; phase=${getState().phase}`;
   return `${view.getAttribute("data-testid")} mounted`;
 }
@@ -413,15 +414,17 @@ async function phaseOpen(config: SmokeConfig) {
 
   setView("agent");
   await settled(240);
-  check("agent view is mounted", !!document.querySelector('[data-testid="view-agent"]'));
-  check("document view is gone", !document.querySelector('[data-testid="view-document"]'));
+  check("agent inspector tab is selected",
+    document.querySelector('[data-testid="inspector-tab-agent"]')?.getAttribute("aria-selected") ===
+      "true");
+  check("document view stays mounted", !!document.querySelector('[data-testid="view-document"]'));
   const during = sharedStateSignature();
   check("shared state identical after switching to agent view", during === before,
     during === before ? "identical" : `${before}\n!=\n${during}`);
-  check("agent view shows the same selection",
-    domText('[data-testid="view-agent"]').includes(beforeSelection), beforeSelection);
-  check("agent view shows the same document",
-    domText('[data-testid="view-agent"]').includes(inspect.documentHash.slice(0, 12)));
+  check("agent tab shows the same selection",
+    domText('[data-testid="document-facts"]').includes(beforeSelection), beforeSelection);
+  check("agent tab shows the same document",
+    domText('[data-testid="document-facts"]').includes(inspect.documentHash.slice(0, 12)));
   // INVERTED in Phase 5, not deleted. This asserted the composer was DISABLED,
   // which was the honest state while there was nowhere to send. There is now,
   // so the property worth pinning moved: the box is present and enabled, and it
@@ -867,17 +870,8 @@ async function phaseEdit(config: SmokeConfig) {
     new Set(getState().events.map((e) => e.seq)).size === getState().events.length,
     `${getState().events.length} events, ${new Set(getState().events.map((e) => e.seq)).size} distinct`);
 
-  setView("agent");
-  // The document's history moved behind Agent view's second tab in Phase 5 —
-  // the centre now holds the conversation by default. REPOINTED rather than
-  // deleted: the property (every event the runtime appended has a card, and
-  // protocol chatter stays behind its disclosure) is unchanged and still worth
-  // pinning; only where a person stands to see it moved.
-  setState({ agentTab: "history" });
+  selectInspectorTab("history");
   await settled(300);
-  // Scoped to the card list. An unscoped prefix selector also matched the
-  // header's counter, which made this read 20 for 19 events — the same class
-  // of mistake as the design slice's vacuous tree/centre check.
   const cards = document.querySelectorAll('[data-testid="timeline"] .cards [data-testid^="event-"]');
   checkDom("the timeline renders the document's own history",
     cards.length === getState().events.length,
@@ -1311,7 +1305,7 @@ async function phaseAgent(config: SmokeConfig) {
   setView("agent");
   await settled(240);
   checkDom("the agent button is offered", !!document.querySelector('[data-testid="run-agent"]'),
-    "it lives in the agent view, so the check has to stand there");
+    "it lives in the 에이전트 inspector tab");
   setView("document");
   await settled(240);
 
@@ -3174,6 +3168,10 @@ async function phaseShot(config: SmokeConfig, stop: string) {
       await settled(400);
     }
     await loadTaskPacks();
+    const shotPacks = document.querySelector(
+      '[data-testid="work-packs-disclosure"]',
+    ) as HTMLDetailsElement | null;
+    if (shotPacks) shotPacks.open = true;
     setView("agent");
     // `packs` photographs the declaration panel. `packs-result` photographs a
     // REAL `module/check` answer, and only when this machine has an enablement
@@ -3379,6 +3377,10 @@ async function phasePacks(config: SmokeConfig) {
 
   const { loadTaskPacks, openPack, runModuleCheck } = await import("./actions");
   await loadTaskPacks();
+  const phasePacks = document.querySelector(
+    '[data-testid="work-packs-disclosure"]',
+  ) as HTMLDetailsElement | null;
+  if (phasePacks) phasePacks.open = true;
   setView("agent");
   await settled(300);
 
@@ -4182,6 +4184,10 @@ async function phaseChrome(config: SmokeConfig) {
   // --- 작업 팩 ---------------------------------------------------------------
   const { loadTaskPacks } = await import("./actions");
   await loadTaskPacks();
+  const workRail = document.querySelector(
+    '[data-testid="work-packs-disclosure"]',
+  ) as HTMLDetailsElement | null;
+  if (workRail) workRail.open = true;
   setView("agent");
   await settled(300);
   const packs = getState().taskPacks;
@@ -4261,17 +4267,17 @@ async function phaseChrome(config: SmokeConfig) {
     setState({ packOpen: null });
   }
 
-  // --- the two tabs ----------------------------------------------------------
+  // --- the inspector tabs ----------------------------------------------------
   await settled(160);
-  checkDom("the centre offers 대화 and 문서 기록",
-    !!document.querySelector('[data-testid="tab-conversation"]') &&
-      !!document.querySelector('[data-testid="tab-history"]'),
+  checkDom("the inspector offers 기록 and 에이전트",
+    !!document.querySelector('[data-testid="inspector-tab-history"]') &&
+      !!document.querySelector('[data-testid="inspector-tab-agent"]'),
     domState());
-  setState({ agentTab: "history" });
+  selectInspectorTab("history");
   await settled(200);
-  checkDom("문서 기록 shows the session's own events",
+  checkDom("기록 shows the session's own events",
     !!document.querySelector('[data-testid="timeline"]'), domState());
-  setState({ agentTab: "conversation" });
+  selectInspectorTab("agent");
   await settled(160);
 
   // --- the window ------------------------------------------------------------

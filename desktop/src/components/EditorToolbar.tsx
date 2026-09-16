@@ -42,15 +42,15 @@ import {
   requestApprovalForDraft,
   runCheck,
   stepUiZoom,
+  toggleLeftRail,
 } from "../actions";
 import {
   activeText,
   canRenderPages,
   canRequestApproval,
   cellKey,
+  selectInspectorTab,
   setCenterMode,
-  setState,
-  setView,
   setZoom,
   useWorkspace,
   type Selection,
@@ -233,6 +233,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
   const findings = useWorkspace((s) => s.findings);
   const exportPhase = useWorkspace((s) => s.exportPhase);
   const canApprove = useWorkspace(canRequestApproval);
+  const railCollapsed = useWorkspace((s) => s.leftRailCollapsed);
 
   const baseline = inspect?.summary.baselineCharPr ?? null;
   const hard = findings.filter((f) => f.severity === "hard").length;
@@ -264,6 +265,16 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
       <div className="tool-actions" data-testid="tool-actions">
         <button
           className="action"
+          data-testid="toggle-left-rail"
+          title={railCollapsed ? "구조 레일 펼치기 (Ctrl+B)" : "구조 레일 접기 (Ctrl+B)"}
+          aria-pressed={railCollapsed}
+          aria-label={railCollapsed ? "구조 레일 펼치기" : "구조 레일 접기"}
+          onClick={() => toggleLeftRail()}
+        >
+          {railCollapsed ? "구조 펼치기" : "구조 접기"}
+        </button>
+        <button
+          className="action"
           data-testid="act-open"
           title="문서 열기 (Ctrl+O)"
           onClick={() => void openViaDialog()}
@@ -287,10 +298,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           className="action"
           data-testid="act-undo"
           title="되돌리기와 후보본 계보를 봅니다"
-          onClick={() => {
-            setView("agent");
-            setState({ agentTab: "history" });
-          }}
+          onClick={() => selectInspectorTab("history")}
         >
           되돌리기
         </button>

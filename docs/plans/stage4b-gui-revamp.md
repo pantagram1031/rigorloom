@@ -49,10 +49,12 @@ The tokens are fine (Pretendard, warm paper, teal accent). What reads as "vibe c
       visibly disabled; `EmptyState.tsx` used by ReviewQueue/History/Conversation/SessionList; tree headings 표 /
       입력 칸; Hangul tracking off, tabular nums. Verified in dev-mock screenshots. Follow-up for R2: the
       browser-mode Tauri drag-drop unsubscribe error still logs once per mount (cosmetic in dev only).
-- [ ] R2 Shell IA: single workspace (`DocumentView` absorbs `AgentView`): left outline rail (collapsible to
-      icons), centre document, right inspector with tabs 선택 / 검토 / 기록 / 에이전트 and badge counts;
-      status bar reduced to document · verification pill (popover holds the former chips) · runtime.
-      View-state tests updated, `setView` kept as a tab switch for compatibility.
+- [x] R2 Shell IA (cursor-grok-4.6-high-fast, 16.6 min, 363k in / 58k out / 9.8M cache; tests 157 → 164): single
+      workspace, header switch removed, right inspector tabs 선택 / 검토 / 기록 / 에이전트 with badges and a default-tab
+      rule, left rail collapses to a 40px icon rail (Ctrl+B, prefs_save), status bar = name+backend · verification
+      pill · 엔진 연결됨/끊김 · ⋯ 자세히 popover with the former chips and glossary tooltips; `setView('agent')` is now
+      a tab switch; smoke checks relocated. Screenshot pass done (default, 검토, popover, collapsed rail, 에이전트).
+      Follow-ups: popover is dense (R6); 기록 still mounts Timeline (R5).
 - [ ] R3 Home screen: `Welcome.tsx` becomes a real home (recents from prefs IPC, open, drop zone, CLI link);
       splash shortened; first-run copy.
 - [ ] R4 Review as diff: hunk cards with before/after from `read-region`, provenance details row, j/k a/r
@@ -74,3 +76,4 @@ done only when the screenshot matches the intent; "tests pass" alone is not acce
 |---|---|---|
 | 2026-09-17 | Diagnosis from dev-mock screenshots (document tab, 작업 tab) | six findings above; R0 launched on cursor-grok-4.6-low-fast |
 | 2026-09-17 | R0 note (grok-low) and R1 fixes (grok-high) landed; 작업 tab screenshot before/after | see slices; commit below |
+| 2026-09-17 | R2 shell IA landed; five dev-mock screenshots checked | commit below |

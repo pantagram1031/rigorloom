@@ -277,11 +277,27 @@ function renderContext(overrides = {}) {
             if (s.kind === "table") return `t:${s.table}`;
             return `c:${s.table}:${s.row}:${s.col}`;
           },
+          visibleInspectorTab: (s) => {
+            if (s.view === "agent") return "agent";
+            if (s.inspectorTabUserSet && s.inspectorTab && s.inspectorTab !== "agent") {
+              return s.inspectorTab;
+            }
+            if ((s.draft?.ops?.length ?? 0) > 0 || s.approvalPhase === "pending") return "review";
+            return "selection";
+          },
+          selectInspectorTab: () => {},
+          markAgentTurnsSeen: () => {},
+          inspectorHistoryBadge: () => 0,
+          inspectorAgentUnread: () => 0,
         };
       }
       if (id === "../types") return {};
       if (id === "./History") return { History: () => null };
       if (id === "./ReviewQueue") return { ReviewQueue: () => null };
+      if (id === "./Composer") return { Composer: () => null };
+      if (id === "./Conversation") return { Conversation: () => null };
+      if (id === "./DocumentContext") return { DocumentContext: () => null };
+      if (id === "./Timeline") return { Timeline: () => null };
       if (id === "./Tag") {
         return {
           Tag: ({ tone, children }) =>

@@ -53,6 +53,13 @@ import type {
 export type View = "document" | "agent";
 
 /**
+ * Right inspector tabs. `view === "agent"` still exists so Ctrl+2 and
+ * `lastView` keep working; it selects the 에이전트 tab rather than mounting
+ * a second layout.
+ */
+export type InspectorTab = "selection" | "review" | "history" | "agent";
+
+/**
  * What the centre of Document view shows.
  *
  * `text` is the default and the only one reachable today: the document's own
@@ -303,8 +310,22 @@ export interface Recovery {
 
 export interface WorkspaceState {
   // --- shell ---------------------------------------------------------------
-  /** The ONLY field that differs between the two views. */
+  /**
+   * Layout compatibility field. R2: both values keep DocumentView mounted.
+   * `"agent"` means the inspector is on the 에이전트 tab.
+   */
   view: View;
+  /** Which inspector tab is showing. Session-independent; not a URL. */
+  inspectorTab: InspectorTab;
+  /** Once the user (or Ctrl+1/2) picks a tab, default-tab logic stops winning. */
+  inspectorTabUserSet: boolean;
+  lastNonAgentInspectorTab: Exclude<InspectorTab, "agent">;
+  /** StructureTree column collapsed to the 40px icon rail. */
+  leftRailCollapsed: boolean;
+  /** Verification-bar 자세히 popover. */
+  verifyDetailsOpen: boolean;
+  /** `turns.length` when the 에이전트 tab was last viewed. */
+  agentTurnsSeen: number;
   phase: Phase;
   /** What the loading state says while `phase === "starting"`. ~1.5 s to first
    *  usable paint is the measured reality (spike M1/M2), so it is designed. */
@@ -696,6 +717,12 @@ export const EMPTY_DRAFT: Draft = {
 
 const initial: WorkspaceState = {
   view: "document",
+  inspectorTab: "selection",
+  inspectorTabUserSet: false,
+  lastNonAgentInspectorTab: "selection",
+  leftRailCollapsed: false,
+  verifyDetailsOpen: false,
+  agentTurnsSeen: 0,
   phase: "idle",
   phaseNote: "",
   fatal: null,
@@ -894,8 +921,97 @@ export function _resetPlanGenerationForTest(): void {
 
 // --- actions -----------------------------------------------------------------
 
-export const setView = (view: View) =>
-  setState({ view, editIntentGeneration: state.editIntentGeneration + 1 });
+/**
+ * Default inspector tab when the user has not picked one yet.
+ *
+ * 검토 when the draft has queued ops or a plan is waiting for approval;
+ * otherwise 선택.
+ */
+export function defaultInspectorTab(
+  s: Pick<WorkspaceState, "draft" | "approvalPhase">,
+): Exclude<InspectorTab, "agent"> {
+  if (s.draft.ops.length > 0 || s.approvalPhase === "pending") return "review";
+  return "selection";
+}
+
+/** The tab the inspector should show for this workspace snapshot. */
+export function visibleInspectorTab(s: WorkspaceState): InspectorTab {
+  if (s.view === "agent") return "agent";
+  if (s.inspectorTabUserSet && s.inspectorTab !== "agent") return s.inspectorTab;
+  return defaultInspectorTab(s);
+}
+
+export function inspectorReviewBadge(s: WorkspaceState): {
+  count: number;
+  pending: boolean;
+} {
+  return {
+    count: s.draft.ops.length,
+    pending: s.approvalPhase === "pending",
+  };
+}
+
+export function inspectorHistoryBadge(s: WorkspaceState): number {
+  if (!s.activeSessionId) return 0;
+  return (s.candidates[s.activeSessionId] ?? []).length;
+}
+
+export function inspectorAgentUnread(s: WorkspaceState): number {
+  return Math.max(0, s.turns.length - s.agentTurnsSeen);
+}
+
+export function markAgentTurnsSeen() {
+  if (state.agentTurnsSeen === state.turns.length) return;
+  setState({ agentTurnsSeen: state.turns.length });
+}
+
+export function selectInspectorTab(tab: InspectorTab) {
+  if (tab === "agent") {
+    setView("agent");
+    return;
+  }
+  const bump =
+    state.view === "agent"
+      ? state.editIntentGeneration + 1
+      : state.editIntentGeneration;
+  setState({
+    view: "document",
+    inspectorTab: tab,
+    inspectorTabUserSet: true,
+    lastNonAgentInspectorTab: tab,
+    editIntentGeneration: bump,
+  });
+}
+
+export const setView = (view: View) => {
+  if (view === "agent") {
+    const current = visibleInspectorTab(state);
+    const remembered: Exclude<InspectorTab, "agent"> =
+      current === "agent"
+        ? state.lastNonAgentInspectorTab
+        : current;
+    setState({
+      view,
+      inspectorTab: "agent",
+      inspectorTabUserSet: true,
+      lastNonAgentInspectorTab: remembered,
+      editIntentGeneration: state.editIntentGeneration + 1,
+    });
+    return;
+  }
+  const restored = state.lastNonAgentInspectorTab ?? defaultInspectorTab(state);
+  setState({
+    view,
+    inspectorTab: restored,
+    editIntentGeneration: state.editIntentGeneration + 1,
+  });
+};
+
+export const setLeftRailCollapsed = (leftRailCollapsed: boolean) =>
+  setState({ leftRailCollapsed });
+
+export const setVerifyDetailsOpen = (verifyDetailsOpen: boolean) =>
+  setState({ verifyDetailsOpen });
 
 export const setCenterMode = (centerMode: CenterMode) => setState({ centerMode });
 
