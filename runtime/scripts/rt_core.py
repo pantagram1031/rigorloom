@@ -520,12 +520,13 @@ class RuntimeCore:
             raise RpcError("plan_not_approved",
                            f"the approval for this plan is {record.state}",
                            planId=plan.id, approvalId=record.id, state=record.state)
-        if plan.payload.get("backend") != "preedit":
+        backend = plan.payload.get("backend")
+        if backend not in ("preedit", "com"):
             raise RpcError(
                 "unsupported_backend",
-                (f"backend {plan.payload.get('backend')!r} has no apply path "
+                (f"backend {backend!r} has no apply path "
                  "in this build"),
-                declared=plan.payload.get("backend"),
+                declared=backend,
                 supported=list(SUPPORTED_BACKENDS),
                 known=list(KNOWN_BACKENDS))
         session = self.store.get(plan.payload["sessionId"])

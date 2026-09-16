@@ -216,7 +216,9 @@ def test_set_cell_raw_traversal_is_refused(core, session, monkeypatch):
         assert "raw_traversal" in caught.value.data["unknown"]
 
 
-def test_apply_still_refuses_a_com_plan(core, session, monkeypatch):
+def test_apply_routes_a_com_plan_into_apply_plan(core, session, monkeypatch):
+    """S1 refused apply before the child. S2+S3 opens the gate; the child is faked."""
+    import rt_core
     _patch_hancom(monkeypatch, YES_HANCOM)
     plan = core.plan_propose(session, "com", [FIRST_WAVE_OP], "test")["plan"]
     validation = core.plan_validate(plan["planId"])["validation"]
@@ -225,9 +227,16 @@ def test_apply_still_refuses_a_com_plan(core, session, monkeypatch):
     core.approval_resolve(
         approval["approvalId"], plan["planId"], plan["planHash"],
         "approved", "test-operator")
+    calls = []
+
+    def fake_apply(*args, **kwargs):
+        calls.append(kwargs)
+        raise RpcError("backend_refused", "test short-circuit before COM",
+                       backend="com")
+
+    monkeypatch.setattr(rt_core, "apply_plan", fake_apply)
     with pytest.raises(RpcError) as caught:
         core.plan_apply(plan["planId"], approval["approvalId"])
-    error = caught.value
-    assert error.code == "unsupported_backend"
-    assert error.data["declared"] == "com"
-    assert error.data["supported"] == ["preedit"]
+    assert calls
+    assert caught.value.code == "backend_refused"
+    assert caught.value.data["backend"] == "com"

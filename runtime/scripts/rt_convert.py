@@ -138,6 +138,17 @@ def running_hancom_processes() -> dict:
             "reason": None}
 
 
+def hancom_is_busy(occupancy: dict | None = None) -> bool:
+    """True unless the process probe said no live Hancom.
+
+    Unknown (unreadable tasklist) is busy: guessing free is how a second
+    instance starts beside somebody else's session. Pass the occupancy dict
+    to avoid a second ``tasklist`` when the caller already probed.
+    """
+    row = occupancy if occupancy is not None else running_hancom_processes()
+    return row.get("state") != "no"
+
+
 def prepare_capability() -> dict:
     """``capabilities.render.prepare`` — can this machine make a PDF at all?"""
     hancom = hancom_facts()

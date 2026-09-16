@@ -3,10 +3,11 @@
 """OperationPlan, PlanValidation, ApprovalRequest/ApprovalRecord.
 
 A plan declares its backend (orchestrator decision D9). This slice executes
-``preedit`` only. ``xml`` plans are refused with ``unsupported_backend``.
+``preedit`` always, and ``com`` when the host capability is available.
+``xml`` plans are refused with ``unsupported_backend``.
 ``com`` plans are accepted at propose when ``capabilities.backends.com`` is
 ``available`` (Hancom probe plus ``engine/scripts/com_backend.py``); apply
-still refuses them with ``unsupported_backend`` until the COM child is wired.
+runs one ``com_backend.py edit`` batch (see ``rt_engine.com_edit_run``).
 Op kinds those backends own, mixed into a preedit plan, are refused with
 ``unsupported_backend`` that NAMES the backend which would serve them, so the
 refusal is a routing answer rather than a wall.

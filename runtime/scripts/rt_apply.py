@@ -48,12 +48,23 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from rt_codes import IMPL_VERSION, RECEIPT_SCHEMA, RpcError  # noqa: E402
+from rt_codes import (  # noqa: E402
+    EVIDENCE_CLASSES,
+    IMPL_VERSION,
+    KNOWN_BACKENDS,
+    RECEIPT_SCHEMA,
+    SUPPORTED_BACKENDS,
+    RpcError,
+)
 from rt_jsonl import canonical_bytes  # noqa: E402
 from rt_session import atomic_write_bytes, now_utc, sha256_file  # noqa: E402
 
 RECEIPT_NAME = "receipt.json"
 REQUIRED_CHECKS = ("check_residue",)
+NATIVE_COM_SESSION = "native_com_session"
+NATIVE_COM_NOTE = (
+    "COM post-inspect is Hancom's own inspection, not a render certificate"
+)
 
 
 class Cancelled(Exception):
@@ -195,13 +206,26 @@ def candidate_artifact(session, run_id: str) -> tuple[Path, dict]:
     return path, receipt
 
 
-def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) -> dict:
+def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
+               export_pdf=None) -> dict:
     """Run the plan, publish the candidate, return the CandidateArtifact.
 
     The first step reads the plan's BASE — a published candidate when the plan
     declared one, the session source otherwise — and every later step chains
     through ``work/``. The source is never an output either way.
+
+    ``backend: com`` copies the origin to ``work/<runId>/opened*``, runs ONE
+    ``com_backend.py edit`` batch with a distinct save-as, optionally exports
+    ``native.pdf``, then publishes like the preedit path.
     """
+    backend = plan.payload.get("backend")
+    if backend not in ("preedit", "com"):
+        raise RpcError(
+            "unsupported_backend",
+            (f"backend {backend!r} has no apply path in this build"),
+            declared=backend, supported=list(SUPPORTED_BACKENDS),
+            known=list(KNOWN_BACKENDS))
+
     ops = plan.payload["ops"]
     base = plan.payload.get("base") or None
     run_id = run_id or uuid.uuid4().hex
@@ -229,39 +253,91 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
 
     steps: list[dict] = []
     current = origin
+    native_pdf_src = None
+    post_inspect = None
     try:
-        for index, op in enumerate(ops):
+        if backend == "com":
+            from rt_engine import (  # noqa: PLC0415
+                stage_com_ops, strip_equation_source, write_com_ops_file,
+            )
             tick()
-            target = work_dir / f"step{index + 1}{suffix}"
-            argv = _argv_for(op["kind"], op["params"], current, target)
-            code, parsed, raw = tools.preedit_run(argv)
-            step = {"opId": op["opId"], "kind": op["kind"],
-                    "subcommand": argv[0], "exitCode": code}
-            if code != 0:
-                # Pass the engine's refusal through VERBATIM. It already carries
-                # the escape hatch (engine/scripts/preedit.py:2694-2717); a
-                # flattened message is what makes a caller open section.xml.
-                raise RpcError(
-                    "backend_refused",
-                    (parsed or {}).get("error")
-                    or f"preedit {argv[0]} refused this op (exit {code})",
-                    opId=op["opId"], kind=op["kind"], exitCode=code,
-                    backend="preedit", refusal=parsed,
-                    raw=None if parsed else raw[:4000])
-            step["result"] = parsed
-            steps.append(step)
-            current = target
-        tick()
+            opened = work_dir / f"opened{suffix}"
+            shutil.copyfile(origin, opened)
+            edited = work_dir / f"edited{suffix}"
+            rows = stage_com_ops(ops, work_dir)
+            ops_path = write_com_ops_file(rows, work_dir / "ops.json")
+            want_pdf = bool(export_pdf) or bool(plan.payload.get("exportPdf"))
+            pdf_target = work_dir / "native.pdf" if want_pdf else None
+            outcome = tools.com_edit_run(
+                opened, ops_path, edited, export_pdf=pdf_target)
+            payload = outcome["payload"]
+            steps.append({
+                "subcommand": "edit",
+                "exitCode": outcome["exitCode"],
+                "results": strip_equation_source(payload.get("results") or []),
+            })
+            current = edited
+            native_pdf_src = pdf_target
+            post_inspect = strip_equation_source(payload.get("post_inspect"))
+            tick()
+        else:
+            for index, op in enumerate(ops):
+                tick()
+                target = work_dir / f"step{index + 1}{suffix}"
+                argv = _argv_for(op["kind"], op["params"], current, target)
+                code, parsed, raw = tools.preedit_run(argv)
+                step = {"opId": op["opId"], "kind": op["kind"],
+                        "subcommand": argv[0], "exitCode": code}
+                if code != 0:
+                    # Pass the engine's refusal through VERBATIM. It already carries
+                    # the escape hatch (engine/scripts/preedit.py:2694-2717); a
+                    # flattened message is what makes a caller open section.xml.
+                    raise RpcError(
+                        "backend_refused",
+                        (parsed or {}).get("error")
+                        or f"preedit {argv[0]} refused this op (exit {code})",
+                        opId=op["opId"], kind=op["kind"], exitCode=code,
+                        backend="preedit", refusal=parsed,
+                        raw=None if parsed else raw[:4000])
+                step["result"] = parsed
+                steps.append(step)
+                current = target
+            tick()
 
         artifact = run_dir / f"artifact{suffix}"
         _atomic_move(current, artifact)
         candidate_sha, candidate_bytes = sha256_file(artifact)
+
+        pdf_record = None
+        if native_pdf_src is not None and Path(native_pdf_src).is_file():
+            pdf_dest = run_dir / "native.pdf"
+            _atomic_move(Path(native_pdf_src), pdf_dest)
+            digest, size = sha256_file(pdf_dest)
+            pdf_record = {"path": pdf_dest.name, "sha256": digest, "bytes": size}
 
         source_profile = session.profile_dir / f"verify-{run_id}.json"
         tools.profile(session.source, source_profile)
         declaration = plan.payload.get("declares") or None
         checks = verification_report(tools, source_profile, artifact,
                                      declaration)
+
+        if backend == "com":
+            evidence_class = NATIVE_COM_SESSION
+            assert evidence_class in EVIDENCE_CLASSES
+            evidence = {
+                "class": evidence_class,
+                "native": {
+                    "post_inspect": post_inspect,
+                    "pdf": pdf_record,
+                },
+                "note": NATIVE_COM_NOTE,
+            }
+        else:
+            evidence = {
+                "class": "structural_only",
+                "note": ("no renderer ran; this receipt binds bytes and offline "
+                         "checker results, and claims no render proof"),
+            }
 
         receipt = {
             "schema": RECEIPT_SCHEMA,
@@ -307,11 +383,7 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
                             "declares": declaration,
                             **checks["exemptions"]}
                            if checks.get("exemptions") else None),
-            "evidence": {
-                "class": "structural_only",
-                "note": ("no renderer ran; this receipt binds bytes and offline "
-                         "checker results, and claims no render proof"),
-            },
+            "evidence": evidence,
         }
         _publish_receipt(run_dir, receipt)
     except BaseException:
@@ -466,4 +538,29 @@ def read_receipt(session, run_id: str) -> dict:
                        "the candidate bytes changed after the receipt was written",
                        runId=run_id, declared=candidate.get("sha256"),
                        actual=actual_sha)
+    _verify_pdf_sidecar(run_dir, payload, run_id)
     return payload
+
+
+def _verify_pdf_sidecar(run_dir: Path, payload: dict, run_id: str) -> None:
+    """Re-hash the optional native PDF when the receipt binds one."""
+    evidence = payload.get("evidence") or {}
+    native = evidence.get("native") if isinstance(evidence, dict) else None
+    pdf = native.get("pdf") if isinstance(native, dict) else None
+    if not isinstance(pdf, dict) or not pdf.get("path"):
+        return
+    rel = str(pdf["path"])
+    if Path(rel).name != rel or rel in {".", ".."} or not rel:
+        raise RpcError("path_escape",
+                       "receipt pdf path must be a basename inside the run",
+                       runId=run_id, path=rel)
+    pdf_file = run_dir / rel
+    if not pdf_file.is_file():
+        raise RpcError("artifact_missing", "the bound PDF sidecar is gone",
+                       runId=run_id, path=rel)
+    actual_sha, actual_bytes = sha256_file(pdf_file)
+    if actual_sha != pdf.get("sha256") or actual_bytes != pdf.get("bytes"):
+        raise RpcError("candidate_hash_mismatch",
+                       "the PDF sidecar bytes changed after the receipt was written",
+                       runId=run_id, declared=pdf.get("sha256"),
+                       actual=actual_sha)

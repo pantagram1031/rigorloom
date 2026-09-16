@@ -169,14 +169,19 @@ APPROVAL_STATES = ("pending", "approved", "auto_approved", "rejected")
 #: refuses to (modules/report/scripts/pipeline_ctl.py:1159).
 APPROVAL_DECISIONS = ("approved", "rejected")
 
-#: Backends this build always executes. ``com`` may be proposed when
-#: ``capabilities.backends.com.state`` is ``available``; apply still refuses
-#: it until the COM child adapter lands. ``xml`` stays unserved.
+#: Backends this build always executes without a host probe. ``com`` may be
+#: proposed and applied when ``capabilities.backends.com.state`` is
+#: ``available`` (Hancom facts plus ``com_backend.py``). ``xml`` stays unserved.
 #: ``com`` and ``xml`` op kinds on a *preedit* plan are refused with
 #: ``unsupported_backend`` naming which backend would serve them
 #: (orchestrator decision D9).
 SUPPORTED_BACKENDS = ("preedit",)
 KNOWN_BACKENDS = ("preedit", "xml", "com")
+
+#: Closed evidence classes on a Runtime candidate receipt.
+#: ``native_com_session`` means Hancom ran one edit batch; ``post_inspect``
+#: is Hancom's own inspection, not a render certificate.
+EVIDENCE_CLASSES = ("structural_only", "native_com_session")
 
 
 class RpcError(Exception):

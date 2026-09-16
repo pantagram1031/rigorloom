@@ -407,7 +407,11 @@ Producer: `engine/scripts/document_evidence.py`.
 - Closed vocabularies: `BACKEND_IDS` (`:32`), `EVIDENCE_CLASSES` (`:40`),
   `ARTIFACT_ROLES` (`:47` — `source_form`, `assembled_hwpx`, `rendered_pdf`,
   `diagnostic_svg`). An unknown value is a validation error
-  (`_validate_enum`, `:824`).
+  (`_validate_enum`, `:824`). Runtime *candidate* receipts
+  (`rigorloom/runtime-candidate/v0`) close a separate pair in
+  `rt_codes.EVIDENCE_CLASSES`: `structural_only` (offline apply) and
+  `native_com_session` (one Hancom edit batch). COM `post_inspect` is not a
+  render certificate; an optional PDF sidecar is re-hashed by `receipt/read`.
 - Build / validate / load: `build_receipt` (`:1125`), `validate_receipt`
   (`:1356`), `load_and_validate_receipt` (`:2106`).
 - Grade derivation: `derive_proof_grade` (`:780`) — fails closed to `none` on
@@ -676,8 +680,12 @@ otherwise it refuses with `capability_unavailable` whose data names the
 missing fact. Ops outside the first wave are refused with the deferred
 `unknown_op_kind` pattern; mixing preedit kinds into a com plan is the
 foreign-mix `unsupported_backend` rule. `opsHash` includes the backend. A
-com plan that reaches `plan/apply` still fails closed with
-`unsupported_backend` — this slice does not execute COM.
+com plan that reaches `plan/apply` runs one bounded `com_backend.py edit`
+batch against a work copy (`opened*` → `edited*`); the session source is
+never opened by Hancom. Receipt `evidence.class` is the closed token
+`native_com_session` — COM `post_inspect` is Hancom's own inspection, not a
+render certificate. An optional exported PDF is hashed as export evidence
+only. `xml` stays `unsupported_backend`.
 
 ### Methods
 
@@ -694,7 +702,7 @@ com plan that reaches `plan/apply` still fails closed with
 | `plan/get`, `approval/get` | implemented | `rt_server` |
 | `approval/request` (agent) | implemented | `rt_plan.request_approval` |
 | `approval/resolve` (host) | implemented, binds plan id + plan hash | `rt_plan.resolve_approval` |
-| `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan`; com still `unsupported_backend` |
+| `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan`; `backend: com` is one `com_backend.py edit` batch (`native_com_session`); xml stays `unsupported_backend` |
 | `candidate/list`, `receipt/read` | implemented; the receipt refuses on drift | `rt_apply` |
 | cancellation | implemented, cooperative between ops | `rt_server._checkpoint` |
 | `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`, `workspace/delete`, `verify/*` | GAP | — |
@@ -711,7 +719,7 @@ All twelve transport codes from §5.2 are implemented and closed
 `unknown_op_kind`, `plan_invalid`, `approval_binding_mismatch`,
 `approval_already_resolved`, `region_too_large`, `source_rejected`,
 `candidate_hash_mismatch`, `receipt_body_mismatch`, `backend_refused`,
-`publication_failed`. `authority_denied` is NOT implemented and should be
+`publication_failed`, `com_busy`, `needs_hancom`. `authority_denied` is NOT implemented and should be
 dropped from v0: authority is registry membership, so a host-only method is
 `unknown_method` on an agent connection, with `knownOnHostEntry: true` carrying
 the diagnostic §4 wanted.

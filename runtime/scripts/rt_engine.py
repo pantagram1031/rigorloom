@@ -35,9 +35,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -47,6 +49,25 @@ from rt_codes import (  # noqa: E402
     MAX_CHILD_OUTPUT_BYTES,
     RpcError,
 )
+
+#: Hancom edit is slower than a form scan; same order as convert, not the
+#: generic child bound.
+COM_EDIT_TIMEOUT_SECONDS = 300.0
+
+#: Engine ops JSON keys, first wave only. Runtime param names already match.
+_COM_PARAM_KEYS: dict[str, tuple[str, ...]] = {
+    "replace_all": ("find", "replace", "regex"),
+    "goto_text": ("text", "after", "line_end", "cell_below", "next_para"),
+    "insert_text": ("text", "pt", "segments", "break_after", "align"),
+    "set_cell": ("addr", "text", "table", "expect_empty", "expect"),
+    "insert_equation": ("latex", "hwpeqn", "display", "boxed",
+                        "base_pt", "font", "box_height_mm"),
+    "insert_picture": ("path", "width_mm", "height_mm",
+                       "treat_as_char", "own_paragraph"),
+    "insert_hyperlink": ("url", "text", "pt"),
+}
+
+_EQUATION_SOURCE_KEYS = frozenset({"latex", "hwpeqn", "script"})
 
 #: Repo root = runtime/scripts/../..
 DEFAULT_ENGINE_ROOT = Path(__file__).resolve().parents[2]
@@ -211,6 +232,130 @@ def run_child(argv: list[str], *, cwd: Path | None = None,
         b"".join(sinks["out"]), b"".join(sinks["err"]),
         over["out"] or over["err"], timed_out,
     )
+
+
+def redact_paths(text: str, *paths) -> str:
+    """Replace absolute path forms with their basename. Longest first."""
+    variants: list[tuple[str, str]] = []
+    for path in paths:
+        if path is None:
+            continue
+        candidate = Path(path)
+        name = candidate.name or str(candidate)
+        forms = [str(candidate), str(candidate).replace("/", "\\"),
+                 str(candidate).replace("\\", "/")]
+        try:
+            resolved = candidate.resolve()
+            forms.extend([str(resolved), str(resolved).replace("\\", "/"),
+                          str(resolved).replace("/", "\\")])
+        except OSError:
+            pass
+        for form in forms:
+            if form:
+                variants.append((form, name))
+    variants.sort(key=lambda item: len(item[0]), reverse=True)
+    out = text
+    seen: set[str] = set()
+    for form, name in variants:
+        if form in seen:
+            continue
+        seen.add(form)
+        out = out.replace(form, name)
+    return out
+
+
+def one_json_object(text: str) -> dict | None:
+    """Exactly one JSON object, optionally preceded by non-JSON noise."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, end = json.JSONDecoder().raw_decode(text, start)
+    except ValueError:
+        return None
+    if text[end:].strip():
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def strip_equation_source(value):
+    """Drop latex/hwpeqn/script so a receipt cannot carry equation input."""
+    if isinstance(value, dict):
+        return {key: strip_equation_source(item)
+                for key, item in value.items()
+                if key not in _EQUATION_SOURCE_KEYS}
+    if isinstance(value, list):
+        return [strip_equation_source(item) for item in value]
+    return value
+
+
+def com_edit_argv(script, file, ops_path, save_as, export_pdf=None) -> list[str]:
+    """The one argv shape: edit --file --ops --save-as [--export-pdf]. Never kill-stale."""
+    argv = [child_python(), str(script), "edit",
+            "--file", str(file),
+            "--ops", str(ops_path),
+            "--save-as", str(save_as)]
+    if export_pdf is not None:
+        argv += ["--export-pdf", str(export_pdf)]
+    return argv
+
+
+def stage_com_ops(ops: list, work_dir: Path) -> list[dict]:
+    """Runtime plan ops → engine ops JSON list. Pictures land under work/assets/."""
+    from rt_plan import COM_FIRST_WAVE, COM_FIRST_WAVE_SET  # noqa: PLC0415
+
+    staged: list[dict] = []
+    assets = Path(work_dir) / "assets"
+    for op in ops:
+        kind = op.get("kind") or op.get("op")
+        if kind not in COM_FIRST_WAVE_SET:
+            raise RpcError(
+                "unknown_op_kind",
+                f"op kind {kind!r} is deferred on the com backend in this wave",
+                kind=kind, servedBy="com",
+                knownKinds=list(COM_FIRST_WAVE))
+        params = dict(op.get("params") or {})
+        if kind == "insert_picture":
+            src = Path(params.get("path") or "")
+            if not src.is_file():
+                raise RpcError(
+                    "invalid_params",
+                    "insert_picture path is not a file",
+                    kind=kind, path=src.name or None)
+            assets.mkdir(parents=True, exist_ok=True)
+            dest = assets / src.name
+            if dest.exists() and dest.resolve() != src.resolve():
+                dest = assets / f"{dest.stem}-{uuid.uuid4().hex[:8]}{dest.suffix}"
+            shutil.copyfile(src, dest)
+            params["path"] = str(dest)
+        row = {"op": kind}
+        for key in _COM_PARAM_KEYS[kind]:
+            if key in params:
+                row[key] = params[key]
+        staged.append(row)
+    return staged
+
+
+def write_com_ops_file(rows: list, path: Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rows, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+    return path
+
+
+def _ops_kinds_from_file(ops_path: Path) -> list[str]:
+    raw = json.loads(Path(ops_path).read_text(encoding="utf-8"))
+    rows = raw.get("ops") if isinstance(raw, dict) else raw
+    if not isinstance(rows, list):
+        raise RpcError("invalid_params", "COM ops file must be a list or {ops: [...]}",
+                       path=Path(ops_path).name)
+    kinds = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise RpcError("invalid_params", f"ops[{index}] is not an object")
+        kinds.append(row.get("op") or row.get("kind"))
+    return kinds
 
 
 #: Run in a bounded child with the engine root's ``pipeline/scripts`` on the
@@ -506,6 +651,106 @@ class EngineTools:
             raise RpcError("backend_refused", "preedit exceeded its time bound",
                            tool="preedit", timedOut=True)
         return result.returncode, parsed, raw
+
+    # -- com_backend edit ---------------------------------------------------
+    def com_edit_run(self, file, ops_path, save_as, export_pdf=None,
+                     timeout: float = COM_EDIT_TIMEOUT_SECONDS) -> dict:
+        """One bounded ``com_backend.py edit`` child. Never ``--kill-stale``.
+
+        Refuses before spawn when Hancom is missing, when an Hwp.exe is already
+        running, when file and save-as resolve to the same path, or when the
+        ops file names a kind outside the first wave. Parses exactly one JSON
+        object from stdout.
+        """
+        from rt_convert import hancom_facts, hancom_is_busy, running_hancom_processes  # noqa: PLC0415
+        from rt_plan import COM_FIRST_WAVE, COM_FIRST_WAVE_SET  # noqa: PLC0415
+
+        self._require("com_backend", self.com_backend)
+        src = Path(file)
+        ops = Path(ops_path)
+        dest = Path(save_as)
+        pdf = Path(export_pdf) if export_pdf is not None else None
+
+        hancom = hancom_facts()
+        if hancom.get("state") != "yes":
+            raise RpcError(
+                "needs_hancom",
+                "this machine cannot run a COM edit: "
+                + (hancom.get("reason") or "Hancom is not available"),
+                hancom=hancom)
+
+        busy = running_hancom_processes()
+        if hancom_is_busy(busy):
+            raise RpcError(
+                "com_busy",
+                "a Hancom instance is already running on this machine; "
+                "close it and try again — the Runtime will not "
+                "terminate somebody else's session",
+                processes=busy.get("processes") or [],
+                state=busy.get("state"),
+                reason=busy.get("reason"))
+
+        try:
+            same = src.resolve() == dest.resolve()
+        except OSError:
+            same = str(src) == str(dest)
+        if same:
+            raise RpcError(
+                "invalid_params",
+                "COM edit save-as must be a different path from the input file",
+                file=src.name, saveAs=dest.name)
+
+        try:
+            kinds = _ops_kinds_from_file(ops)
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise RpcError(
+                "invalid_params",
+                "COM ops file is unreadable",
+                path=ops.name, detail=str(exc)) from exc
+        for kind in kinds:
+            if kind not in COM_FIRST_WAVE_SET:
+                raise RpcError(
+                    "unknown_op_kind",
+                    f"op kind {kind!r} is deferred on the com backend in this wave",
+                    kind=kind, servedBy="com",
+                    knownKinds=list(COM_FIRST_WAVE))
+
+        argv = com_edit_argv(self.com_backend, src, ops, dest, pdf)
+        paths = (src, ops, dest, pdf, self.com_backend)
+        result = run_child(argv, timeout=timeout)
+        raw = result.text
+        parsed = one_json_object(raw)
+        redacted_out = redact_paths(raw[:4000], *paths)
+        redacted_err = redact_paths(
+            result.stderr.decode("utf-8", errors="replace")[:4000], *paths)
+        if result.timed_out:
+            raise RpcError(
+                "backend_refused", "com_backend edit exceeded its time bound",
+                tool="com_backend", timedOut=True,
+                stdout=redacted_out, stderr=redacted_err)
+        if result.returncode != 0 or parsed is None or not parsed.get("ok"):
+            message = None
+            if isinstance(parsed, dict):
+                message = parsed.get("error") or parsed.get("reason")
+            if message:
+                message = redact_paths(str(message), *paths)
+            raise RpcError(
+                "backend_refused",
+                message or f"com_backend edit refused this batch (exit {result.returncode})",
+                tool="com_backend", exitCode=result.returncode,
+                timedOut=False,
+                stdout=redacted_out, stderr=redacted_err)
+        if not dest.is_file():
+            raise RpcError(
+                "backend_refused",
+                "com_backend edit left no save-as file",
+                tool="com_backend", exitCode=result.returncode,
+                stdout=redacted_out, stderr=redacted_err)
+        return {
+            "exitCode": result.returncode,
+            "payload": parsed,
+            "argv": list(argv),
+        }
 
     # -- render_probe -------------------------------------------------------
     def render_probe(self) -> dict:

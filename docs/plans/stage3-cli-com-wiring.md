@@ -36,7 +36,7 @@ known registry for `servedBy` classification but is refused for execution (`defe
 
 ## Tasks (bounded, one Cursor session each, Fable runs acceptance)
 
-- [ ] S1 capability + plan contract: `backends.com` produced from `hancom_facts` + script resolution; `propose`
+- [x] S1 capability + plan contract (grok-4.6-xhigh, 17 min, 285k in / 50k out / 6.4M cache; 59 + 55 tests green; committed 80b87b9; `backends.com.state: available` on this PC with the seven first-wave opKinds): `backends.com` produced from `hancom_facts` + script resolution; `propose`
       accepts `backend: com` only when available and only first-wave ops; foreign-op mix refused; `opsHash`
       includes the backend. Owned: `rt_codes.py`, `rt_plan.py`, `rt_core.py`, `rt_engine.py` (capability only),
       `tests/test_runtime_plan.py`, `tests/test_runtime_cli.py`, new `tests/test_runtime_com_capability.py`.
