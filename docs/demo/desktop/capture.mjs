@@ -220,10 +220,13 @@ async function main() {
   const cdp = new Cdp(ws);
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
+  const filter = new Set(process.argv.slice(2));
   try {
     for (const theme of THEMES) {
       for (const [width, height] of SIZES) {
         for (const state of STATES) {
+          const name = `${state}-${width}x${height}-${theme}.png`;
+          if (filter.size && !filter.has(name)) continue;
           await captureOne(cdp, width, height, theme, state);
         }
       }

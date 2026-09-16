@@ -274,7 +274,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           onClick={() => toggleLeftRail()}
         >
           <Icon name={railCollapsed ? "chevron-right" : "chevron-left"} />
-          {railCollapsed ? "구조 펼치기" : "구조 접기"}
+          <span className="tool-action-label">{railCollapsed ? "구조 펼치기" : "구조 접기"}</span>
         </button>
         <button
           className="action btn-icon"
@@ -283,7 +283,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           onClick={() => void openViaDialog()}
         >
           <Icon name="open" />
-          열기
+          <span className="tool-action-label">열기</span>
         </button>
         <button
           className="action btn-icon"
@@ -297,7 +297,9 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           onClick={() => void exportApplied()}
         >
           <Icon name="save" />
-          {exportPhase === "starting" ? "내보내는 중…" : "저장/내보내기"}
+          <span className="tool-action-label">
+            {exportPhase === "starting" ? "내보내는 중…" : "저장/내보내기"}
+          </span>
         </button>
         <button
           className="action btn-icon"
@@ -306,7 +308,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           onClick={() => selectInspectorTab("history")}
         >
           <Icon name="undo" />
-          되돌리기
+          <span className="tool-action-label">되돌리기</span>
         </button>
         <button
           className="action btn-icon"
@@ -316,13 +318,15 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           onClick={() => void runCheck()}
         >
           <Icon name="search" />
-          {checkPhase === "starting"
-            ? "검사 중…"
-            : checkPhase === "idle"
-              ? "검사"
-              : hard > 0
-                ? `막힘 ${hard}`
-                : `검사 ${findings.length}`}
+          <span className="tool-action-label">
+            {checkPhase === "starting"
+              ? "검사 중…"
+              : checkPhase === "idle"
+                ? "검사"
+                : hard > 0
+                  ? `막힘 ${hard}`
+                  : `검사 ${findings.length}`}
+          </span>
         </button>
         <button
           className={approvalPhase === "pending" ? "action point btn-icon" : "action btn-icon"}
@@ -346,7 +350,9 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           }}
         >
           <Icon name="check" />
-          {approvalPhase === "pending" ? "승인 대기" : "승인"}
+          <span className="tool-action-label">
+            {approvalPhase === "pending" ? "승인 대기" : "승인"}
+          </span>
         </button>
       </div>
 

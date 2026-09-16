@@ -1251,19 +1251,23 @@ button.recent:active {
 }
 
 .fact {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(4.5em, 9em) minmax(0, 1fr);
   align-items: baseline;
   gap: var(--s2);
   min-width: 0;
 }
 
-.fact .k {
+.fact .k,
+.fact dt {
   font-size: var(--text-xs);
   color: var(--fg-faint);
   white-space: nowrap;
 }
 
-.fact .v {
+.fact .v,
+.fact dd {
+  margin: 0;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
@@ -2628,6 +2632,7 @@ button.recent:active {
    thing, which is the whole point of a band. */
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--s2);
   flex: none;
@@ -2636,11 +2641,13 @@ button.recent:active {
   background: var(--bg-sunken);
   border-bottom: 1px solid var(--line);
   font-size: var(--text-sm);
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: visible;
 }
 
-.toolbar::-webkit-scrollbar { display: none; }
+.toolbar > .spacer {
+  flex: 1 1 8px;
+  min-width: 0;
+}
 
 .tool-group {
   display: flex;
@@ -3618,13 +3625,14 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 /* ══ R2 shell: inspector tabs, icon rail, verify popover ═══════════════ */
 
 .panel.rail:not(.is-collapsed) .panel-body {
-  display: flex;
-  flex-direction: column;
+  display: block;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .panel.rail .tree {
-  flex: 1;
-  min-height: 0;
+  flex: none;
 }
 
 .view-document .columns.is-rail-collapsed {
@@ -3688,9 +3696,12 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 }
 
 .work-disclosure {
-  margin-top: auto;
+  flex: none;
+  margin-top: 0;
   border-top: 1px solid var(--line);
+  background: var(--bg-panel);
   padding: 0;
+  z-index: 1;
 }
 
 .work-disclosure > summary {
@@ -3864,8 +3875,9 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   right: 0;
   bottom: calc(100% + 6px);
   z-index: 20;
-  width: min(720px, 90vw);
-  max-height: 50vh;
+  width: min(520px, 90vw);
+  max-width: 520px;
+  max-height: 70vh;
   overflow: auto;
   padding: var(--s3);
   background: var(--bg-raised);
@@ -3876,9 +3888,43 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .verify-details-body {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: var(--s3);
+}
+
+.verify-details-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-emph);
+}
+
+.verify-group h4 {
+  margin: 0 0 var(--s2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-emph);
+  color: var(--fg-muted);
+}
+
+.verify-group + .verify-group {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s3);
+}
+
+.verify-dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin: 0;
+}
+
+.verify-details-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
 }
 
 .verifybar {
@@ -3951,5 +3997,14 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   .view-document,
   .welcome {
     animation: none;
+  }
+}
+
+/* ══ R7 fit: rail footer, toolbar wrap, verify definition list ═════════ */
+
+@media (max-width: 1024px) {
+  .toolbar .tool-action-label,
+  .toolbar > .toolmenu > summary > .tool-label {
+    display: none;
   }
 }

@@ -1,6 +1,6 @@
 # Stage 4b — Desktop revamp: from debug console to product
 
-Status: ACTIVE 2026-09-17. Owner: Fable. Trigger: the user looked at the Stage 4 desktop and said it
+Status: DONE 2026-09-17 (R0–R7). Owner: Fable. Trigger: the user looked at the Stage 4 desktop and said it
 "looks vibe coded"; asked for a revamp inspired by open-source apps. Input: research note
 `docs/plans/analyses/stage4b-design-research.md` (R0, grok-low). Renderer/rematch/certificate freeze stays
 in force: nothing here may add a rendering claim, weaken a gate, or bypass approve → apply.
@@ -79,7 +79,15 @@ The tokens are fine (Pretendard, warm paper, teal accent). What reads as "vibe c
       captured from the dev-mock via CDP into `docs/demo/desktop/` with `capture.mjs` + README. Fable reviewed the
       captures: accepted. Defects seen → R7: rail footer overlap with the 문서/작업 팩 disclosure, 기록 header count
       spacing, 서식 control clipping at 1280 px, popover density.
-- [ ] R7 Fit and finish: the four defects above; recapture the six 1280×800 light PNGs.
+- [x] R7 Fit and finish (cursor-grok-4.6-high-fast, 9.5 min, 209k in / 39k out / 3.4M cache; tests 190 → 193): rail
+      footer outside the scrolling tree, 기록 heading unglued, toolbar wraps from 1100 px and hides labels at 1024 px,
+      자세히 popover = 문서 / 검사 / 엔진 definition lists with a close button; seven captures rewritten and reviewed
+      by Fable (accepted).
+
+Status 2026-09-17 02:50: Stage 4b R0–R7 complete on branch claude/stage1-report-demo (desktop tests 149 → 193,
+seven Cursor grok-high sessions ≈ 90 min wall, one grok-low research note). Remaining ideas, not scheduled:
+command palette (R0 fix 10), per-hunk include/exclude (needs a Runtime-side plan subset verb, out of scope),
+hosted CLI docs URL for the Home link, native Tauri smoke with IME.
 
 ## Verification per slice
 
@@ -98,3 +106,4 @@ done only when the screenshot matches the intent; "tests pass" alone is not acce
 | 2026-09-17 | R4 hunk review landed; T9 runtime README (composer) committed 233270e | commit below |
 | 2026-09-17 | R5 landed; gemini-3.8-flash C1 row recorded | commit below |
 | 2026-09-17 | R6 landed with 24 reference captures; Fable review found four small defects → R7 | commit below |
+| 2026-09-17 | R7 landed; Stage 4b closed | commit below |

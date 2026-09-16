@@ -116,7 +116,7 @@ export function DocumentView() {
                   <Icon name="chevron-left" />
                 </button>
               </div>
-              <div className="panel-body">
+              <div className="panel-body" data-testid="left-rail-scroll">
                 {inspectPhase === "starting" ? (
                   <p className="empty">문서를 읽는 중입니다. 서식을 뜯어보는 데 몇 초 걸립니다.</p>
                 ) : inspectError && inspect ? (
@@ -129,15 +129,15 @@ export function DocumentView() {
                 ) : (
                   <p className="empty">문서를 열면 구역, 표, 채움 자리가 여기에 펼쳐집니다.</p>
                 )}
-                <details className="work-disclosure" data-testid="work-packs-disclosure">
-                  <summary>문서 / 작업 팩</summary>
-                  <SessionList
-                    embedded
-                    onSelect={(id) => void selectSession(id)}
-                    onOpen={() => void openViaDialog()}
-                  />
-                </details>
               </div>
+              <details className="work-disclosure" data-testid="work-packs-disclosure">
+                <summary>문서 / 작업 팩</summary>
+                <SessionList
+                  embedded
+                  onSelect={(id) => void selectSession(id)}
+                  onOpen={() => void openViaDialog()}
+                />
+              </details>
             </>
           )}
         </nav>

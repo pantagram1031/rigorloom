@@ -373,12 +373,7 @@ export function History() {
 
   return (
     <div className="section history" data-testid="history">
-      <h3>
-        기록
-        <span className="count" data-testid="history-count">
-          {rows.length + (sourceHash ? 1 : 0)}
-        </span>
-      </h3>
+      <h3 data-testid="history-heading">기록</h3>
       <p className="prose tiny">
         원본과 후보본을 시간순으로 봅니다. 되돌리기는 원본을 고치는 일이 아니라,
         되돌리는 계획을 제안한 뒤 승인하고 적용하는 일입니다.
