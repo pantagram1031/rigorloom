@@ -93,3 +93,17 @@ Acceptance: `python -m pytest -q modules/report/tests/test_poster_build.py pipel
 - Stage machine position after this session: 5 pending (assembly). `output/form_copy.hwpx` staged pristine. `doc_backend: hwp` in build.yaml.
 - Sim: `sim/run_sim.py` (deterministic, seed 20260916) → `sim/results.json`, `sim/tables/*.csv`, `bundle/figures/fig1..12 + .sha256`. Engine axes: x = width 6 m, y = length 8 m; window wall at x = 0, secondary source (0.2, 4.0).
 - Assembly command (playbook §HWP): `python engine/scripts/fill_report.py --loop --form <WS>/output/form_copy.hwpx --content <WS>/bundle/content.md --out-dir <WS>/output --build-yaml <WS>/build.yaml --form-profile <WS>/form_profile.json --proof --max-proof-iters 3` from the rigorloom-stage1 root.
+
+## Stage 1c — reproduce the shipped Hawkes report on rigorloom's engine (2026-09-17, 05:10–06:05)
+
+Goal: prove the Stage 1 port by assembling the Aug 2026 Hawkes bundle (read-only copy under C:/Users/user/dev/reproduce-hawkes) with rigorloom's own engine and Hancom on this PC. Four Cursor grok-high lanes (about 32 min agent time):
+
+| lane | finding | fix / result |
+|---|---|---|
+| H1c | port gap: margin_top/bottom/left/right/gutter (and nested margins:) unknown to BUILD_YAML_KEYS; page_binding carried no margins | T11 (commit 4e3c70f): keys registered, page_binding margins applied in com and xml backends, offline tests |
+| T11 dry-run | equation preflight refused two display equations (mid unknown; apostrophe prime + qquad); the fork had no preflight and shipped "1midH_t" in 식 1 | T12 (commit eb5ac39): mid → bar, primes → ^{prime}/^{dprime}; the Hawkes bundle now validates with zero warnings (test) |
+| H1c-b | assembled: 20 pages, 13 figures, 12 double-border boxed equations with captions, margins and page numbers applied; layout QA caption_missing on [코드 n] captions; red abstract label survived (F2) | T13 (commit 57a5a5d): colour normalisation default with targeted abstract-label op (fork parity), caption regex accepts 코드/알고리즘 |
+| T13 re-run | loop converged in one iteration, proof grade hancom, 20 pages / 13 figures / 12 boxed equations, figure_placement clean; F2 still hard on one red whitespace run after the (now black) label | remedy = build.yaml strip_guide_ws_colors ["#FF0000"] (the T6/T7 feature AURALAB uses); H1d records it |
+
+Reading: rigorloom's engine reproduces the shipped shape (boxed equations, captions, margins, page numbers) and renders 식 1 correctly where the shipped PDF shows "1midH_t". Page-count difference (20 vs 18) is content: the bundle carries 13 figures (three code screenshots) and extra subheads versus the shipped revision (content-ours.md / build-ours.yaml, abstract: false). Renders under reproduce-hawkes/compare (Fable looked at repro p1, p4, shipped p2, repro2 p1).
+
