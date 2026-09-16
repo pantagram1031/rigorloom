@@ -20,7 +20,7 @@ Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 ### 30-second demo
 
-A classroom-acoustics inquiry report (14 pages, 12 figures, 5 tables, 8 boxed
+A classroom-acoustics inquiry report (20 pages, 12 figures, 9 tables, 8 boxed
 equations) produced end-to-end by the pipeline on 2026-09-16 from a simulation
 data set and the standard 소논문 form, plus the poster built from the same
 workspace:
@@ -29,7 +29,7 @@ workspace:
 |---|---|---|---|
 | ![page 1](docs/demo/report-page-01.png) | ![page 3](docs/demo/report-page-03.png) | ![page 10](docs/demo/report-page-10.png) | ![poster](docs/demo/poster.png) |
 
-All 14 pages: [docs/demo/report-all-pages.png](docs/demo/report-all-pages.png).
+All 20 pages: [docs/demo/report-all-pages.png](docs/demo/report-all-pages.png).
 Every number in the body was re-derived without the engine (51 checks) before
 the text was frozen; the assembled file passed the format gate with zero
 guide-text residue and a native Hancom proof receipt.

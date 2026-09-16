@@ -43,3 +43,5 @@ merges the best, and runs `check_style` / `content_audit`.
 
 | When | What | Result |
 |---|---|---|
+| 2026-09-16 | W1/W2/W3 section expansions written by Cursor models (see model-eval.md), judged, merged: II ← grok-4.6-xhigh, IV ← gpt-5.6-sol, III+V ← opus-5-medium. Tables renumbered by appearance (9), figure widths capped 85–95 mm, `page_numbers: true`, target_pages 16–20, layout plan rebudgeted (check_layout pass), content_audit pass (0 HARD). Body 26.3k chars, 98 paragraphs, median 191, 13 bold heads | Q1/Q3/Q4/Q5 met on paper; Q2 partly (maps not combined); Q6 pending assembly run 11 |
+| 2026-09-16 | Judge found two rounding slips in the original 표 5 (36.3→36.2, −5.12→−5.11); fixed in body, claims.yaml, evidence.md | numbers now match results.json |
