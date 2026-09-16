@@ -22,7 +22,11 @@ Status: ACTIVE 2026-09-16. Owner: Fable. Source: `docs/plans/analyses/stage4-gui
 
 ## Slices (value per effort, each visualizes commands that already exist)
 
-- [ ] G1 Plan review queue — `propose`, `validate`, `plan`, `request-approval`, `approve`, `reject`.
+- [x] G1 Plan review queue — `propose`, `validate`, `plan`, `request-approval`, `approve`, `reject`. Existing
+      `ReviewQueue` extended (grok-4.6-xhigh, 13 min, 131k in / 44k out / 3.4M cache): IME-inert gate, per-hunk
+      provenance strip, approve decoupled from apply; headless tests 113 → 120, build ok. Follow-up: `smoke.ts`
+      still expects approve to apply (scripted smoke needs a separate `applyApproved()`), Composer composition
+      does not yet set `isComposing`.
 - [ ] G2 Receipt / verify / compare inspector — `receipt`, `verify`, `compare`, `candidates`; `acceptance: false`
       and exit 3 stay visible as refusals.
 - [ ] G3 Honest page preview — `render`, `render-prepare` (host-only, explicit button), `geometry` when present.
