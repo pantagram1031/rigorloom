@@ -595,6 +595,8 @@ class HwpxDocument:
         return result
 
     def insert_equation(self, cursor, op):
+        if op.get("boxed"):
+            raise LookupError("equation_box_unsupported_xml")
         script, _warnings, ok, _reason = validate_equation_operation(op)
         if not ok:
             raise LookupError("insert_equation")
@@ -1131,9 +1133,13 @@ def main(argv=None):
             name = op["op"]
             if name not in SUPPORTED_OPS and name not in unsupported:
                 unsupported.append(name)
-            elif name == "insert_equation" and not validate_equation_operation(op)[2]:
-                if name not in unsupported:
-                    unsupported.append(name)
+            elif name == "insert_equation":
+                if op.get("boxed"):
+                    if "equation_box_unsupported_xml" not in unsupported:
+                        unsupported.append("equation_box_unsupported_xml")
+                elif not validate_equation_operation(op)[2]:
+                    if name not in unsupported:
+                        unsupported.append(name)
         if unsupported:
             return emit(summary(False, unsupported=unsupported), 4)
 

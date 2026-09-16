@@ -177,7 +177,7 @@ def parse_front_matter(text):
 # build.yaml에서 meta로 병합할 빌드 노브(문자열/불리언 스칼라). fill 블록은 별도 처리.
 BUILD_YAML_KEYS = {
     "base_pt", "caption_pt", "line_spacing", "binding", "abstract",
-    "title", "title_anchor", "collapse_blank_runs",
+    "title", "title_anchor", "collapse_blank_runs", "box_display_equations",
 }
 # 리스트 값으로 파싱할 최상위 키(style_diff.py의 색 허용 목록 등).
 # delete_texts: 삭제할 안내문 문자열 목록(양식 잔재 정리, find_delete op로 변환).
@@ -635,6 +635,12 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
                 if not ok:
                     die(f"equation preflight failed ({msg})")
                 op["hwpeqn"] = script
+                # boxed is a COM layout flag, not part of the closed equation
+                # envelope — attach it only after preflight, and only for
+                # display equations. Bare/inline EQ never gets a box.
+                if b["display"] and _is_true(
+                        meta.get("box_display_equations"), default=False):
+                    op["boxed"] = True
                 ops.append(op)
             elif b["kind"] == "fig":
                 # Rule 2(operator): 캡션은 객체와 붙어 그 아래에, 본문과는 앞뒤로

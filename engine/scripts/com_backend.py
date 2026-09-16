@@ -867,9 +867,15 @@ def op_set_para_align(hwp, o):
     return {"align": align}
 
 
+# Layout-only keys on insert_equation. The shared equation envelope in eqn.py
+# is closed and must not grow; strip these before validate_equation_operation.
+_EQUATION_LAYOUT_KEYS = frozenset({"boxed", "box_height_mm"})
+
+
 def _checked_equation_script(o):
     """Resolve exactly one equation input and apply the shared preflight."""
-    script, warns, ok, msg = validate_equation_operation(o)
+    check = {k: v for k, v in o.items() if k not in _EQUATION_LAYOUT_KEYS}
+    script, warns, ok, msg = validate_equation_operation(check)
     if not ok:
         raise RuntimeError(f"equation preflight failed ({msg})")
     return script, warns
@@ -881,8 +887,22 @@ def op_insert_equation(hwp, o):
     # 커서가 문단 중간이면 새 문단을 열고, 이미 문단 맨 앞(앞 문단이 \r\n로 끝남)이면
     # 새로 열지 않는다 — 안 그러면 lead-in과 수식 사이에 빈 문단이 끼어 빈 줄이 쌓인다.
     display = o.get("display", False)
+    boxed = bool(display and o.get("boxed", False))
     if display and _para_offset(hwp) != 0:
-        hwp.insert_text("\r\n")
+        if boxed:
+            _run(hwp, "BreakPara")
+        else:
+            hwp.insert_text("\r\n")
+    if boxed:
+        # Full-width 1x1 table, thin double border, ~23.5 mm row, 0.5 mm inset.
+        _create_table_with_ratios(
+            hwp, 1, 1, [1.0], True,
+            row_height_mm=float(o.get("box_height_mm", 23.5)),
+            outer_inset_mm=0.5,
+        )
+        _set_current_cell_double_border(hwp)
+        _run(hwp, "TableCellAlignCenterCenter")
+        _run(hwp, "ParagraphShapeAlignCenter")
     pset = hwp.HParameterSet.HEqEdit
     hwp.HAction.GetDefault("EquationCreate", pset.HSet)
     pset.string = script
@@ -896,13 +916,20 @@ def op_insert_equation(hwp, o):
         hwp.Cancel()
     except Exception:
         pass
-    if display:
+    if boxed:
+        _run(hwp, "ParagraphShapeAlignCenter")
+        # 마지막(유일한) 셀에서 표 바로 뒤로 빠져나온 뒤 본문 문단을 연다.
+        _run(hwp, "MoveRight")
+        _run(hwp, "BreakPara")
+        _run(hwp, "ParagraphShapeAlignJustify")
+    elif display:
         _run(hwp, "ParagraphShapeAlignCenter")
         # 수식 문단 뒤에 새 문단을 열어 후속 본문이 수식 문단에 붙지 않게 한다
         # (붙으면 본문이 수식 옆에 끼고 가운데정렬을 상속한다). 새 문단은 본문 정렬.
         hwp.insert_text("\r\n")
         _run(hwp, "ParagraphShapeAlignJustify")
-    return {"hwpeqn": script, "warnings": warns, "display": display}
+    return {"hwpeqn": script, "warnings": warns, "display": display,
+            "boxed": boxed}
 
 
 def op_edit_equation(hwp, o):
@@ -923,16 +950,17 @@ def op_edit_equation(hwp, o):
     raise RuntimeError(f"수식 index {idx} 없음 (총 {cur}개)")
 
 
-def _table_total_width(hwp):
-    """본문 폭(용지-여백-제본-표 바깥여백 2mm)을 HwpUnit으로 계산.
+def _table_total_width(hwp, outer_inset_mm=2):
+    """본문 폭(용지-여백-제본-표 바깥여백)을 HwpUnit으로 계산.
 
-    pyhwpx create_table과 동일 공식(총 폭 = 용지폭 - 좌우여백 - 제본 - 2mm).
+    pyhwpx create_table과 동일 공식(총 폭 = 용지폭 - 좌우여백 - 제본 - inset).
+    기본 inset 2mm는 구동작. 수식 상자(boxed display)는 0.5mm를 넘긴다.
     """
     sec_def = hwp.HParameterSet.HSecDef
     hwp.HAction.GetDefault("PageSetup", sec_def.HSet)
     pd = sec_def.PageDef
     return (int(pd.PaperWidth) - int(pd.LeftMargin) - int(pd.RightMargin)
-            - int(pd.GutterLen) - hwp.MiliToHwpUnit(2))
+            - int(pd.GutterLen) - hwp.MiliToHwpUnit(outer_inset_mm))
 
 
 # 셀 안쪽여백(좌우 각 1.8mm = 도합 3.6mm) HwpUnit 상수 — pyhwpx.create_table과
@@ -965,7 +993,8 @@ def _col_widths_for_target(target_total, col_ratios, inset=CELL_INSET_HWU,
     return widths, any(clamped)
 
 
-def _create_table_with_ratios(hwp, rows, cols, col_ratios, treat_as_char):
+def _create_table_with_ratios(hwp, rows, cols, col_ratios, treat_as_char, *,
+                              row_height_mm=None, outer_inset_mm=None):
     """HTableCreation을 직접 호출해 열별 폭을 col_ratios(정규화된 비율, 합=1.0)
     비율대로 임의값(WidthType=2)으로 지정하며 표를 만든다.
 
@@ -975,6 +1004,10 @@ def _create_table_with_ratios(hwp, rows, cols, col_ratios, treat_as_char):
     inset이 모든 열에 동일 상수라 여전히 근사 보존된다(작은 열일수록
     상대오차가 커질 수 있으나, 절대폭이 계약이므로 이쪽이 우선).
 
+    row_height_mm/outer_inset_mm는 키워드 전용. 둘 다 기본 None이면 구동작
+    (HeightType=0, 바깥여백 2mm). 수식 상자는 row_height_mm=23.5,
+    outer_inset_mm=0.5를 넘긴다.
+
     반환: total_width(HwpUnit), col_widths(HwpUnit 리스트, inset 보정 후
     SetItem에 실제로 준 "내용 폭") — 후속 헤더/치수 로깅용.
     """
@@ -983,9 +1016,23 @@ def _create_table_with_ratios(hwp, rows, cols, col_ratios, treat_as_char):
     pset.Rows = rows
     pset.Cols = cols
     pset.WidthType = 2   # 임의값(custom) — 균등폭(0/1)과 달리 열별 폭 지정 가능
-    pset.HeightType = 0
+    pset.HeightType = 1 if row_height_mm else 0
 
-    total_width = _table_total_width(hwp)
+    inset = 2 if outer_inset_mm is None else outer_inset_mm
+    total_width = _table_total_width(hwp, outer_inset_mm=inset)
+    if row_height_mm:
+        # 한/글의 표 생성 높이는 셀 상하 기본 여백 0.5mm씩을 제외한 내부
+        # 높이로 저장된다. pyhwpx 공식 create_table 경로와 같은 방식으로
+        # 총 높이에서 1mm를 빼 RowHeight/TableProperties.Height를 맞춘다.
+        total_height = hwp.MiliToHwpUnit(float(row_height_mm))
+        content_height = max(hwp.MiliToHwpUnit(1),
+                             total_height - hwp.MiliToHwpUnit(1))
+        pset.HeightValue = total_height
+        pset.CreateItemArray("RowHeight", rows)
+        each_row_height = content_height // rows
+        for i in range(rows):
+            pset.RowHeight.SetItem(i, each_row_height)
+        pset.TableProperties.Height = content_height
     col_widths, _clamped = _col_widths_for_target(total_width, col_ratios)
     pset.CreateItemArray("ColWidth", cols)
     for i, w in enumerate(col_widths):
@@ -997,6 +1044,25 @@ def _create_table_with_ratios(hwp, rows, cols, col_ratios, treat_as_char):
         pass
     hwp.HAction.Execute("TableCreate", pset.HSet)
     return total_width, col_widths
+
+
+def _set_current_cell_double_border(hwp):
+    """현재 셀의 네 변을 원본 3번 보고서와 같은 가는 이중선으로 설정."""
+    pset = hwp.HParameterSet.HCellBorderFill
+    hwp.HAction.GetDefault("CellBorder", pset.HSet)
+    line_type = hwp.HwpLineType("DoubleSlim")
+    # DoubleSlim의 width는 두 획을 합친 패턴 폭이다. 원본 렌더에서 바깥선과
+    # 안쪽선 사이가 약 0.7mm였으므로 0.7mm 프리셋을 사용한다.
+    line_width = hwp.HwpLineWidth("1.0mm")
+    for side in ("Left", "Right", "Top", "Bottom"):
+        setattr(pset, f"BorderType{side}", line_type)
+        setattr(pset, f"BorderWidth{side}", line_width)
+        # HCellBorderFill COM 타입 라이브러리는 왼쪽 색 이름에만 오탈자
+        # BorderCorlorLeft를 노출하고, 나머지는 BorderColor*를 쓴다.
+        color_attr = "BorderCorlorLeft" if side == "Left" else f"BorderColor{side}"
+        setattr(pset, color_attr, 0)
+    if not hwp.HAction.Execute("CellBorder", pset.HSet):
+        raise RuntimeError("수식 상자 이중선 적용 실패")
 
 
 def op_insert_table(hwp, o):

@@ -17,6 +17,7 @@ Two mechanism fixes are locked here with pure-Python tests:
    (COM-verified 2026-08-07: nrf 2→4 pages, parity 4==4.)
 """
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -517,6 +518,137 @@ def test_validate_ops_rejects_malformed_addr_and_double_guard(monkeypatch):
                   "expect_empty": True, "expect": "x"}]):
         with pytest.raises(SystemExit):
             com_backend._validate_ops(bad)
+
+
+# ---------------------------------------------------------------------------
+# boxed display equations (COM layout; XML refuses)
+# ---------------------------------------------------------------------------
+
+class _FakeEqHwp:
+    """op_insert_equation surface: recorded actions, equation pset, para offset."""
+
+    class _EqEdit:
+        def __init__(self):
+            self.HSet = object()
+            self.string = None
+            self.BaseUnit = None
+            self.EqFontName = None
+
+    class _HAction:
+        def __init__(self, record):
+            self._record = record
+
+        def GetDefault(self, name, hset):
+            self._record.append(("GetDefault", name))
+
+        def Execute(self, name, hset):
+            self._record.append(("Execute", name))
+            return True
+
+        def Run(self, action):
+            self._record.append(("Run", action))
+
+    def __init__(self, para_offset=0):
+        self.actions = []
+        self._para_offset = para_offset
+        self.HParameterSet = types.SimpleNamespace(HEqEdit=self._EqEdit())
+        self.HAction = self._HAction(self.actions)
+
+    def get_pos(self):
+        return (0, 0, self._para_offset)
+
+    def insert_text(self, text):
+        self.actions.append(("insert_text", text))
+
+    def Cancel(self):
+        self.actions.append(("Cancel",))
+
+    def Run(self, action):
+        self.actions.append(("Run", action))
+
+
+def _boxed_equation_op(**extra):
+    op = {"op": "insert_equation", "hwpeqn": "E=mc^2", "display": True,
+          "base_pt": 10}
+    op.update(extra)
+    return op
+
+
+def test_validate_ops_accepts_boxed_display_equation():
+    ops = com_backend._validate_ops([_boxed_equation_op(boxed=True)])
+    assert ops[0]["boxed"] is True
+
+
+def test_boxed_display_equation_creates_table_double_border_and_exits(
+        monkeypatch):
+    table_calls = []
+    border_calls = []
+
+    def fake_table(*args, **kwargs):
+        table_calls.append((args, kwargs))
+        return 1000, [1000]
+
+    def fake_border(hwp):
+        border_calls.append(hwp)
+
+    monkeypatch.setattr(com_backend, "_create_table_with_ratios", fake_table)
+    monkeypatch.setattr(
+        com_backend, "_set_current_cell_double_border", fake_border)
+    hwp = _FakeEqHwp()
+    result = com_backend.op_insert_equation(hwp, _boxed_equation_op(boxed=True))
+    assert result["boxed"] is True
+    assert result["display"] is True
+    assert len(table_calls) == 1
+    args, kwargs = table_calls[0]
+    assert args[1:] == (1, 1, [1.0], True)
+    assert kwargs["row_height_mm"] == 23.5
+    assert kwargs["outer_inset_mm"] == 0.5
+    assert border_calls == [hwp]
+    runs = [a[1] for a in hwp.actions if a[0] == "Run"]
+    assert "TableCellAlignCenterCenter" in runs
+    exit_at = runs.index("MoveRight")
+    assert runs[exit_at:exit_at + 3] == [
+        "MoveRight", "BreakPara", "ParagraphShapeAlignJustify"]
+    assert ("insert_text", "\r\n") not in hwp.actions
+
+
+def test_non_boxed_display_equation_does_not_touch_table_helpers(monkeypatch):
+    table_calls = []
+    border_calls = []
+    monkeypatch.setattr(
+        com_backend, "_create_table_with_ratios",
+        lambda *a, **k: table_calls.append((a, k)) or (1000, [1000]))
+    monkeypatch.setattr(
+        com_backend, "_set_current_cell_double_border",
+        lambda hwp: border_calls.append(hwp))
+    hwp = _FakeEqHwp()
+    result = com_backend.op_insert_equation(hwp, _boxed_equation_op())
+    assert result["boxed"] is False
+    assert table_calls == []
+    assert border_calls == []
+    assert ("insert_text", "\r\n") in hwp.actions
+    runs = [a[1] for a in hwp.actions if a[0] == "Run"]
+    assert "TableCellAlignCenterCenter" not in runs
+    assert "MoveRight" not in runs
+    assert "BreakPara" not in runs
+
+
+def test_xml_backend_refuses_boxed_equation(tmp_path):
+    src = tmp_path / "in.hwpx"
+    src.write_bytes(b"not-a-real-hwpx")
+    ops_path = tmp_path / "ops.json"
+    ops_path.write_text(json.dumps([_boxed_equation_op(boxed=True)]),
+                        encoding="utf-8")
+    dst = tmp_path / "out.hwpx"
+    result = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "scripts", "xml_backend.py"),
+         "edit", "--file", str(src), "--ops", str(ops_path),
+         "--save-as", str(dst)],
+        capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 4, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert "equation_box_unsupported_xml" in payload["unsupported"]
+    assert not dst.exists()
 
 
 # ---------------------------------------------------------------------------

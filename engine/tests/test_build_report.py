@@ -1096,6 +1096,23 @@ base_pt: 10
 본문 뒤.
 """
 
+_EQ_BOXED_CONTENT = """---
+title: T
+title_anchor: "T_ANCHOR"
+base_pt: 10
+---
+
+## SECTION: I.  서론
+
+본문.
+
+[[EQ display latex="\\frac{1}{2}mv^2"]]
+
+[[EQ latex="E = mc^2"]]
+
+본문 뒤.
+"""
+
 
 def test_eq_bare_tag_defaults_to_inline():
     meta, secs = br.parse_content(_EQ_BARE_CONTENT)
@@ -1140,6 +1157,28 @@ def test_eq_display_emits_no_build_warning(tmp_path):
     warnings = []
     br.build_ops(meta, secs, tmp_path, warnings=warnings)
     assert warnings == []
+
+
+def test_box_display_equations_true_boxes_display_not_bare(tmp_path):
+    p = _write_build_yaml(tmp_path, ["box_display_equations: true"])
+    meta, secs = br.parse_content(_EQ_BOXED_CONTENT)
+    meta = br.merge_meta(meta, br.parse_build_yaml(p))
+    ops = br.build_ops(meta, secs, tmp_path)
+    eq_ops = [o for o in ops if o["op"] == "insert_equation"]
+    assert len(eq_ops) == 2
+    display_op, bare_op = eq_ops
+    assert display_op["display"] is True
+    assert display_op["boxed"] is True
+    assert bare_op["display"] is False
+    assert "boxed" not in bare_op or bare_op["boxed"] is False
+
+
+def test_box_display_equations_absent_emits_no_boxed_key(tmp_path):
+    meta, secs = br.parse_content(_EQ_BOXED_CONTENT)
+    ops = br.build_ops(meta, secs, tmp_path)
+    eq_ops = [o for o in ops if o["op"] == "insert_equation"]
+    assert len(eq_ops) == 2
+    assert all("boxed" not in o for o in eq_ops)
 
 
 def test_build_ops_warnings_param_optional_backward_compat(tmp_path):
