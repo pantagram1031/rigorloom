@@ -18,11 +18,14 @@
  *    head, does not re-render the page as that candidate, and does not change
  *    what an export writes: export names its run explicitly, on this row.
  */
+import { useEffect } from "react";
+
 import {
   compareInspectRefusals,
   exportApplied,
   loadReceipt,
-  proposeUndoOf,
+  loadSessionEvents,
+  restoreRun,
   runCompareInspect,
   selectHistory,
   setCompareAgainst,
@@ -35,6 +38,7 @@ import {
   headCandidate,
   lineage,
   reversedBy,
+  sessionHistory,
   useWorkspace,
 } from "../store";
 import type { Candidate, CandidateCompare } from "../types";
@@ -61,12 +65,16 @@ function Row({
   isHead,
   selected,
   undoneBy,
+  backend,
+  receiptPresent,
 }: {
   row: Candidate;
   depth: number;
   isHead: boolean;
   selected: boolean;
   undoneBy: Candidate | null;
+  backend: string | null;
+  receiptPresent: boolean;
 }) {
   const runId = row.runId ?? "";
   const undoPhase = useWorkspace((s) => s.undoPhase);
@@ -120,6 +128,15 @@ function Row({
         {" · "}
         {(row.sha256 ?? "").slice(0, 12)}
       </p>
+      <p className="mono tiny" data-testid={`history-provenance-${runId}`}>
+        run {runId.slice(0, 12)}
+        {" · "}
+        parent {row.base?.runId ? row.base.runId.slice(0, 12) : "source"}
+        {" · "}
+        backend {backend ?? "—"}
+        {" · "}
+        {receiptPresent ? "영수증 있음" : "영수증 없음"}
+      </p>
 
       {selected ? (
         <div
@@ -152,12 +169,12 @@ function Row({
             </button>
             <button
               className="action"
-              data-testid={`history-undo-${runId}`}
+              data-testid={`history-restore-${runId}`}
               disabled={undoPhase === "starting"}
-              title="이 후보본이 한 일을 되돌리는 계획을 대기열에 냅니다. 지우지 않습니다."
-              onClick={() => void proposeUndoOf(runId)}
+              title="이 후보본을 되돌리는 계획을 제안합니다. 승인하고 적용해야 후보본이 하나 더 생깁니다. 원본은 바꾸지 않습니다."
+              onClick={() => void restoreRun(runId)}
             >
-              되돌리기 제안
+              되돌리기
             </button>
             <button
               className="ghost dark-safe"
@@ -169,6 +186,40 @@ function Row({
           </div>
         </div>
       ) : null}
+    </li>
+  );
+}
+
+function EventRow({
+  at,
+  seq,
+  eventKind,
+  runId,
+  parent,
+  backend,
+  receiptPresent,
+}: {
+  at: string;
+  seq: number | null;
+  eventKind: string | null;
+  runId: string | null;
+  parent: string | null;
+  backend: string | null;
+  receiptPresent: boolean;
+}) {
+  const id = runId ?? `seq-${seq ?? at}`;
+  return (
+    <li className="history-row" data-testid={`history-event-${seq ?? id}`}>
+      <p className="mono tiny">{eventKind ?? "event"} · {clock(at)}</p>
+      <p className="mono tiny" data-testid={`history-provenance-${id}`}>
+        run {runId ? runId.slice(0, 12) : "—"}
+        {" · "}
+        parent {parent ? parent.slice(0, 12) : "source"}
+        {" · "}
+        backend {backend ?? "—"}
+        {" · "}
+        {receiptPresent ? "영수증 있음" : "영수증 없음"}
+      </p>
     </li>
   );
 }
@@ -310,12 +361,18 @@ function ComparePayload({ compare }: { compare: CandidateCompare }) {
 
 export function History() {
   const rows = useWorkspace(activeCandidates);
+  const timeline = useWorkspace(sessionHistory);
   const head = useWorkspace(headCandidate);
   const selected = useWorkspace((s) => s.historySelected);
   const undoError = useWorkspace((s) => s.undoError);
   const proof = useWorkspace((s) => s.inverseProof);
+  const sessionId = useWorkspace((s) => s.activeSessionId);
 
-  if (rows.length === 0) {
+  useEffect(() => {
+    if (sessionId) void loadSessionEvents();
+  }, [sessionId]);
+
+  if (timeline.length === 0) {
     return (
       <div className="section" data-testid="history-empty">
         <h3>기록</h3>
@@ -340,25 +397,40 @@ export function History() {
       <h3>
         기록
         <span className="count" data-testid="history-count">
-          {rows.length}
+          {timeline.length}
         </span>
       </h3>
       <p className="prose tiny">
-        적용할 때마다 후보본이 하나씩 늘어납니다. 되돌리기도 후보본을 하나 더
-        만드는 일이지, 무언가를 지우는 일이 아닙니다.
+        세션 사건과 공개된 후보본을 한 줄로 봅니다. 되돌리기는 원본을 고치는
+        일이 아니라, 되돌리는 계획을 제안한 뒤 승인하고 적용하는 일입니다.
       </p>
 
       <ul className="history-rows">
-        {ordered.map((row) => (
-          <Row
-            key={row.runId}
-            row={row}
-            depth={depthOf.get(row.runId ?? "") ?? 0}
-            isHead={!!row.runId && row.runId === head?.runId}
-            selected={row.runId === selected}
-            undoneBy={row.runId ? reversedBy(rows, row.runId) : null}
-          />
-        ))}
+        {timeline.map((item) =>
+          item.candidate ? (
+            <Row
+              key={item.key}
+              row={item.candidate}
+              depth={depthOf.get(item.candidate.runId ?? "") ?? 0}
+              isHead={!!item.candidate.runId && item.candidate.runId === head?.runId}
+              selected={item.candidate.runId === selected}
+              undoneBy={item.candidate.runId ? reversedBy(rows, item.candidate.runId) : null}
+              backend={item.backend}
+              receiptPresent={item.receiptPresent}
+            />
+          ) : (
+            <EventRow
+              key={item.key}
+              at={item.at}
+              seq={item.seq}
+              eventKind={item.eventKind}
+              runId={item.runId}
+              parent={item.parent}
+              backend={item.backend}
+              receiptPresent={item.receiptPresent}
+            />
+          ),
+        )}
       </ul>
 
       <CompareInspect rows={rows} />

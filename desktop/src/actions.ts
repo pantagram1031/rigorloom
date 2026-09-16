@@ -24,6 +24,7 @@ import {
   getState,
   headCandidate,
   locateSelection,
+  mergePolledEvents,
   patchTurn,
   providerConfigFields,
   setCenterMode,
@@ -243,6 +244,9 @@ export async function selectSession(sessionId: string) {
           render: null,
           renderPhase: "idle" as const,
           renderError: null,
+          lastGoodRender: null,
+          renderUnavailable: null,
+          renderAtHead: null,
           prepareError: null,
           prepareNote: null,
           // The geometry CACHE is keyed on the session and survives a switch
@@ -1111,6 +1115,16 @@ export async function proposeUndoOf(runId: string): Promise<number> {
   }
 }
 
+/**
+ * Restore a published candidate by proposing its reverse plan.
+ *
+ * This is propose with reverses-run set, then the normal approve then apply
+ * path. It never mutates the original in place and never applies here.
+ */
+export async function restoreRun(runId: string): Promise<number> {
+  return proposeUndoOf(runId);
+}
+
 /** The text the runtime returned for one address, or null if it returned none. */
 function regionTextAt(
   regions: RegionText[],
@@ -1833,12 +1847,20 @@ export async function reopenExported(): Promise<boolean> {
 
 const RENDER_DPI = 110;
 
+/** Host-only prepare refusals. Never restyle these as a successful note. */
+export const PREPARE_REFUSAL_CODES = new Set(["com_busy", "needs_hancom"]);
+
+export function isPrepareRefusalCode(code: string | undefined | null): boolean {
+  return !!code && PREPARE_REFUSAL_CODES.has(code);
+}
+
 /**
  * Ask for a page raster.
  *
  * `available: false` is a RESULT, not an error (§11.1) — "there is no page
  * image for this document" is an answer the UI has to draw, and the reason
  * comes from a closed set. So the unavailable state is stored, not thrown.
+ * A later unavailable answer keeps the last good image and its run id.
  */
 export async function renderCurrentPage(
   page?: number,
@@ -1848,6 +1870,8 @@ export async function renderCurrentPage(
   const sessionId = state.activeSessionId;
   if (!sessionId) return;
   const wanted = (page ?? state.page) - 1;
+  const previousGood = state.render?.available ? state.render : state.lastGoodRender;
+  const previousHead = state.renderAtHead;
   setState({ renderPhase: "starting", renderError: null });
   try {
     const render = await rt.renderPage(
@@ -1856,7 +1880,26 @@ export async function renderCurrentPage(
       RENDER_DPI,
       runId ?? null,
     );
-    setState({ render, renderPhase: "ready", page: Math.max(0, wanted) + 1 });
+    const head = headCandidate(getState())?.runId ?? null;
+    if (render.available) {
+      setState({
+        render,
+        lastGoodRender: render,
+        renderUnavailable: null,
+        renderAtHead: head,
+        renderPhase: "ready",
+        page: Math.max(0, wanted) + 1,
+      });
+    } else {
+      setState({
+        render: previousGood ?? render,
+        lastGoodRender: previousGood ?? null,
+        renderUnavailable: render,
+        renderAtHead: previousGood ? previousHead : head,
+        renderPhase: "ready",
+        page: Math.max(0, wanted) + 1,
+      });
+    }
   } catch (e) {
     setState({ renderPhase: "failed", renderError: rt.asRuntimeError(e) });
   }
@@ -2239,11 +2282,24 @@ export function dismissOverlayPick(): void {
  * like from here).
  */
 export async function preparePages(runId?: string | null): Promise<void> {
+  if (getState().isComposing) return;
   const sessionId = getState().activeSessionId;
   if (!sessionId) return;
   setState({ preparePhase: "starting", prepareError: null, prepareNote: null });
   try {
     const result = await rt.renderPrepare(sessionId, runId ?? null);
+    const reason = result.reason ?? "";
+    if (!result.prepared && isPrepareRefusalCode(reason)) {
+      setState({
+        preparePhase: "failed",
+        prepareError: {
+          code: reason,
+          message: reason,
+        },
+        prepareNote: null,
+      });
+      return;
+    }
     setState({
       preparePhase: "ready",
       prepareNote: result.prepared
@@ -2252,7 +2308,12 @@ export async function preparePages(runId?: string | null): Promise<void> {
     });
     await renderCurrentPage(1, runId ?? null);
   } catch (e) {
-    setState({ preparePhase: "failed", prepareError: rt.asRuntimeError(e) });
+    const error = rt.asRuntimeError(e);
+    setState({
+      preparePhase: "failed",
+      prepareError: error,
+      prepareNote: isPrepareRefusalCode(error.code) ? null : getState().prepareNote,
+    });
   }
 }
 
@@ -2388,6 +2449,18 @@ async function loadReceiptQuiet(runId: string) {
  */
 export async function startEvents(sessionId: string): Promise<void> {
   await startDocumentEvents(sessionId);
+}
+
+/** One-shot `event/poll` (CLI `events`), merged into the same session log. */
+export async function loadSessionEvents(): Promise<void> {
+  const sessionId = getState().activeSessionId;
+  if (!sessionId) return;
+  try {
+    const result = await rt.pollEvents(sessionId, -1);
+    mergePolledEvents(result.events);
+  } catch (e) {
+    setState({ eventError: rt.asRuntimeError(e) });
+  }
 }
 
 // --- the agent door -------------------------------------------------------------------

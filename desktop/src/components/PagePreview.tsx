@@ -43,7 +43,10 @@ import {
 import {
   canPreparePages,
   fitScale,
+  getState,
   headCandidate,
+  previewIsStale,
+  previewRevisionText,
   setFittedZoom,
   setPageFit,
   setZoom,
@@ -293,9 +296,9 @@ function prepareGuidance(code: string): string {
 function PrepareRefusal({ error }: { error: RuntimeError }) {
   const data = (error.data ?? {}) as Record<string, unknown>;
   return (
-    <div className="unavailable" data-testid="prepare-refusal">
+    <div className="refusal" data-testid="prepare-refusal">
       <div className="unavailable-head">
-        <Tag tone="bad">페이지 그림을 만들지 못했습니다</Tag>
+        <Tag tone="bad">거절</Tag>
         <code className="mono">{error.code}</code>
       </div>
       {/* The runtime's own words first. Ours after. */}
@@ -362,6 +365,7 @@ function GeometryUnavailable({ geometry }: { geometry: GeometryResult }) {
  */
 function CandidateDiffers({ echo }: { echo: LayoutEcho }) {
   const preparePhase = useWorkspace((s) => s.preparePhase);
+  const composing = useWorkspace((s) => s.isComposing);
   const canPrepare = useWorkspace(canPreparePages);
   return (
     <div className="unavailable" data-testid="layout-echo">
@@ -397,9 +401,16 @@ function CandidateDiffers({ echo }: { echo: LayoutEcho }) {
         <button
           className="action primary"
           data-testid="echo-redraw"
-          disabled={preparePhase === "starting"}
-          title="후보본을 PDF로 바꿔 다시 그립니다. 원본은 건드리지 않습니다."
-          onClick={() => void preparePages(echo.runId)}
+          disabled={preparePhase === "starting" || composing}
+          title={
+            composing
+              ? "입력 조합이 끝나기 전에는 변환하지 않습니다"
+              : "후보본을 PDF로 바꿔 다시 그립니다. 원본은 건드리지 않습니다."
+          }
+          onClick={() => {
+            if (getState().isComposing) return;
+            void preparePages(echo.runId);
+          }}
         >
           {preparePhase === "starting" ? "한컴을 부르는 중…" : "다시 그리기"}
         </button>
@@ -439,6 +450,9 @@ function Unavailable({ render }: { render: RenderResult }) {
         {"\n"}
         {detail}
       </p>
+      <pre className="reason" data-testid="render-unavailable-json">
+        {JSON.stringify(render.unavailable ?? { available: false, reason, detail })}
+      </pre>
       {/* The THIRD tier's own refusal. Without this a user is told only about
           the Hancom they do not have, and never that the renderer we DO ship
           also declined — which is the half they can act on. */}
@@ -458,16 +472,21 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
   const pageFit = useWorkspace((s) => s.pageFit);
   const page = useWorkspace((s) => s.page);
   const render = useWorkspace((s) => s.render);
+  const lastGoodRender = useWorkspace((s) => s.lastGoodRender);
+  const renderUnavailable = useWorkspace((s) => s.renderUnavailable);
   const renderPhase = useWorkspace((s) => s.renderPhase);
   const renderError = useWorkspace((s) => s.renderError);
   const preparePhase = useWorkspace((s) => s.preparePhase);
   const prepareError = useWorkspace((s) => s.prepareError);
   const prepareNote = useWorkspace((s) => s.prepareNote);
+  const composing = useWorkspace((s) => s.isComposing);
   const canPrepare = useWorkspace(canPreparePages);
   const sessionId = useWorkspace((s) => s.activeSessionId);
   const geometry = useWorkspace((s) => s.geometry);
   const echo = useWorkspace(layoutEcho);
   const head = useWorkspace(headCandidate);
+  const revisionLabel = useWorkspace(previewRevisionText);
+  const stale = useWorkspace(previewIsStale);
 
   // Read the plans behind the head's chain so the echo can name the regions
   // that changed. Nothing is marked until the runtime has said which ones.
@@ -475,29 +494,16 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
     if (head?.runId) void loadChangedAddresses(head.runId);
   }, [head?.runId]);
 
-  // Ask once when the mode is entered. A render is a real call with a real
-  // cost; it is not re-run on every zoom nudge.
+  // Geometry follows the PAGE after an explicit raster, never the zoom and
+  // never a keystroke. Preview itself is requested by the footer button.
   useEffect(() => {
-    if (sessionId && renderPhase === "idle") void renderCurrentPage();
-  }, [sessionId, renderPhase]);
+    if (sessionId && renderPhase === "ready" && render?.available) void loadGeometry(page);
+  }, [sessionId, page, renderPhase, render?.available]);
 
-  // Geometry follows the PAGE, never the zoom. `page` is in the dependency
-  // list and `zoom` is deliberately not: the rects are fractions of the page,
-  // so a zoom change re-lays out the overlay from numbers already in hand and
-  // asks the runtime nothing (§12.1). `loadGeometry` serves its own per-page
-  // cache on the way back to a page that was already read, so paging back and
-  // forth is one call per page for the life of the session.
-  //
-  // AFTER the raster, not beside it. Tier 3's geometry reads the render's own
-  // sidecar and never starts a render of its own (§11.1c), so a geometry call
-  // that won the race against the first render would cache `needs_conversion`
-  // for a page that is about to exist and the overlay would never appear.
-  useEffect(() => {
-    if (sessionId && renderPhase === "ready") void loadGeometry(page);
-  }, [sessionId, page, renderPhase]);
-
-  const image = render?.available ? render.image : undefined;
-  const pageCount = render?.pageCount ?? 1;
+  const shown = render?.available ? render : lastGoodRender?.available ? lastGoodRender : null;
+  const image = shown?.image;
+  const pageCount = shown?.pageCount ?? render?.pageCount ?? 1;
+  const latestUnavailable = renderUnavailable ?? (render && !render.available ? render : null);
 
   // --- fitting the page to the window ---------------------------------------
   //
@@ -510,8 +516,8 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
   // This asks the runtime NOTHING. The raster is drawn at its own dpi and
   // scaled by CSS; the overlay rects are page fractions. One number changes.
   const scroller = useRef<HTMLDivElement>(null);
-  const pageWidthCss = image ? (image.widthPx / (render?.dpi ?? 96)) * 96 : 0;
-  const pageHeightCss = image ? (image.heightPx / (render?.dpi ?? 96)) * 96 : 0;
+  const pageWidthCss = image ? (image.widthPx / (shown?.dpi ?? 96)) * 96 : 0;
+  const pageHeightCss = image ? (image.heightPx / (shown?.dpi ?? 96)) * 96 : 0;
 
   useLayoutEffect(() => {
     if (pageFit === "free" || !scroller.current || pageWidthCss <= 0) return;
@@ -545,7 +551,7 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
   // ruler that is not touching the page it measures is decoration.
   const ruler = <Ruler inspect={inspect} zoom={zoom} />;
 
-  const overlayOk = tiersAgree(render, geometry);
+  const overlayOk = tiersAgree(shown ?? render, geometry);
 
   return (
     <div className="center-scroll paged" data-testid="page-preview" ref={scroller}>
@@ -562,12 +568,32 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
         </div>
       ) : image?.data ? (
         <>
+          <div className="raster-note" data-testid="preview-provenance">
+            <span className="mono tiny" data-testid="preview-revision">
+              {revisionLabel || "revision unknown"}
+            </span>
+            {stale ? (
+              <span data-testid="preview-stale">
+                <Tag tone="warn">이전 그림</Tag>
+              </span>
+            ) : null}
+          </div>
+          {latestUnavailable ? (
+            <div className="refusal" data-testid="preview-unavailable-kept">
+              <Tag tone="warn">지금은 그릴 수 없음</Tag>
+              <pre className="reason" data-testid="render-unavailable-json">
+                {JSON.stringify(
+                  latestUnavailable.unavailable ?? { available: false },
+                )}
+              </pre>
+            </div>
+          ) : null}
           {/* Above the page, not under it: a person must know the picture is
               out of date BEFORE they read it, not after they scroll past. */}
           {echo ? <CandidateDiffers echo={echo} /> : null}
           {/* WHICH RENDERER, above the paper. A person must know what they are
               looking at before they read it, not after. */}
-          {render ? <GradeBadge render={render} /> : null}
+          {shown ? <GradeBadge render={shown} /> : null}
           {ruler}
           {/* The raster and the overlay share ONE box, sized once. The overlay
               positions its children in percentages of it, so the two cannot
@@ -576,7 +602,7 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
           <div
             className="page-stage"
             data-testid="page-stage"
-            style={{ width: `${(image.widthPx / (render?.dpi ?? 96)) * 96 * zoom}px` }}
+            style={{ width: `${(image.widthPx / (shown?.dpi ?? 96)) * 96 * zoom}px` }}
           >
             <img
               className="page-raster"
@@ -597,18 +623,18 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
           ) : null}
           {/* 무엇을 못 그렸나. One click, and always present on a page a
               renderer graded — an absent list would read as nothing skipped. */}
-          {render?.elementsSkipped ? (
-            <SkippedElements skipped={render.elementsSkipped} />
+          {shown?.elementsSkipped ? (
+            <SkippedElements skipped={shown.elementsSkipped} />
           ) : null}
-          {render ? <FontSubstitutions render={render} /> : null}
+          {shown ? <FontSubstitutions render={shown} /> : null}
           <p className="raster-note" data-testid="raster-evidence">
-            <Tag tone="none">{render?.evidence?.proofGrade ?? "none"}</Tag>
-            {render?.evidence?.note ??
+            <Tag tone="none">{shown?.evidence?.proofGrade ?? "none"}</Tag>
+            {shown?.evidence?.note ??
               "페이지 그림은 바이트가 무엇을 그리는지 보여 줄 뿐, 그 바이트가 옳다는 증거가 아닙니다."}
           </p>
           <p className="mono tiny">
-            {image.widthPx}×{image.heightPx}px · {render?.dpi}dpi ·{" "}
-            {render?.source?.kind} · {image.sha256.slice(0, 12)}
+            {image.widthPx}×{image.heightPx}px · {shown?.dpi}dpi ·{" "}
+            {shown?.source?.kind} · {image.sha256.slice(0, 12)}
           </p>
         </>
       ) : image ? (
@@ -641,13 +667,29 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
           the renderer's own, and it is 1 when there is no raster because that
           is what the runtime returned. */}
       <div className="page-footer" data-testid="page-footer">
+        <button
+          className="action primary"
+          data-testid="request-preview"
+          disabled={!sessionId || renderPhase === "starting"}
+          title="지금 문서의 페이지 그림을 요청합니다. 입력할 때마다 그리지 않습니다."
+          onClick={() => void renderCurrentPage()}
+        >
+          {renderPhase === "starting" ? "페이지를 요청하는 중…" : "페이지 그림 요청"}
+        </button>
         {canPrepare ? (
           <button
-            className="action primary"
+            className="action"
             data-testid="prepare-pages"
-            disabled={preparePhase === "starting"}
-            title="세션 사본을 PDF로 바꿉니다. 원본은 건드리지 않습니다."
-            onClick={() => void preparePages()}
+            disabled={preparePhase === "starting" || composing}
+            title={
+              composing
+                ? "입력 조합이 끝나기 전에는 변환하지 않습니다"
+                : "세션 사본을 PDF로 바꿉니다. 원본은 건드리지 않습니다."
+            }
+            onClick={() => {
+              if (getState().isComposing) return;
+              void preparePages();
+            }}
           >
             {preparePhase === "starting" ? "한컴을 부르는 중…" : "페이지 그림 만들기"}
           </button>

@@ -32,6 +32,7 @@ import type {
   RegionText,
   RenderResult,
   RuntimeError,
+  RuntimeEvent,
   Session,
   SidecarStatus,
   TaskPackList,
@@ -322,6 +323,25 @@ export const subscribeEvents = (sessionId: string, after = -1, intervalMs = 250)
 export const unsubscribeEvents = (subscriptionId: string) =>
   call<{ subscriptionId: string; stopped: boolean }>("event/unsubscribe", {
     subscriptionId,
+  });
+
+/**
+ * CLI `events` — one-shot read of the session log (`event/poll`).
+ *
+ * Live delivery stays on `event/subscribe`. This is the request/response
+ * shape History can merge with `candidate/list` without inventing a second log.
+ */
+export const pollEvents = (sessionId: string, after = -1, limit?: number) =>
+  call<{
+    sessionId: string;
+    after: number;
+    events: RuntimeEvent[];
+    nextSeq: number;
+    more: boolean;
+  }>("event/poll", {
+    sessionId,
+    after,
+    ...(typeof limit === "number" ? { limit } : {}),
   });
 
 // --- host-side file work the protocol does not do ----------------------------

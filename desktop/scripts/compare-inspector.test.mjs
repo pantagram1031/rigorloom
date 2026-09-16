@@ -156,6 +156,7 @@ function renderHistory(overrides = {}) {
     undoPhase: "idle",
     undoError: null,
     inverseProof: null,
+    events: [],
     compareLeftRunId: "run-A",
     compareAgainst: { source: true },
     compareUseSelection: false,
@@ -183,6 +184,8 @@ function renderHistory(overrides = {}) {
           exportApplied: () => {},
           loadReceipt: () => {},
           proposeUndoOf: () => {},
+          restoreRun: () => {},
+          loadSessionEvents: () => {},
           runCompareInspect: () => {},
           selectHistory: () => {},
           setCompareAgainst: () => {},
@@ -198,6 +201,19 @@ function renderHistory(overrides = {}) {
           headCandidate: (s) => (s.candidates[s.activeSessionId] ?? [])[0] ?? null,
           lineage: (rows) => rows,
           reversedBy: () => null,
+          sessionHistory: (s) =>
+            (s.candidates[s.activeSessionId] ?? []).map((row) => ({
+              key: row.runId,
+              at: row.createdUtc ?? "",
+              seq: null,
+              eventKind: null,
+              runId: row.runId,
+              parent: row.base?.runId ?? null,
+              backend: s.receipts?.[row.runId]?.backend ?? null,
+              receiptPresent: Boolean(s.receipts?.[row.runId] || row.receipt),
+              candidate: row,
+            })),
+          previewIsStale: () => false,
         };
       }
       if (id === "../types") return {};

@@ -462,6 +462,19 @@ export interface WorkspaceState {
   renderPhase: Phase;
   render: RenderResult | null;
   renderError: RuntimeError | null;
+  /**
+   * Last `available: true` raster. Kept when a later render answers
+   * `available: false` so the page can keep showing the picture with its run
+   * id instead of blanking it.
+   */
+  lastGoodRender: RenderResult | null;
+  /** Latest `available: false` answer, or null. Distinct from `renderError`. */
+  renderUnavailable: RenderResult | null;
+  /**
+   * Shell head (`runId` or null for source) when the displayed raster was
+   * captured. Stale when the current head is different.
+   */
+  renderAtHead: string | null;
   preparePhase: Phase;
   prepareError: RuntimeError | null;
   prepareNote: string | null;
@@ -732,6 +745,9 @@ const initial: WorkspaceState = {
   renderPhase: "idle",
   render: null,
   renderError: null,
+  lastGoodRender: null,
+  renderUnavailable: null,
+  renderAtHead: null,
   preparePhase: "idle",
   prepareError: null,
   prepareNote: null,
@@ -1293,6 +1309,192 @@ export function headCandidate(s: WorkspaceState): Candidate | null {
   }
   const ordered = lineage(rows);
   return ordered[ordered.length - 1] ?? null;
+}
+
+/** True when the page image was captured against a head that has since moved. */
+export function previewIsStale(s: WorkspaceState): boolean {
+  const shown = s.render?.available ? s.render : s.lastGoodRender;
+  if (!shown?.available) return false;
+  return (s.renderAtHead ?? null) !== (headCandidate(s)?.runId ?? null);
+}
+
+/**
+ * Run id the raster was drawn from, or the session source digest when it was
+ * drawn from the source. Empty when nothing has been drawn.
+ */
+export function previewRevisionText(s: WorkspaceState): string {
+  const shown = s.render?.available ? s.render : s.lastGoodRender;
+  if (!shown) return "";
+  if (shown.source?.runId) return shown.source.runId;
+  const sha =
+    shown.source?.sha256 ??
+    (s.activeSessionId
+      ? (s.sessions.find((row) => row.sessionId === s.activeSessionId)?.source.sha256 ?? null)
+      : null);
+  return sha ?? "";
+}
+
+export interface SessionHistoryRow {
+  key: string;
+  at: string;
+  seq: number | null;
+  eventKind: string | null;
+  runId: string | null;
+  parent: string | null;
+  backend: string | null;
+  receiptPresent: boolean;
+  candidate: Candidate | null;
+}
+
+function historyDetail(event: RuntimeEvent): Record<string, unknown> {
+  return (event.detail ?? {}) as Record<string, unknown>;
+}
+
+function historyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function candidateHistoryRow(
+  row: Candidate,
+  receipts: Record<string, Receipt>,
+  extras: {
+    seq: number | null;
+    at: string;
+    eventKind: string | null;
+    key?: string;
+    backend?: string | null;
+    parent?: string | null;
+  },
+): SessionHistoryRow {
+  const runId = row.runId ?? null;
+  const receipt = runId ? receipts[runId] : undefined;
+  const backend =
+    extras.backend ??
+    receipt?.backend ??
+    (typeof row.backend === "string" ? row.backend : null);
+  return {
+    key: extras.key ?? (runId ? `run:${runId}` : `cand:${extras.at}`),
+    at: extras.at,
+    seq: extras.seq,
+    eventKind: extras.eventKind,
+    runId,
+    parent: extras.parent ?? row.base?.runId ?? null,
+    backend,
+    receiptPresent: Boolean(row.receipt) || receipt !== undefined,
+    candidate: row,
+  };
+}
+
+function computeSessionHistory(
+  events: RuntimeEvent[],
+  candidates: Candidate[],
+  receipts: Record<string, Receipt>,
+): SessionHistoryRow[] {
+  const byId = new Map<string, Candidate>();
+  for (const row of candidates) if (row.runId) byId.set(row.runId, row);
+  const seen = new Set<string>();
+  const out: SessionHistoryRow[] = [];
+
+  for (const event of events) {
+    const detail = historyDetail(event);
+    const runId =
+      historyString(detail.runId) ??
+      historyString(event.runId);
+    const candidate = runId ? (byId.get(runId) ?? null) : null;
+    if (candidate && runId && event.kind === "candidate.published") {
+      seen.add(runId);
+      out.push(
+        candidateHistoryRow(candidate, receipts, {
+          seq: event.seq,
+          at: event.at || candidate.createdUtc || "",
+          eventKind: event.kind,
+          key: `event:${event.seq}`,
+          backend: historyString(detail.backend),
+          parent: historyString(detail.baseRunId) ?? candidate.base?.runId ?? null,
+        }),
+      );
+      continue;
+    }
+    const receipt = runId ? receipts[runId] : undefined;
+    out.push({
+      key: `event:${event.seq}`,
+      at: event.at,
+      seq: event.seq,
+      eventKind: event.kind,
+      runId,
+      parent: historyString(detail.baseRunId),
+      backend: historyString(detail.backend) ?? receipt?.backend ?? null,
+      receiptPresent: Boolean(receipt) || Boolean(candidate?.receipt),
+      candidate,
+    });
+  }
+
+  for (const row of lineage(candidates)) {
+    if (row.runId && seen.has(row.runId)) continue;
+    if (row.runId) seen.add(row.runId);
+    out.push(
+      candidateHistoryRow(row, receipts, {
+        seq: null,
+        at: row.createdUtc ?? "",
+        eventKind: null,
+      }),
+    );
+  }
+  return out;
+}
+
+let sessionHistoryCache: {
+  events: RuntimeEvent[];
+  candidates: Candidate[];
+  receipts: Record<string, Receipt>;
+  rows: SessionHistoryRow[];
+} | null = null;
+
+/**
+ * Protocol events merged with published candidates for the Document view 기록.
+ *
+ * Events keep seq order. A `candidate.published` (or any event naming a run)
+ * is enriched from `candidate/list` and `receipt/read`. Candidates that never
+ * appeared in the log are appended in lineage order.
+ */
+export function sessionHistory(s: WorkspaceState): SessionHistoryRow[] {
+  const events = s.events;
+  const candidates = activeCandidates(s);
+  const receipts = s.receipts;
+  const cached = sessionHistoryCache;
+  if (
+    cached &&
+    cached.events === events &&
+    cached.candidates === candidates &&
+    cached.receipts === receipts
+  ) {
+    return cached.rows;
+  }
+  const rows = computeSessionHistory(events, candidates, receipts);
+  sessionHistoryCache = { events, candidates, receipts, rows };
+  return rows;
+}
+
+/**
+ * Merge a one-shot `event/poll` (the CLI `events` command) into the session log.
+ *
+ * Same seq de-dupe as `pushEvents`, without a subscription id: poll is
+ * request/response, not a live delivery.
+ */
+export function mergePolledEvents(incoming: RuntimeEvent[]) {
+  if (incoming.length === 0) return;
+  const bySeq = new Map<number, RuntimeEvent>();
+  for (const event of state.events) bySeq.set(event.seq, event);
+  let changed = false;
+  for (const event of incoming) {
+    if (typeof event.seq !== "number") continue;
+    if (bySeq.has(event.seq)) continue;
+    bySeq.set(event.seq, event);
+    changed = true;
+  }
+  if (!changed) return;
+  const next = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  setState({ events: next.length > EVENT_CAP ? next.slice(next.length - EVENT_CAP) : next });
 }
 
 /** A stable key for a cell, shared by the queue, the tree and the centre. */

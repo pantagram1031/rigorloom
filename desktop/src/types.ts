@@ -909,6 +909,8 @@ export interface Candidate {
   acceptance?: boolean | null;
   opKinds?: string[];
   verified?: boolean;
+  /** Present when a receipt was read; listing itself may omit it. */
+  backend?: string;
   [key: string]: unknown;
 }
 

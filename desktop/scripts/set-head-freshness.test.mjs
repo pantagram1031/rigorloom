@@ -212,6 +212,8 @@ function renderHistory(statePatch) {
     exportApplied: () => {},
     loadReceipt: () => {},
     proposeUndoOf: () => {},
+    restoreRun: () => {},
+    loadSessionEvents: () => {},
     selectHistory: () => {},
     setHead: () => {},
     compareInspectRefusals: () => ({
