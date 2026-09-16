@@ -1,22 +1,10 @@
 /**
- * 기록 — the candidate chain, in lineage order, with what each one did.
+ * 기록 — a checkpoint timeline: 원본, then each published candidate.
  *
- * This panel is what makes undo something a person can reason about instead of
- * a button they have to trust. Four things it states rather than implies:
- *
- * 1. **Lineage, not a list.** Every row shows the candidate it was built ON.
- *    Before the runtime recorded a parent, two applies produced two siblings of
- *    the source and the second silently dropped the first edit — so a flat list
- *    here would be hiding exactly the fact this panel exists to show.
- * 2. **Which row reverses which.** `reverses` comes out of the receipt, so the
- *    arrow between an edit and its undo is a runtime fact, not a UI guess.
- * 3. **The head is a CHOICE.** The runtime keeps no head (§15.7): a chain can
- *    fork and it will publish both branches without complaint. So the head is
- *    the shell's, it is marked, and moving it is a deliberate click — never a
- *    silent switch that changes what the file on disk would be.
- * 4. **Selecting is reading.** Clicking a row shows it. It does not move the
- *    head, does not re-render the page as that candidate, and does not change
- *    what an export writes: export names its run explicitly, on this row.
+ * Restore is a reverse plan through approve → apply. Receipts are the only
+ * proof. Protocol chatter lives under a collapsed 이벤트 disclosure so the
+ * three event lifetimes stay separate: document history here, shell protocol
+ * activity in Timeline, provider events on the 에이전트 tab.
  */
 import { useEffect } from "react";
 
@@ -38,12 +26,12 @@ import {
   headCandidate,
   lineage,
   reversedBy,
-  sessionHistory,
   useWorkspace,
 } from "../store";
 import type { Candidate, CandidateCompare } from "../types";
 import { EmptyIconHistory, EmptyState } from "./EmptyState";
 import { Tag } from "./Tag";
+import { Timeline } from "./Timeline";
 
 /** `2026-09-02T11:04:07Z` → `11:04:07`. The date is on the receipt. */
 function clock(utc: string | undefined): string {
@@ -81,11 +69,12 @@ function Row({
   const undoPhase = useWorkspace((s) => s.undoPhase);
   return (
     <li
-      className={`history-row${selected ? " selected" : ""}${isHead ? " head" : ""}`}
+      className={`history-row checkpoint-row${selected ? " selected" : ""}${isHead ? " head is-head" : ""}`}
       data-testid={`history-${runId}`}
       data-depth={depth}
       style={{ paddingLeft: `calc(var(--s3) + ${Math.min(depth, 4) * 12}px)` }}
     >
+      <span className="checkpoint-dot" aria-hidden="true" />
       <button
         className="history-head"
         data-testid={`history-select-${runId}`}
@@ -96,6 +85,7 @@ function Row({
       >
         <span className="mono">{runId.slice(0, 12)}</span>
         <span className="mono tiny">{clock(row.createdUtc)}</span>
+        {backend ? <Tag tone="none">{backend}</Tag> : null}
         {isHead ? (
           <Tag tone="ok" title="지금 이 후보본을 문서의 현재 상태로 보고 있습니다">
             현재
@@ -118,6 +108,9 @@ function Row({
         ) : (
           <Tag tone="none">검사 결과 없음</Tag>
         )}
+        <Tag tone={receiptPresent ? "ok" : "none"}>
+          {receiptPresent ? "영수증 있음" : "영수증 없음"}
+        </Tag>
       </button>
 
       <p className="mono tiny history-facts" data-testid={`history-facts-${runId}`}>
@@ -139,15 +132,38 @@ function Row({
         {receiptPresent ? "영수증 있음" : "영수증 없음"}
       </p>
 
+      <div className="checkpoint-actions">
+        <button
+          className="ghost dark-safe"
+          data-testid={`history-receipt-${runId}`}
+          onClick={() => void loadReceipt(runId)}
+        >
+          자세히
+        </button>
+        <button
+          className="action"
+          data-testid={`history-restore-${runId}`}
+          disabled={undoPhase === "starting"}
+          title="이 후보본을 되돌리는 계획을 제안합니다. 승인하고 적용해야 후보본이 하나 더 생깁니다. 원본은 바꾸지 않습니다."
+          onClick={() => void restoreRun(runId)}
+        >
+          여기로 되돌리기
+        </button>
+        <button
+          className="ghost dark-safe"
+          data-testid={`history-compare-${runId}`}
+          onClick={() => setCompareLeft(runId)}
+        >
+          비교
+        </button>
+      </div>
+
       {selected ? (
         <div
           className="history-detail"
           id={`history-detail-${runId}`}
           data-testid={`history-detail-${runId}`}
         >
-          {/* The listing does not re-hash the artifact and says so; the receipt
-              read below is the one that does, and its refusal is the answer
-              that matters when bytes have drifted. */}
           <p className="prose tiny">
             이 목록의 해시는 영수증에 적힌 값을 읽어 온 것입니다. 바이트를 다시
             확인하는 것은 영수증 읽기 쪽이고, 어긋나면 그쪽이 거절합니다.
@@ -155,27 +171,11 @@ function Row({
           <div className="gate-actions">
             <button
               className="ghost dark-safe"
-              data-testid={`history-receipt-${runId}`}
-              onClick={() => void loadReceipt(runId)}
-            >
-              영수증 확인
-            </button>
-            <button
-              className="ghost dark-safe"
               data-testid={`history-head-${runId}`}
               disabled={isHead}
               onClick={() => void setHead(runId)}
             >
               이 후보본을 현재로
-            </button>
-            <button
-              className="action"
-              data-testid={`history-restore-${runId}`}
-              disabled={undoPhase === "starting"}
-              title="이 후보본을 되돌리는 계획을 제안합니다. 승인하고 적용해야 후보본이 하나 더 생깁니다. 원본은 바꾸지 않습니다."
-              onClick={() => void restoreRun(runId)}
-            >
-              되돌리기
             </button>
             <button
               className="ghost dark-safe"
@@ -187,40 +187,6 @@ function Row({
           </div>
         </div>
       ) : null}
-    </li>
-  );
-}
-
-function EventRow({
-  at,
-  seq,
-  eventKind,
-  runId,
-  parent,
-  backend,
-  receiptPresent,
-}: {
-  at: string;
-  seq: number | null;
-  eventKind: string | null;
-  runId: string | null;
-  parent: string | null;
-  backend: string | null;
-  receiptPresent: boolean;
-}) {
-  const id = runId ?? `seq-${seq ?? at}`;
-  return (
-    <li className="history-row" data-testid={`history-event-${seq ?? id}`}>
-      <p className="mono tiny">{eventKind ?? "event"} · {clock(at)}</p>
-      <p className="mono tiny" data-testid={`history-provenance-${id}`}>
-        run {runId ? runId.slice(0, 12) : "—"}
-        {" · "}
-        parent {parent ? parent.slice(0, 12) : "source"}
-        {" · "}
-        backend {backend ?? "—"}
-        {" · "}
-        {receiptPresent ? "영수증 있음" : "영수증 없음"}
-      </p>
     </li>
   );
 }
@@ -362,18 +328,23 @@ function ComparePayload({ compare }: { compare: CandidateCompare }) {
 
 export function History() {
   const rows = useWorkspace(activeCandidates);
-  const timeline = useWorkspace(sessionHistory);
   const head = useWorkspace(headCandidate);
   const selected = useWorkspace((s) => s.historySelected);
   const undoError = useWorkspace((s) => s.undoError);
   const proof = useWorkspace((s) => s.inverseProof);
   const sessionId = useWorkspace((s) => s.activeSessionId);
+  const sourceHash = useWorkspace((s) => {
+    const session = s.sessions?.find((row) => row.sessionId === s.activeSessionId);
+    return session?.source?.sha256 ?? null;
+  });
+  const eventCount = useWorkspace((s) => s.events?.length ?? 0);
+  const receipts = useWorkspace((s) => s.receipts);
 
   useEffect(() => {
     if (sessionId) void loadSessionEvents();
   }, [sessionId]);
 
-  if (timeline.length === 0) {
+  if (rows.length === 0 && !sourceHash) {
     return (
       <div className="section" data-testid="history-empty">
         <EmptyState
@@ -398,43 +369,44 @@ export function History() {
       <h3>
         기록
         <span className="count" data-testid="history-count">
-          {timeline.length}
+          {rows.length + (sourceHash ? 1 : 0)}
         </span>
       </h3>
       <p className="prose tiny">
-        세션 사건과 공개된 후보본을 한 줄로 봅니다. 되돌리기는 원본을 고치는
-        일이 아니라, 되돌리는 계획을 제안한 뒤 승인하고 적용하는 일입니다.
+        원본과 후보본을 시간순으로 봅니다. 되돌리기는 원본을 고치는 일이 아니라,
+        되돌리는 계획을 제안한 뒤 승인하고 적용하는 일입니다.
       </p>
 
-      <ul className="history-rows">
-        {timeline.map((item) =>
-          item.candidate ? (
-            <Row
-              key={item.key}
-              row={item.candidate}
-              depth={depthOf.get(item.candidate.runId ?? "") ?? 0}
-              isHead={!!item.candidate.runId && item.candidate.runId === head?.runId}
-              selected={item.candidate.runId === selected}
-              undoneBy={item.candidate.runId ? reversedBy(rows, item.candidate.runId) : null}
-              backend={item.backend}
-              receiptPresent={item.receiptPresent}
-            />
-          ) : (
-            <EventRow
-              key={item.key}
-              at={item.at}
-              seq={item.seq}
-              eventKind={item.eventKind}
-              runId={item.runId}
-              parent={item.parent}
-              backend={item.backend}
-              receiptPresent={item.receiptPresent}
-            />
-          ),
-        )}
+      <ul className="history-rows checkpoint-list">
+        {sourceHash ? (
+          <li className="history-row checkpoint-row is-source" data-testid="history-source">
+            <span className="checkpoint-dot" aria-hidden="true" />
+            <p className="history-head">
+              <span>원본</span>
+              <span className="mono">{sourceHash.slice(0, 12)}</span>
+            </p>
+          </li>
+        ) : null}
+        {ordered.map((row) => (
+          <Row
+            key={row.runId ?? row.sha256}
+            row={row}
+            depth={depthOf.get(row.runId ?? "") ?? 0}
+            isHead={!!row.runId && row.runId === head?.runId}
+            selected={row.runId === selected}
+            undoneBy={row.runId ? reversedBy(rows, row.runId) : null}
+            backend={row.backend ?? receipts[row.runId ?? ""]?.backend ?? null}
+            receiptPresent={Boolean(receipts[row.runId ?? ""] || row.receipt)}
+          />
+        ))}
       </ul>
 
-      <CompareInspect rows={rows} />
+      {rows.length > 0 ? <CompareInspect rows={rows} /> : null}
+
+      <details className="disclosure history-events" data-testid="history-events">
+        <summary>이벤트 ({eventCount})</summary>
+        <Timeline />
+      </details>
 
       {undoError ? (
         <div className="refusal" data-testid="undo-error">
@@ -444,11 +416,6 @@ export function History() {
         </div>
       ) : null}
 
-      {/* THE PROOF. The runtime's own answer, printed with both equalities
-          apart: text restored is what an undo claims, and bytes restored is
-          something an undo does not claim and normally cannot deliver — the
-          engine rewrites and rezips. Drawing artifactEqual:false as a failure
-          would be this panel inventing a defect. */}
       {proof ? (
         <div
           className={proof.compare.regionsEqual === true ? "queue-verdict" : "refusal"}

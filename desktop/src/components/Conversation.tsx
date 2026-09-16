@@ -1,37 +1,17 @@
 /**
- * Agent view, centre: the conversation, as calm cards.
+ * 에이전트 tab: a chat with a plan-aware assistant.
  *
- * One card per turn, and a turn is one Agent Host process. What it shows, in
- * the order a person reads it:
+ * User bubbles sit on the right, agent bubbles on the left, and tool/plan
+ * events are compact system rows. A plan arrival is a card that sends the
+ * person to 검토 — this host still cannot approve. NOTHING HERE CAN APPROVE.
  *
- *   the instruction, verbatim   what was asked
- *   what the agent said         `closingText`, the provider's own words
- *   what it did                 the compiled tool calls, as one line each
- *   where it stopped            the gate, always, because it always stops
- *   원본 기록                    every raw event, behind a disclosure
- *
- * THE TECHNICAL DETAIL IS BEHIND THE DISCLOSURE AND THE OUTCOME IS NOT. A card
- * that led with `tool.compiled plan/propose` would be a log; a card that hid
- * the tool calls entirely would be unauditable. Both are on screen and only one
- * of them is unfolded.
- *
- * NOTHING HERE CAN APPROVE, and the card says so in words rather than leaving
- * it to be inferred from the absence of a button. `neverCompiled` comes from
- * the host's own payload — the host-only methods its compile gate will never
- * emit — so the sentence is a quotation, not a claim this component makes.
- *
- * STREAMING, HONESTLY. `provider.stream.chunk` is a declared event kind and
- * this renders it when it arrives, but `AgentHost.run` only ever calls
- * `provider.complete()`: no adapter's `stream()` is reached through `host.py`
- * today, so a provider whose profile says `streaming: yes` still delivers its
- * text in one piece at the end of a turn. The card therefore streams the
- * host's PROGRESS — its events arrive live while the process runs — and says
- * plainly that the assistant text does not. Drawing a fake typing animation
- * over a batch response would be the exact dishonesty this application is
- * built to avoid. Recorded as agenthost gap 1 in the README.
+ * STREAMING, HONESTLY. `provider.stream.chunk` is rendered when it arrives, but
+ * `AgentHost.run` only ever calls `provider.complete()`, so assistant text
+ * still arrives in one piece. Drawing a fake typing animation would be the
+ * exact dishonesty this application is built to avoid.
  */
 import { runAgentProposal, stopInstruction } from "../actions";
-import { setState, useWorkspace } from "../store";
+import { selectInspectorTab, setState, useWorkspace } from "../store";
 import type { HostEvent, Turn } from "../types";
 import { EmptyIconChat, EmptyState } from "./EmptyState";
 import { Tag } from "./Tag";
@@ -61,6 +41,14 @@ const SAID: Record<string, (d: Record<string, unknown>) => string> = {
   "run.finished": (d) => (d.ok === true ? "지시를 마쳤습니다" : "여기서 멈췄습니다"),
 };
 
+const SYSTEM_KINDS = new Set([
+  "tool.requested",
+  "tool.refused",
+  "tool.compiled",
+  "runtime.result",
+  "runtime.refused",
+]);
+
 function describe(event: HostEvent): string {
   return SAID[event.kind]?.(event.detail ?? {}) ?? event.kind;
 }
@@ -84,133 +72,172 @@ function assistantText(turn: Turn): string {
   return turn.payload?.closingText ?? "";
 }
 
+function ToolIcon() {
+  return (
+    <svg className="system-icon" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M6 3.8v2.4M6 8.2h.01" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    </svg>
+  );
+}
+
+function PlanArrivalCard({
+  count,
+  testId,
+}: {
+  count: number;
+  testId: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="plan-arrival"
+      data-testid={testId}
+      onClick={() => selectInspectorTab("review")}
+    >
+      계획 {count}개 편집 도착 → 검토 탭에서 승인
+    </button>
+  );
+}
+
 function TurnCard({ turn }: { turn: Turn }) {
   const payload = turn.payload;
   const compiled = turn.events.filter((event) => event.kind === "tool.compiled");
   const refused = turn.events.filter(
     (event) => event.kind === "tool.refused" || event.kind === "runtime.refused",
   );
+  const system = turn.events.filter((event) => SYSTEM_KINDS.has(event.kind));
   const fault = payload?.providerFault ?? null;
   const said = assistantText(turn);
+  const planOps = payload?.plan?.ops.length ?? 0;
 
   return (
     <article className="turn" data-testid={`turn-${turn.id}`}>
-      <div className="asked" data-testid="turn-instruction">
-        <span className="who latin-caps">you</span>
-        <p>{turn.instruction}</p>
+      <div className="bubble-row is-user">
+        <div className="bubble bubble-user" data-testid="turn-instruction">
+          <p>{turn.instruction}</p>
+        </div>
       </div>
 
-      <div className="answered">
-        <div className="head">
+      <div className="bubble-row is-agent">
+        <div className="answered">
+          <div className="head">
+            {turn.phase === "starting" ? (
+              <Tag tone="fill">일하는 중</Tag>
+            ) : fault ? (
+              <Tag tone="bad">모델 쪽 문제</Tag>
+            ) : turn.error ? (
+              <Tag tone="bad">돌리지 못했습니다</Tag>
+            ) : payload?.plan ? (
+              <Tag tone="ok">제안 도착</Tag>
+            ) : (
+              <Tag tone="none">제안 없음</Tag>
+            )}
+            <span className="when mono">
+              {turn.provider}
+              {payload?.provider?.model ? ` · ${payload.provider.model}` : ""}
+              {payload ? ` · ${payload.turns}턴` : ""}
+              {turn.exitCode !== null ? ` · exit ${turn.exitCode}` : ""}
+            </span>
+          </div>
+
           {turn.phase === "starting" ? (
-            <Tag tone="fill">일하는 중</Tag>
-          ) : fault ? (
-            <Tag tone="bad">모델 쪽 문제</Tag>
-          ) : turn.error ? (
-            <Tag tone="bad">돌리지 못했습니다</Tag>
-          ) : payload?.plan ? (
-            <Tag tone="ok">제안 도착</Tag>
-          ) : (
-            <Tag tone="none">제안 없음</Tag>
-          )}
-          <span className="when mono">
-            {turn.provider}
-            {payload?.provider?.model ? ` · ${payload.provider.model}` : ""}
-            {payload ? ` · ${payload.turns}턴` : ""}
-            {turn.exitCode !== null ? ` · exit ${turn.exitCode}` : ""}
-          </span>
-        </div>
-
-        {turn.phase === "starting" ? (
-          <p className="progress" data-testid="turn-progress">
-            <i className="pulse" aria-hidden="true" />
-            {progressLine(turn)}
-          </p>
-        ) : null}
-
-        {said ? (
-          <p className="said" data-testid="turn-said">
-            {said}
-          </p>
-        ) : null}
-
-        {/* A provider fault is a PROVIDER fault. It never becomes a statement
-            about the document, and the plan state is left exactly as far as
-            the run actually got — which is what `ah_host` guarantees on its
-            side and what this refuses to blur on ours. */}
-        {fault ? (
-          <div className="refusal" data-testid="turn-fault">
-            <p className="prose">{String(fault.message ?? "")}</p>
-            <p className="mono tiny">{String(fault.code ?? "")}</p>
-            <p className="tiny">
-              문서에 대한 판정이 아닙니다. 계획과 승인 상태는 그대로입니다.
+            <p className="progress" data-testid="turn-progress">
+              <i className="pulse" aria-hidden="true" />
+              {progressLine(turn)}
             </p>
-          </div>
-        ) : null}
+          ) : null}
 
-        {turn.error ? (
-          <div className="refusal" data-testid="turn-error">
-            <p className="prose">{turn.error.message}</p>
-            <p className="mono tiny">{turn.error.code}</p>
-          </div>
-        ) : null}
+          {system.map((event) => (
+            <p key={event.seq} className="system-row" data-testid={`system-row-${event.seq}`}>
+              <ToolIcon />
+              <span>{describe(event)}</span>
+            </p>
+          ))}
 
-        {refused.length > 0 ? (
-          <div className="refusal" data-testid="turn-refused">
-            <Tag tone="warn">{refused.length}건을 문 앞에서 막았습니다</Tag>
-            <ul className="tiny">
-              {refused.map((event) => (
-                <li key={event.seq} className="mono">
-                  {String((event.detail ?? {}).code ?? event.kind)} —{" "}
-                  {String((event.detail ?? {}).message ?? "")}
+          {said ? (
+            <div className="bubble bubble-agent" data-testid="turn-said">
+              <p>{said}</p>
+            </div>
+          ) : null}
+
+          {fault ? (
+            <div className="refusal" data-testid="turn-fault">
+              <p className="prose">{String(fault.message ?? "")}</p>
+              <p className="mono tiny">{String(fault.code ?? "")}</p>
+              <p className="tiny">
+                문서에 대한 판정이 아닙니다. 계획과 승인 상태는 그대로입니다.
+              </p>
+            </div>
+          ) : null}
+
+          {turn.error ? (
+            <div className="refusal" data-testid="turn-error">
+              <p className="prose">{turn.error.message}</p>
+              <p className="mono tiny">{turn.error.code}</p>
+            </div>
+          ) : null}
+
+          {refused.length > 0 ? (
+            <div className="refusal" data-testid="turn-refused">
+              <Tag tone="warn">{refused.length}건을 문 앞에서 막았습니다</Tag>
+              <ul className="tiny">
+                {refused.map((event) => (
+                  <li key={event.seq} className="mono">
+                    {String((event.detail ?? {}).code ?? event.kind)} —{" "}
+                    {String((event.detail ?? {}).message ?? "")}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {payload?.plan ? (
+            <>
+              <PlanArrivalCard count={planOps} testId={`plan-arrival-${turn.id}`} />
+              <p className="gate" data-testid="turn-gate">
+                계획 <span className="mono">{payload.plan.planId.slice(0, 12)}</span> 을(를) 냈고,{" "}
+                {turn.planId ? (
+                  <>
+                    승인은 <strong>받지 못한 채</strong> 멈췄습니다. 오른쪽 검토 대기열에서 사람이
+                    직접 승인해야 합니다.
+                  </>
+                ) : turn.error ? (
+                  <>
+                    검토 대기열에 넣지 <strong>못했습니다.</strong> 위 오류를 확인한 뒤 다시 요청해야
+                    합니다.
+                  </>
+                ) : (
+                  <>
+                    도착하는 동안 문서나 검토 대기열이 바뀌어 <strong>대기열에는 넣지 않았습니다.</strong>{" "}
+                    현재 상태에서 다시 요청해야 합니다.
+                  </>
+                )}
+              </p>
+            </>
+          ) : null}
+
+          {payload ? (
+            <p className="tiny" data-testid="turn-never">
+              이 연결에 아예 없는 기능:{" "}
+              <span className="mono">{payload.neverCompiled.join(", ")}</span>
+            </p>
+          ) : null}
+
+          <details className="disclosure">
+            <summary>
+              무엇을 했는지 ({compiled.length}건) · 원본 기록 ({turn.events.length})
+            </summary>
+            <ul className="chatter">
+              {turn.events.map((event) => (
+                <li key={event.seq} className="tiny">
+                  <span className="mono">#{event.seq}</span> {describe(event)}
                 </li>
               ))}
             </ul>
-          </div>
-        ) : null}
-
-        {payload?.plan ? (
-          <p className="gate" data-testid="turn-gate">
-            계획 <span className="mono">{payload.plan.planId.slice(0, 12)}</span> 을(를) 냈고,{" "}
-            {turn.planId ? (
-              <>
-                승인은 <strong>받지 못한 채</strong> 멈췄습니다. 오른쪽 검토 대기열에서 사람이
-                직접 승인해야 합니다.
-              </>
-            ) : turn.error ? (
-              <>
-                검토 대기열에 넣지 <strong>못했습니다.</strong> 위 오류를 확인한 뒤 다시 요청해야
-                합니다.
-              </>
-            ) : (
-              <>
-                도착하는 동안 문서나 검토 대기열이 바뀌어 <strong>대기열에는 넣지 않았습니다.</strong>{" "}
-                현재 상태에서 다시 요청해야 합니다.
-              </>
-            )}
-          </p>
-        ) : null}
-
-        {payload ? (
-          <p className="tiny" data-testid="turn-never">
-            이 연결에 아예 없는 기능:{" "}
-            <span className="mono">{payload.neverCompiled.join(", ")}</span>
-          </p>
-        ) : null}
-
-        <details className="disclosure">
-          <summary>
-            무엇을 했는지 ({compiled.length}건) · 원본 기록 ({turn.events.length})
-          </summary>
-          <ul className="chatter">
-            {turn.events.map((event) => (
-              <li key={event.seq} className="tiny">
-                <span className="mono">#{event.seq}</span> {describe(event)}
-              </li>
-            ))}
-          </ul>
-          <pre>{JSON.stringify(turn.payload ?? turn.events, null, 2)}</pre>
-        </details>
+            <pre>{JSON.stringify(turn.payload ?? turn.events, null, 2)}</pre>
+          </details>
+        </div>
       </div>
     </article>
   );
@@ -225,6 +252,7 @@ export function Conversation() {
   const agentRun = useWorkspace((s) => s.agentRun);
   const sessionId = useWorkspace((s) => s.activeSessionId);
   const hostReady = useWorkspace((s) => s.agentHost?.available === true);
+  const queued = useWorkspace((s) => s.draft?.ops?.length ?? 0);
 
   return (
     <div className="conversation" data-testid="conversation">
@@ -255,11 +283,6 @@ export function Conversation() {
         </button>
       ) : null}
 
-      {/* The dev-mode mock agent, unchanged in substance and moved here from
-          the document-history pane: it is a thing an agent does, not a thing
-          that happened to the document. Present only where its script is
-          reachable — a shipped installation without a checkout does not show
-          a button that cannot work. */}
       {agentTool?.available && sessionId ? (
         <div className="agent-door" data-testid="agent-door">
           <button
@@ -286,6 +309,7 @@ export function Conversation() {
               {agentRun.door} · exit {agentRun.exitCode}
             </span>
           </div>
+          <PlanArrivalCard count={queued} testId="plan-arrival-mock" />
           <p className="said">
             <strong>{agentRun.proposer}</strong>이(가) 계획{" "}
             <span className="mono">{agentRun.planId.slice(0, 12)}</span> 을(를) 냈고, 승인은{" "}

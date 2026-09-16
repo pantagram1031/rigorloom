@@ -235,6 +235,9 @@ function renderHistory(statePatch) {
         nodeRequire("react").createElement("div", { className: "empty-state", "data-testid": testId }, title, body),
       EmptyIconHistory: () => null,
     },
+    "./Timeline": {
+      Timeline: () => nodeRequire("react").createElement("div", { "data-testid": "timeline" }),
+    },
   });
   store.setState({
     activeSessionId: "session-A",

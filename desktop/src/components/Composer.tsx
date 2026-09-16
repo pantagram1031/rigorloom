@@ -128,6 +128,11 @@ export function Composer() {
         <span className="tiny mono" data-testid="composer-provider">
           {provider}
         </span>
+        {composingFlag ? (
+          <span className="composer-ime" data-testid="composer-ime">
+            입력 중 …
+          </span>
+        ) : null}
         <span className="spacer" />
         <button
           className="action primary"

@@ -326,6 +326,8 @@ export interface WorkspaceState {
   verifyDetailsOpen: boolean;
   /** `turns.length` when the 에이전트 tab was last viewed. */
   agentTurnsSeen: number;
+  /** Candidate count per session when the 기록 tab was last viewed. */
+  historyCandidatesSeen: Record<string, number>;
   phase: Phase;
   /** What the loading state says while `phase === "starting"`. ~1.5 s to first
    *  usable paint is the measured reality (spike M1/M2), so it is designed. */
@@ -728,6 +730,7 @@ const initial: WorkspaceState = {
   leftRailCollapsed: false,
   verifyDetailsOpen: false,
   agentTurnsSeen: 0,
+  historyCandidatesSeen: {},
   phase: "idle",
   phaseNote: "",
   fatal: null,
@@ -959,7 +962,9 @@ export function inspectorReviewBadge(s: WorkspaceState): {
 
 export function inspectorHistoryBadge(s: WorkspaceState): number {
   if (!s.activeSessionId) return 0;
-  return (s.candidates[s.activeSessionId] ?? []).length;
+  const n = (s.candidates[s.activeSessionId] ?? []).length;
+  const seen = s.historyCandidatesSeen[s.activeSessionId] ?? 0;
+  return Math.max(0, n - seen);
 }
 
 export function inspectorAgentUnread(s: WorkspaceState): number {
@@ -969,6 +974,16 @@ export function inspectorAgentUnread(s: WorkspaceState): number {
 export function markAgentTurnsSeen() {
   if (state.agentTurnsSeen === state.turns.length) return;
   setState({ agentTurnsSeen: state.turns.length });
+}
+
+export function markHistoryCandidatesSeen() {
+  const id = state.activeSessionId;
+  if (!id) return;
+  const n = (state.candidates[id] ?? []).length;
+  if ((state.historyCandidatesSeen[id] ?? 0) === n) return;
+  setState({
+    historyCandidatesSeen: { ...state.historyCandidatesSeen, [id]: n },
+  });
 }
 
 export function selectInspectorTab(tab: InspectorTab) {
@@ -987,6 +1002,7 @@ export function selectInspectorTab(tab: InspectorTab) {
     lastNonAgentInspectorTab: tab,
     editIntentGeneration: bump,
   });
+  if (tab === "history") markHistoryCandidatesSeen();
 }
 
 export const setView = (view: View) => {

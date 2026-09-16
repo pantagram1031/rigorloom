@@ -230,6 +230,9 @@ function renderHistory(overrides = {}) {
           EmptyIconHistory: () => null,
         };
       }
+      if (id === "./Timeline") {
+        return { Timeline: () => React.createElement("div", { "data-testid": "timeline" }) };
+      }
       throw new Error(`unexpected import: ${id}`);
     },
   });

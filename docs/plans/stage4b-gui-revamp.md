@@ -67,8 +67,11 @@ The tokens are fine (Pretendard, warm paper, teal accent). What reads as "vibe c
       the displayed plan hash, refusal card verbatim, byte-identical plan JSON test. Verified in dev-mock via DOM
       (queued 행정안전부 on 표 0 R0C14 → card + 모두 승인 · 1); the browser pane was too narrow for a screenshot of
       the inspector at that moment. Not done: per-hunk include/exclude (approval stays commit-bound by design).
-- [ ] R5 Agent in the inspector: Conversation + Composer inside the 에이전트 tab; plan arrival badges 검토;
-      composition guard unchanged.
+- [x] R5 Agent chat + checkpoint timeline (cursor-grok-4.6-high-fast, 10.6 min, 380k in / 47k out / 3.8M cache;
+      tests 181 → 187): bubbles + tool system rows, plan-arrival card that switches to 검토 and bumps its badge,
+      sticky composer with 입력 중 … indicator and inert send while composing/disconnected, 문서 정보 as collapsed
+      details; 기록 = 원본 → candidates timeline with head marker, 자세히 / 여기로 되돌리기 (reverse plan, never apply) /
+      비교, protocol events under a collapsed 이벤트 (N). DOM-verified in dev-mock.
 - [ ] R6 Polish pass: density, focus rings, icon set (inline SVG, no new deps), Korean line-height/letter
       spacing per R0 §glossary, dark mode check, 1280×800 and 1920×1080 screenshots into docs/demo/desktop/.
 
@@ -87,3 +90,4 @@ done only when the screenshot matches the intent; "tests pass" alone is not acce
 | 2026-09-17 | R2 shell IA landed; five dev-mock screenshots checked | commit below |
 | 2026-09-17 | R3 home screen landed | commit below |
 | 2026-09-17 | R4 hunk review landed; T9 runtime README (composer) committed 233270e | commit below |
+| 2026-09-17 | R5 landed; gemini-3.8-flash C1 row recorded | commit below |

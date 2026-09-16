@@ -268,6 +268,9 @@ test("History empty state keeps history-empty and uses EmptyState", () => {
     if (id === "./Tag") {
       return { Tag: ({ children }) => React.createElement("span", null, children) };
     }
+    if (id === "./Timeline") {
+      return { Timeline: () => React.createElement("div", { "data-testid": "timeline" }) };
+    }
     throw new Error(`unexpected import: ${id}`);
   });
   const html = renderToStaticMarkup(React.createElement(exports.History));

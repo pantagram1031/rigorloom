@@ -296,6 +296,9 @@ function renderHistory(overrides = {}) {
           EmptyIconHistory: () => null,
         };
       }
+      if (id === "./Timeline") {
+        return { Timeline: () => React.createElement("div", { "data-testid": "timeline" }) };
+      }
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -311,5 +314,6 @@ test("history rows show run id, parent, backend, receipt, and a Restore action",
   assert.match(html, /backend preedit/);
   assert.match(html, /영수증 있음/);
   assert.match(html, /data-testid="history-restore-run-A"/);
-  assert.match(html, />되돌리기</);
+  assert.match(html, />여기로 되돌리기</);
+  assert.match(html, />자세히</);
 });

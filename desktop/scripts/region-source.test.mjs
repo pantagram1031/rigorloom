@@ -287,6 +287,7 @@ function renderContext(overrides = {}) {
           },
           selectInspectorTab: () => {},
           markAgentTurnsSeen: () => {},
+          markHistoryCandidatesSeen: () => {},
           inspectorHistoryBadge: () => 0,
           inspectorAgentUnread: () => 0,
         };

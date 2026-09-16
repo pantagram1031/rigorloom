@@ -12,6 +12,7 @@ import {
   inspectorAgentUnread,
   inspectorHistoryBadge,
   markAgentTurnsSeen,
+  markHistoryCandidatesSeen,
   selectInspectorTab,
   selectionId,
   useWorkspace,
@@ -25,7 +26,6 @@ import { Conversation } from "./Conversation";
 import { DocumentContext } from "./DocumentContext";
 import { History } from "./History";
 import { ApproveAllButton, ReviewQueue } from "./ReviewQueue";
-import { Timeline } from "./Timeline";
 import { CLASSIFICATION_LABEL, Tag } from "./Tag";
 
 function Fact({ k, v }: { k: string; v: React.ReactNode }) {
@@ -320,11 +320,20 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
     typeof inspectorAgentUnread === "function" ? inspectorAgentUnread(s) : 0,
   );
   const turnCount = useWorkspace((s) => s.turns?.length ?? 0);
+  const candidateCount = useWorkspace((s) =>
+    s.activeSessionId ? (s.candidates?.[s.activeSessionId] ?? []).length : 0,
+  );
   const id = selectionId(selection);
 
   useEffect(() => {
     if (tab === "agent" && typeof markAgentTurnsSeen === "function") markAgentTurnsSeen();
   }, [tab, turnCount]);
+
+  useEffect(() => {
+    if (tab === "history" && typeof markHistoryCandidatesSeen === "function") {
+      markHistoryCandidatesSeen();
+    }
+  }, [tab, candidateCount]);
 
   function onTabListKey(e: React.KeyboardEvent<HTMLDivElement>) {
     const idx = TABS.findIndex((row) => row.id === tab);
@@ -439,12 +448,7 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
       >
         {tab === "selection" ? <SelectionPane inspect={inspect} /> : null}
         {tab === "review" ? <ReviewQueue /> : null}
-        {tab === "history" ? (
-          <>
-            <History />
-            <Timeline />
-          </>
-        ) : null}
+        {tab === "history" ? <History /> : null}
         {tab === "agent" ? (
           <>
             <DocumentContext />
