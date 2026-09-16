@@ -2620,8 +2620,9 @@ export async function refreshAgentTool(): Promise<void> {
   try {
     setState({ agentTool: await rt.agentToolStatus() });
   } catch (e) {
+    const error = rt.asRuntimeError(e);
     setState({
-      agentTool: { available: false, script: null, reason: String(e) },
+      agentTool: { available: false, script: null, reason: error.message || error.code },
     });
   }
 }
@@ -3102,13 +3103,14 @@ export async function refreshAgentHost(): Promise<void> {
   try {
     setState({ agentHost: await rt.agentHostStatus() });
   } catch (e) {
+    const error = rt.asRuntimeError(e);
     setState({
       agentHost: {
         available: false,
         mode: null,
         script: null,
         program: null,
-        reason: String(e),
+        reason: error.message || error.code,
       },
     });
   }
@@ -3429,8 +3431,14 @@ export async function loadTaskPacks(): Promise<void> {
   try {
     setState({ taskPacks: await rt.taskPacks() });
   } catch (e) {
+    const error = rt.asRuntimeError(e);
     setState({
-      taskPacks: { available: false, mode: null, reason: String(e), packs: [] },
+      taskPacks: {
+        available: false,
+        mode: null,
+        reason: error.message || error.code,
+        packs: [],
+      },
     });
   }
 }

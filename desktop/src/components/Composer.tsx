@@ -17,6 +17,7 @@
 import { useEffect, useRef } from "react";
 
 import { sendInstruction } from "../actions";
+import { labelOf } from "../label";
 import { activeStoreKey, composerBlocker, getState, setState, useWorkspace } from "../store";
 import { submitComposerDraft } from "../workspace/composerDraft";
 
@@ -37,7 +38,7 @@ function Blocked({ reason }: { reason: string }) {
     case "no_host":
       return (
         <>
-          이 설치본에서 에이전트 호스트를 찾지 못했습니다. {host?.reason ?? ""} 저장소
+          이 설치본에서 에이전트 호스트를 찾지 못했습니다. {labelOf(host?.reason)} 저장소
           체크아웃에서 실행하거나 <span className="mono">RIGORLOOM_AGENT_HOST</span> 를
           지정하십시오.
         </>
@@ -88,7 +89,7 @@ export function Composer() {
   }
 
   return (
-    <div className="composer" data-testid="composer">
+    <div className={`composer${blocker ? " is-blocked" : ""}`} data-testid="composer">
       <textarea
         data-testid="composer-input"
         value={text}

@@ -31,8 +31,9 @@
  * built to avoid. Recorded as agenthost gap 1 in the README.
  */
 import { runAgentProposal, stopInstruction } from "../actions";
-import { useWorkspace } from "../store";
+import { setState, useWorkspace } from "../store";
 import type { HostEvent, Turn } from "../types";
+import { EmptyIconChat, EmptyState } from "./EmptyState";
 import { Tag } from "./Tag";
 
 /** Korean product language for each Agent Host event kind. Closed set. */
@@ -223,14 +224,27 @@ export function Conversation() {
   const agentError = useWorkspace((s) => s.agentError);
   const agentRun = useWorkspace((s) => s.agentRun);
   const sessionId = useWorkspace((s) => s.activeSessionId);
+  const hostReady = useWorkspace((s) => s.agentHost?.available === true);
 
   return (
     <div className="conversation" data-testid="conversation">
       {turns.length === 0 ? (
-        <p className="empty" data-testid="conversation-empty">
-          아직 시킨 일이 없습니다. 아래 칸에 문서로 할 일을 쓰면, 에이전트가 문서를 살펴보고
-          계획을 냅니다. 계획은 사람이 승인해야만 문서에 닿습니다.
-        </p>
+        hostReady ? (
+          <EmptyState
+            testId="conversation-empty"
+            icon={<EmptyIconChat />}
+            title="아직 시킨 일이 없습니다"
+            body="아래 칸에 문서로 할 일을 쓰면 에이전트가 계획을 냅니다."
+          />
+        ) : (
+          <EmptyState
+            testId="conversation-empty"
+            icon={<EmptyIconChat />}
+            title="에이전트가 연결되어 있지 않습니다"
+            body="설정에서 에이전트 호스트를 연결하면 지시를 보낼 수 있습니다."
+            action={{ label: "설정 열기", onClick: () => setState({ settingsOpen: true }) }}
+          />
+        )
       ) : (
         turns.map((turn) => <TurnCard key={turn.id} turn={turn} />)
       )}

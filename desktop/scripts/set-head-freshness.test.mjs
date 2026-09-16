@@ -230,6 +230,11 @@ function renderHistory(statePatch) {
     "../actions": actions,
     "../store": store,
     "./Tag": tag,
+    "./EmptyState": {
+      EmptyState: ({ title, body, testId }) =>
+        nodeRequire("react").createElement("div", { className: "empty-state", "data-testid": testId }, title, body),
+      EmptyIconHistory: () => null,
+    },
   });
   store.setState({
     activeSessionId: "session-A",

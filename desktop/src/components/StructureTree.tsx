@@ -114,7 +114,7 @@ function ForbiddenRows({
   return (
     <>
       <div className="group-head" data-testid="forbidden-group">
-        <span className="latin-caps">forbidden</span>
+        <span className="group-label">금지</span>
         <span className="count">{count}</span>
       </div>
       {forbidden.anchors.map((anchor, i) => (
@@ -249,7 +249,7 @@ export function StructureTree({
 
       {/* ── 표와 칸 ─────────────────────────────────────────────────── */}
       <div className="group-head">
-        <span className="latin-caps">tables</span>
+        <span className="group-label">표</span>
         <span className="count">{inspect.graph.tables.length}</span>
       </div>
       {inspect.graph.tables.map((table) => {
@@ -305,7 +305,7 @@ export function StructureTree({
 
       {/* ── 채움 자리 ───────────────────────────────────────────────── */}
       <div className="group-head">
-        <span className="latin-caps">fill seats</span>
+        <span className="group-label">입력 칸</span>
         <span className="count">{inspect.regions.regions.length}</span>
       </div>
       {inspect.regions.regions.map((region, i) => {
@@ -362,7 +362,7 @@ export function StructureTree({
       {guides.length > 0 && (
         <>
           <div className="group-head">
-            <span className="latin-caps">guide text</span>
+            <span className="group-label">안내문</span>
             <span className="count">{guides.length}</span>
           </div>
           {guides.map(({ table, cell }) => (
@@ -381,7 +381,7 @@ export function StructureTree({
 
       {/* ── 이 빌드가 보지 못하는 것 ────────────────────────────────── */}
       <div className="group-head">
-        <span className="latin-caps">not reachable here</span>
+        <span className="group-label">이 빌드에서 불가</span>
         <span className="count">{unreachable.length}</span>
       </div>
       {unreachable.length === 0 ? (

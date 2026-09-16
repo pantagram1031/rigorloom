@@ -40,10 +40,15 @@ The tokens are fine (Pretendard, warm paper, teal accent). What reads as "vibe c
 
 ## Slices (each: Cursor grok-high implements under a spec; Fable verifies headless tests + screenshots)
 
-- [ ] R0 Research note (grok-low): patterns, IA proposal, glossary, top-ten fixes.
-- [ ] R1 Stop the bleeding: `[object Object]` in the 작업 sidebar; the dimmed Agent centre; an empty-state
-      component (`EmptyState.tsx`: icon slot, title, one action) used by ReviewQueue, History, Conversation,
-      SessionList; status-bar chips get tooltips from the glossary. Tests stay ≥ 149.
+- [x] R0 Research note (cursor-grok-4.6-low-fast, 2.1 min, 87k in / 5.9k out / 511k cache): 18 patterns from GitButler,
+      Yaak, AFFiNE, Zed, Obsidian, Typst, Pretendard/KLReq/Toss; IA proposal, glossary, top-ten fixes. Commit 37d707b.
+- [x] R1 Stop the bleeding (cursor-grok-4.6-high-fast, 11 min, 318k in / 43k out / 4.1M cache; tests 149 → 157):
+      `[object Object]` was `reason: String(e)` on a `{code, message}` throw in `loadTaskPacks` (fixed via
+      `label.ts` + `asRuntimeError`); the dimmed Agent centre was `.action:disabled{opacity:.42}` plus a faint
+      paragraph, now a full-contrast `EmptyState` ("에이전트가 연결되어 있지 않습니다" + 설정 열기) with the composer
+      visibly disabled; `EmptyState.tsx` used by ReviewQueue/History/Conversation/SessionList; tree headings 표 /
+      입력 칸; Hangul tracking off, tabular nums. Verified in dev-mock screenshots. Follow-up for R2: the
+      browser-mode Tauri drag-drop unsubscribe error still logs once per mount (cosmetic in dev only).
 - [ ] R2 Shell IA: single workspace (`DocumentView` absorbs `AgentView`): left outline rail (collapsible to
       icons), centre document, right inspector with tabs 선택 / 검토 / 기록 / 에이전트 and badge counts;
       status bar reduced to document · verification pill (popover holds the former chips) · runtime.
@@ -68,3 +73,4 @@ done only when the screenshot matches the intent; "tests pass" alone is not acce
 | When | What | Result |
 |---|---|---|
 | 2026-09-17 | Diagnosis from dev-mock screenshots (document tab, 작업 tab) | six findings above; R0 launched on cursor-grok-4.6-low-fast |
+| 2026-09-17 | R0 note (grok-low) and R1 fixes (grok-high) landed; 작업 tab screenshot before/after | see slices; commit below |

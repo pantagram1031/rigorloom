@@ -42,6 +42,7 @@ import {
   useWorkspace,
 } from "../store";
 import type { Candidate, CandidateCompare } from "../types";
+import { EmptyIconHistory, EmptyState } from "./EmptyState";
 import { Tag } from "./Tag";
 
 /** `2026-09-02T11:04:07Z` → `11:04:07`. The date is on the receipt. */
@@ -375,11 +376,11 @@ export function History() {
   if (timeline.length === 0) {
     return (
       <div className="section" data-testid="history-empty">
-        <h3>기록</h3>
-        <p className="prose">
-          아직 만들어진 후보본이 없습니다. 승인하고 적용할 때마다 여기에 하나씩
-          쌓이고, 지워지는 것은 없습니다.
-        </p>
+        <EmptyState
+          icon={<EmptyIconHistory />}
+          title="아직 후보본이 없습니다"
+          body="승인하고 적용할 때마다 여기에 하나씩 쌓입니다."
+        />
       </div>
     );
   }

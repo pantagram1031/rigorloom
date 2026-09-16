@@ -43,6 +43,7 @@ import {
   runModuleCheck,
   runtimeEnabledModules,
 } from "../actions";
+import { labelOf } from "../label";
 import { useWorkspace } from "../store";
 import type { ModuleCheckReport, ModuleCheckRow, ModuleFinding, TaskPack } from "../types";
 import { Tag } from "./Tag";
@@ -278,7 +279,7 @@ function PackDetail({ pack }: { pack: TaskPack }) {
         <h3>{pack.title}</h3>
         {pack.enabled ? <Tag tone="ok">켜짐</Tag> : <Tag tone="none">꺼짐</Tag>}
       </div>
-      <p className="prose">{PLANNED[pack.name] ?? pack.blurb}</p>
+      <p className="prose">{PLANNED[pack.name] ?? labelOf(pack.blurb, pack.name)}</p>
 
       <h4>지금 이 설치본에 실제로 있는 것</h4>
       <ul className="tiny">
@@ -358,7 +359,7 @@ export function TaskPacks() {
         <p className="empty">읽는 중입니다.</p>
       ) : !packs.available ? (
         <p className="empty" data-testid="task-packs-unavailable">
-          {packs.reason}
+          {labelOf(packs.reason, "작업 팩 목록을 읽지 못했습니다.")}
         </p>
       ) : (
         <div className="rows">
@@ -371,10 +372,10 @@ export function TaskPacks() {
               onClick={() => openPack(pack.name === open ? null : pack.name)}
             >
               <span className="primary">
-                {pack.title}
+                {labelOf(pack.title, pack.name)}
                 {pack.enabled ? null : <span className="secondary"> · 꺼짐</span>}
               </span>
-              <span className="secondary">{pack.blurb || pack.name}</span>
+              <span className="secondary">{labelOf(pack.blurb, pack.name)}</span>
             </button>
           ))}
         </div>

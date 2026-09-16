@@ -75,6 +75,23 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
       return nextEventId++;
     case "plugin:event|unlisten":
       return null;
+    case "task_packs":
+      return {
+        available: false,
+        mode: "browser",
+        reason: "브라우저 미리보기에는 작업 팩 등록기가 없습니다.",
+        packs: [],
+      };
+    case "agent_host_status":
+      return {
+        available: false,
+        mode: null,
+        script: null,
+        program: null,
+        reason: "브라우저 미리보기에는 에이전트 호스트가 없습니다.",
+      };
+    case "agent_tool_status":
+      return { available: false, script: null, reason: "브라우저 미리보기" };
     default:
       throw { code: "dev_mock", message: `no fixture for ${cmd}` };
   }

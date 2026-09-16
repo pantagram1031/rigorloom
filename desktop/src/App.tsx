@@ -76,6 +76,14 @@ function Fatal({
 /** Document sits left of Agent on one axis, so the slide direction has meaning. */
 const AXIS: Record<View, number> = { document: 0, agent: 1 };
 
+/** Real Tauri windows expose this; the browser devMock only stubs `invoke`. */
+function canBindDragDrop(): boolean {
+  const internals = (window as unknown as {
+    __TAURI_INTERNALS__?: { metadata?: { currentWebview?: { label?: string } } };
+  }).__TAURI_INTERNALS__;
+  return typeof internals?.metadata?.currentWebview?.label === "string";
+}
+
 function switchView(next: View) {
   if (getState().view === next) return;
   setView(next);
@@ -123,21 +131,24 @@ export default function App() {
       if (!(await subscriptions.add(rt.onPanic((p) => setState({ panic: p }))))) return;
 
       // Files dropped on the window. The webview owns the event; the runtime
-      // owns everything that happens to the bytes afterwards.
-      try {
-        if (
-          !(await subscriptions.add(
+      // owns everything that happens to the bytes afterwards. Browser-mode
+      // (devMock) has invoke but no window metadata, so getCurrentWebview()
+      // throws — never abort boot, and never leave the drop veil stuck.
+      if (canBindDragDrop()) {
+        try {
+          await subscriptions.add(
             getCurrentWebview().onDragDropEvent((event) => {
-              if (event.payload.type === "over") setState({ dragOver: true });
-              else if (event.payload.type === "drop") void openDropped(event.payload.paths);
-              else setState({ dragOver: false });
+              if (event.payload.type === "over" || event.payload.type === "enter") {
+                setState({ dragOver: true });
+              } else {
+                setState({ dragOver: false });
+                if (event.payload.type === "drop") void openDropped(event.payload.paths);
+              }
             }),
-          ))
-        ) {
-          return;
+          );
+        } catch {
+          setState({ dragOver: false });
         }
-      } catch {
-        // Drag-drop is an affordance, not a dependency: the dialog still works.
       }
 
       // Read the launcher's intent before boot: the entrance screenshot needs

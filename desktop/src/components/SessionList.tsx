@@ -12,6 +12,7 @@
  */
 import { useWorkspace } from "../store";
 import type { Session } from "../types";
+import { EmptyIconDoc, EmptyState } from "./EmptyState";
 import { TaskPacks } from "./TaskPacks";
 
 export function SessionList({
@@ -34,7 +35,11 @@ export function SessionList({
       <div className="panel-body">
         <div className="rows" data-testid="session-list">
           {sessions.length === 0 ? (
-            <p className="empty">아직 연 문서가 없습니다.</p>
+            <EmptyState
+              icon={<EmptyIconDoc />}
+              title="연 문서가 없습니다"
+              body="문서를 열면 이 목록에 나타납니다."
+            />
           ) : (
             sessions.map((s: Session) => (
               <button

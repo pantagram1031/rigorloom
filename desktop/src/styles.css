@@ -531,10 +531,11 @@ button {
   }
 }
 
-/* Panes rise in a 60 ms stagger after the mark finishes. */
+/* Panes rise in a 60 ms stagger after the mark finishes. Resting opacity is
+   1 so a missed animation cannot leave the centre under a veil. */
 .stagger > * {
-  opacity: 0;
-  animation: rise-in 260ms var(--ease) forwards;
+  opacity: 1;
+  animation: rise-in 260ms var(--ease) both;
 }
 
 .stagger > *:nth-child(1) { animation-delay: 0ms; }
@@ -633,6 +634,13 @@ button {
   align-items: center;
   gap: var(--s2);
   padding: var(--s4) var(--s3) var(--s1);
+  color: var(--fg-faint);
+}
+
+.group-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-emph);
+  letter-spacing: 0;
   color: var(--fg-faint);
 }
 
@@ -798,9 +806,8 @@ button {
   padding-bottom: var(--s2);
   color: var(--fg-faint);
   font-size: var(--text-xs);
-  font-family: var(--font-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-family: var(--font-ui);
+  letter-spacing: 0;
 }
 
 .paper .doc-table td {
@@ -1255,18 +1262,58 @@ body.dragging .drop {
 
 .prose {
   font-size: var(--text-base);
-  line-height: var(--leading-body);
+  line-height: 1.6;
   color: var(--fg-muted);
   margin: 0;
   max-width: 52ch;
 }
 
+.panel .prose,
+.panel .empty {
+  line-height: 1.6;
+}
+
 .empty {
   padding: var(--s6) var(--s4);
   font-size: var(--text-base);
-  line-height: var(--leading-body);
+  line-height: 1.6;
   color: var(--fg-faint);
   max-width: 48ch;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s8) var(--s4);
+  max-width: 36ch;
+}
+
+.empty-state-icon {
+  color: var(--accent);
+  display: flex;
+}
+
+.empty-state-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-head);
+  line-height: var(--leading-ui);
+  letter-spacing: 0;
+  color: var(--fg);
+}
+
+.empty-state-body {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.6;
+  letter-spacing: 0;
+  color: var(--fg-muted);
+}
+
+.empty-state .action {
+  margin-top: var(--s1);
 }
 
 /* ══ agent timeline ══════════════════════════════════════════════════════ */
@@ -1361,7 +1408,23 @@ body.dragging .drop {
   border-radius: var(--radius);
 }
 
-.composer textarea:disabled { cursor: not-allowed; }
+.composer textarea:disabled {
+  cursor: not-allowed;
+  color: var(--fg);
+  opacity: 1;
+  border-style: dashed;
+}
+
+.composer.is-blocked .action:disabled {
+  opacity: 1;
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  border-color: var(--line-strong);
+}
+
+.composer.is-blocked .note {
+  color: var(--fg);
+}
 
 .composer .note {
   margin: var(--s2) 0 0;
@@ -1879,7 +1942,10 @@ body.dragging .drop {
 .receipt-checks .dim,
 .receipt-steps .dim { color: var(--fg-faint); }
 
-.hash { cursor: help; }
+.hash {
+  cursor: help;
+  font-variant-numeric: tabular-nums;
+}
 
 .linkish {
   font-size: inherit;

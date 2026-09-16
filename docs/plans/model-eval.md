@@ -113,3 +113,21 @@ The primary Cursor account (`pantagram1031`) returned `ActionRequiredError: You'
   visually verified in vite dev-mock (tree click → 자리 원문 pane shows address/access/text, cell highlighted).
   Pre-existing dev-mock console error (Tauri drag-drop unsubscribe under StrictMode) noted, not G6's.
 
+### OpenCode `opencode/union-alpha` (2026-09-17, free alpha via OpenCode Zen; user asked to try it)
+- Works: PONG (8 s, 17k input, cost 0), tiny attachment, 9k-char inline summary (190 output tokens, 8 s).
+- Fails: every turn that needs a long generation. C1 spec in its own worktree died after 12 tool calls
+  (`step_finish reason: other`, 0 tokens, ~33 s); `-c` continuation died instantly; fresh retry died after 12
+  calls; a no-tool 500-word Korean essay died at 37–38 s with 0 tokens on the default and `high` variants and
+  with `provider.opencode.options.timeout` raised. No error is logged by OpenCode; the session export records
+  `finish: other`. Direct endpoint probe returns 403 outside the SDK. Reading: a ~30 s cutoff on the alpha
+  gateway for long generations on this PC; unusable for agentic or long-form work until that changes. Local
+  OpenCode history shows the user's earlier sessions were on `x-preview-f-free`, not union-alpha.
+- Launch gotcha: `opencode run` `-f` is an array flag and swallows a trailing positional message; put the
+  message before `-f`.
+
+### Stage 4b desktop revamp lanes (2026-09-17)
+| task | model | wall | in / out / cache | outcome |
+|---|---|---|---|---|
+| R0 design research (read-only) | cursor-grok-4.6-low-fast | 2.1 min | 87k / 5.9k / 511k | accurate, sourced, matched Fable's diagnosis; adopted as input |
+| R1 stop-the-bleeding (13 files) | cursor-grok-4.6-high-fast | 11 min | 318k / 43k / 4.1M | root causes found, tests 149 → 157, screenshots confirm; committed |
+

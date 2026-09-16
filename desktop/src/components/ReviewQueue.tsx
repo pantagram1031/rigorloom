@@ -54,6 +54,7 @@ import {
 } from "../store";
 import type { PlanFinding } from "../types";
 import { hasActiveApprovalBinding } from "../workspace/reviewSummary";
+import { EmptyIconInbox, EmptyState } from "./EmptyState";
 import { Tag } from "./Tag";
 
 /** Findings that name one op, keyed the way `validate_plan` writes `at`. */
@@ -338,11 +339,11 @@ export function ReviewQueue() {
   if (draft.ops.length === 0) {
     return (
       <div className="section" data-testid="review-queue-empty">
-        <h3>검토 대기열</h3>
-        <p className="prose">
-          비어 있습니다. 문서 화면에서 <strong>채움 자리</strong>를 누르고 값을 쓰면 여기에
-          쌓입니다. 승인하기 전까지 문서는 아무것도 바뀌지 않습니다.
-        </p>
+        <EmptyState
+          icon={<EmptyIconInbox />}
+          title="검토할 것이 없습니다"
+          body="문서에서 입력 칸을 누르면 값이 여기에 쌓입니다."
+        />
         {redo ? <div className="gate-actions">{redo}</div> : null}
       </div>
     );

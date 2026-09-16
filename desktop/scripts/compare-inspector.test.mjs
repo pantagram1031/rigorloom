@@ -223,6 +223,13 @@ function renderHistory(overrides = {}) {
             React.createElement("span", { "data-tone": tone }, children),
         };
       }
+      if (id === "./EmptyState") {
+        return {
+          EmptyState: ({ title, body, testId }) =>
+            React.createElement("div", { className: "empty-state", "data-testid": testId }, title, body),
+          EmptyIconHistory: () => null,
+        };
+      }
       throw new Error(`unexpected import: ${id}`);
     },
   });
