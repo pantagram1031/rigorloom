@@ -33,9 +33,15 @@ Status: ACTIVE 2026-09-16. Owner: Fable. Source: `docs/plans/analyses/stage4-gui
 - [x] G4 (partial, same session) Structure tree marks regions editable only when the inspect payload says so and
       renders `forbidden` rows non-editable when the Runtime returns that section; documented protocol gap
       otherwise. G1 follow-ups done: Composer sets `isComposing`; scripted smoke applies after approve.
-- [ ] G3 Honest page preview — `render`, `render-prepare` (host-only, explicit button), `geometry` when present.
-- [ ] G4 Structure tree + region source — `inspect`, `read-region`.
-- [ ] G5 Session history + reverse — `events`, `candidates`, `propose --reverses-run`.
+- [x] G3 Honest page preview — on-demand request, run/source label + stale label, unavailable keeps last good
+      image with the JSON reason, prepare IME-inert with refusal chrome (cursor-grok-4.6-**high**-fast, 19 min,
+      214k in / 55k out / 9.5M cache; tests 131 → 140). Follow-up: scripted smoke still targets the old
+      `history-undo` button id; grade strip copy untouched (no new renderer claims).
+- [x] G4 Structure tree + region source — done in the G2 session (editable only when the payload says so;
+      `forbidden` rows when the Runtime returns them). Region source view (`read-region` beside the tree) is the
+      remaining part.
+- [x] G5 Session history + reverse — events merged with candidates; Restore = propose with `reverses` → normal
+      approve/apply; test proves apply is never called directly.
 
 Default screen: reuse the desktop `DocumentView` layout from `docs/desktop-code-map.md`: StructureTree (G4) |
 TextView + optional PagePreview (G4, G3) | ReviewQueue + ReceiptPanel + History (G1, G2, G5); VerificationBar
