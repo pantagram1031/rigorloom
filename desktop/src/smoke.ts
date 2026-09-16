@@ -177,11 +177,21 @@ async function applyApprovedPlan() {
 }
 
 /**
+ * Stage 4b put 검토 / 기록 / 에이전트 behind inspector tabs. A DOM check that
+ * still assumed the old always-on side panels has to open the tab first.
+ */
+async function showInspectorTab(tab: "selection" | "review" | "history" | "agent") {
+  selectInspectorTab(tab);
+  await settled(240);
+}
+
+/**
  * Restore through the history-restore control: propose with reverses, then the
  * caller runs approve and applyApproved. Never the old history-undo id, and
  * never an in-place mutation of the original.
  */
 async function restoreViaHistory(runId: string) {
+  await showInspectorTab("history");
   selectHistory(runId);
   await settled(240);
   checkDom(
@@ -202,6 +212,7 @@ async function restoreViaHistory(runId: string) {
       getState().undoPhase === "failed",
     20_000,
   );
+  await showInspectorTab("review");
 }
 
 function hasHangul(text: string): boolean {
@@ -950,6 +961,7 @@ async function phaseUndo(config: SmokeConfig) {
     `${activeCandidates(getState()).length} candidates`);
   check("the removed op is on the redo stack", getState().redoStack.length === 1,
     `${getState().redoStack.length}`);
+  await showInspectorTab("review");
   checkDom("다시 넣기 is offered", !!document.querySelector('[data-testid="queue-redo"]'),
     domText('[data-testid="review-queue-empty"]').slice(0, 120));
 
@@ -1095,6 +1107,7 @@ async function phaseUndo(config: SmokeConfig) {
     receipt.base?.runId === chainRun, JSON.stringify(receipt.base));
 
   // --- 6. the 기록 panel -----------------------------------------------------
+  await showInspectorTab("history");
   await settled(300);
   checkDom("기록 lists the whole lineage",
     document.querySelectorAll('[data-testid^="history-"][data-depth]').length === 3,
@@ -1347,8 +1360,10 @@ async function phaseAgent(config: SmokeConfig) {
     domText('[data-testid="agent-result"]').slice(0, 160));
   setView("document");
   await settled(240);
+  await showInspectorTab("review");
   checkDom("the queue row says the op came from an agent",
-    domText('[data-testid="review-queue"]').includes("에이전트 제안"),
+    !!document.querySelector('[data-testid="approve-all"]') &&
+      domText('[data-testid="review-queue"]').includes("에이전트 제안"),
     domText('[data-testid="review-queue"]').slice(0, 160));
 
   // The human approves it exactly the way a manual edit is approved. NOT via
@@ -4149,7 +4164,9 @@ async function phaseChrome(config: SmokeConfig) {
     `${domText('[data-testid="tool-size"]')} vs ${JSON.stringify(baseline)}`);
 
   checkDom("the status bar carries the Hangul insert indicator, saying neither",
-    domText('[data-testid="verification-bar"]').includes("삽입/수정 없음"),
+    !getState().inlineEdit &&
+      domText('[data-testid="verification-bar"]').includes("입력") &&
+      !domText('[data-testid="verification-bar"]').includes("삽입"),
     domText('[data-testid="verification-bar"]').slice(0, 200));
 
   // Document zoom, one number for both modes.

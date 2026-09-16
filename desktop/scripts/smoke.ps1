@@ -144,7 +144,23 @@ $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DesktopDir = Split-Path -Parent $ScriptDir
 $RepoRoot   = Split-Path -Parent $DesktopDir
 $RunDir     = Join-Path $ScriptDir '_run'
-$Exe        = if ($Executable) { (Resolve-Path -LiteralPath $Executable).Path } else { Join-Path $DesktopDir 'src-tauri\target\release\rigorloom-desktop.exe' }
+$Exe        = if ($Executable) { (Resolve-Path -LiteralPath $Executable).Path } else {
+    $local = Join-Path $DesktopDir 'src-tauri\target\release\rigorloom-desktop.exe'
+    $fromCargo = if ($env:CARGO_TARGET_DIR) {
+        Join-Path $env:CARGO_TARGET_DIR 'release\rigorloom-desktop.exe'
+    } else { '' }
+    # CARGO_TARGET_DIR is where `tauri build` actually wrote the exe AND its
+    # bundled sidecar. The src-tauri/target copy is a convenience layout; if
+    # that copy is missing its resources/, resolve_launch falls back to the
+    # interpreter and the open-phase packaged-sidecar check fails.
+    if ($fromCargo -and (Test-Path -LiteralPath $fromCargo)) {
+        (Resolve-Path -LiteralPath $fromCargo).Path
+    } elseif (Test-Path -LiteralPath $local) {
+        (Resolve-Path -LiteralPath $local).Path
+    } else {
+        $local
+    }
+}
 
 if (-not $Corpus) {
     $Corpus = Join-Path $RepoRoot 'tests\corpus\forms\converted\gianmun-byeolji-1ho.hwpx'
@@ -188,6 +204,14 @@ $AgentHost = Join-Path $RepoRoot 'agenthost\scripts\host.py'
 # The task-pack list needs the module DECLARATIONS. The bundle carries those
 # too now; this pins the run to the repo's copy for the same reason.
 $ModulesRoot = Join-Path $RepoRoot 'modules'
+# Snapshot before any phase. The packs check below is "this run did not write
+# into the checkout", not "the checkout has never had an enablement". A
+# gitignored modules/enabled.yaml left by pytest or an operator is category (c).
+$RepoEnabled = Join-Path $ModulesRoot 'enabled.yaml'
+$EnabledBeforeHash = $null
+if (Test-Path -LiteralPath $RepoEnabled) {
+    $EnabledBeforeHash = (Get-FileHash -LiteralPath $RepoEnabled -Algorithm SHA256).Hash
+}
 
 # What must never appear in any file the app writes. `smoke.ts` puts this exact
 # string into the OS credential store and then drives the settings pane; the
@@ -450,12 +474,21 @@ try {
     # the P2 defect's shape exactly. Checked from out here because only out
     # here can see the repository the app was pointed at.
     if ($ran -contains 'packs') {
-        $repoEnabled = Join-Path $ModulesRoot 'enabled.yaml'
-        if (Test-Path $repoEnabled) {
-            Write-Host ("  [FAIL] the run left an enablement in the checkout at {0}" -f $repoEnabled)
+        $nowExists = Test-Path -LiteralPath $RepoEnabled
+        $nowHash = if ($nowExists) {
+            (Get-FileHash -LiteralPath $RepoEnabled -Algorithm SHA256).Hash
+        } else { $null }
+        if ($nowExists -and -not $EnabledBeforeHash) {
+            Write-Host ("  [FAIL] the run left an enablement in the checkout at {0}" -f $RepoEnabled)
+            $allOk = $false
+        } elseif ($nowExists -and $EnabledBeforeHash -and $nowHash -ne $EnabledBeforeHash) {
+            Write-Host ("  [FAIL] the run mutated the checkout enablement at {0}" -f $RepoEnabled)
             $allOk = $false
         } else {
             Write-Host "  [PASS] the packs phase enabled modules without writing into the checkout"
+            if ($EnabledBeforeHash) {
+                Write-Host "  (pre-existing gitignored enablement was left untouched)"
+            }
         }
     }
 
