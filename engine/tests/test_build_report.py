@@ -190,6 +190,11 @@ def test_delete_texts_after_abstract_delete_ctrls(tmp_path):
     assert op_names.index("replace_all") < op_names.index("delete_ctrls")
 
 
+def test_merge_meta_carries_allow_colors():
+    merged = br.merge_meta({}, {"allow_colors": ["false"]})
+    assert merged["allow_colors"] == ["false"]
+
+
 def test_merge_meta_carries_delete_texts():
     merged = br.merge_meta({}, {"delete_texts": ["x", "y"]})
     assert merged["delete_texts"] == ["x", "y"]
@@ -1060,6 +1065,64 @@ def test_yaml_list_int_elements_still_parsed_as_int():
 
 # ── style_diff allowance normalization (BUG2c) ──────────────────────────
 
+def test_allow_colors_false_emits_global_and_abstract_label_set_char_color():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["allow_colors"] = "false"
+    ops = br.build_ops(meta, secs, FIX)
+    color_ops = [o for o in ops if o["op"] == "set_char_color"]
+    assert color_ops == [
+        {"op": "set_char_color", "color": "#000000", "all": True},
+        {"op": "set_char_color", "color": "#000000", "all": False,
+         "anchor": br.ABSTRACT_GUIDE_LABEL, "required": False},
+    ]
+
+
+def test_allow_colors_parsed_false_list_still_emits_set_char_color(tmp_path):
+    """LIST_KEYS가 `allow_colors: false`를 `["false"]`로 접어도 정규화한다."""
+    p = _write_build_yaml(tmp_path, ["allow_colors: false"])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["allow_colors"] == ["false"]
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    ops = br.build_ops(br.merge_meta(meta, cfg), secs, FIX)
+    assert any(o["op"] == "set_char_color" and o.get("all") is True for o in ops)
+    assert any(o.get("anchor") == br.ABSTRACT_GUIDE_LABEL for o in ops)
+
+
+def test_allow_colors_empty_list_emits_set_char_color():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["allow_colors"] = []
+    ops = br.build_ops(meta, secs, FIX)
+    assert [o["op"] for o in ops if o["op"] == "set_char_color"] == [
+        "set_char_color", "set_char_color"]
+
+
+def test_allow_colors_allowlist_skips_set_char_color():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["allow_colors"] = ["#0000FF"]
+    ops = br.build_ops(meta, secs, FIX)
+    assert not any(o["op"] == "set_char_color" for o in ops)
+
+
+def test_set_char_color_ops_precede_delete_texts_after():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["delete_texts_after"] = ["나중 안내 X"]
+    ops = br.build_ops(meta, secs, FIX)
+    names = [o["op"] for o in ops]
+    last_color = max(i for i, n in enumerate(names) if n == "set_char_color")
+    late = names.index("find_delete", names.index("replace_all") + 1)
+    assert last_color < late
+    assert ops[-1]["text"] == "나중 안내 X"
+
+
 def test_style_diff_allow_colors_accepts_quoted_and_unquoted_and_bracket_forms():
     import style_diff as sd
 
@@ -1688,6 +1751,9 @@ _GOLDEN_EXPECTED_OPS = [
     {"op": "insert_equation", "base_pt": 10, "display": False,
      "hwpeqn": "E = mc^{2}"},
     {"op": "insert_text", "text": "여기까지.", "pt": 10, "break_after": True},
+    {"op": "set_char_color", "color": "#000000", "all": True},
+    {"op": "set_char_color", "color": "#000000", "all": False,
+     "anchor": "(초록: 논문의 주요 내용의 요약)", "required": False},
 ]
 
 

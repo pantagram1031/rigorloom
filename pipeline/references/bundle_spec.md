@@ -66,6 +66,7 @@ bundle/
 - 조립 규칙(고정): 그림 단독 문단(가운데, width mm, 높이 종횡비 자동) → 캡션 문단 아래(caption_pt=9, 가운데). width 미지정 시 110mm 기본.
 - 빈 캡션(`caption=""`)이면 캡션 문단 생략.
 - file은 bundle/figures/ 기준 상대경로.
+- 캡션 접두: `그림`/`Fig`뿐 아니라 코드 스크린샷용 `코드`/`Code`/`알고리즘`/`Algorithm`도 같은 선택 대괄호·번호 형식(`[코드 1 - …]`, `코드 1.`, `[Algorithm 2]`)을 쓴다. `layout_qa` CAPTION_RE / OBJECT_CAPTION_RE가 이 형식을 그림 캡션과 같이 인정한다. `[식 n]`은 수식 캡션이라 그림 캡션으로 치지 않는다.
 
 ### 표 (v2: cols= pt= 추가)
 ```
@@ -149,6 +150,13 @@ header_series: ""                  # 머리말 옆 시리즈명. header_text가 
 - **delete_texts** (build.yaml): 양식 안내문 `find_delete`. **title `replace_all`보다 먼저**
   발행한다 — 안내문에 placeholder 단어(예: `논문제목`)가 있으면 제목 치환이 안내문까지
   바꿔 이후 삭제가 실패한다.
+- **allow_colors**: 비검정 글자색을 남길 때만 켠다. 키 부재·`false`·빈 목록은
+  포크와 같이 검정 정규화가 기본이다. 조립 끝(줄간격 뒤, `delete_texts_after` 앞)에
+  `set_char_color #000000 all:true`와 초록 라벨 표적 `set_char_color`(anchor
+  `(초록: 논문의 주요 내용의 요약)`, `required: false`)를 방출한다. SelectAll이
+  표 셀 안 라벨을 빠뜨리기 때문이다. 라벨을 지우려면 같은 문구를 `delete_texts_after`에
+  넣는다(AURALAB). 색을 검정으로 바꾸든 지우든 `verify_format` F2(잔여 빨강)는
+  그대로 세므로, 빨간 안내가 남으면 게이트는 실패한다.
 - **delete_texts_after** (build.yaml): `delete_texts`와 같은 목록 형태(flat `[a, b]` 또는
   block `- "…"`). `find_delete`를 섹션·그림·표·수식 삽입이 끝난 **맨 끝**에 발행한다.
   섹션 앵커로 쓰인 안내문(예: 초록 placeholder)처럼 본문 삽입 전에 지우면 안 되는 문구용.

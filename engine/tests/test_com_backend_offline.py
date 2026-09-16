@@ -1071,3 +1071,92 @@ def test_real_form_geometry_reproduces_the_defect():
     cursor = _GridCursor(cells)
     com_backend.walk_to_cell_addr(cursor, (2, 3))
     assert cursor.addr() == (2, 3) and cursor.text() == ""
+
+
+# ---------------------------------------------------------------------------
+# set_char_color targeted anchor (SelectAll misses the abstract-table label)
+# ---------------------------------------------------------------------------
+
+class _FakeCharColorHwp:
+    """op_set_char_color surface: SelectAll vs find(anchor) + CharShape."""
+
+    class _PSet:
+        def __init__(self):
+            self.HSet = self
+            self.TextColor = None
+
+    class _HAction:
+        def __init__(self, record, pset):
+            self._record = record
+            self._pset = pset
+
+        def GetDefault(self, name, hset):
+            self._record.append(("GetDefault", name))
+
+        def Execute(self, name, hset):
+            self._record.append(("Execute", name, self._pset.TextColor))
+            return True
+
+    def __init__(self, find_hits=None):
+        self.actions = []
+        self.find_hits = dict(find_hits or {})
+        self._pset = self._PSet()
+        self.HParameterSet = types.SimpleNamespace(HCharShape=self._pset)
+        self.HAction = self._HAction(self.actions, self._pset)
+
+    def MoveDocBegin(self):
+        self.actions.append("MoveDocBegin")
+
+    def SelectAll(self):
+        self.actions.append("SelectAll")
+
+    def find(self, text):
+        self.actions.append(("find", text))
+        return bool(self.find_hits.get(text, False))
+
+    def Cancel(self):
+        self.actions.append("Cancel")
+
+
+def test_set_char_color_all_true_uses_select_all():
+    hwp = _FakeCharColorHwp()
+    res = com_backend.op_set_char_color(
+        hwp, {"color": "#000000", "all": True})
+    assert "MoveDocBegin" in hwp.actions
+    assert "SelectAll" in hwp.actions
+    assert ("find", _GUIDE) not in hwp.actions
+    assert ("Execute", "CharShape", 0) in hwp.actions
+    assert res["text_color"] == 0
+    assert "warning" in res
+
+
+def test_set_char_color_anchor_found_skips_select_all():
+    hwp = _FakeCharColorHwp(find_hits={_GUIDE: True})
+    res = com_backend.op_set_char_color(hwp, {
+        "color": "#000000", "all": False,
+        "anchor": _GUIDE, "required": False,
+    })
+    assert "SelectAll" not in hwp.actions
+    assert ("find", _GUIDE) in hwp.actions
+    assert ("Execute", "CharShape", 0) in hwp.actions
+    assert res["anchor"] == _GUIDE
+    assert res["text_color"] == 0
+
+
+def test_set_char_color_anchor_missing_required_false_skips_charshape():
+    hwp = _FakeCharColorHwp(find_hits={})
+    res = com_backend.op_set_char_color(hwp, {
+        "color": "#000000", "all": False,
+        "anchor": _GUIDE, "required": False,
+    })
+    assert res == {"text_color": 0, "found": False}
+    assert not any(
+        isinstance(a, tuple) and a[0] == "Execute" for a in hwp.actions)
+
+
+def test_set_char_color_anchor_missing_required_true_raises():
+    hwp = _FakeCharColorHwp(find_hits={})
+    with pytest.raises(RuntimeError, match="글자색 앵커"):
+        com_backend.op_set_char_color(hwp, {
+            "color": "#000000", "all": False, "anchor": _GUIDE,
+        })

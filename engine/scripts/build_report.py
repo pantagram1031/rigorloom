@@ -380,6 +380,8 @@ def merge_meta(meta, build_cfg):
             merged[k] = build_cfg[k]
     if "fill" in build_cfg:
         merged["fill"] = build_cfg["fill"]
+    if "allow_colors" in build_cfg:
+        merged["allow_colors"] = build_cfg["allow_colors"]
     if "delete_texts" in build_cfg:
         merged["delete_texts"] = build_cfg["delete_texts"]
     if "delete_texts_after" in build_cfg:
@@ -546,6 +548,34 @@ def _is_true(v, default=True):
     if v is None:
         return default
     return str(v).strip().lower() not in ("false", "0", "no", "off")
+
+
+# 양식 초록 표 안의 빨간 안내 라벨. SelectAll이 이 셀을 빠뜨리므로
+# allow_colors가 꺼져 있으면 전역 검정 정규화 뒤에 표적 set_char_color로
+# 따로 칠한다. 삭제는 delete_texts_after로 남긴다(AURALAB).
+ABSTRACT_GUIDE_LABEL = "(초록: 논문의 주요 내용의 요약)"
+_FALSE_COLOR_TOKENS = frozenset(("false", "0", "no", "off"))
+
+
+def _allows_nonblack_colors(v):
+    """allow_colors가 비검정 글자색을 남기라고 하는지.
+
+    build.yaml은 이 키를 두 가지로 쓴다. Hawkes는 boolean `false`이고,
+    LIST_KEYS 파서가 `["false"]`로 접는다. AURALAB은 style_diff 허용
+    목록 `[]`. 둘 다 '허용 색 없음'이므로 검정 정규화를 방출한다.
+    비어 있지 않은 색 목록이나 true만 전역 set_char_color를 건너뛴다.
+    키 부재는 포크와 같이 정규화가 기본(default=False).
+    """
+    if v is None:
+        return False
+    if isinstance(v, (list, tuple, set)):
+        tokens = [str(x).strip().lower() for x in v if str(x).strip()]
+        if not tokens:
+            return False
+        if all(t in _FALSE_COLOR_TOKENS for t in tokens):
+            return False
+        return True
+    return str(v).strip().lower() not in _FALSE_COLOR_TOKENS
 
 
 def load_form_profile(path):
@@ -810,6 +840,16 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
     ls = meta.get("line_spacing")
     if ls:
         ops.append({"op": "set_line_spacing", "percent": int(str(ls).rstrip("%"))})
+    # 제출본은 양식의 붉은 안내문 글자색을 상속하지 않도록 전체 텍스트를
+    # 검정으로 정규화한다. 그림 내부 색은 HWP 글자 속성이 아니므로 보존된다.
+    # SelectAll은 일부 한글 버전에서 표 안의 초록 라벨을 빠뜨린다. 라벨은
+    # 별도로 찾아 검정으로 교정해 제출 양식의 빨간 안내색이 남지 않게 한다.
+    # 라벨 자체 삭제는 delete_texts_after로 유지(AURALAB). F2는 잔여 빨강을
+    # 계속 세므로 색 정규화·삭제 모두 그 검사를 우회하지 않는다.
+    if not _allows_nonblack_colors(meta.get("allow_colors")):
+        ops.append({"op": "set_char_color", "color": "#000000", "all": True})
+        ops.append({"op": "set_char_color", "color": "#000000", "all": False,
+                    "anchor": ABSTRACT_GUIDE_LABEL, "required": False})
     # tidy_blank_before/after (build.yaml): T7(COM 기반 blank-paragraph 정리가
     # 제목 charPr 오염·문단 병합을 일으킴) 이후 COM-op emission은 폐기.
     # 키 자체는 여기서 계속 파싱 가능하게 남겨두되(meta에 이미 병합됨), 실제

@@ -30,9 +30,13 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from cli_io import utf8_stdio  # noqa: E402
 
-CAPTION_RE = re.compile(r"^\s*(\[?그림|Fig)", re.IGNORECASE)
-# 캡션 뒤 빈 줄 면제용 — 표/그림 캡션 줄 판정("표 1.", "[그림 2]", "그림 3" 등).
-OBJECT_CAPTION_RE = re.compile(r"^\s*(표\s*\d|\[?그림\s*\d|Fig)", re.IGNORECASE)
+# 그림/코드/알고리즘 캡션. 선택 대괄호는 그림과 같은 형식("[코드 1 - …]").
+_CAPTION_KIND = r"(?:그림|코드|알고리즘|Fig|Code|Algorithm)"
+CAPTION_RE = re.compile(rf"^\s*(\[?{_CAPTION_KIND})", re.IGNORECASE)
+# 캡션 뒤 빈 줄 면제용 — 표/그림/코드/알고리즘 캡션 줄 판정
+# ("표 1.", "[그림 2]", "[코드 1 - …]", "Fig 3" 등).
+OBJECT_CAPTION_RE = re.compile(
+    rf"^\s*(표\s*\d|\[?{_CAPTION_KIND}\s*\d|Fig)", re.IGNORECASE)
 CITATION_RE = re.compile(r"\[\d{1,2}\]")
 GUIDE_RE = re.compile(r"(작성하세요|여기에\s*입력|예시\s*[):]|【안내|<안내)")
 LATEX_LEAK_RE = re.compile(r"\\\\|pmatrix|\\frac")

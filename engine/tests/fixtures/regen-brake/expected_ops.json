@@ -323,6 +323,18 @@
       "text": "Q. Zhang et al.(2024), \"Regenerative braking system development and perspectives for electric vehicles: An overview\", Renewable and Sustainable Energy Reviews.",
       "pt": 11,
       "break_after": true
+    },
+    {
+      "op": "set_char_color",
+      "color": "#000000",
+      "all": true
+    },
+    {
+      "op": "set_char_color",
+      "color": "#000000",
+      "all": false,
+      "anchor": "(초록: 논문의 주요 내용의 요약)",
+      "required": false
     }
   ]
 }

@@ -33,6 +33,8 @@ ops.json 형식 (순서대로 실행):
   // 레거시(T28 위험): row/col은 '키 입력 횟수'이지 cellAddr이 아니다 — rowSpan 양식에서 엉뚱한 셀에 쓴다
   {"op": "set_cell", "table": 0, "row": 1, "col": 2, "text": "값", "raw_traversal": true},
   {"op": "set_char_color", "color": "#000000"},     // 문서 전체 글자색(기본 all)
+  {"op": "set_char_color", "color": "#000000", "all": false,
+   "anchor": "(초록: 논문의 주요 내용의 요약)", "required": false}, // 표 셀 라벨
   {"op": "delete_ctrls", "types": ["tbl", "gso"]},  // 표/그림 삭제(캡션 텍스트는 유지)
   {"op": "collapse_empty_paragraphs"},              // 연속 빈 문단 -> 1빈줄(^n^n^n->^n^n)
   {"op": "delete_blank_after",  "text": "캡션"},    // 캡션 뒤 빈 문단 제거(이미지 밀착)
@@ -1376,7 +1378,9 @@ def op_set_char_color(hwp, o):
     """글자색만 변경. 기본은 문서 전체(SelectAll), 굵기·크기 등은 불변.
 
     GetDefault로 받은 CharShape 파라미터에서 TextColor만 set하므로 다른 글자
-    속성은 건드리지 않는다. all=false면 현재 선택 영역에만 적용.
+    속성은 건드리지 않는다. all=false면 현재 선택 영역에만 적용. all=false이고
+    anchor가 있으면 그 문구를 찾아 선택 영역에 적용한다(SelectAll이 빠뜨리는
+    표 셀 안 초록 라벨용). required=false면 미발견 시 skip.
 
     순서 주의: insert_hyperlink는 링크를 파랑으로 넣는다. 그 뒤에 all=true 전역
     색 지정을 돌리면 SelectAll이 링크까지 덮어 파랑이 사라진다. 하이퍼링크가
@@ -1387,6 +1391,12 @@ def op_set_char_color(hwp, o):
     if all_doc:
         hwp.MoveDocBegin()
         hwp.SelectAll()
+    elif o.get("anchor"):
+        hwp.MoveDocBegin()
+        if not (hwp.find(o["anchor"]) if hasattr(hwp, "find") else False):
+            if o.get("required", True):
+                raise RuntimeError(f"글자색 앵커 문구를 찾지 못함: {o['anchor']!r}")
+            return {"text_color": color, "found": False}
     # CharShape 파라미터로 TextColor만 직접 set한다. set_font(TextColor=...)는
     # 빈 값 인자를 건너뛰는데 검정(0)도 falsy라 스킵돼 검정 적용이 무효가 된다.
     # 따라서 항상 HParameterSet 경로를 쓴다(크기·굵기 등 다른 속성은 GetDefault로 보존).
@@ -1401,6 +1411,8 @@ def op_set_char_color(hwp, o):
     res = {"text_color": color}
     if all_doc:
         res["warning"] = ("all=true는 하이퍼링크 색도 덮어씀 — 링크 삽입 후 실행 금지")
+    if o.get("anchor"):
+        res["anchor"] = o["anchor"]
     return res
 
 
