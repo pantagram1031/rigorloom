@@ -29,6 +29,11 @@ SUPPORTED_OPS = {
     "page_binding", "replace_all", "insert_blank_before", "insert_picture",
     "set_line_spacing",
 }
+# COM-only page chrome. XML must refuse with a named reason, not skip.
+XML_UNSUPPORTED_REASONS = {
+    "page_numbers": "page_numbers_unsupported_xml",
+    "set_header": "set_header_unsupported_xml",
+}
 SECTION_RE = re.compile(r"^Contents/section\d+\.xml$")
 HWPUNIT_PER_MM = 7200 / 25.4
 HWPUNIT_PER_PIXEL_96_DPI = 7200 / 96
@@ -1131,7 +1136,11 @@ def main(argv=None):
         unsupported = []
         for op in ops:
             name = op["op"]
-            if name not in SUPPORTED_OPS and name not in unsupported:
+            if name in XML_UNSUPPORTED_REASONS:
+                reason = XML_UNSUPPORTED_REASONS[name]
+                if reason not in unsupported:
+                    unsupported.append(reason)
+            elif name not in SUPPORTED_OPS and name not in unsupported:
                 unsupported.append(name)
             elif name == "insert_equation":
                 if op.get("boxed"):

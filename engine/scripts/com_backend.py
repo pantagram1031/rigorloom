@@ -844,16 +844,16 @@ def _set_bold(hwp, bold):
     hwp.HAction.Execute("CharShape", pset.HSet)
 
 
-def _insert_run_with_shape(hwp, text, pt=None, bold=None):
-    """텍스트 한 런을 삽입하고, pt/bold가 주어지면 insert-then-select로 CharShape를 건다.
+def _insert_run_with_shape(hwp, text, pt=None, bold=None, color=None):
+    """텍스트 한 런을 삽입하고, pt/bold/color가 주어지면 insert-then-select로 CharShape를 건다.
 
     pending CharShape는 한 번 밀려(다음 입력에 적용) 신뢰할 수 없다 — 먼저
     삽입하고 삽입 구간을 선택해 CharShape를 거는 결정론적 경로(op_insert_text의
-    기존 pt 전용 경로와 동일 메커니즘, bold까지 확장). pt/bold 둘 다 없으면
+    기존 pt 전용 경로와 동일 메커니즘, bold까지 확장). pt/bold/color 모두 없으면
     아무 CharShape도 걸지 않고 그대로 삽입(앵커 서식 상속, 구동작).
     반환: 삽입 후 커서 위치(end, get_pos() 튜플).
     """
-    if pt is None and bold is None:
+    if pt is None and bold is None and color is None:
         hwp.insert_text(text)
         return hwp.get_pos()
     start = hwp.get_pos()           # (list, para, pos)
@@ -862,7 +862,15 @@ def _insert_run_with_shape(hwp, text, pt=None, bold=None):
     try:
         if hwp.select_text(start[1], start[2], end[1], end[2], start[0]):
             if pt is not None:
-                _set_char_height(hwp, pt, bold=bold)
+                _set_char_height(hwp, pt, color=(0 if color is None else color),
+                                 bold=bold)
+            elif color is not None:
+                pset = hwp.HParameterSet.HCharShape
+                hwp.HAction.GetDefault("CharShape", pset.HSet)
+                pset.TextColor = color
+                if bold is not None:
+                    pset.Bold = 1 if bold else 0
+                hwp.HAction.Execute("CharShape", pset.HSet)
             else:
                 _set_bold(hwp, bold)
         try:
@@ -1813,6 +1821,84 @@ def op_set_line_spacing(hwp, o):
     return {"line_spacing_percent": percent}
 
 
+_PAGE_NUM_POS = {
+    "bottom_center": "BottomCenter",
+    "bottom_left": "BottomLeft",
+    "bottom_right": "BottomRight",
+    "top_center": "TopCenter",
+    "top_left": "TopLeft",
+    "top_right": "TopRight",
+    "inside_top": "InsideTop",
+    "outside_top": "OutsideTop",
+    "inside_bottom": "InsideBottom",
+    "outside_bottom": "OutsideBottom",
+}
+
+
+def op_set_header(hwp, o):
+    """반복 머리말. HeaderFooter type=0은 현재 구역의 모든 쪽에 적용된다.
+
+    머리말은 별도 한글 영역이라 본문 페이지 흐름과 충돌하지 않는다.
+    text가 비면 아무 것도 넣지 않는다(빈 문자열 = 없음).
+    """
+    header_text = str(o.get("text") or o.get("header_text") or "").strip()
+    header_series = str(o.get("series") or o.get("header_series") or "").strip()
+    if not header_text:
+        return {"header": False}
+    hwp.MoveDocBegin()
+    pset = hwp.HParameterSet.HHeaderFooter
+    hwp.HAction.GetDefault("HeaderFooter", pset.HSet)
+    pset.type = 0
+    if not hwp.HAction.Execute("HeaderFooter", pset.HSet):
+        raise RuntimeError("머리말 영역 생성 실패")
+    # 원본은 머리말이 위쪽에 달라붙지 않고 약 4mm 내려와 있으며,
+    # 제목은 가운데, 회색 가로선은 본문 폭 가까이 뻗는다.
+    _insert_run_with_shape(hwp, "\u200b", pt=5, bold=False,
+                           color=_parse_color("#FFFFFF"))
+    _run(hwp, "BreakPara")
+    _run(hwp, "ParagraphShapeAlignCenter")
+    _insert_run_with_shape(hwp, header_text, pt=8.5, bold=False,
+                           color=_parse_color("#555555"))
+    if header_series:
+        _insert_run_with_shape(hwp, "    " + header_series, pt=8, bold=False,
+                               color=_parse_color("#777777"))
+    _run(hwp, "BreakPara")
+    _insert_run_with_shape(hwp, "━" * 84, pt=5.5, bold=False,
+                           color=_parse_color("#B9BEC8"))
+    _run(hwp, "CloseEx")
+    return {"header": True, "text": header_text, "series": header_series}
+
+
+def op_page_numbers(hwp, o):
+    """가운데 쪽번호. PageNumPos의 side_char=True는 ``- n -`` 형식을 만든다.
+
+    build_report가 넣는 position/format/pt 계약을 유지하고, COM은 포크와
+    같이 pyhwpx PageNumPos 래퍼(HPageNumPos 파라미터 세트)를 쓴다. 래퍼가
+    없는 더블(테스트)은 GetDefault/Execute("PageNumPos")로 같은 액션을 기록한다.
+    """
+    raw_pos = o.get("position") or "bottom_center"
+    key = str(raw_pos).lower().replace("-", "_")
+    position = _PAGE_NUM_POS.get(key, "BottomCenter")
+    fmt = o.get("format") or "- {n} -"
+    pt = o.get("pt", 9)
+    hwp.MoveDocBegin()
+    wrapper = getattr(hwp, "PageNumPos", None)
+    if callable(wrapper):
+        wrapper(global_start=1, position=position,
+                number_format="Digit", side_char=True)
+    else:
+        pset = hwp.HParameterSet.HPageNumPos
+        hwp.HAction.GetDefault("PageNumPos", pset.HSet)
+        draw = getattr(hwp, "PageNumPosition", None)
+        numfmt = getattr(hwp, "NumberFormat", None)
+        pset.DrawPos = draw(position) if callable(draw) else position
+        pset.NumberFormat = numfmt("Digit") if callable(numfmt) else "Digit"
+        pset.NewNumber = 1
+        pset.SideChar = 45
+        hwp.HAction.Execute("PageNumPos", pset.HSet)
+    return {"page_numbers": True, "position": raw_pos, "format": fmt, "pt": pt}
+
+
 OPS = {
     "replace_all": op_replace_all,
     "put_field": op_put_field,
@@ -1836,6 +1922,8 @@ OPS = {
     "page_binding": op_page_binding,
     "set_line_spacing": op_set_line_spacing,
     "page_break_before": op_page_break_before,
+    "page_numbers": op_page_numbers,
+    "set_header": op_set_header,
 }
 
 
@@ -1856,6 +1944,7 @@ OP_REQUIRED_KEYS = {
     "page_break_before": ("text",),
     "set_cell": ("text",),
     "edit_equation": ("index",),
+    "set_header": ("text",),
 }
 
 

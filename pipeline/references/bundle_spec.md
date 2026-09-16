@@ -109,6 +109,9 @@ line_spacing: 160                  # 줄간격(%). 미지정 시 양식 기본�
 binding: submit                    # book(기본,제본용 미러여백) | submit(제출용 좌우대칭)
 abstract: false                    # true(기본) | false → 양식의 초록 표를 통째로 제거
 abstract_table_index: 1            # abstract:false일 때 지울 표 index(기본 1=초록표)
+page_numbers: true                 # true면 바닥글 가운데 쪽번호(`- n -`). 글자 크기 caption_pt(기본 9). 미지정/false면 없음
+header_text: ""                    # 반복 머리말 텍스트. 빈 문자열이면 머리말 없음
+header_series: ""                  # 머리말 옆 시리즈명. header_text가 있을 때만 쓰이며, 빈 문자열이면 생략
 ---
 ```
 - **base_pt**: 본문/수식/URL을 이 크기로 **강제**(insert-then-select). 제목은 양식 원본 크기 보존. 수식 BaseUnit도 base_pt로.
@@ -118,6 +121,12 @@ abstract_table_index: 1            # abstract:false일 때 지울 표 index(기�
 - **binding**: `submit`이면 조립 시 `page_binding` op으로 좌우 여백을 대칭화(인쇄폭 동일).
 - **abstract**: `false`면 `delete_ctrls`(tbl, abstract_table_index)로 초록 표 제거 →
   I.서론부터 시작. content.md에 초록 섹션을 아예 빼면 된다.
+- **page_numbers**: `true`면 조립 초반(`page_binding`/`delete_ctrls` 이후, 섹션 삽입 이전)에
+  `page_numbers` op를 방출한다. 바닥글 가운데, 형식 `- n -`, `pt`는 `caption_pt`(없으면 9).
+  미지정·false·off면 쪽번호를 넣지 않는다. XML 백엔드는 `page_numbers_unsupported_xml`로 거절.
+- **header_text** / **header_series**: 반복 머리말. `header_text`가 비어 있지 않을 때만
+  `set_header` op를 방출한다(`series`는 옆 시리즈명, 빈 문자열이면 생략). 둘 다 빈
+  문자열이면 머리말 없음. XML 백엔드는 `set_header_unsupported_xml`로 거절.
 - **delete_texts** (build.yaml): 양식 안내문 `find_delete`. **title `replace_all`보다 먼저**
   발행한다 — 안내문에 placeholder 단어(예: `논문제목`)가 있으면 제목 치환이 안내문까지
   바꿔 이후 삭제가 실패한다.

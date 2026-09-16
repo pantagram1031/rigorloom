@@ -179,6 +179,7 @@ def parse_front_matter(text):
 BUILD_YAML_KEYS = {
     "base_pt", "caption_pt", "line_spacing", "binding", "abstract",
     "title", "title_anchor", "collapse_blank_runs", "box_display_equations",
+    "header_text", "header_series", "page_numbers",
 }
 # 리스트 값으로 파싱할 최상위 키(style_diff.py의 색 허용 목록 등).
 # delete_texts: 삭제할 안내문 문자열 목록(양식 잔재 정리, find_delete op로 변환).
@@ -562,6 +563,23 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
     # 있으면 안 된다(위 상수 주석 참고).
     for pb in meta.get("page_break_before") or []:
         ops.append({"op": "page_break_before", "text": pb, "required": False})
+    # 쪽번호·반복 머리말: 문서 장식. page_binding/delete_ctrls 이후,
+    # 섹션 삽입(goto_text 등) 이전에 1회. header_text가 빈 문자열이면 머리말
+    # 없음. page_numbers는 명시적으로 true일 때만 방출(기본 꺼짐).
+    header_text = str(meta.get("header_text") or "").strip()
+    if header_text:
+        ops.append({
+            "op": "set_header",
+            "text": header_text,
+            "series": str(meta.get("header_series") or "").strip(),
+        })
+    if _is_true(meta.get("page_numbers"), default=False):
+        ops.append({
+            "op": "page_numbers",
+            "position": "bottom_center",
+            "format": "- {n} -",
+            "pt": caption_pt or 9,
+        })
     figs_dir = Path(bundle_dir) / "figures"
     for si, sec in enumerate(sections):
         # BUG4: 제목 앞 빈 문단 1개 보장(이전 본문과 제목 분리). 단 첫 섹션은 앞에 분리할

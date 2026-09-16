@@ -782,6 +782,157 @@ def test_xml_backend_refuses_boxed_equation(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# page_numbers / set_header (COM; XML refuses with a named reason)
+# ---------------------------------------------------------------------------
+
+class _FakePageChromeHwp:
+    """op_page_numbers/op_set_header: record HAction names and PageNumPos."""
+
+    class _PSet:
+        def __init__(self):
+            self.HSet = self
+            self.type = None
+            self.DrawPos = None
+            self.NumberFormat = None
+            self.NewNumber = None
+            self.SideChar = None
+            self.Height = None
+            self.TextColor = None
+            self.Bold = None
+            self.UnderlineType = None
+
+    class _HParameterSet:
+        def __init__(self):
+            self.HHeaderFooter = _FakePageChromeHwp._PSet()
+            self.HPageNumPos = _FakePageChromeHwp._PSet()
+            self.HCharShape = _FakePageChromeHwp._PSet()
+
+    class _HAction:
+        def __init__(self, record):
+            self._record = record
+
+        def GetDefault(self, name, hset):
+            self._record.append(name)
+
+        def Execute(self, name, hset):
+            self._record.append(name)
+            return True
+
+        def Run(self, action):
+            self._record.append(action)
+
+    def __init__(self):
+        self.actions = []
+        self.page_num_pos_kwargs = None
+        self.text_written = ""
+        self._pos = (0, 0, 0)
+        self.HParameterSet = self._HParameterSet()
+        self.HAction = self._HAction(self.actions)
+
+    def MoveDocBegin(self):
+        self.actions.append("MoveDocBegin")
+
+    def PageNumPos(self, **kwargs):
+        self.actions.append("PageNumPos")
+        self.page_num_pos_kwargs = kwargs
+        return True
+
+    def Run(self, action):
+        self.actions.append(action)
+
+    def get_pos(self):
+        return self._pos
+
+    def set_pos(self, *args):
+        self._pos = args
+
+    def insert_text(self, text):
+        self.text_written += text
+        self._pos = (self._pos[0], self._pos[1], self._pos[2] + len(text))
+
+    def select_text(self, *args):
+        return True
+
+    def Cancel(self):
+        self.actions.append("Cancel")
+
+
+def test_op_page_numbers_executes_pagenumpos_action():
+    hwp = _FakePageChromeHwp()
+    result = com_backend.op_page_numbers(hwp, {
+        "position": "bottom_center", "format": "- {n} -", "pt": 9})
+    assert "PageNumPos" in hwp.actions
+    assert hwp.actions[0] == "MoveDocBegin"
+    assert hwp.page_num_pos_kwargs == {
+        "global_start": 1, "position": "BottomCenter",
+        "number_format": "Digit", "side_char": True,
+    }
+    assert result["page_numbers"] is True
+    assert result["format"] == "- {n} -"
+    assert result["pt"] == 9
+
+
+def test_op_page_numbers_falls_back_to_pagenumpos_parameter_set():
+    """Wrapper-less doubles still Execute the PageNumPos parameter set."""
+    hwp = _FakePageChromeHwp()
+    hwp.PageNumPos = None
+    result = com_backend.op_page_numbers(hwp, {"position": "bottom_center"})
+    assert "PageNumPos" in hwp.actions
+    assert hwp.HParameterSet.HPageNumPos.SideChar == 45
+    assert hwp.HParameterSet.HPageNumPos.NewNumber == 1
+    assert result["page_numbers"] is True
+
+
+def test_op_set_header_executes_headerfooter_action():
+    hwp = _FakePageChromeHwp()
+    result = com_backend.op_set_header(hwp, {
+        "text": "제목", "series": "시리즈"})
+    assert "HeaderFooter" in hwp.actions
+    assert "CloseEx" in hwp.actions
+    assert "ParagraphShapeAlignCenter" in hwp.actions
+    assert result["header"] is True
+    assert "제목" in hwp.text_written
+    assert "시리즈" in hwp.text_written
+
+
+def test_xml_backend_refuses_page_numbers_with_named_reason(tmp_path):
+    src = tmp_path / "in.hwpx"
+    src.write_bytes(b"not-a-real-hwpx")
+    ops_path = tmp_path / "ops.json"
+    ops_path.write_text(json.dumps([
+        {"op": "page_numbers", "position": "bottom_center",
+         "format": "- {n} -", "pt": 9}]), encoding="utf-8")
+    dst = tmp_path / "out.hwpx"
+    result = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "scripts", "xml_backend.py"),
+         "edit", "--file", str(src), "--ops", str(ops_path),
+         "--save-as", str(dst)],
+        capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 4, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["unsupported"] == ["page_numbers_unsupported_xml"]
+    assert not dst.exists()
+
+
+def test_xml_backend_refuses_set_header_with_named_reason(tmp_path):
+    src = tmp_path / "in.hwpx"
+    src.write_bytes(b"not-a-real-hwpx")
+    ops_path = tmp_path / "ops.json"
+    ops_path.write_text(json.dumps([
+        {"op": "set_header", "text": "제목", "series": ""}]), encoding="utf-8")
+    dst = tmp_path / "out.hwpx"
+    result = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "scripts", "xml_backend.py"),
+         "edit", "--file", str(src), "--ops", str(ops_path),
+         "--save-as", str(dst)],
+        capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 4, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["unsupported"] == ["set_header_unsupported_xml"]
+    assert not dst.exists()
+
+
+# ---------------------------------------------------------------------------
 # 실사격(COM) 검증 — 한컴이 있는 기계에서만, 직렬로. 없으면 사유와 함께 skip.
 # ---------------------------------------------------------------------------
 

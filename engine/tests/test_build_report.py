@@ -452,6 +452,124 @@ def test_validate_ops_rejects_page_break_before_missing_text():
         cb._validate_ops([{"op": "page_break_before"}])
 
 
+# ── page_numbers / set_header (build.yaml 페이지 장식) ──────────────────
+
+def test_page_numbers_absent_emits_no_ops():
+    _, _, ops = _build()
+    assert not any(o["op"] in ("page_numbers", "set_header") for o in ops)
+
+
+def test_page_numbers_false_emits_no_op():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["page_numbers"] = False
+    ops = br.build_ops(meta, secs, FIX)
+    assert not any(o["op"] == "page_numbers" for o in ops)
+
+
+def test_empty_header_text_emits_no_set_header():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["header_text"] = ""
+    meta["header_series"] = "Series"
+    ops = br.build_ops(meta, secs, FIX)
+    assert not any(o["op"] == "set_header" for o in ops)
+
+
+def test_page_numbers_emits_op_after_setup_before_sections():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["binding"] = "submit"
+    meta["abstract"] = "false"
+    meta["delete_texts"] = ["안내문 A"]
+    meta["page_break_before"] = ["I.  서론"]
+    meta["page_numbers"] = True
+    ops = br.build_ops(meta, secs, FIX)
+
+    pn = [o for o in ops if o["op"] == "page_numbers"]
+    assert pn == [{"op": "page_numbers", "position": "bottom_center",
+                   "format": "- {n} -", "pt": 9}]
+
+    names = [o["op"] for o in ops]
+    pn_idx = names.index("page_numbers")
+    first_section = min(
+        i for i, n in enumerate(names)
+        if n in ("goto_text", "insert_blank_before")
+    )
+    assert names.index("page_binding") < pn_idx
+    assert names.index("delete_ctrls") < pn_idx
+    assert pn_idx < first_section
+
+
+def test_page_numbers_pt_follows_caption_pt():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["page_numbers"] = "true"
+    meta["caption_pt"] = 11
+    ops = br.build_ops(meta, secs, FIX)
+    pn = next(o for o in ops if o["op"] == "page_numbers")
+    assert pn["pt"] == 11
+
+
+def test_set_header_emits_when_header_text_nonempty():
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["header_text"] = "보고서 제목"
+    meta["header_series"] = "탐구 시리즈"
+    ops = br.build_ops(meta, secs, FIX)
+    hd = [o for o in ops if o["op"] == "set_header"]
+    assert hd == [{"op": "set_header", "text": "보고서 제목",
+                   "series": "탐구 시리즈"}]
+    names = [o["op"] for o in ops]
+    first_section = min(
+        i for i, n in enumerate(names)
+        if n in ("goto_text", "insert_blank_before")
+    )
+    assert names.index("set_header") < first_section
+
+
+def test_parse_build_yaml_and_merge_page_chrome_keys(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        'header_text: "반복 머리말"',
+        'header_series: "시리즈"',
+        "page_numbers: true",
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["header_text"] == "반복 머리말"
+    assert cfg["header_series"] == "시리즈"
+    assert cfg["page_numbers"] == "true"
+    merged = br.merge_meta({}, cfg)
+    assert merged["header_text"] == "반복 머리말"
+    assert merged["header_series"] == "시리즈"
+    assert merged["page_numbers"] == "true"
+
+
+def test_merge_meta_no_page_chrome_keys_when_absent():
+    merged = br.merge_meta({}, {})
+    assert "page_numbers" not in merged
+    assert "header_text" not in merged
+    assert "header_series" not in merged
+
+
+def test_validate_ops_accepts_page_numbers_and_set_header():
+    ops = [
+        {"op": "page_numbers", "position": "bottom_center",
+         "format": "- {n} -", "pt": 9},
+        {"op": "set_header", "text": "제목", "series": ""},
+    ]
+    assert cb._validate_ops(ops) == ops
+
+
+def test_validate_ops_rejects_set_header_missing_text():
+    with pytest.raises(SystemExit):
+        cb._validate_ops([{"op": "set_header"}])
+
+
 # ── fake-Hwp COM harness — records HAction.Run/Run() action names ──────────
 # 실제 GetPos()/find() 등은 라이브 한글 인스턴스가 필요해 유닛 테스트 불가하지만
 # (위 _resolve_post_field_pos 주석 참고), op_goto_text의 T8/T10 가드와
