@@ -27,6 +27,7 @@ docx = ["python-docx>=1.1"]
 studio = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "pymupdf>=1.23"]
 engine = ["pillow>=10", "pymupdf>=1.23", "pyyaml>=6"]
 test = ["pytest>=8"]
+poster = ["python-pptx>=0.6.21", "pillow>=10"]
 
 [tool.pytest.ini_options]
 # MODULE-AGNOSTIC by contract (modules/README.md rule 4: "adding a module

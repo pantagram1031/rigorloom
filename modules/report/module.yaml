@@ -35,6 +35,8 @@ provides:
     - {command: pipeline, script: scripts/pipeline_ctl.py}
     - {command: compose, script: scripts/compose.py}
     - {command: workflow-lint, script: scripts/workflow_lint.py}
+    - {command: poster, script: scripts/poster_build.py}
+    - {command: poster-verify, script: scripts/poster_verify.py}
   preflight:
     - {name: preflight_report, script: scripts/preflight_report.py}
   studio_panels:
