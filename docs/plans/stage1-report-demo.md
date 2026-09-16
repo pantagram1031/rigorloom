@@ -1,6 +1,6 @@
 # Stage 1 — one complete report through `main`, publicly demoable
 
-Status: ACTIVE 2026-09-16. Owner: Claude (goals, content, verification).
+Status: DONE 2026-09-16 (all six goals; see ledger). Next: Stage 2 repo hygiene. Owner: Claude (goals, content, verification).
 Coding lanes: Cursor agent `cursor-grok-4.6-xhigh-fast` on bounded tasks.
 Branch: `claude/stage1-report-demo` (worktree `dev/rigorloom-stage1`), base `main@ec61ea0`.
 No push, no main merge, no deletion of other branches. Commits stay local.
@@ -21,21 +21,21 @@ artifact is the first demo for the open-source README and the M2 evidence in
 
 ## Goals (exit = all checked)
 
-- [ ] G1 `boxed` display equations: `build_report.py` honors `box_display_equations`
+- [x] G1 `boxed` display equations: `build_report.py` honors `box_display_equations`
       in build.yaml; `com_backend.op_insert_equation` draws the 1×1 double-border
       table box (port of the fork, lines 606–660); offline tests pass; `xml_backend`
       refuses `boxed` with a named reason (no silent drop).
-- [ ] G2 poster line: `modules/report/scripts/poster_build.py` + `poster_verify.py`
+- [x] G2 poster line: `modules/report/scripts/poster_build.py` + `poster_verify.py`
       registered as `poster`/`poster-verify` CLI in `module.yaml`; optional extra
       `[poster]` = python-pptx + pillow; clean refusal when missing; tests with a
       synthetic 2-box pptx form.
-- [ ] G3 AURALAB report workspace scaffolded with `new_report.py` under
+- [x] G3 AURALAB report workspace scaffolded with `new_report.py` under
       `Downloads/ReportWorkspace project/reports/`, stages 0→4 with real
       simulation data from `acoustic_building_analyzer`.
-- [ ] G4 native assembly via Hancom COM on this PC, PDF verified page-by-page,
+- [x] G4 native assembly via Hancom COM on this PC, PDF verified page-by-page,
       `submission_preflight` green.
-- [ ] G5 poster built from the same workspace with G2.
-- [ ] G6 demo assets (sanitized PDF pages / PNGs) staged for the Stage 2 README.
+- [x] G5 poster built from the same workspace with G2.
+- [x] G6 demo assets (sanitized PDF pages / PNGs) staged for the Stage 2 README.
 
 ## Cursor task specs
 
@@ -84,6 +84,9 @@ Acceptance: `python -m pytest -q modules/report/tests/test_poster_build.py pipel
 | 2026-09-16 | T4 (strip_residual whole-paragraph) + T5 (adjacent whitespace) committed (6f40bc8, +1). Runs 7 and 8 still show the red ` ` run: it precedes the abstract body in the same paragraph; COM-side stripping did not take effect. Run 8 also hit `proof_iter 4 → escalate_human` because the proof counter accumulates in `output/fill_events.jsonl`; archived to `output/archive-runs1-8/` | Cursor T6 dispatched: offline `tidy_hwpx --strip-guide-ws-runs #FF0000` wired via build.yaml `strip_guide_ws_colors` |
 | 2026-09-16 | T6 committed dc27f36 (`tidy_hwpx --strip-guide-ws-runs`, build.yaml `strip_guide_ws_colors`). Run 9: converged, proof hancom, out.hwpx has 0 runs on red charPr 27, but `verify_format` F2 still fails because it counts near-red charPr **definitions** in header.xml (lines 392–405), not runs | Cursor T7 dispatched: neutralize unreferenced guide-colour charPr to #000000 inside the same tidy step |
 | 2026-09-16 | `canonical_output` is written as YAML null by invalidate; set it to `output/out.hwpx` only after the final converged run (check_canonical validates it) | pending |
+
+| 2026-09-16 | T7 committed (neutralize unreferenced guide charPr). Run 10: converged, proof hancom, `verify_format` pass (red 0). Rubric judged true ×4 (layout identical to runs 4/6), scorecard hashes refreshed, `canonical_output: output/out.hwpx`, request.yaml `output_filename` filled → gates 5.3/5.5/5.7/6 all auto_approved; `pipeline_ctl resume` = all stages done | **Stage 1 complete** |
+| 2026-09-16 | Demo assets: `ReportWorkspace project/docs/demo/` (report PDF, 6 page PNGs, all-pages sheet, poster PNG) | for Stage 2 README |
 
 ## Workspace facts (for resume)
 
