@@ -268,7 +268,7 @@ function renderContext(overrides = {}) {
     require: (id) => {
       if (id === "react/jsx-runtime") return require(id);
       if (id === "react") return require(id);
-      if (id === "../actions") return { beginEdit: () => {} };
+      if (id === "../actions") return { beginEdit: () => {}, bindFormToActiveDocument: () => {}, needsBoundFormHint: () => false };
       if (id === "../store") {
         return {
           useWorkspace: (selector) => selector(state),

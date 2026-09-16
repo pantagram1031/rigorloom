@@ -56,6 +56,26 @@ function Checks({ receipt }: { receipt: Receipt }) {
         )}
       </div>
       {report.reason ? <p className="prose">{report.reason}</p> : null}
+      {receipt.residue ? (
+        <dl className="kv" data-testid="receipt-residue">
+          <dt>판정 기준</dt>
+          <dd className="mono">
+            {receipt.residue.profileSource === "bound_form"
+              ? `연결된 양식${receipt.residue.sha256 ? ` (${receipt.residue.sha256.slice(0, 12)})` : ""}`
+              : receipt.residue.profileSource === "self_derived"
+                ? "문서 자체 추정"
+                : receipt.residue.profileSource}
+          </dd>
+          {receipt.residue.declaration?.keep && receipt.residue.declaration.keep.length > 0 ? (
+            <>
+              <dt>남긴 항목</dt>
+              <dd data-testid="receipt-declaration-keep">
+                {receipt.residue.declaration.keep.join(", ")}
+              </dd>
+            </>
+          ) : null}
+        </dl>
+      ) : null}
       <ul className="receipt-checks">
         {report.checks.map((row) => (
           <li key={String(row.checker)} data-testid={`receipt-check-${row.checker}`}>

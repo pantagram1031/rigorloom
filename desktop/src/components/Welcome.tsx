@@ -3,7 +3,7 @@
  * one sentence of what this is, 문서 열기, a drop hint, recents, and a quiet
  * link row. The three columns stay unmounted until a session is shown.
  */
-import { openPath, openViaDialog } from "../actions";
+import { bindFormAndOpen, openPath, openViaDialog } from "../actions";
 import { setState, useWorkspace } from "../store";
 import type { Recent } from "../types";
 import { Icon } from "./Icon";
@@ -54,6 +54,11 @@ function RecentRow({ recent }: { recent: Recent }) {
       ) : null}
       <span className="meta">
         <span className="latin-caps">{backend}</span>
+        {recent.formBinding ? (
+          <span className="form-tag" data-testid="recent-form-tag" title={recent.formBinding.path}>
+            양식
+          </span>
+        ) : null}
         {time ? <span className="when">{time}</span> : null}
         {recent.missing ? (
           <span className="missing-tag" data-testid="recent-missing">
@@ -78,11 +83,11 @@ function RecentRow({ recent }: { recent: Recent }) {
       className="recent"
       data-testid="recent-row"
       title={recent.path}
-      onClick={() => void openPath(recent.path)}
+      onClick={() => void openPath(recent.path, recent.formBinding)}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          void openPath(recent.path);
+          void openPath(recent.path, recent.formBinding);
         }
       }}
     >
@@ -108,14 +113,26 @@ export function Home() {
           </p>
         </div>
 
-        <button
-          className="action primary big btn-icon"
-          data-testid="home-open"
-          onClick={() => void openViaDialog()}
-        >
-          <Icon name="open" />
-          문서 열기
-        </button>
+        <div className="home-open-row">
+          <button
+            className="action primary big btn-icon"
+            data-testid="home-open"
+            onClick={() => void openViaDialog()}
+          >
+            <Icon name="open" />
+            문서 열기
+          </button>
+          <button
+            type="button"
+            className="action big btn-icon"
+            data-testid="home-bind-form"
+            title="빈 양식이나 form_profile.json을 연결해 엽니다"
+            onClick={() => void bindFormAndOpen()}
+          >
+            <Icon name="link" />
+            양식 연결
+          </button>
+        </div>
 
         <div
           className={`drop${dragOver ? " over" : ""}`}

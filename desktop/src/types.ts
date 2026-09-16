@@ -192,6 +192,23 @@ export interface ForbiddenInventory {
     removalTargets: number;
   };
   note?: string;
+  /** Which inventory graded this inspect: bound form vs a self-derived scan. */
+  residue?: ResidueJudgement;
+}
+
+/** How residue was judged, on inspect `forbidden` and on apply receipts. */
+export interface ResidueJudgement {
+  profileSource: "bound_form" | "self_derived" | string;
+  sha256?: string;
+  note?: string;
+  /** Plan `declares`, echoed on apply receipts. Null when the plan declared none. */
+  declaration?: ResidueDeclaration | null;
+}
+
+export interface ResidueDeclaration {
+  keep?: string[];
+  keepPattern?: string | string[];
+  fillMap?: Record<string, unknown>;
 }
 
 export interface InspectResult {
@@ -398,6 +415,7 @@ export interface Receipt {
   }>;
   checks: VerificationReport;
   evidence: { class: string; note: string };
+  residue?: ResidueJudgement;
 }
 
 /** What `plan/apply` returns. */
@@ -889,6 +907,14 @@ export interface Recent {
   documentKind?: DocumentKind;
   /** True when the path is gone; Home shows 찾을 수 없음 and the row is inert. */
   missing?: boolean;
+  /** Blank form this document was last opened with; reopening reuses it. */
+  formBinding?: FormBinding;
+}
+
+/** A blank form_profile.json or a blank .hwpx, bound at open. */
+export interface FormBinding {
+  kind: "profile" | "form";
+  path: string;
 }
 
 /**

@@ -7,7 +7,7 @@
  */
 import { useEffect } from "react";
 
-import { beginEdit } from "../actions";
+import { beginEdit, bindFormToActiveDocument, needsBoundFormHint } from "../actions";
 import {
   inspectorAgentUnread,
   inspectorHistoryBadge,
@@ -439,6 +439,22 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
         ) : null}
         {tab === "review" ? <ApproveAllButton /> : null}
       </div>
+      {tab === "review" && needsBoundFormHint(inspect) ? (
+        <div className="form-bind-hint" data-testid="form-bind-hint">
+          <p>
+            이 문서는 완성본으로 보입니다. 양식을 연결하면 검사 판정이 정확해집니다
+          </p>
+          <button
+            type="button"
+            className="ghost btn-icon"
+            data-testid="review-bind-form"
+            onClick={() => void bindFormToActiveDocument()}
+          >
+            <Icon name="link" />
+            양식 연결
+          </button>
+        </div>
+      ) : null}
       <div
         key={tab}
         className={`panel-body inspector-body inspector-pane${tab === "agent" ? " is-agent" : ""}`}

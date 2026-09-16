@@ -62,6 +62,7 @@ import type {
   AppliedCandidate,
   EditableRegion,
   Finding,
+  FormBinding,
   GeometryAddress,
   GeometrySeat,
   GeometrySpan,
@@ -456,6 +457,36 @@ export async function refreshSessions(): Promise<void> {
 // --- recents ----------------------------------------------------------------
 
 /**
+ * Form bound at open, keyed by session. `null` means this open had no form;
+ * absent means selectSession is not coming from a fresh openPath and should
+ * keep the recent's existing binding.
+ */
+const sessionFormBindings = new Map<string, FormBinding | null>();
+
+export function formBindingFromPath(path: string): FormBinding {
+  return /\.json$/i.test(path) ? { kind: "profile", path } : { kind: "form", path };
+}
+
+export function openPathParams(path: string, binding?: FormBinding | null): {
+  path: string;
+  formProfile?: string;
+  form?: string;
+} {
+  const params: { path: string; formProfile?: string; form?: string } = { path };
+  if (binding?.kind === "profile") params.formProfile = binding.path;
+  if (binding?.kind === "form") params.form = binding.path;
+  return params;
+}
+
+/** self_derived inventory on a finished document (zero placeholders). */
+export function needsBoundFormHint(inspect: InspectResult | null | undefined): boolean {
+  const forbidden = inspect?.forbidden;
+  if (!forbidden || forbidden.residue?.profileSource !== "self_derived") return false;
+  if (Array.isArray(forbidden.placeholders)) return forbidden.placeholders.length === 0;
+  return forbidden.counts.placeholders === 0;
+}
+
+/**
  * Remember a document so the home screen can offer it back.
  *
  * Keyed on the source path, because that is what reopening needs; the hash
@@ -467,6 +498,12 @@ export function rememberRecent(sessionId: string) {
   const session = getState().sessions.find((s) => s.sessionId === sessionId);
   const path = getState().openedPaths[sessionId];
   if (!session || !path) return;
+  const fromOpen = sessionFormBindings.has(sessionId)
+    ? sessionFormBindings.get(sessionId)
+    : undefined;
+  const previous = getState().recents.find((r) => r.path === path);
+  const formBinding =
+    fromOpen === undefined ? previous?.formBinding : fromOpen ?? undefined;
   const entry: Recent = {
     path,
     name: session.source.name,
@@ -474,6 +511,7 @@ export function rememberRecent(sessionId: string) {
     bytes: session.source.bytes,
     openedUtc: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
     documentKind: session.source.documentKind,
+    ...(formBinding ? { formBinding } : {}),
   };
   const next = [entry, ...getState().recents.filter((r) => r.path !== path)].slice(
     0,
@@ -513,10 +551,14 @@ export function recentsFromSessions(
   }));
 }
 
-export async function openPath(path: string): Promise<string | null> {
+export async function openPath(
+  path: string,
+  binding?: FormBinding | null,
+): Promise<string | null> {
   try {
-    const opened = await rt.openPath(path);
+    const opened = await rt.openPath(path, binding);
     const openedPaths = { ...getState().openedPaths, [opened.sessionId]: path };
+    sessionFormBindings.set(opened.sessionId, binding ?? null);
     setState({ openedPaths });
     // Persisted so a relaunch can still name where a session came from; the
     // Runtime deliberately does not keep the source path.
@@ -531,8 +573,19 @@ export async function openPath(path: string): Promise<string | null> {
   }
 }
 
+export async function pickFormBinding(): Promise<FormBinding | null> {
+  const chosen = await openFileDialog({
+    multiple: false,
+    directory: false,
+    title: "양식 연결",
+    filters: [{ name: "양식 프로필 또는 빈 양식", extensions: ["json", "hwpx"] }],
+  });
+  if (typeof chosen !== "string") return null;
+  return formBindingFromPath(chosen);
+}
+
 /** The native file dialog. No web upload, no localhost. */
-export async function openViaDialog(): Promise<string | null> {
+export async function openViaDialog(opts?: { bindForm?: boolean }): Promise<string | null> {
   const chosen = await openFileDialog({
     multiple: false,
     directory: false,
@@ -540,7 +593,25 @@ export async function openViaDialog(): Promise<string | null> {
     filters: [{ name: "한글 문서", extensions: ["hwpx", "hwp"] }],
   });
   if (typeof chosen !== "string") return null;
-  return openPath(chosen);
+  if (!opts?.bindForm) return openPath(chosen);
+  const binding = await pickFormBinding();
+  if (!binding) return null;
+  return openPath(chosen, binding);
+}
+
+/** Home / 문서 열기 secondary: pick a document, then a blank form, then open. */
+export async function bindFormAndOpen(): Promise<string | null> {
+  return openViaDialog({ bindForm: true });
+}
+
+/** Re-open the active document with a freshly picked blank form. */
+export async function bindFormToActiveDocument(): Promise<string | null> {
+  const sessionId = getState().activeSessionId;
+  const path = sessionId ? getState().openedPaths[sessionId] : null;
+  if (!path) return bindFormAndOpen();
+  const binding = await pickFormBinding();
+  if (!binding) return null;
+  return openPath(path, binding);
 }
 
 const SUPPORTED = /\.(hwpx|hwp)$/i;

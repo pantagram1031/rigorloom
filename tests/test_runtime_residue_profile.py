@@ -132,11 +132,16 @@ def _texts(entries):
     return [entry["text"] for entry in entries if isinstance(entry.get("text"), str)]
 
 
-def _drive_xml_replace(root, session):
+def _drive_xml_replace(root, session, declares=None):
     op = json.dumps({"kind": "replace_all", "find": BODY, "replace": REPLACED},
                     ensure_ascii=False)
-    plan = run_cli(root, "propose", "--session", session, "--backend", "xml",
-                   "--op", op)
+    argv = ["propose", "--session", session, "--backend", "xml", "--op", op]
+    if declares is not None:
+        declares_path = root / "declares.json"
+        declares_path.write_text(json.dumps(declares, ensure_ascii=False),
+                                 encoding="utf-8")
+        argv += ["--declares-file", str(declares_path)]
+    plan = run_cli(root, *argv)
     assert plan.code == 0, plan.stdout + plan.stderr
     payload = plan.result["plan"]
     run_cli(root, "validate", "--plan", payload["planId"])
@@ -263,6 +268,7 @@ def test_bound_apply_accepts_when_the_guide_is_gone(tmp_path, forms):
     residue = receipt["residue"]
     assert residue["profileSource"] == "bound_form"
     assert residue["sha256"] == opened["formProfile"]["sha256"]
+    assert residue["declaration"] is None
     assert "originPath" not in residue
     assert str(forms["profile"]) not in json.dumps(receipt, ensure_ascii=False)
 
@@ -292,6 +298,36 @@ def test_self_derived_apply_still_carries_profile_source(tmp_path, forms):
     receipt = run_cli(root, "receipt", "--session", opened["sessionId"],
                       "--run", applied["candidate"]["runId"]).result["receipt"]
     assert receipt["residue"]["profileSource"] == "self_derived"
+    assert receipt["residue"]["declaration"] is None
     assert "heuristic" in receipt["residue"].get("note", "")
     # The opened document's own prose is a removal target, so the gate bites.
     assert applied["candidate"]["checks"]["acceptance"] is False
+
+
+@pytest.mark.skipif(not XML_BACKEND.is_file(), reason="xml_backend.py not found")
+def test_receipt_echoes_the_plan_keep_declaration(tmp_path):
+    keep = ["학번", "이름"]
+    blank = make_hwpx(tmp_path / "keep-blank.hwpx", keep + BLANK_PARAS)
+    finished = make_hwpx(tmp_path / "keep-finished.hwpx", keep + FINISHED_PARAS)
+    profile = tmp_path / "keep_profile.json"
+    EngineTools().profile(blank, profile)
+    root = tmp_path / "root"
+    opened = _open(root, finished, form_profile=profile)
+    applied, payload, _ = _drive_xml_replace(root, opened["sessionId"],
+                                             declares={"keep": keep})
+    assert applied["candidate"]["checks"]["ranAll"] is True, applied
+    receipt = run_cli(root, "receipt", "--session", opened["sessionId"],
+                      "--run", applied["candidate"]["runId"]).result["receipt"]
+    assert receipt["residue"]["declaration"] == payload["declares"]
+    assert receipt["residue"]["declaration"]["keep"] == keep
+
+
+@pytest.mark.skipif(not XML_BACKEND.is_file(), reason="xml_backend.py not found")
+def test_receipt_declaration_is_null_when_the_plan_declared_none(tmp_path, forms):
+    root = tmp_path / "root"
+    opened = _open(root, forms["finished"], form_profile=forms["profile"])
+    applied, payload, _ = _drive_xml_replace(root, opened["sessionId"])
+    assert "declares" not in payload or payload.get("declares") is None
+    receipt = run_cli(root, "receipt", "--session", opened["sessionId"],
+                      "--run", applied["candidate"]["runId"]).result["receipt"]
+    assert receipt["residue"]["declaration"] is None

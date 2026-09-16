@@ -22,6 +22,7 @@ export const ICON_NAMES = [
   "compare",
   "history",
   "settings",
+  "link",
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -99,6 +100,11 @@ const GLYPHS: Record<IconName, Glyph> = {
   settings: [
     { cx: 8, cy: 8, r: 2.1 },
     { d: "M8 2.6v1.8M8 11.6v1.8M2.6 8h1.8M11.6 8h1.8M4.2 4.2l1.3 1.3M10.5 10.5l1.3 1.3M11.8 4.2l-1.3 1.3M5.5 10.5 4.2 11.8" },
+  ],
+  link: [
+    { d: "M6.4 9.6 4.9 11.1a2.2 2.2 0 0 1-3.1-3.1L3.3 6.5a2.2 2.2 0 1 1 3.1 3.1" },
+    { d: "M9.6 6.4 11.1 4.9a2.2 2.2 0 0 1 3.1 3.1L12.7 9.5a2.2 2.2 0 1 1-3.1-3.1" },
+    { d: "M6.5 9.5 9.5 6.5" },
   ],
 };
 

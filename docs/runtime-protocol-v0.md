@@ -1757,7 +1757,10 @@ rule; `summary` / `graph` / `regions` still describe the opened document.
 
 Both the inspect `forbidden` payload and every apply receipt carry
 `residue.profileSource: "bound_form" | "self_derived"` plus the profile
-SHA-256. When `self_derived` and the opened document has zero placeholders, or
+SHA-256. Every apply receipt also echoes `residue.declaration`: the plan's
+`declares` object (`keep`, `keepPattern`, `fillMap`) or `null` when the plan
+declared none, copied from the plan payload and never recomputed. When
+`self_derived` and the opened document has zero placeholders, or
 any removal target whose confidence is below `high`, `residue.note` states
 that the inventory is heuristic. The note is informational; it does not
 change the verdict.

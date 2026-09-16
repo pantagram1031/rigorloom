@@ -10,8 +10,10 @@
  * `session/list` is the only enumeration there is. The header says "문서" so
  * the UI does not claim a concept the runtime lacks.
  */
+import { bindFormAndOpen } from "../actions";
 import { useWorkspace } from "../store";
 import type { Session } from "../types";
+import { Icon } from "./Icon";
 import { EmptyIconDoc, EmptyState } from "./EmptyState";
 import { TaskPacks } from "./TaskPacks";
 
@@ -58,6 +60,17 @@ export function SessionList({
       <div className="section">
         <button className="action primary" onClick={onOpen} style={{ width: "100%" }}>
           문서 열기
+        </button>
+        <button
+          type="button"
+          className="action btn-icon"
+          data-testid="bind-form"
+          title="빈 양식이나 form_profile.json을 연결해 엽니다"
+          onClick={() => void bindFormAndOpen()}
+          style={{ width: "100%", marginTop: "var(--s2)" }}
+        >
+          <Icon name="link" />
+          양식 연결
         </button>
       </div>
       <TaskPacks />

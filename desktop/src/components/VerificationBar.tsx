@@ -23,7 +23,26 @@ const GLOSSARY = {
   job: "창이 강제 종료돼도 엔진 자식 프로세스를 함께 끝낼 수 있는지입니다.",
   candidate: "승인·적용 후 생긴 사본입니다. 원본 파일은 그대로입니다.",
   source: "연 파일의 해시입니다. 이 앱은 원본을 고치지 않습니다.",
+  judgement:
+    "완성된 문서에서 문서 자체로 추정한 목록은 휴리스틱입니다. 빈 양식을 연결하면 판정이 정확해집니다.",
 } as const;
+
+export function judgementCriterion(residue?: {
+  profileSource?: string;
+  sha256?: string;
+} | null): { label: string; title: string } {
+  if (residue?.profileSource === "bound_form") {
+    const sha = residue.sha256 ? residue.sha256.slice(0, 12) : "";
+    return {
+      label: sha ? `연결된 양식 (${sha})` : "연결된 양식",
+      title: "이 세션은 연 문서가 아니라 연결한 빈 양식의 목록으로 잔여를 판정합니다.",
+    };
+  }
+  if (residue?.profileSource === "self_derived") {
+    return { label: "문서 자체 추정", title: GLOSSARY.judgement };
+  }
+  return { label: "—", title: GLOSSARY.judgement };
+}
 
 const PILL_CAVEAT =
   "서식 점검입니다. 색·글꼴 등 서식 이상을 읽습니다. 제출용 검사가 아니며, 페이지 그림은 증거가 아닙니다.";
@@ -139,6 +158,7 @@ export function VerificationBar({
   const engineUp = Boolean(status?.running);
   const docName = session?.source.name ?? "문서 없음";
   const backendTag = session?.source.documentKind ?? "—";
+  const judgement = judgementCriterion(inspect?.forbidden?.residue);
 
   const chips = (
     <div className="verify-details-body" data-testid="verify-details">
@@ -354,6 +374,16 @@ export function VerificationBar({
           />
         ) : null}
         <Fact k="입력 칸" v={inspect ? String(inspect.summary.fillTargetCount) : "—"} title={GLOSSARY.seats} />
+        <Fact
+          k="판정 기준"
+          nonce={inspect?.forbidden?.residue?.profileSource ?? "none"}
+          title={judgement.title}
+          v={
+            <span className="mono" data-testid="verify-judgement-source">
+              {judgement.label}
+            </span>
+          }
+        />
         <Fact
           k="서식 점검"
           nonce={`${checkPhase}-${findings.length}`}

@@ -377,6 +377,12 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
         declaration = plan.payload.get("declares") or None
         checks = verification_report(tools, source_profile, artifact,
                                      declaration)
+        # Echo the plan's own declares, never a recomputed keep list. A receipt
+        # that passed under a keep of ["학번","이름"] must still say so after
+        # the plan file is gone; null is the other honest answer.
+        residue = dict(residue_meta)
+        residue["declaration"] = (
+            dict(declaration) if isinstance(declaration, dict) else None)
 
         if backend == "com":
             evidence_class = NATIVE_COM_SESSION
@@ -453,7 +459,8 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
             # supplied an explicit form; otherwise a self-derived scan of the
             # opened document. Origin paths stay in session metadata — receipts
             # carry the digest only, same redaction as elsewhere.
-            "residue": residue_meta,
+            # declaration is the plan's declares object, or null.
+            "residue": residue,
             # The exemptions this candidate was graded WITH, bound to the plan
             # hash the approval signed. A later ``verify`` reads them from here
             # rather than trusting a caller to re-supply the policy: a candidate

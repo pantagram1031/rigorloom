@@ -1046,6 +1046,14 @@ button.docchip[aria-current="page"] {
   gap: var(--s8);
 }
 
+.home-open-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+}
+
 .welcome .mark {
   color: var(--accent);
 }
@@ -1230,6 +1238,12 @@ button.recent:active {
 
 .missing-tag {
   color: var(--fg-faint);
+}
+
+.form-tag {
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-emph);
 }
 
 /* ══ verification bar ════════════════════════════════════════════════════ */
@@ -3800,6 +3814,24 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .inspector-head {
   min-height: 34px;
+}
+
+.form-bind-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  word-break: keep-all;
+}
+
+.form-bind-hint p {
+  margin: 0;
+  flex: 1 1 12em;
 }
 
 .inspector-body.is-agent {

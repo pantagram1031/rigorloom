@@ -347,6 +347,7 @@ test("SessionList empty uses EmptyState and keeps session-list", () => {
       return { useWorkspace: (selector) => selector(state) };
     }
     if (id === "../types") return {};
+    if (id === "../actions") return { bindFormAndOpen: () => {} };
     if (id === "./TaskPacks") {
       return { TaskPacks: () => React.createElement("div", { "data-testid": "task-packs" }) };
     }

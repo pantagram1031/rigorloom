@@ -37,6 +37,7 @@
  */
 import {
   applyUiZoom,
+  bindFormAndOpen,
   exportApplied,
   openViaDialog,
   requestApprovalForDraft,
@@ -284,6 +285,15 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         >
           <Icon name="open" />
           <span className="tool-action-label">열기</span>
+        </button>
+        <button
+          className="action btn-icon"
+          data-testid="act-bind-form"
+          title="빈 양식이나 form_profile.json을 연결해 엽니다"
+          onClick={() => void bindFormAndOpen()}
+        >
+          <Icon name="link" />
+          <span className="tool-action-label">양식 연결</span>
         </button>
         <button
           className="action btn-icon"

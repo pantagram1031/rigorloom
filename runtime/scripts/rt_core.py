@@ -827,6 +827,13 @@ class RuntimeCore:
         recorded = receipt.get("exemptions") or {}
         declaration = recorded.get("declares") or None
         checks = verification_report(self.tools, profile_path, artifact, declaration)
+        residue = dict(residue_meta)
+        receipt_residue = receipt.get("residue") if isinstance(
+            receipt.get("residue"), dict) else {}
+        if "declaration" in receipt_residue:
+            residue["declaration"] = receipt_residue["declaration"]
+        else:
+            residue["declaration"] = declaration
         return {"sessionId": session.id, "runId": run_id,
                 "candidate": receipt["candidate"], "checks": checks,
-                "residue": residue_meta}
+                "residue": residue}

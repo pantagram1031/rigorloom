@@ -18,6 +18,7 @@ import type {
   Capabilities,
   CredentialStatus,
   EventDelivery,
+  FormBinding,
   GeometryResult,
   HostEvent,
   HostRunPayload,
@@ -128,10 +129,14 @@ export const capabilities = (probeRenderers = false) =>
 export const sessions = () =>
   call<{ sessions: Session[] }>("session/list").then((r) => r.sessions);
 
-export const openPath = (path: string) =>
+export const openPath = (path: string, binding?: FormBinding | null) =>
   call<{ sessionId: string; openedUtc: string; source: Session["source"] }>(
     "workspace/openPath",
-    { path },
+    {
+      path,
+      ...(binding?.kind === "profile" ? { formProfile: binding.path } : {}),
+      ...(binding?.kind === "form" ? { form: binding.path } : {}),
+    },
   );
 
 /**

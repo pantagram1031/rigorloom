@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import {
   boot,
+  bindFormAndOpen,
   closeTopmostOverlay,
   copySelection,
   openDropped,
@@ -334,6 +335,15 @@ export default function App() {
         <button className="ghost btn-icon" title="Ctrl+O" onClick={() => void openViaDialog()}>
           <Icon name="open" />
           문서 열기
+        </button>
+        <button
+          className="ghost btn-icon"
+          data-testid="bind-form"
+          title="빈 양식이나 form_profile.json을 연결해 엽니다"
+          onClick={() => void bindFormAndOpen()}
+        >
+          <Icon name="link" />
+          양식 연결
         </button>
         <button
           className="ghost btn-icon"

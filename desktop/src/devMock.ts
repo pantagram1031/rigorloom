@@ -36,6 +36,7 @@ const PRESENT_PATH = "C:\\dev-fixture\\forms\\gianmun-byeolji-1ho.hwpx";
 const MISSING_PATH = "C:\\dev-fixture\\missing\\gone.hwpx";
 
 let openedSession = false;
+let boundForm = false;
 let prefs: Record<string, unknown> = {
   recents: [
     {
@@ -45,6 +46,10 @@ let prefs: Record<string, unknown> = {
       bytes: fixture.source.bytes,
       openedUtc: "2026-09-17T00:04:00Z",
       documentKind: fixture.source.documentKind,
+      formBinding: {
+        kind: "profile",
+        path: "C:\\dev-fixture\\forms\\blank_profile.json",
+      },
     },
     {
       path: MISSING_PATH,
@@ -149,9 +154,10 @@ function call(method: string, params: Record<string, unknown>): unknown {
       };
     case "workspace/openPath":
       openedSession = true;
+      boundForm = Boolean(params.formProfile || params.form);
       return { sessionId: SESSION, openedUtc: OPENED, source: fixture.source };
     case "document/inspect":
-      return withSession(fixture.inspect);
+      return inspectPayload();
     case "document/readRegion": {
       const wanted = (params.regions ?? []) as Array<{
         table?: number;
@@ -175,6 +181,31 @@ function call(method: string, params: Record<string, unknown>): unknown {
     default:
       throw { code: "dev_mock", message: `no fixture for ${method}` };
   }
+}
+
+function inspectPayload(): unknown {
+  const inspect = withSession(fixture.inspect) as InspectResult;
+  const forbidden = inspect.forbidden ?? {
+    sessionId: SESSION,
+    anchors: [],
+    placeholders: [],
+    removalTargets: [],
+    counts: { anchors: 0, placeholders: 0, removalTargets: 0 },
+  };
+  inspect.forbidden = {
+    ...forbidden,
+    residue: boundForm
+      ? {
+          profileSource: "bound_form",
+          sha256: "boundform".padEnd(64, "0"),
+        }
+      : {
+          profileSource: "self_derived",
+          sha256: inspect.documentHash,
+          note: "heuristic",
+        },
+  };
+  return inspect;
 }
 
 function withSession(value: unknown): unknown {

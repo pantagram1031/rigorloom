@@ -47,7 +47,7 @@ function renderHome(state) {
       if (id === "react/jsx-runtime") return nodeRequire(id);
       if (id === "react") return nodeRequire(id);
       if (id === "../actions") {
-        return { openPath: () => {}, openViaDialog: () => {} };
+        return { openPath: () => {}, openViaDialog: () => {}, bindFormAndOpen: () => {} };
       }
       if (id === "../store") {
         return {
