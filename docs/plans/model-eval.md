@@ -89,6 +89,10 @@ Two cheap models asked for the same design note (read-only). Usage: gpt-5.6-sol-
 
 Reading: grok-xhigh delivers spec-shaped runtime code with green suites in one pass; the residual risk is host integration, which only a live run reveals. A1's two cheap notes (sol, grok-low) were accurate enough to plan S1–S3 without Fable reading the runtime code itself.
 
+### Allocation exhausted (2026-09-16 ~22:15)
+
+The primary Cursor account (`pantagram1031`) returned `ActionRequiredError: You've hit your usage limit … resets 9/23/2026` while launching the Stage 4 research task R1 on gpt-5.6-sol-high-fast. Today's spend on this account: W1 ×8, judge ×3, W2 ×3, W3 ×3, C1 ×7, T1–T8, H1, S1, S2+S3, A1 ×2 (≈ 30 agent sessions). Probe right after: `cursor-grok-4.6-xhigh-fast`, `cursor-grok-4.6-low-fast`, `composer-2.5-fast`, `auto` still answer; `claude-opus-5`, `claude-sonnet-5`, `gpt-5.3-codex`, `gemini-3.7-flash` (and `gpt-5.6-sol`) return `usage limit`. So the cap is on the API-billed tier only; Cursor's own models keep running. Gemini's earlier "connection lost" failures were probably the same cap surfacing differently. The second account (`pantagram1301`) has the same allocation; switching requires the user to sign in (Fable never handles credentials). Routing until 9/23: production code → grok-4.6-xhigh; mechanical/maintenance → composer-2.5-fast; analysis/research → grok-4.6-low; judging → grok-4.6-xhigh (sol unavailable).
+
 ## Verdicts so far (Stage 1 experience, all cursor-grok-4.6-xhigh-fast)
 
 - T1–T7, H1: 9/9 bounded engine tasks accepted after my review; typical
