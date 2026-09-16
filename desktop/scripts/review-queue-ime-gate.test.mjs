@@ -6,6 +6,7 @@ import test from "node:test";
 
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 const queueSource = readFileSync(new URL("../src/components/ReviewQueue.tsx", import.meta.url), "utf8");
+const hunkSource = readFileSync(new URL("../src/components/HunkCard.tsx", import.meta.url), "utf8");
 const seatSource = readFileSync(new URL("../src/components/SeatEditor.tsx", import.meta.url), "utf8");
 
 const resolveStart = actionsSource.indexOf("export async function resolveApprovalDecision(");
@@ -209,8 +210,8 @@ test("queue-value commit is skipped mid-composition and proceeds after", async (
 test("the queue and seat publish composition and freeze the gate", () => {
   assert.match(seatSource, /setState\(\{ isComposing: true \}\)/);
   assert.match(seatSource, /sawComposition: true, isComposing: false/);
-  assert.match(queueSource, /setState\(\{ isComposing: true \}\)/);
-  assert.match(queueSource, /if \(composing\.current \|\| native\.isComposing\) return/);
+  assert.match(hunkSource, /setState\(\{ isComposing: true \}\)/);
+  assert.match(hunkSource, /if \(composing\.current \|\| native\.isComposing\) return/);
   assert.match(queueSource, /if \(getState\(\)\.isComposing\) return/);
   assert.match(queueSource, /disabled=\{!canDecide\}/);
   assert.match(queueSource, /disabled=\{!canApply\}/);

@@ -61,8 +61,12 @@ The tokens are fine (Pretendard, warm paper, teal accent). What reads as "vibe c
       Ctrl+Shift+H keep the session alive, splash ≤ 400 ms, status bar shows only the engine state on Home.
       Verified in dev-mock (page text + screenshots; recent row opens the workspace). Not done: CLI 문서 has no
       hosted URL yet, so it is an in-app hint.
-- [ ] R4 Review as diff: hunk cards with before/after from `read-region`, provenance details row, j/k a/r
-      keys, "모두 승인" = approve displayed hash, rejected hash cannot apply (existing tests preserved).
+- [x] R4 Review as diff (cursor-grok-4.6-high-fast, 14.3 min, 752k in / 56k out / 3.3M cache; tests 171 → 181):
+      `HunkCard.tsx` per queued op (Korean kind label, address, state tag, before/after with an LCS diff from
+      `diff.ts`, 승인/거부, folded 출처 row), j/k/a/r/Enter/Shift+A, 모두 승인 · N · hash in the tab header bound to
+      the displayed plan hash, refusal card verbatim, byte-identical plan JSON test. Verified in dev-mock via DOM
+      (queued 행정안전부 on 표 0 R0C14 → card + 모두 승인 · 1); the browser pane was too narrow for a screenshot of
+      the inspector at that moment. Not done: per-hunk include/exclude (approval stays commit-bound by design).
 - [ ] R5 Agent in the inspector: Conversation + Composer inside the 에이전트 tab; plan arrival badges 검토;
       composition guard unchanged.
 - [ ] R6 Polish pass: density, focus rings, icon set (inline SVG, no new deps), Korean line-height/letter
@@ -82,3 +86,4 @@ done only when the screenshot matches the intent; "tests pass" alone is not acce
 | 2026-09-17 | R0 note (grok-low) and R1 fixes (grok-high) landed; 작업 tab screenshot before/after | see slices; commit below |
 | 2026-09-17 | R2 shell IA landed; five dev-mock screenshots checked | commit below |
 | 2026-09-17 | R3 home screen landed | commit below |
+| 2026-09-17 | R4 hunk review landed; T9 runtime README (composer) committed 233270e | commit below |

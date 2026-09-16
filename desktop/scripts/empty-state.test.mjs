@@ -208,6 +208,17 @@ test("ReviewQueue empty state keeps review-queue-empty and is not a prose wall",
     if (id === "../workspace/reviewSummary") {
       return { hasActiveApprovalBinding: () => false };
     }
+    if (id === "../reviewHunk") {
+      return {
+        hunkReviewState: () => "queued",
+        queueRefusalMessage: () => null,
+        reviewQueueHotkey: () => ({ type: "none" }),
+        shortPlanHash: (hash) => (hash ? String(hash).slice(0, 6) : null),
+      };
+    }
+    if (id === "./HunkCard") {
+      return { HunkCard: () => null };
+    }
     if (id === "./Tag") {
       return { Tag: ({ children }) => React.createElement("span", null, children) };
     }

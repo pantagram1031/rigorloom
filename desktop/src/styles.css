@@ -1805,6 +1805,92 @@ button.recent:hover {
   font-size: var(--text-sm);
 }
 
+.hunk-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.hunk-card.is-focused,
+.hunk-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hunk-head {
+  align-items: center;
+}
+
+.hunk-kind {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-emph);
+  color: var(--fg);
+}
+
+.hunk-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.hunk-pane {
+  min-width: 0;
+  padding: var(--s2);
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.hunk-missing {
+  color: var(--fg-faint);
+}
+
+.hunk-del {
+  background: var(--bad-soft);
+  text-decoration: line-through;
+  text-decoration-color: var(--bad);
+  color: var(--fg);
+}
+
+.hunk-ins {
+  background: var(--ok-soft);
+  text-decoration: none;
+  color: var(--fg);
+}
+
+.hunk-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+
+.hunk-provenance {
+  margin-left: auto;
+}
+
+.hunk-after .queue-value {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.approve-all {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  padding: 2px var(--s2);
+}
+
+@media (max-width: 719px) {
+  .hunk-diff {
+    grid-template-columns: 1fr;
+  }
+}
+
 .queue-diff .was {
   max-width: 12ch;
   overflow: hidden;

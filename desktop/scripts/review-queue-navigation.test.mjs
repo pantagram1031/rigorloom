@@ -54,7 +54,7 @@ test("run queue navigation enters document text view before locating its paragra
 });
 
 test("queue address buttons use the shared navigation path", () => {
-  assert.match(source, /onClick=\{\(\) => locateQueuedOp\(op\)\}/);
+  assert.match(source, /onLocate=\{\(\) => locateQueuedOp\(op\)\}/);
 });
 
 test("another session's preserved queue cannot navigate in the active document", () => {
@@ -65,8 +65,9 @@ test("another session's preserved queue cannot navigate in the active document",
     ),
     [],
   );
-  assert.match(source, /disabled=\{!locatable\}/);
-  assert.match(source, /다른 문서의 대기열/);
+  const hunkSource = readFileSync(new URL("../src/components/HunkCard.tsx", import.meta.url), "utf8");
+  assert.match(hunkSource, /disabled=\{!locatable\}/);
+  assert.match(hunkSource, /다른 문서의 대기열/);
 });
 
 const provStart = source.indexOf("export function hunkProvenance(");
@@ -121,14 +122,15 @@ test("each hunk projects session, plan, full hash, proposer, backend, base run, 
 });
 
 test("the queue renders provenance through per-hunk testids and a copyable full hash", () => {
-  assert.match(source, /data-testid=\{`queue-provenance-\$\{slug\}`\}/);
-  assert.match(source, /data-testid=\{`queue-prov-session-\$\{slug\}`\}/);
-  assert.match(source, /data-testid=\{`queue-prov-plan-\$\{slug\}`\}/);
-  assert.match(source, /data-testid=\{`queue-prov-hash-\$\{slug\}`\}/);
-  assert.match(source, /data-testid=\{`queue-prov-proposer-\$\{slug\}`\}/);
-  assert.match(source, /data-testid=\{`queue-prov-backend-\$\{slug\}`\}/);
-  assert.match(source, /data-testid=\{`queue-prov-base-\$\{slug\}`\}/);
-  assert.match(source, /data-testid=\{`queue-prov-receipt-\$\{slug\}`\}/);
-  assert.match(source, /data-testid=\{`queue-prov-copy-hash-\$\{slug\}`\}/);
-  assert.match(source, /copyPlanHash\(provenance\.planHash/);
+  const hunkSource = readFileSync(new URL("../src/components/HunkCard.tsx", import.meta.url), "utf8");
+  assert.match(hunkSource, /data-testid=\{`queue-provenance-\$\{slug\}`\}/);
+  assert.match(hunkSource, /data-testid=\{`queue-prov-session-\$\{slug\}`\}/);
+  assert.match(hunkSource, /data-testid=\{`queue-prov-plan-\$\{slug\}`\}/);
+  assert.match(hunkSource, /data-testid=\{`queue-prov-hash-\$\{slug\}`\}/);
+  assert.match(hunkSource, /data-testid=\{`queue-prov-proposer-\$\{slug\}`\}/);
+  assert.match(hunkSource, /data-testid=\{`queue-prov-backend-\$\{slug\}`\}/);
+  assert.match(hunkSource, /data-testid=\{`queue-prov-base-\$\{slug\}`\}/);
+  assert.match(hunkSource, /data-testid=\{`queue-prov-receipt-\$\{slug\}`\}/);
+  assert.match(hunkSource, /data-testid=\{`queue-prov-copy-hash-\$\{slug\}`\}/);
+  assert.match(hunkSource, /copyPlanHash\(provenance\.planHash/);
 });

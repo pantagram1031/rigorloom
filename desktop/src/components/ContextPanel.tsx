@@ -24,7 +24,7 @@ import { Composer } from "./Composer";
 import { Conversation } from "./Conversation";
 import { DocumentContext } from "./DocumentContext";
 import { History } from "./History";
-import { ReviewQueue } from "./ReviewQueue";
+import { ApproveAllButton, ReviewQueue } from "./ReviewQueue";
 import { Timeline } from "./Timeline";
 import { CLASSIFICATION_LABEL, Tag } from "./Tag";
 
@@ -427,6 +427,7 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
             {id}
           </span>
         ) : null}
+        {tab === "review" ? <ApproveAllButton /> : null}
       </div>
       <div
         className={`panel-body inspector-body${tab === "agent" ? " is-agent" : ""}`}

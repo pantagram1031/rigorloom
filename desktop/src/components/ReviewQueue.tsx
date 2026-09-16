@@ -24,12 +24,10 @@
  *    cannot be approved at all, and the panel offers the one thing that fixes
  *    it: propose again against what is open now.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   applyApproved,
-  declareSuggestedCharPr,
-  editOpValue,
   redoQueuedOp,
   reproposeDraft,
   requestApprovalForDraft,
@@ -37,15 +35,20 @@ import {
   cancelApply,
   clearQueue,
   resolveRecovery,
-  undoQueuedOp,
 } from "../actions";
+import {
+  hunkReviewState,
+  queueRefusalMessage,
+  reviewQueueHotkey,
+  shortPlanHash,
+  type HunkProvenance,
+} from "../reviewHunk";
 import {
   canRequestApproval,
   draftStaleness,
   getState,
   locateSelection,
   setCenterMode,
-  setState,
   setView,
   showToast,
   useWorkspace,
@@ -55,6 +58,7 @@ import {
 import type { PlanFinding } from "../types";
 import { hasActiveApprovalBinding } from "../workspace/reviewSummary";
 import { EmptyIconInbox, EmptyState } from "./EmptyState";
+import { HunkCard } from "./HunkCard";
 import { Tag } from "./Tag";
 
 /** Findings that name one op, keyed the way `validate_plan` writes `at`. */
@@ -82,17 +86,9 @@ export function locateQueuedOp(op: QueuedOp): boolean {
   return true;
 }
 
-/** GitHub-style provenance on every hunk. Plan JSON is unchanged. */
-export interface HunkProvenance {
-  sessionId: string | null;
-  planId: string | null;
-  planHash: string | null;
-  proposer: string;
-  backend: string | null;
-  baseRunId: string | null;
-  receiptExists: boolean;
-}
+export type { HunkProvenance };
 
+/** GitHub-style provenance on every hunk. Plan JSON is unchanged. */
 export function hunkProvenance(
   op: Pick<QueuedOp, "origin" | "proposer">,
   draft: Pick<Draft, "sessionId" | "plan" | "baseRunId">,
@@ -111,188 +107,77 @@ export function hunkProvenance(
   };
 }
 
-function copyPlanHash(hash: string): void {
-  const clip = navigator.clipboard;
-  if (!clip) {
-    showToast("복사하지 못했습니다", 1400);
-    return;
-  }
-  void clip.writeText(hash).then(
-    () => showToast("계획 지문을 복사했습니다", 1400),
-    () => showToast("복사하지 못했습니다", 1400),
-  );
+/** Same path as the 모두 승인 button. Does not mutate op params. */
+export function approveDisplayedPlan(): void {
+  if (getState().isComposing) return;
+  void resolveApprovalDecision("approved");
 }
 
-function OpRow({
-  op,
-  hard,
-  warn,
-  locked,
-  locatable,
-  provenance,
-}: {
-  op: QueuedOp;
-  hard: PlanFinding[];
-  warn: PlanFinding[];
-  locked: boolean;
-  locatable: boolean;
-  provenance: HunkProvenance;
-}) {
-  const anomaly = hard.find((f) => f.code === "fill_charpr_script_anomaly");
-  const [text, setText] = useState(op.text);
-  const composing = useRef(false);
-  useEffect(() => {
-    if (!composing.current) setText(op.text);
-  }, [op.text]);
-  useEffect(() => {
-    return () => {
-      if (!composing.current) return;
-      composing.current = false;
-      setState({ isComposing: false });
-    };
-  }, []);
-  // A row names its target in the vocabulary of the address the OPERATION
-  // carries, never in one shape flattened onto both: a cell is 표 N RxCy, a
-  // paragraph run is 문단 N · 덩어리 R. A run drawn as a cell with blank
-  // coordinates would be a review queue that cannot be reviewed.
-  const slug =
-    op.kind === "fill_cell" ? `${op.table}-${op.row}-${op.col}` : `p${op.atPara}-r${op.run}`;
+export function rejectDisplayedPlan(): void {
+  if (getState().isComposing) return;
+  void resolveApprovalDecision("rejected");
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+}
+
+function decideTitle(composing: boolean, approvalBound: boolean): string {
+  return composing
+    ? "입력 조합이 끝나기 전에는 승인하지 않습니다"
+    : approvalBound
+      ? "화면에 보이는 계획 지문에 승인을 기록합니다"
+      : "현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다";
+}
+
+function approveAllTitle(
+  composing: boolean,
+  approvalBound: boolean,
+  recoveryBlocksApply: boolean,
+): string {
+  if (composing) return "입력 조합이 끝나기 전에는 승인하지 않습니다";
+  if (recoveryBlocksApply) return "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다";
+  if (!approvalBound) return "현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다";
+  return "화면에 보이는 계획 지문에 승인을 기록합니다";
+}
+
+/** 모두 승인 in the 검토 tab header. Binds the displayed plan hash. */
+export function ApproveAllButton() {
+  const draft = useWorkspace((s) => s.draft);
+  const composing = useWorkspace((s) => s.isComposing);
+  const approval = useWorkspace((s) => s.approval);
+  const approvalPhase = useWorkspace((s) => s.approvalPhase);
+  const applyPhase = useWorkspace((s) => s.applyPhase);
+  const recovery = useWorkspace((s) => s.recovery);
+  const approvalBound = useWorkspace(hasActiveApprovalBinding);
+  const locked = approvalPhase === "resolving" || applyPhase === "starting";
+  const recoveryBlocksApply =
+    !!recovery &&
+    recovery.outcome !== "not_applied" &&
+    recovery.planId === draft.plan?.planId &&
+    recovery.approvalId === approval?.approvalId;
+  const canDecide = approvalBound && !locked && !composing;
+  const disabled = !canDecide || recoveryBlocksApply;
+  const hash = shortPlanHash(draft.plan?.planHash ?? approval?.planHash ?? null);
+  const count = draft.ops.length;
+  const label = hash ? `모두 승인 · ${count} · ${hash}` : `모두 승인 · ${count}`;
   return (
-    <li className="queue-op" data-testid={`queue-op-${slug}`} data-kind={op.kind}>
-      <div className="queue-op-head">
-        <button
-          className="addr mono"
-          disabled={!locatable}
-          title={
-            locatable
-              ? "문서에서 이 자리를 찾습니다"
-              : "이 작업은 다른 문서의 대기열에 있어 현재 문서에서는 찾을 수 없습니다"
-          }
-          onClick={() => locateQueuedOp(op)}
-        >
-          {op.kind === "fill_cell"
-            ? `표 ${op.table} R${op.row}C${op.col}`
-            : `문단 ${op.atPara} · 덩어리 ${op.run}`}
-        </button>
-        {op.origin === "agent" ? (
-          <Tag tone="none" title={`제안: ${op.proposer ?? "에이전트"}`}>
-            에이전트 제안
-          </Tag>
-        ) : (
-          <Tag tone="fill">내가 입력</Tag>
-        )}
-        {op.charPr ? (
-          <Tag tone="ok" title="이 자리에 쓸 글자 속성을 지정했습니다">
-            charPr {op.charPr}
-          </Tag>
-        ) : null}
-        {/* TIER ONE UNDO, and its label is the whole honesty of it. Nothing
-            has been approved or applied, so this removes a pending row and
-            changes no document — calling it 문서 되돌리기 would tell someone
-            their file changed back when it never changed at all. */}
-        <button
-          className="ghost dark-safe"
-          data-testid={`queue-remove-${slug}`}
-          disabled={locked}
-          title="이 작업을 대기열에서 뺍니다. 문서는 아직 아무것도 바뀌지 않았습니다."
-          onClick={() => void undoQueuedOp(op.opId)}
-        >
-          대기열에서 제거
-        </button>
-      </div>
-
-      <div className="queue-diff">
-        <span className="was" data-testid={`queue-before-${op.opId}`}>
-          {op.before.trim().length > 0 ? op.before : "(빈 자리)"}
-        </span>
-        <span className="arrow" aria-hidden="true">
-          →
-        </span>
-        <input
-          className="queue-value"
-          data-testid={`queue-value-${op.opId}`}
-          value={text}
-          disabled={locked}
-          aria-label="넣을 값"
-          onCompositionStart={() => {
-            composing.current = true;
-            setState({ isComposing: true });
-          }}
-          onCompositionEnd={(e) => {
-            composing.current = false;
-            const next = (e.target as HTMLInputElement).value;
-            setText(next);
-            setState({ isComposing: false });
-            void editOpValue(op.opId, next);
-          }}
-          onChange={(e) => {
-            const next = e.target.value;
-            setText(next);
-            const native = e.nativeEvent as { isComposing?: boolean };
-            if (composing.current || native.isComposing) return;
-            void editOpValue(op.opId, next);
-          }}
-        />
-      </div>
-
-      <dl className="kv" data-testid={`queue-provenance-${slug}`}>
-        <dt>세션</dt>
-        <dd data-testid={`queue-prov-session-${slug}`}>{provenance.sessionId ?? "—"}</dd>
-        <dt>계획</dt>
-        <dd data-testid={`queue-prov-plan-${slug}`}>{provenance.planId ?? "—"}</dd>
-        <dt>지문</dt>
-        <dd data-testid={`queue-prov-hash-${slug}`}>
-          {provenance.planHash ?? "—"}
-          {provenance.planHash ? (
-            <button
-              type="button"
-              className="linkish"
-              data-testid={`queue-prov-copy-hash-${slug}`}
-              title="계획 지문 전체 복사"
-              onClick={() => copyPlanHash(provenance.planHash as string)}
-            >
-              복사
-            </button>
-          ) : null}
-        </dd>
-        <dt>제안자</dt>
-        <dd data-testid={`queue-prov-proposer-${slug}`}>{provenance.proposer}</dd>
-        <dt>백엔드</dt>
-        <dd data-testid={`queue-prov-backend-${slug}`}>{provenance.backend ?? "—"}</dd>
-        <dt>기준 후보</dt>
-        <dd data-testid={`queue-prov-base-${slug}`}>{provenance.baseRunId ?? "원본"}</dd>
-        <dt>영수증</dt>
-        <dd data-testid={`queue-prov-receipt-${slug}`}>
-          {provenance.receiptExists ? "있음" : "없음"}
-        </dd>
-      </dl>
-
-      {hard.map((row) => (
-        <p className="queue-finding hard" key={`${row.code}-${row.at}`}>
-          <Tag tone="bad">막힘</Tag>
-          <span>{row.msg}</span>
-          <code className="mono">{row.code}</code>
-        </p>
-      ))}
-      {warn.map((row) => (
-        <p className="queue-finding warn" key={`${row.code}-${row.at}`}>
-          <Tag tone="warn">주의</Tag>
-          <span>{row.msg}</span>
-          <code className="mono">{row.code}</code>
-        </p>
-      ))}
-
-      {anomaly && !op.charPr ? (
-        <button
-          className="action"
-          data-testid={`queue-fix-charpr-${op.opId}`}
-          disabled={locked}
-          onClick={() => void declareSuggestedCharPr(op.opId)}
-        >
-          권장 charPr {String(anomaly.charPrSuggested ?? "")} 지정
-        </button>
-      ) : null}
-    </li>
+    <button
+      type="button"
+      className="action point approve-all"
+      data-testid="approve-all"
+      disabled={disabled || count === 0}
+      title={approveAllTitle(composing, approvalBound, recoveryBlocksApply)}
+      aria-label={label}
+      onClick={() => {
+        if (getState().isComposing) return;
+        approveDisplayedPlan();
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -313,14 +198,75 @@ export function ReviewQueue() {
   const receipts = useWorkspace((s) => s.receipts);
   const head = useWorkspace((s) => s.head);
   const composing = useWorkspace((s) => s.isComposing);
+  const texts = useWorkspace((s) =>
+    s.activeSessionId ? s.texts?.[s.activeSessionId] : undefined,
+  );
+  const applied = useWorkspace((s) => s.applied);
+  const verdict = useWorkspace((s) => s.candidateVerdict);
+
+  const [focused, setFocused] = useState(0);
+  const [openProvenance, setOpenProvenance] = useState<Record<string, boolean>>({});
 
   const locked = approvalPhase === "resolving" || applyPhase === "starting";
   const locatable = !!activeSessionId && draft.sessionId === activeSessionId;
-  const recoveryBlocksApply = !!recovery && recovery.outcome !== "not_applied" &&
-    recovery.planId === draft.plan?.planId && recovery.approvalId === approval?.approvalId;
+  const recoveryBlocksApply =
+    !!recovery &&
+    recovery.outcome !== "not_applied" &&
+    recovery.planId === draft.plan?.planId &&
+    recovery.approvalId === approval?.approvalId;
   const canDecide = approvalBound && !locked && !composing;
   const canApply =
     approvalBound && applyPhase !== "starting" && !recoveryBlocksApply && !composing;
+
+  const appliedForPlan = !!applied && !!draft.plan && applied.planId === draft.plan.planId;
+  const stateId = hunkReviewState({
+    stale: !!staleness,
+    approvalState: approval?.state,
+    applied: appliedForPlan,
+  });
+  const title = decideTitle(composing, approvalBound);
+
+  const receipt = head ? receipts[head] : undefined;
+  const refusalMessage = queueRefusalMessage({
+    verdict: verdict?.report,
+    applyError,
+    draftError: draft.error,
+    exitCodes: receipt?.steps.map((step) => step.exitCode),
+  });
+
+  useEffect(() => {
+    if (focused >= draft.ops.length) setFocused(Math.max(0, draft.ops.length - 1));
+  }, [draft.ops.length, focused]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const action = reviewQueueHotkey(e, {
+        focused,
+        count: draft.ops.length,
+        composing: composing || e.isComposing,
+        inEditable: isEditableTarget(e.target),
+      });
+      if (action.type === "none") return;
+      e.preventDefault();
+      if (action.type === "focus") {
+        setFocused(action.index);
+        return;
+      }
+      if (action.type === "approve-all" || action.type === "approve-hunk") {
+        approveDisplayedPlan();
+        return;
+      }
+      if (action.type === "reject-hunk") {
+        rejectDisplayedPlan();
+        return;
+      }
+      const op = draft.ops[action.index];
+      if (!op) return;
+      setOpenProvenance((prev) => ({ ...prev, [op.opId]: !prev[op.opId] }));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focused, draft.ops, composing]);
 
   /** Put the last removed row back — the same target, the same value. */
   const redo =
@@ -337,6 +283,18 @@ export function ReviewQueue() {
     ) : null;
 
   if (draft.ops.length === 0) {
+    if (draft.phase === "failed" && draft.error) {
+      return (
+        <div className="section" data-testid="review-queue-error">
+          <EmptyState
+            icon={<EmptyIconInbox />}
+            title="검토할 수 없습니다"
+            body={draft.error.message}
+          />
+          {redo ? <div className="gate-actions">{redo}</div> : null}
+        </div>
+      );
+    }
     return (
       <div className="section" data-testid="review-queue-empty">
         <EmptyState
@@ -350,13 +308,20 @@ export function ReviewQueue() {
   }
 
   return (
-    <div className="section queue" data-testid="review-queue">
+    <div className="section queue" data-testid="review-queue" tabIndex={0} aria-label="검토 대기열">
       <h3>
         검토 대기열
         <span className="count" data-testid="queue-count">
           {draft.ops.length}
         </span>
       </h3>
+
+      {refusalMessage ? (
+        <div className="refusal" data-testid="queue-refusal">
+          <Tag tone="bad">거절됨</Tag>
+          <p className="prose">{refusalMessage}</p>
+        </div>
+      ) : null}
 
       {/* TIER TWO UNDO, in the queue where every other proposal lives. An
           applied candidate is immutable and receipted, so this is not an
@@ -424,8 +389,8 @@ export function ReviewQueue() {
       ) : null}
 
       <ul className="queue-ops">
-        {draft.ops.map((op) => (
-          <OpRow
+        {draft.ops.map((op, index) => (
+          <HunkCard
             key={op.opId}
             op={op}
             hard={findingsFor(op, validation?.hard ?? [])}
@@ -433,6 +398,25 @@ export function ReviewQueue() {
             locked={locked}
             locatable={locatable}
             provenance={hunkProvenance(op, draft, receipts, head)}
+            focused={index === focused}
+            provenanceOpen={!!openProvenance[op.opId]}
+            onToggleProvenance={() =>
+              setOpenProvenance((prev) => ({ ...prev, [op.opId]: !prev[op.opId] }))
+            }
+            onLocate={() => locateQueuedOp(op)}
+            onApprove={() => {
+              if (getState().isComposing) return;
+              approveDisplayedPlan();
+            }}
+            onReject={() => {
+              if (getState().isComposing) return;
+              rejectDisplayedPlan();
+            }}
+            canDecide={canDecide}
+            decideTitle={title}
+            regions={texts}
+            stateId={stateId}
+            showToast={showToast}
           />
         ))}
       </ul>
@@ -504,10 +488,10 @@ export function ReviewQueue() {
                 composing
                   ? "입력 조합이 끝나기 전에는 적용하지 않습니다"
                   : recoveryBlocksApply
-                  ? "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다"
-                  : approvalBound
-                  ? "승인된 이 계획을 적용합니다"
-                  : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
+                    ? "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다"
+                    : approvalBound
+                      ? "승인된 이 계획을 적용합니다"
+                      : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
               }
               onClick={() => {
                 if (getState().isComposing) return;
@@ -552,16 +536,10 @@ export function ReviewQueue() {
               className="action point"
               data-testid="approve"
               disabled={!canDecide}
-              title={
-                composing
-                  ? "입력 조합이 끝나기 전에는 승인하지 않습니다"
-                  : approvalBound
-                  ? "화면에 보이는 계획 지문에 승인을 기록합니다"
-                  : "현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다"
-              }
+              title={title}
               onClick={() => {
                 if (getState().isComposing) return;
-                void resolveApprovalDecision("approved");
+                approveDisplayedPlan();
               }}
             >
               {approvalPhase === "resolving" ? "기록하는 중…" : "승인"}
@@ -574,12 +552,12 @@ export function ReviewQueue() {
                 composing
                   ? "입력 조합이 끝나기 전에는 거절하지 않습니다"
                   : approvalBound
-                  ? "이 승인 요청을 거절합니다"
-                  : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
+                    ? "이 승인 요청을 거절합니다"
+                    : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
               }
               onClick={() => {
                 if (getState().isComposing) return;
-                void resolveApprovalDecision("rejected");
+                rejectDisplayedPlan();
               }}
             >
               거절
