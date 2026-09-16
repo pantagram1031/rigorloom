@@ -137,7 +137,7 @@ test("a newer exact-plan approval cannot be overwritten by an older resolution",
   assert.equal(f.applyCalls(), 0);
 });
 
-test("the unchanged exact binding publishes the decision and invokes apply", async () => {
+test("the unchanged exact binding publishes the decision and does not apply", async () => {
   const f = fixture();
   const deciding = f.decide("approved");
   f.pending.resolve(approval("approval-A", "approved"));
@@ -145,7 +145,9 @@ test("the unchanged exact binding publishes the decision and invokes apply", asy
 
   assert.equal(f.read().approval.state, "approved");
   assert.equal(f.read().approvalPhase, "resolved");
-  assert.equal(f.applyCalls(), 1);
+  assert.equal(f.applyCalls(), 0);
+  assert.equal(f.runtimeCalls[0][2], "hash-A");
+  assert.equal(f.runtimeCalls[0][3], "approved");
 });
 
 test("a valid fork or root-bound pending approval remains rejectable", async () => {

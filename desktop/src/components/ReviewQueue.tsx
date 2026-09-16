@@ -24,6 +24,8 @@
  *    cannot be approved at all, and the panel offers the one thing that fixes
  *    it: propose again against what is open now.
  */
+import { useEffect, useRef, useState } from "react";
+
 import {
   applyApproved,
   declareSuggestedCharPr,
@@ -43,8 +45,11 @@ import {
   getState,
   locateSelection,
   setCenterMode,
+  setState,
   setView,
+  showToast,
   useWorkspace,
+  type Draft,
   type QueuedOp,
 } from "../store";
 import type { PlanFinding } from "../types";
@@ -76,20 +81,75 @@ export function locateQueuedOp(op: QueuedOp): boolean {
   return true;
 }
 
+/** GitHub-style provenance on every hunk. Plan JSON is unchanged. */
+export interface HunkProvenance {
+  sessionId: string | null;
+  planId: string | null;
+  planHash: string | null;
+  proposer: string;
+  backend: string | null;
+  baseRunId: string | null;
+  receiptExists: boolean;
+}
+
+export function hunkProvenance(
+  op: Pick<QueuedOp, "origin" | "proposer">,
+  draft: Pick<Draft, "sessionId" | "plan" | "baseRunId">,
+  receipts: Record<string, unknown>,
+  head: string | null,
+): HunkProvenance {
+  const plan = draft.plan;
+  return {
+    sessionId: draft.sessionId ?? plan?.sessionId ?? null,
+    planId: plan?.planId ?? null,
+    planHash: plan?.planHash ?? null,
+    proposer: op.proposer ?? plan?.proposer ?? (op.origin === "agent" ? "agent" : "user"),
+    backend: plan?.backend ?? null,
+    baseRunId: draft.baseRunId ?? plan?.base?.runId ?? null,
+    receiptExists: head != null && receipts[head] != null,
+  };
+}
+
+function copyPlanHash(hash: string): void {
+  const clip = navigator.clipboard;
+  if (!clip) {
+    showToast("복사하지 못했습니다", 1400);
+    return;
+  }
+  void clip.writeText(hash).then(
+    () => showToast("계획 지문을 복사했습니다", 1400),
+    () => showToast("복사하지 못했습니다", 1400),
+  );
+}
+
 function OpRow({
   op,
   hard,
   warn,
   locked,
   locatable,
+  provenance,
 }: {
   op: QueuedOp;
   hard: PlanFinding[];
   warn: PlanFinding[];
   locked: boolean;
   locatable: boolean;
+  provenance: HunkProvenance;
 }) {
   const anomaly = hard.find((f) => f.code === "fill_charpr_script_anomaly");
+  const [text, setText] = useState(op.text);
+  const composing = useRef(false);
+  useEffect(() => {
+    if (!composing.current) setText(op.text);
+  }, [op.text]);
+  useEffect(() => {
+    return () => {
+      if (!composing.current) return;
+      composing.current = false;
+      setState({ isComposing: false });
+    };
+  }, []);
   // A row names its target in the vocabulary of the address the OPERATION
   // carries, never in one shape flattened onto both: a cell is 표 N RxCy, a
   // paragraph run is 문단 N · 덩어리 R. A run drawn as a cell with blank
@@ -150,12 +210,61 @@ function OpRow({
         <input
           className="queue-value"
           data-testid={`queue-value-${op.opId}`}
-          value={op.text}
+          value={text}
           disabled={locked}
           aria-label="넣을 값"
-          onChange={(e) => void editOpValue(op.opId, e.target.value)}
+          onCompositionStart={() => {
+            composing.current = true;
+            setState({ isComposing: true });
+          }}
+          onCompositionEnd={(e) => {
+            composing.current = false;
+            const next = (e.target as HTMLInputElement).value;
+            setText(next);
+            setState({ isComposing: false });
+            void editOpValue(op.opId, next);
+          }}
+          onChange={(e) => {
+            const next = e.target.value;
+            setText(next);
+            const native = e.nativeEvent as { isComposing?: boolean };
+            if (composing.current || native.isComposing) return;
+            void editOpValue(op.opId, next);
+          }}
         />
       </div>
+
+      <dl className="kv" data-testid={`queue-provenance-${slug}`}>
+        <dt>세션</dt>
+        <dd data-testid={`queue-prov-session-${slug}`}>{provenance.sessionId ?? "—"}</dd>
+        <dt>계획</dt>
+        <dd data-testid={`queue-prov-plan-${slug}`}>{provenance.planId ?? "—"}</dd>
+        <dt>지문</dt>
+        <dd data-testid={`queue-prov-hash-${slug}`}>
+          {provenance.planHash ?? "—"}
+          {provenance.planHash ? (
+            <button
+              type="button"
+              className="linkish"
+              data-testid={`queue-prov-copy-hash-${slug}`}
+              title="계획 지문 전체 복사"
+              onClick={() => copyPlanHash(provenance.planHash as string)}
+            >
+              복사
+            </button>
+          ) : null}
+        </dd>
+        <dt>제안자</dt>
+        <dd data-testid={`queue-prov-proposer-${slug}`}>{provenance.proposer}</dd>
+        <dt>백엔드</dt>
+        <dd data-testid={`queue-prov-backend-${slug}`}>{provenance.backend ?? "—"}</dd>
+        <dt>기준 후보</dt>
+        <dd data-testid={`queue-prov-base-${slug}`}>{provenance.baseRunId ?? "원본"}</dd>
+        <dt>영수증</dt>
+        <dd data-testid={`queue-prov-receipt-${slug}`}>
+          {provenance.receiptExists ? "있음" : "없음"}
+        </dd>
+      </dl>
 
       {hard.map((row) => (
         <p className="queue-finding hard" key={`${row.code}-${row.at}`}>
@@ -200,12 +309,17 @@ export function ReviewQueue() {
   const redoCount = useWorkspace((s) => s.redoStack.length);
   const activeSessionId = useWorkspace((s) => s.activeSessionId);
   const approvalBound = useWorkspace(hasActiveApprovalBinding);
+  const receipts = useWorkspace((s) => s.receipts);
+  const head = useWorkspace((s) => s.head);
+  const composing = useWorkspace((s) => s.isComposing);
 
   const locked = approvalPhase === "resolving" || applyPhase === "starting";
   const locatable = !!activeSessionId && draft.sessionId === activeSessionId;
-  const canDecide = approvalBound && !locked;
   const recoveryBlocksApply = !!recovery && recovery.outcome !== "not_applied" &&
     recovery.planId === draft.plan?.planId && recovery.approvalId === approval?.approvalId;
+  const canDecide = approvalBound && !locked && !composing;
+  const canApply =
+    approvalBound && applyPhase !== "starting" && !recoveryBlocksApply && !composing;
 
   /** Put the last removed row back — the same target, the same value. */
   const redo =
@@ -317,6 +431,7 @@ export function ReviewQueue() {
             warn={findingsFor(op, validation?.warn ?? [])}
             locked={locked}
             locatable={locatable}
+            provenance={hunkProvenance(op, draft, receipts, head)}
           />
         ))}
       </ul>
@@ -383,15 +498,20 @@ export function ReviewQueue() {
             <button
               className="action point"
               data-testid="apply-approved"
-              disabled={!approvalBound || applyPhase === "starting" || recoveryBlocksApply}
+              disabled={!canApply}
               title={
-                recoveryBlocksApply
+                composing
+                  ? "입력 조합이 끝나기 전에는 적용하지 않습니다"
+                  : recoveryBlocksApply
                   ? "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다"
                   : approvalBound
                   ? "승인된 이 계획을 적용합니다"
                   : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
               }
-              onClick={() => void applyApproved()}
+              onClick={() => {
+                if (getState().isComposing) return;
+                void applyApproved();
+              }}
             >
               {applyPhase === "starting" ? "적용하는 중…" : "승인된 계획 적용"}
             </button>
@@ -413,7 +533,8 @@ export function ReviewQueue() {
             <strong>승인을 기다리는 중</strong>
           </div>
           <p className="prose">
-            승인하면 이 계획 그대로 문서 사본에 적용되고, 원본은 손대지 않습니다. 승인 기록은{" "}
+            승인하면 이 계획 지문에 대한 결정만 런타임에 기록됩니다. 문서는 아직 바뀌지
+            않습니다. 적용은 승인이 기록된 뒤의 다음 단계입니다. 승인 기록은{" "}
             <span className="mono">{approval.planHash.slice(0, 12)}</span> 이 계획 하나에만
             묶입니다.
           </p>
@@ -431,32 +552,37 @@ export function ReviewQueue() {
               data-testid="approve"
               disabled={!canDecide}
               title={
-                approvalBound
-                  ? "이 승인에 묶인 계획을 적용합니다"
-                  : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
+                composing
+                  ? "입력 조합이 끝나기 전에는 승인하지 않습니다"
+                  : approvalBound
+                  ? "화면에 보이는 계획 지문에 승인을 기록합니다"
+                  : "현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다"
               }
-              onClick={() => void resolveApprovalDecision("approved")}
+              onClick={() => {
+                if (getState().isComposing) return;
+                void resolveApprovalDecision("approved");
+              }}
             >
-              {locked ? "적용하는 중…" : "승인하고 적용"}
+              {approvalPhase === "resolving" ? "기록하는 중…" : "승인"}
             </button>
             <button
               className="action"
               data-testid="reject"
               disabled={!canDecide}
               title={
-                approvalBound
+                composing
+                  ? "입력 조합이 끝나기 전에는 거절하지 않습니다"
+                  : approvalBound
                   ? "이 승인 요청을 거절합니다"
                   : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
               }
-              onClick={() => void resolveApprovalDecision("rejected")}
+              onClick={() => {
+                if (getState().isComposing) return;
+                void resolveApprovalDecision("rejected");
+              }}
             >
               거절
             </button>
-            {applyPhase === "starting" ? (
-              <button className="ghost dark-safe" data-testid="cancel-apply" onClick={() => void cancelApply()}>
-                멈추기
-              </button>
-            ) : null}
           </div>
         </div>
       ) : (

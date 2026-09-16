@@ -277,6 +277,22 @@ test("an approval resolved during a head change cannot auto-apply the old base",
   assert.equal(f.read().head, "new-head");
 });
 
+test("approving a still-bound plan records the decision without applying", async () => {
+  const f = fixture();
+  const pending = f.resolve("approved");
+  f.decisions[0].resolve({
+    approvalId: "approval-old",
+    planId: "plan-old",
+    planHash: "hash-old",
+    state: "approved",
+  });
+  await pending;
+  assert.equal(f.applies.length, 0);
+  assert.equal(f.read().approval.state, "approved");
+  assert.equal(f.read().approvalPhase, "resolved");
+  assert.equal(f.decisions.length, 1);
+});
+
 test("apply completion preserves a head chosen while the runtime was working", async () => {
   const f = fixture();
   const pending = f.apply();

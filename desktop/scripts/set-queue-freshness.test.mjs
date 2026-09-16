@@ -478,7 +478,7 @@ test("late approval resolution cannot reattach to a replacement draft", async ()
   assert.equal(f.applies(), 0);
 });
 
-test("approval resolution applies while its draft owner is unchanged", async () => {
+test("approval resolution records the decision without applying while its draft owner is unchanged", async () => {
   const f = approvalFixture();
   f.patch({ approval: f.approval });
   const pending = f.resolve();
@@ -487,5 +487,5 @@ test("approval resolution applies while its draft owner is unchanged", async () 
   await pending;
   assert.equal(f.read().approval.state, "approved");
   assert.equal(f.read().approvalPhase, "resolved");
-  assert.equal(f.applies(), 1);
+  assert.equal(f.applies(), 0);
 });

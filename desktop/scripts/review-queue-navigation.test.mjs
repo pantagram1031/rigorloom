@@ -68,3 +68,67 @@ test("another session's preserved queue cannot navigate in the active document",
   assert.match(source, /disabled=\{!locatable\}/);
   assert.match(source, /다른 문서의 대기열/);
 });
+
+const provStart = source.indexOf("export function hunkProvenance(");
+const provEnd = source.indexOf("\n}\n", provStart);
+assert.ok(provStart >= 0 && provEnd > provStart, "hunkProvenance source boundary changed");
+const provenanceSource = source.slice(provStart, provEnd + 2);
+
+function project(op, draft, receipts, head) {
+  const context = vm.createContext({});
+  vm.runInContext(
+    `${stripTypeScriptTypes(provenanceSource).replace("export ", "")}\nglobalThis.hunkProvenanceForTest = hunkProvenance;`,
+    context,
+  );
+  return JSON.parse(JSON.stringify(context.hunkProvenanceForTest(op, draft, receipts, head)));
+}
+
+test("each hunk projects session, plan, full hash, proposer, backend, base run, and receipt", () => {
+  const draft = {
+    sessionId: "session-A",
+    baseRunId: "run-parent",
+    plan: {
+      sessionId: "session-A",
+      planId: "plan-full",
+      planHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      proposer: "plan-proposer",
+      backend: "preedit",
+      base: { runId: "run-parent" },
+    },
+  };
+  assert.deepEqual(
+    project(
+      { origin: "agent", proposer: "agent-one" },
+      draft,
+      { "run-head": { runId: "run-head" } },
+      "run-head",
+    ),
+    {
+      sessionId: "session-A",
+      planId: "plan-full",
+      planHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      proposer: "agent-one",
+      backend: "preedit",
+      baseRunId: "run-parent",
+      receiptExists: true,
+    },
+  );
+  assert.equal(
+    project({ origin: "user" }, { sessionId: "session-A", baseRunId: null, plan: null }, {}, null)
+      .receiptExists,
+    false,
+  );
+});
+
+test("the queue renders provenance through per-hunk testids and a copyable full hash", () => {
+  assert.match(source, /data-testid=\{`queue-provenance-\$\{slug\}`\}/);
+  assert.match(source, /data-testid=\{`queue-prov-session-\$\{slug\}`\}/);
+  assert.match(source, /data-testid=\{`queue-prov-plan-\$\{slug\}`\}/);
+  assert.match(source, /data-testid=\{`queue-prov-hash-\$\{slug\}`\}/);
+  assert.match(source, /data-testid=\{`queue-prov-proposer-\$\{slug\}`\}/);
+  assert.match(source, /data-testid=\{`queue-prov-backend-\$\{slug\}`\}/);
+  assert.match(source, /data-testid=\{`queue-prov-base-\$\{slug\}`\}/);
+  assert.match(source, /data-testid=\{`queue-prov-receipt-\$\{slug\}`\}/);
+  assert.match(source, /data-testid=\{`queue-prov-copy-hash-\$\{slug\}`\}/);
+  assert.match(source, /copyPlanHash\(provenance\.planHash/);
+});

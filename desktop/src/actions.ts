@@ -618,6 +618,7 @@ export function cancelEdit(): void {
   setState({
     inlineEdit: null,
     sawComposition: false,
+    isComposing: false,
     editIntentGeneration: getState().editIntentGeneration + 1,
   });
 }
@@ -630,6 +631,7 @@ export async function commitEdit(value: string): Promise<void> {
     inlineEdit: null,
     lastCommit: { value, composed: getState().sawComposition },
     sawComposition: false,
+    isComposing: false,
   });
   const trimmed = value;
   const queuedRun = edit.kind === "run" ? queuedRunOpAt(getState(), edit.atPara, edit.run) : null;
@@ -691,6 +693,7 @@ function cellSlug(table: number, row: number, col: number): string {
 
 /** Change a queued op's value without reopening the cell. */
 export async function editOpValue(opId: string, text: string): Promise<void> {
+  if (getState().isComposing) return;
   const ops = getState().draft.ops.map((op) =>
     op.opId === opId
       ? { ...op, text, origin: "user" as const, proposer: undefined }
@@ -1290,6 +1293,7 @@ export async function resolveApprovalDecision(
   approver = "host-operator",
 ): Promise<void> {
   const state = getState();
+  if (state.isComposing) return;
   const approval = state.approval;
   const binding = activeApprovalBinding(state);
   if (!approval || approval.state !== "pending" || !binding) return;
@@ -1304,15 +1308,12 @@ export async function resolveApprovalDecision(
     );
     // The decision belongs only to the captured draft/approval. Its resolved
     // record may remain on that exact preserved queue after a session switch,
-    // but it must never replace a newer queue or approval.
+    // but it must never replace a newer queue or approval. Apply is a
+    // separate action: this function records the decision and nothing else.
     const current = getState();
     if (!approvalBindingStillExists(current, binding)) return;
     setState({ approval: resolved, approvalPhase: "resolved" });
-    // A resolved approval remains an honest Runtime fact on its preserved
-    // queue, but only the still-active exact binding may auto-apply it.
-    if (decision === "approved" && current.draft === state.draft && current.head === state.head && approvalBindingIsCurrent(getState(), binding)) {
-      await applyApproved();
-    } else if (decision === "rejected" && approvalBindingIsCurrent(getState(), binding)) {
+    if (decision === "rejected" && approvalBindingIsCurrent(getState(), binding)) {
       showToast("계획을 거절했습니다. 문서는 그대로입니다.", 2000);
     }
   } catch (e) {
@@ -1341,6 +1342,7 @@ function applyPresentation(sessionId: string | null) {
 
 export async function applyApproved(): Promise<void> {
   const state = getState();
+  if (state.isComposing) return;
   const plan = state.draft.plan;
   const approval = state.approval;
   const sessionId = state.activeSessionId;

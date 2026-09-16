@@ -72,6 +72,14 @@ export function SeatEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (!composing.current) return;
+      composing.current = false;
+      setState({ isComposing: false });
+    };
+  }, []);
+
   return (
     <input
       ref={field}
@@ -83,13 +91,14 @@ export function SeatEditor({
       onChange={(e) => setText(e.target.value)}
       onCompositionStart={() => {
         composing.current = true;
+        setState({ isComposing: true });
       }}
       onCompositionEnd={(e) => {
         composing.current = false;
         // Recorded so the IME harness can tell a composed string from
         // characters injected straight into the field: both look the same in
         // the value, and only one of them exercised the IME.
-        setState({ sawComposition: true });
+        setState({ sawComposition: true, isComposing: false });
         // The composed syllable arrives here on some IMEs without a further
         // input event, so read it off the element rather than trusting state.
         setText((e.target as HTMLInputElement).value);

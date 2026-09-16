@@ -349,6 +349,11 @@ export interface WorkspaceState {
   lastCommit: LastCommit | null;
   /** Set by the editor when a real `compositionend` fires. */
   sawComposition: boolean;
+  /**
+   * True while a seat or queue-value field has an open IME composition.
+   * Approve, reject, apply, and queue-value commits must no-op until it clears.
+   */
+  isComposing: boolean;
   draft: Draft;
 
   // --- undo, in two tiers that are never blurred together (E1.4) -----------
@@ -677,6 +682,7 @@ const initial: WorkspaceState = {
   inlineEdit: null,
   lastCommit: null,
   sawComposition: false,
+  isComposing: false,
   draft: EMPTY_DRAFT,
   redoStack: [],
   head: null,
