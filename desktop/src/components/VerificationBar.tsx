@@ -70,10 +70,12 @@ export function VerificationBar({
   session,
   inspect,
   candidates,
+  home = false,
 }: {
   session: Session | null;
   inspect: InspectResult | null;
   candidates: Candidate[];
+  home?: boolean;
 }) {
   const status = useWorkspace((s) => s.status);
   const checkPhase = useWorkspace((s) => s.checkPhase);
@@ -418,6 +420,20 @@ export function VerificationBar({
       </button>
     </div>
   );
+
+  if (home) {
+    return (
+      <footer className="verifybar is-home" data-testid="verification-bar">
+        <span
+          className="verify-engine"
+          data-testid="verify-engine"
+          title={GLOSSARY.engine}
+        >
+          {engineUp ? "엔진 연결됨" : "끊김"}
+        </span>
+      </footer>
+    );
+  }
 
   return (
     <footer className="verifybar" data-testid="verification-bar">

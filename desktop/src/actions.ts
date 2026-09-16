@@ -73,6 +73,7 @@ import type {
   Recent,
   RegionText,
   RuntimeError,
+  Session,
   Turn,
   VerificationReport,
 } from "./types";
@@ -382,6 +383,7 @@ export async function selectSession(sessionId: string) {
   if (previous !== sessionId) stopDocumentEvents();
   setState({
     activeSessionId: sessionId,
+    homeOpen: false,
     ...(previous !== sessionId
       ? {
           selection: null,
@@ -454,7 +456,7 @@ export async function refreshSessions(): Promise<void> {
 // --- recents ----------------------------------------------------------------
 
 /**
- * Remember a document so the welcome screen can offer it back.
+ * Remember a document so the home screen can offer it back.
  *
  * Keyed on the source path, because that is what reopening needs; the hash
  * rides along so the list can show it and so a moved-but-identical file is
@@ -471,6 +473,7 @@ export function rememberRecent(sessionId: string) {
     sha256: session.source.sha256,
     bytes: session.source.bytes,
     openedUtc: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    documentKind: session.source.documentKind,
   };
   const next = [entry, ...getState().recents.filter((r) => r.path !== path)].slice(
     0,
@@ -487,6 +490,29 @@ export function rememberRecent(sessionId: string) {
  * validates, copies into the session and records the SHA-256 — the source
  * itself is never touched.
  */
+function markRecentMissing(path: string) {
+  const recents = getState().recents.map((r) =>
+    r.path === path ? { ...r, missing: true } : r,
+  );
+  setState({ recents });
+  void rt.savePrefs({ recents });
+}
+
+/** Recents when prefs have none: the Runtime's session list, plus opened paths. */
+export function recentsFromSessions(
+  sessions: Session[],
+  openedPaths: Record<string, string>,
+): Recent[] {
+  return sessions.map((s) => ({
+    path: openedPaths[s.sessionId] ?? s.source.name,
+    name: s.source.name,
+    sha256: s.source.sha256,
+    bytes: s.source.bytes,
+    openedUtc: s.openedUtc,
+    documentKind: s.source.documentKind,
+  }));
+}
+
 export async function openPath(path: string): Promise<string | null> {
   try {
     const opened = await rt.openPath(path);
@@ -499,6 +525,7 @@ export async function openPath(path: string): Promise<string | null> {
     await selectSession(opened.sessionId);
     return opened.sessionId;
   } catch (e) {
+    markRecentMissing(path);
     setState({ inspectPhase: "failed", inspectError: rt.asRuntimeError(e) });
     return null;
   }
@@ -3025,7 +3052,8 @@ export async function boot(): Promise<void> {
     if (Number.isFinite(savedZoom) && savedZoom !== 1) {
       await applyUiZoom(savedZoom, false);
     }
-    if (Array.isArray(prefs.recents)) setState({ recents: prefs.recents as Recent[] });
+    const prefsHadRecents = Array.isArray(prefs.recents);
+    if (prefsHadRecents) setState({ recents: prefs.recents as Recent[] });
     if (prefs.openedPaths && typeof prefs.openedPaths === "object") {
       setState({ openedPaths: prefs.openedPaths as Record<string, string> });
     }
@@ -3047,11 +3075,15 @@ export async function boot(): Promise<void> {
     setState({ phaseNote: "열린 문서를 찾는 중" });
     await refreshSessions();
 
+    if (!prefsHadRecents) {
+      const derived = recentsFromSessions(getState().sessions, getState().openedPaths);
+      if (derived.length > 0) setState({ recents: derived });
+    }
+
     const remembered = prefs.lastSessionId as string | undefined;
     const sessions = getState().sessions;
     const target =
-      (remembered && sessions.find((s) => s.sessionId === remembered)?.sessionId) ??
-      sessions[0]?.sessionId;
+      remembered && sessions.find((s) => s.sessionId === remembered)?.sessionId;
 
     if (prefs.leftRailCollapsed === true) setState({ leftRailCollapsed: true });
     if (prefs.lastView === "agent") setView("agent");

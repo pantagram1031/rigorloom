@@ -55,8 +55,12 @@ The tokens are fine (Pretendard, warm paper, teal accent). What reads as "vibe c
       pill · 엔진 연결됨/끊김 · ⋯ 자세히 popover with the former chips and glossary tooltips; `setView('agent')` is now
       a tab switch; smoke checks relocated. Screenshot pass done (default, 검토, popover, collapsed rail, 에이전트).
       Follow-ups: popover is dense (R6); 기록 still mounts Timeline (R5).
-- [ ] R3 Home screen: `Welcome.tsx` becomes a real home (recents from prefs IPC, open, drop zone, CLI link);
-      splash shortened; first-run copy.
+- [x] R3 Home screen (cursor-grok-4.6-high-fast, 12.5 min, 499k in / 48k out / 4.7M cache; tests 164 → 171): Home
+      replaces the three columns when no session is in front (mark, lede, 문서 열기, drop zone, recents from prefs
+      with relative time and 찾을 수 없음 for missing files, first-run line, CLI 문서 / 설정), header 홈 button and
+      Ctrl+Shift+H keep the session alive, splash ≤ 400 ms, status bar shows only the engine state on Home.
+      Verified in dev-mock (page text + screenshots; recent row opens the workspace). Not done: CLI 문서 has no
+      hosted URL yet, so it is an in-app hint.
 - [ ] R4 Review as diff: hunk cards with before/after from `read-region`, provenance details row, j/k a/r
       keys, "모두 승인" = approve displayed hash, rejected hash cannot apply (existing tests preserved).
 - [ ] R5 Agent in the inspector: Conversation + Composer inside the 에이전트 tab; plan arrival badges 검토;
@@ -77,3 +81,4 @@ done only when the screenshot matches the intent; "tests pass" alone is not acce
 | 2026-09-17 | Diagnosis from dev-mock screenshots (document tab, 작업 tab) | six findings above; R0 launched on cursor-grok-4.6-low-fast |
 | 2026-09-17 | R0 note (grok-low) and R1 fixes (grok-high) landed; 작업 tab screenshot before/after | see slices; commit below |
 | 2026-09-17 | R2 shell IA landed; five dev-mock screenshots checked | commit below |
+| 2026-09-17 | R3 home screen landed | commit below |

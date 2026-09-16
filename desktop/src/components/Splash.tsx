@@ -1,22 +1,21 @@
 /**
- * The entrance. 700 ms, once per launch, skippable by click.
+ * The entrance. ≤ 400 ms, once per launch, skippable by click.
  *
  * It exists because the measured cold start is about 1.5 s to a usable window
  * (spike finding 4) and that time has to be spent somewhere. A blank pane
  * spends it looking broken; the mark weaving itself spends it saying an
- * application started. The panes then rise in a 60 ms stagger, so the layout
- * assembles rather than appearing.
+ * application started. Home then has to be visible within a second of mount.
  *
  * It never replays. `entranceDone` lives in the store and a view switch does
  * not touch it — re-running the entrance on every navigation is exactly the
- * "website" tell this slice is removing.
+ * "website" tell this slice is removing. Smoke `hold-entrance` pins it open.
  */
 import { useEffect, useState } from "react";
 
 import { Logo } from "./Logo";
 
-const TOTAL_MS = 700;
-const FADE_MS = 260;
+const TOTAL_MS = 160;
+const FADE_MS = 200;
 
 export function Splash({
   note,

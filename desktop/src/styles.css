@@ -297,6 +297,33 @@ button {
   flex: 1;
 }
 
+.home-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  margin-left: -2px;
+  flex: none;
+}
+
+.home-btn[aria-pressed="true"] {
+  color: var(--fg-on-ink);
+}
+
+button.docchip {
+  cursor: pointer;
+}
+
+button.docchip:hover {
+  color: var(--fg-on-ink);
+}
+
+button.docchip[aria-current="page"] {
+  color: var(--fg-on-ink);
+}
+
 .docchip {
   display: flex;
   align-items: baseline;
@@ -452,9 +479,8 @@ button {
 }
 
 /* ══ entrance ════════════════════════════════════════════════════════════
-   700 ms, once per launch. The logo weaves itself, then the panes rise. It
-   earns its place by being the thing that says "an application started",
-   which a blank 1.5 s of nothing does not. Click to skip. */
+   ≤ 400 ms, once per launch. The logo weaves itself, then Home is waiting.
+   Click to skip. Smoke hold-entrance pins it open. */
 
 .splash {
   position: fixed;
@@ -470,7 +496,7 @@ button {
 }
 
 .splash.leaving {
-  animation: splash-out 260ms var(--ease) forwards;
+  animation: splash-out 200ms var(--ease) forwards;
   pointer-events: none;
 }
 
@@ -489,14 +515,14 @@ button {
   font-weight: var(--weight-head);
   letter-spacing: -0.015em;
   opacity: 0;
-  animation: rise-in 320ms var(--ease) 380ms forwards;
+  animation: rise-in 180ms var(--ease) 40ms forwards;
 }
 
 .splash .note {
   font-size: var(--text-base);
   color: var(--fg-faint);
   opacity: 0;
-  animation: rise-in 320ms var(--ease) 480ms forwards;
+  animation: rise-in 180ms var(--ease) 80ms forwards;
   min-height: 1.4em;
 }
 
@@ -505,14 +531,14 @@ button {
 .mark-draw path {
   stroke-dasharray: 100;
   stroke-dashoffset: 100;
-  animation: weave-in 300ms var(--ease) forwards;
+  animation: weave-in 120ms var(--ease) forwards;
 }
 
 .mark-draw .rl-warp-a { animation-delay: 0ms; }
-.mark-draw .rl-warp-b { animation-delay: 60ms; }
-.mark-draw .rl-weft-a { animation-delay: 140ms; }
-.mark-draw .rl-weft-b { animation-delay: 200ms; }
-.mark-draw .rl-leg    { animation-delay: 280ms; }
+.mark-draw .rl-warp-b { animation-delay: 16ms; }
+.mark-draw .rl-weft-a { animation-delay: 36ms; }
+.mark-draw .rl-weft-b { animation-delay: 52ms; }
+.mark-draw .rl-leg    { animation-delay: 72ms; }
 
 @keyframes weave-in {
   to {
@@ -967,19 +993,25 @@ button {
   text-align: center;
 }
 
-/* ══ welcome ═════════════════════════════════════════════════════════════ */
+/* ══ welcome / home ══════════════════════════════════════════════════════ */
 
 .welcome {
-  flex: 1;
   min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--s6);
-  padding: var(--s12) var(--s6);
+  padding: var(--s16) var(--s6);
   text-align: center;
+}
+
+.home-inner {
+  width: min(720px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s8);
 }
 
 .welcome .mark {
@@ -995,24 +1027,55 @@ button {
 }
 
 .welcome .lede {
-  margin: 0;
-  max-width: 46ch;
+  margin: var(--s3) auto 0;
+  max-width: 42ch;
   font-size: var(--text-md);
   line-height: var(--leading-body);
   color: var(--fg-muted);
 }
 
+.home-onboarding {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  color: var(--fg-muted);
+}
+
+.home-links {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+}
+
+.home-link {
+  color: inherit;
+  text-decoration: none;
+  padding: 2px 0;
+}
+
+.home-link:hover {
+  color: var(--fg-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.home-link-sep {
+  opacity: 0.5;
+}
+
 .drop {
-  width: min(520px, 100%);
+  width: 100%;
   border: 1.5px dashed var(--line-strong);
   border-radius: var(--radius-lg);
-  padding: var(--s12) var(--s6);
+  padding: var(--s8) var(--s6);
   background: var(--bg-panel);
   transition: border-color var(--t-view) var(--ease), background var(--t-view) var(--ease);
 }
 
 .drop .hint {
-  margin: var(--s3) 0 0;
+  margin: 0;
   font-size: var(--text-sm);
   color: var(--fg-faint);
 }
@@ -1050,7 +1113,7 @@ body.dragging .drop {
 /* ── recents ───────────────────────────────────────────────────────────── */
 
 .recents {
-  width: min(520px, 100%);
+  width: 100%;
   text-align: left;
 }
 
@@ -1066,35 +1129,66 @@ body.dragging .drop {
   align-items: baseline;
   gap: var(--s3);
   width: 100%;
-  padding: var(--s2) var(--s3);
+  padding: var(--s3);
   border-radius: var(--radius);
   text-align: left;
   transition: background var(--t-micro) var(--ease);
 }
 
-.recent:hover {
+button.recent:hover {
   background: var(--bg-hover);
 }
 
 .recent .name {
+  flex: none;
   font-weight: var(--weight-emph);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 22ch;
+}
+
+.recent .folder {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+}
+
+.recent .folder > span {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .recent .meta {
   margin-left: auto;
   flex: none;
-  font-family: var(--font-mono);
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
   font-size: var(--text-xs);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
 
+.recent .when {
+  font-family: var(--font-mono);
+}
+
+.recent.missing {
+  cursor: default;
+}
+
 .recent.missing .name {
   color: var(--fg-faint);
   text-decoration: line-through;
+}
+
+.missing-tag {
+  color: var(--fg-faint);
 }
 
 /* ══ verification bar ════════════════════════════════════════════════════ */
@@ -1109,6 +1203,10 @@ body.dragging .drop {
   border-top: 1px solid var(--line);
   flex: none;
   min-height: 38px;
+}
+
+.verifybar.is-home {
+  justify-content: flex-start;
 }
 
 .fact {

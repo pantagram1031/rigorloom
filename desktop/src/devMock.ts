@@ -32,13 +32,37 @@ const fixture = corpus as unknown as Fixture;
 
 const SESSION = "devfixture0000000000000000000000";
 const OPENED = "2026-09-01T00:00:00Z";
+const PRESENT_PATH = "C:\\dev-fixture\\forms\\gianmun-byeolji-1ho.hwpx";
+const MISSING_PATH = "C:\\dev-fixture\\missing\\gone.hwpx";
+
+let openedSession = false;
+let prefs: Record<string, unknown> = {
+  recents: [
+    {
+      path: PRESENT_PATH,
+      name: "gianmun-byeolji-1ho.hwpx",
+      sha256: fixture.source.sha256,
+      bytes: fixture.source.bytes,
+      openedUtc: "2026-09-17T00:04:00Z",
+      documentKind: fixture.source.documentKind,
+    },
+    {
+      path: MISSING_PATH,
+      name: "gone.hwpx",
+      sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+      bytes: 0,
+      openedUtc: "2026-09-16T12:00:00Z",
+      documentKind: "hwpx",
+      missing: true,
+    },
+  ],
+};
 
 interface Internals {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   transformCallback?: (cb: unknown) => number;
 }
 
-let prefs: Record<string, unknown> = {};
 let nextEventId = 1;
 
 function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
@@ -119,9 +143,12 @@ function call(method: string, params: Record<string, unknown>): unknown {
       return fixture.capabilities;
     case "session/list":
       return {
-        sessions: [{ sessionId: SESSION, openedUtc: OPENED, source: fixture.source }],
+        sessions: openedSession
+          ? [{ sessionId: SESSION, openedUtc: OPENED, source: fixture.source }]
+          : [],
       };
     case "workspace/openPath":
+      openedSession = true;
       return { sessionId: SESSION, openedUtc: OPENED, source: fixture.source };
     case "document/inspect":
       return withSession(fixture.inspect);
@@ -166,15 +193,15 @@ export function installDevMock(): void {
   const internals: Internals = {
     invoke: (cmd, args) =>
       new Promise((resolve, reject) => {
-        // A small delay so the entrance and loading states are visible in the
-        // browser the way they are in the app.
+        // A small delay so the entrance is visible; keep it short so Home
+        // is on screen within a second of mount.
         setTimeout(() => {
           try {
             resolve(handle(cmd, args));
           } catch (e) {
             reject(e);
           }
-        }, 120);
+        }, 40);
       }),
     transformCallback: () => 0,
   };

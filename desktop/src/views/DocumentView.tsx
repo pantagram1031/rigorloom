@@ -1,6 +1,7 @@
 /**
  * One workspace. The document is the hero.
  *
+ * Home replaces the three columns when no session is in front of the user.
  * left: collapsible structure rail · centre: the document ·
  * right: tabbed inspector · bottom: the verification bar.
  *
@@ -17,11 +18,12 @@ import { SessionList } from "../components/SessionList";
 import { StructureTree } from "../components/StructureTree";
 import { TextView } from "../components/TextView";
 import { VerificationBar } from "../components/VerificationBar";
-import { Welcome } from "../components/Welcome";
+import { Home } from "../components/Welcome";
 import {
   activeCandidates,
   activeInspect,
   activeSession,
+  isHome,
   useWorkspace,
 } from "../store";
 
@@ -58,12 +60,24 @@ export function DocumentView() {
   const zoom = useWorkspace((s) => s.zoom);
   const candidates = useWorkspace(activeCandidates);
   const collapsed = useWorkspace((s) => s.leftRailCollapsed);
+  const home = useWorkspace(isHome);
   const paraCount = inspect?.graph.paragraphs.length ?? 0;
   const tableCount = inspect?.graph.tables.length ?? 0;
   const fillCount = inspect?.summary.fillTargetCount ?? 0;
   const railTitle = inspect
     ? `문단 ${paraCount} · 표 ${tableCount} · 입력 칸 ${fillCount}`
     : "구조";
+
+  if (home) {
+    return (
+      <div className="view view-document is-home" data-testid="view-document">
+        <Home />
+        <VerificationBar home session={session} inspect={null} candidates={[]} />
+        <Findings />
+        <ReceiptPanel />
+      </div>
+    );
+  }
 
   return (
     <div className="view view-document" data-testid="view-document">
@@ -138,20 +152,14 @@ export function DocumentView() {
         </nav>
 
         <main className="panel center" aria-label="문서">
-          {!inspect ? (
-            <Welcome />
+          <EditorToolbar inspect={inspect} />
+          <CenterCaveat />
+          {mode === "text" ? (
+            <div className="doc-zoom" style={{ zoom }}>
+              {inspect ? <TextView inspect={inspect} /> : null}
+            </div>
           ) : (
-            <>
-              <EditorToolbar inspect={inspect} />
-              <CenterCaveat />
-              {mode === "text" ? (
-                <div className="doc-zoom" style={{ zoom }}>
-                  <TextView inspect={inspect} />
-                </div>
-              ) : (
-                <PagePreview inspect={inspect} />
-              )}
-            </>
+            inspect ? <PagePreview inspect={inspect} /> : null
           )}
         </main>
 

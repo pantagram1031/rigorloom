@@ -22,10 +22,13 @@ import { deliverDocumentEvents, stopDocumentEvents } from "./documentEvents";
 import { RuntimeSubscriptionScope } from "./runtimeSubscriptions";
 import {
   getState,
+  goHome,
+  leaveHome,
   pushActivity,
   pushHostEvents,
   setState,
   setView,
+  toggleHome,
   useWorkspace,
   type View,
 } from "./store";
@@ -86,6 +89,20 @@ function canBindDragDrop(): boolean {
   return typeof internals?.metadata?.currentWebview?.label === "string";
 }
 
+function HomeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <path
+        d="M2.75 7.25 8 2.75l5.25 4.5V13.25H9.4v-3.1H6.6v3.1H2.75z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function App() {
   const phase = useWorkspace((s) => s.phase);
   const phaseNote = useWorkspace((s) => s.phaseNote);
@@ -98,6 +115,7 @@ export default function App() {
   const session = useWorkspace(
     (s) => s.sessions.find((x) => x.sessionId === s.activeSessionId) ?? null,
   );
+  const homeOpen = useWorkspace((s) => s.homeOpen);
 
   useEffect(() => {
     const subscriptions = new RuntimeSubscriptionScope();
@@ -139,7 +157,7 @@ export default function App() {
       }
 
       // Read the launcher's intent before boot: the entrance screenshot needs
-      // the splash pinned open, and it is gone 960 ms after mount otherwise.
+      // the splash pinned open, and it is gone within 400 ms of mount otherwise.
       const intent = await smokeIntent();
       if (subscriptions.isDisposed) return;
       if (intent?.phase === "hold-entrance") setState({ holdEntrance: true });
@@ -162,7 +180,7 @@ export default function App() {
     };
   }, []);
 
-  // Keyboard. Ctrl+O open · Ctrl+1/2 views · Ctrl+= / - / 0 app zoom ·
+  // Keyboard. Ctrl+O open · Ctrl+Shift+H home · Ctrl+1/2 views · Ctrl+= / - / 0 app zoom ·
   // Ctrl+C copies the selected cell's text.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -226,6 +244,13 @@ export default function App() {
           e.preventDefault();
           toggleLeftRail();
           break;
+        case "h":
+        case "H":
+          if (e.shiftKey) {
+            e.preventDefault();
+            toggleHome();
+          }
+          break;
         default:
           break;
       }
@@ -265,18 +290,39 @@ export default function App() {
       ) : null}
 
       <header className="titlebar">
+        {session ? (
+          <button
+            type="button"
+            className="ghost home-btn"
+            data-testid="header-home"
+            title="홈 (Ctrl+Shift+H)"
+            aria-label="홈"
+            aria-pressed={homeOpen}
+            onClick={() => goHome()}
+          >
+            <HomeIcon />
+          </button>
+        ) : null}
+
         <div className="brand">
           <Logo size={19} />
           <span className="wordmark">Rigorloom</span>
         </div>
 
         {session ? (
-          <div className="docchip">
+          <button
+            type="button"
+            className="docchip"
+            data-testid="doc-tab"
+            title="문서로 돌아가기"
+            aria-current={homeOpen ? undefined : "page"}
+            onClick={() => leaveHome()}
+          >
             <span className="name" data-testid="doc-name">
               {session.source.name}
             </span>
             <span className="latin-caps">{session.source.documentKind}</span>
-          </div>
+          </button>
         ) : null}
 
         <span className="spacer" />

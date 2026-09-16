@@ -564,6 +564,11 @@ export interface WorkspaceState {
   uiZoom: number;
   toast: { text: string; at: number } | null;
   recents: Recent[];
+  /**
+   * Home is showing. A live session stays in memory; the three columns hide.
+   * Opening a document or clicking the header document tab clears this.
+   */
+  homeOpen: boolean;
   /** The entrance has played. A view switch must never reset this. */
   entranceDone: boolean;
   /** Screenshot support only: pin the entrance open so it can be captured. */
@@ -813,6 +818,7 @@ const initial: WorkspaceState = {
   uiZoom: 1,
   toast: null,
   recents: [],
+  homeOpen: true,
   entranceDone: false,
   holdEntrance: false,
   dragOver: false,
@@ -1009,6 +1015,27 @@ export const setView = (view: View) => {
 
 export const setLeftRailCollapsed = (leftRailCollapsed: boolean) =>
   setState({ leftRailCollapsed });
+
+/** Home replaces the three columns. The active session is not dropped. */
+export function goHome() {
+  setState({ homeOpen: true });
+}
+
+/** Show the workspace for the live session. No-op when nothing is open. */
+export function leaveHome() {
+  if (!state.activeSessionId) return;
+  setState({ homeOpen: false });
+}
+
+export function toggleHome() {
+  if (state.homeOpen) leaveHome();
+  else goHome();
+}
+
+/** Home when the flag is set, or when there is no document session at all. */
+export function isHome(s: WorkspaceState = state): boolean {
+  return s.homeOpen || !s.activeSessionId;
+}
 
 export const setVerifyDetailsOpen = (verifyDetailsOpen: boolean) =>
   setState({ verifyDetailsOpen });

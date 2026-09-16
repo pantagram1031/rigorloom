@@ -885,6 +885,10 @@ export interface Recent {
   sha256: string;
   bytes: number;
   openedUtc: string;
+  /** Backend kind for the Home row tag. Absent rows derive it from the path. */
+  documentKind?: DocumentKind;
+  /** True when the path is gone; Home shows 찾을 수 없음 and the row is inert. */
+  missing?: boolean;
 }
 
 /**
