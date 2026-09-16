@@ -154,7 +154,7 @@ def test_operation_keys_match_authoritative_ast_sources(catalog):
     expected_xml = _extract_ast_keys(xml_backend_path, "SUPPORTED_OPS")
 
     assert len(expected_preedit) == 4, f"Unexpected preedit op count: {expected_preedit}"
-    assert len(expected_com) == 22, f"Unexpected com op count: {expected_com}"
+    assert len(expected_com) == 24, f"Unexpected com op count: {expected_com}"  # page_numbers, set_header
     assert len(expected_xml) == 9, f"Unexpected xml op count: {expected_xml}"
 
     catalog_preedit = {
@@ -187,7 +187,7 @@ def test_operation_keys_match_authoritative_ast_sources(catalog):
     )
 
     total_ops = len(catalog["operations"])
-    assert total_ops == 35, f"Expected exactly 35 operations, found {total_ops}"
+    assert total_ops == 37, f"Expected exactly 37 operations, found {total_ops}"
 
 
 def test_implementation_references_resolve_to_tracked_files(catalog):

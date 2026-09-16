@@ -238,7 +238,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 513,
+        "line": 619,
         "symbol": "op_find_delete"
       },
       "test_references": [],
@@ -266,7 +266,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 597,
+        "line": 721,
         "symbol": "op_collapse_empty_paragraphs"
       },
       "test_references": [],
@@ -292,7 +292,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 623,
+        "line": 747,
         "symbol": "op_delete_blank_after"
       },
       "test_references": [],
@@ -318,7 +318,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 654,
+        "line": 778,
         "symbol": "op_delete_blank_before"
       },
       "test_references": [],
@@ -344,7 +344,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 683,
+        "line": 807,
         "symbol": "op_move"
       },
       "test_references": [
@@ -376,7 +376,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 753,
+        "line": 885,
         "symbol": "op_insert_text"
       },
       "test_references": [],
@@ -404,7 +404,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 844,
+        "line": 996,
         "symbol": "op_set_para_align"
       },
       "test_references": [],
@@ -432,7 +432,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 878,
+        "line": 1036,
         "symbol": "op_insert_equation"
       },
       "test_references": [],
@@ -460,7 +460,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 908,
+        "line": 1087,
         "symbol": "op_edit_equation"
       },
       "test_references": [],
@@ -488,7 +488,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1002,
+        "line": 1220,
         "symbol": "op_insert_table"
       },
       "test_references": [],
@@ -517,7 +517,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1108,
+        "line": 1326,
         "symbol": "op_insert_picture"
       },
       "test_references": [],
@@ -546,7 +546,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1157,
+        "line": 1375,
         "symbol": "op_set_char_color"
       },
       "test_references": [],
@@ -574,7 +574,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1189,
+        "line": 1407,
         "symbol": "op_delete_ctrls"
       },
       "test_references": [],
@@ -602,7 +602,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1366,
+        "line": 1584,
         "symbol": "op_set_cell"
       },
       "test_references": [
@@ -636,7 +636,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1445,
+        "line": 1663,
         "symbol": "op_insert_blank_before"
       },
       "test_references": [],
@@ -662,7 +662,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1467,
+        "line": 1685,
         "symbol": "op_page_break_before"
       },
       "test_references": [],
@@ -688,7 +688,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1513,
+        "line": 1731,
         "symbol": "op_insert_hyperlink"
       },
       "test_references": [],
@@ -716,7 +716,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1557,
+        "line": 1775,
         "symbol": "op_page_binding"
       },
       "test_references": [],
@@ -744,7 +744,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/com_backend.py",
-        "line": 1580,
+        "line": 1798,
         "symbol": "op_set_line_spacing"
       },
       "test_references": [],
@@ -763,6 +763,60 @@
       ]
     },
     {
+      "id": "native:page_numbers",
+      "operation_key": "page_numbers",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "page"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1872,
+        "symbol": "op_page_numbers"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "headers/footers/numbering"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
+      "id": "native:set_header",
+      "operation_key": "set_header",
+      "surface": "com_backend.py edit",
+      "backend": "com",
+      "target_kinds": [
+        "page"
+      ],
+      "implementation_reference": {
+        "path": "engine/scripts/com_backend.py",
+        "line": 1838,
+        "symbol": "op_set_header"
+      },
+      "test_references": [],
+      "documentation_claim": {
+        "path": "docs/plans/rigorloom-master-execution-plan.md",
+        "line": 166,
+        "topic": "headers/footers/numbering"
+      },
+      "strongest_evidence_category": "source",
+      "refusals": [
+        "headerfooter_action_failed"
+      ],
+      "missing_evidence": [
+        "focused_unit_test",
+        "native_com_automated_test"
+      ]
+    },
+    {
       "id": "portable:goto_text",
       "operation_key": "goto_text",
       "surface": "xml_backend.py edit",
@@ -772,7 +826,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 242,
+        "line": 247,
         "symbol": "goto_text"
       },
       "test_references": [
@@ -804,7 +858,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 275,
+        "line": 280,
         "symbol": "replace_all"
       },
       "test_references": [
@@ -836,7 +890,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 302,
+        "line": 307,
         "symbol": "insert_blank_before"
       },
       "test_references": [
@@ -868,7 +922,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 325,
+        "line": 330,
         "symbol": "page_binding"
       },
       "test_references": [
@@ -900,7 +954,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 471,
+        "line": 476,
         "symbol": "insert_text"
       },
       "test_references": [
@@ -932,7 +986,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 557,
+        "line": 562,
         "symbol": "set_line_spacing"
       },
       "test_references": [
@@ -964,7 +1018,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 597,
+        "line": 602,
         "symbol": "insert_equation"
       },
       "test_references": [
@@ -996,7 +1050,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 857,
+        "line": 864,
         "symbol": "insert_picture"
       },
       "test_references": [
@@ -1029,7 +1083,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/xml_backend.py",
-        "line": 988,
+        "line": 995,
         "symbol": "insert_table"
       },
       "test_references": [
