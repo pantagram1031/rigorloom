@@ -79,7 +79,12 @@ DEFAULT_ENGINE_ROOT = Path(__file__).resolve().parents[2]
 _ENV_KEYS_COMMON = ("PATH", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL")
 _ENV_KEYS_WINDOWS = ("SYSTEMROOT", "SystemRoot", "COMSPEC", "PATHEXT",
                      "SYSTEMDRIVE", "WINDIR", "USERPROFILE", "APPDATA",
-                     "LOCALAPPDATA", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE")
+                     "LOCALAPPDATA", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+                     # Hancom's COM server resolves its shared configuration under
+                     # %ProgramData%; without it CoCreateInstance(HWPFrame.HwpObject)
+                     # fails inside the child even though the same script works from
+                     # a full shell (measured 2026-09-16: ProgramData alone fixes it).
+                     "ProgramData", "PROGRAMDATA")
 _ENV_KEYS_POSIX = ("HOME",)
 
 

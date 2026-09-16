@@ -219,3 +219,13 @@ def test_stage_com_ops_copies_a_picture_into_assets(tmp_path):
     assert copied.read_bytes() == b"png"
     assert rows[0]["op"] == "insert_picture"
     assert rows[0]["width_mm"] == 80
+
+
+def test_child_env_passes_programdata_on_windows(monkeypatch):
+    """Hancom's COM server needs %ProgramData% inside the child (measured 2026-09-16)."""
+    import os
+    import rt_engine
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setenv("ProgramData", r"C:\ProgramData")
+    env = rt_engine.child_env()
+    assert env.get("ProgramData") == r"C:\ProgramData"
