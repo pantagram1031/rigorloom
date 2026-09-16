@@ -39,6 +39,8 @@ Per the user's model-benchmark request, section expansions are written by
 Cursor models against one spec (`docs/plans/model-eval.md`), Fable reviews,
 merges the best, and runs `check_style` / `content_audit`.
 
+Exit check (2026-09-16, run 11): Q1 ✓ (26.3k chars, 20 pages, 13 bold heads — 3 over target, accepted), Q2 partly ✓ (widths 85–95 mm; maps kept separate), Q3 ✓ (9 tables), Q4 ✓, Q5 ✓, Q6 ✓ (converged first try, bottom void 3.4 %, rubric ×4, gates 5.3/5.5/5.7/6 green). Stage 1b closed.
+
 ## Ledger
 
 | When | What | Result |
