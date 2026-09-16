@@ -105,6 +105,9 @@ SIMPLE_MAP = {
     r"\lim": "lim",
     r"\max": "max",
     r"\min": "min",
+    r"\arg": "arg",
+    r"\argmin": "arg min",
+    r"\argmax": "arg max",
     r"\log": "log",
     r"\ln": "ln",
     r"\exp": "exp",
@@ -180,7 +183,7 @@ def _read_arg(s, i):
 # origin check only; direct ``hwpeqn`` callers are validated by
 # ``preflight_hwpeqn`` and may use the native tokens.
 _LATEX_TEXT_COMMANDS = frozenset(
-    ("text", "mathrm", "textrm", "mbox", "operatorname"))
+    ("text", "mathrm", "textrm", "mbox", "operatorname", "operatorname*"))
 _LATEX_NATIVE_OPERATOR_SURFACES = (
     "<=>", "<->", "+-", "-+", "=>", "->", "<-", "!=", "==", "<=", ">=",
 )
@@ -639,7 +642,8 @@ def _convert_structures(s, warnings):
                 warnings.append("missing_required_argument")
                 out.append("\\" + cmd)
                 i = j if j > i else i + m.end()
-        elif cmd in ("text", "mathrm", "textrm", "mbox", "operatorname"):
+        elif cmd in ("text", "mathrm", "textrm", "mbox", "operatorname",
+                     "operatorname*"):
             arg, j2 = _read_arg(s, j)
             if (not arg or any(ch in arg for ch in ('"', "\\", "\n", "\r"))):
                 warnings.append("conversion_warning")
