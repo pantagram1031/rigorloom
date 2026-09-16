@@ -214,6 +214,15 @@ function renderHistory(statePatch) {
     proposeUndoOf: () => {},
     selectHistory: () => {},
     setHead: () => {},
+    compareInspectRefusals: () => ({
+      acceptanceRefused: false,
+      exit3: false,
+      errorRefused: false,
+    }),
+    runCompareInspect: () => {},
+    setCompareAgainst: () => {},
+    setCompareLeft: () => {},
+    setCompareUseSelection: () => {},
   };
   const { History } = loadComponentModule("../src/components/History.tsx", {
     "../actions": actions,

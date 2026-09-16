@@ -93,6 +93,10 @@ Reading: grok-xhigh delivers spec-shaped runtime code with green suites in one p
 
 The primary Cursor account (`pantagram1031`) returned `ActionRequiredError: You've hit your usage limit … resets 9/23/2026` while launching the Stage 4 research task R1 on gpt-5.6-sol-high-fast. Today's spend on this account: W1 ×8, judge ×3, W2 ×3, W3 ×3, C1 ×7, T1–T8, H1, S1, S2+S3, A1 ×2 (≈ 30 agent sessions). Probe right after: `cursor-grok-4.6-xhigh-fast`, `cursor-grok-4.6-low-fast`, `composer-2.5-fast`, `auto` still answer; `claude-opus-5`, `claude-sonnet-5`, `gpt-5.3-codex`, `gemini-3.7-flash` (and `gpt-5.6-sol`) return `usage limit`. So the cap is on the API-billed tier only; Cursor's own models keep running. Gemini's earlier "connection lost" failures were probably the same cap surfacing differently. The second account (`pantagram1301`) has the same allocation; switching requires the user to sign in (Fable never handles credentials). Routing until 9/23: production code → grok-4.6-xhigh; mechanical/maintenance → composer-2.5-fast; analysis/research → grok-4.6-low; judging → grok-4.6-xhigh (sol unavailable).
 
+### Antigravity pool (added 2026-09-16 night at the user's request)
+
+`agy --print … --model M --effort high --mode accept-edits --dangerously-skip-permissions --output-format json --print-timeout 45m`; JSON returns `status`, `duration_seconds`, `usage{input,output,thinking,cache_read}`. Models: gemini-3.8/3.7/3.6-flash (low/med/high), gemini-3.1-pro (low/high), claude-sonnet-4-6 (thinking), claude-opus-4-6-thinking, gpt-oss-120b-medium. Smoke PONG: 18.6 s, 17k input. First real task: S7 (xml backend routing) on claude-sonnet-4-6 — result below when done. Cursor default per user: `cursor-grok-4.6-high-fast` from now on.
+
 ## Verdicts so far (Stage 1 experience, all cursor-grok-4.6-xhigh-fast)
 
 - T1–T7, H1: 9/9 bounded engine tasks accepted after my review; typical

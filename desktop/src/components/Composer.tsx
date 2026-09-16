@@ -14,7 +14,7 @@
  * the same failure the inline seat editor was built around, in a box people
  * will type paragraphs into.
  */
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { sendInstruction } from "../actions";
 import { activeStoreKey, composerBlocker, getState, setState, useWorkspace } from "../store";
@@ -65,12 +65,21 @@ export function Composer() {
   const provider = useWorkspace((s) => s.provider.provider);
   const activeTurn = useWorkspace((s) => s.activeTurn);
   const text = useWorkspace((s) => s.composerDraft.text);
+  const composingFlag = useWorkspace((s) => s.isComposing);
   const composing = useRef(false);
 
-  const canSend = blocker === null && text.trim() !== "";
+  const canSend = blocker === null && text.trim() !== "" && !composingFlag;
+
+  useEffect(() => {
+    return () => {
+      if (!composing.current) return;
+      composing.current = false;
+      setState({ isComposing: false });
+    };
+  }, []);
 
   async function send() {
-    if (!canSend) return;
+    if (!canSend || getState().isComposing) return;
     await submitComposerDraft({
       read: () => getState().composerDraft,
       write: (composerDraft) => setState({ composerDraft }),
@@ -93,15 +102,21 @@ export function Composer() {
         onChange={(e) => setState({ composerDraft: { text: e.target.value } })}
         onCompositionStart={() => {
           composing.current = true;
+          setState({ isComposing: true });
         }}
-        onCompositionEnd={() => {
+        onCompositionEnd={(e) => {
           composing.current = false;
+          setState({
+            sawComposition: true,
+            isComposing: false,
+            composerDraft: { text: (e.target as HTMLTextAreaElement).value },
+          });
         }}
         onKeyDown={(e) => {
           // Never while a syllable is still being built. `isComposing` is the
           // browser's own answer; the ref is the fallback for the one WebView2
           // path that fires keydown after compositionend without the flag.
-          if (e.nativeEvent.isComposing || composing.current) return;
+          if (e.nativeEvent.isComposing || composing.current || getState().isComposing) return;
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             void send();

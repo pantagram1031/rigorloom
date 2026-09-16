@@ -38,6 +38,7 @@ import {
   currentPlanGeneration,
   type Draft,
   type QueuedOp,
+  type Selection,
 } from "./store";
 import {
   activeApprovalBinding,
@@ -256,6 +257,12 @@ export async function selectSession(sessionId: string) {
           // Applying is globally serial, even if its document is not visible.
           ...(getState().applyPhase === "starting" ? { applyPhase: "starting" as const } : {}),
           receiptOpen: null,
+          compareLeftRunId: null,
+          compareAgainst: { source: true as const },
+          compareUseSelection: false,
+          comparePhase: "idle" as const,
+          compareError: null,
+          compareResult: null,
           // A module report names the document it checked. Carrying one across
           // a document switch would put another file's verdict under this
           // file's heading, which is the same class of lie as a stale geometry.
@@ -1167,6 +1174,110 @@ export function selectHistory(runId: string | null): void {
   if (runId && !getState().receipts[runId]) void loadReceipt(runId);
 }
 
+/** Addresses `candidate/compare` accepts, from the current selection or none. */
+export function selectionToCompareRegions(
+  selection: Selection,
+): Array<{ table?: number; row?: number; col?: number; atPara?: number }> | undefined {
+  if (!selection) return undefined;
+  if (selection.kind === "paragraph") return [{ atPara: selection.atPara }];
+  if (selection.kind === "cell") {
+    return [{ table: selection.table, row: selection.row, col: selection.col }];
+  }
+  return undefined;
+}
+
+export function setCompareLeft(runId: string | null): void {
+  setState({
+    compareLeftRunId: runId,
+    compareResult: null,
+    compareError: null,
+    comparePhase: "idle",
+  });
+}
+
+export function setCompareAgainst(against: { runId: string } | { source: true }): void {
+  setState({
+    compareAgainst: against,
+    compareResult: null,
+    compareError: null,
+    comparePhase: "idle",
+  });
+}
+
+export function setCompareUseSelection(on: boolean): void {
+  setState({ compareUseSelection: on });
+}
+
+/** Exit 3 on a receipt step or an RPC payload — never inferred from a green tick. */
+export function rpcExitCode(error: RuntimeError | null | undefined): number | null {
+  const data = error?.data;
+  if (data && typeof data === "object" && data !== null && "exitCode" in data) {
+    const n = (data as { exitCode: unknown }).exitCode;
+    if (typeof n === "number") return n;
+  }
+  return null;
+}
+
+export function compareInspectRefusals(input: {
+  acceptance?: boolean | null;
+  exitCodes?: number[];
+  error?: RuntimeError | null;
+}): { acceptanceRefused: boolean; exit3: boolean; errorRefused: boolean } {
+  const exit3 =
+    (input.exitCodes ?? []).includes(3) || rpcExitCode(input.error) === 3;
+  return {
+    acceptanceRefused: input.acceptance === false,
+    exit3,
+    errorRefused: input.error != null,
+  };
+}
+
+/**
+ * Operator compare via the existing `candidate/compare` method only.
+ *
+ * Does not call `verify/*` — that surface is still GAP on the wire.
+ */
+export async function runCompareInspect(): Promise<void> {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  const runId = state.compareLeftRunId ?? state.historySelected ?? state.head;
+  if (!sessionId || !runId) return;
+  const against = state.compareAgainst ?? { source: true as const };
+  if ("runId" in against && against.runId === runId) {
+    setState({
+      comparePhase: "failed",
+      compareResult: null,
+      compareError: {
+        code: "invalid_params",
+        message: "같은 후보본끼리는 비교하지 않습니다.",
+      },
+    });
+    return;
+  }
+  const regions = state.compareUseSelection
+    ? selectionToCompareRegions(state.selection)
+    : undefined;
+  setState({
+    comparePhase: "starting",
+    compareError: null,
+    compareResult: null,
+    compareLeftRunId: runId,
+  });
+  try {
+    if (!state.receipts[runId]) await loadReceipt(runId);
+    const compare = await rt.compareCandidate(sessionId, runId, against, regions);
+    if (getState().activeSessionId !== sessionId) return;
+    setState({ comparePhase: "ready", compareResult: compare, compareError: null });
+  } catch (e) {
+    if (getState().activeSessionId !== sessionId) return;
+    setState({
+      comparePhase: "failed",
+      compareError: rt.asRuntimeError(e),
+      compareResult: null,
+    });
+  }
+}
+
 interface HeadSelectionLease {
   generation: number;
   sessionId: string | null;
@@ -1413,6 +1524,9 @@ export async function applyApproved(): Promise<void> {
       head: applied.runId,
       historySelected: applied.runId,
       inverseProof: null,
+      compareResult: null,
+      compareError: null,
+      comparePhase: "idle" as const,
     } : {}),
   });
   await loadCandidates(sessionId);

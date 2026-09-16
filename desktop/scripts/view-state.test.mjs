@@ -47,3 +47,13 @@ test("a late send completion never overwrites newer composer work", () => {
   assert.equal(composerDraftAfterSend("", sent, true), "");
   assert.equal(composerDraftAfterSend("다음 지시", sent, true), "다음 지시");
 });
+
+test("the composer publishes workspace isComposing the way the seat editor does", async () => {
+  const { readFileSync } = await import("node:fs");
+  const composer = readFileSync(new URL("../src/components/Composer.tsx", import.meta.url), "utf8");
+  const seat = readFileSync(new URL("../src/components/SeatEditor.tsx", import.meta.url), "utf8");
+  assert.match(seat, /setState\(\{ isComposing: true \}\)/);
+  assert.match(composer, /setState\(\{ isComposing: true \}\)/);
+  assert.match(composer, /isComposing: false/);
+  assert.match(composer, /sawComposition: true/);
+});

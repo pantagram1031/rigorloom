@@ -157,12 +157,51 @@ export interface DocumentSummary {
   };
 }
 
+/**
+ * Opt-in `document/inspect` section (`include: ["forbidden"]`).
+ *
+ * Runtime core and the CLI already emit this inventory; the protocol markdown
+ * and MCP include-enum still list only summary/graph/regions. Absent means the
+ * payload did not carry the section — never synthesize rows from summary.
+ */
+export interface ForbiddenInventory {
+  sessionId: string;
+  documentHash?: string;
+  anchors: Array<{
+    kind: string;
+    text: string;
+    atPara?: number | null;
+    paraIdx?: number | null;
+    section?: string | null;
+    keepable?: boolean;
+  }>;
+  placeholders: Array<{ kind: string; text: string; keepable?: boolean }>;
+  removalTargets: Array<{
+    kind: string;
+    text?: string | null;
+    atPara?: number | null;
+    paraIdx?: number | null;
+    section?: string | null;
+    confidence?: string | null;
+    reason?: string;
+    keepable?: boolean;
+  }>;
+  counts: {
+    anchors: number;
+    placeholders: number;
+    removalTargets: number;
+  };
+  note?: string;
+}
+
 export interface InspectResult {
   documentHash: string;
   sessionId: string;
   summary: DocumentSummary;
   graph: DocumentGraph;
   regions: { documentHash: string; sessionId: string; regions: EditableRegion[] };
+  /** Present only when inspect was asked for `include` containing `forbidden`. */
+  forbidden?: ForbiddenInventory;
 }
 
 export interface BackendCapability {

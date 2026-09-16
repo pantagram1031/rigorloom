@@ -19,10 +19,15 @@
  *    what an export writes: export names its run explicitly, on this row.
  */
 import {
+  compareInspectRefusals,
   exportApplied,
   loadReceipt,
   proposeUndoOf,
+  runCompareInspect,
   selectHistory,
+  setCompareAgainst,
+  setCompareLeft,
+  setCompareUseSelection,
   setHead,
 } from "../actions";
 import {
@@ -32,7 +37,7 @@ import {
   reversedBy,
   useWorkspace,
 } from "../store";
-import type { Candidate } from "../types";
+import type { Candidate, CandidateCompare } from "../types";
 import { Tag } from "./Tag";
 
 /** `2026-09-02T11:04:07Z` → `11:04:07`. The date is on the receipt. */
@@ -168,6 +173,141 @@ function Row({
   );
 }
 
+function againstIsSource(against: { runId: string } | { source: true }): boolean {
+  return "source" in against && against.source === true;
+}
+
+function CompareInspect({ rows }: { rows: Candidate[] }) {
+  const leftRunId = useWorkspace(
+    (s) => s.compareLeftRunId ?? s.historySelected ?? s.head,
+  );
+  const against = useWorkspace((s) => s.compareAgainst);
+  const useSelection = useWorkspace((s) => s.compareUseSelection);
+  const phase = useWorkspace((s) => s.comparePhase);
+  const error = useWorkspace((s) => s.compareError);
+  const result = useWorkspace((s) => s.compareResult);
+  const receipts = useWorkspace((s) => s.receipts);
+  const left = rows.find((row) => row.runId === leftRunId) ?? null;
+  const receipt = leftRunId ? receipts[leftRunId] : undefined;
+  const refusals = compareInspectRefusals({
+    acceptance: left?.acceptance ?? receipt?.checks.acceptance,
+    exitCodes: receipt?.steps.map((step) => step.exitCode),
+    error,
+  });
+
+  return (
+    <div className="receipt-block" data-testid="compare-inspect">
+      <h4>비교</h4>
+      <p className="prose tiny">
+        런타임의 <span className="mono">candidate/compare</span> 만 씁니다.{" "}
+        <span className="mono">verify/*</span> 는 프로토콜에 없습니다.
+      </p>
+      <p className="prose tiny">왼쪽 후보본</p>
+      <div className="gate-actions">
+        {rows.map((row) => (
+          <button
+            key={row.runId}
+            className="ghost dark-safe"
+            data-testid={`compare-left-${row.runId}`}
+            aria-pressed={row.runId === leftRunId}
+            onClick={() => setCompareLeft(row.runId ?? null)}
+          >
+            {(row.runId ?? "").slice(0, 12)}
+          </button>
+        ))}
+      </div>
+      <p className="prose tiny">비교 대상</p>
+      <div className="gate-actions">
+        <button
+          className="ghost dark-safe"
+          data-testid="compare-against-source"
+          aria-pressed={againstIsSource(against)}
+          onClick={() => setCompareAgainst({ source: true })}
+        >
+          원본
+        </button>
+        {rows
+          .filter((row) => row.runId && row.runId !== leftRunId)
+          .map((row) => (
+            <button
+              key={row.runId}
+              className="ghost dark-safe"
+              data-testid={`compare-against-${row.runId}`}
+              aria-pressed={"runId" in against && against.runId === row.runId}
+              onClick={() => setCompareAgainst({ runId: row.runId! })}
+            >
+              {(row.runId ?? "").slice(0, 12)}
+            </button>
+          ))}
+      </div>
+      <label className="prose tiny">
+        <input
+          type="checkbox"
+          data-testid="compare-use-selection"
+          checked={useSelection}
+          onChange={(e) => setCompareUseSelection(e.target.checked)}
+        />{" "}
+        지금 고른 자리만
+      </label>
+      <div className="gate-actions">
+        <button
+          className="ghost dark-safe"
+          data-testid="compare-run"
+          disabled={!leftRunId || phase === "starting"}
+          onClick={() => void runCompareInspect()}
+        >
+          {phase === "starting" ? "비교 중…" : "비교"}
+        </button>
+      </div>
+
+      {refusals.acceptanceRefused ? (
+        <div className="refusal" data-testid="compare-acceptance-refusal">
+          <Tag tone="warn">받아들일 수 없음</Tag>
+          <p className="prose tiny">acceptance: false 는 통과가 아닙니다.</p>
+        </div>
+      ) : null}
+      {refusals.exit3 ? (
+        <div className="refusal" data-testid="compare-exit3-refusal">
+          <Tag tone="bad">거절 exit 3</Tag>
+          <p className="prose tiny">exit 3 은 성공으로 표시하지 않습니다.</p>
+        </div>
+      ) : null}
+      {error ? (
+        <div className="refusal" data-testid="compare-error">
+          <Tag tone="bad">비교를 거절했습니다</Tag>
+          <p className="prose">{error.message}</p>
+          <p className="mono tiny">{error.code}</p>
+        </div>
+      ) : null}
+      {result ? <ComparePayload compare={result} /> : null}
+    </div>
+  );
+}
+
+function ComparePayload({ compare }: { compare: CandidateCompare }) {
+  return (
+    <div data-testid="compare-payload">
+      <div className="queue-verdict-head">
+        {compare.regionsEqual === true ? (
+          <Tag tone="ok">자리 글자 일치</Tag>
+        ) : compare.regionsEqual === false ? (
+          <Tag tone="bad">자리 글자 불일치</Tag>
+        ) : (
+          <Tag tone="none">자리를 비교하지 않음</Tag>
+        )}
+      </div>
+      <p className="mono tiny" data-testid="compare-artifact-equal">
+        파일 전체 해시 일치: {String(compare.artifactEqual)} · 비교 기준 {compare.normalizer}
+      </p>
+      <p className="prose tiny">{compare.note}</p>
+      <details className="disclosure" data-testid="compare-raw">
+        <summary>비교 응답</summary>
+        <pre>{JSON.stringify(compare, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
 export function History() {
   const rows = useWorkspace(activeCandidates);
   const head = useWorkspace(headCandidate);
@@ -220,6 +360,8 @@ export function History() {
           />
         ))}
       </ul>
+
+      <CompareInspect rows={rows} />
 
       {undoError ? (
         <div className="refusal" data-testid="undo-error">

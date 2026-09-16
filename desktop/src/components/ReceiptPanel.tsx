@@ -45,7 +45,9 @@ function Checks({ receipt }: { receipt: Receipt }) {
         {report.acceptance ? (
           <Tag tone="ok">받아들일 수 있음</Tag>
         ) : (
-          <Tag tone="warn">받아들일 수 없음</Tag>
+          <span data-testid="receipt-acceptance-refusal">
+            <Tag tone="warn">받아들일 수 없음</Tag>
+          </span>
         )}
         {report.ranAll ? (
           <Tag tone="ok">필수 검사 모두 실행됨</Tag>
@@ -152,10 +154,22 @@ export function ReceiptPanel() {
                   <li key={step.opId}>
                     <span className="mono">{step.subcommand}</span>
                     <span className="dim">{step.kind}</span>
-                    <Tag tone={step.exitCode === 0 ? "ok" : "bad"}>exit {step.exitCode}</Tag>
+                    {step.exitCode === 3 ? (
+                      <Tag tone="bad">거절 exit 3</Tag>
+                    ) : (
+                      <Tag tone={step.exitCode === 0 ? "ok" : "bad"}>
+                        exit {step.exitCode}
+                      </Tag>
+                    )}
                   </li>
                 ))}
               </ol>
+              {receipt.steps.some((step) => step.exitCode === 3) ? (
+                <div className="refusal" data-testid="receipt-exit3-refusal">
+                  <Tag tone="bad">거절 exit 3</Tag>
+                  <p className="prose tiny">이 단계는 성공으로 표시하지 않습니다.</p>
+                </div>
+              ) : null}
             </div>
 
             <div className="receipt-block">

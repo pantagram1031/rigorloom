@@ -350,8 +350,8 @@ export interface WorkspaceState {
   /** Set by the editor when a real `compositionend` fires. */
   sawComposition: boolean;
   /**
-   * True while a seat or queue-value field has an open IME composition.
-   * Approve, reject, apply, and queue-value commits must no-op until it clears.
+   * True while a seat, composer, or queue-value field has an open IME composition.
+   * Approve, reject, apply, composer send, and queue-value commits must no-op until it clears.
    */
   isComposing: boolean;
   draft: Draft;
@@ -407,6 +407,16 @@ export interface WorkspaceState {
     reversedRunId: string;
     compare: CandidateCompare;
   } | null;
+  /**
+   * Operator-picked `candidate/compare` (G2). Separate from `inverseProof`,
+   * which is the reversal that was just applied. No `verify/*` lives here.
+   */
+  compareLeftRunId: string | null;
+  compareAgainst: { runId: string } | { source: true };
+  compareUseSelection: boolean;
+  comparePhase: Phase;
+  compareError: RuntimeError | null;
+  compareResult: CandidateCompare | null;
 
   approval: ApprovalRecord | null;
   approvalPhase: ApprovalPhase;
@@ -691,6 +701,12 @@ const initial: WorkspaceState = {
   undoPhase: "idle",
   undoError: null,
   inverseProof: null,
+  compareLeftRunId: null,
+  compareAgainst: { source: true },
+  compareUseSelection: false,
+  comparePhase: "idle",
+  compareError: null,
+  compareResult: null,
   approval: null,
   approvalPhase: "idle",
   approvalError: null,
@@ -1368,6 +1384,9 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     inverseProof: s.inverseProof
       ? `${s.inverseProof.runId}:${s.inverseProof.compare.regionsEqual}`
       : null,
+    compareInspect: s.compareResult
+      ? `${s.compareLeftRunId}:${s.compareResult.regionsEqual}`
+      : s.compareError?.code ?? null,
     verdict: s.candidateVerdict?.report.acceptance ?? null,
     receiptOpen: s.receiptOpen,
     events: s.events.length,

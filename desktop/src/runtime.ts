@@ -133,8 +133,18 @@ export const openPath = (path: string) =>
     { path },
   );
 
-export const inspect = (sessionId: string) =>
-  call<InspectResult>("document/inspect", { sessionId });
+/**
+ * Default inspect include. `forbidden` is opt-in on the wire (not in the
+ * protocol-default trio) so existing callers keep the old payload; this shell
+ * asks for it so the structure tree can show residue anchors without inventing
+ * them. MCP's include enum still omits `forbidden` — JSON-RPC/CLI accept it.
+ */
+export const INSPECT_INCLUDE = ["summary", "graph", "regions", "forbidden"] as const;
+
+export const inspect = (
+  sessionId: string,
+  include: readonly string[] = INSPECT_INCLUDE,
+) => call<InspectResult>("document/inspect", { sessionId, include: [...include] });
 
 /**
  * Full text for a set of addresses, with per-run charPr and colour facts.

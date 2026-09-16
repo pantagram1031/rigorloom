@@ -9,7 +9,14 @@
  * | 구역 / 문단 | `graph.paragraphs[]` — `section`, `at_para`, `text` |
  * | 표 / 칸 | `graph.tables[].cells[]` — `addr`, `classification`, `textPreview` |
  * | 채움 자리 | `regions.regions[]` — the fill seats, with their preflight |
+ * | 금지 자리 | `forbidden` — residue anchors, placeholders, removal targets |
  * | 이 빌드가 보지 못하는 것 | `capabilities.backends` + `capabilities.unavailable` |
+ *
+ * `forbidden` is opt-in on the wire (`include` contains `"forbidden"`). The
+ * protocol markdown and MCP include-enum still name only summary/graph/regions.
+ * When the payload omits the key, this panel prints that gap and does not
+ * synthesize anchors from `summary`. Fill seats (`regions.regions`) and
+ * `fill_target` cells are the only rows marked editable.
  *
  * The last group is the honest answer to "unsupported structures". The Runtime
  * does not enumerate what it failed to parse, so the panel reports what this
@@ -26,7 +33,7 @@ import {
   useWorkspace,
   type Selection,
 } from "../store";
-import type { Capabilities, InspectResult } from "../types";
+import type { Capabilities, ForbiddenInventory, InspectResult } from "../types";
 import { CLASSIFICATION_LABEL, CLASSIFICATION_TONE, Tag } from "./Tag";
 
 function Row({
@@ -39,6 +46,7 @@ function Row({
   expandable,
   expanded,
   testId,
+  editable,
 }: {
   id: string;
   depth: 0 | 1 | 2;
@@ -49,6 +57,8 @@ function Row({
   expandable?: boolean;
   expanded?: boolean;
   testId?: string;
+  /** Set only from inspect: fill seats / fill_target true; forbidden never. */
+  editable?: boolean;
 }) {
   const current = useWorkspace((s) => selectionId(s.selection));
   const selected = selection ? selectionId(selection) === current : false;
@@ -60,6 +70,7 @@ function Row({
       aria-expanded={expandable ? expanded : undefined}
       data-node-id={id}
       data-testid={testId}
+      data-editable={editable === undefined ? undefined : editable ? "true" : "false"}
       onClick={() => {
         if (expandable) toggleExpanded(id);
         // locate, not just select: picking a node in the tree scrolls the
@@ -81,6 +92,74 @@ function Row({
 function trim(text: string, max = 34): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+function forbiddenSelection(
+  atPara: number | null | undefined,
+): Selection | undefined {
+  if (typeof atPara !== "number") return undefined;
+  return { kind: "paragraph", atPara };
+}
+
+function ForbiddenRows({
+  forbidden,
+}: {
+  forbidden: ForbiddenInventory;
+}) {
+  const count =
+    forbidden.counts.anchors +
+    forbidden.counts.placeholders +
+    forbidden.counts.removalTargets;
+  return (
+    <>
+      <div className="group-head" data-testid="forbidden-group">
+        <span className="latin-caps">forbidden</span>
+        <span className="count">{count}</span>
+      </div>
+      {forbidden.anchors.map((anchor, i) => (
+        <Row
+          key={`forbidden-anchor-${i}`}
+          id={`forbidden:anchor:${i}`}
+          depth={0}
+          label={trim(anchor.text || "(앵커)")}
+          hint={
+            typeof anchor.atPara === "number" ? `at_para ${anchor.atPara}` : "주소 없음"
+          }
+          selection={forbiddenSelection(anchor.atPara)}
+          testId={`forbidden-anchor-${i}`}
+          editable={false}
+          tag={<Tag tone="bad">금지</Tag>}
+        />
+      ))}
+      {forbidden.placeholders.map((placeholder, i) => (
+        <Row
+          key={`forbidden-placeholder-${i}`}
+          id={`forbidden:placeholder:${i}`}
+          depth={0}
+          label={trim(placeholder.text || "(자리표시)")}
+          testId={`forbidden-placeholder-${i}`}
+          editable={false}
+          tag={<Tag tone="warn">자리표시</Tag>}
+        />
+      ))}
+      {forbidden.removalTargets.map((target, i) => (
+        <Row
+          key={`forbidden-removal-${i}`}
+          id={`forbidden:removal:${i}`}
+          depth={0}
+          label={trim(target.text || target.reason || "(제거 대상)")}
+          hint={
+            typeof target.atPara === "number" ? `at_para ${target.atPara}` : undefined
+          }
+          selection={forbiddenSelection(target.atPara)}
+          testId={`forbidden-removal-${i}`}
+          editable={false}
+          tag={<Tag tone="bad">제거 대상</Tag>}
+        />
+      ))}
+      {forbidden.note ? <p className="empty">{forbidden.note}</p> : null}
+    </>
+  );
 }
 
 export function StructureTree({
@@ -191,6 +270,7 @@ export function StructureTree({
             {open &&
               table.cells.map((cell) => {
                 const addr = `R${cell.addr.row}C${cell.addr.col}`;
+                const isFill = cell.classification === "fill_target";
                 return (
                   <Row
                     key={`${id}:${addr}`}
@@ -205,6 +285,7 @@ export function StructureTree({
                       col: cell.addr.col,
                     }}
                     testId={`cell-${table.index}-${cell.addr.row}-${cell.addr.col}`}
+                    editable={isFill}
                     tag={
                       <>
                         {cell.colorAnomaly ? <Tag tone="bad">색 이상</Tag> : null}
@@ -250,6 +331,7 @@ export function StructureTree({
             }
             selection={selection}
             testId={`seat-${i}`}
+            editable={true}
             tag={
               region.colorAnomaly ? (
                 <Tag tone="bad">색 이상</Tag>
@@ -262,6 +344,18 @@ export function StructureTree({
           />
         );
       })}
+
+      {/* ── 금지 자리 (payload only; never invented) ────────────────── */}
+      {inspect.forbidden ? (
+        <ForbiddenRows forbidden={inspect.forbidden} />
+      ) : (
+        <p className="empty" data-testid="forbidden-protocol-gap">
+          이 검사 응답에는 <span className="mono">forbidden</span> 구역이 없습니다.
+          프로토콜 문서와 MCP include 열거는 summary, graph, regions 뿐이고, 런타임
+          코어·CLI는 선택적으로 금지 목록을 내놓을 수 있습니다. 칸이 없으면 앵커를
+          만들지 않으며, 채움 자리만 편집 가능으로 표시합니다.
+        </p>
+      )}
 
       {/* ── 안내문 ──────────────────────────────────────────────────── */}
       {guides.length > 0 && (
@@ -278,6 +372,7 @@ export function StructureTree({
               label={trim(cell.textPreview ?? "(미리보기 없음)", 30)}
               hint={`표 ${table} R${cell.addr.row}C${cell.addr.col}`}
               selection={{ kind: "cell", table, row: cell.addr.row, col: cell.addr.col }}
+              editable={false}
             />
           ))}
         </>
@@ -299,6 +394,7 @@ export function StructureTree({
             label={item.label}
             hint={trim(item.reason, 30)}
             tag={<Tag tone="none">불가</Tag>}
+            editable={false}
           />
         ))
       )}

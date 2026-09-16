@@ -37,6 +37,7 @@ import {
   reproposeDraft,
   requestApprovalForDraft,
   resolveApprovalDecision,
+  applyApproved,
   runAgentProposal,
   runCheck,
   seatAt,
@@ -165,6 +166,14 @@ async function waitFor(
     await settled(stepMs);
   }
   return predicate();
+}
+
+/** Approve records the decision only; apply is a second call (G1). */
+async function applyApprovedPlan() {
+  await applyApproved();
+  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
+    await settled(500);
+  }
 }
 
 function hasHangul(text: string): boolean {
@@ -700,10 +709,7 @@ async function phaseEdit(config: SmokeConfig) {
 
   const planApproved = getState().draft.plan?.planId;
   await resolveApprovalDecision("approved", "smoke-operator");
-  // plan/apply runs preedit children; give it room.
-  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
-    await settled(500);
-  }
+  await applyApprovedPlan();
   check("approval/resolve + plan/apply produced a candidate",
     getState().applyPhase === "ready" && !!getState().applied,
     getState().applied?.runId ?? JSON.stringify(getState().applyError));
@@ -946,7 +952,7 @@ async function phaseUndo(config: SmokeConfig) {
   await requestApprovalForDraft();
   await settled(200);
   await resolveApprovalDecision("approved", "smoke-operator");
-  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  await applyApprovedPlan();
   const editRun = getState().applied?.runId;
   check("the edit applied and produced a candidate", !!editRun,
     editRun ?? JSON.stringify(getState().applyError));
@@ -974,7 +980,7 @@ async function phaseUndo(config: SmokeConfig) {
   await requestApprovalForDraft();
   await settled(200);
   await resolveApprovalDecision("approved", "smoke-operator");
-  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  await applyApprovedPlan();
   const chainRun = getState().applied?.runId;
   check("the chained edit applied", !!chainRun, chainRun ?? JSON.stringify(getState().applyError));
   if (!chainRun) return;
@@ -1021,7 +1027,7 @@ async function phaseUndo(config: SmokeConfig) {
   await requestApprovalForDraft();
   await settled(200);
   await resolveApprovalDecision("approved", "smoke-operator");
-  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  await applyApprovedPlan();
   const undoRun = getState().applied?.runId;
   check("the reversal applied as one MORE candidate", !!undoRun && undoRun !== editRun,
     undoRun ?? JSON.stringify(getState().applyError));
@@ -1189,7 +1195,7 @@ async function echoChecks() {
   await requestApprovalForDraft();
   await settled(200);
   await resolveApprovalDecision("approved", "smoke-operator");
-  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) await settled(500);
+  await applyApprovedPlan();
   const echoRun = getState().applied?.runId;
   check("the staged edit applied", !!echoRun,
     echoRun ?? JSON.stringify(getState().applyError));
@@ -1335,9 +1341,7 @@ async function phaseAgent(config: SmokeConfig) {
       getState().approval?.requestedBy === "rigorloom-mock-agent",
     `${getState().approvalPhase} / ${getState().approval?.requestedBy}`);
   await resolveApprovalDecision("approved", "smoke-operator");
-  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
-    await settled(500);
-  }
+  await applyApprovedPlan();
   check("the host approved the agent's plan and it applied",
     getState().applyPhase === "ready" && !!getState().applied,
     getState().applied?.runId ?? JSON.stringify(getState().applyError));
@@ -2892,9 +2896,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
         await requestApprovalForDraft();
         await settled(300);
         await resolveApprovalDecision("approved", "host-operator");
-        for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
-          await settled(500);
-        }
+        await applyApprovedPlan();
         const shotRun = getState().applied?.runId;
         if (shotRun) {
           await waitFor(
@@ -3273,9 +3275,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   }
 
   await resolveApprovalDecision("approved", "host-operator");
-  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
-    await settled(500);
-  }
+  await applyApprovedPlan();
   await runCheck();
   await settled(300);
   setState({ sheetOpen: false });
@@ -3300,9 +3300,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
       await requestApprovalForDraft();
       await settled(300);
       await resolveApprovalDecision("approved", "host-operator");
-      for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
-        await settled(500);
-      }
+      await applyApprovedPlan();
       await settled(900);
     }
     selectHistory(edited);
@@ -3826,9 +3824,7 @@ async function phaseComposer(config: SmokeConfig) {
 
   // The human resolves it, exactly as for a manual edit.
   await resolveApprovalDecision("approved", "smoke-operator");
-  for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
-    await settled(500);
-  }
+  await applyApprovedPlan();
   const applied = getState().applied;
   check("the host approved the agent's plan and it applied",
     getState().applyPhase === "ready" && !!applied,
