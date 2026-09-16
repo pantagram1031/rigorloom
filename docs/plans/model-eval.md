@@ -72,6 +72,14 @@ Judge (gpt-5.6-sol-high-fast, agent mode, reads results.json / gates.py to verif
 
 Reading: a cheap judge (sol, ~8 min, ~260k cache tokens) reliably finds arithmetic/rounding slips and register leaks, including in the human-written baseline; its rankings agreed with Fable's spot checks. Writing quality ordering differed by task (grok-xhigh best on theory, sol on results, opus on reflection), so no single cheap model wins across kinds; sol-high-fast is the best value per token for prose so far.
 
+### T8 — catalog maintenance (composer-2.5-fast, 2026-09-16)
+
+Add two catalog entries + refresh ~35 implementation line references + bump two test constants. composer-2.5-fast: 6.7 min, 36k input / 7.4k output / 239k cache tokens, `tests/test_hancom_operation_catalog.py` 8 passed on first try, entries reviewed (ids, coverage state) and committed c862943. Reading: for mechanical, well-specified maintenance the cheapest tier is enough. Launch gotcha: a prompt containing ` - ` (space-hyphen-space) makes the cursor-agent.ps1 launcher fail with a PSArgumentException before any model runs; write prompts without bare hyphens.
+
+### A1 — analysis note for Stage 3 COM wiring (2026-09-16)
+
+Two cheap models asked for the same design note (read-only). Usage: gpt-5.6-sol-high-fast 6.1 min, 15.7k output, 1.85M cache; cursor-grok-4.6-low-fast 4.4 min, 9.4k output, 632k cache. Quality assessment: pending Fable review of the two notes.
+
 ## Verdicts so far (Stage 1 experience, all cursor-grok-4.6-xhigh-fast)
 
 - T1–T7, H1: 9/9 bounded engine tasks accepted after my review; typical
