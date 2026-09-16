@@ -55,6 +55,16 @@ the kernel's contract shape.
   113 → 193; built-app smoke passes 549 checks on the release build;
   reference captures under `docs/demo/desktop/`.
 
+- **Fork parity for the Hawkes report (Stage 1c, 2026-09-17):** page margins
+  (`margin_top/bottom/left/right/gutter`, nested `margins:`) reach `page_binding`
+  and both backends; the LaTeX converter maps `\mid` and apostrophe primes
+  (the shipped PDF had rendered `1midH_t`); colour normalisation including the
+  abstract label is the default when `allow_colors` is false; layout QA accepts
+  코드/알고리즘 captions. The Aug 2026 Hawkes bundle assembles on this engine
+  with a converged loop, verify_format and layout QA green
+  (`docs/demo/hawkes-repro-page1.png`); the AURALAB demo re-assembles
+  pixel-identically on pages checked.
+
 - **T126:** a cross-lane reproduction of the private-capture custody claims from
   PRs #134-#137, written from this side against the shipped code rather than
   derived from the PR text. Reproduced: a clean one-link file is captured with an
