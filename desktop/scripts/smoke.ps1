@@ -102,6 +102,16 @@
                              and real module-registry data. Leaves a window
                              geometry in prefs.
     run 9 ("chrome-reattach") the window must come back where run 8 left it.
+    run 13 (phase "bound")    S10. The harness runs form_inspect.py on the same
+                             blank corpus form into the smoke root, then the
+                             app opens that form through workspace/openPath
+                             with formProfile. The 자세히 판정 기준 row must
+                             read 연결된 양식 plus the inspect sha prefix,
+                             inspect forbidden.residue.profileSource must be
+                             bound_form, a fill → approve → apply receipt
+                             must carry the same bound_form residue, and the
+                             검토 finished-document hint must stay hidden on
+                             a blank form.
 
   The assertions live in the app (src/smoke.ts) and run through the same
   actions.ts functions a click calls. This script owns process lifecycle,
@@ -253,7 +263,7 @@ $EnabledFile = Join-Path $RunDir 'enabled.yaml'
 
 function Invoke-Phase {
     param([string]$Phase, [string]$ReportPath, [string]$PhaseCorpus = "",
-          [string]$EnabledOverride = "")
+          [string]$EnabledOverride = "", [string]$FormProfile = "")
 
     Remove-Item -Force $ReportPath -ErrorAction SilentlyContinue
     $env:RIGORLOOM_SMOKE = $Phase
@@ -270,6 +280,8 @@ function Invoke-Phase {
     $env:RIGORLOOM_SMOKE_FINAL = Join-Path $RunDir "final-$Phase.json"
     if ($StagedSession) { $env:RIGORLOOM_SMOKE_STAGED = $StagedSession }
     else { Remove-Item Env:RIGORLOOM_SMOKE_STAGED -ErrorAction SilentlyContinue }
+    if ($FormProfile) { $env:RIGORLOOM_SMOKE_FORM_PROFILE = $FormProfile }
+    else { Remove-Item Env:RIGORLOOM_SMOKE_FORM_PROFILE -ErrorAction SilentlyContinue }
     # Redirect the app's own data dir so a developer's real prefs and sessions
     # are never read or written by the smoke.
     #
@@ -336,7 +348,7 @@ $ran = @()
 # which `own-reattach` restores before it finishes.
 $phases = @('open', 'reattach', 'edit', 'agent', 'page', 'own', 'own-reattach',
             'overlay', 'undo', 'packs',
-            'composer', 'settings', 'chrome', 'chrome-reattach')
+            'composer', 'settings', 'chrome', 'chrome-reattach', 'bound')
 if ($Only.Count -gt 0) { $phases = $phases | Where-Object { $Only -contains $_ } }
 
 try {
@@ -380,14 +392,29 @@ try {
         # address — and it is the only phase handed an enablement.
         $phaseCorpus = ''
         $phaseEnabled = ''
+        $phaseProfile = ''
         if ($phase -eq 'packs') {
             $phaseCorpus = $SeatedCorpus
             $phaseEnabled = $EnabledFile
             Write-Host ("  enablement for this phase only: {0}" -f $EnabledFile)
         }
+        if ($phase -eq 'bound') {
+            $FormInspect = Join-Path $RepoRoot 'engine\scripts\form_inspect.py'
+            $FormProfileOut = Join-Path $AppData 'form-profile.json'
+            Write-Host ("  generating form profile from {0} into the smoke root" -f `
+                [IO.Path]::GetFileName($Corpus))
+            $inspectOut = & python $FormInspect $Corpus --out $FormProfileOut 2>&1
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $FormProfileOut)) {
+                Write-Host "  [FAIL] form_inspect.py did not write a profile: $inspectOut"
+                $allOk = $false
+            } else {
+                $phaseProfile = $FormProfileOut
+                Write-Host ("  form profile: {0}" -f $FormProfileOut)
+            }
+        }
 
         $result = Invoke-Phase -Phase $phase -ReportPath (Join-Path $RunDir "report-$phase.json") `
-            -PhaseCorpus $phaseCorpus -EnabledOverride $phaseEnabled
+            -PhaseCorpus $phaseCorpus -EnabledOverride $phaseEnabled -FormProfile $phaseProfile
         $ok = Show-Report $result
         if (-not $ok) { $allOk = $false }
         if ($result.report) {
@@ -529,7 +556,8 @@ finally {
     Remove-Item Env:RIGORLOOM_SMOKE, Env:RIGORLOOM_SMOKE_CORPUS, Env:RIGORLOOM_SMOKE_CORPUS2, `
         Env:RIGORLOOM_SMOKE_REPORT, Env:RIGORLOOM_SMOKE_EXPORT, Env:RIGORLOOM_MOCK_AGENT, `
         Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, Env:RIGORLOOM_SMOKE_FINAL, `
-        Env:RIGORLOOM_SMOKE_STAGED, Env:RIGORLOOM_MODULES_ENABLED `
+        Env:RIGORLOOM_SMOKE_STAGED, Env:RIGORLOOM_MODULES_ENABLED, `
+        Env:RIGORLOOM_SMOKE_FORM_PROFILE `
         -ErrorAction SilentlyContinue
     # The enablement the packs phase used never belonged to the checkout, and
     # it does not outlive the run either.

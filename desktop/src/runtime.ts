@@ -530,6 +530,8 @@ export const smokeConfig = () =>
     imeEmpty: boolean;
     /** A session already on disk with its rendered PDF; see the overlay phase. */
     stagedSession: string | null;
+    /** form_inspect JSON of the blank form, written into the smoke root. */
+    formProfile: string | null;
   }>("smoke_config");
 
 export const smokeFinish = (report: unknown) => invoke<void>("smoke_finish", { report });

@@ -37,6 +37,7 @@ import {
   requestApprovalForDraft,
   resolveApprovalDecision,
   applyApproved,
+  needsBoundFormHint,
   runAgentProposal,
   runCheck,
   seatAt,
@@ -76,6 +77,8 @@ interface SmokeConfig {
   exportPath?: string | null;
   /** A session the harness left on disk with a rendered PDF already attached. */
   stagedSession?: string | null;
+  /** form_inspect JSON of the same blank form, written into the smoke root. */
+  formProfile?: string | null;
 }
 
 interface Check {
@@ -3645,6 +3648,170 @@ async function ready(what: string) {
 }
 
 /**
+ * S10: open the corpus blank form with a bound form_inspect profile, then
+ * prove the GUI path — not a CLI flag — is what the runtime and the DOM
+ * both report.
+ *
+ * The profile path comes from the harness, which ran form_inspect.py on the
+ * same blank form into the smoke root. Assertions read the inspect payload
+ * and the receipt the apply returned; they never substitute a constant sha
+ * or a constant profileSource.
+ */
+async function phaseBound(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+  if (!config.formProfile) {
+    check("form profile path supplied", false, "RIGORLOOM_SMOKE_FORM_PROFILE is empty");
+    return;
+  }
+
+  const sessionId = await openPath(config.corpus, {
+    kind: "profile",
+    path: config.formProfile,
+  });
+  check(
+    "bound phase opened the corpus through workspace/openPath with formProfile",
+    !!sessionId,
+    sessionId ?? getState().inspectError?.message ?? "",
+  );
+  if (!sessionId) return;
+  await settled(200);
+
+  const inspect = activeInspect(getState());
+  check("inspect returned", !!inspect, String(getState().inspectError?.code ?? ""));
+  if (!inspect) return;
+
+  const forbidden = inspect.forbidden;
+  const residue = forbidden?.residue;
+  check(
+    "inspect forbidden payload is present",
+    !!forbidden,
+    JSON.stringify({ keys: Object.keys(inspect), error: getState().inspectError }),
+  );
+  check(
+    "inspect forbidden says profileSource bound_form",
+    residue?.profileSource === "bound_form",
+    JSON.stringify(residue ?? null),
+  );
+  const sha = residue?.sha256 ?? "";
+  check("the bound profile sha is the digest inspect returned", sha.length === 64, sha || "none");
+  const shaPrefix = sha.slice(0, 12);
+
+  setState({ verifyDetailsOpen: true });
+  await settled(160);
+  const judgement = domText('[data-testid="verify-judgement-source"]');
+  checkDom(
+    "자세히 popover 판정 기준 reads 연결된 양식 with the sha prefix",
+    judgement.includes("연결된 양식") &&
+      shaPrefix.length === 12 &&
+      judgement.includes(shaPrefix),
+    judgement,
+  );
+
+  await showInspectorTab("review");
+  const hint = document.querySelector('[data-testid="form-bind-hint"]');
+  const placeholderCount = Array.isArray(forbidden?.placeholders)
+    ? forbidden.placeholders.length
+    : (forbidden?.counts.placeholders ?? null);
+  check(
+    "needsBoundFormHint is false for this blank form",
+    needsBoundFormHint(inspect) === false,
+    JSON.stringify({
+      profileSource: residue?.profileSource,
+      placeholders: placeholderCount,
+    }),
+  );
+  checkDom(
+    "검토 hint for finished documents is not shown for a blank form",
+    !hint,
+    hint
+      ? `hint shown; profileSource=${residue?.profileSource} placeholders=${placeholderCount}`
+      : `no hint; profileSource=${residue?.profileSource} placeholders=${placeholderCount}`,
+  );
+
+  const seats = inspect.regions.regions.filter(
+    (r): r is EditableRegion & { table: number; row: number; col: number } =>
+      r.kind === "cell" && r.table !== undefined && r.row !== undefined && r.col !== undefined,
+  );
+  const clean = seats.find((r) => r.scriptAnomaly !== true && r.colorAnomaly !== true);
+  check("a clean fill seat exists to edit", !!clean, `${seats.length} seats`);
+  if (!clean) return;
+
+  const VALUE = "리고룸 양식연결 001";
+  beginEdit(clean.table, clean.row, clean.col);
+  await commitEdit(VALUE);
+  await settled(160);
+
+  const anomaly = (getState().draft.validation?.hard ?? []).find(
+    (f) => f.code === "fill_charpr_script_anomaly",
+  );
+  if (anomaly) {
+    const op = fillOps()[0];
+    if (op) {
+      await declareSuggestedCharPr(op.opId);
+      await settled(160);
+    }
+  }
+
+  check(
+    "a plan was proposed for the bound-form fill",
+    !!getState().draft.plan,
+    getState().draft.plan?.planId ?? String(getState().draft.error?.code),
+  );
+  check(
+    "the queue is approvable",
+    canRequestApproval(getState()) === true,
+    `verdict ${getState().draft.validation?.verdict} hard=${JSON.stringify(getState().draft.validation?.hard ?? [])}`,
+  );
+
+  await requestApprovalForDraft();
+  await settled(160);
+  check(
+    "approval/request returned a pending record",
+    getState().approval?.state === "pending",
+    JSON.stringify(getState().approval),
+  );
+  check("nothing has been applied yet", getState().applied === null, JSON.stringify(getState().applied));
+  await resolveApprovalDecision("approved", "smoke-operator");
+  await applyApprovedPlan();
+  check(
+    "approval/resolve + plan/apply produced a candidate",
+    getState().applyPhase === "ready" && !!getState().applied,
+    getState().applied?.runId ?? JSON.stringify(getState().applyError),
+  );
+  const applied = getState().applied;
+  if (!applied) return;
+
+  openReceipt(applied.runId);
+  await waitFor(() => !!getState().receipts[applied.runId], 15_000);
+  await settled(200);
+  const receipt = getState().receipts[applied.runId];
+  check("receipt/read returned the receipt", !!receipt, JSON.stringify(getState().receiptError));
+  check(
+    "the receipt residue.profileSource is bound_form",
+    receipt?.residue?.profileSource === "bound_form",
+    JSON.stringify(receipt?.residue ?? null),
+  );
+  check(
+    "the receipt residue sha matches the inspect binding",
+    !!sha && receipt?.residue?.sha256 === sha,
+    `${receipt?.residue?.sha256 ?? "none"} vs ${sha || "none"}`,
+  );
+  checkDom(
+    "the receipt panel shows 연결된 양식 with the same sha prefix",
+    !!document.querySelector('[data-testid="receipt-residue"]') &&
+      domText('[data-testid="receipt-residue"]').includes("연결된 양식") &&
+      (shaPrefix.length === 0 ||
+        domText('[data-testid="receipt-residue"]').includes(shaPrefix)),
+    domText('[data-testid="receipt-residue"]').slice(0, 200),
+  );
+
+  checkAlive("the bound-form loop");
+}
+
+/**
  * Entry point, called once after boot. Silent no-op unless the launcher set
  * `RIGORLOOM_SMOKE`.
  */
@@ -3696,6 +3863,7 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "settings") await phaseSettings();
     else if (config.phase === "chrome") await phaseChrome(config);
     else if (config.phase === "chrome-reattach") await phaseChromeReattach();
+    else if (config.phase === "bound") await phaseBound(config);
     else if (config.phase === "hold" || config.phase === "hold-agent") {
       await phaseHold(config, config.phase === "hold-agent" ? "agent" : "document");
       finished = true;

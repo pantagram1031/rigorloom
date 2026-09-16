@@ -710,6 +710,9 @@ fn smoke_config() -> Value {
         // has to know about the substitution to find its way to the document.
         // See desktop/scripts/stage-rendered-session.py for the provenance.
         "stagedSession": std::env::var("RIGORLOOM_SMOKE_STAGED").ok().filter(|v| !v.is_empty()),
+        // S10: a form_inspect JSON the harness wrote into the smoke root from
+        // the same blank form this phase opens. workspace/openPath binds it.
+        "formProfile": std::env::var("RIGORLOOM_SMOKE_FORM_PROFILE").ok().filter(|v| !v.is_empty()),
     })
 }
 
