@@ -208,7 +208,8 @@ def test_apply_once_replays_the_same_com_candidate(tmp_path, hancom_ok, monkeypa
     assert second == first
     assert len(calls) == 1
     session = core.store.get(session_id)
-    assert len(list(session.candidates_dir.iterdir())) == 1
+    run_id = first["candidate"]["runId"]
+    assert [entry.name for entry in session.candidates_dir.iterdir()] == [run_id]
 
 
 def test_read_receipt_rehashes_the_pdf_sidecar(tmp_path, hancom_ok, monkeypatch):

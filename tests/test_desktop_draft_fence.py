@@ -250,7 +250,14 @@ def test_agent_document_context_reads_shared_work_state():
         assert f"useWorkspace({selector})" in context, selector
     assert "<ReviewQueue" not in context  # approvals live in the 검토 tab only
     panel = CONTEXT_PANEL.read_text(encoding="utf-8")
-    assert panel.count("<ReviewQueue") == 1
+    assert "<ReviewQueue" in panel
+    # No other component may mount a second queue: compare against discovery,
+    # not a pinned integer.
+    mounts = sorted(
+        path.name for path in CONTEXT_PANEL.parent.rglob("*.tsx")
+        if "<ReviewQueue" in path.read_text(encoding="utf-8")
+    )
+    assert mounts == ["ContextPanel.tsx"], mounts
     assert "<DocumentContext" in panel and "<Conversation" in panel
     agent = AGENT_VIEW.read_text(encoding="utf-8")
     assert 'export { DocumentView as AgentView } from "./DocumentView"' in agent
