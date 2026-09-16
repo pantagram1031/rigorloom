@@ -776,10 +776,16 @@ def op_insert_text(hwp, o):
     하위호환 유지. break_after는 CharShape 적용(pt/bold) *이후*, 커서가
     삽입 끝에 있는 상태에서 실행해 새 문단이 방금 삽입한 런의 서식을
     그대로 이어받게 한다(끊긴 서식으로 새 문단이 시작되는 것 방지).
+
+    "align": "right"|"left"|"center"|"justify"|"distribute" — 현재 문단에
+    ParagraphShapeAlign* 를 건다(커서는 옮기지 않음). 수식 캡션처럼 삽입
+    문단만 우측 정렬할 때 쓴다. break_after가 함께면 새 문단은 양쪽정렬로
+    되돌려 다음 본문이 캡션 정렬을 상속하지 않게 한다. 키 없으면 구동작.
     """
     segments = o.get("segments")
     pt = o.get("pt")
     break_after = bool(o.get("break_after"))
+    align = o.get("align")
     if segments:
         total_chars = 0
         for seg in segments:
@@ -787,15 +793,13 @@ def op_insert_text(hwp, o):
             bold = bool(seg.get("bold"))
             _insert_run_with_shape(hwp, seg_text, pt=pt, bold=bold)
             total_chars += len(seg_text)
-        if break_after:
-            _run(hwp, "BreakPara")
+        _apply_insert_text_para_shape(hwp, align, break_after)
         return {"inserted_chars": total_chars, "pt": pt, "segments": len(segments),
                 "break_after": break_after}
     text = o["text"]
     if not pt:
         hwp.insert_text(text)
-        if break_after:
-            _run(hwp, "BreakPara")
+        _apply_insert_text_para_shape(hwp, align, break_after)
         return {"inserted_chars": len(text), "break_after": break_after}
     start = hwp.get_pos()           # (list, para, pos)
     hwp.insert_text(text)
@@ -809,8 +813,7 @@ def op_insert_text(hwp, o):
             pass
     finally:
         hwp.set_pos(*end)           # 후속 op를 위해 커서를 삽입 끝으로 복귀
-    if break_after:
-        _run(hwp, "BreakPara")
+    _apply_insert_text_para_shape(hwp, align, break_after)
     return {"inserted_chars": len(text), "pt": pt, "break_after": break_after}
 
 
@@ -828,6 +831,23 @@ def _run(hwp, action):
     if callable(runner):
         return runner(action)
     return hwp.HAction.Run(action)
+
+
+def _apply_insert_text_para_shape(hwp, align, break_after):
+    """insert_text 직후 문단 정렬·줄바꿈. align은 현재 문단에만 걸고 커서를 안 옮긴다.
+
+    break_after로 새 문단을 열면 정렬이 상속되므로, right/center 등 비-justify
+    정렬은 새 문단에서 양쪽정렬로 되돌려 다음 본문이 오염되지 않게 한다.
+    """
+    if align:
+        act = _ALIGN_ACTIONS.get(align)
+        if not act:
+            raise RuntimeError(f"알 수 없는 align: {align}")
+        _run(hwp, act)
+    if break_after:
+        _run(hwp, "BreakPara")
+        if align and align != "justify":
+            _run(hwp, _ALIGN_ACTIONS["justify"])
 
 
 def _para_offset(hwp):

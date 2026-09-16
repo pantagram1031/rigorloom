@@ -70,6 +70,10 @@ Acceptance: `python -m pytest -q modules/report/tests/test_poster_build.py pipel
 | 2026-09-16 | Equation preflight: `r_{min}` is a reserved HwpEqn identifier → renamed `r_0`; post-freeze rule applied (invalidate 4.5 → re-check → advance) | build_report dry-run ok, 185 ops, boxed eq 8 |
 | 2026-09-16 | Cursor T1 (boxed equations) and T2 (poster) running on `claude/stage1-report-demo`; Hancom COM probe | HWPFrame OK (13.0.0.2986) |
 
+| 2026-09-16 | T1 accepted (441 tests), T2 accepted (76 tests, no identifiers); committed 1c21d55, e2b6eee | local only |
+| 2026-09-16 | Hancom assembly run 1: anchor `V.  결론 및 논의` not in form → renamed to `V.  요약 및 논의`. Run 2: 14 pages, 12 figs, bottom-white 30.6 %, boxed equations render (visually checked page 3). Defects: EQ captions dropped; title `replace_all` ran before `find_delete` and polluted the `논문 : 저자...` guide line; abstract placeholder survives above the abstract text. | `output/out.pdf` exists, fill state `gappy` (line-spacing anomalies = equation boxes) |
+| 2026-09-16 | `preedit.py delete-guides --color #FF0000` on the pristine form: 16 red guide paragraphs deleted, abstract placeholder protected, 14 anchors intact → staged as `output/form_copy.hwpx` | Cursor T3 dispatched: EQ captions, delete order, `delete_texts_after` |
+
 ## Workspace facts (for resume)
 
 - Stage machine position after this session: 5 pending (assembly). `output/form_copy.hwpx` staged pristine. `doc_backend: hwp` in build.yaml.

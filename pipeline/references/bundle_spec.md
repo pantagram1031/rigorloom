@@ -43,11 +43,15 @@ bundle/
 ```
 [[EQ latex="T_0 = \frac{mv_0^2}{P}"]]           ← (v2 기본) 문장 속 inline
 [[EQ display latex="\frac{1}{2}mv^2"]]          ← display는 opt-in (큰 행렬·유도만)
+[[EQ display latex="\frac{1}{2}mv^2" caption="[식 1] 운동에너지"]]  ← display 캡션
 [[EQ inline hwpeqn="T_0 = {mv_0^2} over {P}"]]  ← inline 명시도 허용(동일 의미)
 ```
 - **v2 기본값 = inline** (CONTRACT_v0.6 §O, S1 검증: COM `EquationCreate` 문장 중간
   `treatAsChar="1"`). 예시 편집 관습 = 수식이 문장 흐름에 붙음. `display` 키워드가 있을 때만
   자기 문단(가운데) 블록. (v1.1은 display가 기본이었음 — 반대로 뒤집혔다.)
+- `caption=` (display): `insert_equation` 직후 `insert_text`(caption_pt, 우측 정렬,
+  `break_after`)로 식 번호·짧은 설명을 붙인다. 빈 캡션(`caption=""`)은 FIG/TABLE과
+  같이 생략. inline EQ의 caption은 문장 흐름을 끊으므로 조판하지 않고 빌드 경고만 낸다.
 - `latex` 또는 `hwpeqn` 중 정확히 하나만 허용한다. 두 입력은
   `rigorloom/hwpeqn/v1` 공용 bounded preflight를 거치며, 변환 warning이나
   원점이 모호한 native 토큰은 terminal refusal이다. 이는 HwpEqn 의미론,
@@ -100,7 +104,7 @@ title: 제동 시간에 따른 전기 자동차 회생 제동 에너지 회수�
 form: 물리학_보고서_양식.hwp       # Downloads 기준 파일명
 title_anchor: "보고서 제목"        # 양식에서 제목이 들어갈 placeholder 문구 (없으면 생략)
 base_pt: 10                        # 본문 글자 크기(기본 10). 본문·수식·URL에 강제 적용(앵커 제목 등 상속 금지).
-caption_pt: 9                      # 캡션 글자 크기(기본 9). FIG/TABLE 캡션에 적용. 미지정 시 9.
+caption_pt: 9                      # 캡션 글자 크기(기본 9). FIG/TABLE/EQ(display) 캡션에 적용. 미지정 시 9.
 line_spacing: 160                  # 줄간격(%). 미지정 시 양식 기본값 유지. 지정 시 양식 기본을 덮어씀.
 binding: submit                    # book(기본,제본용 미러여백) | submit(제출용 좌우대칭)
 abstract: false                    # true(기본) | false → 양식의 초록 표를 통째로 제거
@@ -108,22 +112,32 @@ abstract_table_index: 1            # abstract:false일 때 지울 표 index(기�
 ---
 ```
 - **base_pt**: 본문/수식/URL을 이 크기로 **강제**(insert-then-select). 제목은 양식 원본 크기 보존. 수식 BaseUnit도 base_pt로.
-- **caption_pt**: FIG·TABLE 캡션 글자 크기(기본 9pt). 예시 편집 관습 — 캡션은 본문보다 1pt 작게.
+- **caption_pt**: FIG·TABLE·EQ(display) 캡션 글자 크기(기본 9pt). 예시 편집 관습 — 캡션은 본문보다 1pt 작게.
 - **line_spacing**: 본문 줄간격(%). **미지정 시 양식 기본값을 그대로 유지**하고, 값이 있으면
   조립 시 본문 문단에 강제 적용해 양식 기본을 덮어쓴다. 기본양식은 180. (v3→v5 재작업의 핵심 노브.)
 - **binding**: `submit`이면 조립 시 `page_binding` op으로 좌우 여백을 대칭화(인쇄폭 동일).
 - **abstract**: `false`면 `delete_ctrls`(tbl, abstract_table_index)로 초록 표 제거 →
   I.서론부터 시작. content.md에 초록 섹션을 아예 빼면 된다.
+- **delete_texts** (build.yaml): 양식 안내문 `find_delete`. **title `replace_all`보다 먼저**
+  발행한다 — 안내문에 placeholder 단어(예: `논문제목`)가 있으면 제목 치환이 안내문까지
+  바꿔 이후 삭제가 실패한다.
+- **delete_texts_after** (build.yaml): `delete_texts`와 같은 목록 형태(flat `[a, b]` 또는
+  block `- "…"`). `find_delete`를 섹션·그림·표·수식 삽입이 끝난 **맨 끝**에 발행한다.
+  섹션 앵커로 쓰인 안내문(예: 초록 placeholder)처럼 본문 삽입 전에 지우면 안 되는 문구용.
 
 ## build_report.py 의무 동작
 1. content.md 파싱 → 섹션/수식/그림/표/URL 추출 (정규식 기반, 미지 태그는 에러)
 2. 양식 inspect 결과와 SECTION 앵커 대조 — 하나라도 불일치면 **중단·보고** (우회 금지)
 3. ops JSON 생성(순서 보존):
-   - binding:submit → `page_binding`(맨 앞), abstract:false → `delete_ctrls`(초록표)
+   - binding:submit → `page_binding`(맨 앞)
+   - `delete_texts` → `find_delete` (**title `replace_all` 이전**)
+   - title `replace_all`, abstract:false → `delete_ctrls`(초록표)
    - 섹션마다 `insert_blank_before`(제목 앞 빈 문단 1개 보장) → `goto_text`(next_para,
      제목 문단 안 쪼개고 다음 문단으로) → 본문/수식/그림/표
+   - display EQ `caption` → `insert_equation` 직후 `insert_text`(caption_pt, 우측)
    - 본문·캡션·URL `insert_text`/`insert_hyperlink`에 `pt=base_pt`(글자크기 강제+검정),
      수식 base_pt=base_pt, URL은 링크 서식
+   - 맨 끝 `delete_texts_after` → `find_delete`
 4. 생성한 ops를 stdout JSON으로 출력. `com_backend edit --ops`는 {ok,...,ops} 래퍼와
    순수 리스트를 모두 받는다.
 5. `--dry-run`: ops만 출력하고 한글 미실행 (단위 테스트용)

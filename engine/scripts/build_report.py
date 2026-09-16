@@ -16,7 +16,7 @@ content.md를 결정론적으로 파싱해 com_backend.py edit에 그대로 줄 
     cols/pt 생략 시 구동작(균등폭, pt 미지정=앵커 상속) 그대로 — 후방호환.
 
     [[EQ latex="..."]]           // bare = 인라인(본문 문단 중간, treatAsChar)
-    [[EQ display latex="..."]]   // display 플래그 = 기존 동작(자기 문단, 가운데)
+    [[EQ display latex="..." caption="[식 1] ..."]]  // display + 캡션(수식 아래, 우측)
 """
 
 import argparse
@@ -107,6 +107,7 @@ def split_inline_para(text, line_no=0):
                 "display": "display" in flags,
                 "latex": attrs.get("latex"),
                 "hwpeqn": attrs.get("hwpeqn"),
+                "caption": attrs.get("caption", ""),
             })
         elif name == "URL":
             href = attrs.get("href") or attrs.get("url")
@@ -181,7 +182,8 @@ BUILD_YAML_KEYS = {
 }
 # 리스트 값으로 파싱할 최상위 키(style_diff.py의 색 허용 목록 등).
 # delete_texts: 삭제할 안내문 문자열 목록(양식 잔재 정리, find_delete op로 변환).
-BUILD_YAML_LIST_KEYS = {"allow_colors", "delete_texts"}
+# delete_texts_after: 같은 형태이나 섹션·그림·표·수식 삽입이 끝난 맨 끝에 발행.
+BUILD_YAML_LIST_KEYS = {"allow_colors", "delete_texts", "delete_texts_after"}
 FILL_KEYS = {"min_figures", "target_pages", "bottom_white_max", "max_gap_lines"}
 
 
@@ -240,8 +242,8 @@ def _yaml_list(v):
 # 적용(오프라인 tidy_hwpx.py --keep-with-next). tidy_blank_*/page_break_before와
 # 동일하게 COM op이 아니라 fill_report.py가 hwpx 저장 뒤 오프라인으로 처리한다.
 BUILD_YAML_BLOCK_LIST_KEYS = {
-    "delete_texts", "tidy_blank_before", "tidy_blank_after", "page_break_before",
-    "keep_with_next",
+    "delete_texts", "delete_texts_after", "tidy_blank_before", "tidy_blank_after",
+    "page_break_before", "keep_with_next",
 }
 
 
@@ -330,6 +332,8 @@ def merge_meta(meta, build_cfg):
         merged["fill"] = build_cfg["fill"]
     if "delete_texts" in build_cfg:
         merged["delete_texts"] = build_cfg["delete_texts"]
+    if "delete_texts_after" in build_cfg:
+        merged["delete_texts_after"] = build_cfg["delete_texts_after"]
     if "tidy_blank_before" in build_cfg:
         merged["tidy_blank_before"] = build_cfg["tidy_blank_before"]
     if "tidy_blank_after" in build_cfg:
@@ -422,6 +426,7 @@ def parse_content(text):
                     "display": "display" in flags,
                     "latex": attrs.get("latex"),
                     "hwpeqn": attrs.get("hwpeqn"),
+                    "caption": attrs.get("caption", ""),
                 })
             elif name == "FIG":
                 cur["blocks"].append({
@@ -532,6 +537,12 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
     # BUG3: 제출용이면 좌우 대칭 여백으로 먼저 전환.
     if binding == "submit":
         ops.append({"op": "page_binding", "mode": "submit"})
+    # delete_texts(build.yaml): 양식 안내문 잔재 제거. title replace_all보다
+    # 먼저 발행한다 — 안내문에 placeholder 단어(예: 논문제목)가 들어 있으면
+    # 제목 치환이 안내문까지 바꿔 find_delete가 매칭에 실패한다.
+    # HR런 v4와 동일 스키마(all/required:false) — 문서에 없어도 abort하지 않는다.
+    for dt in meta.get("delete_texts") or []:
+        ops.append({"op": "find_delete", "text": dt, "all": True, "required": False})
     title, t_anchor = meta.get("title"), meta.get("title_anchor")
     if title and t_anchor:
         ops.append({"op": "replace_all", "find": t_anchor, "replace": title})
@@ -539,14 +550,11 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
     if not abstract:
         ai = meta.get("abstract_table_index", 1)
         ops.append({"op": "delete_ctrls", "types": ["tbl"], "index": int(ai)})
-    # delete_texts(build.yaml): 양식 안내문 잔재 제거. HR런 v4 find_delete 관습과
-    # 동일 스키마(all/required:false) — 문서에 없어도 배치를 abort하지 않는다.
-    for dt in meta.get("delete_texts") or []:
-        ops.append({"op": "find_delete", "text": dt, "all": True, "required": False})
     # page_break_before(build.yaml, T11): 앵커 문단이 새 페이지 맨 위에서
-    # 시작하도록 강제. delete_texts 직후, 섹션 삽입(goto_text 등) 이전에 배치
-    # — 삭제로 문서가 짧아진 뒤 페이지 나누기를 걸어야 페이지 경계가 어긋나지
-    # 않는다. 주의: 이 앵커는 tidy_blank_before에 있으면 안 된다(위 상수 주석 참고).
+    # 시작하도록 강제. delete_texts/replace_all/delete_ctrls 이후, 섹션 삽입
+    # (goto_text 등) 이전에 배치 — 삭제로 문서가 짧아진 뒤 페이지 나누기를
+    # 걸어야 페이지 경계가 어긋나지 않는다. 주의: 이 앵커는 tidy_blank_before에
+    # 있으면 안 된다(위 상수 주석 참고).
     for pb in meta.get("page_break_before") or []:
         ops.append({"op": "page_break_before", "text": pb, "required": False})
     figs_dir = Path(bundle_dir) / "figures"
@@ -642,6 +650,19 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
                         meta.get("box_display_equations"), default=False):
                     op["boxed"] = True
                 ops.append(op)
+                caption = b.get("caption") or ""
+                if caption:
+                    if b["display"]:
+                        # 수식 상자 아래 식 번호·설명. 우측 정렬은 insert_text
+                        # align 키가 현재 문단에 직접 적용해 커서를 흔들지 않는다.
+                        # break_after로 다음 본문 문단이 새로 시작(양쪽정렬).
+                        ops.append({"op": "insert_text", "text": caption,
+                                    "pt": caption_pt, "align": "right",
+                                    "break_after": True})
+                    elif warnings is not None:
+                        # 인라인 수식 뒤에 캡션 문단을 끼우면 문장 흐름이 끊긴다.
+                        warnings.append(
+                            "EQ 인라인 캡션은 조판하지 않음(display EQ만 캡션 지원)")
             elif b["kind"] == "fig":
                 # Rule 2(operator): 캡션은 객체와 붙어 그 아래에, 본문과는 앞뒤로
                 # 빈 문단 1개 간격. 고정 순서: (blank) -> 그림 -> 캡션 -> (blank)
@@ -707,6 +728,11 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
     # tidy_blank_* 앵커 지정 정리로 대체할 것. 맨 끝(tidy_blank_* 뒤)에 1회.
     if str(meta.get("collapse_blank_runs", "")).strip().lower() in ("true", "1", "yes"):
         ops.append({"op": "collapse_empty_paragraphs"})
+    # delete_texts_after(build.yaml): 섹션 앵커로 쓰인 안내문(예: 초록
+    # placeholder)처럼 본문 삽입이 끝난 뒤에야 지울 수 있는 문구. 모든 섹션·
+    # 그림·표·수식 및 line_spacing/collapse 이후 맨 끝에 find_delete.
+    for dt in meta.get("delete_texts_after") or []:
+        ops.append({"op": "find_delete", "text": dt, "all": True, "required": False})
     return ops
 
 

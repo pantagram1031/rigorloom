@@ -177,6 +177,8 @@ def test_delete_texts_emits_find_delete_ops_in_correct_position(tmp_path):
 
 
 def test_delete_texts_after_abstract_delete_ctrls(tmp_path):
+    """delete_ctrls(abstract off)는 replace_all 뒤에 그대로 두고,
+    delete_texts의 find_delete만 replace_all 앞으로 옮긴다."""
     text = open(CONTENT, encoding="utf-8").read()
     meta, secs = br.parse_content(text)
     meta = dict(meta)
@@ -184,7 +186,8 @@ def test_delete_texts_after_abstract_delete_ctrls(tmp_path):
     meta["delete_texts"] = ["안내문 A"]
     ops = br.build_ops(meta, secs, FIX)
     op_names = [o["op"] for o in ops]
-    assert op_names.index("delete_ctrls") < op_names.index("find_delete")
+    assert op_names.index("find_delete") < op_names.index("replace_all")
+    assert op_names.index("replace_all") < op_names.index("delete_ctrls")
 
 
 def test_merge_meta_carries_delete_texts():
@@ -195,6 +198,62 @@ def test_merge_meta_carries_delete_texts():
 def test_merge_meta_no_delete_texts_key_when_absent():
     merged = br.merge_meta({}, {})
     assert "delete_texts" not in merged
+
+
+def test_parse_build_yaml_delete_texts_after_block_list(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        "delete_texts_after:",
+        '  - "안내문 1, 콤마 포함"',
+        '  - "안내문 2"',
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["delete_texts_after"] == ["안내문 1, 콤마 포함", "안내문 2"]
+
+
+def test_parse_build_yaml_delete_texts_after_flat_list(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        'delete_texts_after: ["앵커 문구", "다른 문구"]',
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["delete_texts_after"] == ["앵커 문구", "다른 문구"]
+
+
+def test_delete_texts_find_delete_precedes_replace_all(tmp_path):
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["delete_texts"] = ["안내문 A", "안내문 B"]
+    ops = br.build_ops(meta, secs, FIX)
+    replace_idx = next(i for i, o in enumerate(ops) if o["op"] == "replace_all")
+    for i, o in enumerate(ops):
+        if o["op"] == "find_delete":
+            assert i < replace_idx, o
+
+
+def test_delete_texts_after_ops_are_last(tmp_path):
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["delete_texts"] = ["안내문 A"]
+    meta["delete_texts_after"] = ["나중 안내 X", "나중 안내 Y"]
+    ops = br.build_ops(meta, secs, FIX)
+    assert ops[-2:] == [
+        {"op": "find_delete", "text": "나중 안내 X", "all": True, "required": False},
+        {"op": "find_delete", "text": "나중 안내 Y", "all": True, "required": False},
+    ]
+    replace_idx = next(i for i, o in enumerate(ops) if o["op"] == "replace_all")
+    early = [o for o in ops[:replace_idx] if o["op"] == "find_delete"]
+    assert [o["text"] for o in early] == ["안내문 A"]
+
+
+def test_merge_meta_carries_delete_texts_after():
+    merged = br.merge_meta({}, {"delete_texts_after": ["x", "y"]})
+    assert merged["delete_texts_after"] == ["x", "y"]
+
+
+def test_merge_meta_no_delete_texts_after_key_when_absent():
+    merged = br.merge_meta({}, {})
+    assert "delete_texts_after" not in merged
 
 
 # ── tidy_blank_before/after (build.yaml) → anchor-targeted blank cleanup ──
@@ -346,8 +405,8 @@ def test_page_break_before_emits_ops_in_correct_position(tmp_path):
     assert pb_ops[0]["text"] == "I.  서론"
     assert pb_ops[0]["required"] is False
 
-    # 위치: delete_texts(find_delete) 바로 뒤, 섹션 삽입(goto_text/insert_blank_before)
-    # 이전에 와야 한다.
+    # 위치: delete_texts(find_delete)와 replace_all 이후, 섹션 삽입
+    # (goto_text/insert_blank_before) 이전에 와야 한다.
     op_names = [o["op"] for o in ops]
     fd_idx = op_names.index("find_delete")
     pb_idx = op_names.index("page_break_before")
@@ -633,6 +692,15 @@ def test_op_insert_text_segments_break_after_runs_breakpara_once():
     })
     assert hwp.actions.count("BreakPara") == 1
     assert result["break_after"] is True
+
+
+def test_op_insert_text_align_right_applies_before_breakpara():
+    hwp = _FakeInsertTextHwp()
+    cb.op_insert_text(hwp, {"text": "캡션", "pt": 9, "align": "right",
+                            "break_after": True})
+    i = hwp.actions.index("BreakPara")
+    assert hwp.actions[i - 1] == "ParagraphShapeAlignRight"
+    assert hwp.actions[i + 1] == "ParagraphShapeAlignJustify"
 
 
 def test_page_break_before_not_required_skips_when_anchor_missing():
@@ -1142,6 +1210,55 @@ def test_eq_display_emits_insert_equation_op_with_display_true(tmp_path):
     eq_ops = [o for o in ops if o["op"] == "insert_equation"]
     assert len(eq_ops) == 1
     assert eq_ops[0]["display"] is True
+
+
+_EQ_DISPLAY_CAPTION_CONTENT = """---
+title: T
+title_anchor: "T_ANCHOR"
+base_pt: 10
+caption_pt: 9
+---
+
+## SECTION: I.  서론
+
+본문.
+
+[[EQ display latex="\\frac{1}{2}mv^2" caption="[식 1] 운동에너지"]]
+
+본문 뒤.
+"""
+
+
+def test_eq_display_caption_emits_insert_text_after_equation(tmp_path):
+    meta, secs = br.parse_content(_EQ_DISPLAY_CAPTION_CONTENT)
+    ops = br.build_ops(meta, secs, tmp_path)
+    eq_idx = next(i for i, o in enumerate(ops) if o["op"] == "insert_equation")
+    cap = ops[eq_idx + 1]
+    assert cap["op"] == "insert_text"
+    assert cap["text"] == "[식 1] 운동에너지"
+    assert cap["pt"] == int(meta["caption_pt"])
+    assert cap["align"] == "right"
+    assert cap["break_after"] is True
+
+
+def test_eq_display_without_caption_omits_caption_op(tmp_path):
+    meta, secs = br.parse_content(_EQ_DISPLAY_CONTENT)
+    ops = br.build_ops(meta, secs, tmp_path)
+    caption_pt = int(meta.get("caption_pt", 9))
+    eq_idx = next(i for i, o in enumerate(ops) if o["op"] == "insert_equation")
+    nxt = ops[eq_idx + 1]
+    assert not (nxt["op"] == "insert_text" and nxt.get("pt") == caption_pt
+                and nxt.get("align") == "right")
+
+
+def test_eq_display_empty_caption_omits_caption_op(tmp_path):
+    content = _EQ_DISPLAY_CAPTION_CONTENT.replace(
+        'caption="[식 1] 운동에너지"', 'caption=""')
+    meta, secs = br.parse_content(content)
+    ops = br.build_ops(meta, secs, tmp_path)
+    eq_idx = next(i for i, o in enumerate(ops) if o["op"] == "insert_equation")
+    nxt = ops[eq_idx + 1]
+    assert nxt["op"] != "insert_text" or nxt.get("text") != ""
 
 
 def test_eq_bare_appends_build_warning_when_flipped_to_inline(tmp_path):
