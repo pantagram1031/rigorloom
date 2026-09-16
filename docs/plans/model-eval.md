@@ -59,6 +59,7 @@ Reading: for a 6k-char Korean section with worked numbers, sol/codex/composer/gr
 | gpt-5.6-sol-high-fast | ~12 min | 193 passed / ok / ok | +175 −6 | wrapper only, smallest diff; header inserts a hidden white run (odd) |
 | claude-sonnet-5-thinking-high | > 60 min | still running at adoption time | +468 | — |
 | gemini-3.7-flash-high | failed | connection lost to the Cursor agent endpoint | — | not usable from this CLI today |
+| gemini-3.8-flash-high (Antigravity `agy`, 2026-09-17, user asked) | 45 min | 197 passed / ok / ok (verified by Fable) | +377 −14 | wrapper + raw `HPageNumPos` fallback like grok-xhigh; named xml refusals for both ops; 104+153 test lines. Cost 4.03M input / 78k output / 54k thinking / 8.4M cache; the final turn died with `503 No capacity available for model gemini-3.8-flash-high` after 2694 s, so its own report was lost but the work was complete. Reading: correct and thorough, but slow and token-hungry in this harness; the Antigravity quota makes it a poor fit for 30-minute tasks |
 
 Reading: every model that finished produced a passing, spec-shaped implementation; the differences were robustness (raw-action fallback) and diff economy. For spec-driven, test-gated engine work the cheap tier (composer, codex-high, sol-high) is sufficient; pick grok-xhigh/opus when the COM surface is uncertain. Live Hancom proof of the adopted op is pending the next assembly.
 
