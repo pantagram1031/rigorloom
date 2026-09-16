@@ -183,7 +183,10 @@ BUILD_YAML_KEYS = {
 # 리스트 값으로 파싱할 최상위 키(style_diff.py의 색 허용 목록 등).
 # delete_texts: 삭제할 안내문 문자열 목록(양식 잔재 정리, find_delete op로 변환).
 # delete_texts_after: 같은 형태이나 섹션·그림·표·수식 삽입이 끝난 맨 끝에 발행.
-BUILD_YAML_LIST_KEYS = {"allow_colors", "delete_texts", "delete_texts_after"}
+# strip_guide_ws_colors: 조립 후 tidy_hwpx --strip-guide-ws-runs 에 넘길 '#RRGGBB' 목록.
+BUILD_YAML_LIST_KEYS = {
+    "allow_colors", "delete_texts", "delete_texts_after", "strip_guide_ws_colors",
+}
 FILL_KEYS = {"min_figures", "target_pages", "bottom_white_max", "max_gap_lines"}
 
 
@@ -243,7 +246,7 @@ def _yaml_list(v):
 # 동일하게 COM op이 아니라 fill_report.py가 hwpx 저장 뒤 오프라인으로 처리한다.
 BUILD_YAML_BLOCK_LIST_KEYS = {
     "delete_texts", "delete_texts_after", "tidy_blank_before", "tidy_blank_after",
-    "page_break_before", "keep_with_next",
+    "page_break_before", "keep_with_next", "strip_guide_ws_colors",
 }
 
 
@@ -342,6 +345,8 @@ def merge_meta(meta, build_cfg):
         merged["page_break_before"] = build_cfg["page_break_before"]
     if "keep_with_next" in build_cfg:
         merged["keep_with_next"] = build_cfg["keep_with_next"]
+    if "strip_guide_ws_colors" in build_cfg:
+        merged["strip_guide_ws_colors"] = build_cfg["strip_guide_ws_colors"]
     return merged
 
 

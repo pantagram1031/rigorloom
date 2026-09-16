@@ -81,6 +81,9 @@ Acceptance: `python -m pytest -q modules/report/tests/test_poster_build.py pipel
 | 2026-09-16 | Run 5 (fig7/fig8 100→88 mm to lift p9): worse — p11 35.1 % void, 표 5 split (`table_too_wide` on a page break). Reverted. Run 6 = run 4 layout, converged, proof hancom | flow is sensitive; only ±1–2 line deltas per playbook |
 | 2026-09-16 | Gates: `understand` (QUESTIONS.md, 5 questions, answers pending) auto_approved; `final_panel` (output/scorecard.json with contact-sheet hashes + judge ids) auto_approved; `format_check` REJECTED: F2 one red run left (` ` space run with guide charPr 27 in the abstract cell after `delete_texts_after`); `submission_preflight` REJECTED: P1 ambiguous `output/out.*` because `canonical_output` is the literal "null", P5 wants `output/verdict_v06.json` (I had used `--out fill_verdict.json`) | Cursor T4 dispatched (strip residual run); final run must omit `--out` and set `canonical_output: "output/out.hwpx"` in PIPELINE.md |
 
+| 2026-09-16 | T4 (strip_residual whole-paragraph) + T5 (adjacent whitespace) committed (6f40bc8, +1). Runs 7 and 8 still show the red ` ` run: it precedes the abstract body in the same paragraph; COM-side stripping did not take effect. Run 8 also hit `proof_iter 4 → escalate_human` because the proof counter accumulates in `output/fill_events.jsonl`; archived to `output/archive-runs1-8/` | Cursor T6 dispatched: offline `tidy_hwpx --strip-guide-ws-runs #FF0000` wired via build.yaml `strip_guide_ws_colors` |
+| 2026-09-16 | `canonical_output` is written as YAML null by invalidate; set it to `output/out.hwpx` only after the final converged run (check_canonical validates it) | pending |
+
 ## Workspace facts (for resume)
 
 - Stage machine position after this session: 5 pending (assembly). `output/form_copy.hwpx` staged pristine. `doc_backend: hwp` in build.yaml.

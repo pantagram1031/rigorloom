@@ -125,6 +125,11 @@ abstract_table_index: 1            # abstract:false일 때 지울 표 index(기�
   block `- "…"`). `find_delete`를 섹션·그림·표·수식 삽입이 끝난 **맨 끝**에 발행한다.
   섹션 앵커로 쓰인 안내문(예: 초록 placeholder)처럼 본문 삽입 전에 지우면 안 되는 문구용.
   이 경로의 `find_delete`는 `strip_residual: true`를 붙여, 문구 삭제 후 삭제 지점에 맞닿은 안내문 charPr 공백을 같은 문단에 본문이 남아 있어도 지운다.
+- **strip_guide_ws_colors** (build.yaml): `'#RRGGBB'` 목록(flat `[#FF0000]` 또는 block `- "#FF0000"`).
+  조립 후 `tidy_hwpx.py --strip-guide-ws-runs`가 해당 색 charPr의 공백/빈 런을 오프라인 XML에서 제거한다.
+  COM `find_delete`가 안내문 문구만 지우고 같은 문단 앞머리에 남긴 빨간 스페이스 런(verify_format F2)용.
+  `tidy_blank_*`가 없어도 이 키만 있으면 fill 루프는 오프라인 tidy 경로를 탄다.
+  유일한 런인 문단은 지우지 않고 `--form-profile`의 `body_black_charpr` id(또는 같은 문단의 다른 런 charPr)로 빈 런을 남긴다.
 
 ## build_report.py 의무 동작
 1. content.md 파싱 → 섹션/수식/그림/표/URL 추출 (정규식 기반, 미지 태그는 에러)

@@ -40,7 +40,10 @@ build.yaml에 tidy_blank_before/tidy_blank_after 블록-리스트가 있으면, 
 COM edit는 save-as hwpx까지만 하고(--export-pdf 생략) tidy_hwpx.py(오프라인
 XML 편집)로 앵커 앞/뒤 빈 문단을 정리한 뒤, 그 결과 hwpx를 COM convert로
 PDF 변환한다(edit → tidy_hwpx → convert 순서). 두 키가 모두 없으면 기존
-한 방(edit+export-pdf 동시) 경로 그대로.
+한 방(edit+export-pdf 동시) 경로 그대로. strip_guide_ws_colors('#RRGGBB'
+목록)가 있으면 같은 오프라인 패스에서 --strip-guide-ws-runs 를 각 색에
+넘겨 안내문 공백 런(F2)을 제거한다 — tidy_blank_* 가 없어도 이 키만으로
+오프라인 경로를 탄다.
 
 자동 앵커 유도: build.yaml에 tidy_blank_before/after가 둘 다 없고
 --form-profile FORM_PROFILE.json이 주어지면, form_inspect.py가 뽑은
@@ -625,6 +628,18 @@ def read_keep_with_next(build_yaml):
     return cfg.get("keep_with_next") or None
 
 
+def read_strip_guide_ws_colors(build_yaml):
+    """build.yaml의 strip_guide_ws_colors('#RRGGBB' 목록). 없으면 None.
+
+    fill 루프가 tidy_hwpx --strip-guide-ws-runs 로 넘긴다. tidy_blank_* 가
+    없어도 이 키만 있으면 오프라인 tidy 경로를 탄다."""
+    if not build_yaml or not Path(build_yaml).exists():
+        return None
+    cfg = build_report.parse_build_yaml(build_yaml)
+    colors = cfg.get("strip_guide_ws_colors") or None
+    return list(colors) if colors else None
+
+
 def _call_tidy_hwpx_quiet(hwpx_path, before_anchors, after_anchors, keep_map=None):
     """tidy_hwpx.tidy_hwpx를 stdout 잠근 채 1회 호출. 성공 시 result dict,
     실패 시 SystemExit을 그대로 전파(호출자가 처리).
@@ -692,6 +707,52 @@ def run_tidy_hwpx(hwpx_path, before_anchors, after_anchors, soft=False, keep_map
             warnings.append({"anchor": anchor, "direction": "after",
                               "reason": "not found or ambiguous — skipped (auto-derived)"})
     return {"ok": True, "removed": removed, "warnings": warnings}
+
+
+def run_strip_guide_ws_runs(hwpx_path, colors, profile_path=None):
+    """tidy_hwpx.strip_guide_ws_runs를 프로세스 내에서 직접 호출.
+
+    실패(색 형식/well-formed) 시 die()로 중단. stdout은 호출 동안 잠근다."""
+    class _NullBuffer:
+        def write(self, _data):
+            pass
+
+    class _NullStdout:
+        buffer = _NullBuffer()
+
+    saved_stdout = sys.stdout
+    sys.stdout = _NullStdout()
+    try:
+        result = tidy_hwpx.strip_guide_ws_runs(
+            hwpx_path, colors or [], out_path=hwpx_path,
+            profile_path=profile_path)
+    except SystemExit as e:
+        sys.stdout = saved_stdout
+        die(f"strip_guide_ws_runs 실패(exit {e.code}): colors={colors}")
+    finally:
+        sys.stdout = saved_stdout
+    return result
+
+
+def _tidy_then_strip(hwpx_path, before_anchors, after_anchors, *,
+                     soft=False, keep_map=None, strip_colors=None,
+                     profile_path=None):
+    """빈 문단 tidy 직후 안내 공백 런 스트립. strip_colors가 없으면 tidy만.
+
+    tidy 앵커가 비어 있어도 run_tidy_hwpx는 호출한다(xml 엔진 경로가 항상
+    tidy 패스를 타는 기존 계약). strip만 필요할 때도 이 함수를 거쳐
+    --strip-guide-ws-runs 가 실제로 돈다."""
+    result = run_tidy_hwpx(hwpx_path, before_anchors, after_anchors,
+                           soft=soft, keep_map=keep_map)
+    if strip_colors:
+        strip_result = run_strip_guide_ws_runs(
+            hwpx_path, strip_colors, profile_path=profile_path)
+        merged = dict(result or {"ok": True})
+        merged["stripped"] = strip_result.get("stripped", 0)
+        merged["replaced"] = strip_result.get("replaced", 0)
+        merged["skipped"] = strip_result.get("skipped", 0)
+        return merged
+    return result
 
 
 def run_keep_with_next(hwpx_path, prefixes):
@@ -1367,9 +1428,11 @@ def mode_loop(args):
     tidy_before, tidy_after, derived_tidy_anchors, tidy_keep_map = read_tidy_anchors_with_source(
         args.build_yaml, form_profile, content)
     keep_with_next = read_keep_with_next(args.build_yaml)
+    strip_guide_ws_colors = read_strip_guide_ws_colors(args.build_yaml)
     use_restore = baseline_has_para_formats(args.baseline)
     use_tidy = (bool(tidy_before or tidy_after) or use_restore
-                or bool(keep_with_next) or bool(form_profile))
+                or bool(keep_with_next) or bool(form_profile)
+                or bool(strip_guide_ws_colors))
     tidy_soft = bool(derived_tidy_anchors)  # 유도 앵커는 모호/없음을 fatal 대신 skip.
 
     result = None
@@ -1384,8 +1447,10 @@ def mode_loop(args):
         xml_para_verification = None
         if engine == "xml":
             run_xml_edit(form, ops_path, out_hwpx)
-            tidy_result = run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
-                                        keep_map=tidy_keep_map)
+            tidy_result = _tidy_then_strip(
+                out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
+                keep_map=tidy_keep_map, strip_colors=strip_guide_ws_colors,
+                profile_path=form_profile)
             tidy_warnings = (tidy_result or {}).get("warnings", [])
             if use_restore:
                 run_restore_para_formats(out_hwpx, args.baseline)
@@ -1439,8 +1504,10 @@ def mode_loop(args):
             # typeset-defaults(오프라인, form_profile 있을 때) -> convert.
             # 순서·조건은 mode_assemble과 같다(§O).
             run_com_edit(form, ops_path, out_hwpx, None, args.kill_stale)
-            tidy_result = run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
-                                        keep_map=tidy_keep_map)
+            tidy_result = _tidy_then_strip(
+                out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
+                keep_map=tidy_keep_map, strip_colors=strip_guide_ws_colors,
+                profile_path=form_profile)
             tidy_warnings = (tidy_result or {}).get("warnings", [])
             if use_restore:
                 run_restore_para_formats(out_hwpx, args.baseline)
@@ -1637,9 +1704,11 @@ def mode_assemble(args):
         args.build_yaml, form_profile, content)
     tidy_soft = bool(derived_tidy_anchors)
     keep_with_next = read_keep_with_next(args.build_yaml)
+    strip_guide_ws_colors = read_strip_guide_ws_colors(args.build_yaml)
     use_restore = baseline_has_para_formats(getattr(args, "baseline", None))
     use_tidy = (bool(tidy_before or tidy_after) or use_restore
-                or bool(keep_with_next) or bool(form_profile))
+                or bool(keep_with_next) or bool(form_profile)
+                or bool(strip_guide_ws_colors))
     verdicts = []
     quality = None
     for _ in range(iters):
@@ -1649,8 +1718,10 @@ def mode_assemble(args):
         xml_para_verification = None
         if engine == "xml":
             run_xml_edit(form, ops_path, out_hwpx)
-            run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
-                          keep_map=tidy_keep_map)
+            _tidy_then_strip(
+                out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
+                keep_map=tidy_keep_map, strip_colors=strip_guide_ws_colors,
+                profile_path=form_profile)
             if use_restore:
                 run_restore_para_formats(out_hwpx, args.baseline)
             if keep_with_next:
@@ -1679,8 +1750,10 @@ def mode_assemble(args):
                 break
         elif use_tidy:
             run_com_edit(form, ops_path, out_hwpx, None, args.kill_stale)
-            run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
-                          keep_map=tidy_keep_map)
+            _tidy_then_strip(
+                out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
+                keep_map=tidy_keep_map, strip_colors=strip_guide_ws_colors,
+                profile_path=form_profile)
             if use_restore:
                 run_restore_para_formats(out_hwpx, args.baseline)
             if keep_with_next:

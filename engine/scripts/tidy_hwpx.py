@@ -61,20 +61,37 @@ exit 2: 사용법/파일 오류.
     파일을 쓰지 않고 계획된 repoint 목록(문단 인덱스/텍스트 미리보기/적용될
     속성)만 출력한다.
 
+    --strip-guide-ws-runs COLOR (반복 가능, '#RRGGBB' 정확 일치·대소문자 무시):
+    모든 Contents/section*.xml에서, header.xml charPr의 textColor가 COLOR인
+    런 중 hp:t 텍스트가 비었거나 공백뿐인 hp:run을 제거한다. COM find_delete가
+    안내문 문구만 지우고 같은 문단 앞머리에 빨간 공백 런을 남기는 잔재(F2)를
+    오프라인 XML로 결정론적으로 걷어낸다. 표 셀 안 중첩 문단도 대상으로 한다
+    (delete-guides의 top-level 전용과 달리, 초록 표 안의 잔여 공백 런이
+    바로 그 사례). 비공백 텍스트 런·ctrl/table/secPr/object 런은 건드리지
+    않는다. 그런 런이 문단의 유일한 런이면 문단 자체는 지우지 않고, 같은
+    문단의 다른 런 charPr(있으면) 또는 --profile의 body_black_charpr id로
+    빈 런을 남겨 치환한다(둘 다 없으면 그대로 두고 skipped). 수정한 문단의
+    linesegarray만 제거(T24)하고 손대지 않은 문단의 것은 바이트 그대로.
+    쓰기 전 수정 멤버 well-formed 검사. 자기 출력에 재적용하면 멤버 내용이
+    동일(멱등). 요약 JSON: {stripped, replaced, skipped}.
+
     다른 플래그와 조합 가능. 실행 순서(고정): --before/--after(빈 문단 정리)
-    → --restore-formats(줄간격/정렬 복원) → --keep-with-next(캡션 고아 방지)
-    → --typeset-defaults(위 세 패스가 만든 최종 문단 구조 위에서 widowOrphan
-    전역 적용 + keepWithNext 보강). --typeset-defaults를 맨 뒤에 두는 이유:
-    (1) 앞선 패스가 지우거나 재배치한 문단에 영향받지 않도록 최종 구조를
-    봐야 하고, (2) --keep-with-next가 이미 세팅한 keepWithNext="1"을 이 패스가
-    되돌리지 않고 보존해야 하기 때문(현재 값이 "1"이면 유지, 강등하지 않음).
+    → --strip-guide-ws-runs(안내문 공백 런 제거) → --restore-formats(줄간격/
+    정렬 복원) → --keep-with-next(캡션 고아 방지) → --typeset-defaults(위
+    패스가 만든 최종 문단 구조 위에서 widowOrphan 전역 적용 + keepWithNext
+    보강). --typeset-defaults를 맨 뒤에 두는 이유: (1) 앞선 패스가 지우거나
+    재배치한 문단에 영향받지 않도록 최종 구조를 봐야 하고, (2)
+    --keep-with-next가 이미 세팅한 keepWithNext="1"을 이 패스가 되돌리지
+    않고 보존해야 하기 때문(현재 값이 "1"이면 유지, 강등하지 않음).
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
@@ -82,6 +99,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from cli_io import utf8_stdio  # noqa: E402
+from guards import PROTECTED_TAG_RE  # noqa: E402
 
 NS = r'[A-Za-z0-9]+'
 P_TAG_RE = re.compile(r'<(' + NS + r'):p\b[^>]*>.*?</\1:p>', re.S)
@@ -112,6 +130,9 @@ def _para_text(p_xml):
 OBJECT_TAG_RE = re.compile(
     r'<' + NS + r':(tbl|pic|container|ole|line|rect|ellipse|'
     r'arc|polygon|curve|connectLine|equation)\b')
+LINESEG_RE = re.compile(
+    r'<' + NS + r':linesegarray\b(?:[^>]*/>|[^>]*>.*?</' + NS
+    + r':linesegarray>)', re.S)
 
 
 def _is_empty_para(p_xml):
@@ -968,6 +989,308 @@ def apply_typeset_defaults(path, anchors, caption_prefixes=None, out_path=None,
     return {"ok": True, "patched": patched}
 
 
+# ---------------------------------------------------------------------------
+# --strip-guide-ws-runs: 안내문 색 charPr의 공백/빈 런만 오프라인 제거.
+# COM find_delete가 문구만 지우고 같은 문단 앞머리에 남긴 빨간 스페이스 런
+# (verify_format F2)을 XML에서 결정론적으로 걷어낸다. 표 셀 중첩 문단 포함.
+# ---------------------------------------------------------------------------
+
+def _normalize_guide_color(color):
+    """'#RRGGBB' 정확 일치용으로 정규화. 선행 # 은 허용, 대소문자 무시."""
+    raw = (color or "").strip()
+    m = re.fullmatch(r"#?([0-9A-Fa-f]{6})", raw)
+    if not m:
+        die(f"--strip-guide-ws-runs 색상은 '#RRGGBB': {color!r}", code=2)
+    return "#" + m.group(1).upper()
+
+
+def _charpr_ids_for_colors(header_xml, colors):
+    """header.xml에서 textColor가 colors(이미 #RRGGBB 정규화) 중 하나인
+    charPr id 집합. 여는 태그의 textColor만 본다(preedit._guide_charpr_ids와
+    동일 위치)."""
+    want = {c[1:].upper() for c in colors}
+    ids = set()
+    for m in re.finditer(r'<' + NS + r':charPr\b[^>]*\bid="(\d+)"[^>]*>',
+                         header_xml):
+        cm = re.search(r'textColor="#?([0-9A-Fa-f]{6})"', m.group(0))
+        if cm and cm.group(1).upper() in want:
+            ids.add(m.group(1))
+    return ids
+
+
+def _body_black_charpr_id(profile_path):
+    """form_profile.json의 body_black_charpr.id (문자열). 없거나 파일 없으면
+    None — 유일한 안내 공백 런을 치환하지 못하고 skipped 로 센다."""
+    if not profile_path:
+        return None
+    path = Path(profile_path)
+    if not path.exists():
+        die(f"profile 없음: {profile_path}", code=2)
+    try:
+        profile = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        die(f"profile 파싱 실패: {exc}", code=2)
+    bbc = profile.get("body_black_charpr")
+    if bbc is None:
+        return None
+    cid = bbc.get("id") if isinstance(bbc, dict) else bbc
+    if cid is None or cid == "":
+        return None
+    return str(cid)
+
+
+def _assert_xml_well_formed(xml, name):
+    try:
+        ET.fromstring(xml)
+    except ET.ParseError as exc:
+        die(f"산출 XML이 well-formed 아님({name}): {exc}", code=2)
+
+
+def _write_hwpx(src_path, out_path, contents):
+    """contents(name -> bytes)로 hwpx를 원자적 재작성. ZipInfo(타임스탬프)는
+    원본 엔트리를 재사용한다."""
+    src_path = Path(src_path)
+    out_path = Path(out_path)
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".hwpx", dir=str(out_path.parent))
+    os.close(tmp_fd)
+    try:
+        with zipfile.ZipFile(src_path) as zin, \
+             zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                zout.writestr(item, contents[item.filename])
+        shutil.move(tmp_path, out_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def _run_text(run_xml):
+    """런 안 hp:t 텍스트. 자기닫힘 <hp:t/> 는 빈 문자열(T_RE 그룹 None)."""
+    parts = []
+    for t in T_RE.findall(run_xml):
+        if t:
+            parts.append(re.sub(r"<[^>]+>", "", t))
+    return "".join(parts)
+
+
+def _run_is_protected(run_xml):
+    """ctrl/table/secPr/object 를 담은 런은 삭제 금지(T18 + OBJECT_TAG_RE)."""
+    return bool(PROTECTED_TAG_RE.search(run_xml) or OBJECT_TAG_RE.search(run_xml))
+
+
+def _strip_own_linesegarray(p_xml):
+    """이 문단 자신의 linesegarray만 제거(T24). 중첩 문단 것은 보존."""
+    om = P_OPEN_RE.match(p_xml)
+    if not om:
+        return LINESEG_RE.sub("", p_xml)
+    close_idx = p_xml.rfind("</")
+    if close_idx <= om.end():
+        return LINESEG_RE.sub("", p_xml)
+    inner = p_xml[om.end():close_idx]
+    nested = _find_paragraphs(inner)
+    if not nested:
+        return p_xml[:om.end()] + LINESEG_RE.sub("", inner) + p_xml[close_idx:]
+    out, last = [], 0
+    for start, end, nested_p in nested:
+        out.append(LINESEG_RE.sub("", inner[last:start]))
+        out.append(nested_p)
+        last = end
+    out.append(LINESEG_RE.sub("", inner[last:]))
+    return p_xml[:om.end()] + "".join(out) + p_xml[close_idx:]
+
+
+def _direct_child_runs(p_xml):
+    """문단의 직접 자식 hp:run 목록(중첩 hp:p 안의 런 제외).
+
+    반환: [{start, end, xml, prefix, charpr, text, protected}, ...]
+    오프셋은 p_xml 기준.
+    """
+    om = P_OPEN_RE.match(p_xml)
+    if not om:
+        return []
+    p_prefix = om.group(1)
+    stack = [(p_prefix, "p", 0)]  # (prefix, local, start)
+    runs = []
+    pos = om.end()
+    length = len(p_xml)
+    while pos < length:
+        m = TAG_RE.search(p_xml, pos)
+        if not m:
+            break
+        is_close, prefix, local, selfclose = m.groups()
+        if selfclose:
+            if local == "run" and len(stack) == 1:
+                run_xml = p_xml[m.start():m.end()]
+                runs.append(_run_record(m.start(), m.end(), run_xml, prefix))
+            pos = m.end()
+            continue
+        if not is_close:
+            stack.append((prefix, local, m.start()))
+        elif stack:
+            opened_prefix, opened_local, open_start = stack.pop()
+            if opened_local == "run" and len(stack) == 1:
+                run_xml = p_xml[open_start:m.end()]
+                runs.append(_run_record(open_start, m.end(), run_xml, opened_prefix))
+            if opened_local == "p" and not stack:
+                break
+        pos = m.end()
+    return runs
+
+
+def _run_record(start, end, run_xml, prefix):
+    am = re.match(r'<' + NS + r':run\b([^>]*?)/?>', run_xml)
+    attrs = am.group(1) if am else ""
+    return {
+        "start": start,
+        "end": end,
+        "xml": run_xml,
+        "prefix": prefix,
+        "charpr": _attr_value(attrs, "charPrIDRef"),
+        "text": _run_text(run_xml),
+        "protected": _run_is_protected(run_xml),
+    }
+
+
+def _is_guide_ws_run(run, guide_ids):
+    return (run["charpr"] in guide_ids
+            and not run["text"].strip()
+            and not run["protected"])
+
+
+def _strip_direct_runs(p_xml, guide_ids, fallback_id):
+    """직접 자식 안내-공백 런을 지우거나(다른 런이 남으면) 빈 런으로 치환.
+
+    반환: (new_p_xml, stripped, replaced, skipped)
+    """
+    runs = _direct_child_runs(p_xml)
+    cands = [r for r in runs if _is_guide_ws_run(r, guide_ids)]
+    if not cands:
+        return p_xml, 0, 0, 0
+    cand_starts = {r["start"] for r in cands}
+    others = [r for r in runs if r["start"] not in cand_starts]
+    if others:
+        # 다른 런이 남으면 안내 공백 런만 삭제(문단은 유지). 다른 런의
+        # charPr은 치환에 쓰지 않는다 — 치환은 '유일한 런' 케이스 전용.
+        new_p = p_xml
+        for r in reversed(cands):
+            new_p = new_p[:r["start"]] + new_p[r["end"]:]
+        return _strip_own_linesegarray(new_p), len(cands), 0, 0
+
+    # 유일한 런(또는 안내 공백 런만 있는 문단): 다른 런 charPr은 없음 →
+    # profile body_black_charpr. 그것도 없으면 손대지 않고 skipped.
+    fb = fallback_id
+    if not fb:
+        return p_xml, 0, 0, len(cands)
+
+    cands_sorted = sorted(cands, key=lambda r: r["start"])
+    last_start = cands_sorted[-1]["start"]
+    prefix = cands_sorted[-1]["prefix"] or "hp"
+    empty = f'<{prefix}:run charPrIDRef="{fb}"/>'
+    new_p = p_xml
+    stripped = 0
+    for r in reversed(cands_sorted):
+        repl = empty if r["start"] == last_start else ""
+        if repl == "":
+            stripped += 1
+        new_p = new_p[:r["start"]] + repl + new_p[r["end"]:]
+    return _strip_own_linesegarray(new_p), stripped, 1, 0
+
+
+def _strip_guide_ws_in_para(p_xml, guide_ids, fallback_id):
+    """중첩 문단을 먼저 처리한 뒤 이 문단의 직접 자식 런을 정리."""
+    stripped = replaced = skipped = 0
+    om = P_OPEN_RE.match(p_xml)
+    if om:
+        close_idx = p_xml.rfind("</")
+        if close_idx > om.end():
+            inner = p_xml[om.end():close_idx]
+            if _find_paragraphs(inner):
+                new_inner, s, r, k = _strip_guide_ws_in_xml(
+                    inner, guide_ids, fallback_id)
+                p_xml = p_xml[:om.end()] + new_inner + p_xml[close_idx:]
+                stripped, replaced, skipped = s, r, k
+    new_p, s, r, k = _strip_direct_runs(p_xml, guide_ids, fallback_id)
+    return new_p, stripped + s, replaced + r, skipped + k
+
+
+def _strip_guide_ws_in_xml(xml, guide_ids, fallback_id):
+    """xml 조각에서 top-level(이 조각 기준) 문단을 뒤에서부터 정리.
+
+    표 래퍼 문단의 inner를 재귀 호출하면 셀 문단이 이 조각의 top-level이
+    되므로 초록 표 안의 잔여 공백 런도 잡힌다. 형제 문단은 뒤에서부터
+    치환해 앞쪽 오프셋을 보존한다.
+    """
+    stripped = replaced = skipped = 0
+    paras = _find_paragraphs(xml)
+    for start, end, p_xml in reversed(paras):
+        new_p, s, r, k = _strip_guide_ws_in_para(p_xml, guide_ids, fallback_id)
+        if new_p != p_xml:
+            xml = xml[:start] + new_p + xml[end:]
+        stripped += s
+        replaced += r
+        skipped += k
+    return xml, stripped, replaced, skipped
+
+
+def strip_guide_ws_runs(path, colors, out_path=None, profile_path=None):
+    """안내문 색 공백 런을 모든 section*.xml에서 제거.
+
+    colors: ['#RRGGBB', ...] (대소문자 무시, # 생략 허용).
+    profile_path: 유일한 런 치환용 body_black_charpr.id 출처.
+    반환: {"ok": True, "stripped": n, "replaced": n, "skipped": n}
+    """
+    path = Path(path)
+    out_path = Path(out_path) if out_path else path
+    if not colors:
+        if out_path.resolve() != path.resolve():
+            shutil.copy2(path, out_path)
+        return {"ok": True, "stripped": 0, "replaced": 0, "skipped": 0}
+
+    norm_colors = [_normalize_guide_color(c) for c in colors]
+    fallback_id = _body_black_charpr_id(profile_path)
+
+    with zipfile.ZipFile(path) as zin:
+        names = zin.namelist()
+        contents = {n: zin.read(n) for n in names}
+
+    header_name = next(
+        (n for n in names if n.replace("\\", "/").endswith("Contents/header.xml")
+         or n.replace("\\", "/").endswith("header.xml")),
+        None,
+    )
+    if header_name is None:
+        die("hwpx에 header.xml 멤버 없음 — 구조 이상", code=2)
+    header_xml = contents[header_name].decode("utf-8")
+    guide_ids = _charpr_ids_for_colors(header_xml, norm_colors)
+
+    section_names = sorted(
+        n for n in names
+        if re.match(r"Contents/section\d+\.xml", n.replace("\\", "/"))
+    )
+    stripped = replaced = skipped = 0
+    changed = False
+    for sname in section_names:
+        xml = contents[sname].decode("utf-8")
+        new_xml, s, r, k = _strip_guide_ws_in_xml(xml, guide_ids, fallback_id)
+        stripped += s
+        replaced += r
+        skipped += k
+        if new_xml != xml:
+            _assert_xml_well_formed(new_xml, sname)
+            contents[sname] = new_xml.encode("utf-8")
+            changed = True
+
+    if not changed:
+        if out_path.resolve() != path.resolve():
+            shutil.copy2(path, out_path)
+        return {"ok": True, "stripped": stripped, "replaced": replaced,
+                "skipped": skipped}
+
+    _write_hwpx(path, out_path, contents)
+    return {"ok": True, "stripped": stripped, "replaced": replaced,
+            "skipped": skipped}
+
+
 def main():
     # cp949 콘솔 안전(--help의 em-dash 포함) — parse_args보다 먼저.
     utf8_stdio()
@@ -994,8 +1317,14 @@ def main():
                      help="모든 top-level 본문 문단에 widowOrphan=1, "
                           "제목(--profile anchors)/캡션(--caption-prefixes) 문단에는 "
                           "keepWithNext=1도 추가 적용")
+    ap.add_argument("--strip-guide-ws-runs", action="append", default=[],
+                     metavar="COLOR",
+                     help="안내문 색('#RRGGBB') charPr의 공백/빈 런을 제거"
+                          "(반복 가능). 유일한 런이면 문단을 남기고 빈 런으로 "
+                          "치환(--profile body_black_charpr 또는 다른 런 charPr)")
     ap.add_argument("--profile",
-                     help="--typeset-defaults용 form_profile.json(anchors 목록 사용)")
+                     help="form_profile.json — --typeset-defaults의 anchors와 "
+                          "--strip-guide-ws-runs의 body_black_charpr id에 사용")
     ap.add_argument("--caption-prefixes",
                      help="--typeset-defaults용 캡션 프리픽스, 쉼표로 구분"
                           f"(기본: {', '.join(DEFAULT_CAPTION_PREFIXES)!r})")
@@ -1007,9 +1336,9 @@ def main():
     if not Path(args.file).exists():
         die(f"파일 없음: {args.file}", code=2)
     if not (args.before or args.after or args.restore_formats or args.keep_with_next
-            or args.typeset_defaults):
-        die("--before/--after/--restore-formats/--keep-with-next/--typeset-defaults "
-            "중 최소 하나 필요", code=2)
+            or args.typeset_defaults or args.strip_guide_ws_runs):
+        die("--before/--after/--restore-formats/--keep-with-next/--typeset-defaults/"
+            "--strip-guide-ws-runs 중 최소 하나 필요", code=2)
     if args.dry_run and not args.typeset_defaults:
         die("--dry-run은 --typeset-defaults와 함께만 사용 가능", code=2)
 
@@ -1029,6 +1358,15 @@ def main():
                                  keep_map=keep_map)
         result["ok"] = result["ok"] and tidy_result["ok"]
         result["removed"] = tidy_result["removed"]
+        cur = out
+
+    if args.strip_guide_ws_runs:
+        strip_result = strip_guide_ws_runs(
+            cur, args.strip_guide_ws_runs, out_path=out, profile_path=args.profile)
+        result["ok"] = result["ok"] and strip_result.get("ok", True)
+        result["stripped"] = strip_result["stripped"]
+        result["replaced"] = strip_result["replaced"]
+        result["skipped"] = strip_result["skipped"]
         cur = out
 
     if args.restore_formats:

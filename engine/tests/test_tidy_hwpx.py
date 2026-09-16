@@ -26,10 +26,18 @@ _WS = os.environ.get("HWP_MASTER_WS", "")  # set to a local agenthwpx workspace 
 FIXTURE = os.path.join(_WS, "reports", "report-aliasing-sampling", "output", "out.hwpx") if _WS else ""
 ANCHOR = "Ⅰ. 서 론"
 
-pytestmark = pytest.mark.skipif(
-    not os.path.exists(FIXTURE),
-    reason="real fixture (report-aliasing-sampling/output/out.hwpx) not present on this machine",
-)
+
+@pytest.fixture(autouse=True)
+def _skip_without_live_fixture(request):
+    """라이브 픽스처가 필요한 기존 테스트만 skip. 합성 zip 테스트
+    (test_strip_guide_ws_runs_*) 는 우회."""
+    if "test_strip_guide_ws_runs" in request.node.name:
+        return
+    if not os.path.exists(FIXTURE):
+        pytest.skip(
+            "real fixture (report-aliasing-sampling/output/out.hwpx) "
+            "not present on this machine"
+        )
 
 
 def _copy_fixture(tmp_path):
@@ -871,3 +879,118 @@ def test_typeset_defaults_table_object_flip_idempotent(tmp_path):
     with zipfile.ZipFile(out1) as z1, zipfile.ZipFile(out2) as z2:
         for n in z1.namelist():
             assert z1.read(n) == z2.read(n)
+
+
+# ---------------------------------------------------------------------------
+# --strip-guide-ws-runs: 합성 hwpx (픽스처 불필요). F2 빨간 공백 런 잔재.
+# ---------------------------------------------------------------------------
+
+def _zip_members(path):
+    with zipfile.ZipFile(path) as z:
+        return {n: z.read(n) for n in z.namelist()}
+
+
+def _build_guide_ws_hwpx(tmp_path):
+    """charPr 3=#000000, 27=#FF0000. 세 문단: 혼합(공백+본문), 유일한 빨간
+    공백 런, 빨간 실문. 혼합은 표 셀 안(초록 표 F2 재현)."""
+    header = (
+        '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head">'
+        '<hh:refList>'
+        '<hh:charProperties itemCnt="2">'
+        '<hh:charPr id="3" height="1000" textColor="#000000"/>'
+        '<hh:charPr id="27" height="1000" textColor="#FF0000"/>'
+        '</hh:charProperties>'
+        '<hh:paraProperties itemCnt="1">'
+        '<hh:paraPr id="0"/>'
+        '</hh:paraProperties></hh:refList></hh:head>'
+    )
+    mixed = ('<hp:run charPrIDRef="27"><hp:t> </hp:t></hp:run>'
+             '<hp:run charPrIDRef="3"><hp:t>text</hp:t></hp:run>')
+    sole = '<hp:run charPrIDRef="27"><hp:t> </hp:t></hp:run>'
+    real = '<hp:run charPrIDRef="27"><hp:t>real text</hp:t></hp:run>'
+    section = (
+        '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
+        ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+        '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="3">'
+        '<hp:tbl rowCnt="1" colCnt="1"><hp:tr><hp:tc><hp:subList>'
+        f'<hp:p paraPrIDRef="0">{mixed}</hp:p>'
+        '</hp:subList></hp:tc></hp:tr></hp:tbl>'
+        '</hp:run>'
+        '<hp:linesegarray><hp:lineseg vertpos="1"/></hp:linesegarray>'
+        '</hp:p>'
+        f'<hp:p paraPrIDRef="0">{sole}</hp:p>'
+        f'<hp:p paraPrIDRef="0">{real}'
+        '<hp:linesegarray><hp:lineseg vertpos="99"/></hp:linesegarray>'
+        '</hp:p>'
+        '</hs:sec>'
+    )
+    path = tmp_path / "guide_ws.hwpx"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("mimetype", "application/hwp+zip")
+        z.writestr("Contents/header.xml", header)
+        z.writestr("Contents/section0.xml", section)
+    return path
+
+
+def test_strip_guide_ws_runs_mixed_sole_and_real_text(tmp_path):
+    src = _build_guide_ws_hwpx(tmp_path)
+    profile = tmp_path / "form_profile.json"
+    profile.write_text(
+        json.dumps({"body_black_charpr": {"id": 3}}), encoding="utf-8")
+    out1 = tmp_path / "out1.hwpx"
+    result = tidy_hwpx.strip_guide_ws_runs(
+        src, ["#FF0000"], out_path=out1, profile_path=str(profile))
+    assert result["ok"] is True
+    assert result["stripped"] == 1
+    assert result["replaced"] == 1
+    assert result["skipped"] == 0
+
+    with zipfile.ZipFile(out1) as z:
+        xml = z.read("Contents/section0.xml").decode("utf-8")
+    import xml.etree.ElementTree as ET
+    ET.fromstring(xml)
+
+    # 혼합: 빨간 공백 런 제거, 본문 런 보존(표 셀 안).
+    assert '<hp:run charPrIDRef="27"><hp:t> </hp:t></hp:run>' not in xml
+    assert '<hp:run charPrIDRef="3"><hp:t>text</hp:t></hp:run>' in xml
+    # 유일한 런: charPr 3 빈 런으로 치환.
+    assert '<hp:run charPrIDRef="3"/>' in xml
+    # 실문 런은 색이 빨개도 텍스트가 있으므로 생존.
+    assert '<hp:run charPrIDRef="27"><hp:t>real text</hp:t></hp:run>' in xml
+    assert xml.count('charPrIDRef="27"') == 1
+    # 손대지 않은 문단의 linesegarray 보존.
+    assert 'vertpos="99"' in xml
+
+    out2 = tmp_path / "out2.hwpx"
+    result2 = tidy_hwpx.strip_guide_ws_runs(
+        out1, ["#ff0000"], out_path=out2, profile_path=str(profile))
+    assert result2["stripped"] == 0
+    assert result2["replaced"] == 0
+    assert result2["skipped"] == 0
+    assert _zip_members(out1) == _zip_members(out2)
+
+
+def test_strip_guide_ws_runs_cli_json(tmp_path):
+    import subprocess
+    src = _build_guide_ws_hwpx(tmp_path)
+    profile = tmp_path / "form_profile.json"
+    profile.write_text(
+        json.dumps({"body_black_charpr": {"id": "3"}}), encoding="utf-8")
+    out = tmp_path / "out.hwpx"
+    script = os.path.join(ROOT, "scripts", "tidy_hwpx.py")
+    proc = subprocess.run(
+        [sys.executable, script, str(src),
+         "--strip-guide-ws-runs", "#FF0000",
+         "--profile", str(profile), "--out", str(out)],
+        capture_output=True,
+        env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    payload = json.loads(proc.stdout.decode("utf-8"))
+    assert payload["stripped"] == 1
+    assert payload["replaced"] == 1
+    assert payload["skipped"] == 0
+    with zipfile.ZipFile(out) as z:
+        xml = z.read("Contents/section0.xml").decode("utf-8")
+    assert 'charPrIDRef="27"><hp:t>real text</hp:t>' in xml
+    assert xml.count('charPrIDRef="27"') == 1

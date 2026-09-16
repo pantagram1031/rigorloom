@@ -1041,6 +1041,46 @@ def test_merge_meta_no_keep_with_next_key_when_absent():
     assert "keep_with_next" not in merged
 
 
+# ── strip_guide_ws_colors (build.yaml) → offline tidy_hwpx flag ────────────
+
+def test_parse_build_yaml_strip_guide_ws_colors_flat_list(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        'strip_guide_ws_colors: ["#FF0000", "#00FF00"]',
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["strip_guide_ws_colors"] == ["#FF0000", "#00FF00"]
+
+
+def test_parse_build_yaml_strip_guide_ws_colors_block_list(tmp_path):
+    p = _write_build_yaml(tmp_path, [
+        "strip_guide_ws_colors:",
+        '  - "#FF0000"',
+        '  - "#00FF00"',
+    ])
+    cfg = br.parse_build_yaml(p)
+    assert cfg["strip_guide_ws_colors"] == ["#FF0000", "#00FF00"]
+
+
+def test_merge_meta_carries_strip_guide_ws_colors():
+    merged = br.merge_meta({}, {"strip_guide_ws_colors": ["#FF0000"]})
+    assert merged["strip_guide_ws_colors"] == ["#FF0000"]
+
+
+def test_merge_meta_no_strip_guide_ws_colors_when_absent():
+    merged = br.merge_meta({}, {})
+    assert "strip_guide_ws_colors" not in merged
+
+
+def test_strip_guide_ws_colors_emits_no_com_ops(tmp_path):
+    text = open(CONTENT, encoding="utf-8").read()
+    meta, secs = br.parse_content(text)
+    meta = dict(meta)
+    meta["strip_guide_ws_colors"] = ["#FF0000"]
+    ops = br.build_ops(meta, secs, FIX)
+    blob = json.dumps(ops)
+    assert "strip_guide_ws" not in blob
+
+
 # ── [[TABLE cols= pt=]] — column width ratios + cell font size ─────────────
 
 def test_parse_col_ratios_normalizes_to_sum_one():
