@@ -34,6 +34,18 @@ Every number in the body was re-derived without the engine (51 checks) before
 the text was frozen; the assembled file passed the format gate with zero
 guide-text residue and a native Hancom proof receipt.
 
+### Editing a finished report
+
+The assembly demo above starts from the blank form. The same AURALAB report can
+also be opened finished and edited in place: `--backend com` applied a
+`replace_all` and Hancom rendered page 1 is at
+[docs/demo/cli-com-edit-page1.png](docs/demo/cli-com-edit-page1.png). On a
+finished artifact, pair `open` with `--form-profile` (or `--form`) so residue
+checks use the blank form's inventory, and optionally `--declares-file` to
+record words that should remain; the desktop exposes the same binding as
+양식 연결 ([workspace screenshot](docs/demo/desktop/workspace-1280x800-light.png)).
+No apply path here claims render proof.
+
 ### Status at a glance
 
 | Surface | State |
@@ -41,17 +53,17 @@ guide-text residue and a native Hancom proof receipt.
 | Report pipeline (`modules/report`, stage machine 0 → 6) | usable; the demo above ran through every gate |
 | Native Hancom assembly + proof (Windows) | usable; boxed equations, equation captions, poster line |
 | Pure-XML assembly (any OS) | usable; structural proof only, boxed equations refused with a named reason |
-| Runtime CLI for agents (`rigorloom open/inspect/propose/approve/apply/...`) | usable for the `preedit` backend; `com` backend executes a first wave of seven ops through Hancom with a `native_com_session` receipt (one recorded live run); `xml` backend (pure Python, no Hancom) executes the same first wave plus tables/pictures/equations with a `structural_only` receipt whose well-formedness the Runtime checks itself |
-| Desktop editor (Tauri) | pre-alpha on unmerged branches; do not rely on it |
+| Runtime CLI for agents (`rigorloom open/inspect/propose/approve/apply/...`) | three routed apply backends with `engine/`: `preedit`, `com` (Hancom, `native_com_session` receipt), `xml` (any OS, `structural_only` with Runtime-verified well-formedness); `open --form-profile\|--form` binds the blank form; receipts carry `residue.profileSource` and `residue.declaration` |
+| Desktop editor (Tauri) | single workspace on `claude/stage1-report-demo`: home, tabbed inspector (선택/검토/기록/에이전트), hunk-card review, checkpoint timeline, 양식 연결; 199 headless tests and passing release-build smoke — not on `main` yet |
 
 The core workflow does not require Hancom Office. Linux and Windows
 are practiced; macOS is unproven. Any coding-capable AI agent or a
 human operator can run it.
 
-**What it is not.** It is not a general-purpose word processor, a
-cloud service, or a finished desktop application. The pipeline on `main`
-is usable for report automation. A desktop Tauri editor exists on
-unmerged branches and is **pre-alpha** — do not rely on it.
+**What it is not.** It is not a general-purpose word processor or a
+cloud service. The pipeline on `main` is usable for report automation.
+The Tauri desktop on `claude/stage1-report-demo` is exercised (see status
+table) but not yet part of the `main` product.
 
 ## Quick start
 
@@ -133,13 +145,11 @@ rigorloom --root ~/rigorloom-work --engine-root ~/rigorloom-install capabilities
 `report` declares `requires_modules: [style]`, so a report payload is three
 zips; the registry refuses to enable `report` alone rather than half-enabling
 it. With the payload installed, `capabilities` reports `form_inspect`,
-`preedit`, `check_residue` and the module registry as available with paths
-under the install root, and the enabled modules by name. The `xml` and `com`
-backends stay unavailable with reasons — they are protocol vocabulary this
-build does not execute.
+`check_residue`, the module registry, and each apply backend's availability
+(`preedit`, `xml` when scripts resolve; `com` when Hancom is present).
 
-What the installed command then does is cell-level document editing on the
-`preedit` backend: `open`, `inspect`, `propose`, `request-approval`,
+What the installed command then does is cell-level document editing with
+`propose --backend preedit|com|xml`: `open`, `inspect`, `propose`, `request-approval`,
 `approve`, `apply`, `verify`. `verify` is fail-closed on runnability — it exits
 non-zero when a required checker could not run — and it reports the residue
 gate's verdict rather than assuming it. That verdict measures a *finished*
@@ -201,9 +211,9 @@ but `ADVISORY_PROOF_RELEASE_ENABLED` is false and prevents promotion.
 > deterministic gates, tested across form families, validated by a
 > clean-room harness. Not yet beta.
 >
-> **Desktop editor: pre-alpha** — a Tauri-based agent-native editor lives
-> on unmerged branches (#330 → #340). It is not part of the `main` product
-> and should not be evaluated as shipped software.
+> **Desktop editor** — on `claude/stage1-report-demo`, a single-workspace
+> Tauri shell (home, hunk-card review, 양식 연결) passes 199 headless tests and
+> release-build smoke; not merged to `main` yet.
 
 Exercised capabilities are tracked per-row with evidence
 pointers in [`docs/support-matrix.md`](docs/support-matrix.md). The
