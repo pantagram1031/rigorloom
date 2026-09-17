@@ -76,6 +76,8 @@ def test_capabilities_reports_the_whole_method_roster(root):
     methods = result.result["methods"]
     assert "plan/apply" in methods and "plan/propose" in methods
     assert "workspace/pipelineStatus" in methods
+    assert "candidate/verify" in methods
+    assert "workspace/fillRun" in methods
 
 
 def test_inspect_and_read_region_work_from_the_command_line(root, source):
@@ -284,3 +286,33 @@ def test_verify_refuses_a_candidate_whose_bytes_moved(root, source):
     artifact.write_bytes(saved)
     assert run_cli(root, "verify", "--session", session["sessionId"],
                    "--run", run_id).code == 0
+
+
+def test_verify_without_run_targets_the_session_source(root, source):
+    session = run_cli(root, "open", "--path", str(source)).result
+    verified = run_cli(root, "verify", "--session", session["sessionId"])
+    assert verified.code == 0, verified.stdout
+    result = verified.result
+    assert result["target"] == {"source": True}
+    assert result["runId"] is None
+    assert result["candidate"] is None
+    assert result["checkedUtc"].endswith("Z")
+    assert "T" in result["checkedUtc"]
+    row = result["checks"]["checks"][0]
+    assert row["checker"] == "check_residue"
+    assert row["state"] == "ran"
+
+
+def test_verify_with_run_stamps_the_candidate_target(root, source):
+    session, plan, approval = _drive(root, source)
+    run_id = run_cli(root, "apply", "--plan", plan["planId"],
+                     "--approval", approval["approvalId"]
+                     ).result["candidate"]["runId"]
+    verified = run_cli(root, "verify", "--session", session["sessionId"],
+                       "--run", run_id)
+    assert verified.code == 0
+    result = verified.result
+    assert result["target"] == {"runId": run_id}
+    assert result["runId"] == run_id
+    assert result["candidate"]["sha256"]
+    assert result["checkedUtc"].endswith("Z")

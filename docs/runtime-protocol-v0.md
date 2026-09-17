@@ -705,6 +705,7 @@ only.
 | `session/list` | implemented | `_m_session_list` |
 | `workspace/openPath` (host) | implemented — size + zip sanity; no HWP5 CFB walk | `runtime/scripts/rt_session.py` `validate_source` |
 | `workspace/pipelineStatus` (host) | implemented — read-only PIPELINE.md header; never writes | `runtime/scripts/rt_pipeline.py` §11.6 |
+| `workspace/fillRun` (host) | implemented — spawn `fill_report.py --loop`; tail `fill_events.jsonl` | `runtime/scripts/rt_fill.py` §11.7 |
 | `document/inspect` | implemented — summary + graph + regions | `_m_document_inspect` |
 | `document/readRegion` | implemented, bounded, refuses rather than truncates | `_m_document_read_region` |
 | `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan`. `xml` when `xml_backend.py` resolves; `com` only when `backends.com` is available; first-wave kinds only. |
@@ -730,7 +731,7 @@ All twelve transport codes from §5.2 are implemented and closed
 `unknown_op_kind`, `plan_invalid`, `approval_binding_mismatch`,
 `approval_already_resolved`, `region_too_large`, `source_rejected`,
 `candidate_hash_mismatch`, `receipt_body_mismatch`, `backend_refused`,
-`publication_failed`, `com_busy`, `needs_hancom`. `authority_denied` is NOT implemented and should be
+`publication_failed`, `com_busy`, `needs_hancom`, `fill_in_progress`. `authority_denied` is NOT implemented and should be
 dropped from v0: authority is registry membership, so a host-only method is
 `unknown_method` on an agent connection, with `knownOnHostEntry: true` carrying
 the diagnostic §4 wanted.
@@ -1107,7 +1108,8 @@ different object. The Runtime still does not manage it. `workspace/pipelineStatu
 `verify/*` as a family of protocol methods (the host now has `candidate/verify`; the rest of the family is still GAP), `artifact/exportTo`,
 `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`,
 `workspace/delete`, section and heading structure (desktop gap 6), descendant
-containment for child processes, and last-writer-wins on plan and approval
+containment for child processes (fill-run kills the direct `fill_report`
+child only), and last-writer-wins on plan and approval
 records under one root — the event log is now locked, those records are not.
 
 ### 11.6 `workspace/pipelineStatus` — read-only PIPELINE.md header
@@ -1124,7 +1126,8 @@ verdict.
 ```
 --> workspace/pipelineStatus {path}                         HOST ONLY
 <-- {found, workspacePath, slug, mode, subject, updated,
-     canonicalOutput, stages:[{id, label?, status, gate}], nextGate}
+     canonicalOutput, stages:[{id, label?, status, gate}], nextGate,
+     fillInputs}
 ```
 
 `path` is an absolute document or directory, the same "no ambient cwd" rule as
@@ -1135,10 +1138,46 @@ verdict.
 | `found: false` and null identity fields | no `PIPELINE.md` within the walk bound — an answer, not a refusal |
 | `pipeline_header_missing` | `PIPELINE.md` exists but has no v0.4 fence |
 | `pipeline_header_unparsable` | the fence is present but the header cannot be read as the kernel's map |
-| `found: true` | header parsed; `stages[].status` / `gate.{name,state,by,at}` copied from the parser; `label` is the stages.yaml `name` when that graph loads, else omitted; `nextGate` is the first stage whose **header** status is not `done`, or `null` |
+| `found: true` | header parsed; `stages[].status` / `gate.{name,state,by,at}` copied from the parser; `label` is the stages.yaml `name` when that graph loads, else omitted; `nextGate` is the first stage whose **header** status is not `done`, or `null`; `fillInputs` is a read-only existence check of `build.yaml`, `bundle/content.md`, `form_profile.json`, and the blank form (`output/form_copy.hwpx` else the header `form` path) |
 
 Agent connections do not build the method (decision D8). Walking an arbitrary
 filesystem path is the same authority class as `workspace/openPath`.
+
+### 11.7 `workspace/fillRun` — the same fill loop the CLI playbook runs
+
+HOST ONLY. Spawns `engine/scripts/fill_report.py --loop` against a report
+workspace: `--form` (blank `output/form_copy.hwpx` or the PIPELINE.md `form`),
+`--content bundle/content.md`, `--out-dir output`, `--build-yaml`,
+`--form-profile`, optional `--baseline` when `form_baseline.json` exists,
+`--proof`, and the caller's `--spacing-skip-pages` / `--max-proof-iters`.
+No new document semantics. Never `--kill-stale`.
+
+```
+--> workspace/fillRun {workspace, sessionId?, spacingSkipPages?, maxProofIters?}
+                                                                HOST ONLY
+<-- {workspacePath, sessionId, state, converged, proofGrade, pageCount,
+     iterations, verdict, outputs, contactSheets, layoutQa, verifyFormat,
+     checks}
+```
+
+Progress is the engine's own `output/fill_events.jsonl`, tailed into Runtime
+events of kind `fill/progress` (iteration, state, layout QA summary,
+`proofGrade`) on `sessionId` when one is supplied. One run at a time per
+workspace (`fill_in_progress` + lock file under the Runtime root).
+Cancellable: the cancel frame kills the direct `fill_report` child.
+
+CLI spelling: `fill-run --workspace <dir> [--session <id>] [--spacing-skip-pages …] [--max-proof-iters N]`.
+
+| Result | When |
+| --- | --- |
+| `needs_hancom` | Hancom facts are not `yes` |
+| `com_busy` | a Hancom process is already running |
+| `artifact_missing` | workspace incomplete (`missing` names the files) |
+| `fill_in_progress` | another fill-run holds this workspace's lock |
+| `cancelled` | client cancel; the direct child is killed |
+| success payload | `state` is the loop's terminal state (`converged` / `gappy` / `underfilled` / `overfilled` / `escalate_human`); `verdict` is fill_report JSON verbatim; `proofGrade` is what the loop wrote (`hancom` / `none` / `advisory`); `checks` has layout QA copied from that verdict and `verify_format` run on `output/out.hwpx` as P2-shaped rows. Contact sheets are not a render certificate. |
+
+Agent connections do not build the method (decision D8).
 
 ---
 

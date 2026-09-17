@@ -426,6 +426,8 @@ async function phaseOpen(config: SmokeConfig) {
   check("verify rows are present", (getState().verifyResult?.checks.checks.length ?? 0) > 0);
   check("the bar still refuses to claim a render proof",
     domText('[data-testid="verification-bar"]').includes("증명 없음"));
+  check("채우기 실행 stays off on a non-report document",
+    !document.querySelector('[data-testid="fill-run"]'));
   setState({ verifyPanelOpen: false, sheetOpen: false });
   await settled();
 

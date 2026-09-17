@@ -11,6 +11,7 @@ import {
 } from "../pipelineStatus";
 import { useWorkspace } from "../store";
 import { EmptyIconDoc, EmptyState } from "./EmptyState";
+import { FillCard } from "./FillResults";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
@@ -130,6 +131,7 @@ export function PipelinePanel() {
           </li>
         ))}
       </ul>
+      <FillCard />
     </div>
   );
 }

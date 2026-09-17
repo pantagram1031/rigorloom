@@ -164,6 +164,7 @@ class RuntimeServer:
             "plan/apply": self._m_plan_apply,
             "document/renderPrepare": self._m_document_render_prepare,
             "candidate/verify": self._m_candidate_verify,
+            "workspace/fillRun": self._m_workspace_fill_run,
         }
         assert set(methods) == set(HOST_ONLY_METHODS), (
             "host handler map and rt_core.HOST_ONLY_METHODS disagree: "
@@ -525,6 +526,20 @@ class RuntimeServer:
                          policy=self.unknown_field_policy)
         return self.core.candidate_verify(params["sessionId"],
                                           params.get("runId"))
+
+    def _m_workspace_fill_run(self, params: dict, request_id) -> dict:
+        params = _object(
+            params, {"workspace", "sessionId", "spacingSkipPages", "maxProofIters"},
+            required=("workspace",),
+            where="workspace/fillRun.params",
+            policy=self.unknown_field_policy)
+        return self.core.workspace_fill_run(
+            params["workspace"],
+            session_id=params.get("sessionId"),
+            spacing_skip_pages=params.get("spacingSkipPages"),
+            max_proof_iters=params.get("maxProofIters"),
+            checkpoint=self._checkpoint(request_id),
+        )
 
     def _m_document_render(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "page", "dpi", "runId", "inline"},

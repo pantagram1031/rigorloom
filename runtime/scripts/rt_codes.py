@@ -54,6 +54,9 @@ MAX_CHILD_OUTPUT_BYTES = 8 * 1024 * 1024
 #: Child wall clock. Above the measured loaded-spawn distribution recorded in
 #: tests/test_subprocess_bounds.py (median 9.00s, worst observed 36.46s).
 CHILD_TIMEOUT_SECONDS = 120.0
+#: fill_report --loop is COM assemble + measure + optional proof sheets.
+#: AURALAB's measured re-assembly was ~10 minutes (stage1 H1d).
+FILL_TIMEOUT_SECONDS = 1800.0
 
 #: An operator or a packaged host may point engine children at a real
 #: interpreter. Without it children run under ``sys.executable``, which in a
@@ -111,6 +114,7 @@ DOMAIN_CODES = frozenset({
     "plan_stale",
     "plan_not_approved",
     "apply_in_progress",
+    "fill_in_progress",
     "apply_outcome_unknown",
     "plan_invalid",
     "approval_binding_mismatch",

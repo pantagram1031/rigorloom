@@ -39,6 +39,7 @@ import type {
   SidecarStatus,
   TaskPackList,
   VerifyResult,
+  FillResult,
 } from "./types";
 
 export const EVENT_ACTIVITY = "runtime://activity";
@@ -288,6 +289,31 @@ export const verify = (sessionId: string, runId?: string | null) =>
     sessionId,
     ...(runId ? { runId } : {}),
   });
+
+const FILL_TAG = "fill-run";
+
+/**
+ * HOST ONLY. Spawn fill_report --loop on a report workspace. Cancellable.
+ * Contact sheets are not a render certificate; `proofGrade` is the loop's.
+ */
+export const fillRun = (params: {
+  workspace: string;
+  sessionId?: string | null;
+  spacingSkipPages?: string;
+  maxProofIters?: number;
+}) =>
+  callCancellable<FillResult>(
+    "workspace/fillRun",
+    {
+      workspace: params.workspace,
+      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+      ...(params.spacingSkipPages ? { spacingSkipPages: params.spacingSkipPages } : {}),
+      ...(typeof params.maxProofIters === "number"
+        ? { maxProofIters: params.maxProofIters }
+        : {}),
+    },
+    FILL_TAG,
+  );
 
 // --- rendering ---------------------------------------------------------------
 

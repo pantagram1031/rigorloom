@@ -4,6 +4,16 @@
  */
 import type { PipelineGate, PipelineStatus } from "./types";
 
+export const EMPTY_FILL_INPUTS = {
+  complete: false,
+  missing: [] as string[],
+  formPath: null,
+  contentPath: null,
+  buildYamlPath: null,
+  formProfilePath: null,
+  baselinePath: null,
+};
+
 export const PIPELINE_NOT_FOUND: PipelineStatus = {
   found: false,
   workspacePath: null,
@@ -14,6 +24,7 @@ export const PIPELINE_NOT_FOUND: PipelineStatus = {
   canonicalOutput: null,
   stages: [],
   nextGate: null,
+  fillInputs: EMPTY_FILL_INPUTS,
 };
 
 /** Dev-mock / tests: the AURALAB classroom header, field-for-field. */
@@ -40,6 +51,15 @@ export const AURALAB_PIPELINE_STATUS: PipelineStatus = {
     { id: "6", label: "return", status: "done", gate: { name: "submission_preflight", state: "auto_approved", by: "script", at: "2026-09-16T21:38:59" } },
   ],
   nextGate: null,
+  fillInputs: {
+    complete: true,
+    missing: [],
+    formPath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\output\\form_copy.hwpx",
+    contentPath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\bundle\\content.md",
+    buildYamlPath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\build.yaml",
+    formProfilePath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\form_profile.json",
+    baselinePath: null,
+  },
 };
 
 export function stagesDone(status: PipelineStatus): { done: number; total: number } {

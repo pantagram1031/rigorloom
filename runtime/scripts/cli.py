@@ -363,6 +363,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run", default=None,
                    help="published candidate to check; omit to check the session source")
 
+    p = sub.add_parser(
+        "fill-run",
+        help="run fill_report --loop on a report workspace (Hancom)")
+    p.add_argument(
+        "--workspace", required=True,
+        help="absolute report workspace (or a path inside one)")
+    p.add_argument(
+        "--session", default=None,
+        help="optional session id; fill/progress events are appended there")
+    p.add_argument(
+        "--spacing-skip-pages", default=None,
+        help="1-based page numbers, comma-separated, same as fill_report")
+    p.add_argument(
+        "--max-proof-iters", type=int, default=None,
+        help="PROOF re-entry cap (fill_report default 3)")
+
     return parser
 
 
@@ -464,6 +480,13 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
         # Fail closed: a check that could not run is never a pass
         # (pipeline/scripts/privacy_scan.py:16-25).
         return result, EXIT_OK if result["checks"]["ranAll"] else EXIT_REFUSED
+    if command == "fill-run":
+        return core.workspace_fill_run(
+            args.workspace,
+            session_id=args.session,
+            spacing_skip_pages=args.spacing_skip_pages,
+            max_proof_iters=args.max_proof_iters,
+        ), EXIT_OK
     raise UsageError(f"unknown command {command!r}")
 
 

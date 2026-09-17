@@ -275,6 +275,7 @@ EVENT_KINDS = (
     "candidate.published",
     "pdf.prepared",
     "module.checked",
+    "fill/progress",
 )
 
 

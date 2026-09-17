@@ -3833,6 +3833,66 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   font-size: var(--text-xs);
 }
 
+.fill-card {
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.fill-card-actions {
+  display: flex;
+  gap: var(--s2);
+}
+
+.fill-progress,
+.fill-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-sm);
+}
+
+.fill-sheets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.fill-sheet img {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--line);
+}
+
+.fill-sheet-label,
+.fill-sheet-hash {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+
+.fill-outputs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+
+.fill-outputs li {
+  display: grid;
+  grid-template-columns: 4rem 1fr auto;
+  gap: var(--s2);
+  font-family: var(--mono, ui-monospace, monospace);
+}
+
 .verify-panel {
   flex: none;
   border-bottom: 1px solid var(--line);

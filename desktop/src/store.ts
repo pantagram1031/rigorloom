@@ -50,6 +50,8 @@ import type {
   TaskPackList,
   Turn,
   VerifyResult,
+  FillProgress,
+  FillResult,
 } from "./types";
 
 export type View = "document" | "agent";
@@ -378,6 +380,10 @@ export interface WorkspaceState {
   pipelineStatus: PipelineStatus | null;
   pipelinePhase: Phase;
   pipelineError: RuntimeError | null;
+  fillPhase: Phase;
+  fillProgress: FillProgress | null;
+  fillResult: FillResult | null;
+  fillError: RuntimeError | null;
   candidates: Record<string, Candidate[]>;
 
   // --- shared selection and navigation (survives every view switch) --------
@@ -774,6 +780,10 @@ const initial: WorkspaceState = {
   pipelineStatus: null,
   pipelinePhase: "idle",
   pipelineError: null,
+  fillPhase: "idle",
+  fillProgress: null,
+  fillResult: null,
+  fillError: null,
   candidates: {},
 
   selection: null,
@@ -1201,7 +1211,17 @@ export function pushEvents(batch: EventDelivery[]) {
   }
   if (!changed) return;
   const next = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
-  setState({ events: next.length > EVENT_CAP ? next.slice(next.length - EVENT_CAP) : next });
+  const patch: Partial<WorkspaceState> = {
+    events: next.length > EVENT_CAP ? next.slice(next.length - EVENT_CAP) : next,
+  };
+  if (state.fillPhase === "starting") {
+    for (const event of next) {
+      if (event.kind === "fill/progress") {
+        patch.fillProgress = (event.detail ?? {}) as FillProgress;
+      }
+    }
+  }
+  setState(patch);
 }
 
 // --- the conversation ---------------------------------------------------------
@@ -1708,7 +1728,17 @@ export function mergePolledEvents(incoming: RuntimeEvent[]) {
   }
   if (!changed) return;
   const next = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
-  setState({ events: next.length > EVENT_CAP ? next.slice(next.length - EVENT_CAP) : next });
+  const patch: Partial<WorkspaceState> = {
+    events: next.length > EVENT_CAP ? next.slice(next.length - EVENT_CAP) : next,
+  };
+  if (state.fillPhase === "starting") {
+    for (const event of next) {
+      if (event.kind === "fill/progress") {
+        patch.fillProgress = (event.detail ?? {}) as FillProgress;
+      }
+    }
+  }
+  setState(patch);
 }
 
 /** A stable key for a cell, shared by the queue, the tree and the centre. */

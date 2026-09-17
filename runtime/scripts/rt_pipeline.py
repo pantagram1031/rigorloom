@@ -26,6 +26,16 @@ MAX_WALK_UP = 4
 
 PIPELINE_FILENAME = "PIPELINE.md"
 
+EMPTY_FILL_INPUTS = {
+    "complete": False,
+    "missing": [],
+    "formPath": None,
+    "contentPath": None,
+    "buildYamlPath": None,
+    "formProfilePath": None,
+    "baselinePath": None,
+}
+
 NOT_FOUND = {
     "found": False,
     "workspacePath": None,
@@ -36,7 +46,22 @@ NOT_FOUND = {
     "canonicalOutput": None,
     "stages": [],
     "nextGate": None,
+    "fillInputs": {
+        "complete": False,
+        "missing": [],
+        "formPath": None,
+        "contentPath": None,
+        "buildYamlPath": None,
+        "formProfilePath": None,
+        "baselinePath": None,
+    },
 }
+
+FILL_REQUIRED = (
+    ("build.yaml", "build.yaml"),
+    ("bundle/content.md", "bundle/content.md"),
+    ("form_profile.json", "form_profile.json"),
+)
 
 
 def _pipeline_ctl(engine_root: Path):
@@ -237,6 +262,72 @@ def _header_status(ctl, workspace: Path) -> dict:
         "canonicalOutput": canonical,
         "stages": rows,
         "nextGate": _next_gate(rows),
+        "fillInputs": fill_inputs(workspace, hdr),
+    }
+
+
+def resolve_form_path(workspace: Path, hdr: dict | None = None) -> Path | None:
+    """Blank form the Stage 5 playbook fills: form_copy, else PIPELINE.md form."""
+    copy = Path(workspace) / "output" / "form_copy.hwpx"
+    try:
+        if copy.is_file():
+            return copy
+    except OSError:
+        pass
+    raw = None
+    if isinstance(hdr, dict):
+        value = hdr.get("form")
+        if isinstance(value, str) and value.strip():
+            raw = value.strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path(workspace) / path
+    try:
+        return path if path.is_file() else None
+    except OSError:
+        return None
+
+
+def fill_inputs(workspace: Path, hdr: dict | None = None) -> dict:
+    """Read-only: which fill_report --loop inputs exist. Never writes."""
+    missing: list[str] = []
+    paths: dict[str, str | None] = {
+        "contentPath": None,
+        "buildYamlPath": None,
+        "formProfilePath": None,
+        "baselinePath": None,
+    }
+    mapping = {
+        "build.yaml": "buildYamlPath",
+        "bundle/content.md": "contentPath",
+        "form_profile.json": "formProfilePath",
+    }
+    for rel, label in FILL_REQUIRED:
+        candidate = Path(workspace) / rel
+        try:
+            present = candidate.is_file()
+        except OSError:
+            present = False
+        if present:
+            paths[mapping[rel]] = str(candidate)
+        else:
+            missing.append(label)
+    baseline = Path(workspace) / "form_baseline.json"
+    try:
+        if baseline.is_file():
+            paths["baselinePath"] = str(baseline)
+    except OSError:
+        pass
+    form = resolve_form_path(workspace, hdr)
+    if form is None:
+        missing.append("form")
+    return {
+        "complete": not missing,
+        "missing": missing,
+        "formPath": str(form) if form is not None else None,
+        **paths,
     }
 
 

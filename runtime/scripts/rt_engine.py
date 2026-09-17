@@ -532,6 +532,7 @@ class EngineTools:
         self.check_residue = self.root / "pipeline" / "scripts" / "check_residue.py"
         self.com_backend = self.root / "engine" / "scripts" / "com_backend.py"
         self.xml_backend = self.root / "engine" / "scripts" / "xml_backend.py"
+        self.fill_report = self.root / "engine" / "scripts" / "fill_report.py"
 
     def availability(self) -> dict[str, dict]:
         rows = {}
@@ -539,12 +540,19 @@ class EngineTools:
                            ("preedit", self.preedit),
                            ("check_residue", self.check_residue),
                            ("com_backend", self.com_backend),
-                           ("xml_backend", self.xml_backend)):
+                           ("xml_backend", self.xml_backend),
+                           ("fill_report", self.fill_report)):
             present = path.is_file()
+            rel = None
+            if present:
+                try:
+                    rel = path.relative_to(self.root).as_posix()
+                except ValueError:
+                    rel = path.name
             rows[name] = {
                 "state": "available" if present else "unavailable",
                 "reason": None if present else "script not found under the engine root",
-                "path": path.relative_to(self.root).as_posix() if present else None,
+                "path": rel,
             }
         return rows
 

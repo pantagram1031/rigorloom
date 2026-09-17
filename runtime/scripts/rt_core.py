@@ -69,6 +69,7 @@ from rt_module import (  # noqa: E402
     run_module_checks,
 )
 from rt_pipeline import pipeline_status as read_pipeline_status  # noqa: E402
+from rt_fill import workspace_fill_run  # noqa: E402
 from rt_render import render_capability, render_page  # noqa: E402
 from rt_session import (  # noqa: E402
     MAX_EVENTS_PER_POLL_DEFAULT,
@@ -129,6 +130,7 @@ HOST_ONLY_METHODS: tuple[str, ...] = (
     "plan/apply",
     "document/renderPrepare",
     "candidate/verify",
+    "workspace/fillRun",
 )
 
 METHODS: tuple[str, ...] = (AGENT_METHODS + PROTOCOL_ONLY_METHODS
@@ -255,6 +257,16 @@ class RuntimeCore:
     def pipeline_status(self, path) -> dict:
         """Read-only PIPELINE.md header near ``path``. Host-only; no writes."""
         return read_pipeline_status(path, engine_root=self.tools.root)
+
+    def workspace_fill_run(self, workspace, *, session_id=None,
+                           spacing_skip_pages=None, max_proof_iters=None,
+                           checkpoint=None) -> dict:
+        """HOST ONLY. Spawn fill_report --loop on a report workspace."""
+        return workspace_fill_run(
+            self, workspace, session_id=session_id,
+            spacing_skip_pages=spacing_skip_pages,
+            max_proof_iters=max_proof_iters, checkpoint=checkpoint,
+        )
 
     def session_list(self) -> dict:
         return {"sessions": self.store.list()}

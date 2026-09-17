@@ -45,6 +45,16 @@ export interface PipelineNextGate {
 }
 
 /** `workspace/pipelineStatus`. Verdicts are copied, never recomputed. */
+export interface FillInputs {
+  complete: boolean;
+  missing: string[];
+  formPath: string | null;
+  contentPath: string | null;
+  buildYamlPath: string | null;
+  formProfilePath: string | null;
+  baselinePath: string | null;
+}
+
 export interface PipelineStatus {
   found: boolean;
   workspacePath: string | null;
@@ -55,6 +65,7 @@ export interface PipelineStatus {
   canonicalOutput: string | null;
   stages: PipelineStage[];
   nextGate: PipelineNextGate | null;
+  fillInputs: FillInputs;
 }
 
 export type CellClassification = "guide" | "static" | "fill_target" | "spacer";
@@ -434,6 +445,52 @@ export interface VerifyResult {
   candidate: ArtifactRef | null;
   checks: VerificationReport;
   residue?: Record<string, unknown>;
+}
+
+/** One hashed fill-loop output (`out.hwpx`, `out.pdf`, verdict JSON). */
+export interface FillOutput {
+  role: string;
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
+/** Proof contact sheet. `data` is raw base64 when the Runtime inlined it. */
+export interface FillContactSheet {
+  path: string;
+  sha256: string;
+  bytes: number;
+  mediaType: string;
+  data: string | null;
+}
+
+/** `fill/progress` detail tailed from `output/fill_events.jsonl`. */
+export interface FillProgress {
+  iteration?: number | null;
+  state?: string | null;
+  phase?: string | null;
+  proofGrade?: string | null;
+  pageCount?: number | null;
+  layoutQa?: { pass?: boolean | null; flagged?: string[]; counts?: Record<string, number> };
+  [key: string]: unknown;
+}
+
+/** `workspace/fillRun`. Checker rows are P2-shaped; `proofGrade` is the loop's. */
+export interface FillResult {
+  workspacePath: string;
+  sessionId: string | null;
+  state: string;
+  converged: boolean;
+  proofGrade: string;
+  pageCount?: number | null;
+  iterations?: number | null;
+  verdict: Record<string, unknown>;
+  outputs: FillOutput[];
+  contactSheets: FillContactSheet[];
+  layoutQa: CheckRow;
+  verifyFormat: CheckRow;
+  checks: VerificationReport;
+  argv?: string[];
 }
 
 export interface ArtifactRef {

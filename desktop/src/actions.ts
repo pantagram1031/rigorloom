@@ -15,6 +15,7 @@ import {
   stopDocumentEvents,
 } from "./documentEvents";
 import { agentPlanCellAddresses, projectAgentPlan } from "./agent/planProjection";
+import { canRunFill } from "./fillReport";
 import { PIPELINE_NOT_FOUND } from "./pipelineStatus";
 import {
   DEFAULT_PROVIDER,
@@ -436,6 +437,14 @@ export async function selectSession(sessionId: string) {
           pipelineStatus: null,
           pipelinePhase: "idle" as const,
           pipelineError: null,
+          ...(getState().fillPhase === "starting"
+            ? {}
+            : {
+                fillPhase: "idle" as const,
+                fillProgress: null,
+                fillResult: null,
+                fillError: null,
+              }),
         }
       : {}),
   });
@@ -496,6 +505,62 @@ export async function refreshSessions(): Promise<void> {
   } catch (e) {
     setState({ fatal: rt.asRuntimeError(e) });
   }
+}
+
+const FILL_TAG = "fill-run";
+
+/**
+ * 채우기 실행 — HOST ONLY `workspace/fillRun`. Same fill_report --loop the
+ * CLI playbook runs. Progress is `fill/progress` on this session.
+ */
+export async function runFill(): Promise<void> {
+  const sessionId = getState().activeSessionId;
+  const status = getState().pipelineStatus;
+  const workspace = status?.workspacePath;
+  if (!sessionId || !workspace) return;
+  if (!canRunFill(status, getState().capabilities)) return;
+  if (getState().fillPhase === "starting") return;
+  setState({
+    fillPhase: "starting",
+    fillProgress: null,
+    fillResult: null,
+    fillError: null,
+  });
+  try {
+    const result = await rt.fillRun({ workspace, sessionId });
+    if (getState().activeSessionId !== sessionId) {
+      setState({ fillPhase: "idle" });
+      return;
+    }
+    setState({
+      fillPhase: "ready",
+      fillResult: result,
+      fillProgress: null,
+      fillError: null,
+    });
+  } catch (e) {
+    const error = rt.asRuntimeError(e);
+    if (getState().activeSessionId !== sessionId) {
+      setState({ fillPhase: "idle" });
+      return;
+    }
+    if (error.code === "cancelled") {
+      setState({ fillPhase: "idle", fillError: error, fillResult: null });
+      showToast("채우기를 멈췄습니다.", 2000);
+      return;
+    }
+    setState({
+      fillPhase: "failed",
+      fillError: error,
+      fillResult: null,
+    });
+    showToast(error.message);
+  }
+}
+
+export async function cancelFill(): Promise<void> {
+  await rt.cancel(FILL_TAG);
+  showToast("채우기를 멈추라고 알렸습니다.", 2400);
 }
 
 // --- recents ----------------------------------------------------------------

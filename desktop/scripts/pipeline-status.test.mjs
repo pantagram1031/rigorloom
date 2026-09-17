@@ -78,6 +78,9 @@ function renderPipeline(state, { refreshCalls } = { refreshCalls: [] }) {
       return { useWorkspace: (selector) => selector(state) };
     }
     if (id === "./EmptyState") return emptyState;
+    if (id === "./FillResults") {
+      return { FillCard: () => null };
+    }
     if (id === "./Icon") return { Icon };
     if (id === "./Tag") {
       return {
