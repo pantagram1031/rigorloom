@@ -65,7 +65,13 @@ import {
   type QueuedFillOp,
   type QueuedRunOp,
 } from "./store";
-import type { EditableRegion, GeometryMapping, GeometrySpan, HostEvent } from "./types";
+import type {
+  EditableRegion,
+  GeometryMapping,
+  GeometrySpan,
+  HostEvent,
+  InspectResult,
+} from "./types";
 
 interface SmokeConfig {
   phase: string | null;
@@ -79,6 +85,9 @@ interface SmokeConfig {
   stagedSession?: string | null;
   /** form_inspect JSON of the same blank form, written into the smoke root. */
   formProfile?: string | null;
+  /** Opt-in live router. Absent unless the harness set RIGORLOOM_SMOKE_AGENT_BASEURL. */
+  agentBaseUrl?: string | null;
+  agentModel?: string | null;
 }
 
 interface Check {
@@ -104,6 +113,15 @@ function check(name: string, ok: boolean, detail: unknown = "") {
  */
 function settled(ms = 80): Promise<void> {
   return new Promise((resolve) => setTimeout(() => setTimeout(resolve, ms), 0));
+}
+
+/** Drive a React-controlled field the way a person typing would. */
+function fillControl(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const proto = el instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype
+    : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function domText(selector: string): string {
@@ -3835,7 +3853,9 @@ export async function runSmoke(): Promise<void> {
   // plus two form_inspect runs for candidate/compare and an eight-page geometry
   // scan. Giving it the default would make the watchdog a coin flip on machine
   // load rather than a budget.
-  const budgetMs = config.phase === "undo" ? 480_000 : 180_000;
+  const budgetMs = config.phase === "undo" ? 480_000
+    : config.phase === "agent-live" ? 720_000
+    : 180_000;
   const watchdog = setTimeout(() => {
     if (finished) return;
     check("smoke finished within its own budget", false,
@@ -3864,6 +3884,7 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "chrome") await phaseChrome(config);
     else if (config.phase === "chrome-reattach") await phaseChromeReattach();
     else if (config.phase === "bound") await phaseBound(config);
+    else if (config.phase === "agent-live") await phaseAgentLive(config);
     else if (config.phase === "hold" || config.phase === "hold-agent") {
       await phaseHold(config, config.phase === "hold-agent" ? "agent" : "document");
       finished = true;
@@ -3893,6 +3914,286 @@ export async function runSmoke(): Promise<void> {
     failed: failed.length,
     checks,
   });
+}
+
+/**
+ * G6b. A real router session through the built app: Settings → Composer →
+ * plan-arrival → 검토 hunks → 모두 승인 → 적용 → 기록/영수증.
+ *
+ * Opt-in. The harness only launches this phase when
+ * `RIGORLOOM_SMOKE_AGENT_BASEURL` is set. Assertions read runtime payloads,
+ * never constants. An invalid first propose is recorded verbatim and the
+ * instruction is retried once; validation is never touched.
+ */
+function liveEditInstruction(inspect: InspectResult): {
+  text: string;
+  find: string;
+  anchor: string;
+  inserted: string;
+  replacement: string;
+  tight: string;
+} {
+  const paragraphs = inspect.graph.paragraphs
+    .map((row) => row.text.replace(/\s+/g, " ").trim())
+    .filter((text) => text.length >= 2);
+  const anchors = inspect.summary.anchors
+    .map((row) => row.replace(/\s+/g, " ").trim())
+    .filter((text) => text.length >= 2);
+  const titleish = paragraphs.find((text) => /제목|논문제목/.test(text))
+    ?? anchors.find((text) => /제목|논문제목/.test(text))
+    ?? paragraphs.find((text) => text.length <= 40)
+    ?? anchors[0]
+    ?? "";
+  const anchor = anchors.find((text) => text !== titleish && /(서론|I\.|비고|수신)/.test(text))
+    ?? anchors.find((text) => text !== titleish)
+    ?? paragraphs.find((text) => text !== titleish)
+    ?? "";
+  const replacement = "Agent 스모크";
+  const inserted = "이 문장은 에이전트가 제안했다.";
+  const text = [
+    `문서에서 보이는 「${titleish}」 문자열을 replace_all 로 「${replacement}」 로 바꾸십시오.`,
+    `그 다음 goto_text 로 「${anchor}」 를 찾은 뒤 바로 뒤에 insert_text 로 「${inserted}」 를 넣으십시오.`,
+    "backend 은 xml 입니다. 다른 연산은 쓰지 마십시오. 끝나면 승인을 요청하십시오.",
+  ].join(" ");
+  const tight = [
+    "xml backend 로 아래 두 연산만 제안하십시오.",
+    `1) replace_all find=${JSON.stringify(titleish)} replace=${JSON.stringify(replacement)}`,
+    `2) goto_text text=${JSON.stringify(anchor)} 다음에 insert_text text=${JSON.stringify(inserted)}`,
+    "끝나면 approval_request 하십시오. 다른 kind 는 쓰지 마십시오.",
+  ].join(" ");
+  return { text, find: titleish, anchor, inserted, replacement, tight };
+}
+
+function turnRefusals(turn: { payload?: { refusals?: Array<{ code?: string; message?: string }> } | null; events?: HostEvent[] } | null): string {
+  const fromPayload = (turn?.payload?.refusals ?? []).map(
+    (row) => `${row.code ?? ""}: ${row.message ?? ""}`,
+  );
+  const fromEvents = (turn?.events ?? [])
+    .filter((event) => event.kind === "tool.refused" || event.kind === "runtime.refused")
+    .map((event) => {
+      const detail = event.detail ?? {};
+      return `${String(detail.code ?? event.kind)}: ${String(detail.message ?? "")}`;
+    });
+  return [...fromPayload, ...fromEvents].join(" | ");
+}
+
+async function holdNativeAgent(view: string) {
+  await settled(400);
+  await ready(view);
+  // shot.ps1 FitToWorkArea + settle is several seconds; the receipt
+  // hold used to end before PrintWindow ran, and the window was already gone.
+  await settled(5500);
+}
+
+async function phaseAgentLive(config: SmokeConfig) {
+  const baseUrl = (config.agentBaseUrl ?? "").trim();
+  const model = (config.agentModel ?? "cursor-grok-4.6-high-fast").trim();
+  check("live router base URL supplied", baseUrl.startsWith("http"), baseUrl || "empty");
+  if (!baseUrl) return;
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+
+  const { refreshAgentHost } = await import("./actions");
+  await refreshAgentHost();
+  const host = getState().agentHost;
+  check("the agent host is reachable from this build", host?.available === true,
+    `${host?.mode ?? "none"} · ${host?.script ?? host?.reason ?? ""}`);
+  if (!host?.available) return;
+
+  // Settings, as a person would: 제공자 router, 주소, 모델, no credential.
+  const settingsButton = document.querySelector<HTMLButtonElement>(
+    '[data-testid="home-settings"], [data-testid="open-settings"]',
+  );
+  settingsButton?.click();
+  await settled(240);
+  checkDom("the settings pane is on screen", !!document.querySelector('[data-testid="settings"]'));
+  document.querySelector<HTMLButtonElement>('[data-testid="provider-router"]')?.click();
+  await settled(200);
+  const urlField = document.querySelector<HTMLInputElement>('[data-testid="router-baseurl"]');
+  const modelField = document.querySelector<HTMLInputElement>('[data-testid="router-model"]');
+  if (urlField) fillControl(urlField, baseUrl);
+  if (modelField) fillControl(modelField, model);
+  await settled(120);
+  const save = document.querySelector<HTMLButtonElement>('[data-testid="settings-save"]');
+  save?.click();
+  await settled(400);
+  check("the provider is the custom router", getState().provider.provider === "router",
+    getState().provider.provider);
+  check("the router address is the live bridge",
+    getState().provider.router.baseUrl === baseUrl, getState().provider.router.baseUrl);
+  check("the router model is the live model",
+    getState().provider.router.model === model, getState().provider.router.model);
+  document.querySelector<HTMLButtonElement>('[data-testid="settings-close"]')?.click();
+  await settled(200);
+
+  const sessionId = await openPath(config.corpus);
+  check("agent-live opened the corpus form", !!sessionId, sessionId ?? "");
+  if (!sessionId) return;
+  await settled(200);
+
+  const inspect = activeInspect(getState());
+  check("inspect returned for the live instruction", !!inspect);
+  if (!inspect) return;
+  const asked = liveEditInstruction(inspect);
+  check("inspect named a title-ish string", asked.find.length >= 2, asked.find);
+  check("inspect named a goto_text anchor", asked.anchor.length >= 2, asked.anchor);
+  if (!asked.find || !asked.anchor) return;
+
+  await showInspectorTab("agent");
+  setView("agent");
+  await settled(260);
+  const { composerBlocker } = await import("./store");
+  check("nothing blocks the composer for a keyless router",
+    composerBlocker(getState()) === null, String(composerBlocker(getState())));
+
+  const newest = () => {
+    const turns = getState().turns;
+    return turns.length > 0 ? turns[turns.length - 1] : null;
+  };
+  const validPlan = () => {
+    const turn = newest();
+    const plan = turn?.payload?.plan ?? getState().draft.plan;
+    const validation = turn?.payload?.validation ?? getState().draft.validation;
+    return !!plan?.planHash && validation?.ok === true && (plan.ops?.length ?? 0) > 0;
+  };
+  const xmlPlan = () =>
+    (newest()?.payload?.plan?.backend ?? getState().draft.plan?.backend) === "xml";
+
+  async function sendAsUser(instruction: string) {
+    const before = getState().turns.length;
+    const field = document.querySelector<HTMLTextAreaElement>('[data-testid="composer-input"]');
+    if (field) fillControl(field, instruction);
+    await settled(120);
+    document.querySelector<HTMLButtonElement>('[data-testid="composer-send"]')?.click();
+    await waitFor(() => getState().turns.length > before, 15_000, 200);
+    const id = getState().turns[getState().turns.length - 1]?.id;
+    await waitFor(() => {
+      const turn = getState().turns.find((row) => row.id === id);
+      return !!turn && turn.phase !== "starting";
+    }, 600_000, 1000);
+  }
+
+  const started = Date.now();
+  await sendAsUser(asked.text);
+  if (!validPlan() || !xmlPlan()) {
+    const refusal = turnRefusals(newest()) || JSON.stringify({
+      error: newest()?.error,
+      validation: newest()?.payload?.validation,
+      plan: newest()?.payload?.plan,
+      backend: newest()?.payload?.plan?.backend,
+    });
+    check("first propose recorded before retry", refusal.length > 0, refusal);
+    // A provider fault is not an invalid plan. Retrying the same hung
+    // tools-array request occupies the bridge; only re-ask on a refusal.
+    if (!newest()?.payload?.providerFault) {
+      await sendAsUser(asked.tight);
+    }
+  }
+  const wallMs = Date.now() - started;
+  check("the live turn finished within 10 minutes", wallMs <= 600_000, `${Math.round(wallMs / 1000)}s`);
+  check("the live turn produced a validated plan", validPlan(),
+    JSON.stringify({
+      phase: newest()?.phase,
+      ok: newest()?.payload?.ok,
+      planId: newest()?.payload?.plan?.planId,
+      backend: newest()?.payload?.plan?.backend,
+      validation: newest()?.payload?.validation,
+      refusals: turnRefusals(newest()),
+      error: newest()?.error,
+      providerFault: newest()?.payload?.providerFault,
+      finishReason: newest()?.payload?.finishReason,
+      closingText: newest()?.payload?.closingText,
+      turns: newest()?.payload?.turns,
+      turnBudgetExhausted: newest()?.payload?.turnBudgetExhausted,
+      eventKinds: newest()?.events?.map((event) => event.kind),
+    }));
+  if (!validPlan()) return;
+
+  const turn = newest();
+  const payload = turn?.payload;
+  check("the host proposed xml ops",
+    payload?.plan?.backend === "xml" || getState().draft.plan?.backend === "xml",
+    payload?.plan?.backend ?? getState().draft.plan?.backend ?? "");
+  const planOps = payload?.plan?.ops ?? getState().draft.plan?.ops ?? [];
+  check("the plan has a replace_all and an insert_text",
+    planOps.some((op) => op.kind === "replace_all") &&
+      planOps.some((op) => op.kind === "insert_text"),
+    planOps.map((op) => op.kind).join(","));
+
+  await settled(400);
+  checkDom("the plan-arrival card is on screen",
+    !!document.querySelector('[data-testid^="plan-arrival-"]'),
+    domText('[data-testid="conversation"]').slice(0, 200));
+  const cardHash = domText('[data-testid="plan-arrival-hash"]');
+  const planHash = payload?.plan?.planHash ?? getState().draft.plan?.planHash ?? "";
+  check("the plan-arrival card shows the runtime plan hash",
+    cardHash.length === 64 && cardHash === planHash, `${cardHash} vs ${planHash}`);
+  await holdNativeAgent("native-agent-plan");
+
+  document.querySelector<HTMLButtonElement>('[data-testid^="plan-arrival-"]')?.click();
+  await settled(300);
+  checkDom("검토 shows hunks",
+    document.querySelectorAll('[data-testid^="queue-op-"], .hunk-card').length > 0,
+    domText('[data-testid="review-queue"]').slice(0, 240));
+  await holdNativeAgent("native-agent-review");
+
+  const approve = document.querySelector<HTMLButtonElement>('[data-testid="approve-all"]');
+  checkDom("모두 승인 is offered", !!approve && approve.disabled === false,
+    approve?.getAttribute("aria-label") ?? "missing");
+  approve?.click();
+  await waitFor(() => getState().approval?.state === "approved", 20_000, 250);
+  const approvedHash = getState().approval?.planHash ?? "";
+  check("plan hash in the card equals the approved hash",
+    cardHash === approvedHash && approvedHash === planHash,
+    JSON.stringify({ cardHash, planHash, approvedHash }));
+
+  const apply = document.querySelector<HTMLButtonElement>('[data-testid="apply-approved"]');
+  checkDom("적용 is offered", !!apply && apply.disabled === false,
+    apply?.textContent ?? "missing");
+  apply?.click();
+  await waitFor(() => getState().applyPhase === "ready" && getState().applied !== null, 120_000, 500);
+  const applied = getState().applied;
+  check("the approved plan applied", getState().applyPhase === "ready" && !!applied,
+    applied?.runId ?? JSON.stringify(getState().applyError));
+  if (!applied) return;
+
+  const receipt = await rt.readReceipt(sessionId, applied.runId);
+  check("the receipt run id is the applied run", receipt.runId === applied.runId, receipt.runId);
+  check("the receipt backend is xml", receipt.backend === "xml", receipt.backend);
+  check("the receipt evidence class is structural_only",
+    receipt.evidence.class === "structural_only", receipt.evidence.class);
+  check("the receipt binds the same plan hash",
+    receipt.planHash === planHash && receipt.approval.planHash === planHash,
+    JSON.stringify({ receipt: receipt.planHash, approval: receipt.approval.planHash }));
+
+  const regions = [
+    ...inspect.graph.paragraphs.map((row) => ({ atPara: row.at_para })),
+    ...inspect.graph.tables.flatMap((table) =>
+      table.cells.map((cell) => ({ table: table.index, row: cell.addr.row, col: cell.addr.col })),
+    ),
+  ];
+  const read = await rt.readRegion(sessionId, regions.slice(0, 80), applied.runId);
+  const blob = read.regions.map((row) => row.text).join("\n");
+  check("the candidate contains the inserted text", blob.includes(asked.inserted),
+    blob.slice(0, 400));
+
+  openReceipt(applied.runId);
+  await showInspectorTab("history");
+  await settled(400);
+  checkDom("기록 lists the receipt run id",
+    !!document.querySelector(`[data-testid="history-${applied.runId}"]`) &&
+      domText('[data-testid="history"], [data-testid="view-document"]').includes(applied.runId.slice(0, 12)),
+    applied.runId);
+  await holdNativeAgent("native-agent-receipt");
+  openReceipt(null);
+
+  check("agent-live wall time recorded", true, `${Math.round(wallMs / 1000)}s`);
+  checkAlive("the live router session");
+  // One more beat so the last PrintWindow can finish before smokeFinish
+  // tears the window down.
+  await settled(2500);
 }
 
 // --- Phase 5 -------------------------------------------------------------------

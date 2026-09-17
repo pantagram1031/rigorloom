@@ -198,6 +198,9 @@ class ProviderResponse:
         usage = (self.raw or {}).get("usage")
         if usage is not None:
             payload["usage"] = usage
+        fallback = (self.raw or {}).get("promptModeFallback")
+        if fallback is not None:
+            payload["promptModeFallback"] = fallback
         return payload
 
 

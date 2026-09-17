@@ -98,6 +98,42 @@ ${stripTypeScriptTypes(adoptImplementation)}\nglobalThis.adoptForTest = adoptAge
   };
 }
 
+test("xml first-wave ops project as themselves, never as a cell fill", () => {
+  const result = project(
+    [
+      { opId: "r1", kind: "replace_all", params: { find: "논문제목", replace: "Agent 스모크" } },
+      { opId: "g1", kind: "goto_text", params: { text: "I.  서론" } },
+      { opId: "i1", kind: "insert_text", params: { text: "이 문장은 에이전트가 제안했다." } },
+    ],
+    () => {
+      throw new Error("xml ops must not read a cell");
+    },
+  );
+  assert.deepEqual(
+    result.map((op) => op.kind),
+    ["replace_all", "goto_text", "insert_text"],
+  );
+  assert.equal(result[0].before, "논문제목");
+  assert.equal(result[0].text, "Agent 스모크");
+  assert.equal(result[2].before, "");
+  assert.equal(result[2].text, "이 문장은 에이전트가 제안했다.");
+  assert.deepEqual(result[0].params, { find: "논문제목", replace: "Agent 스모크" });
+});
+
+test("xml-only plans expose no cell read addresses", () => {
+  const addresses = JSON.parse(
+    JSON.stringify(
+      context.addressesForTest({
+        proposer: "agent-A",
+        ops: [
+          { opId: "r1", kind: "replace_all", params: { find: "a", replace: "b" } },
+        ],
+      }),
+    ),
+  );
+  assert.deepEqual(addresses, []);
+});
+
 test("unsupported authoritative operation is refused by name", () => {
   assert.throws(
     () => project([{ opId: "delete-1", kind: "delete_guides", params: { color: "#0000FF" } }]),

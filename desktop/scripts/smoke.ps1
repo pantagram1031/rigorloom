@@ -124,6 +124,7 @@
 
     powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke.ps1
     powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke.ps1 -Only edit
+    $env:RIGORLOOM_SMOKE_AGENT_BASEURL='http://127.0.0.1:8766/v1'; powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke.ps1 -Only agent-live
 
   Exit codes: 0 all checks passed · 3 a check failed · 2 could not run.
 #>
@@ -293,10 +294,29 @@ function Invoke-Phase {
     # into a document — which is why the welcome-screen checks failed.
     $env:RIGORLOOM_APPDATA = $AppData
 
+    if ($env:RIGORLOOM_SMOKE_AGENT_BASEURL -and -not $env:RIGORLOOM_SMOKE_AGENT_MODEL) {
+        $env:RIGORLOOM_SMOKE_AGENT_MODEL = 'cursor-grok-4.6-high-fast'
+    }
+
     # Not minimised: WebView2 throttles a minimised window's timers and
     # withholds rAF entirely, which is a good way to make a harness hang.
-    $proc = Start-Process -FilePath $Exe -WindowStyle Hidden -PassThru
-    $exited = $proc.WaitForExit($TimeoutSec * 1000)
+    # agent-live must stay visible so shot.ps1 can photograph the same window.
+    $hidden = $Phase -ne 'agent-live'
+    $proc = if ($hidden) {
+        Start-Process -FilePath $Exe -WindowStyle Hidden -PassThru
+    } else {
+        Start-Process -FilePath $Exe -PassThru
+    }
+    $waitMs = $TimeoutSec * 1000
+    if ($Phase -eq 'agent-live') {
+        Invoke-AgentLiveShots -Process $proc -WaitMs $waitMs | Out-Null
+        if (-not $proc.HasExited) {
+            try { $proc.WaitForExit(1000) | Out-Null } catch {}
+        }
+        $exited = $proc.HasExited
+    } else {
+        $exited = $proc.WaitForExit($waitMs)
+    }
     if (-not $exited) {
         Write-Warning "phase '$Phase' did not exit within ${TimeoutSec}s; killing"
         try { $proc.Kill() } catch {}
@@ -320,7 +340,18 @@ function Invoke-Phase {
 function Show-Report {
     param($Result)
     Write-Host ""
-    Write-Host ("── phase {0} ── exit {1}" -f $Result.phase, $Result.exit)
+    $phase = $null
+    if ($Result -is [hashtable] -and $Result.ContainsKey('phase')) {
+        $phase = $Result.phase
+    } elseif ($Result -and $Result.PSObject.Properties['phase']) {
+        $phase = $Result.phase
+    }
+    if ($null -eq $phase) {
+        Write-Host "── phase (missing result) ──"
+        Write-Host "  (Invoke-Phase did not return a report)"
+        return $false
+    }
+    Write-Host ("── phase {0} ── exit {1}" -f $phase, $Result.exit)
     if (-not $Result.report) {
         Write-Host "  (no report written)"
         return $false
@@ -333,6 +364,59 @@ function Show-Report {
     }
     Write-Host ("  {0} passed, {1} failed" -f $Result.report.passed, $Result.report.failed)
     return ($Result.report.failed -eq 0)
+}
+
+function Invoke-AgentLiveShots {
+    param($Process, [int]$WaitMs)
+    $OutDir = Join-Path $RepoRoot 'docs\demo\desktop'
+    New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+    $shotScript = Join-Path $ScriptDir 'shot.ps1'
+    $shots = @(
+        @{ marker = 'ready-native-agent-plan.json';    out = 'native-agent-plan.png' },
+        @{ marker = 'ready-native-agent-review.json';  out = 'native-agent-review.png' },
+        @{ marker = 'ready-native-agent-receipt.json'; out = 'native-agent-receipt.png' }
+    )
+    foreach ($shot in $shots) { $shot.done = $false }
+    # KeepRoot leaves these markers on disk; a new process must not photograph
+    # the welcome screen because last run's ready files are still sitting here.
+    foreach ($shot in $shots) {
+        Remove-Item -LiteralPath (Join-Path $RunDir $shot.marker) -Force -ErrorAction SilentlyContinue
+    }
+    $deadline = (Get-Date).AddMilliseconds($WaitMs)
+    while (-not $Process.HasExited -and (Get-Date) -lt $deadline) {
+        foreach ($shot in $shots) {
+            if ($shot.done) { continue }
+            $marker = Join-Path $RunDir $shot.marker
+            if (-not (Test-Path -LiteralPath $marker)) { continue }
+            $png = Join-Path $OutDir $shot.out
+            Write-Host ("  capturing {0} from {1}" -f $shot.out, $shot.marker)
+            $captured = $false
+            foreach ($attempt in 1..3) {
+                $prevEap = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try {
+                    & powershell -ExecutionPolicy Bypass -NoProfile -File $shotScript `
+                        -Out $png -SettleMs 1500 -FitToWorkArea
+                    if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $png)) {
+                        $captured = $true
+                        break
+                    }
+                } catch {
+                    Write-Warning ("shot.ps1 attempt {0} for {1}: {2}" -f $attempt, $shot.out, $_)
+                } finally {
+                    $ErrorActionPreference = $prevEap
+                }
+                Start-Sleep -Milliseconds 800
+            }
+            if ($captured) {
+                Write-Host ("  [PASS] wrote {0}" -f $png)
+            } else {
+                Write-Warning ("shot.ps1 failed for {0} (exit {1})" -f $shot.out, $LASTEXITCODE)
+            }
+            $shot.done = $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
 }
 
 $origAppData = $env:RIGORLOOM_APPDATA
@@ -349,7 +433,16 @@ $ran = @()
 $phases = @('open', 'reattach', 'edit', 'agent', 'page', 'own', 'own-reattach',
             'overlay', 'undo', 'packs',
             'composer', 'settings', 'chrome', 'chrome-reattach', 'bound')
-if ($Only.Count -gt 0) { $phases = $phases | Where-Object { $Only -contains $_ } }
+if ($env:RIGORLOOM_SMOKE_AGENT_BASEURL) {
+    $phases += 'agent-live'
+}
+if ($Only.Count -gt 0) {
+    if (($Only -contains 'agent-live') -and -not $env:RIGORLOOM_SMOKE_AGENT_BASEURL) {
+        Write-Error "agent-live is opt-in: set RIGORLOOM_SMOKE_AGENT_BASEURL (and optionally RIGORLOOM_SMOKE_AGENT_MODEL)"
+        exit 2
+    }
+    $phases = $phases | Where-Object { $Only -contains $_ }
+}
 
 try {
     foreach ($phase in $phases) {
@@ -413,13 +506,23 @@ try {
             }
         }
 
+        $phaseTimeout = if ($phase -eq 'agent-live') { [Math]::Max($TimeoutSec, 720) } else { $TimeoutSec }
+        $origTimeout = $TimeoutSec
+        $TimeoutSec = $phaseTimeout
         $result = Invoke-Phase -Phase $phase -ReportPath (Join-Path $RunDir "report-$phase.json") `
             -PhaseCorpus $phaseCorpus -EnabledOverride $phaseEnabled -FormProfile $phaseProfile
+        $TimeoutSec = $origTimeout
         $ok = Show-Report $result
         if (-not $ok) { $allOk = $false }
-        if ($result.report) {
-            $totals.passed += [int]$result.report.passed
-            $totals.failed += [int]$result.report.failed
+        $report = $null
+        if ($result -is [hashtable] -and $result.ContainsKey('report')) {
+            $report = $result.report
+        } elseif ($result -and $result.PSObject.Properties['report']) {
+            $report = $result.report
+        }
+        if ($report) {
+            $totals.passed += [int]$report.passed
+            $totals.failed += [int]$report.failed
         }
         $ran += $phase
 

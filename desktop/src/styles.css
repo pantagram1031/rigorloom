@@ -3105,6 +3105,11 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   cursor: pointer;
 }
 
+.plan-arrival .mono {
+  display: block;
+  margin-top: var(--s1);
+}
+
 .plan-arrival:hover {
   background: var(--bg-hover);
 }

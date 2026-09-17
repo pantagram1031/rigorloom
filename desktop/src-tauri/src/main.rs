@@ -713,6 +713,8 @@ fn smoke_config() -> Value {
         // S10: a form_inspect JSON the harness wrote into the smoke root from
         // the same blank form this phase opens. workspace/openPath binds it.
         "formProfile": std::env::var("RIGORLOOM_SMOKE_FORM_PROFILE").ok().filter(|v| !v.is_empty()),
+        "agentBaseUrl": std::env::var("RIGORLOOM_SMOKE_AGENT_BASEURL").ok().filter(|v| !v.is_empty()),
+        "agentModel": std::env::var("RIGORLOOM_SMOKE_AGENT_MODEL").ok().filter(|v| !v.is_empty()),
     })
 }
 
@@ -731,7 +733,23 @@ fn smoke_ready(detail: Value) -> Result<(), String> {
     }
     let body = serde_json::to_string_pretty(&json!({ "ready": true, "detail": detail }))
         .unwrap_or_else(|_| "{\"ready\":true}".into());
-    std::fs::write(&path, body).map_err(|e| e.to_string())
+    let view = detail.get("view").and_then(Value::as_str);
+    let live_hold = view
+        .map(|name| name.starts_with("native-agent-"))
+        .unwrap_or(false);
+    if !live_hold {
+        std::fs::write(&path, &body).map_err(|e| e.to_string())?;
+    }
+    // A live phase can hold more than once. Named markers let the harness
+    // capture several screenshots from one process without overwriting the
+    // final report path.
+    if let Some(name) = view {
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            let named = parent.join(format!("ready-{name}.json"));
+            let _ = std::fs::write(named, &body);
+        }
+    }
+    Ok(())
 }
 
 /// A second report file, written without exiting.

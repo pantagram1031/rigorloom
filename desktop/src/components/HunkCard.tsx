@@ -91,6 +91,11 @@ export function HunkCard({
   const before = hunkBeforeText(op, regions);
   const replace = isReplaceOp(op, before);
   const marks = hunkDiffMarks(before, op.text, replace);
+  const valueLocked =
+    locked ||
+    op.kind === "replace_all" ||
+    op.kind === "goto_text" ||
+    op.kind === "insert_text";
 
   return (
     <li
@@ -174,7 +179,7 @@ export function HunkCard({
             className="queue-value"
             data-testid={`queue-value-${op.opId}`}
             value={text}
-            disabled={locked}
+            disabled={valueLocked}
             aria-label="넣을 값"
             onCompositionStart={() => {
               composing.current = true;

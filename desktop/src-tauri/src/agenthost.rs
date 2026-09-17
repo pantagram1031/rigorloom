@@ -466,6 +466,14 @@ pub fn run_turn(
     }
     let credential = match attach_credential(&mut command, store_key) {
         Ok(value) => value,
+        Err(message) if provider == "router" => {
+            // A missing store entry is a keyless OpenAI-compatible bridge,
+            // not a run refusal. Anthropic still fails here; it cannot talk
+            // without a key. `--capabilities` already treated a missing
+            // router key as attached=false.
+            let _ = message;
+            false
+        }
         Err(message) => {
             drop(guard);
             return Err(fail(

@@ -168,13 +168,27 @@ export interface QueuedRunOp extends QueuedOpBase {
   run: number;
 }
 
-export type QueuedOp = QueuedFillOp | QueuedRunOp;
+/**
+ * An xml-backend op the review queue can display without pretending it is a
+ * cell fill. `params` is the Runtime's own field set so a later propose
+ * round-trip cannot drop a meaning the person just approved.
+ */
+export interface QueuedXmlOp extends QueuedOpBase {
+  kind: "replace_all" | "goto_text" | "insert_text";
+  params: Record<string, unknown>;
+}
+
+export type QueuedOp = QueuedFillOp | QueuedRunOp | QueuedXmlOp;
+
+export function isXmlQueuedOp(op: Pick<QueuedOp, "kind">): op is QueuedXmlOp {
+  return op.kind === "replace_all" || op.kind === "goto_text" || op.kind === "insert_text";
+}
 
 /** Where a queued op points, as one string. Cells and runs both have one. */
 export function opTargetId(op: QueuedOp): string {
-  return op.kind === "fill_cell"
-    ? cellKey(op.table, op.row, op.col)
-    : `p:${op.atPara}#${op.run}`;
+  if (op.kind === "fill_cell") return cellKey(op.table, op.row, op.col);
+  if (op.kind === "set_run") return `p:${op.atPara}#${op.run}`;
+  return `xml:${op.kind}:${op.opId}`;
 }
 
 /**
@@ -1231,11 +1245,12 @@ export function composerBlocker(s: WorkspaceState): string | null {
   if (!s.agentHost?.available) return "no_host";
   if (s.activeTurn) return "busy";
   if (s.provider.provider === "mock") return null;
+  if (s.provider.provider === "router") {
+    if (s.provider.router.baseUrl.trim() === "") return "no_base_url";
+    return null;
+  }
   if (!activeStoreKey(s.provider)) return "no_credential_name";
   if (s.credential?.state !== "present") return "no_credential";
-  if (s.provider.provider === "router" && s.provider.router.baseUrl.trim() === "") {
-    return "no_base_url";
-  }
   return null;
 }
 

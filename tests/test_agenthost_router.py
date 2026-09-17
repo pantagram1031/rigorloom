@@ -302,6 +302,145 @@ def test_prompt_mode_history_is_plain_chat_not_role_tool(env):
                for m in seen[1]["messages"])
 
 
+def test_a_tools_array_500_falls_back_to_prompt_mode_for_the_session(env):
+    """Desktop Settings cannot name toolsInBody; the adapter has to notice."""
+    tools = [{"name": "document_inspect", "description": "look",
+              "inputSchema": {"type": "object"}}]
+    blob = json.dumps({"name": "document_inspect",
+                       "arguments": {"sessionId": "s1"}})
+    seen = []
+
+    def responder(path, body):
+        seen.append(body)
+        if body.get("tools"):
+            return {"status": 500,
+                    "text": json.dumps({"error": "cursor_cli_error",
+                                        "message": "tools not supported"})}
+        return {"json": completion(blob)}
+
+    with FakeRouter(responder) as srv:
+        client = adapter(srv, env)
+        first = client.complete(request_of(tools=tools))
+        second = client.complete(request_of(tools=tools, history=[{
+            "tool": first.tool_calls[0].name,
+            "callId": first.tool_calls[0].call_id,
+            "arguments": first.tool_calls[0].arguments,
+            "ok": True, "result": {"sessions": []},
+        }]))
+    assert "tools" in seen[0]
+    assert "tools" not in seen[1]
+    assert "tools" not in seen[2]
+    assert first.finish_reason == "tool_calls"
+    assert first.tool_calls[0].name == "document_inspect"
+    fallback = first.public()["promptModeFallback"]
+    assert fallback["status"] == 500
+    assert "cursor_cli_error" in fallback["body"]
+    assert fallback["fault"]["code"] == "provider_http_error"
+    assert "promptModeFallback" not in second.public()
+    assert client.tools_in_body is False
+    assert client.capabilities().public()["notes"]["toolsInBody"] is False
+    assert client.capabilities().public()["notes"]["promptModeFallback"]["status"] == 500
+
+
+def test_a_timeout_on_a_tools_array_falls_back_to_prompt_mode(env):
+    tools = [{"name": "document_inspect", "description": "look",
+              "inputSchema": {"type": "object"}}]
+    blob = json.dumps({"name": "document_inspect", "arguments": {"sessionId": "s1"}})
+
+    def responder(path, body):
+        if body.get("tools"):
+            return {"delaySeconds": 2.0, "json": completion("late")}
+        return {"json": completion(blob)}
+
+    with FakeRouter(responder) as srv:
+        client = adapter(srv, env, timeoutSeconds=0.35)
+        response = client.complete(request_of(tools=tools))
+    assert response.tool_calls[0].name == "document_inspect"
+    assert response.public()["promptModeFallback"]["code"] == "provider_timeout"
+    assert client.tools_in_body is False
+    tools = [{"name": "session_list", "description": "d",
+              "inputSchema": {"type": "object"}}]
+    blob = json.dumps({"name": "session_list", "arguments": {}})
+
+    def responder(path, body):
+        if body.get("tools"):
+            return {"status": 400, "text": "unknown field: tools"}
+        return {"json": completion(blob)}
+
+    with FakeRouter(responder) as srv:
+        response = adapter(srv, env).complete(request_of(tools=tools))
+    assert response.tool_calls[0].name == "session_list"
+    assert response.public()["promptModeFallback"]["status"] == 400
+
+
+def test_a_500_that_does_not_mention_tools_stays_a_provider_fault(env):
+    tools = [{"name": "session_list", "description": "d",
+              "inputSchema": {"type": "object"}}]
+    with FakeRouter(lambda path, body: {"status": 500, "text": "upstream boom"}) as srv:
+        with pytest.raises(ah_codes.ProviderError) as excinfo:
+            adapter(srv, env).complete(request_of(tools=tools))
+    assert excinfo.value.code == "provider_http_error"
+    assert excinfo.value.data["status"] == 500
+
+
+def test_a_cursor_named_model_starts_in_prompt_mode_without_a_tools_probe(env):
+    """A tools-array probe hangs this bridge's single worker; skip it."""
+    tools = [{"name": "document_inspect", "description": "look",
+              "inputSchema": {"type": "object"}}]
+    blob = json.dumps({"name": "document_inspect",
+                       "arguments": {"sessionId": "s1"}})
+    seen = []
+
+    def responder(path, body):
+        seen.append(body)
+        return {"json": completion(blob)}
+
+    with FakeRouter(responder) as srv:
+        client = adapter(srv, env, model="cursor-grok-4.6-high-fast")
+        response = client.complete(request_of(tools=tools))
+    assert all("tools" not in body for body in seen)
+    assert response.tool_calls[0].name == "document_inspect"
+    assert client.tools_in_body is False
+    fallback = response.public()["promptModeFallback"]
+    assert "Cursor-named" in fallback["reason"]
+    assert "cursor_cli_error" in fallback["body"]
+    assert client.timeout >= 180.0
+
+
+def test_explicit_tools_in_body_still_probes_a_cursor_model(env):
+    tools = [{"name": "document_inspect", "description": "look",
+              "inputSchema": {"type": "object"}}]
+    blob = json.dumps({"name": "document_inspect", "arguments": {}})
+    seen = []
+
+    def responder(path, body):
+        seen.append(body)
+        if body.get("tools"):
+            return {"status": 500,
+                    "text": json.dumps({"error": "cursor_cli_error"})}
+        return {"json": completion(blob)}
+
+    with FakeRouter(responder) as srv:
+        client = adapter(srv, env, model="cursor-grok-4.6-high-fast",
+                         toolsInBody=True)
+        response = client.complete(request_of(tools=tools))
+    assert "tools" in seen[0]
+    assert "tools" not in seen[1]
+    assert response.tool_calls[0].name == "document_inspect"
+    assert response.public()["promptModeFallback"]["status"] == 500
+
+
+def test_explicit_prompt_mode_does_not_send_tools_even_once(env):
+    tools = [{"name": "document_inspect", "description": "look",
+              "inputSchema": {"type": "object"}}]
+    blob = json.dumps({"name": "document_inspect", "arguments": {}})
+    with FakeRouter(lambda path, body: {"json": completion(blob)}) as srv:
+        client = adapter(srv, env, toolsInBody=False)
+        client.complete(request_of(tools=tools))
+        assert "tools" not in srv.requests[-1]["body"]
+        assert client.capabilities().public()["notes"]["toolsInBodyConfigured"] is True
+
+
 def test_prompt_mode_slims_inspect_history(env):
     tools = [{"name": "document_inspect", "description": "look"}]
     inspect_result = {
@@ -650,3 +789,102 @@ def test_a_router_outage_mid_run_is_a_provider_fault_not_a_document_verdict(
     assert payload["plan"] is None and payload["validation"] is None
     assert run_cli(root, "candidates", "--session",
                    session).result["candidates"] == []
+
+
+def _prompt_names(body):
+    """Tool names recovered from prompt-mode assistant JSON, not role=tool."""
+    names = []
+    for message in body.get("messages") or []:
+        if message.get("role") != "assistant":
+            continue
+        raw = message.get("content") or ""
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            continue
+        if isinstance(parsed, dict) and isinstance(parsed.get("name"), str):
+            names.append(parsed["name"])
+    return names
+
+
+def _prompt_result_of(body, tool):
+    for message in reversed(body.get("messages") or []):
+        if message.get("role") != "user":
+            continue
+        raw = message.get("content") or ""
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("ok") is True:
+            result = parsed.get("result") or {}
+            if tool == "document_inspect" and "regions" in result:
+                return result
+            if tool == "plan_propose" and "plan" in result:
+                return result
+            if tool == "plan_validate" and "validation" in result:
+                return result
+    raise AssertionError(f"no prompt-mode result for {tool}")
+
+
+def _fallback_agent_model(path, body, target):
+    """Same script as `_agent_model`, over JSON-in-text after a tools 500."""
+    if body.get("tools"):
+        return {"status": 500,
+                "text": json.dumps({"error": "cursor_cli_error",
+                                    "message": "tools array rejected"})}
+    names = _prompt_names(body)
+    if "document_inspect" not in names:
+        return {"json": completion(json.dumps({
+            "name": "document_inspect",
+            "arguments": {"sessionId": _session_of(body),
+                          "include": ["regions"]}}))}
+    if "plan_propose" not in names:
+        return {"json": completion(json.dumps({
+            "name": "plan_propose",
+            "arguments": {"sessionId": _session_of(body), "backend": "preedit",
+                          "ops": [mock_agent.build_op(target, "ROUTER-0001")],
+                          "proposer": "agenthost-router"}}))}
+    if "plan_validate" not in names:
+        plan = _prompt_result_of(body, "plan_propose")["plan"]
+        return {"json": completion(json.dumps({
+            "name": "plan_validate",
+            "arguments": {"planId": plan["planId"]}}))}
+    return {"json": completion("Proposed and validated; a human must approve.")}
+
+
+def test_the_host_records_a_tools_fallback_and_still_proposes(
+        tmp_path, env, monkeypatch):
+    monkeypatch.setenv(CREDENTIAL_ENV, PLACEHOLDER_CREDENTIAL)
+    root = tmp_path / "root"
+    source = tmp_path / "form.hwpx"
+    shutil.copyfile(CORPUS_FORM, source)
+    session = run_cli(root, "open", "--path", str(source)).result["sessionId"]
+    inspect = run_cli(root, "inspect", "--session", session,
+                      "--include", "regions").result
+    target = mock_agent.choose_target(inspect["regions"]["regions"])
+
+    with FakeRouter(lambda path, body: _fallback_agent_model(path, body, target)) as srv:
+        client = adapter(srv, env)
+        door = mock_agent.open_door("protocol", root, None)
+        try:
+            payload = AgentHost(door, client).run("fill the first seat")
+        finally:
+            door.close()
+
+    assert payload["ok"] is True
+    assert payload["providerFault"] is None
+    assert payload["plan"]["ops"][0]["params"]["text"] == "ROUTER-0001"
+    assert payload["validation"]["ok"] is True
+    notes = [event for event in payload["events"]["events"]
+             if event["kind"] == "host.note"]
+    assert len(notes) == 1
+    assert "prompt-mode" in notes[0]["detail"]["message"]
+    assert notes[0]["detail"]["providerFault"]["code"] == "provider_http_error"
+    assert notes[0]["detail"]["toolsInBody"] is False
+    kinds = [event["kind"] for event in payload["events"]["events"]]
+    assert "provider.failed" not in kinds
+    assert client.tools_in_body is False
+    assert any(event["kind"] == "provider.response"
+               and (event.get("detail") or {}).get("promptModeFallback")
+               for event in payload["events"]["events"])

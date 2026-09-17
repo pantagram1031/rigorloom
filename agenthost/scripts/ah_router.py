@@ -52,6 +52,9 @@ if str(RUNTIME_SCRIPTS) not in sys.path:
 from rt_jsonl import StrictJsonError, loads_strict  # noqa: E402
 
 DEFAULT_TIMEOUT = 60.0
+# Prompt-mode inspect/propose turns on this Cursor bridge run ~30–90s.
+# The 60s default stays the tools-array probe budget.
+PROMPT_MODE_TIMEOUT = 180.0
 DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 CREDENTIAL_SOURCES = ("none", "env", "os_store")
 
@@ -183,11 +186,22 @@ class RouterAdapter(ProviderAdapter):
                                  "toolsInBody must be a boolean",
                                  offered=tools_in_body)
         self.tools_in_body = bool(tools_in_body)
+        # Explicit `toolsInBody: false` starts in prompt-mode. Unset/true still
+        # sends a `tools` array, then falls back for the rest of the session if
+        # this gateway rejects it (the Cursor bridge 500s/`cursor_cli_error`).
+        self._tools_in_body_explicit = "toolsInBody" in config
+        self._prompt_mode_fallback: dict | None = None
+        self._fallback_pending = False
         self.extra_headers = dict(config.get("extraHeaders") or {})
         _reject_secret_shaped(self.extra_headers, "extraHeaders")
         self.notes = dict(config.get("notes") or {})
         self._environ = environ if environ is not None else os.environ
         self._opener = opener or urllib.request.urlopen
+        # Cursor-named models 500/hang on a `tools` array (G6a: ~300s then
+        # cursor_cli_error). Probing that hang occupies the single worker, so
+        # the prompt-mode retry times out behind it. Skip the probe unless
+        # the operator set toolsInBody explicitly.
+        self._maybe_preempt_cursor_tools()
 
     # -- contract -----------------------------------------------------------
     def credential_state(self) -> dict:
@@ -230,6 +244,7 @@ class RouterAdapter(ProviderAdapter):
                    "credentialRef": self.credential.public(),
                    "credential": self.credential_state(),
                    "toolsInBody": self.tools_in_body,
+                   "toolsInBodyConfigured": self._tools_in_body_explicit,
                    **self.notes},
         )
         return base.with_overrides(self.overrides)
@@ -497,6 +512,85 @@ class RouterAdapter(ProviderAdapter):
                                 provider=self.provider_id)
         return parsed
 
+    def _is_tools_rejection(self, exc: ProviderError) -> bool:
+        """True when this HTTP fault is the gateway refusing an OpenAI tools array.
+
+        The keyless Cursor bridge answers HTTP 500 ``cursor_cli_error``. Other
+        gateways say so in a 4xx/5xx body that mentions tools. Auth rejections
+        stay unauthorized; a 500 that does not mention tools stays a fault.
+        """
+        if exc.code != "provider_http_error":
+            # This Cursor bridge hangs on a `tools` array (then 500s after
+            # minutes). A timeout while tools were in the body is the same
+            # rejection; prompt-mode must take over rather than fail the run.
+            return exc.code == "provider_timeout"
+        status = exc.data.get("status")
+        body = str(exc.data.get("body") or "")
+        lowered = body.lower()
+        if status == 500 and "cursor_cli_error" in lowered:
+            return True
+        if isinstance(status, int) and 400 <= status <= 599:
+            return "tools" in lowered
+        return False
+
+    def _maybe_preempt_cursor_tools(self) -> None:
+        """Skip the hanging tools probe for Cursor-named models."""
+        if self._tools_in_body_explicit or not self.tools_in_body:
+            return
+        if not str(self.model).lower().startswith("cursor-"):
+            return
+        self._enter_prompt_mode(ProviderError(
+            "provider_http_error",
+            f"{self.provider_id} Cursor-named models reject an OpenAI tools array",
+            provider=self.provider_id, status=500,
+            body="cursor_cli_error: tools array omitted; this bridge hangs then 500s",
+        ))
+        self._prompt_mode_fallback["reason"] = (
+            "Cursor-named gateway model; OpenAI tools array omitted "
+            "(this bridge 500s/hangs on tools)"
+        )
+        self.notes["promptModeFallback"]["reason"] = (
+            self._prompt_mode_fallback["reason"]
+        )
+
+    def _enter_prompt_mode(self, exc: ProviderError) -> None:
+        """Stay in prompt-mode for the rest of this adapter's life."""
+        fault = exc.as_dict()
+        body = str(exc.data.get("body") or "")[:500]
+        self.tools_in_body = False
+        self.timeout = max(self.timeout, PROMPT_MODE_TIMEOUT)
+        self._prompt_mode_fallback = {
+            "reason": ("gateway rejected the OpenAI tools array; "
+                       "remaining turns use prompt-mode"),
+            "status": exc.data.get("status"),
+            "body": body,
+            "code": exc.code,
+            "fault": fault,
+        }
+        self._fallback_pending = True
+        self.notes["promptModeFallback"] = {
+            "reason": self._prompt_mode_fallback["reason"],
+            "status": self._prompt_mode_fallback["status"],
+        }
+
+    def _maybe_fallback_to_prompt(self, exc: ProviderError,
+                                  request: ProviderRequest) -> bool:
+        if not self.tools_in_body or not request.tools:
+            return False
+        if not self._is_tools_rejection(exc):
+            return False
+        self._enter_prompt_mode(exc)
+        return True
+
+    def _attach_fallback(self, parsed: ProviderResponse) -> ProviderResponse:
+        if not self._fallback_pending or not self._prompt_mode_fallback:
+            return parsed
+        self._fallback_pending = False
+        raw = dict(parsed.raw or {})
+        raw["promptModeFallback"] = self._prompt_mode_fallback
+        return ProviderResponse(text=parsed.text, tool_calls=parsed.tool_calls,
+                                finish_reason=parsed.finish_reason, raw=raw)
+
     def parse_completion(self, payload) -> ProviderResponse:
         if not isinstance(payload, dict):
             raise ProviderError("provider_malformed_response",
@@ -544,7 +638,7 @@ class RouterAdapter(ProviderAdapter):
                                 raw=raw)
 
     # -- calls --------------------------------------------------------------
-    def complete(self, request: ProviderRequest) -> ProviderResponse:
+    def _complete_once(self, request: ProviderRequest) -> ProviderResponse:
         response = self._post("/chat/completions",
                               self.build_body(request, stream=False), False)
         try:
@@ -570,11 +664,31 @@ class RouterAdapter(ProviderAdapter):
                                         raw=dict(parsed.raw or {}))
         return parsed
 
+    def complete(self, request: ProviderRequest) -> ProviderResponse:
+        try:
+            parsed = self._complete_once(request)
+        except ProviderError as exc:
+            if not self._maybe_fallback_to_prompt(exc, request):
+                raise
+            parsed = self._complete_once(request)
+        return self._attach_fallback(parsed)
+
     def stream(self, request: ProviderRequest) -> Iterator[dict]:
         """Server-sent events, only when the profile actually promises it."""
         self.capabilities().require("streaming")
-        response = self._post("/chat/completions",
-                              self.build_body(request, stream=True), True)
+        try:
+            response = self._post("/chat/completions",
+                                  self.build_body(request, stream=True), True)
+        except ProviderError as exc:
+            if not self._maybe_fallback_to_prompt(exc, request):
+                raise
+            response = self._post("/chat/completions",
+                                  self.build_body(request, stream=True), True)
+        if self._fallback_pending:
+            self._fallback_pending = False
+            if self._prompt_mode_fallback:
+                yield {"type": "note",
+                       "promptModeFallback": self._prompt_mode_fallback}
         total = 0
         finish_reason = "stop"
         usage = None

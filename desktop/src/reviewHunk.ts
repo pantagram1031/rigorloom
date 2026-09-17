@@ -7,6 +7,10 @@ import { diffText } from "./diff";
 import type { QueuedOp } from "./store";
 import type { RegionText, RuntimeError, VerificationReport } from "./types";
 
+function isXmlKind(kind: string): boolean {
+  return kind === "replace_all" || kind === "goto_text" || kind === "insert_text";
+}
+
 /** GitHub-style provenance on every hunk. Plan JSON is unchanged. */
 export interface HunkProvenance {
   sessionId: string | null;
@@ -37,9 +41,9 @@ export const HUNK_STATE_TONE: Record<HunkStateId, "none" | "ok" | "bad" | "fill"
 };
 
 export function hunkSlug(op: Pick<QueuedOp, "kind"> & Partial<QueuedOp>): string {
-  return op.kind === "fill_cell"
-    ? `${op.table}-${op.row}-${op.col}`
-    : `p${op.atPara}-r${op.run}`;
+  if (op.kind === "fill_cell") return `${op.table}-${op.row}-${op.col}`;
+  if (op.kind === "set_run") return `p${op.atPara}-r${op.run}`;
+  return op.opId ?? op.kind;
 }
 
 export function hunkKindLabel(op: Pick<QueuedOp, "kind"> & Partial<QueuedOp>): string {
@@ -49,13 +53,17 @@ export function hunkKindLabel(op: Pick<QueuedOp, "kind"> & Partial<QueuedOp>): s
     return "값 넣기";
   }
   if (op.kind === "set_run") return "바꾸기";
+  if (op.kind === "replace_all") return "모두 바꾸기";
+  if (op.kind === "goto_text") return "이동";
   return "삽입";
 }
 
 export function hunkAddress(op: QueuedOp): string {
-  return op.kind === "fill_cell"
-    ? `표 ${op.table} R${op.row}C${op.col}`
-    : `문단 ${op.atPara}`;
+  if (op.kind === "fill_cell") return `표 ${op.table} R${op.row}C${op.col}`;
+  if (op.kind === "set_run") return `문단 ${op.atPara}`;
+  if (op.kind === "replace_all") return `「${String(op.params.find ?? op.before)}」`;
+  if (op.kind === "goto_text") return `「${String(op.params.text ?? op.text)}」`;
+  return "삽입";
 }
 
 export function hunkReviewState(input: {
@@ -77,6 +85,9 @@ export function hunkBeforeText(
   op: RegionLookup,
   regions: RegionText[] | null | undefined,
 ): string | null {
+  if (isXmlKind(op.kind)) {
+    return typeof op.before === "string" ? op.before : null;
+  }
   if (regions && regions.length > 0) {
     const hit =
       op.kind === "fill_cell"
@@ -86,7 +97,9 @@ export function hunkBeforeText(
               row.addr?.row === op.row &&
               row.addr?.col === op.col,
           )
-        : regions.find((row) => row.at_para === op.atPara);
+        : op.kind === "set_run"
+          ? regions.find((row) => row.at_para === op.atPara)
+          : undefined;
     if (hit) return hit.text;
   }
   if (typeof op.before === "string") return op.before;
@@ -94,7 +107,8 @@ export function hunkBeforeText(
 }
 
 export function isReplaceOp(op: RegionLookup, before: string | null): boolean {
-  if (op.kind === "set_run") return true;
+  if (op.kind === "set_run" || op.kind === "replace_all") return true;
+  if (op.kind === "goto_text" || op.kind === "insert_text") return false;
   return typeof before === "string" && before.length > 0;
 }
 
@@ -108,26 +122,30 @@ export function hunkDiffMarks(before: string | null, after: string, replace: boo
 /** Same shape `setQueue` sends to `plan/propose`. Display must not change this. */
 export function planOpsJson(ops: readonly QueuedOp[]): string {
   return JSON.stringify(
-    ops.map((op) =>
-      op.kind === "fill_cell"
-        ? {
-            opId: op.opId,
-            kind: op.kind,
-            table: op.table,
-            row: op.row,
-            col: op.col,
-            text: op.text,
-            ...(op.charPr ? { charPr: op.charPr } : {}),
-            ...(op.overwrite ? { overwrite: true } : {}),
-          }
-        : {
-            opId: op.opId,
-            kind: op.kind,
-            atPara: op.atPara,
-            run: op.run,
-            text: op.text,
-          },
-    ),
+    ops.map((op) => {
+      if (op.kind === "fill_cell") {
+        return {
+          opId: op.opId,
+          kind: op.kind,
+          table: op.table,
+          row: op.row,
+          col: op.col,
+          text: op.text,
+          ...(op.charPr ? { charPr: op.charPr } : {}),
+          ...(op.overwrite ? { overwrite: true } : {}),
+        };
+      }
+      if (op.kind === "set_run") {
+        return {
+          opId: op.opId,
+          kind: op.kind,
+          atPara: op.atPara,
+          run: op.run,
+          text: op.text,
+        };
+      }
+      return { opId: op.opId, kind: op.kind, ...op.params };
+    }),
   );
 }
 

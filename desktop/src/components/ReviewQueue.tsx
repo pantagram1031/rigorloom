@@ -78,12 +78,15 @@ export function locateQueuedOp(op: QueuedOp): boolean {
   }
   setView("document");
   setCenterMode("text");
-  locateSelection(
-    op.kind === "fill_cell"
-      ? { kind: "cell", table: op.table, row: op.row, col: op.col }
-      : { kind: "paragraph", atPara: op.atPara },
-  );
-  return true;
+  if (op.kind === "fill_cell") {
+    locateSelection({ kind: "cell", table: op.table, row: op.row, col: op.col });
+    return true;
+  }
+  if (op.kind === "set_run") {
+    locateSelection({ kind: "paragraph", atPara: op.atPara });
+    return true;
+  }
+  return false;
 }
 
 export type { HunkProvenance };
@@ -396,7 +399,7 @@ export function ReviewQueue() {
             hard={findingsFor(op, validation?.hard ?? [])}
             warn={findingsFor(op, validation?.warn ?? [])}
             locked={locked}
-            locatable={locatable}
+            locatable={locatable && (op.kind === "fill_cell" || op.kind === "set_run")}
             provenance={hunkProvenance(op, draft, receipts, head)}
             focused={index === focused}
             provenanceOpen={!!openProvenance[op.opId]}

@@ -125,6 +125,17 @@ class AgentHost:
                 break
             self.events.append("provider.response", turn=turns,
                                **response.public())
+            fallback = (response.raw or {}).get("promptModeFallback")
+            if isinstance(fallback, dict):
+                # The HTTP fault was recovered, not fatal: record it so the
+                # transcript says prompt-mode took over, and leave
+                # providerFault unset so this is not a document verdict.
+                self.events.append(
+                    "host.note",
+                    message=fallback.get("reason") or "prompt-mode fallback",
+                    providerFault=fallback.get("fault"),
+                    toolsInBody=False,
+                )
             closing_text = response.text or closing_text
             finish_reason = response.finish_reason
 

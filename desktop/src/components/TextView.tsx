@@ -63,7 +63,11 @@ function QueuedValue({ op }: { op: QueuedOp }) {
   // the review queue uses. Renaming the existing one to make room would have
   // been churn dressed as consistency, and it broke a check the first time.
   const slug =
-    op.kind === "fill_cell" ? `${op.table}-${op.row}-${op.col}` : `p${op.atPara}-r${op.run}`;
+    op.kind === "fill_cell"
+      ? `${op.table}-${op.row}-${op.col}`
+      : op.kind === "set_run"
+        ? `p${op.atPara}-r${op.run}`
+        : op.opId;
   return (
     <span className="queued" data-testid={`queued-${slug}`} data-kind={op.kind}>
       {op.before.trim().length > 0 ? (
@@ -149,10 +153,11 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
   const queuedByNode = useMemo(() => {
     const map = new Map<string, QueuedOp>();
     for (const op of queuedOps) {
-      map.set(
-        op.kind === "fill_cell" ? cellKey(op.table, op.row, op.col) : `p:${op.atPara}`,
-        op,
-      );
+      if (op.kind === "fill_cell") {
+        map.set(cellKey(op.table, op.row, op.col), op);
+      } else if (op.kind === "set_run") {
+        map.set(`p:${op.atPara}`, op);
+      }
     }
     return map;
   }, [queuedOps]);

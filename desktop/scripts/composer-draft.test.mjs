@@ -109,3 +109,61 @@ test("blank input is not sent or replaced", async () => {
   assert.equal(f.sent.length, 0);
   assert.equal(f.port.read(), blank);
 });
+
+function loadStore() {
+  return loadModule("../src/store.ts", (name) => {
+    assert.equal(name, "react");
+    return { useSyncExternalStore: (_subscribe, snapshot) => snapshot() };
+  });
+}
+
+test("a keyless router is not blocked by a missing credential", () => {
+  const store = loadStore();
+  store.setState({
+    activeSessionId: "s1",
+    agentHost: { available: true, mode: "packaged", script: "host.py", program: null, reason: null },
+    activeTurn: null,
+    provider: {
+      provider: "router",
+      scenario: "propose-one",
+      router: { baseUrl: "http://127.0.0.1:8766/v1", model: "cursor-grok-4.6-high-fast", storeKey: "RIGORLOOM_ROUTER" },
+      anthropic: { model: "", storeKey: "RIGORLOOM_ANTHROPIC" },
+    },
+    credential: { key: "RIGORLOOM_ROUTER", state: "absent", bytes: 0 },
+  });
+  assert.equal(store.composerBlocker(store.getState()), null);
+});
+
+test("a router still needs a base URL", () => {
+  const store = loadStore();
+  store.setState({
+    activeSessionId: "s1",
+    agentHost: { available: true, mode: "packaged", script: "host.py", program: null, reason: null },
+    activeTurn: null,
+    provider: {
+      provider: "router",
+      scenario: "propose-one",
+      router: { baseUrl: "  ", model: "m", storeKey: "RIGORLOOM_ROUTER" },
+      anthropic: { model: "", storeKey: "RIGORLOOM_ANTHROPIC" },
+    },
+    credential: { key: "RIGORLOOM_ROUTER", state: "absent", bytes: 0 },
+  });
+  assert.equal(store.composerBlocker(store.getState()), "no_base_url");
+});
+
+test("anthropic still requires a stored credential", () => {
+  const store = loadStore();
+  store.setState({
+    activeSessionId: "s1",
+    agentHost: { available: true, mode: "packaged", script: "host.py", program: null, reason: null },
+    activeTurn: null,
+    provider: {
+      provider: "anthropic",
+      scenario: "propose-one",
+      router: { baseUrl: "", model: "", storeKey: "RIGORLOOM_ROUTER" },
+      anthropic: { model: "claude", storeKey: "RIGORLOOM_ANTHROPIC" },
+    },
+    credential: { key: "RIGORLOOM_ANTHROPIC", state: "absent", bytes: 0 },
+  });
+  assert.equal(store.composerBlocker(store.getState()), "no_credential");
+});

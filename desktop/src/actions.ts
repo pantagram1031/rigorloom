@@ -1128,26 +1128,30 @@ async function setQueue(
       // others: `plan/propose` refuses an op that carries a field its kind
       // does not define (`unknown_field`, rt_plan.py:196), which is the check
       // that would catch a shell sending a cell's triple with a run's address.
-      ops.map((op) =>
-        op.kind === "fill_cell"
-          ? {
-              opId: op.opId,
-              kind: op.kind,
-              table: op.table,
-              row: op.row,
-              col: op.col,
-              text: op.text,
-              ...(op.charPr ? { charPr: op.charPr } : {}),
-              ...(op.overwrite ? { overwrite: true } : {}),
-            }
-          : {
-              opId: op.opId,
-              kind: op.kind,
-              atPara: op.atPara,
-              run: op.run,
-              text: op.text,
-            },
-      ),
+      ops.map((op) => {
+        if (op.kind === "fill_cell") {
+          return {
+            opId: op.opId,
+            kind: op.kind,
+            table: op.table,
+            row: op.row,
+            col: op.col,
+            text: op.text,
+            ...(op.charPr ? { charPr: op.charPr } : {}),
+            ...(op.overwrite ? { overwrite: true } : {}),
+          };
+        }
+        if (op.kind === "set_run") {
+          return {
+            opId: op.opId,
+            kind: op.kind,
+            atPara: op.atPara,
+            run: op.run,
+            text: op.text,
+          };
+        }
+        return { opId: op.opId, kind: op.kind, ...op.params };
+      }),
       { baseRunId, reverses },
     );
     if (currentPlanGeneration() !== gen) return;
@@ -2668,11 +2672,13 @@ export async function loadChangedAddresses(runId: string): Promise<number> {
       break;
     }
     for (const op of plan.ops) {
-      const key =
-        op.kind === "set_run"
-          ? `p:${Number(op.params.atPara)}`
-          : `c:${Number(op.params.table ?? 0)}:${Number(op.params.row)}:${Number(op.params.col)}`;
-      if (!keys.includes(key)) keys.push(key);
+      let key: string | null = null;
+      if (op.kind === "set_run") {
+        key = `p:${Number(op.params.atPara)}`;
+      } else if (op.kind === "fill_cell") {
+        key = `c:${Number(op.params.table ?? 0)}:${Number(op.params.row)}:${Number(op.params.col)}`;
+      }
+      if (key && !keys.includes(key)) keys.push(key);
     }
     cursor = receipt.base?.runId ?? null;
   }

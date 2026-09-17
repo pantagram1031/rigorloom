@@ -48,6 +48,7 @@ const SYSTEM_KINDS = new Set([
   "tool.compiled",
   "runtime.result",
   "runtime.refused",
+  "host.note",
 ]);
 
 function describe(event: HostEvent): string {
@@ -79,9 +80,11 @@ function ToolIcon() {
 
 function PlanArrivalCard({
   count,
+  planHash,
   testId,
 }: {
   count: number;
+  planHash?: string | null;
   testId: string;
 }) {
   return (
@@ -92,6 +95,11 @@ function PlanArrivalCard({
       onClick={() => selectInspectorTab("review")}
     >
       계획 {count}개 편집 도착 → 검토 탭에서 승인
+      {planHash ? (
+        <span className="mono tiny" data-testid="plan-arrival-hash">
+          {planHash}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -190,7 +198,11 @@ function TurnCard({ turn }: { turn: Turn }) {
 
           {payload?.plan ? (
             <>
-              <PlanArrivalCard count={planOps} testId={`plan-arrival-${turn.id}`} />
+              <PlanArrivalCard
+                count={planOps}
+                planHash={payload.plan.planHash}
+                testId={`plan-arrival-${turn.id}`}
+              />
               <p className="gate" data-testid="turn-gate">
                 계획 <span className="mono">{payload.plan.planId.slice(0, 12)}</span> 을(를) 냈고,{" "}
                 {turn.planId ? (
