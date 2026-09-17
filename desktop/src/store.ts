@@ -52,6 +52,7 @@ import type {
   VerifyResult,
   FillProgress,
   FillResult,
+  PosterResult,
 } from "./types";
 
 export type View = "document" | "agent";
@@ -384,6 +385,9 @@ export interface WorkspaceState {
   fillProgress: FillProgress | null;
   fillResult: FillResult | null;
   fillError: RuntimeError | null;
+  posterPhase: Phase;
+  posterResult: PosterResult | null;
+  posterError: RuntimeError | null;
   candidates: Record<string, Candidate[]>;
 
   // --- shared selection and navigation (survives every view switch) --------
@@ -784,6 +788,9 @@ const initial: WorkspaceState = {
   fillProgress: null,
   fillResult: null,
   fillError: null,
+  posterPhase: "idle",
+  posterResult: null,
+  posterError: null,
   candidates: {},
 
   selection: null,

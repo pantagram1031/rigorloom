@@ -379,6 +379,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-proof-iters", type=int, default=None,
         help="PROOF re-entry cap (fill_report default 3)")
 
+    p = sub.add_parser(
+        "poster-run",
+        help="run the report module's poster then poster-verify on a workspace")
+    p.add_argument(
+        "--workspace", required=True,
+        help="absolute report workspace (or a path inside one)")
+    p.add_argument(
+        "--session", default=None,
+        help="optional session id")
+
     return parser
 
 
@@ -486,6 +496,11 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
             session_id=args.session,
             spacing_skip_pages=args.spacing_skip_pages,
             max_proof_iters=args.max_proof_iters,
+        ), EXIT_OK
+    if command == "poster-run":
+        return core.workspace_poster_run(
+            args.workspace,
+            session_id=args.session,
         ), EXIT_OK
     raise UsageError(f"unknown command {command!r}")
 

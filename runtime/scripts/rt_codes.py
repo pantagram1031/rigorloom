@@ -57,6 +57,9 @@ CHILD_TIMEOUT_SECONDS = 120.0
 #: fill_report --loop is COM assemble + measure + optional proof sheets.
 #: AURALAB's measured re-assembly was ~10 minutes (stage1 H1d).
 FILL_TIMEOUT_SECONDS = 1800.0
+#: poster_build + poster_verify are offline pptx work; PowerPoint PNG export
+#: is optional and bounded separately. Same order as a generic child.
+POSTER_TIMEOUT_SECONDS = 180.0
 
 #: An operator or a packaged host may point engine children at a real
 #: interpreter. Without it children run under ``sys.executable``, which in a
@@ -159,6 +162,10 @@ DOMAIN_CODES = frozenset({
     # as a workspace whose header cannot be trusted.
     "pipeline_header_missing",
     "pipeline_header_unparsable",
+    # Report-module CLI not enabled / extra not installed. Distinct from
+    # artifact_missing (the workspace is incomplete) so the GUI can say
+    # "install the report module" rather than "add poster_content.md".
+    "module_unavailable",
 })
 
 ERROR_CODES = TRANSPORT_CODES | DOMAIN_CODES

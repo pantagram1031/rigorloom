@@ -14,6 +14,14 @@ export const EMPTY_FILL_INPUTS = {
   baselinePath: null,
 };
 
+export const EMPTY_POSTER_INPUTS = {
+  complete: false,
+  missing: [] as string[],
+  contentPath: null,
+  figuresPath: null,
+  formPath: null,
+};
+
 export const PIPELINE_NOT_FOUND: PipelineStatus = {
   found: false,
   workspacePath: null,
@@ -25,6 +33,7 @@ export const PIPELINE_NOT_FOUND: PipelineStatus = {
   stages: [],
   nextGate: null,
   fillInputs: EMPTY_FILL_INPUTS,
+  posterInputs: EMPTY_POSTER_INPUTS,
 };
 
 /** Dev-mock / tests: the AURALAB classroom header, field-for-field. */
@@ -59,6 +68,13 @@ export const AURALAB_PIPELINE_STATUS: PipelineStatus = {
     buildYamlPath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\build.yaml",
     formProfilePath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\form_profile.json",
     baselinePath: null,
+  },
+  posterInputs: {
+    complete: true,
+    missing: [],
+    contentPath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\poster\\poster_content.md",
+    figuresPath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\bundle\\figures",
+    formPath: "C:\\Users\\user\\Downloads\\ReportWorkspace project\\reports\\report-auralab-classroom\\poster\\form.pptx",
   },
 };
 

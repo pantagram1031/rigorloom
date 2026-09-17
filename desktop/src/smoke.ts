@@ -428,6 +428,8 @@ async function phaseOpen(config: SmokeConfig) {
     domText('[data-testid="verification-bar"]').includes("증명 없음"));
   check("채우기 실행 stays off on a non-report document",
     !document.querySelector('[data-testid="fill-run"]'));
+  check("포스터 만들기 stays off on a non-report document",
+    !document.querySelector('[data-testid="poster-run"]'));
   setState({ verifyPanelOpen: false, sheetOpen: false });
   await settled();
 

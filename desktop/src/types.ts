@@ -55,6 +55,14 @@ export interface FillInputs {
   baselinePath: string | null;
 }
 
+export interface PosterInputs {
+  complete: boolean;
+  missing: string[];
+  contentPath: string | null;
+  figuresPath: string | null;
+  formPath: string | null;
+}
+
 export interface PipelineStatus {
   found: boolean;
   workspacePath: string | null;
@@ -66,6 +74,7 @@ export interface PipelineStatus {
   stages: PipelineStage[];
   nextGate: PipelineNextGate | null;
   fillInputs: FillInputs;
+  posterInputs?: PosterInputs;
 }
 
 export type CellClassification = "guide" | "static" | "fill_target" | "spacer";
@@ -491,6 +500,36 @@ export interface FillResult {
   verifyFormat: CheckRow;
   checks: VerificationReport;
   argv?: string[];
+}
+
+/** One hashed poster output (`poster_v1.pptx` / `poster_v1.png`). */
+export interface PosterOutput {
+  role: string;
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
+/** PNG preview. `data` is raw base64 when the Runtime inlined it. */
+export interface PosterPreview {
+  path: string;
+  sha256: string;
+  bytes: number;
+  mediaType: string;
+  data: string | null;
+  label?: string;
+}
+
+/** `workspace/posterRun`. Verifier rows are P2-shaped; the PNG is not a proof. */
+export interface PosterResult {
+  workspacePath: string;
+  sessionId: string | null;
+  state: string;
+  outputs: PosterOutput[];
+  verify: CheckRow[];
+  preview: PosterPreview | null;
+  ok?: boolean;
+  posterInputs?: PosterInputs;
 }
 
 export interface ArtifactRef {

@@ -36,6 +36,14 @@ EMPTY_FILL_INPUTS = {
     "baselinePath": None,
 }
 
+EMPTY_POSTER_INPUTS = {
+    "complete": False,
+    "missing": [],
+    "contentPath": None,
+    "figuresPath": None,
+    "formPath": None,
+}
+
 NOT_FOUND = {
     "found": False,
     "workspacePath": None,
@@ -54,6 +62,13 @@ NOT_FOUND = {
         "buildYamlPath": None,
         "formProfilePath": None,
         "baselinePath": None,
+    },
+    "posterInputs": {
+        "complete": False,
+        "missing": [],
+        "contentPath": None,
+        "figuresPath": None,
+        "formPath": None,
     },
 }
 
@@ -263,6 +278,7 @@ def _header_status(ctl, workspace: Path) -> dict:
         "stages": rows,
         "nextGate": _next_gate(rows),
         "fillInputs": fill_inputs(workspace, hdr),
+        "posterInputs": poster_inputs(workspace),
     }
 
 
@@ -288,6 +304,79 @@ def resolve_form_path(workspace: Path, hdr: dict | None = None) -> Path | None:
         return path if path.is_file() else None
     except OSError:
         return None
+
+
+def _poster_form_path(workspace: Path) -> Path | None:
+    """Blank poster PPTX. ``poster/form.pptx``, else one other pptx that is not the output."""
+    named = Path(workspace) / "poster" / "form.pptx"
+    try:
+        if named.is_file():
+            return named
+    except OSError:
+        pass
+    poster_dir = Path(workspace) / "poster"
+    try:
+        if not poster_dir.is_dir():
+            return None
+        candidates = []
+        for path in sorted(poster_dir.iterdir()):
+            try:
+                if not path.is_file():
+                    continue
+            except OSError:
+                continue
+            if path.suffix.lower() != ".pptx":
+                continue
+            if path.name.lower() in {"poster_v1.pptx", "form.pptx"}:
+                continue
+            candidates.append(path)
+        if len(candidates) == 1:
+            return candidates[0]
+    except OSError:
+        return None
+    return None
+
+
+def _poster_figures_path(workspace: Path) -> Path | None:
+    for rel in ("poster/figures", "bundle/figures", "figures"):
+        candidate = Path(workspace) / rel
+        try:
+            if candidate.is_dir():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def poster_inputs(workspace: Path) -> dict:
+    """Read-only: which poster CLI inputs exist. Never writes."""
+    missing: list[str] = []
+    content = Path(workspace) / "poster" / "poster_content.md"
+    try:
+        content_ok = content.is_file()
+    except OSError:
+        content_ok = False
+    content_path = str(content) if content_ok else None
+    if not content_ok:
+        missing.append("poster/poster_content.md")
+
+    figures = _poster_figures_path(workspace)
+    figures_path = str(figures) if figures is not None else None
+    if figures is None:
+        missing.append("figures")
+
+    form = _poster_form_path(workspace)
+    form_path = str(form) if form is not None else None
+    if form is None:
+        missing.append("poster/form.pptx")
+
+    return {
+        "complete": not missing,
+        "missing": missing,
+        "contentPath": content_path,
+        "figuresPath": figures_path,
+        "formPath": form_path,
+    }
 
 
 def fill_inputs(workspace: Path, hdr: dict | None = None) -> dict:

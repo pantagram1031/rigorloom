@@ -40,6 +40,7 @@ import type {
   TaskPackList,
   VerifyResult,
   FillResult,
+  PosterResult,
 } from "./types";
 
 export const EVENT_ACTIVITY = "runtime://activity";
@@ -313,6 +314,24 @@ export const fillRun = (params: {
         : {}),
     },
     FILL_TAG,
+  );
+
+const POSTER_TAG = "poster-run";
+
+/**
+ * HOST ONLY. Spawn poster then poster-verify. The PNG is a preview, not a proof.
+ */
+export const posterRun = (params: {
+  workspace: string;
+  sessionId?: string | null;
+}) =>
+  callCancellable<PosterResult>(
+    "workspace/posterRun",
+    {
+      workspace: params.workspace,
+      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    },
+    POSTER_TAG,
   );
 
 // --- rendering ---------------------------------------------------------------

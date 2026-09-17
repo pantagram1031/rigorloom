@@ -12,6 +12,7 @@ import {
 import { useWorkspace } from "../store";
 import { EmptyIconDoc, EmptyState } from "./EmptyState";
 import { FillCard } from "./FillResults";
+import { PosterCard } from "./PosterResults";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
@@ -132,6 +133,7 @@ export function PipelinePanel() {
         ))}
       </ul>
       <FillCard />
+      <PosterCard />
     </div>
   );
 }

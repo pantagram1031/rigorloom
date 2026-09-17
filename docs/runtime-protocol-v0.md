@@ -706,6 +706,7 @@ only.
 | `workspace/openPath` (host) | implemented — size + zip sanity; no HWP5 CFB walk | `runtime/scripts/rt_session.py` `validate_source` |
 | `workspace/pipelineStatus` (host) | implemented — read-only PIPELINE.md header; never writes | `runtime/scripts/rt_pipeline.py` §11.6 |
 | `workspace/fillRun` (host) | implemented — spawn `fill_report.py --loop`; tail `fill_events.jsonl` | `runtime/scripts/rt_fill.py` §11.7 |
+| `workspace/posterRun` (host) | implemented — spawn report-module `poster` then `poster-verify` | `runtime/scripts/rt_poster.py` §11.8 |
 | `document/inspect` | implemented — summary + graph + regions | `_m_document_inspect` |
 | `document/readRegion` | implemented, bounded, refuses rather than truncates | `_m_document_read_region` |
 | `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan`. `xml` when `xml_backend.py` resolves; `com` only when `backends.com` is available; first-wave kinds only. |
@@ -731,7 +732,7 @@ All twelve transport codes from §5.2 are implemented and closed
 `unknown_op_kind`, `plan_invalid`, `approval_binding_mismatch`,
 `approval_already_resolved`, `region_too_large`, `source_rejected`,
 `candidate_hash_mismatch`, `receipt_body_mismatch`, `backend_refused`,
-`publication_failed`, `com_busy`, `needs_hancom`, `fill_in_progress`. `authority_denied` is NOT implemented and should be
+`publication_failed`, `com_busy`, `needs_hancom`, `fill_in_progress`, `module_unavailable`. `authority_denied` is NOT implemented and should be
 dropped from v0: authority is registry membership, so a host-only method is
 `unknown_method` on an agent connection, with `knownOnHostEntry: true` carrying
 the diagnostic §4 wanted.
@@ -1138,7 +1139,7 @@ verdict.
 | `found: false` and null identity fields | no `PIPELINE.md` within the walk bound — an answer, not a refusal |
 | `pipeline_header_missing` | `PIPELINE.md` exists but has no v0.4 fence |
 | `pipeline_header_unparsable` | the fence is present but the header cannot be read as the kernel's map |
-| `found: true` | header parsed; `stages[].status` / `gate.{name,state,by,at}` copied from the parser; `label` is the stages.yaml `name` when that graph loads, else omitted; `nextGate` is the first stage whose **header** status is not `done`, or `null`; `fillInputs` is a read-only existence check of `build.yaml`, `bundle/content.md`, `form_profile.json`, and the blank form (`output/form_copy.hwpx` else the header `form` path) |
+| `found: true` | header parsed; `stages[].status` / `gate.{name,state,by,at}` copied from the parser; `label` is the stages.yaml `name` when that graph loads, else omitted; `nextGate` is the first stage whose **header** status is not `done`, or `null`; `fillInputs` is a read-only existence check of `build.yaml`, `bundle/content.md`, `form_profile.json`, and the blank form (`output/form_copy.hwpx` else the header `form` path); `posterInputs` is a read-only existence check of `poster/poster_content.md`, a figures directory, and `poster/form.pptx` |
 
 Agent connections do not build the method (decision D8). Walking an arbitrary
 filesystem path is the same authority class as `workspace/openPath`.
@@ -1176,6 +1177,33 @@ CLI spelling: `fill-run --workspace <dir> [--session <id>] [--spacing-skip-pages
 | `fill_in_progress` | another fill-run holds this workspace's lock |
 | `cancelled` | client cancel; the direct child is killed |
 | success payload | `state` is the loop's terminal state (`converged` / `gappy` / `underfilled` / `overfilled` / `escalate_human`); `verdict` is fill_report JSON verbatim; `proofGrade` is what the loop wrote (`hancom` / `none` / `advisory`); `checks` has layout QA copied from that verdict and `verify_format` run on `output/out.hwpx` as P2-shaped rows. Contact sheets are not a render certificate. |
+
+Agent connections do not build the method (decision D8).
+
+### 11.8 `workspace/posterRun` — the same poster line the report module ships
+
+HOST ONLY. Spawns the report module's `poster` then `poster-verify` against a
+report workspace: `--content poster/poster_content.md`, `--figures`
+(`poster/figures` else `bundle/figures` else `figures`), `--form`
+(`poster/form.pptx` else the one other pptx in `poster/` that is not the
+output), `--out poster/poster_v1.pptx`. Verify is called with the form mtime
+recorded before the build and `--no-numbers`, the same invocation G5 used.
+No new poster semantics. An optional PowerPoint COM export writes
+`poster/poster_v1.png` when the PNG is not already there; that file is a
+preview, not a render certificate.
+
+```
+--> workspace/posterRun {workspace, sessionId?}                          HOST ONLY
+<-- {workspacePath, sessionId, state, outputs, verify, preview}
+```
+
+CLI spelling: `poster-run --workspace <dir> [--session <id>]`.
+
+| Result | When |
+| --- | --- |
+| `artifact_missing` | workspace incomplete (`missing` names the files) |
+| `module_unavailable` | report module poster CLI not enabled, scripts missing, or `[poster]` extra absent |
+| success payload | `state` is `pass` / `warn` / `fail` from the verifier rows; `outputs` are hashed pptx/png paths; `verify` is poster-verify's gate rows, P2-shaped, fields copied verbatim. The PNG is not a render certificate. |
 
 Agent connections do not build the method (decision D8).
 

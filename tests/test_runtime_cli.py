@@ -78,6 +78,7 @@ def test_capabilities_reports_the_whole_method_roster(root):
     assert "workspace/pipelineStatus" in methods
     assert "candidate/verify" in methods
     assert "workspace/fillRun" in methods
+    assert "workspace/posterRun" in methods
 
 
 def test_inspect_and_read_region_work_from_the_command_line(root, source):

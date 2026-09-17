@@ -3893,6 +3893,10 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   font-family: var(--mono, ui-monospace, monospace);
 }
 
+.poster-card {
+  border-top: 1px solid var(--line);
+}
+
 .verify-panel {
   flex: none;
   border-bottom: 1px solid var(--line);

@@ -20,6 +20,7 @@
 import corpus from "./fixtures/corpus.json";
 
 import { mockFillResult } from "./fillReport";
+import { mockPosterResult } from "./posterReport";
 import { AURALAB_PIPELINE_STATUS } from "./pipelineStatus";
 import { mockVerifyResult } from "./verifyReport";
 import type { Capabilities, InspectResult, RegionText, SourceRef } from "./types";
@@ -187,6 +188,13 @@ function call(method: string, params: Record<string, unknown>): unknown {
       return mockVerifyResult(SESSION, typeof params.runId === "string" ? params.runId : null);
     case "workspace/fillRun":
       return mockFillResult(
+        typeof params.workspace === "string"
+          ? params.workspace
+          : AURALAB_PIPELINE_STATUS.workspacePath ?? "",
+        SESSION,
+      );
+    case "workspace/posterRun":
+      return mockPosterResult(
         typeof params.workspace === "string"
           ? params.workspace
           : AURALAB_PIPELINE_STATUS.workspacePath ?? "",

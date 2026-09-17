@@ -16,6 +16,7 @@ import {
 } from "./documentEvents";
 import { agentPlanCellAddresses, projectAgentPlan } from "./agent/planProjection";
 import { canRunFill } from "./fillReport";
+import { canRunPoster } from "./posterReport";
 import { PIPELINE_NOT_FOUND } from "./pipelineStatus";
 import {
   DEFAULT_PROVIDER,
@@ -445,6 +446,13 @@ export async function selectSession(sessionId: string) {
                 fillResult: null,
                 fillError: null,
               }),
+          ...(getState().posterPhase === "starting"
+            ? {}
+            : {
+                posterPhase: "idle" as const,
+                posterResult: null,
+                posterError: null,
+              }),
         }
       : {}),
   });
@@ -561,6 +569,55 @@ export async function runFill(): Promise<void> {
 export async function cancelFill(): Promise<void> {
   await rt.cancel(FILL_TAG);
   showToast("채우기를 멈추라고 알렸습니다.", 2400);
+}
+
+// --- poster ----------------------------------------------------------------
+
+/**
+ * 포스터 만들기 — HOST ONLY `workspace/posterRun`. Same poster then
+ * poster-verify the report module already ships.
+ */
+export async function runPoster(): Promise<void> {
+  const sessionId = getState().activeSessionId;
+  const status = getState().pipelineStatus;
+  const workspace = status?.workspacePath;
+  if (!sessionId || !workspace) return;
+  if (!canRunPoster(status, getState().capabilities)) return;
+  if (getState().posterPhase === "starting") return;
+  setState({
+    posterPhase: "starting",
+    posterResult: null,
+    posterError: null,
+  });
+  try {
+    const result = await rt.posterRun({ workspace, sessionId });
+    if (getState().activeSessionId !== sessionId) {
+      setState({ posterPhase: "idle" });
+      return;
+    }
+    setState({
+      posterPhase: "ready",
+      posterResult: result,
+      posterError: null,
+    });
+  } catch (e) {
+    const error = rt.asRuntimeError(e);
+    if (getState().activeSessionId !== sessionId) {
+      setState({ posterPhase: "idle" });
+      return;
+    }
+    if (error.code === "cancelled") {
+      setState({ posterPhase: "idle", posterError: error, posterResult: null });
+      showToast("포스터 만들기를 멈췄습니다.", 2000);
+      return;
+    }
+    setState({
+      posterPhase: "failed",
+      posterError: error,
+      posterResult: null,
+    });
+    showToast(error.message);
+  }
 }
 
 // --- recents ----------------------------------------------------------------

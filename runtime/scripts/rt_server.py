@@ -165,6 +165,7 @@ class RuntimeServer:
             "document/renderPrepare": self._m_document_render_prepare,
             "candidate/verify": self._m_candidate_verify,
             "workspace/fillRun": self._m_workspace_fill_run,
+            "workspace/posterRun": self._m_workspace_poster_run,
         }
         assert set(methods) == set(HOST_ONLY_METHODS), (
             "host handler map and rt_core.HOST_ONLY_METHODS disagree: "
@@ -538,6 +539,18 @@ class RuntimeServer:
             session_id=params.get("sessionId"),
             spacing_skip_pages=params.get("spacingSkipPages"),
             max_proof_iters=params.get("maxProofIters"),
+            checkpoint=self._checkpoint(request_id),
+        )
+
+    def _m_workspace_poster_run(self, params: dict, request_id) -> dict:
+        params = _object(
+            params, {"workspace", "sessionId"},
+            required=("workspace",),
+            where="workspace/posterRun.params",
+            policy=self.unknown_field_policy)
+        return self.core.workspace_poster_run(
+            params["workspace"],
+            session_id=params.get("sessionId"),
             checkpoint=self._checkpoint(request_id),
         )
 

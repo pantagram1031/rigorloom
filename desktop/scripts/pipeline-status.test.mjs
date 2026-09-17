@@ -81,6 +81,9 @@ function renderPipeline(state, { refreshCalls } = { refreshCalls: [] }) {
     if (id === "./FillResults") {
       return { FillCard: () => null };
     }
+    if (id === "./PosterResults") {
+      return { PosterCard: () => null };
+    }
     if (id === "./Icon") return { Icon };
     if (id === "./Tag") {
       return {

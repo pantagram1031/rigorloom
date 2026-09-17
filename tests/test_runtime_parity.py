@@ -340,8 +340,45 @@ def test_the_cli_reaches_host_methods_that_mcp_cannot(tmp_path, source):
                        {"path": str(source)})["code"] == "unknown_method"
 
 
-def test_candidate_verify_is_deliberately_not_a_protocol_method():
-    """The CLI composes it; the wire does not grow a tool for it."""
+def test_candidate_verify_is_host_only_and_not_an_mcp_tool(tmp_path):
+    """The CLI and host JSONL compose it; MCP does not grow a tool for it."""
     assert hasattr(rt_core.RuntimeCore, "candidate_verify")
-    assert "candidate/verify" not in rt_core.METHODS
+    assert "candidate/verify" in rt_core.HOST_ONLY_METHODS
+    assert "candidate/verify" not in rt_core.AGENT_METHODS
     assert "candidate_verify" not in mcp_server.TOOL_TO_METHOD
+    with RuntimeClient(tmp_path / "agent", entry="agent") as agent:
+        agent.initialize()
+        error = agent.err("candidate/verify", {"sessionId": "x"})
+    assert error["code"] == "unknown_method"
+    assert error["data"]["knownOnHostEntry"] is True
+
+
+def test_verify_cli_and_host_wire_agree_on_source_target(root, session):
+    cli = run_cli(root, "verify", "--session", session)
+    assert cli.code == 0, cli.stdout
+    with RuntimeClient(root, entry="host") as host:
+        host.initialize()
+        wire = host.ok("candidate/verify", {"sessionId": session})
+    for key in ("sessionId", "runId", "target", "candidate"):
+        assert cli.result[key] == wire[key]
+    assert cli.result["target"] == {"source": True}
+    assert cli.result["checkedUtc"].endswith("Z")
+    assert wire["checkedUtc"].endswith("Z")
+    assert cli.result["checks"]["required"] == wire["checks"]["required"]
+    assert cli.result["checks"]["ranAll"] == wire["checks"]["ranAll"]
+
+
+def test_fill_run_is_host_only_and_not_an_mcp_tool():
+    """The CLI and host JSONL compose it; MCP does not grow a tool for it."""
+    assert hasattr(rt_core.RuntimeCore, "workspace_fill_run")
+    assert "workspace/fillRun" in rt_core.HOST_ONLY_METHODS
+    assert "workspace/fillRun" not in rt_core.AGENT_METHODS
+    assert "workspace_fillRun" not in mcp_server.TOOL_TO_METHOD
+
+
+def test_poster_run_is_host_only_and_not_an_mcp_tool():
+    """The CLI and host JSONL compose it; MCP does not grow a tool for it."""
+    assert hasattr(rt_core.RuntimeCore, "workspace_poster_run")
+    assert "workspace/posterRun" in rt_core.HOST_ONLY_METHODS
+    assert "workspace/posterRun" not in rt_core.AGENT_METHODS
+    assert "workspace_posterRun" not in mcp_server.TOOL_TO_METHOD

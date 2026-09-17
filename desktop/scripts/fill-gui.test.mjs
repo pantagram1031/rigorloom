@@ -202,7 +202,7 @@ test("dev-mock answers workspace/fillRun with the AURALAB loop shape", () => {
 
 function fillActions() {
   const start = actionsSource.indexOf("const FILL_TAG = \"fill-run\"");
-  const end = actionsSource.indexOf("// --- recents");
+  const end = actionsSource.indexOf("// --- poster");
   assert.ok(start >= 0 && end > start, "runFill slice moved");
   const code = stripTypeScriptTypes(actionsSource.slice(start, end)).replaceAll("export ", "");
   const calls = [];

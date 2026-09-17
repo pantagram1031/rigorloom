@@ -70,6 +70,7 @@ from rt_module import (  # noqa: E402
 )
 from rt_pipeline import pipeline_status as read_pipeline_status  # noqa: E402
 from rt_fill import workspace_fill_run  # noqa: E402
+from rt_poster import workspace_poster_run  # noqa: E402
 from rt_render import render_capability, render_page  # noqa: E402
 from rt_session import (  # noqa: E402
     MAX_EVENTS_PER_POLL_DEFAULT,
@@ -131,6 +132,7 @@ HOST_ONLY_METHODS: tuple[str, ...] = (
     "document/renderPrepare",
     "candidate/verify",
     "workspace/fillRun",
+    "workspace/posterRun",
 )
 
 METHODS: tuple[str, ...] = (AGENT_METHODS + PROTOCOL_ONLY_METHODS
@@ -266,6 +268,13 @@ class RuntimeCore:
             self, workspace, session_id=session_id,
             spacing_skip_pages=spacing_skip_pages,
             max_proof_iters=max_proof_iters, checkpoint=checkpoint,
+        )
+
+    def workspace_poster_run(self, workspace, *, session_id=None,
+                             checkpoint=None) -> dict:
+        """HOST ONLY. Spawn poster then poster-verify on a report workspace."""
+        return workspace_poster_run(
+            self, workspace, session_id=session_id, checkpoint=checkpoint,
         )
 
     def session_list(self) -> dict:

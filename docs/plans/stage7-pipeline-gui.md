@@ -13,7 +13,7 @@ Open a report workspace (e.g. reports/report-auralab-classroom) from the desktop
 - [x] P2 Verify from the GUI: a Runtime verb that runs the offline checkers on the current candidate (exists as
       `verify`; wire it) and a results panel (findings per checker, verdict, "what this does not prove").
 - [x] P3 Fill loop from the GUI on Windows with Hancom (com): progress events, proof contact sheets as images.
-- [ ] P4 Poster line: build + verify from the GUI; poster preview as an image with its verdict.
+- [x] P4 Poster line: build + verify from the GUI; poster preview as an image with its verdict.
 
 ## Ledger
 | When | What | Result |
@@ -22,3 +22,4 @@ Open a report workspace (e.g. reports/report-auralab-classroom) from the desktop
 | 2026-09-18 | P2 `candidate/verify` from the desktop on current head | Optional `runId` (omit = source) + `target`/`checkedUtc`. Toolbar 검사 calls the verb; slide-in rows per checker (pass/warn/fail/unavailable); freeze footer; pill and 검사 popover show run time and 원본/후보본. |
 | 2026-09-18 | P3 `workspace/fillRun` (CLI `fill-run`) drives `fill_report.py --loop` | Host-only. Validates workspace inputs, refuses `needs_hancom` / incomplete / `fill_in_progress`, tails `fill_events.jsonl` into `fill/progress`, returns loop state + hashed outputs + layout QA / verify_format as P2 rows. Desktop 채우기 실행 in the 파이프라인 disclosure; contact sheets labelled `증명 등급: <proof_grade>`. |
 | 2026-09-18 03:35 | P3 accepted by Fable | suites green; GUI card DOM-tested only (browser mock reports com unavailable, so the control is hidden there by design); native screenshot of the fill card is owed to the Stage 8 rebuild |
+| 2026-09-18 | P4 `workspace/posterRun` (CLI `poster-run`) drives report-module `poster` then `poster-verify` | Host-only. Validates `poster/poster_content.md` + form + figures, refuses `module_unavailable` / `artifact_missing`, returns hashed pptx/png + verifier rows verbatim. Desktop 포스터 만들기 in the 파이프라인 disclosure when poster inputs exist; PNG labelled `미리보기 이미지, 증명 아님`. |
