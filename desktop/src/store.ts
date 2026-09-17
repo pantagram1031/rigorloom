@@ -36,6 +36,7 @@ import type {
   OperationPlan,
   OverlayPick,
   PlanValidation,
+  PipelineStatus,
   ProviderProfile,
   ProviderSettings,
   Receipt,
@@ -369,6 +370,13 @@ export interface WorkspaceState {
   inspects: Record<string, InspectResult>;
   inspectPhase: Phase;
   inspectError: RuntimeError | null;
+  /**
+   * Read-only PIPELINE.md header for the active document's original path.
+   * Null until the first `workspace/pipelineStatus` returns.
+   */
+  pipelineStatus: PipelineStatus | null;
+  pipelinePhase: Phase;
+  pipelineError: RuntimeError | null;
   candidates: Record<string, Candidate[]>;
 
   // --- shared selection and navigation (survives every view switch) --------
@@ -759,6 +767,9 @@ const initial: WorkspaceState = {
   inspects: {},
   inspectPhase: "idle",
   inspectError: null,
+  pipelineStatus: null,
+  pipelinePhase: "idle",
+  pipelineError: null,
   candidates: {},
 
   selection: null,

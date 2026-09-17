@@ -150,6 +150,11 @@ DOMAIN_CODES = frozenset({
     # exit 3 means the domain said no about the document, and here the document
     # was never judged.
     "ambiguous_fill_keys",
+    # Read-only PIPELINE.md header. Missing fence vs unparsable body are
+    # distinct so a Desktop empty state (no workspace) is not the same refusal
+    # as a workspace whose header cannot be trusted.
+    "pipeline_header_missing",
+    "pipeline_header_unparsable",
 })
 
 ERROR_CODES = TRANSPORT_CODES | DOMAIN_CODES

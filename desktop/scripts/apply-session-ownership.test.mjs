@@ -14,7 +14,7 @@ function section(start, end) {
 const implementation = section('const APPLY_TAG = "apply";', "/** Cooperative cancel");
 const candidateLoader = section("async function loadCandidates(", "/**\n * Make a session active");
 const reversal = section("export async function verifyReversal(", "/** Show an older candidate");
-const selection = section("let eventSelectionGeneration", "export async function refreshSessions(");
+const selection = section("let eventSelectionGeneration", "/** Read-only PIPELINE.md header");
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -43,6 +43,7 @@ function fixture() {
       savePrefs: async () => {},
     },
     stopDocumentEvents: () => {}, loadInspect: async () => {}, loadText: async () => {},
+    loadPipelineStatus: async () => {},
     rememberRecent: () => {}, startEvents: async () => {},
     verifyReversal: async () => { calls.reversal++; },
     showToast: () => { calls.toast++; },

@@ -159,6 +159,7 @@ class RuntimeServer:
     def _host_only_methods(self) -> dict:
         methods = {
             "workspace/openPath": self._m_open_path,
+            "workspace/pipelineStatus": self._m_pipeline_status,
             "approval/resolve": self._m_approval_resolve,
             "plan/apply": self._m_plan_apply,
             "document/renderPrepare": self._m_document_render_prepare,
@@ -383,6 +384,12 @@ class RuntimeServer:
         return self.core.open_path(params["path"],
                                    form_profile=params.get("formProfile"),
                                    form=params.get("form"))
+
+    def _m_pipeline_status(self, params: dict, _id) -> dict:
+        params = _object(params, {"path"}, required=("path",),
+                         where="workspace/pipelineStatus.params",
+                         policy=self.unknown_field_policy)
+        return self.core.pipeline_status(params["path"])
 
     def _m_session_list(self, params: dict, _id) -> dict:
         _object(params, set(), where="session/list.params",

@@ -23,6 +23,40 @@ export interface Session {
   source: SourceRef;
 }
 
+/** Gate record copied from PIPELINE.md. `state` is the header's own spelling. */
+export interface PipelineGate {
+  name: string;
+  state: "auto_approved" | "approved" | "pending" | "rejected" | string | null;
+  by: string | null;
+  at: string | null;
+}
+
+export interface PipelineStage {
+  id: string;
+  label?: string;
+  status: string;
+  gate: PipelineGate | null;
+}
+
+export interface PipelineNextGate {
+  stageId: string;
+  status: string;
+  gate: PipelineGate | null;
+}
+
+/** `workspace/pipelineStatus`. Verdicts are copied, never recomputed. */
+export interface PipelineStatus {
+  found: boolean;
+  workspacePath: string | null;
+  slug: string | null;
+  mode: string | null;
+  subject: string | null;
+  updated: string | null;
+  canonicalOutput: string | null;
+  stages: PipelineStage[];
+  nextGate: PipelineNextGate | null;
+}
+
 export type CellClassification = "guide" | "static" | "fill_target" | "spacer";
 
 export interface CellAddr {

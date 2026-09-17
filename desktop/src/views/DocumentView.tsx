@@ -14,6 +14,7 @@ import { Icon } from "../components/Icon";
 import { EditorToolbar } from "../components/EditorToolbar";
 import { Findings } from "../components/Findings";
 import { PagePreview } from "../components/PagePreview";
+import { PipelinePanel, PipelineStrip } from "../components/PipelineStatus";
 import { ReceiptPanel } from "../components/ReceiptPanel";
 import { SessionList } from "../components/SessionList";
 import { StructureTree } from "../components/StructureTree";
@@ -130,6 +131,10 @@ export function DocumentView() {
                   <p className="empty">문서를 열면 구역, 표, 채움 자리가 여기에 펼쳐집니다.</p>
                 )}
               </div>
+              <details className="work-disclosure" data-testid="pipeline-disclosure">
+                <summary>파이프라인</summary>
+                <PipelinePanel />
+              </details>
               <details className="work-disclosure" data-testid="work-packs-disclosure">
                 <summary>문서 / 작업 팩</summary>
                 <SessionList
@@ -143,6 +148,7 @@ export function DocumentView() {
         </nav>
 
         <main className="panel center" aria-label="문서">
+          <PipelineStrip />
           <EditorToolbar inspect={inspect} />
           <CenterCaveat />
           {mode === "text" ? (

@@ -68,6 +68,7 @@ from rt_module import (  # noqa: E402
     module_list,
     run_module_checks,
 )
+from rt_pipeline import pipeline_status as read_pipeline_status  # noqa: E402
 from rt_render import render_capability, render_page  # noqa: E402
 from rt_session import (  # noqa: E402
     MAX_EVENTS_PER_POLL_DEFAULT,
@@ -122,6 +123,7 @@ PROTOCOL_ONLY_METHODS: tuple[str, ...] = (
 #: Host authority. The agent registry does not BUILD these (decision D8).
 HOST_ONLY_METHODS: tuple[str, ...] = (
     "workspace/openPath",
+    "workspace/pipelineStatus",
     "approval/resolve",
     "plan/apply",
     "document/renderPrepare",
@@ -247,6 +249,10 @@ class RuntimeCore:
                      sourceSha256=session.meta["sourceSha256"],
                      documentKind=session.meta["ingress"].get("documentKind"))
         return session.summary()
+
+    def pipeline_status(self, path) -> dict:
+        """Read-only PIPELINE.md header near ``path``. Host-only; no writes."""
+        return read_pipeline_status(path, engine_root=self.tools.root)
 
     def session_list(self) -> dict:
         return {"sessions": self.store.list()}

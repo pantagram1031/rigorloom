@@ -210,6 +210,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="blank form HWPX; the Runtime derives its profile (tag form) and "
              "binds that as the residue inventory")
 
+    p = sub.add_parser(
+        "pipeline-status",
+        help="read-only PIPELINE.md header near a document or directory")
+    p.add_argument(
+        "--path", required=True,
+        help="absolute path to a document or directory; walks up at most 4 "
+             "levels to find PIPELINE.md")
+
     p = sub.add_parser("inspect", help="summary, graph and editable regions")
     p.add_argument("--session", required=True)
     p.add_argument("--include", default=None,
@@ -366,6 +374,8 @@ def dispatch(core: RuntimeCore, args) -> tuple[dict, int]:
     if command == "open":
         return core.open_path(args.path, form_profile=args.form_profile,
                               form=args.form), EXIT_OK
+    if command == "pipeline-status":
+        return core.pipeline_status(args.path), EXIT_OK
     if command == "sessions":
         return core.session_list(), EXIT_OK
     if command == "inspect":

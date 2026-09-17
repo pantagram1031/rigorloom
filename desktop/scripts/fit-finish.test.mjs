@@ -104,6 +104,12 @@ function renderDocumentView(state) {
     if (id === "../components/Welcome") {
       return { Home: () => React.createElement("div", { "data-testid": "welcome" }) };
     }
+    if (id === "../components/PipelineStatus") {
+      return {
+        PipelineStrip: () => React.createElement("div", { "data-testid": "pipeline-strip" }),
+        PipelinePanel: () => React.createElement("div", { "data-testid": "pipeline-panel" }),
+      };
+    }
     throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.DocumentView));

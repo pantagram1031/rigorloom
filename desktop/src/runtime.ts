@@ -26,6 +26,7 @@ import type {
   ModuleCheckReport,
   ModuleList,
   OperationPlan,
+  PipelineStatus,
   PlanValidation,
   PrepareResult,
   ProviderProfile,
@@ -138,6 +139,10 @@ export const openPath = (path: string, binding?: FormBinding | null) =>
       ...(binding?.kind === "form" ? { form: binding.path } : {}),
     },
   );
+
+/** HOST ONLY. Read-only PIPELINE.md header near a document or directory. */
+export const pipelineStatus = (path: string) =>
+  call<PipelineStatus>("workspace/pipelineStatus", { path });
 
 /**
  * Default inspect include. `forbidden` is opt-in on the wire (not in the

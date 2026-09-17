@@ -15,6 +15,7 @@ import {
   stopDocumentEvents,
 } from "./documentEvents";
 import { agentPlanCellAddresses, projectAgentPlan } from "./agent/planProjection";
+import { PIPELINE_NOT_FOUND } from "./pipelineStatus";
 import {
   DEFAULT_PROVIDER,
   EMPTY_DRAFT,
@@ -429,6 +430,9 @@ export async function selectSession(sessionId: string) {
           eventPhase: "starting" as const,
           eventError: null,
           selectedRegionSource: null,
+          pipelineStatus: null,
+          pipelinePhase: "idle" as const,
+          pipelineError: null,
         }
       : {}),
   });
@@ -444,6 +448,43 @@ export async function selectSession(sessionId: string) {
   }
   rememberRecent(sessionId);
   await startEvents(sessionId);
+  await loadPipelineStatus(sessionId);
+}
+
+/** Read-only PIPELINE.md header for the session's original document path. */
+export async function loadPipelineStatus(sessionId: string): Promise<void> {
+  const path = getState().openedPaths[sessionId];
+  if (getState().activeSessionId !== sessionId) return;
+  if (!path) {
+    setState({
+      pipelineStatus: PIPELINE_NOT_FOUND,
+      pipelinePhase: "ready",
+      pipelineError: null,
+    });
+    return;
+  }
+  setState({ pipelinePhase: "starting", pipelineError: null });
+  try {
+    const result = await rt.pipelineStatus(path);
+    if (getState().activeSessionId !== sessionId) return;
+    setState({
+      pipelineStatus: result,
+      pipelinePhase: "ready",
+      pipelineError: null,
+    });
+  } catch (e) {
+    if (getState().activeSessionId !== sessionId) return;
+    setState({
+      pipelinePhase: "failed",
+      pipelineError: rt.asRuntimeError(e),
+    });
+  }
+}
+
+export async function refreshPipelineStatus(): Promise<void> {
+  const sessionId = getState().activeSessionId;
+  if (!sessionId) return;
+  await loadPipelineStatus(sessionId);
 }
 
 export async function refreshSessions(): Promise<void> {

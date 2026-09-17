@@ -19,6 +19,7 @@
  */
 import corpus from "./fixtures/corpus.json";
 
+import { AURALAB_PIPELINE_STATUS } from "./pipelineStatus";
 import type { Capabilities, InspectResult, RegionText, SourceRef } from "./types";
 
 interface Fixture {
@@ -156,6 +157,8 @@ function call(method: string, params: Record<string, unknown>): unknown {
       openedSession = true;
       boundForm = Boolean(params.formProfile || params.form);
       return { sessionId: SESSION, openedUtc: OPENED, source: fixture.source };
+    case "workspace/pipelineStatus":
+      return AURALAB_PIPELINE_STATUS;
     case "document/inspect":
       return inspectPayload();
     case "document/readRegion": {
