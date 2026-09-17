@@ -139,7 +139,8 @@ def test_the_mock_declares_a_complete_and_honest_profile():
     profile = MockProvider().capabilities()
     public = profile.public()
     assert set(public["capabilities"]) == set(ah_codes.CAPABILITY_NAMES)
-    assert profile.supports("streaming") is True
+    assert profile.supports("streaming") is False
+    assert profile.state("streaming") == "no"
     assert profile.state("resumableThread") == "no"
     assert public["authOwnership"] == "none"
     assert public["notes"]["network"] == "none"

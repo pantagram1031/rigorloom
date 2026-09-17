@@ -108,12 +108,34 @@ secret-shaped member (`apiKey`, `token`, `secret`, `authorization`, …) is
 refused at load, by member name, whatever the value looks like. The secret is
 read at call time, lives in one local variable, and never reaches an event, a
 log line, an error payload or a returned object; secret-shaped headers are
-redacted before anything is recorded. OS credential-store lookup is **not
-implemented** in this slice and says so (`credential_source_unsupported`).
+redacted before anything is recorded. `source: os_store` on the Python host
+is a `provider_config` refusal: the desktop supplies that secret (OS
+credential manager → env var on the child). Python does not access the
+keychain. Use `source: env`, or `source: none` for a keyless endpoint.
 
 Tested only against a local fake server the test starts and stops
 (`tests/_agenthost_support.py`). **No live-provider test exists and none is
 claimed.**
+
+### Keyless router bridge
+
+G6a (CLI), G6b (Desktop Composer), and G6c (bound form profile) ran the
+router provider against a local OpenAI-compatible bridge with
+`credential.source: none` — no key in config, no OS store, no env secret.
+The bridge reuses an already-logged-in local coding agent; the router
+adapter only needs `baseUrl` and `model`.
+
+Limits of that bridge, recorded so they are not rediscovered as adapter
+bugs: it passes prompts on the Windows command line (a long prompt is
+truncated), returns HTTP 500 on an OpenAI `tools` array, and hangs on
+`tool_choice`. The adapter's prompt-mode (`toolsInBody: false`) recovers
+JSON-as-text tool calls and omits the `tools` array. Cursor-named models
+skip the hanging tools probe.
+
+To point Desktop Settings at it: 제공자 **router**, 주소
+`http://127.0.0.1:<port>/v1`, 모델 the bridge lists, leave the credential
+name empty. The CLI equivalent is `--provider router --config` with
+`{"baseUrl":"http://127.0.0.1:<port>/v1","model":"…","credential":{"source":"none"},"toolsInBody":false}`.
 
 **`anthropic`** — the official Messages API, over the same contract.
 
@@ -129,7 +151,9 @@ recommended model (`claude-opus-5`) and a reference to `ANTHROPIC_API_KEY`, so
 rather than refusing to describe itself. Override any of it the same way the
 router does; a secret-shaped config member is refused by name, as there.
 
-Declared capabilities: `streaming` **yes** (SSE), `structuredToolUse` **yes**,
+Declared capabilities: `streaming` **no** (`AgentHost.run` calls
+`complete()` and does not deliver live tokens; the adapter still implements
+SSE for a config override that exercises `stream()` directly), `structuredToolUse` **yes**,
 `text` **yes**, `modelDiscovery` **yes** (`GET /v1/models`), `resumableThread`
 **no** (the Messages API is stateless — the host resends the whole history each
 turn, as with the router), `structuredOutput` **unknown** (the API offers
@@ -199,8 +223,10 @@ internal. Same table as the Runtime CLI.
 
 ## Known gaps
 
-- The official first-party provider path is a later slice: it needs credential
-  UI, which does not exist yet.
-- OS credential-store resolution is declared and refused, not implemented.
+- Desktop Settings stores secrets in the OS credential manager and injects
+  them as an env reference on the Agent Host child. The Python host still
+  refuses `source: os_store` (`provider_config`) and does not talk to the
+  keychain.
+- `AgentHost.run` calls `complete()`, never `stream()`. Providers that cannot
+  deliver live tokens through the host advertise `streaming: no`.
 - `resumableThread` is `no` everywhere; the host resends history each turn.
-- No retry, no backoff, no fallback provider. A fault ends the run.

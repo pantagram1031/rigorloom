@@ -67,7 +67,8 @@ def request_of(**kwargs):
 
 def test_the_profile_declares_what_the_brief_asked_for(env):
     profile = AnthropicAdapter({}, environ=env).capabilities()
-    assert profile.supports("streaming") is True
+    assert profile.supports("streaming") is False
+    assert profile.state("streaming") == "no"
     assert profile.supports("structuredToolUse") is True
     assert profile.state("resumableThread") == "no"
     # vision is declared but UNWIRED: not-yet, not no
@@ -293,7 +294,8 @@ def test_streaming_yields_text_then_the_tool_call(env):
                          stop_reason="tool_use")
     with FakeRouter(lambda path, b: {"text": body,
                                      "contentType": "text/event-stream"}) as srv:
-        chunks = list(adapter(srv, env).stream(request_of()))
+        chunks = list(adapter(srv, env, capabilities={"streaming": "yes"}
+                              ).stream(request_of()))
     text = "".join(c["text"] for c in chunks if c["type"] == "text")
     assert text == "Looking."
     call = next(c for c in chunks if c["type"] == "tool_call")["toolCall"]
@@ -306,7 +308,8 @@ def test_streaming_yields_text_then_the_tool_call(env):
 def test_a_streaming_request_sets_the_stream_flag(env):
     with FakeRouter(lambda path, b: {"text": anthropic_sse(["x"]),
                                      "contentType": "text/event-stream"}) as srv:
-        list(adapter(srv, env).stream(request_of()))
+        list(adapter(srv, env, capabilities={"streaming": "yes"}
+                     ).stream(request_of()))
         assert srv.requests[-1]["body"]["stream"] is True
 
 
@@ -323,7 +326,8 @@ def test_a_malformed_stream_frame_is_a_provider_failure(env):
     with FakeRouter(lambda path, b: {"text": body,
                                      "contentType": "text/event-stream"}) as srv:
         with pytest.raises(ah_codes.ProviderError) as excinfo:
-            list(adapter(srv, env).stream(request_of()))
+            list(adapter(srv, env, capabilities={"streaming": "yes"}
+                         ).stream(request_of()))
     assert excinfo.value.code == "provider_malformed_response"
 
 
@@ -646,7 +650,7 @@ def test_capabilities_work_keyless_and_say_so():
     provider = payload["provider"]
     assert provider["providerId"] == "anthropic"
     assert provider["notes"]["credential"]["state"] == "missing"
-    assert provider["capabilities"]["streaming"]["state"] == "yes"
+    assert provider["capabilities"]["streaming"]["state"] == "no"
     assert provider["capabilities"]["vision"]["state"] == "unknown"
 
 

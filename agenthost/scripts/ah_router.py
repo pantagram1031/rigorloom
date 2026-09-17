@@ -108,6 +108,17 @@ class CredentialRef:
                                  "a credential reference needs the name of the "
                                  "variable or store key to read",
                                  source=self.source)
+        if self.source == "os_store":
+            # Desktop reads the OS credential manager and injects an env var
+            # on the child. Python never talks to the keychain.
+            raise AgentHostError(
+                "provider_config",
+                "credential source os_store is supplied by the desktop: it "
+                "reads the OS credential manager and injects an environment "
+                "reference on the Agent Host child. The Python host does not "
+                "access the OS keychain. Use source env, or none for a "
+                "keyless endpoint",
+                source=self.source, key=self.key)
         self.scheme = spec.get("scheme", "bearer")
         self.header = spec.get("header", "Authorization")
 
@@ -129,10 +140,13 @@ class CredentialRef:
                     "will not proceed without the credential it was told to use",
                     credentialRef=self.key, source="env")
             return value
-        raise ProviderError(
-            "credential_source_unsupported",
-            "OS credential-store lookup is not implemented in this slice; use "
-            "an environment reference or a provider-managed endpoint",
+        raise AgentHostError(
+            "provider_config",
+            "credential source os_store is supplied by the desktop: it "
+            "reads the OS credential manager and injects an environment "
+            "reference on the Agent Host child. The Python host does not "
+            "access the OS keychain. Use source env, or none for a "
+            "keyless endpoint",
             credentialRef=self.key, source=self.source)
 
     def public(self) -> dict:
@@ -213,7 +227,7 @@ class RouterAdapter(ProviderAdapter):
             present = bool((self._environ.get(self.credential.key) or "").strip())
             return {"state": "configured" if present else "missing", **reference}
         return {"state": "unsupported",
-                "reason": "OS credential-store lookup is not implemented",
+                "reason": "os_store is supplied by the desktop, not Python",
                 **reference}
 
     def capabilities(self) -> CapabilityProfile:

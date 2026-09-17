@@ -71,6 +71,18 @@ def test_every_exposed_method_has_a_schema_and_no_schema_is_orphaned():
         assert spec["inputSchema"]["type"] == "object", method
 
 
+def test_inspect_include_enum_matches_what_the_method_accepts():
+    """G6c called include=['forbidden']; the advertised enum must name it."""
+    advertised = (mcp_server.TOOL_SCHEMAS["document/inspect"]
+                  ["inputSchema"]["properties"]["include"]["items"]["enum"])
+    assert advertised == list(rt_core.INCLUDE_SECTIONS)
+    assert "forbidden" in advertised
+    handed = next(tool for tool in mcp_server.tool_definitions()
+                  if tool["name"] == "document_inspect")
+    assert (handed["inputSchema"]["properties"]["include"]["items"]["enum"]
+            == advertised)
+
+
 def test_list_tools_names_what_is_not_exposed(tmp_path):
     completed = subprocess.run(
         [sys.executable, str(mcp_server.__file__), "--root", str(tmp_path),

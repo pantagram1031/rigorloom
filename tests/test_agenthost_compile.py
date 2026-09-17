@@ -43,6 +43,14 @@ def test_the_tool_definitions_handed_to_a_provider_match_the_allowed_set():
     assert names == set(ah_compile.ALLOWED_TOOLS)
 
 
+def test_inspect_include_enum_handed_to_a_provider_matches_the_method():
+    inspect = next(tool for tool in ah_compile.tool_definitions()
+                   if tool["name"] == "document_inspect")
+    advertised = inspect["inputSchema"]["properties"]["include"]["items"]["enum"]
+    assert advertised == list(rt_core.INCLUDE_SECTIONS)
+    assert "forbidden" in advertised
+
+
 # --- what it lets through ---------------------------------------------------
 
 @pytest.mark.parametrize("tool,method", sorted(ah_compile.ALLOWED_TOOLS.items()))

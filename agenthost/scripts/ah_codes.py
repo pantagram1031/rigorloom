@@ -81,6 +81,7 @@ PROVIDER_CODES = frozenset({
 #: The host itself refused: a bad config, a forbidden tool, a runaway loop.
 HOST_CODES = frozenset({
     "config_invalid",
+    "provider_config",
     "unknown_provider",
     "tool_unknown",
     "tool_forbidden",

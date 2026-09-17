@@ -97,7 +97,10 @@ class MockProvider(ProviderAdapter):
                 "text": cap("yes"),
                 "structuredToolUse": cap("yes"),
                 "structuredOutput": cap("yes"),
-                "streaming": cap("yes", "chunks a fixed string; no network"),
+                "streaming": cap(
+                    "no",
+                    "AgentHost.run calls complete(); live tokens are not "
+                    "delivered through the host"),
                 "resumableThread": cap(
                     "no", "each run is independent; nothing is persisted"),
                 "vision": cap("no", "scripted text only; it looks at no images"),

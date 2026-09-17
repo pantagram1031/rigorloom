@@ -570,7 +570,7 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 | `workspace/list` | — | — | **WITHDRAWN**, not deferred. A Runtime workspace is not an object: `--root` is the store and a connection has exactly one. `session/list` is the enumeration. See §11 |
 | `workspace/openPath` | host | `pipeline/scripts/hwp_ingress.py:1` (bounded ingress) | GAP: no "open arbitrary path into a workspace" entrypoint. Build note: ingress-validate, then copy into the workspace; never operate in place. |
 | `workspace/importAttachment` | host | `pipeline/scripts/hwp_ingress.py:40-46`; `pipeline/scripts/privacy_scan.py:1` | GAP: no import command. Build note: bounds + privacy scan before the bytes land. |
-| `document/inspect` | agent | `engine/scripts/form_inspect.py:1167`; COM variant `engine/scripts/com_backend.py:1715` | none. **Not three methods.** One call returns `summary`, `graph` and `regions` together, selectable with `include`; the next three rows describe what it RETURNS, not methods you can call |
+| `document/inspect` | agent | `engine/scripts/form_inspect.py:1167`; COM variant `engine/scripts/com_backend.py:1715` | none. **Not three methods.** One call returns `summary`, `graph`, `regions`, and opt-in `forbidden`, selectable with `include`; the next three rows describe what it RETURNS, not methods you can call |
 | `document/inspect` → `graph` | agent | `engine/scripts/form_inspect.py:802` (`_table_map`), `:1051` (`_resolve_at_para`) | none. A RESULT SECTION, not a method — there is no `document/graph` on the wire |
 | `document/inspect` → `regions` | agent | `engine/scripts/form_inspect.py:620` (`_fill_preflight`), `:913` (`_run_record`) | none. A RESULT SECTION, not a method |
 | `document/readRegion` | agent | `engine/scripts/form_inspect.py:943` (`--full-text`) | implemented, bounded, refuses rather than truncates |
@@ -704,6 +704,7 @@ only.
 | `capabilities/list` | implemented (no render probe) | `_m_capabilities` |
 | `session/list` | implemented | `_m_session_list` |
 | `workspace/openPath` (host) | implemented — size + zip sanity; no HWP5 CFB walk | `runtime/scripts/rt_session.py` `validate_source` |
+| `workspace/pipelineStatus` (host) | implemented — read-only PIPELINE.md header; never writes | `runtime/scripts/rt_pipeline.py` §11.6 |
 | `document/inspect` | implemented — summary + graph + regions | `_m_document_inspect` |
 | `document/readRegion` | implemented, bounded, refuses rather than truncates | `_m_document_read_region` |
 | `plan/propose` | implemented | `runtime/scripts/rt_plan.py` `build_plan`. `xml` when `xml_backend.py` resolves; `com` only when `backends.com` is available; first-wave kinds only. |
@@ -1097,6 +1098,10 @@ table rather than left as a GAP implying someone should build it. If a Desktop
 Workspace turns out to be a grouping of sessions, that grouping is shell state
 and should live in the shell.
 
+A report pipeline workspace — `PIPELINE.md` next to a document — is a
+different object. The Runtime still does not manage it. `workspace/pipelineStatus`
+(§11.6) is a read-only header view of one that already exists.
+
 ### 11.5 Still GAP after Phase 3
 
 `verify/*` as protocol methods (the domain has `RuntimeCore.candidate_verify`
@@ -1105,6 +1110,36 @@ and the CLI exposes it; the wire does not), `artifact/exportTo`,
 `workspace/delete`, section and heading structure (desktop gap 6), descendant
 containment for child processes, and last-writer-wins on plan and approval
 records under one root — the event log is now locked, those records are not.
+
+### 11.6 `workspace/pipelineStatus` — read-only PIPELINE.md header
+
+HOST ONLY. A document that sits inside a report workspace (`PIPELINE.md` with a
+`# pipeline-state: v0.4` YAML fence) can be asked for the stage machine the
+report kernel already recorded. The Runtime does not own that machine: it
+walks up from the given path (the starting directory plus at most four
+ancestors), imports `modules/report/scripts/pipeline_ctl.py`'s parser, and
+returns the header fields and gate records **verbatim**. It never writes, never
+calls `pipeline_ctl` `advance` / `gate` / `check`, and never recomputes a
+verdict.
+
+```
+--> workspace/pipelineStatus {path}                         HOST ONLY
+<-- {found, workspacePath, slug, mode, subject, updated,
+     canonicalOutput, stages:[{id, label?, status, gate}], nextGate}
+```
+
+`path` is an absolute document or directory, the same "no ambient cwd" rule as
+`workspace/openPath`. CLI spelling: `pipeline-status --path <document or dir>`.
+
+| Result | When |
+| --- | --- |
+| `found: false` and null identity fields | no `PIPELINE.md` within the walk bound — an answer, not a refusal |
+| `pipeline_header_missing` | `PIPELINE.md` exists but has no v0.4 fence |
+| `pipeline_header_unparsable` | the fence is present but the header cannot be read as the kernel's map |
+| `found: true` | header parsed; `stages[].status` / `gate.{name,state,by,at}` copied from the parser; `label` is the stages.yaml `name` when that graph loads, else omitted; `nextGate` is the first stage whose **header** status is not `done`, or `null` |
+
+Agent connections do not build the method (decision D8). Walking an arbitrary
+filesystem path is the same authority class as `workspace/openPath`.
 
 ---
 

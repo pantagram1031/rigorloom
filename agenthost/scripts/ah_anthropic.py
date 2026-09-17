@@ -229,7 +229,7 @@ class AnthropicAdapter(ProviderAdapter):
             present = bool((self._environ.get(self.credential.key) or "").strip())
             return {"state": "configured" if present else "missing", **reference}
         return {"state": "unsupported",
-                "reason": "OS credential-store lookup is not implemented",
+                "reason": "os_store is supplied by the desktop, not Python",
                 **reference}
 
     def capabilities(self) -> CapabilityProfile:
@@ -248,7 +248,10 @@ class AnthropicAdapter(ProviderAdapter):
                     "unknown",
                     "the API offers output_config.format; this adapter does not "
                     "send it, so nothing is promised"),
-                "streaming": cap("yes", "SSE over POST /v1/messages stream:true"),
+                "streaming": cap(
+                    "no",
+                    "AgentHost.run calls complete() and does not deliver live "
+                    "tokens; adapter SSE is not reachable through the host"),
                 "resumableThread": cap(
                     "no", "the Messages API is stateless; the host resends the "
                           "whole history each turn, as with the router"),

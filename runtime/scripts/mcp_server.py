@@ -41,7 +41,13 @@ from rt_codes import (  # noqa: E402
     SUPPORTED_BACKENDS,
     RpcError,
 )
-from rt_core import AGENT_METHODS, HOST_ONLY_METHODS, METHODS, RuntimeCore  # noqa: E402
+from rt_core import (  # noqa: E402
+    AGENT_METHODS,
+    HOST_ONLY_METHODS,
+    INCLUDE_SECTIONS,
+    METHODS,
+    RuntimeCore,
+)
 from rt_jsonl import (  # noqa: E402
     READ_EOF,
     READ_LINE,
@@ -96,7 +102,9 @@ TOOL_SCHEMAS: dict[str, dict] = {
     "document/inspect": {
         "description": "Structure of the document in a session: summary, "
                        "paragraph/table graph, and the editable regions with "
-                       "their charPr preflight. Carries no body text.",
+                       "their charPr preflight. Opt-in include=forbidden "
+                       "returns the residue inventory (anchors, placeholders, "
+                       "removal targets). Carries no body text.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -104,8 +112,9 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "include": {
                     "type": "array",
                     "items": {"type": "string",
-                              "enum": ["summary", "graph", "regions"]},
-                    "description": "subset to return; default all three",
+                              "enum": list(INCLUDE_SECTIONS)},
+                    "description": "subset to return; default summary, graph, "
+                                   "regions. forbidden is opt-in",
                 },
             },
             "required": ["sessionId"],

@@ -96,14 +96,14 @@ def test_the_provider_uses_the_runtime_fixtures_own_seat_rule():
     assert response.tool_calls[0].arguments["ops"][0]["row"] == 9
 
 
-def test_the_stream_is_the_same_answer_in_pieces():
+def test_the_mock_does_not_promise_streaming_through_the_host():
+    from ah_codes import ProviderError
+
     provider = ah_mock.MockProvider()
-    request = ProviderRequest("x", {"sessionId": "s"}, [])
-    chunks = list(provider.stream(request))
-    assert chunks[-1]["type"] == "done"
-    text = "".join(chunk["text"] for chunk in chunks if chunk["type"] == "text")
-    assert text.strip() == provider.complete(request).text
-    assert [c for c in chunks if c["type"] == "tool_call"]
+    assert provider.capabilities().supports("streaming") is False
+    with pytest.raises(ProviderError) as excinfo:
+        list(provider.stream(ProviderRequest("x", {"sessionId": "s"}, [])))
+    assert excinfo.value.code == "provider_capability_unavailable"
 
 
 def test_an_unknown_scenario_is_refused():
@@ -220,6 +220,7 @@ def test_capabilities_needs_no_document_and_no_root():
     assert done.returncode == 0
     payload = json.loads(done.stdout.decode("utf-8"))
     assert payload["provider"]["providerId"] == "mock"
+    assert payload["provider"]["capabilities"]["streaming"]["state"] == "no"
 
 
 def test_running_without_a_root_is_a_usage_error():

@@ -135,14 +135,15 @@ def test_source_none_is_the_same_as_omitting_the_block():
         assert srv.last_authorization() is None
 
 
-def test_the_os_store_source_says_it_is_not_implemented():
+def test_os_store_outside_the_desktop_is_a_provider_config_refusal():
     config = router_config("http://127.0.0.1:1/v1",
                            credential={"source": "os_store", "key": "some-key"})
-    client = RouterAdapter(config, environ={})
-    assert client.capabilities().public()["authOwnership"] == "os_store_reference"
-    with pytest.raises(ah_codes.ProviderError) as excinfo:
-        client.complete(request_of())
-    assert excinfo.value.code == "credential_source_unsupported"
+    with pytest.raises(ah_codes.AgentHostError) as excinfo:
+        RouterAdapter(config, environ={})
+    assert excinfo.value.code == "provider_config"
+    message = excinfo.value.message.lower()
+    assert "desktop" in message
+    assert "keychain" in message
 
 
 # --- capabilities are declared, never assumed -------------------------------

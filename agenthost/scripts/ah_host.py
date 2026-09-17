@@ -116,6 +116,9 @@ class AgentHost:
             self.events.append("provider.request", turn=turns,
                                historyLength=len(history))
             try:
+                # G6d: batched turns. Adapters may implement stream(); this
+                # loop never calls it, so a provider that cannot deliver live
+                # tokens through the host must not advertise streaming: yes.
                 response = self.provider.complete(request)
             except ProviderError as exc:
                 # The model side broke. Nothing about the document changed, and
