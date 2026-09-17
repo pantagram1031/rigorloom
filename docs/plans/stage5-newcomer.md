@@ -1,6 +1,6 @@
 # Stage 5 — Newcomer path (Linux/macOS, no Hancom)
 
-Status: ACTIVE 2026-09-17. Owner: Fable. Goal: a stranger on Linux without Hancom succeeds in five minutes:
+Status: DONE 2026-09-17 23:59 (N5a–N5c). Owner: Fable. Goal: a stranger on Linux without Hancom succeeds in five minutes:
 wheel build → `pip install` in a clean venv → `rigorloom open --path any.hwpx` on every corpus form → propose /
 approve / apply on the xml backend → readable receipt. QUICKSTART.md (English + Korean) is written from what
 actually ran, not from intent. Installer and xml gaps are fixed at the cause. Home's CLI 문서 link points at a real
@@ -23,10 +23,12 @@ Environment for verification: WSL Ubuntu (`~/rigorloom-ci`, Python 3.12; no `ens
       virtualenv (ensurepip absent, exactly as the page says), install ok, capabilities xml/preedit available, 기안문
       open → inspect (26 anchors, 1 placeholder) → propose → approve → apply (acceptance false, honest) → receipt
       backend xml / structural_only / wellFormed true / residue self_derived. N5b done.
-- [ ] N5c macOS notes (untestable here: say so) and a `rigorloom doctor` line that tells a newcomer what is missing.
+- [x] N5c (composer-2.5-fast, 1.7 min): `doctor` now returns `result.nextStep` (install payload / use --backend xml off
+      Windows / ready: open …), 4 tests; QUICKSTART macOS note says plainly it is untested here.
 
 ## Ledger
 | When | What | Result |
 |---|---|---|
 | 2026-09-17 22:05 | N5a Linux path 10/10 forms applied; QUICKSTART.md | Cursor lane (grok-high, 20 min) could not run `wsl` from its shell and looped on file reads; Fable ran the loop as a script. Rough edges → T19: installer message should say to leave the checkout; Home CLI 문서 link target |
 | 2026-09-17 22:40 | N5b replay in a second fresh venv | all QUICKSTART commands ran as written; receipt excerpt corrected to `result.receipt` |
+| 2026-09-17 23:59 | N5c doctor nextStep + macOS note | Stage 5 closed |

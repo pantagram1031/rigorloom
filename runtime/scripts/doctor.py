@@ -454,6 +454,34 @@ def _engine_check(engine_root_value: str | None, child_python: Path | None) -> d
     return _check("engine", required=True, state="pass", facts=facts)
 
 
+_INSTALL_NEXT_STEP = (
+    "install the engine payload: rigorloom install --engine-root <dir> --bundles-dir <dir>"
+)
+_HANCOM_NEXT_STEP = "Hancom is not available on this OS; use --backend xml"
+_READY_NEXT_STEP = (
+    "ready: open a document with rigorloom --root <dir> --engine-root <dir> open --path <file>"
+)
+
+
+def _compute_next_step(
+    checks: list[dict[str, Any]],
+    engine_root: str | None,
+) -> str:
+    engine = next(row for row in checks if row["id"] == "engine")
+    if not engine_root or engine["state"] in {"fail", "unavailable"}:
+        return _INSTALL_NEXT_STEP
+    required_passed = all(
+        row["state"] == "pass" for row in checks if row["required"]
+    )
+    if not required_passed:
+        return _INSTALL_NEXT_STEP
+    if sys.platform != "win32":
+        render = (engine.get("facts") or {}).get("render") or {}
+        if not render.get("hancom_com"):
+            return _HANCOM_NEXT_STEP
+    return _READY_NEXT_STEP
+
+
 def run_doctor(
     engine_root: str | None = None,
     *,
@@ -473,6 +501,7 @@ def run_doctor(
     result = {
         "schema": DOCTOR_SCHEMA,
         "requiredPassed": required_passed,
+        "nextStep": _compute_next_step(checks, engine_root),
         "checks": checks,
     }
     return result, EXIT_OK if required_passed else EXIT_REFUSED

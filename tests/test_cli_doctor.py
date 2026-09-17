@@ -342,3 +342,56 @@ def test_doctor_spawns_only_python_facts_and_installed_probe(tmp_path):
         "render_probe", "win32com",
     ):
         assert forbidden not in flattened
+
+
+def test_next_step_suggests_install_when_no_engine_root():
+    _result, _code = doctor.run_doctor(None, environ={})
+
+    assert _result["nextStep"] == (
+        "install the engine payload: rigorloom install --engine-root <dir> --bundles-dir <dir>"
+    )
+
+
+def test_next_step_suggests_install_when_engine_lacks_core_payload(tmp_path):
+    engine_root = _engine_fixture(tmp_path)
+    (engine_root / "pyproject.toml").unlink()
+
+    _result, _code = doctor.run_doctor(str(engine_root), environ={})
+
+    assert _result["nextStep"] == (
+        "install the engine payload: rigorloom install --engine-root <dir> --bundles-dir <dir>"
+    )
+
+
+def test_next_step_suggests_xml_backend_when_com_unavailable_off_windows(tmp_path):
+    engine_root = _engine_fixture(tmp_path)
+
+    with patch("doctor.sys.platform", "darwin"):
+        _result, code = doctor.run_doctor(str(engine_root), environ={})
+
+    assert code == 0
+    assert _result["nextStep"] == "Hancom is not available on this OS; use --backend xml"
+
+
+def test_next_step_ready_when_all_required_checks_pass(tmp_path):
+    engine_root = _engine_fixture(
+        tmp_path,
+        probe_source=(
+            "import json\n"
+            "print(json.dumps({"
+            "'schema': 'rigorloom-capability-probe/v1',"
+            "'render': {'hancom_com': True, 'soffice': False, 'renderers': [], 'pdf_capable': False},"
+            "'modules': {'enabled': ['style']},"
+            "'backends': 'unconfigured'"
+            "}, separators=(',', ':')))\n"
+        ).encode("utf-8"),
+    )
+
+    with patch("doctor.sys.platform", "win32"):
+        _result, code = doctor.run_doctor(str(engine_root), environ={})
+
+    assert code == 0
+    assert _result["requiredPassed"] is True
+    assert _result["nextStep"] == (
+        "ready: open a document with rigorloom --root <dir> --engine-root <dir> open --path <file>"
+    )

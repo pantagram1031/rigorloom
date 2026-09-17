@@ -39,6 +39,12 @@ preedit  available    (4 op kinds)
 xml      available    (9 op kinds)
 ```
 
+**macOS:** use the same commands with `python3 -m venv` (ensurepip is present on typical
+installs). This project has not been tested on macOS today; expect the same backend picture
+as Linux—Hancom is absent, so `com` is unavailable and `xml` is the backend. When something
+fails, run `rigorloom doctor --engine-root ~/rigorloom-install` first; its `result.nextStep`
+line tells you the next command (install payload, use `--backend xml`, or open a document).
+
 ## 3. Open a form, propose, approve, apply, read the receipt
 
 Use any HWPX. The corpus forms under `tests/corpus/forms/converted/` all work; the example below uses the
