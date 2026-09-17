@@ -55,6 +55,32 @@ the kernel's contract shape.
   113 → 193; built-app smoke passes 549 checks on the release build;
   reference captures under `docs/demo/desktop/`.
 
+- **Newcomer path (Stage 5, 2026-09-17):** `docs/QUICKSTART.md` (EN + KO) written from a
+  recorded Linux run: wheel + three bundles, clean venv, `rigorloom install`,
+  all ten corpus forms opened / proposed / approved / applied on the `xml`
+  backend, replayed in a second fresh environment. The installer's containment
+  refusal now says to run from outside the checkout; `rigorloom doctor`
+  returns `result.nextStep`; Home and README link the quickstart.
+
+- **Live agent loop (Stage 6, 2026-09-17/18):** the Agent Host `router`
+  provider works keyless against a local OpenAI-compatible bridge, enters
+  prompt-mode when a bridge cannot take a `tools` array (recorded as a host
+  note), recovers JSON-as-text tool calls, and surfaces usage. Three recorded
+  sessions with a real model: CLI on the 소논문 form, the built desktop
+  (Settings → Composer → 검토 hunks → 승인 → 적용 → 영수증, opt-in smoke phase
+  `agent-live`), and the finished AURALAB report with a bound form and keep
+  declaration reaching `acceptance: true`. `document/inspect` advertises
+  `forbidden`; providers stop claiming streaming the host does not use;
+  `os_store` is explicitly desktop-supplied.
+
+- **Pipeline in the GUI (Stage 7, 2026-09-18):** read-only
+  `workspace/pipelineStatus` (CLI `pipeline-status`) parses a workspace's
+  PIPELINE.md through the pipeline's own parser and the desktop shows a status
+  strip and per-stage gate states; `candidate/verify` takes a target and
+  reports `checkedUtc`, and the desktop runs the offline checkers from the
+  toolbar with designed pass / warn / fail / unavailable rows and a fixed
+  no-render-proof footer.
+
 - **Fork parity for the Hawkes report (Stage 1c, 2026-09-17):** page margins
   (`margin_top/bottom/left/right/gutter`, nested `margins:`) reach `page_binding`
   and both backends; the LaTeX converter maps `\mid` and apostrophe primes
