@@ -762,6 +762,10 @@ def test_real_install_forwards_confirmed_checkout_roots_and_rolls_back(tmp_path,
     assert code == 3
     assert out["error"]["code"] == "containment_breach"
     assert "Checkout leak in sys.path" in out["error"]["message"]
+    assert (
+        "run this command from a directory outside the rigorloom checkout "
+        "(for example your home directory)"
+    ) in out["error"]["message"]
     assert str(REPO_ROOT.resolve()) in out["error"]["message"]
     assert not engine_root.exists()
 

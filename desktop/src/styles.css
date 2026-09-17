@@ -1090,6 +1090,12 @@ button.docchip[aria-current="page"] {
   color: var(--fg-faint);
 }
 
+.home-cli-docs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
 .home-link {
   color: inherit;
   text-decoration: none;

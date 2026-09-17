@@ -37,6 +37,8 @@ import {
 import { DocumentView } from "./views/DocumentView";
 import { runSmoke, smokeIntent } from "./smoke";
 
+export { CLI_DOCS_PATH, CLI_DOCS_URL } from "./components/Welcome";
+
 /** Fallback for the window between React mounting and the entrance ending. */
 function Boot({ note }: { note: string }) {
   return (

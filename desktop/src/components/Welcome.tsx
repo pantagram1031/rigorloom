@@ -4,10 +4,27 @@
  * link row. The three columns stay unmounted until a session is shown.
  */
 import { bindFormAndOpen, openPath, openViaDialog } from "../actions";
-import { setState, useWorkspace } from "../store";
+import { setState, showToast, useWorkspace } from "../store";
 import type { Recent } from "../types";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
+
+/** Repo-relative CLI walkthrough. No opener/shell plugin is wired. */
+export const CLI_DOCS_PATH = "docs/QUICKSTART.md";
+export const CLI_DOCS_URL =
+  "https://github.com/pantagram1031/rigorloom/blob/main/docs/QUICKSTART.md";
+
+function copyCliDocsPath() {
+  const clip = navigator.clipboard;
+  if (!clip) {
+    showToast("복사하지 못했습니다", 1400);
+    return;
+  }
+  void clip.writeText(CLI_DOCS_PATH).then(
+    () => showToast("경로를 복사했습니다", 1400),
+    () => showToast("복사하지 못했습니다", 1400),
+  );
+}
 
 export function relativeOpened(iso: string, now = Date.now()): string {
   const then = Date.parse(iso);
@@ -161,15 +178,21 @@ export function Home() {
         )}
 
         <div className="home-links">
-          <a
-            className="home-link"
-            data-testid="home-cli-docs"
-            href="docs/runtime-protocol-v0.md"
-            title="docs/runtime-protocol-v0.md"
-            onClick={(e) => e.preventDefault()}
-          >
-            CLI 문서
-          </a>
+          <span className="home-cli-docs" data-testid="home-cli-docs">
+            <span className="home-link">CLI 문서</span>
+            <code className="mono" title={CLI_DOCS_URL}>
+              {CLI_DOCS_PATH}
+            </code>
+            <button
+              type="button"
+              className="home-link"
+              data-testid="home-cli-docs-copy"
+              title={`${CLI_DOCS_PATH} 복사`}
+              onClick={() => copyCliDocsPath()}
+            >
+              복사
+            </button>
+          </span>
           <span className="home-link-sep" aria-hidden="true">
             /
           </span>

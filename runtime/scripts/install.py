@@ -447,8 +447,14 @@ def _probe_origin_split(
         )
     proc = subprocess.run([exe, "-c", code], env=env, capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
-        raise InstallError(EXIT_REFUSED, "containment_breach",
-                           f"origin probe failed (exit {proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}")
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        message = f"origin probe failed (exit {proc.returncode}): {detail}"
+        if "Checkout leak in sys.path" in detail:
+            message += (
+                ". run this command from a directory outside the rigorloom "
+                "checkout (for example your home directory)"
+            )
+        raise InstallError(EXIT_REFUSED, "containment_breach", message)
     try:
         return json.loads(proc.stdout)
     except Exception:

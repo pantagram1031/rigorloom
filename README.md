@@ -95,6 +95,8 @@ clone-to-graded-artifact walkthrough.
 
 ### Installing the `rigorloom` command (optional)
 
+Newcomer walkthrough: [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
 The clone above is the whole pipeline and needs no install. If you want the
 Runtime CLI as an installed command instead, build and install the wheel from
 a checkout:

@@ -53,6 +53,7 @@ function renderHome(state) {
         return {
           useWorkspace: (selector) => selector(state),
           setState: () => {},
+          showToast: () => {},
         };
       }
       if (id === "../types") return {};
@@ -248,6 +249,21 @@ test("VerificationBar on Home shows only the engine connection", () => {
   assert.doesNotMatch(html, /verify-details-toggle/);
   assert.doesNotMatch(html, /verify-pill/);
   assert.doesNotMatch(html, /원본/);
+});
+
+test("Home CLI 문서 points at docs/QUICKSTART.md with a copy control", () => {
+  const html = renderHome({ recents: [], dragOver: false, inspectError: null });
+  assert.match(html, /data-testid="home-cli-docs"/);
+  assert.match(html, /docs\/QUICKSTART\.md/);
+  assert.match(html, /data-testid="home-cli-docs-copy"/);
+  assert.match(
+    html,
+    /https:\/\/github.com\/pantagram1031\/rigorloom\/blob\/main\/docs\/QUICKSTART\.md/,
+  );
+  assert.doesNotMatch(html, /runtime-protocol-v0/);
+  assert.match(welcomeSource, /export const CLI_DOCS_PATH = "docs\/QUICKSTART\.md"/);
+  assert.match(appSource, /CLI_DOCS_PATH/);
+  assert.match(appSource, /CLI_DOCS_URL/);
 });
 
 test("splash is ≤ 400 ms unless smoke holds it, and recents fallback exists", () => {
