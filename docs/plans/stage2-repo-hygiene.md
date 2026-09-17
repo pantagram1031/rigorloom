@@ -34,3 +34,6 @@ Outward actions (push, closing PRs, editing GitHub state) wait for the user's ex
 | 2026-09-16 | H3 README: new "What this is", 30-second demo table (4 images), status table. H4 CHANGELOG Unreleased entry. H5 `docs/demo/` (6 PNG, 2.1 MB). Committed b35639b | local only |
 
 2026-09-17 03:50: full pytest sweep on claude/stage1-report-demo tip (after Stage 3 S7 and Stage 4/4b) = 5219 passed / 0 failed / 182 skipped; desktop headless 193; built-app smoke 549/0. CI-equivalent green locally; pushing and merging still need the user.
+
+2026-09-17 13:20 Linux (WSL Ubuntu, Python 3.12, PyMuPDF user-site) full suite on the branch tip 6161574: 4191 passed, 16 failed, 1259 skipped. The same 13 environmental failures occur on main's commit ec61ea0 in this box (10 own_render font-metric tests: no Pretendard/Malgun/Noto CJK installed; 2 desktop Node-bridge tests and 1 more on the branch: no Node in WSL, CI installs Node 22; the wheel consumer e2e: no offline wheel toolchain). The one branch-only failure was tests/test_hancom_operation_catalog.py line references drifting after T11/T13 → refreshed (T17, composer-2.5-fast, 2.5 min). CI on GitHub installs Node, fonts and the wheel toolchain, so the expectation for a push is green.
+
