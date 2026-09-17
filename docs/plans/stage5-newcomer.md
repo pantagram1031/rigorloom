@@ -19,11 +19,14 @@ Environment for verification: WSL Ubuntu (`~/rigorloom-ci`, Python 3.12; no `ens
       placeholders; honest). docs/QUICKSTART.md written from these commands (EN + KO).
 - [x] N5b (partial) Korean section written; README install section and Home CLI 문서 row link docs/QUICKSTART.md with a
       copy control (no shell-open plugin in the Tauri capabilities); installer containment refusal now says to run from
-      outside the checkout (T19, grok-high 14 min; install tests 88 pass, desktop 200). Still to do: replay QUICKSTART
-      line by line in a second fresh venv.
+      outside the checkout (T19, grok-high 14 min; install tests 88 pass, desktop 200). Replayed 2026-09-17 22:40 in a second fresh environment (qs-* dirs): wheel, three bundles, venv fallback to
+      virtualenv (ensurepip absent, exactly as the page says), install ok, capabilities xml/preedit available, 기안문
+      open → inspect (26 anchors, 1 placeholder) → propose → approve → apply (acceptance false, honest) → receipt
+      backend xml / structural_only / wellFormed true / residue self_derived. N5b done.
 - [ ] N5c macOS notes (untestable here: say so) and a `rigorloom doctor` line that tells a newcomer what is missing.
 
 ## Ledger
 | When | What | Result |
 |---|---|---|
 | 2026-09-17 22:05 | N5a Linux path 10/10 forms applied; QUICKSTART.md | Cursor lane (grok-high, 20 min) could not run `wsl` from its shell and looped on file reads; Fable ran the loop as a script. Rough edges → T19: installer message should say to leave the checkout; Home CLI 문서 link target |
+| 2026-09-17 22:40 | N5b replay in a second fresh venv | all QUICKSTART commands ran as written; receipt excerpt corrected to `result.receipt` |

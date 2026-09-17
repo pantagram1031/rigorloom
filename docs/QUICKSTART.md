@@ -62,7 +62,7 @@ $RL apply --plan <planId> --approval <approvalId>
 $RL receipt --session <sessionId> --run <runId>
 ```
 
-What the receipt says for an xml apply:
+What the receipt says for an xml apply (the CLI prints it under `result.receipt`):
 
 ```json
 "backend": "xml",
@@ -71,7 +71,8 @@ What the receipt says for an xml apply:
   "xml": {"proofGrade": "structural", "wellFormed": true},
   "note": "no renderer ran; this receipt binds bytes and offline checker results, and claims no render proof"
 },
-"residue": {"profileSource": "self_derived", "sha256": "…", "declaration": null}
+"residue": {"profileSource": "self_derived", "sha256": "…", "declaration": null,
+            "note": "inventory is heuristic: this document was profiled as its own form …"}
 ```
 
 The candidate lives under `~/rigorloom-work/sessions/<sessionId>/candidates/<runId>/artifact.hwpx`. The source
