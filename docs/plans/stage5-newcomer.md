@@ -17,8 +17,10 @@ Environment for verification: WSL Ubuntu (`~/rigorloom-ci`, Python 3.12; no `ens
       → all 10 corpus forms: open → inspect → propose xml (goto_text anchor + insert_text) → request-approval → approve
       → apply, 1.9–3.9 s each, edit verified in the candidate XML, `acceptance: false` (blank forms keep their
       placeholders; honest). docs/QUICKSTART.md written from these commands (EN + KO).
-- [ ] N5b QUICKSTART verified by replaying it line by line in a second fresh venv; Korean section; README link;
-      Home CLI 문서 link → docs/QUICKSTART.md.
+- [x] N5b (partial) Korean section written; README install section and Home CLI 문서 row link docs/QUICKSTART.md with a
+      copy control (no shell-open plugin in the Tauri capabilities); installer containment refusal now says to run from
+      outside the checkout (T19, grok-high 14 min; install tests 88 pass, desktop 200). Still to do: replay QUICKSTART
+      line by line in a second fresh venv.
 - [ ] N5c macOS notes (untestable here: say so) and a `rigorloom doctor` line that tells a newcomer what is missing.
 
 ## Ledger
