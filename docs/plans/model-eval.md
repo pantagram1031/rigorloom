@@ -132,3 +132,5 @@ The primary Cursor account (`pantagram1031`) returned `ActionRequiredError: You'
 | R0 design research (read-only) | cursor-grok-4.6-low-fast | 2.1 min | 87k / 5.9k / 511k | accurate, sourced, matched Fable's diagnosis; adopted as input |
 | R1 stop-the-bleeding (13 files) | cursor-grok-4.6-high-fast | 11 min | 318k / 43k / 4.1M | root causes found, tests 149 → 157, screenshots confirm; committed |
 
+### Cursor agent cannot drive WSL (2026-09-17)
+N5a asked cursor-grok-4.6-high-fast to run Linux steps through `wsl -e bash -lc`; its shell tool never executed them (20 min, 336k in / 27k out, looping on file reads, then asked for a follow-up). Lesson: Linux verification is Fable's own Bash + WSL script; give Cursor Windows-side fixes only.
