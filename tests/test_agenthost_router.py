@@ -449,6 +449,14 @@ def test_prompt_mode_slims_inspect_history(env):
                     "noise": "drop-me"},
         "regions": {"regions": []},
         "graph": {"huge": True},
+        "forbidden": {
+            "counts": {"anchors": 1},
+            "residue": {"profileSource": "bound_form"},
+            "anchors": [{"text": "학번", "keepable": True,
+                         "atPara": 3, "drop": "addr"}],
+            "placeholders": [],
+            "removalTargets": [],
+        },
     }
     seen = []
 
@@ -474,6 +482,29 @@ def test_prompt_mode_slims_inspect_history(env):
     assert payload["result"]["summary"]["anchors"] == ["I.  서론"]
     assert "graph" not in payload["result"]
     assert "noise" not in payload["result"]["summary"]
+    assert payload["result"]["forbidden"]["anchors"] == [
+        {"text": "학번", "keepable": True}]
+    assert payload["result"]["forbidden"]["counts"] == {"anchors": 1}
+
+
+def test_prompt_mode_catalogue_lists_argument_keys(env):
+    tools = [{"name": "plan_propose",
+              "description": "propose",
+              "inputSchema": {"type": "object",
+                              "properties": {"ops": {}, "declares": {},
+                                             "backend": {}}}}]
+    seen = []
+
+    def responder(path, body):
+        seen.append(body)
+        return {"json": completion("done")}
+
+    with FakeRouter(responder) as srv:
+        client = adapter(srv, env, toolsInBody=False)
+        client.complete(request_of(tools=tools))
+    catalogue = json.loads(
+        seen[0]["messages"][0]["content"].split("Catalogue: ", 1)[1])
+    assert catalogue[0]["arguments"] == ["backend", "declares", "ops"]
 
 
 def test_the_second_turn_carries_the_tool_result_back(env):

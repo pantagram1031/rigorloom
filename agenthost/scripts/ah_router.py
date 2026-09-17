@@ -341,9 +341,19 @@ class RouterAdapter(ProviderAdapter):
                                    ensure_ascii=False, sort_keys=True)},
         ]
         if request.tools and not self.tools_in_body:
-            catalogue = [{"name": tool["name"],
-                          "description": tool["description"]}
-                         for tool in request.tools]
+            # Names + argument keys only. Full inputSchema is too large for
+            # this Cursor bridge (G6a: a 16.9k prompt was truncated to 14.4k).
+            # Without the keys, plan_propose.declares and inspect include
+            # values are invisible to the model.
+            catalogue = []
+            for tool in request.tools:
+                item = {"name": tool["name"],
+                        "description": tool["description"]}
+                schema = tool.get("inputSchema") or {}
+                props = schema.get("properties")
+                if isinstance(props, dict) and props:
+                    item["arguments"] = sorted(props)
+                catalogue.append(item)
             messages[0]["content"] += (
                 " Tools: reply with one JSON object "
                 '{"name": "<tool>", "arguments": {..}} as the entire message. '
@@ -441,6 +451,20 @@ class RouterAdapter(ProviderAdapter):
             regions = result.get("regions")
             if isinstance(regions, dict):
                 slim["regionCount"] = len(regions.get("regions") or [])
+            forbidden = result.get("forbidden")
+            if isinstance(forbidden, dict):
+                # Keepable label texts are what plan_propose.declares.keep
+                # names. Dropping them (G6a slim) made a bound-form keep
+                # list impossible to compose from inspect.
+                slim["forbidden"] = {
+                    "counts": forbidden.get("counts"),
+                    "residue": forbidden.get("residue"),
+                    "anchors": self._forbidden_texts(forbidden.get("anchors")),
+                    "placeholders": self._forbidden_texts(
+                        forbidden.get("placeholders")),
+                    "removalTargets": self._forbidden_texts(
+                        forbidden.get("removalTargets")),
+                }
             return slim
         blob = json.dumps(result, ensure_ascii=False, default=str)
         if len(blob) > 6000:
@@ -449,6 +473,16 @@ class RouterAdapter(ProviderAdapter):
                     "summary": summarize(tool or "", result
                                          if isinstance(result, dict) else {})}
         return result
+
+    @staticmethod
+    def _forbidden_texts(rows) -> list:
+        """Compact keepable/guide rows: text + keepable flag only."""
+        out = []
+        for entry in rows or []:
+            if isinstance(entry, dict) and isinstance(entry.get("text"), str):
+                out.append({"text": entry["text"],
+                            "keepable": bool(entry.get("keepable"))})
+        return out
 
     def _recover_tool_calls(self, text, tools) -> tuple:
         """Turn a JSON object in assistant text into tool_calls, or nothing.
