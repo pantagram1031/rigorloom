@@ -735,7 +735,7 @@ fn smoke_ready(detail: Value) -> Result<(), String> {
         .unwrap_or_else(|_| "{\"ready\":true}".into());
     let view = detail.get("view").and_then(Value::as_str);
     let live_hold = view
-        .map(|name| name.starts_with("native-agent-"))
+        .map(|name| name.starts_with("native-"))
         .unwrap_or(false);
     if !live_hold {
         std::fs::write(&path, &body).map_err(|e| e.to_string())?;

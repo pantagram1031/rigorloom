@@ -34,7 +34,7 @@ for and became usable by someone other than its authors:
 | Python (Windows) | `python -m pytest -q --ignore=engine/tests/test_live_com.py` | 5219 passed at 2026-09-17 03:50; suites touched since are green per ledger |
 | Python (Linux, WSL) | same | 4191 passed; the 13 remaining failures also fail on `main` in that box (no Node, no CJK fonts, no wheel toolchain; CI installs all three) |
 | Desktop headless | `cd desktop && npm run build && npm test` | 225 passed |
-| Built app | `desktop/scripts/smoke.ps1` | SMOKE PASS 568/0; `agent-live` 31/0 (opt-in) |
+| Built app | `desktop/scripts/smoke.ps1` | SMOKE PASS 570/0 (2026-09-18); `agent-live` 13/1 opt-in (`provider_timeout` on the live bridge); `pipeline-native` 11/0 |
 | Compile sweep | `python scripts/py_compile_sweep.py` | 143 files, 0 failures |
 
 ## Evidence trail
@@ -56,4 +56,4 @@ for and became usable by someone other than its authors:
 - The live agent sessions used a keyless local bridge to Cursor models; Anthropic direct is wired but its live
   smoke needs a user-entered key and is not recorded.
 - The desktop app version stays `0.1.0` (its own line); the product version is `0.18.0`.
-- Native screenshots of the fill and poster result cards are owed to the release build.
+- Native fill/poster cards from the 2026-09-18 release build (`docs/demo/desktop/native-fill-result.png`, `native-poster-result.png`): fill finished **gappy** (`converged=false`, proofGrade none); poster finished **pass**. Not a render certificate.

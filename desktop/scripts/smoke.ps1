@@ -125,6 +125,7 @@
     powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke.ps1
     powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke.ps1 -Only edit
     $env:RIGORLOOM_SMOKE_AGENT_BASEURL='http://127.0.0.1:8766/v1'; powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke.ps1 -Only agent-live
+    $env:RIGORLOOM_SMOKE_PIPELINE_WORKSPACE='...\work\auralab-fill-p3'; powershell -ExecutionPolicy Bypass -File desktop/scripts/smoke.ps1 -Only pipeline-native
 
   Exit codes: 0 all checks passed · 3 a check failed · 2 could not run.
 #>
@@ -294,22 +295,50 @@ function Invoke-Phase {
     # into a document — which is why the welcome-screen checks failed.
     $env:RIGORLOOM_APPDATA = $AppData
 
+    if ($Phase -eq 'pipeline-native') {
+        $env:RIGORLOOM_FILL_HANCOM = 'yes'
+        if (-not $env:RIGORLOOM_CHILD_PYTHON) {
+            $pyhwpx = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\python.exe'
+            if (Test-Path -LiteralPath $pyhwpx) {
+                $prevEap = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                & $pyhwpx -c "import pyhwpx" 2>$null | Out-Null
+                $ErrorActionPreference = $prevEap
+                if ($LASTEXITCODE -eq 0) { $env:RIGORLOOM_CHILD_PYTHON = $pyhwpx }
+            }
+        }
+        Write-Host ("  RIGORLOOM_FILL_HANCOM=yes  child={0}" -f `
+            $(if ($env:RIGORLOOM_CHILD_PYTHON) { $env:RIGORLOOM_CHILD_PYTHON } else { 'sidecar' }))
+    }
+
     if ($env:RIGORLOOM_SMOKE_AGENT_BASEURL -and -not $env:RIGORLOOM_SMOKE_AGENT_MODEL) {
         $env:RIGORLOOM_SMOKE_AGENT_MODEL = 'cursor-grok-4.6-high-fast'
     }
 
     # Not minimised: WebView2 throttles a minimised window's timers and
     # withholds rAF entirely, which is a good way to make a harness hang.
-    # agent-live must stay visible so shot.ps1 can photograph the same window.
-    $hidden = $Phase -ne 'agent-live'
+    # Live hold phases must stay visible so shot.ps1 can photograph the window.
+    $hidden = -not ($Phase -eq 'agent-live' -or $Phase -eq 'pipeline-native')
     $proc = if ($hidden) {
         Start-Process -FilePath $Exe -WindowStyle Hidden -PassThru
     } else {
         Start-Process -FilePath $Exe -PassThru
     }
     $waitMs = $TimeoutSec * 1000
-    if ($Phase -eq 'agent-live') {
-        Invoke-AgentLiveShots -Process $proc -WaitMs $waitMs | Out-Null
+    if ($Phase -eq 'agent-live' -or $Phase -eq 'pipeline-native') {
+        $shots = if ($Phase -eq 'pipeline-native') {
+            @(
+                @{ marker = 'ready-native-fill-result.json';   out = 'native-fill-result.png' },
+                @{ marker = 'ready-native-poster-result.json'; out = 'native-poster-result.png' }
+            )
+        } else {
+            @(
+                @{ marker = 'ready-native-agent-plan.json';    out = 'native-agent-plan.png' },
+                @{ marker = 'ready-native-agent-review.json';  out = 'native-agent-review.png' },
+                @{ marker = 'ready-native-agent-receipt.json'; out = 'native-agent-receipt.png' }
+            )
+        }
+        Invoke-LiveShots -Process $proc -WaitMs $waitMs -Shots $shots | Out-Null
         if (-not $proc.HasExited) {
             try { $proc.WaitForExit(1000) | Out-Null } catch {}
         }
@@ -366,16 +395,12 @@ function Show-Report {
     return ($Result.report.failed -eq 0)
 }
 
-function Invoke-AgentLiveShots {
-    param($Process, [int]$WaitMs)
+function Invoke-LiveShots {
+    param($Process, [int]$WaitMs, $Shots)
     $OutDir = Join-Path $RepoRoot 'docs\demo\desktop'
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
     $shotScript = Join-Path $ScriptDir 'shot.ps1'
-    $shots = @(
-        @{ marker = 'ready-native-agent-plan.json';    out = 'native-agent-plan.png' },
-        @{ marker = 'ready-native-agent-review.json';  out = 'native-agent-review.png' },
-        @{ marker = 'ready-native-agent-receipt.json'; out = 'native-agent-receipt.png' }
-    )
+    $shots = @($Shots)
     foreach ($shot in $shots) { $shot.done = $false }
     # KeepRoot leaves these markers on disk; a new process must not photograph
     # the welcome screen because last run's ready files are still sitting here.
@@ -440,6 +465,18 @@ if ($Only.Count -gt 0) {
     if (($Only -contains 'agent-live') -and -not $env:RIGORLOOM_SMOKE_AGENT_BASEURL) {
         Write-Error "agent-live is opt-in: set RIGORLOOM_SMOKE_AGENT_BASEURL (and optionally RIGORLOOM_SMOKE_AGENT_MODEL)"
         exit 2
+    }
+    if ($Only -contains 'pipeline-native') {
+        $ws = $env:RIGORLOOM_SMOKE_PIPELINE_WORKSPACE
+        if (-not $ws) { $ws = Join-Path $RepoRoot 'work\auralab-fill-p3' }
+        $hwpx = Join-Path $ws 'output\out.hwpx'
+        if (-not (Test-Path -LiteralPath $hwpx)) {
+            Write-Error "pipeline-native needs a report document at $hwpx (set RIGORLOOM_SMOKE_PIPELINE_WORKSPACE)"
+            exit 2
+        }
+        $Corpus = (Resolve-Path -LiteralPath $hwpx).Path
+        Write-Host ("  pipeline-native document: {0}" -f $Corpus)
+        $phases += 'pipeline-native'
     }
     $phases = $phases | Where-Object { $Only -contains $_ }
 }
@@ -506,7 +543,9 @@ try {
             }
         }
 
-        $phaseTimeout = if ($phase -eq 'agent-live') { [Math]::Max($TimeoutSec, 720) } else { $TimeoutSec }
+        $phaseTimeout = if ($phase -eq 'agent-live') { [Math]::Max($TimeoutSec, 720) }
+            elseif ($phase -eq 'pipeline-native') { [Math]::Max($TimeoutSec, 2400) }
+            else { $TimeoutSec }
         $origTimeout = $TimeoutSec
         $TimeoutSec = $phaseTimeout
         $result = Invoke-Phase -Phase $phase -ReportPath (Join-Path $RunDir "report-$phase.json") `
@@ -531,7 +570,7 @@ try {
         # enough — the mechanism does not vary by phase — but it has to be
         # between two real process boundaries to mean anything.
         if ($phase -eq 'open') {
-            Start-Sleep -Seconds 3
+            Start-Sleep -Seconds 8
             $orphans = @(Get-Process rigorloomd -ErrorAction SilentlyContinue)
             if ($orphans.Count -gt 0) {
                 Write-Host ("  [FAIL] no orphaned sidecar after the shell exits — found {0}" -f $orphans.Count)
@@ -660,7 +699,7 @@ finally {
         Env:RIGORLOOM_SMOKE_REPORT, Env:RIGORLOOM_SMOKE_EXPORT, Env:RIGORLOOM_MOCK_AGENT, `
         Env:RIGORLOOM_AGENT_HOST, Env:RIGORLOOM_MODULES_ROOT, Env:RIGORLOOM_SMOKE_FINAL, `
         Env:RIGORLOOM_SMOKE_STAGED, Env:RIGORLOOM_MODULES_ENABLED, `
-        Env:RIGORLOOM_SMOKE_FORM_PROFILE `
+        Env:RIGORLOOM_SMOKE_FORM_PROFILE, Env:RIGORLOOM_FILL_HANCOM `
         -ErrorAction SilentlyContinue
     # The enablement the packs phase used never belonged to the checkout, and
     # it does not outlive the run either.

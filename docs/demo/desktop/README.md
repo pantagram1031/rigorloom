@@ -24,6 +24,13 @@ npx vite --port 5184 --strictPort
 node docs/demo/desktop/capture.mjs
 ```
 
+Demo GIF (home → recent → agent plan → review → approve → apply → receipt), 1280×800, assembled with Pillow:
+
+```bash
+npx vite --port 5184 --strictPort
+node docs/demo/desktop/capture.mjs gif
+```
+
 If Chrome is missing, Edge works with the same flags:
 
 ```bash

@@ -3859,6 +3859,7 @@ export async function runSmoke(): Promise<void> {
   // load rather than a budget.
   const budgetMs = config.phase === "undo" ? 480_000
     : config.phase === "agent-live" ? 720_000
+    : config.phase === "pipeline-native" ? 2_400_000
     : 180_000;
   const watchdog = setTimeout(() => {
     if (finished) return;
@@ -3889,6 +3890,7 @@ export async function runSmoke(): Promise<void> {
     else if (config.phase === "chrome-reattach") await phaseChromeReattach();
     else if (config.phase === "bound") await phaseBound(config);
     else if (config.phase === "agent-live") await phaseAgentLive(config);
+    else if (config.phase === "pipeline-native") await phasePipelineNative(config);
     else if (config.phase === "hold" || config.phase === "hold-agent") {
       await phaseHold(config, config.phase === "hold-agent" ? "agent" : "document");
       finished = true;
@@ -3981,12 +3983,194 @@ function turnRefusals(turn: { payload?: { refusals?: Array<{ code?: string; mess
   return [...fromPayload, ...fromEvents].join(" | ");
 }
 
-async function holdNativeAgent(view: string) {
+async function holdNative(view: string) {
   await settled(400);
   await ready(view);
   // shot.ps1 FitToWorkArea + settle is several seconds; the receipt
   // hold used to end before PrintWindow ran, and the window was already gone.
   await settled(5500);
+}
+
+async function holdNativeAgent(view: string) {
+  await holdNative(view);
+}
+
+/**
+ * Stage 8 native shots owed from Stage 7: open the AURALAB (or other report)
+ * workspace document, open 파이프라인, run 채우기 실행 then 포스터 만들기,
+ * and hold each result card for shot.ps1.
+ *
+ * Opt-in (`-Only pipeline-native`). Hancom-busy, needs_hancom, escalate, or a
+ * hidden control is recorded and photographed as that state rather than
+ * invented as converged.
+ */
+async function phasePipelineNative(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+
+  const sessionId = await openPath(config.corpus);
+  check("pipeline-native opened the report document", !!sessionId, sessionId ?? "");
+  if (!sessionId) return;
+  await settled(400);
+
+  const disclosure = document.querySelector<HTMLDetailsElement>(
+    '[data-testid="pipeline-disclosure"]',
+  );
+  if (disclosure) disclosure.open = true;
+  await settled(300);
+  checkDom(
+    "파이프라인 disclosure is open",
+    !!disclosure && disclosure.open === true,
+    disclosure ? `open=${disclosure.open}` : "missing",
+  );
+
+  const status = getState().pipelineStatus;
+  check(
+    "PIPELINE.md was found next to the document",
+    status?.found === true,
+    JSON.stringify({
+      found: status?.found ?? false,
+      slug: status?.slug ?? null,
+      workspace: status?.workspacePath ?? null,
+      fillComplete: status?.fillInputs?.complete ?? false,
+      posterComplete: status?.posterInputs?.complete ?? false,
+    }),
+  );
+
+  const caps = getState().capabilities;
+  check(
+    "capabilities named the fill/poster verbs and the COM backend honestly",
+    true,
+    JSON.stringify({
+      fillRun: (caps?.methods ?? []).includes("workspace/fillRun"),
+      posterRun: (caps?.methods ?? []).includes("workspace/posterRun"),
+      com: caps?.backends?.com ?? null,
+      fillReport: caps?.tools?.fill_report ?? null,
+    }),
+  );
+
+  const fillButton = document.querySelector<HTMLButtonElement>('[data-testid="fill-run"]');
+  checkDom(
+    "채우기 실행 is offered, or its absence is the machine's honest state",
+    true,
+    fillButton
+      ? `enabled=${fillButton.disabled === false}`
+      : "hidden — packaged sidecar has no pyhwpx, so backends.com is unavailable",
+  );
+  if (fillButton && fillButton.disabled === false) {
+    fillButton.click();
+  } else {
+    // The GUI hides the control when the frozen sidecar cannot import pyhwpx.
+    // Drive the same Runtime verb anyway so the card still photographs the
+    // loop (child python + RIGORLOOM_FILL_HANCOM come from the harness).
+    const workspace = getState().pipelineStatus?.workspacePath;
+    if (sessionId && workspace) {
+      setState({
+        fillPhase: "starting",
+        fillProgress: null,
+        fillResult: null,
+        fillError: null,
+      });
+      try {
+        const result = await rt.fillRun({ workspace, sessionId });
+        setState({
+          fillPhase: "ready",
+          fillResult: result,
+          fillProgress: null,
+          fillError: null,
+        });
+      } catch (e) {
+        setState({
+          fillPhase: "failed",
+          fillError: rt.asRuntimeError(e),
+          fillResult: null,
+        });
+      }
+    }
+  }
+  await waitFor(
+    () => getState().fillPhase === "ready" || getState().fillPhase === "failed",
+    1_850_000,
+    1000,
+  );
+  const fillPhase = getState().fillPhase;
+  const fillResult = getState().fillResult;
+  const fillError = getState().fillError;
+  check(
+    "채우기 실행 finished (converged, escalated, refused, or failed)",
+    fillPhase === "ready" || fillPhase === "failed" || !!fillResult || !!fillError,
+    JSON.stringify({
+      phase: fillPhase,
+      state: fillResult?.state ?? null,
+      converged: fillResult?.converged ?? null,
+      proofGrade: fillResult?.proofGrade ?? null,
+      error: fillError ?? null,
+    }),
+  );
+  checkDom(
+    "the fill result or error card is on screen",
+    !!document.querySelector('[data-testid="fill-result"], [data-testid="fill-error"], [data-testid="fill-progress"]'),
+    domText('[data-testid="fill-card"]').slice(0, 240),
+  );
+  document.querySelector('[data-testid="fill-card"]')?.scrollIntoView({ block: "center", inline: "nearest" });
+  await holdNative("native-fill-result");
+
+  const posterButton = document.querySelector<HTMLButtonElement>('[data-testid="poster-run"]');
+  checkDom(
+    "포스터 만들기 is offered, or its absence is recorded",
+    true,
+    posterButton
+      ? `enabled=${posterButton.disabled === false}`
+      : "hidden — poster inputs or workspace/posterRun not available",
+  );
+  if (posterButton && posterButton.disabled === false) {
+    posterButton.click();
+  } else {
+    const workspace = getState().pipelineStatus?.workspacePath;
+    if (sessionId && workspace) {
+      setState({ posterPhase: "starting", posterResult: null, posterError: null });
+      try {
+        const result = await rt.posterRun({ workspace, sessionId });
+        setState({ posterPhase: "ready", posterResult: result, posterError: null });
+      } catch (e) {
+        setState({
+          posterPhase: "failed",
+          posterError: rt.asRuntimeError(e),
+          posterResult: null,
+        });
+      }
+    }
+  }
+  await waitFor(
+    () => getState().posterPhase === "ready" || getState().posterPhase === "failed",
+    240_000,
+    500,
+  );
+  const posterPhase = getState().posterPhase;
+  const posterResult = getState().posterResult;
+  const posterError = getState().posterError;
+  check(
+    "포스터 만들기 finished (pass, fail, or refused)",
+    posterPhase === "ready" || posterPhase === "failed" || !!posterResult || !!posterError,
+    JSON.stringify({
+      phase: posterPhase,
+      state: posterResult?.state ?? null,
+      ok: posterResult?.ok ?? null,
+      error: posterError ?? null,
+    }),
+  );
+  checkDom(
+    "the poster result or error card is on screen",
+    !!document.querySelector('[data-testid="poster-result"], [data-testid="poster-error"], [data-testid="poster-progress"]'),
+    domText('[data-testid="poster-card"]').slice(0, 240),
+  );
+  document.querySelector('[data-testid="poster-card"]')?.scrollIntoView({ block: "center", inline: "nearest" });
+  await holdNative("native-poster-result");
+
+  checkAlive("the pipeline-native fill/poster loop");
+  await settled(2500);
 }
 
 async function phaseAgentLive(config: SmokeConfig) {

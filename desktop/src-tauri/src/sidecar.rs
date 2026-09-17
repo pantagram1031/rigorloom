@@ -581,7 +581,15 @@ impl Sidecar {
             }
         }
 
-        let outcome = match rx.recv_timeout(CALL_TIMEOUT) {
+        // fill_report --loop is budgeted at 1800 s in rt_codes.FILL_TIMEOUT_SECONDS.
+        // A 180 s RPC cap otherwise kills a live Hancom fill before the loop can
+        // converge, which is what the pipeline-native screenshot phase needs.
+        let timeout = match method {
+            "workspace/fillRun" => Duration::from_secs(1800),
+            "workspace/posterRun" => Duration::from_secs(300),
+            _ => CALL_TIMEOUT,
+        };
+        let outcome = match rx.recv_timeout(timeout) {
             Ok(frame) => {
                 if frame.get("kind").and_then(Value::as_str) == Some("response") {
                     Ok(frame.get("result").cloned().unwrap_or(Value::Null))
@@ -597,7 +605,7 @@ impl Sidecar {
                 Err(json!({
                     "code": if status.running { "timeout" } else { "sidecar_down" },
                     "message": if status.running {
-                        format!("{method} 요청이 {}초 안에 응답하지 않았습니다.", CALL_TIMEOUT.as_secs())
+                        format!("{method} 요청이 {}초 안에 응답하지 않았습니다.", timeout.as_secs())
                     } else {
                         status.failure.clone().unwrap_or_else(|| "사이드카가 종료되었습니다.".into())
                     },
