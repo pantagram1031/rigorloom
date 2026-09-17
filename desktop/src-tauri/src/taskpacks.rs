@@ -281,7 +281,7 @@ mod tests {
     fn the_shape_carries_the_registrys_own_facts() {
         let summary = json!({
             "schema": "rigorloom-module-registry/v1",
-            "version": "0.17.0",
+            "version": "0.18.0",
             "modules_root": "/x/modules",
             "enabled_file": "/x/modules/enabled.yaml",
             "enabled_file_present": true,

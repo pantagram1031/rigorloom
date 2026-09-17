@@ -12,7 +12,7 @@ cd rigorloom
 python3 -m pip wheel --no-deps --no-build-isolation --no-index . -w ~/rigorloom-dist
 for b in core style report; do python3 scripts/package_module.py --module $b --out ~/rigorloom-dist; done
 ls ~/rigorloom-dist
-#   rigorloom-0.17.0-py3-none-any.whl  rigorloom-core-0.17.0.zip  rigorloom-style-0.17.0.zip  rigorloom-report-0.17.0.zip
+#   rigorloom-0.18.0-py3-none-any.whl  rigorloom-core-0.18.0.zip  rigorloom-style-0.18.0.zip  rigorloom-report-0.18.0.zip
 ```
 
 `setuptools` and `wheel` must be importable by `python3` (they are on most systems; otherwise
@@ -26,7 +26,7 @@ checkout on `sys.path`.
 ```bash
 cd ~
 python3 -m venv ~/rigorloom-venv || python3 -m virtualenv ~/rigorloom-venv   # use virtualenv where ensurepip is missing
-~/rigorloom-venv/bin/pip install ~/rigorloom-dist/rigorloom-0.17.0-py3-none-any.whl
+~/rigorloom-venv/bin/pip install ~/rigorloom-dist/rigorloom-0.18.0-py3-none-any.whl
 ~/rigorloom-venv/bin/rigorloom install --engine-root ~/rigorloom-install --bundles-dir ~/rigorloom-dist
 ~/rigorloom-venv/bin/rigorloom --root ~/rigorloom-work --engine-root ~/rigorloom-install capabilities
 ```
@@ -122,7 +122,7 @@ for b in core style report; do python3 scripts/package_module.py --module $b --o
 ```bash
 cd ~
 python3 -m venv ~/rigorloom-venv || python3 -m virtualenv ~/rigorloom-venv
-~/rigorloom-venv/bin/pip install ~/rigorloom-dist/rigorloom-0.17.0-py3-none-any.whl
+~/rigorloom-venv/bin/pip install ~/rigorloom-dist/rigorloom-0.18.0-py3-none-any.whl
 ~/rigorloom-venv/bin/rigorloom install --engine-root ~/rigorloom-install --bundles-dir ~/rigorloom-dist
 ~/rigorloom-venv/bin/rigorloom --root ~/rigorloom-work --engine-root ~/rigorloom-install capabilities
 ```

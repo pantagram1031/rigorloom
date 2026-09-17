@@ -27,7 +27,7 @@ WHEEL_PYTHON = os.environ.get("RIGORLOOM_WHEEL_PYTHON") or sys.executable
 
 
 def _make_dummy_bundle(out_path: Path, name: str, files: dict[str, bytes],
-                       version: str = "0.17.0",
+                       version: str = "0.18.0",
                        manifest_override: dict | None = None) -> None:
     """Create a valid mock rigorloom zip bundle with MANIFEST.json."""
     manifest_files = []
@@ -97,7 +97,7 @@ def test_manifest_schema_and_malformed_entries(tmp_path):
     bundles_dir = tmp_path / "bundles"
     bundles_dir.mkdir()
     engine_root = tmp_path / "engine"
-    core_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    core_zip = bundles_dir / "rigorloom-core-0.18.0.zip"
 
     # 1. Missing name
     _make_dummy_bundle(core_zip, "core", {"foo.txt": b"1"},
@@ -144,14 +144,14 @@ def test_archive_duplicates_and_collisions(tmp_path):
     bundles_dir = tmp_path / "bundles"
     bundles_dir.mkdir()
     engine_root = tmp_path / "engine"
-    core_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    core_zip = bundles_dir / "rigorloom-core-0.18.0.zip"
 
     # 1. Case-folding collision (e.g. 'probe.py' and 'PROBE.PY')
     with zipfile.ZipFile(core_zip, "w") as z:
         manifest = {
             "schema": install.MANIFEST_SCHEMA,
             "name": "core",
-            "version": "0.17.0",
+            "version": "0.18.0",
             "files": [
                 {"path": "probe.py", "sha256": install._sha256_bytes(b"1")},
                 {"path": "PROBE.PY", "sha256": install._sha256_bytes(b"2")}
@@ -172,7 +172,7 @@ def test_archive_duplicates_and_collisions(tmp_path):
         manifest = {
             "schema": install.MANIFEST_SCHEMA,
             "name": "core",
-            "version": "0.17.0",
+            "version": "0.18.0",
             "files": [
                 {"path": "foo", "sha256": install._sha256_bytes(b"1")},
                 {"path": "foo/bar", "sha256": install._sha256_bytes(b"2")}
@@ -206,12 +206,12 @@ def test_zip_slip_traversal_variations(tmp_path, bad_path):
     bundles_dir.mkdir()
     engine_root = tmp_path / "engine"
 
-    evil_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    evil_zip = bundles_dir / "rigorloom-core-0.18.0.zip"
     with zipfile.ZipFile(evil_zip, "w") as z:
         manifest = {
             "schema": install.MANIFEST_SCHEMA,
             "name": "core",
-            "version": "0.17.0",
+            "version": "0.18.0",
             "files": [{"path": bad_path, "sha256": install._sha256_bytes(b"evil")}]
         }
         z.writestr("MANIFEST.json", json.dumps(manifest))
@@ -287,12 +287,12 @@ def test_locked_engine_root_aborts_and_preserves(tmp_path, monkeypatch):
     lock_file.write_text("# original content", encoding="utf-8")
     (engine_root / "pipeline" / "scripts" / "module_registry.py").write_text("# reg", encoding="utf-8")
 
-    core_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    core_zip = bundles_dir / "rigorloom-core-0.18.0.zip"
     _make_dummy_bundle(core_zip, "core", {
         "engine/scripts/probe.py": b"print('probe')",
         "engine/scripts/form_inspect.py": b"print('inspect')",
         "pipeline/scripts/module_registry.py": b"print('reg')",
-        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n"
+        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.18.0'\n"
     })
 
     real_rename = os.rename
@@ -330,12 +330,12 @@ def test_rollback_on_post_swap_failure_restores_prior_engine(tmp_path):
     original_marker.write_text("# original v1", encoding="utf-8")
     (engine_root / "pipeline" / "scripts" / "module_registry.py").write_text("# reg", encoding="utf-8")
 
-    core_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    core_zip = bundles_dir / "rigorloom-core-0.18.0.zip"
     _make_dummy_bundle(core_zip, "core", {
         "engine/scripts/probe.py": b"print('probe')",
         "engine/scripts/form_inspect.py": b"# new v2",
         "pipeline/scripts/module_registry.py": b"print('reg')",
-        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n"
+        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.18.0'\n"
     })
 
     # Trigger post-swap failure by mocking _probe_origin_split to raise
@@ -366,12 +366,12 @@ def test_keyboardinterrupt_during_post_swap_restores_prior_engine(tmp_path):
     original_marker.write_text("# original v1", encoding="utf-8")
     (engine_root / "pipeline" / "scripts" / "module_registry.py").write_text("# reg", encoding="utf-8")
 
-    core_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    core_zip = bundles_dir / "rigorloom-core-0.18.0.zip"
     _make_dummy_bundle(core_zip, "core", {
         "engine/scripts/probe.py": b"print('probe')",
         "engine/scripts/form_inspect.py": b"# new v2",
         "pipeline/scripts/module_registry.py": b"print('reg')",
-        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n"
+        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.18.0'\n"
     })
 
     with patch("install._probe_origin_split", side_effect=KeyboardInterrupt):
@@ -425,7 +425,7 @@ def test_lock_safety_preserves_foreign_lock(tmp_path):
     """An existing lock file always refuses without stealing or unlinking."""
     bundles_dir = tmp_path / "bundles"
     bundles_dir.mkdir()
-    _make_dummy_bundle(bundles_dir / "rigorloom-core-0.17.0.zip", "core", {"probe.py": b"print('probe')"})
+    _make_dummy_bundle(bundles_dir / "rigorloom-core-0.18.0.zip", "core", {"probe.py": b"print('probe')"})
     engine_root = tmp_path / "engine"
     lock_path = tmp_path / f"{engine_root.name}.sync.lock"
     lock_path.write_text("token=foreign-123\npid=99999\ntime=1000.0\n", encoding="utf-8")
@@ -704,15 +704,15 @@ def test_failure_before_swap_preserves_recognized_engine_without_backup(tmp_path
     registry_marker.write_text("# original v1 registry", encoding="utf-8")
 
     _make_dummy_bundle(
-        bundles_dir / "rigorloom-core-0.17.0.zip", "core", {
+        bundles_dir / "rigorloom-core-0.18.0.zip", "core", {
             "engine/scripts/probe.py": b"print('{}')",
             "engine/scripts/form_inspect.py": b"# new v2 inspect",
             "pipeline/scripts/module_registry.py": b"print('{}')",
-            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n",
+            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.18.0'\n",
         }
     )
     _make_dummy_bundle(
-        bundles_dir / "rigorloom-style-0.17.0.zip", "style", {
+        bundles_dir / "rigorloom-style-0.18.0.zip", "style", {
             "unexpected_dir/some_file.txt": b"wrong layout",
         }
     )
@@ -742,12 +742,12 @@ def test_real_install_forwards_confirmed_checkout_roots_and_rolls_back(tmp_path,
     bundles_dir.mkdir()
     engine_root = tmp_path / "engine"
     _make_dummy_bundle(
-        bundles_dir / "rigorloom-core-0.17.0.zip", "core", {
+        bundles_dir / "rigorloom-core-0.18.0.zip", "core", {
             "engine/scripts/probe.py": b"print('{}')",
             "engine/scripts/form_inspect.py": b"# inspect",
             "pipeline/scripts/module_registry.py": b"print('{}')",
             "pipeline/scripts/privacy_scan.py": b"# scan",
-            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n",
+            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.18.0'\n",
         }
     )
 
@@ -781,11 +781,11 @@ def test_undecodable_probe_output_stays_typed_and_replacement_decoded(tmp_path):
         b"raise SystemExit(7)\n"
     )
     _make_dummy_bundle(
-        bundles_dir / "rigorloom-core-0.17.0.zip", "core", {
+        bundles_dir / "rigorloom-core-0.18.0.zip", "core", {
             "engine/scripts/probe.py": probe,
             "engine/scripts/form_inspect.py": b"# inspect",
             "pipeline/scripts/module_registry.py": b"print('{}')",
-            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n",
+            "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.18.0'\n",
         }
     )
 
@@ -920,14 +920,14 @@ def test_residue_tool_presence_and_schema_boundary(tmp_path):
 def test_ambiguous_bundle_version_is_refused_not_guessed(tmp_path):
     """F5: filename order is not version order, so refuse rather than choose.
 
-    ``sorted()`` puts ``0.9.0`` after ``0.17.0`` because it compares strings,
+    ``sorted()`` puts ``0.9.0`` after ``0.18.0`` because it compares strings,
     so the previous ``candidates[-1]`` silently installed the OLDER bundle and
     reported success. That failure is invisible to the operator, which is worse
     than a refusal, so the ambiguity itself is now the error.
     """
     bundles = tmp_path / "bundles"
     bundles.mkdir()
-    for version in ("0.9.0", "0.17.0"):
+    for version in ("0.9.0", "0.18.0"):
         _make_dummy_bundle(bundles / f"rigorloom-core-{version}.zip", "core",
                            {"engine/scripts/probe.py": b"print('{}')\n"},
                            version=version)
@@ -940,14 +940,14 @@ def test_ambiguous_bundle_version_is_refused_not_guessed(tmp_path):
     assert error.error_code == "invalid_params"
     # Both names must be reported: the operator has to know what to remove.
     assert "rigorloom-core-0.9.0.zip" in error.message
-    assert "rigorloom-core-0.17.0.zip" in error.message
+    assert "rigorloom-core-0.18.0.zip" in error.message
 
 
 def test_single_bundle_still_resolves(tmp_path):
     """F5 guard must not break the ordinary one-bundle directory."""
     bundles = tmp_path / "bundles"
     bundles.mkdir()
-    target = bundles / "rigorloom-core-0.17.0.zip"
+    target = bundles / "rigorloom-core-0.18.0.zip"
     _make_dummy_bundle(target, "core",
                        {"engine/scripts/probe.py": b"print('x')\n"})
     assert install._find_bundle(bundles, "core") == target
@@ -1029,7 +1029,7 @@ def test_missing_style_bundle_names_modules_none(tmp_path):
     """A4: a core-only bundles-dir must name --modules none on the default path."""
     bundles_dir = tmp_path / "bundles"
     bundles_dir.mkdir()
-    _make_dummy_bundle(bundles_dir / "rigorloom-core-0.17.0.zip", "core",
+    _make_dummy_bundle(bundles_dir / "rigorloom-core-0.18.0.zip", "core",
                        {"engine/scripts/probe.py": b"print('probe')"})
     engine_root = tmp_path / "engine"
 
@@ -1054,12 +1054,12 @@ def test_replace_backup_note_tells_operator_to_remove(tmp_path):
     original_marker.write_text("# original v1", encoding="utf-8")
     (engine_root / "pipeline" / "scripts" / "module_registry.py").write_text("# reg", encoding="utf-8")
 
-    core_zip = bundles_dir / "rigorloom-core-0.17.0.zip"
+    core_zip = bundles_dir / "rigorloom-core-0.18.0.zip"
     _make_dummy_bundle(core_zip, "core", {
         "engine/scripts/probe.py": b"print('probe')",
         "engine/scripts/form_inspect.py": b"# new v2",
         "pipeline/scripts/module_registry.py": b"print('reg')",
-        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n"
+        "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.18.0'\n"
     })
 
     with patch("install._probe_origin_split", return_value={"ok": True}):

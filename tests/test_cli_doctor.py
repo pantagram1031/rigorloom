@@ -74,7 +74,7 @@ def _engine_fixture(tmp_path: Path, *, probe_source: bytes | None = None) -> Pat
         "# marker", encoding="utf-8"
     )
     (root / "pyproject.toml").write_text(
-        "[project]\nname='rigorloom'\nversion='0.17.0'\n", encoding="utf-8"
+        "[project]\nname='rigorloom'\nversion='0.18.0'\n", encoding="utf-8"
     )
     (root / "modules" / "enabled.yaml").write_text(
         f"schema: {doctor.ENABLED_SCHEMA}\nenabled: [style]\n", encoding="utf-8"

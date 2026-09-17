@@ -914,7 +914,7 @@ def _repo_bundle_names() -> list[str]:
 
 
 BUNDLE_NAMES = _repo_bundle_names()
-REPRO_VERSION = "0.17.0"
+REPRO_VERSION = "0.18.0"
 
 
 @pytest.fixture(scope="module")

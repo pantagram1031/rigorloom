@@ -68,7 +68,7 @@ def installed_module(tmp_path: Path) -> dict[str, Path]:
         "print(json.dumps({'ok': True, 'profile': str(profile)}))\n",
     )
     (engine / "pyproject.toml").write_text(
-        "[project]\nname='rigorloom'\nversion='0.17.0'\n", encoding="utf-8"
+        "[project]\nname='rigorloom'\nversion='0.18.0'\n", encoding="utf-8"
     )
     form = tmp_path / "form.hwpx"
     form.write_bytes(b"portable fixture")
@@ -248,7 +248,7 @@ def test_registry_discovers_new_report_on_enabled_report_module(tmp_path):
     registry = ModuleRegistry(
         REPO_ROOT / "modules",
         enabled_file=enabled,
-        version="0.17.0",
+        version="0.18.0",
         pyproject=REPO_ROOT / "pyproject.toml",
     )
 

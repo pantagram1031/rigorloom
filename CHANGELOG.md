@@ -8,6 +8,8 @@ the kernel's contract shape.
 
 ## Unreleased
 
+## v0.18.0 — reports through the engine, com/xml Runtime, desktop revamp, newcomer path, live agent loop (2026-09-18)
+
 ### Added
 
 - **Stage 1 report demo (2026-09-16):** the engine features that the shipped

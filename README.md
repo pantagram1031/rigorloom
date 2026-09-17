@@ -16,7 +16,7 @@ and refuses to call it done until every stage gate (independent recomputation
 of the numbers, content audit, format check, submission preflight) has passed.
 It is built for the documents Korean schools and offices actually require, and
 it drives Hancom Office when present and a pure-XML engine when not.
-Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
+Current release: **v0.18.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 ### 30-second demo
 
@@ -103,7 +103,7 @@ a checkout:
 
 ```sh
 python -m pip wheel --no-deps --wheel-dir dist .
-python -m pip install --no-deps dist/rigorloom-0.17.0-py3-none-any.whl
+python -m pip install --no-deps dist/rigorloom-0.18.0-py3-none-any.whl
 
 rigorloom --root ./rigorloom-root capabilities
 ```
@@ -135,9 +135,9 @@ python scripts/package_module.py --module report --out dist
 # 2. install them into an INSTALL ROOT of your choosing
 mkdir -p ~/rigorloom-install
 cd ~/rigorloom-install
-unzip /path/to/dist/rigorloom-core-0.17.0.zip
-unzip /path/to/dist/rigorloom-style-0.17.0.zip  'modules/*'
-unzip /path/to/dist/rigorloom-report-0.17.0.zip 'modules/*'
+unzip /path/to/dist/rigorloom-core-0.18.0.zip
+unzip /path/to/dist/rigorloom-style-0.18.0.zip  'modules/*'
+unzip /path/to/dist/rigorloom-report-0.18.0.zip 'modules/*'
 python pipeline/scripts/module_registry.py write-enabled --all
 
 # 3. drive the install root with the installed command
