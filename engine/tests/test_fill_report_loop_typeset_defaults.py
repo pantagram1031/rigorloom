@@ -100,7 +100,7 @@ def test_mode_loop_typeset_defaults_after_restore_keep_with_next(tmp_path, monke
         calls.append(("keep_with_next", tuple(prefixes or [])))
         return {"ok": True, "patched": []}
 
-    def fake_typeset(hwpx_path, anchors_):
+    def fake_typeset(hwpx_path, anchors_, widow_orphan=None):
         calls.append(("typeset_defaults", tuple(anchors_ or [])))
         return {"ok": True, "patched": []}
 
@@ -163,7 +163,7 @@ def test_mode_loop_form_profile_alone_takes_offline_path(tmp_path, monkeypatch):
         calls.append(("tidy_hwpx",))
         return {"ok": True, "removed": {}}
 
-    def fake_typeset(hwpx_path, anchors_):
+    def fake_typeset(hwpx_path, anchors_, widow_orphan=None):
         calls.append(("typeset_defaults", tuple(anchors_ or [])))
         return {"ok": True, "patched": []}
 
@@ -236,7 +236,7 @@ def test_mode_loop_xml_typeset_defaults_before_para_check(tmp_path, monkeypatch)
         calls.append("keep_with_next")
         return {"ok": True, "patched": []}
 
-    def fake_typeset(hwpx_path, anchors_):
+    def fake_typeset(hwpx_path, anchors_, widow_orphan=None):
         calls.append(("typeset_defaults", tuple(anchors_ or [])))
         return {"ok": True, "patched": []}
 

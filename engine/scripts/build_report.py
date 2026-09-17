@@ -182,7 +182,7 @@ BUILD_YAML_KEYS = {
     "margin_top", "margin_bottom", "margin_left", "margin_right",
     "margin_gutter",
     "title", "title_anchor", "collapse_blank_runs", "box_display_equations",
-    "header_text", "header_series", "page_numbers",
+    "header_text", "header_series", "page_numbers", "widow_orphan",
 }
 # flat margin_* → page_binding margins dict 키. 둘 다 있으면 평탄 키가 이긴다.
 MARGIN_FLAT_KEYS = (

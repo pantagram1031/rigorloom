@@ -29,9 +29,19 @@ ANCHOR = "Ⅰ. 서 론"
 
 @pytest.fixture(autouse=True)
 def _skip_without_live_fixture(request):
-    """라이브 픽스처가 필요한 기존 테스트만 skip. 합성 zip 테스트
-    (test_strip_guide_ws_runs_*) 는 우회."""
-    if "test_strip_guide_ws_runs" in request.node.name:
+    """라이브 픽스처가 필요한 기존 테스트만 skip. 합성 zip 테스트는 우회."""
+    name = request.node.name
+    if any(k in name for k in (
+        "test_strip_guide_ws_runs",
+        "test_object_anchor",
+        "test_object_without_following",
+        "test_object_wants_keep_with_next",
+        "test_is_caption",
+        "test_is_heading",
+        "test_typeset_defaults_table_object",
+        "test_typeset_defaults_keep_with_next_clone",
+        "test_typeset_defaults_widow",
+    )):
         return
     if not os.path.exists(FIXTURE):
         pytest.skip(
@@ -474,22 +484,30 @@ def _breaksetting_attrs(defs, pid):
     }
 
 
-def test_typeset_defaults_sets_widow_orphan_on_all_top_level_paragraphs(tmp_path):
+def test_typeset_defaults_preserves_source_widow_orphan_on_all_top_level_paragraphs(tmp_path):
+    """Default: clone widowOrphan from the source paraPr. Never force 1."""
     src = _copy_fixture(tmp_path)
+    before_defs = _header_defs(src)
+    before_xml = _section_xml(src)
+    before_paras = tidy_hwpx._find_top_level_paragraphs_with_prattrs(before_xml)
+    source_widow = []
+    for (_s, _e, _px, _oe, attrs) in before_paras:
+        pid = tidy_hwpx._attr_value(attrs, "paraPrIDRef")
+        source_widow.append(_breaksetting_attrs(before_defs, pid)["widowOrphan"])
+
     out = tmp_path / "out.hwpx"
     result = tidy_hwpx.apply_typeset_defaults(
         src, TYPESET_ANCHORS, caption_prefixes=TYPESET_CAPTION_PREFIXES, out_path=out)
     assert result["ok"] is True
-    assert len(result["patched"]) > 0
-    assert all(r["widow_orphan"] is True for r in result["patched"])
 
-    defs = _header_defs(out)
-    xml = _section_xml(out)
+    defs = _header_defs(out if out.exists() else src)
+    xml = _section_xml(out if out.exists() else src)
     paras = tidy_hwpx._find_top_level_paragraphs_with_prattrs(xml)
-    for (_s, _e, _px, _oe, attrs) in paras:
+    assert len(paras) == len(source_widow)
+    for (_s, _e, _px, _oe, attrs), want in zip(paras, source_widow):
         pid = tidy_hwpx._attr_value(attrs, "paraPrIDRef")
         assert pid in defs
-        assert _breaksetting_attrs(defs, pid)["widowOrphan"] == "1"
+        assert _breaksetting_attrs(defs, pid)["widowOrphan"] == want
 
 
 def test_typeset_defaults_heading_and_caption_get_keep_with_next_plain_body_does_not(tmp_path):
@@ -548,7 +566,7 @@ def test_typeset_defaults_heading_and_caption_get_keep_with_next_plain_body_does
     assert _breaksetting_attrs(defs, obj_pid)["keepWithNext"] == "1"
 
     # plain body paragraph (not heading, not caption, not object) — widowOrphan
-    # yes, keepWithNext untouched.
+    # stays at the source value; keepWithNext untouched.
     plain_hit = None
     for (_s, _e, px, _oe, attrs) in paras:
         text = tidy_hwpx._para_text(px).strip()
@@ -557,12 +575,10 @@ def test_typeset_defaults_heading_and_caption_get_keep_with_next_plain_body_does
                 and not tidy_hwpx._contains_object(px):
             pid = tidy_hwpx._attr_value(attrs, "paraPrIDRef")
             b = _breaksetting_attrs(defs, pid)
-            if b["widowOrphan"] == "1":
-                plain_hit = (text, b)
-                break
+            plain_hit = (text, b)
+            break
     assert plain_hit is not None
     _text, b = plain_hit
-    assert b["widowOrphan"] == "1"
     assert b["keepWithNext"] != "1"
 
 
@@ -678,17 +694,17 @@ def test_typeset_defaults_cli_run_twice_byte_identical(tmp_path):
 def test_typeset_defaults_default_caption_prefixes(tmp_path):
     """caption_prefixes를 생략하면 모듈 기본값("표 ", "[그림")이 쓰인다.
 
-    Rule 2: 캡션 문단 자신은 keep_with_next를 받지 않는다(patched에는 남되
-    keep_with_next=False) — 대신 그 앞 객체(그림) 문단이 keep_with_next=True로
-    patched된다. 이 fixture의 그림은 이미 신규(객체 -> 캡션) 레이아웃이라
-    빈 text_head("") 항목으로 patched에 나타난다."""
+    Rule 2: 캡션 문단 자신은 keep_with_next를 받지 않는다 — 대신 그 앞
+    객체(그림) 문단이 keep_with_next=True로 patched된다. 이 fixture의 그림은
+    이미 신규(객체 -> 캡션) 레이아웃이라 빈 text_head("") 항목으로 patched에
+    나타난다. widowOrphan은 양식 값을 보존하므로 캡션 문단이 patched에 안
+    실릴 수 있다."""
     src = _copy_fixture(tmp_path)
     out = tmp_path / "out.hwpx"
     result = tidy_hwpx.apply_typeset_defaults(src, TYPESET_ANCHORS, out_path=out)
     assert result["ok"] is True
     caption_hits = [r for r in result["patched"] if r["text_head"].startswith("표 ")
                     or r["text_head"].startswith("[그림")]
-    assert caption_hits
     assert all(r["keep_with_next"] is False for r in caption_hits)
     # 빈 text_head(객체 문단, 캡션 텍스트 없음) 중 keep_with_next=True인 항목이
     # 있어야 한다(그림 객체가 다음 캡션과 묶임).
@@ -743,7 +759,6 @@ def test_typeset_defaults_cli_composes_with_before_and_keep_with_next(tmp_path):
         if text.startswith("표 1."):
             pid = tidy_hwpx._attr_value(attrs, "paraPrIDRef")
             b = _breaksetting_attrs(defs, pid)
-            assert b["widowOrphan"] == "1"
             assert b["keepWithNext"] == "1"
 
 
@@ -825,11 +840,10 @@ def test_object_without_following_caption_gets_no_keep_with_next(tmp_path):
     조건에서만 True."""
     paras = [_p_table(), _p("캡션 아님, 그냥 본문")]
     path = _build_minimal_synthetic_hwpx(tmp_path, paras)
-    out = tmp_path / "out.hwpx"
-    tidy_hwpx.apply_typeset_defaults(path, [], caption_prefixes=["표 "], out_path=out)
+    tidy_hwpx.apply_typeset_defaults(path, [], caption_prefixes=["표 "], out_path=path)
 
-    defs = _header_defs(out)
-    xml = _section_xml(out)
+    defs = _header_defs(path)
+    xml = _section_xml(path)
     top_paras = tidy_hwpx._find_top_level_paragraphs_with_prattrs(xml)
     table_idx = next(i for i, (_s, _e, px, _oe, _a) in enumerate(top_paras)
                       if tidy_hwpx._contains_object(px))

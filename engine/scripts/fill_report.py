@@ -51,9 +51,10 @@ anchors 목록을 tidy_blank_before로 유도해 쓴다(explicit build.yaml 키�
 항상 우선). verdict에 derived_tidy_anchors로 기록되고, 유도 앵커는
 모호/미매치를 fatal 대신 per-anchor skip+warning으로 처리한다
 (tidy_warnings).
-또한 --form-profile이 주어지면 §O 조판 기본값(전 본문 widowOrphan=1,
-anchors/캡션 keepWithNext=1)을 keep_with_next/restore 이후 PDF 변환 직전에
-적용한다(멱등). --loop와 --assemble이 같은 순서·조건으로 동작한다.
+또한 --form-profile이 주어지면 §O 조판 기본값(양식 본문 widowOrphan 보존,
+build.yaml widow_orphan이 있을 때만 강제, anchors/캡션 keepWithNext=1)을
+keep_with_next/restore 이후 PDF 변환 직전에 적용한다(멱등). --loop와
+--assemble이 같은 순서·조건으로 동작한다.
 
   (D) PROOF 단계(--loop v2, COM 필요):
       python fill_report.py --loop --form FORM.hwpx --content content.md
@@ -792,10 +793,29 @@ def read_profile_anchors(form_profile):
     return list(profile.get("anchors") or [])
 
 
-def run_typeset_defaults(hwpx_path, anchors):
+def read_widow_orphan(build_yaml):
+    """build.yaml widow_orphan opt-in. None = 양식 본문 paraPr 값 보존.
+
+    true/false만 허용. 키가 없으면 None."""
+    if not build_yaml or not Path(build_yaml).exists():
+        return None
+    cfg = build_report.parse_build_yaml(build_yaml)
+    if "widow_orphan" not in cfg:
+        return None
+    raw = cfg["widow_orphan"]
+    v = str(raw).strip().lower()
+    if v in ("true", "1", "yes"):
+        return True
+    if v in ("false", "0", "no", "off"):
+        return False
+    die(f"build.yaml widow_orphan must be true or false: {raw!r}")
+
+
+def run_typeset_defaults(hwpx_path, anchors, widow_orphan=None):
     """tidy_hwpx.apply_typeset_defaults를 프로세스 내에서 직접 호출 (§O).
 
-    조판 기본값: 전 본문 widowOrphan=1, 제목(anchors)+캡션 keepWithNext=1.
+    조판 기본값: 양식 본문 widowOrphan 보존(widow_orphan이 True/False일 때만
+    강제), 제목(anchors)+캡션 keepWithNext=1.
     패스 순서 규약(tidy_hwpx docstring)대로 keep_with_next/restore 이후, PDF
     변환 직전에 실행한다. 멱등이므로 반복 루프에서 매번 호출해도 안전.
     실패는 die()로 중단 — run_keep_with_next와 동일 패턴(stdout 잠금)."""
@@ -809,8 +829,9 @@ def run_typeset_defaults(hwpx_path, anchors):
     saved_stdout = sys.stdout
     sys.stdout = _NullStdout()
     try:
-        result = tidy_hwpx.apply_typeset_defaults(hwpx_path, anchors or [],
-                                                  out_path=hwpx_path)
+        result = tidy_hwpx.apply_typeset_defaults(
+            hwpx_path, anchors or [], out_path=hwpx_path,
+            widow_orphan=widow_orphan)
     except SystemExit as e:
         sys.stdout = saved_stdout
         die(f"apply_typeset_defaults 실패(exit {e.code}): anchors={anchors}")
@@ -1457,7 +1478,9 @@ def mode_loop(args):
             if keep_with_next:
                 run_keep_with_next(out_hwpx, keep_with_next)
             if form_profile:
-                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
+                run_typeset_defaults(
+                    out_hwpx, read_profile_anchors(form_profile),
+                    widow_orphan=read_widow_orphan(args.build_yaml))
             xml_para_verification = run_para_format_check(out_hwpx, form)
             if not pdf_cmd:
                 verdict = xml_only_verdict(out_hwpx, xml_para_verification, i)
@@ -1514,7 +1537,9 @@ def mode_loop(args):
             if keep_with_next:
                 run_keep_with_next(out_hwpx, keep_with_next)
             if form_profile:
-                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
+                run_typeset_defaults(
+                    out_hwpx, read_profile_anchors(form_profile),
+                    widow_orphan=read_widow_orphan(args.build_yaml))
             run_com_convert(out_hwpx, out_pdf)
         else:
             # 기존 경로: edit 한 방에 save-as + export-pdf.
@@ -1727,7 +1752,9 @@ def mode_assemble(args):
             if keep_with_next:
                 run_keep_with_next(out_hwpx, keep_with_next)
             if form_profile:
-                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
+                run_typeset_defaults(
+                    out_hwpx, read_profile_anchors(form_profile),
+                    widow_orphan=read_widow_orphan(args.build_yaml))
             xml_para_verification = run_para_format_check(out_hwpx, form)
             if not pdf_cmd:
                 verdicts.append(xml_only_verdict(out_hwpx, xml_para_verification,
@@ -1760,7 +1787,9 @@ def mode_assemble(args):
                 run_keep_with_next(out_hwpx, keep_with_next)
             # §O 조판 기본값 — form_profile이 주어지면 적용(멱등). 패스 순서 규약 준수.
             if form_profile:
-                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
+                run_typeset_defaults(
+                    out_hwpx, read_profile_anchors(form_profile),
+                    widow_orphan=read_widow_orphan(args.build_yaml))
             run_com_convert(out_hwpx, out_pdf)
         else:
             run_com_edit(form, ops_path, out_hwpx, out_pdf, args.kill_stale)
@@ -1892,7 +1921,8 @@ def main():
                          "build.yaml에 tidy_blank_before/after가 둘 다 없을 때 "
                          "anchors 목록을 tidy_blank_before로 자동 유도(explicit "
                          "build.yaml 키가 항상 우선), (2) §O 조판 기본값을 PDF 변환 "
-                         "직전에 적용(widowOrphan=1 + anchors keepWithNext=1). "
+                         "직전에 적용(양식 widowOrphan 보존 + anchors keepWithNext=1; "
+                         "build.yaml widow_orphan이 있으면 그 값으로 강제). "
                          "이 옵션만 주어져도 오프라인 tidy 경로를 탄다")
     ap.add_argument("--proof", action="store_true",
                     help="(loop) phase-1 FILL 루프 수렴 후 PROOF 단계 실행: "

@@ -49,13 +49,16 @@ exit 2: 사용법/파일 오류.
 
 --typeset-defaults [--profile form_profile.json] [--caption-prefixes "표 ,[그림"]:
     모든 top-level 본문 문단(표 셀 안에 중첩된 문단 제외 — 기존 구조-보호
-    관례와 동일)에 widowOrphan="1"을 적용한다. 추가로, 문단 텍스트가
-    --profile의 anchors(제목) 중 하나와 일치/그 텍스트로 시작하거나
-    --caption-prefixes(기본 "표 ", "[그림") 중 하나로 시작하면 같은 문단에
-    keepWithNext="1"도 함께 적용한다. clone/repoint는 restore_para_formats/
-    apply_keep_with_next와 동일 패턴이되, widowOrphan과 keepWithNext가 같은
-    hh:breakSetting 태그에 있으므로 문단당 목표 조합을 한 번에 계산해
-    (원본 def id, 목표 keepWithNext) 단위로만 clone을 캐시한다(동일 def를
+    관례와 동일)에 keepWithNext 보강을 적용한다. widowOrphan은 기본적으로
+    원본 본문 paraPr 값을 그대로 복제한다(양식이 0이면 0, 1이면 1 —
+    강제하지 않음). 호출자가 widow_orphan=True/False를 주면 그 값으로
+    명시적으로 덮어쓴다. 추가로, 문단 텍스트가 --profile의 anchors(제목)
+    중 하나와 일치/그 텍스트로 시작하거나 --caption-prefixes(기본 "표 ",
+    "[그림") 중 하나로 시작하면 같은 문단에 keepWithNext="1"도 함께
+    적용한다. clone/repoint는 restore_para_formats/apply_keep_with_next와
+    동일 패턴이되, widowOrphan과 keepWithNext가 같은 hh:breakSetting 태그에
+    있으므로 문단당 목표 조합을 한 번에 계산해 (원본 def id, 목표
+    keepWithNext, 목표 widowOrphan) 단위로 clone을 캐시한다(동일 def를
     가리키는 문단이 여럿이면 clone 재사용). 이미 목표 값과 일치하는 def는
     건드리지 않는다 — 두 번 실행해도 byte-identical(idempotent). --dry-run은
     파일을 쓰지 않고 계획된 repoint 목록(문단 인덱스/텍스트 미리보기/적용될
@@ -84,7 +87,7 @@ exit 2: 사용법/파일 오류.
     다른 플래그와 조합 가능. 실행 순서(고정): --before/--after(빈 문단 정리)
     → --strip-guide-ws-runs(안내문 공백 런 제거) → --restore-formats(줄간격/
     정렬 복원) → --keep-with-next(캡션 고아 방지) → --typeset-defaults(위
-    패스가 만든 최종 문단 구조 위에서 widowOrphan 전역 적용 + keepWithNext
+    패스가 만든 최종 문단 구조 위에서 양식 widowOrphan 보존 + keepWithNext
     보강). --typeset-defaults를 맨 뒤에 두는 이유: (1) 앞선 패스가 지우거나
     재배치한 문단에 영향받지 않도록 최종 구조를 봐야 하고, (2)
     --keep-with-next가 이미 세팅한 keepWithNext="1"을 이 패스가 되돌리지
@@ -748,13 +751,15 @@ def apply_keep_with_next(path, prefixes, out_path=None):
 
 
 # ---------------------------------------------------------------------------
-# --typeset-defaults: widowOrphan=1 on every top-level body paragraph, plus
-# keepWithNext=1 additionally on heading/caption paragraphs. Same clone/repoint
-# pattern as restore_para_formats/apply_keep_with_next, but unified into one
-# pass per paragraph since both attrs live on the same hh:breakSetting tag of
-# the same paraPr def — doing widowOrphan and keepWithNext as two independent
-# sequential passes would clone the same def twice (once per pass) instead of
-# once per distinct (orig_id, widow_target, kwn_target) combination.
+# --typeset-defaults: keep the source body paraPr's widowOrphan (do not force
+# "1") and set keepWithNext=1 on heading/object-anchor paragraphs. Same
+# clone/repoint pattern as restore_para_formats/apply_keep_with_next, but
+# unified into one pass per paragraph since both attrs live on the same
+# hh:breakSetting tag of the same paraPr def — doing widowOrphan and
+# keepWithNext as two independent sequential passes would clone the same def
+# twice (once per pass) instead of once per distinct (orig_id, widow_target,
+# kwn_target) combination. Callers may opt in to a specific widowOrphan via
+# widow_orphan=True/False.
 # ---------------------------------------------------------------------------
 
 DEFAULT_CAPTION_PREFIXES = ["표 ", "[그림"]
@@ -827,17 +832,19 @@ def _object_wants_keep_with_next(paras_text, caption_prefixes):
 
 
 def apply_typeset_defaults(path, anchors, caption_prefixes=None, out_path=None,
-                            dry_run=False):
-    """모든 top-level 본문 문단에 widowOrphan="1"을 적용하고, profile의 anchors
-    (제목 문단)나 caption_prefixes(표/그림 캡션 등)로 시작하는 문단에는
-    keepWithNext="1"도 추가로 적용한다. 표 셀(hp:tbl) 안에 중첩된 문단은
+                            dry_run=False, widow_orphan=None):
+    """top-level 본문 문단의 widowOrphan은 원본 본문 paraPr 값을 복제하고
+    (기본: 강제하지 않음), profile의 anchors(제목 문단)나 객체+캡션 문단에는
+    keepWithNext="1"을 추가로 적용한다. 표 셀(hp:tbl) 안에 중첩된 문단은
     (top-level 판정 자체가 이를 제외하므로) 건드리지 않는다.
+
+    widow_orphan=None(기본): 각 문단이 가리키는 원본 paraPr의 widowOrphan을
+    그대로 둔다. True면 "1", False면 "0"으로 명시적으로 덮어쓴다.
 
     clone/repoint 패턴은 restore_para_formats/apply_keep_with_next와 동일하되,
     widowOrphan+keepWithNext 두 속성이 같은 breakSetting 태그에 있으므로 문단당
     한 번만 목표 (widowOrphan, keepWithNext) 조합을 계산해 그 조합 단위로 clone을
-    캐시한다(원본 def id당 최대 2개 clone: 본문용 widowOrphan-only, 제목/캡션용
-    widowOrphan+keepWithNext).
+    캐시한다(원본 def id당 최대 몇 개: 목표 조합 수만큼).
 
     이미 목표 값과 일치하는 def는 건드리지 않는다(idempotent — 두 번 실행해도
     byte-identical 출력).
@@ -864,8 +871,7 @@ def apply_typeset_defaults(path, anchors, caption_prefixes=None, out_path=None,
     section_names = sorted(n for n in names if re.match(r"Contents/section\d+\.xml", n))
     section_xmls = {n: contents[n].decode("utf-8") for n in section_names}
 
-    # clone 재사용 캐시: (원본 def id, keep_with_next target bool) -> new id.
-    # widowOrphan target은 이 함수 내에서 항상 True 고정이므로 캐시 키에서 생략.
+    # clone 재사용 캐시: (원본 def id, 목표 keepWithNext, 목표 widowOrphan) -> new id.
     clone_cache = {}
     new_defs = []  # [(new_id, block_xml)]
     patched = []
@@ -901,21 +907,27 @@ def apply_typeset_defaults(path, anchors, caption_prefixes=None, out_path=None,
             cur_widow = _attr_value(cur_break_m.group(1), "widowOrphan") if cur_break_m else None
             cur_kwn = _attr_value(cur_break_m.group(1), "keepWithNext") if cur_break_m else None
 
-            want_widow_str = "1"
+            if widow_orphan is True:
+                want_widow_str = "1"
+            elif widow_orphan is False:
+                want_widow_str = "0"
+            else:
+                want_widow_str = cur_widow
             want_kwn_str = "1" if want_kwn else cur_kwn
 
-            widow_changed = cur_widow != want_widow_str
+            widow_changed = (
+                widow_orphan is not None and cur_widow != want_widow_str
+            )
             kwn_changed = want_kwn and cur_kwn != "1"
             if not widow_changed and not kwn_changed:
                 continue  # 이미 목표 상태 — anomaly 아님, 손대지 않음(idempotence).
 
-            # 캐시 키: (원본 id, 최종 목표 keepWithNext 문자열) — widowOrphan은
-            # 이 함수에서 항상 "1"로 고정이라 별도 축이 필요 없다.
-            cache_key = (cur_id, want_kwn_str)
+            # 캐시 키: (원본 id, 최종 목표 keepWithNext, 최종 목표 widowOrphan).
+            cache_key = (cur_id, want_kwn_str, want_widow_str)
             new_id = clone_cache.get(cache_key)
             if new_id is None:
                 if dry_run:
-                    new_id = f"<new:{cur_id}:{want_kwn_str}>"
+                    new_id = f"<new:{cur_id}:{want_kwn_str}:{want_widow_str}>"
                 else:
                     max_id += 1
                     new_id = max_id
@@ -929,7 +941,7 @@ def apply_typeset_defaults(path, anchors, caption_prefixes=None, out_path=None,
             record = {
                 "para_idx": para_idx,
                 "text_head": text.strip()[:40],
-                "widow_orphan": True,
+                "widow_orphan": want_widow_str == "1",
                 "keep_with_next": bool(want_kwn),
                 "paraPrIDRef": {"from": cur_id, "to": str(new_id)},
             }
@@ -1405,9 +1417,9 @@ def main():
                      help="이 프리픽스로 시작하는 모든 문단에 keepWithNext=1 적용"
                           "(여러 번 지정 가능, 표 캡션 고아 방지)")
     ap.add_argument("--typeset-defaults", action="store_true",
-                     help="모든 top-level 본문 문단에 widowOrphan=1, "
-                          "제목(--profile anchors)/캡션(--caption-prefixes) 문단에는 "
-                          "keepWithNext=1도 추가 적용")
+                     help="제목(--profile anchors)/캡션(--caption-prefixes) 문단에 "
+                          "keepWithNext=1을 적용. widowOrphan은 양식 본문 paraPr "
+                          "값을 보존(강제하지 않음)")
     ap.add_argument("--strip-guide-ws-runs", action="append", default=[],
                      metavar="COLOR",
                      help="안내문 색('#RRGGBB') charPr의 공백/빈 런을 제거"
@@ -1488,10 +1500,10 @@ def main():
             if args.caption_prefixes else None
         )
         # --typeset-defaults는 다른 모든 패스(빈 문단 정리/포맷 복원/캡션 keepWithNext)
-        # 이후 최종 문단 구조 위에서 실행한다 — widowOrphan은 가장 넓은 범위(모든
-        # top-level 본문)라 앞선 패스가 지우거나 재배치한 문단에 영향받지 않아야
-        # 하고, 앞선 --keep-with-next가 이미 세팅한 keepWithNext="1"을 이 패스가
-        # 되돌리지 않고 보존해야 하기 때문(내부적으로 cur_kwn=="1"이면 유지).
+        # 이후 최종 문단 구조 위에서 실행한다 — keepWithNext 보강은 최종 구조를
+        # 봐야 하고, 앞선 --keep-with-next가 이미 세팅한 keepWithNext="1"을 이
+        # 패스가 되돌리지 않고 보존해야 하기 때문(내부적으로 cur_kwn=="1"이면 유지).
+        # widowOrphan은 양식 값을 보존한다(CLI는 opt-in 강제 없음).
         typeset_result = apply_typeset_defaults(
             cur, anchors, caption_prefixes=caption_prefixes, out_path=out,
             dry_run=args.dry_run,
