@@ -1,6 +1,6 @@
 # Stage 7 — Report pipeline in the GUI
 
-Status: QUEUED 2026-09-17 (after Stage 6). Owner: Fable. Rule: no new document semantics; the GUI drives the same
+Status: DONE 2026-09-18 04:00 (P1–P4; native screenshots of the fill and poster cards owed to the Stage 8 rebuild). Owner: Fable. Rule: no new document semantics; the GUI drives the same
 Runtime verbs the CLI uses; verify_format / layout_qa results are shown as designed states, never as render proof.
 
 ## Intent
@@ -23,3 +23,4 @@ Open a report workspace (e.g. reports/report-auralab-classroom) from the desktop
 | 2026-09-18 | P3 `workspace/fillRun` (CLI `fill-run`) drives `fill_report.py --loop` | Host-only. Validates workspace inputs, refuses `needs_hancom` / incomplete / `fill_in_progress`, tails `fill_events.jsonl` into `fill/progress`, returns loop state + hashed outputs + layout QA / verify_format as P2 rows. Desktop 채우기 실행 in the 파이프라인 disclosure; contact sheets labelled `증명 등급: <proof_grade>`. |
 | 2026-09-18 03:35 | P3 accepted by Fable | suites green; GUI card DOM-tested only (browser mock reports com unavailable, so the control is hidden there by design); native screenshot of the fill card is owed to the Stage 8 rebuild |
 | 2026-09-18 | P4 `workspace/posterRun` (CLI `poster-run`) drives report-module `poster` then `poster-verify` | Host-only. Validates `poster/poster_content.md` + form + figures, refuses `module_unavailable` / `artifact_missing`, returns hashed pptx/png + verifier rows verbatim. Desktop 포스터 만들기 in the 파이프라인 disclosure when poster inputs exist; PNG labelled `미리보기 이미지, 증명 아님`. |
+| 2026-09-18 04:00 | Stage 7 closed by Fable | P1 status strip, P2 verify, P3 fill loop (real converged run), P4 poster (real pass run); all through Runtime verbs the CLI shares; no new document semantics; no render-proof wording |
