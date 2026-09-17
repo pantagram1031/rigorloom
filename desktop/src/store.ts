@@ -49,6 +49,7 @@ import type {
   SidecarStatus,
   TaskPackList,
   Turn,
+  VerifyResult,
 } from "./types";
 
 export type View = "document" | "agent";
@@ -514,14 +515,17 @@ export interface WorkspaceState {
   findings: Finding[];
   checkedAt: string | null;
   sheetOpen: boolean;
+  /** Slide-in 검사 결과 panel under the pipeline strip. */
+  verifyPanelOpen: boolean;
+  /** Latest `candidate/verify` payload, verbatim. */
+  verifyResult: VerifyResult | null;
   /**
-   * The canonical verdict for a candidate, read from its receipt.
+   * The canonical verdict for a candidate, from the latest verify run when
+   * the target was a candidate, else from its receipt.
    *
-   * NOT re-derived here: `receipt/read` re-hashes the artifact against its
-   * binding before it returns, and the `checks` it carries are the offline
-   * checkers' own output from the apply that produced it. `verify/*` is still
-   * GAP, so a *re-run* is not available — and the UI says which of the two
-   * it is showing rather than blurring them.
+   * NOT re-derived here: `candidate/verify` / `receipt/read` re-hash the
+   * artifact against its binding before they return, and the `checks` they
+   * carry are the offline checkers' own output.
    */
   candidateVerdict: { runId: string; report: Receipt["checks"] } | null;
 
@@ -823,6 +827,8 @@ const initial: WorkspaceState = {
   findings: [],
   checkedAt: null,
   sheetOpen: false,
+  verifyPanelOpen: false,
+  verifyResult: null,
   candidateVerdict: null,
 
   renderPhase: "idle",

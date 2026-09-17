@@ -240,6 +240,9 @@ test("the 자세히 popover lists every former verification chip", () => {
         };
       }
       if (id === "./Icon") return { Icon };
+      if (id === "../verifyReport") {
+        return { worstVerifyVerdict: () => null, verifyTargetLabel: () => "원본" };
+      }
       throw new Error(`unexpected import: ${id}`);
     },
   });

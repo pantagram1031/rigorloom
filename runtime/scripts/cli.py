@@ -360,7 +360,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("verify", help="re-run the offline checks; fail closed")
     p.add_argument("--session", required=True)
-    p.add_argument("--run", required=True)
+    p.add_argument("--run", default=None,
+                   help="published candidate to check; omit to check the session source")
 
     return parser
 

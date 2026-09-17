@@ -20,6 +20,7 @@ import { SessionList } from "../components/SessionList";
 import { StructureTree } from "../components/StructureTree";
 import { TextView } from "../components/TextView";
 import { VerificationBar } from "../components/VerificationBar";
+import { VerifyPanel } from "../components/VerifyResults";
 import { Home } from "../components/Welcome";
 import {
   activeCandidates,
@@ -149,6 +150,7 @@ export function DocumentView() {
 
         <main className="panel center" aria-label="문서">
           <PipelineStrip />
+          <VerifyPanel />
           <EditorToolbar inspect={inspect} />
           <CenterCaveat />
           {mode === "text" ? (

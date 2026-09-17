@@ -110,6 +110,9 @@ function renderDocumentView(state) {
         PipelinePanel: () => React.createElement("div", { "data-testid": "pipeline-panel" }),
       };
     }
+    if (id === "../components/VerifyResults") {
+      return { VerifyPanel: () => null };
+    }
     throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.DocumentView));
@@ -202,6 +205,9 @@ function renderVerificationBar(state, props) {
         };
       }
       if (id === "./Icon") return { Icon };
+      if (id === "../verifyReport") {
+        return { worstVerifyVerdict: () => null, verifyTargetLabel: () => "원본" };
+      }
       throw new Error(`unexpected import: ${id}`);
     },
   );

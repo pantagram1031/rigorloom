@@ -324,7 +324,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           className="action btn-icon"
           data-testid="toolbar-check"
           disabled={!inspect || checkPhase === "starting"}
-          title="서식 검사를 돌립니다"
+          title="오프라인 검사를 돌립니다. 페이지 그림은 증거가 아닙니다."
           onClick={() => void runCheck()}
         >
           <Icon name="search" />

@@ -1,5 +1,5 @@
 /**
- * Status strip + 파이프라인 details. Read-only: P2 adds verify.
+ * Status strip + 파이프라인 details. P2 verify is a sibling slide-in.
  */
 import { refreshPipelineStatus } from "../actions";
 import {

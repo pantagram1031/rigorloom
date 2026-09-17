@@ -38,6 +38,7 @@ import type {
   Session,
   SidecarStatus,
   TaskPackList,
+  VerifyResult,
 } from "./types";
 
 export const EVENT_ACTIVITY = "runtime://activity";
@@ -277,6 +278,16 @@ export const readReceipt = (sessionId: string, runId: string) =>
   call<{ receipt: Receipt }>("receipt/read", { sessionId, runId }).then(
     (r) => r.receipt,
   );
+
+/**
+ * HOST ONLY. Re-run the offline checkers on the session source or a candidate.
+ * Omit `runId` to check the source. A check that could not run is never a pass.
+ */
+export const verify = (sessionId: string, runId?: string | null) =>
+  call<VerifyResult>("candidate/verify", {
+    sessionId,
+    ...(runId ? { runId } : {}),
+  });
 
 // --- rendering ---------------------------------------------------------------
 

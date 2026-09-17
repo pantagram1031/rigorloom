@@ -164,6 +164,9 @@ function renderVerification(inspect) {
         };
       }
       if (id === "./Icon") return { Icon };
+      if (id === "../verifyReport") {
+        return { worstVerifyVerdict: () => null, verifyTargetLabel: () => "원본" };
+      }
       throw new Error(`unexpected import: ${id}`);
     },
   });

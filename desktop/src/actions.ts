@@ -78,6 +78,7 @@ import type {
   Session,
   Turn,
   VerificationReport,
+  VerifyResult,
 } from "./types";
 
 const MAX_RECENTS = 8;
@@ -393,6 +394,8 @@ export async function selectSession(sessionId: string) {
           findings: [],
           checkedAt: null,
           checkPhase: "idle" as const,
+          verifyResult: null,
+          verifyPanelOpen: false,
           editIntentGeneration: getState().editIntentGeneration + 1,
           inlineEdit: null,
           render: null,
@@ -2853,61 +2856,40 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
 // --- checking ---------------------------------------------------------------
 
 /**
- * 검사 실행 — the document's own preflight, and, once a candidate exists, the
- * real offline verdict for it.
+ * 검사 실행 — `candidate/verify` on the current head.
  *
- * Two halves, kept apart on purpose because they are different claims:
- *
- * 1. **The source's preflight.** `document/inspect` and `document/readRegion`
- *    re-read, then the engine's own facts are reported: `color_anomaly`
- *    (T127 — the blue body text that once shipped as clean), `scriptAnomaly`
- *    (T30), per-run colour drift. Every finding carries an address.
- *
- * 2. **The candidate's verdict.** `receipt/read` re-hashes the artifact
- *    against its binding before it returns anything, and the `checks` it
- *    carries are `check_residue`'s own output from the run that produced the
- *    candidate — a real offline verification, executed by the Runtime, not
- *    re-derived here. `acceptance` is true only if every required check RAN
- *    and was clean; a check that could not run is `unavailable` and is never
- *    counted as a pass.
- *
- * What is still NOT available, and is not dressed up as if it were: a fresh
- * RE-RUN of the checkers on demand. `verify/*` is GAP on the wire (§11.5) and
- * `RuntimeCore.candidate_verify` is domain-only, reachable from the CLI and
- * not from here. So the badge distinguishes "verified at apply" from "verified
- * just now", and the second one is honestly absent.
+ * Source when there is no candidate, else the head candidate. Progress is
+ * `checkPhase: starting`; the result panel opens immediately. Unavailable
+ * checkers stay unavailable — never dressed as pass. This is a byte/offline
+ * re-run, not a render proof.
  */
 export async function runCheck(): Promise<void> {
   const sessionId = getState().activeSessionId;
   if (!sessionId) return;
-  setState({ checkPhase: "starting", sheetOpen: true });
-
-  await loadInspect(sessionId, true);
-  await loadText(sessionId, true);
-
-  const inspect = getState().inspects[sessionId];
-  if (!inspect) {
-    setState({ checkPhase: "failed" });
-    return;
-  }
-  const findings = collectFindings(inspect, getState().texts[sessionId] ?? []);
+  const runId = headCandidate(getState())?.runId ?? null;
   setState({
-    findings,
-    checkPhase: "ready",
-    checkedAt: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    checkPhase: "starting",
+    verifyPanelOpen: true,
+    sheetOpen: false,
   });
-  await loadCandidates(sessionId);
 
-  // The candidate half. Newest run last in `candidate/list` (sorted run dirs),
-  // and the one the user just made is the one they mean.
-  const applied = getState().applied;
-  const rows = getState().candidates[sessionId] ?? [];
-  const runId = applied?.runId ?? rows[rows.length - 1]?.runId ?? null;
-  if (runId) {
-    const ok = await loadReceipt(runId);
-    if (!ok) setState({ candidateVerdict: null });
-  } else {
-    setState({ candidateVerdict: null });
+  try {
+    const result: VerifyResult = await rt.verify(sessionId, runId);
+    const findings = verdictFindings(result.checks);
+    setState({
+      verifyResult: result,
+      findings,
+      checkPhase: "ready",
+      checkedAt: result.checkedUtc,
+      candidateVerdict: runId ? { runId, report: result.checks } : null,
+    });
+  } catch (e) {
+    setState({
+      checkPhase: "failed",
+      verifyResult: null,
+      candidateVerdict: null,
+    });
+    showToast(rt.asRuntimeError(e).message);
   }
 }
 
@@ -3744,6 +3726,10 @@ export function closeTopmostOverlay(): boolean {
   }
   if (state.sheetOpen) {
     setState({ sheetOpen: false });
+    return true;
+  }
+  if (state.verifyPanelOpen) {
+    setState({ verifyPanelOpen: false });
     return true;
   }
   return false;

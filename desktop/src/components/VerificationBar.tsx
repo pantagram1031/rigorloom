@@ -8,6 +8,10 @@
 import { exportApplied, openReceipt, reopenExported, runCheck } from "../actions";
 import { setState, useWorkspace } from "../store";
 import type { Candidate, InspectResult, Session } from "../types";
+import {
+  worstVerifyVerdict,
+  verifyTargetLabel,
+} from "../verifyReport";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
@@ -90,14 +94,19 @@ function verificationPill(args: {
   hard: number;
   warn: number;
   seatWarnings: number;
+  worst: "pass" | "warn" | "fail" | "unavailable" | null;
 }): { label: string; tone: "none" | "ok" | "warn" | "bad" } {
-  const { checkPhase, hard, warn, seatWarnings } = args;
+  const { checkPhase, hard, warn, seatWarnings, worst } = args;
   if (checkPhase === "starting") return { label: "검사 중", tone: "none" };
   if (checkPhase === "idle") {
     if (seatWarnings > 0) return { label: `주의 ${seatWarnings}`, tone: "warn" };
     return { label: "검사 안 함", tone: "none" };
   }
   if (checkPhase === "failed") return { label: hard > 0 ? `실패 ${hard}` : "실패", tone: "bad" };
+  if (worst === "fail" || hard > 0) return { label: `실패 ${hard || ""}`.trim(), tone: "bad" };
+  if (worst === "unavailable") return { label: "일부 미실행", tone: "none" };
+  if (worst === "warn" || warn > 0) return { label: `주의 ${warn}`, tone: "warn" };
+  if (worst === "pass") return { label: "통과", tone: "ok" };
   if (hard > 0) return { label: `실패 ${hard}`, tone: "bad" };
   if (warn > 0) return { label: `주의 ${warn}`, tone: "warn" };
   return { label: "통과", tone: "ok" };
@@ -118,7 +127,8 @@ export function VerificationBar({
   const checkPhase = useWorkspace((s) => s.checkPhase);
   const findings = useWorkspace((s) => s.findings);
   const checkedAt = useWorkspace((s) => s.checkedAt);
-  const sheetOpen = useWorkspace((s) => s.sheetOpen);
+  const verifyResult = useWorkspace((s) => s.verifyResult);
+  const verifyPanelOpen = useWorkspace((s) => s.verifyPanelOpen);
   const applied = useWorkspace((s) => s.applied);
   const verdict = useWorkspace((s) => s.candidateVerdict);
   const exportPhase = useWorkspace((s) => s.exportPhase);
@@ -154,7 +164,8 @@ export function VerificationBar({
   const seatWarnings = inspect
     ? inspect.regions.regions.filter((r) => r.colorAnomaly || r.scriptAnomaly).length
     : 0;
-  const pill = verificationPill({ checkPhase, hard, warn, seatWarnings });
+  const worst = verifyResult ? worstVerifyVerdict(verifyResult.checks.checks) : null;
+  const pill = verificationPill({ checkPhase, hard, warn, seatWarnings, worst });
   const engineUp = Boolean(status?.running);
   const docName = session?.source.name ?? "문서 없음";
   const backendTag = session?.source.documentKind ?? "—";
@@ -365,6 +376,26 @@ export function VerificationBar({
             )
           }
         />
+        <Fact
+          k="대상"
+          nonce={verifyResult ? `${verifyResult.runId ?? "source"}-${verifyResult.checkedUtc}` : "none"}
+          title="지금 다시 돌린 검사가 본 문서입니다. 원본이거나 후보본 한 건입니다."
+          v={
+            <span className="mono" data-testid="verify-run-target">
+              {verifyResult ? verifyTargetLabel(verifyResult) : "—"}
+            </span>
+          }
+        />
+        <Fact
+          k="실행 시각"
+          nonce={verifyResult?.checkedUtc ?? checkedAt ?? "none"}
+          title="candidate/verify 가 검사를 끝낸 시각입니다."
+          v={
+            <span className="mono" data-testid="verify-run-time">
+              {verifyResult?.checkedUtc ?? checkedAt ?? "—"}
+            </span>
+          }
+        />
         {queued > 0 ? (
           <Fact
             k="검토 대기"
@@ -469,11 +500,11 @@ export function VerificationBar({
             내보낸 파일 열어 확인
           </button>
         ) : null}
-        {findings.length > 0 && !sheetOpen ? (
+        {verifyResult && !verifyPanelOpen ? (
           <button
             className="action"
             data-testid="open-findings"
-            onClick={() => setState({ sheetOpen: true })}
+            onClick={() => setState({ verifyPanelOpen: true })}
           >
             결과 보기
           </button>

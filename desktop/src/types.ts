@@ -415,6 +415,27 @@ export interface VerificationReport {
   note: string;
 }
 
+/** `candidate/verify`. `runId` omitted means the session source. */
+export type VerifyTarget = { source: true } | { runId: string };
+
+export interface VerifyFinding {
+  code?: string;
+  msg?: string;
+  at?: string;
+  page?: number | null;
+  [key: string]: unknown;
+}
+
+export interface VerifyResult {
+  sessionId: string;
+  runId: string | null;
+  target: VerifyTarget;
+  checkedUtc: string;
+  candidate: ArtifactRef | null;
+  checks: VerificationReport;
+  residue?: Record<string, unknown>;
+}
+
 export interface ArtifactRef {
   role: string;
   path: string;

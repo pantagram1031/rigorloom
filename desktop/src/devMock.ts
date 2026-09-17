@@ -20,6 +20,7 @@
 import corpus from "./fixtures/corpus.json";
 
 import { AURALAB_PIPELINE_STATUS } from "./pipelineStatus";
+import { mockVerifyResult } from "./verifyReport";
 import type { Capabilities, InspectResult, RegionText, SourceRef } from "./types";
 
 interface Fixture {
@@ -181,6 +182,8 @@ function call(method: string, params: Record<string, unknown>): unknown {
     }
     case "candidate/list":
       return { sessionId: SESSION, candidates: [] };
+    case "candidate/verify":
+      return mockVerifyResult(SESSION, typeof params.runId === "string" ? params.runId : null);
     default:
       throw { code: "dev_mock", message: `no fixture for ${method}` };
   }

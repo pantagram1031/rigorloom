@@ -163,6 +163,7 @@ class RuntimeServer:
             "approval/resolve": self._m_approval_resolve,
             "plan/apply": self._m_plan_apply,
             "document/renderPrepare": self._m_document_render_prepare,
+            "candidate/verify": self._m_candidate_verify,
         }
         assert set(methods) == set(HOST_ONLY_METHODS), (
             "host handler map and rt_core.HOST_ONLY_METHODS disagree: "
@@ -517,6 +518,13 @@ class RuntimeServer:
                          where="receipt/read.params",
                          policy=self.unknown_field_policy)
         return self.core.receipt_read(params["sessionId"], params["runId"])
+
+    def _m_candidate_verify(self, params: dict, _id) -> dict:
+        params = _object(params, {"sessionId", "runId"}, required=("sessionId",),
+                         where="candidate/verify.params",
+                         policy=self.unknown_field_policy)
+        return self.core.candidate_verify(params["sessionId"],
+                                          params.get("runId"))
 
     def _m_document_render(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "page", "dpi", "runId", "inline"},

@@ -421,12 +421,12 @@ async function phaseOpen(config: SmokeConfig) {
   // --- 검사 실행 --------------------------------------------------------------
   await runCheck();
   await settled();
-  check("검사 produced findings", getState().findings.length > 0, getState().findings.length);
-  check("findings sheet is shown", !!document.querySelector('[data-testid="findings-sheet"]'));
-  check("findings are addressed", getState().findings.every((f) => f.where.length > 0));
+  check("검사 called candidate/verify", !!getState().verifyResult, JSON.stringify(getState().checkPhase));
+  check("verify results panel is shown", !!document.querySelector('[data-testid="verify-results"]'));
+  check("verify rows are present", (getState().verifyResult?.checks.checks.length ?? 0) > 0);
   check("the bar still refuses to claim a render proof",
     domText('[data-testid="verification-bar"]').includes("증명 없음"));
-  setState({ sheetOpen: false });
+  setState({ verifyPanelOpen: false, sheetOpen: false });
   await settled();
 
   // --- app zoom ---------------------------------------------------------------
@@ -3340,7 +3340,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
   await applyApprovedPlan();
   await runCheck();
   await settled(300);
-  setState({ sheetOpen: false });
+  setState({ sheetOpen: false, verifyPanelOpen: false });
   await settled(200);
 
   if (stop === "receipt" && getState().applied) {

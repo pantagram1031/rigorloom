@@ -714,8 +714,9 @@ only.
 | `approval/resolve` (host) | implemented, binds plan id + plan hash | `rt_plan.resolve_approval` |
 | `plan/apply` (host) | implemented | `runtime/scripts/rt_apply.py` `apply_plan`; `backend: xml` is one `xml_backend.py edit` batch (`structural_only` + `evidence.xml`); `backend: com` is one `com_backend.py edit` batch (`native_com_session`) |
 | `candidate/list`, `receipt/read` | implemented; the receipt refuses on drift | `rt_apply` |
+| `candidate/verify` (host) | implemented — optional `runId` (omit = source); `target` + `checkedUtc` | `RuntimeCore.candidate_verify` |
 | cancellation | implemented, cooperative between ops | `rt_server._checkpoint` |
-| `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`, `workspace/delete`, `verify/*` | GAP | — |
+| `artifact/exportTo`, `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`, `workspace/delete`, remaining `verify/*` | GAP | — |
 | `document/render`, `document/renderPrepare`, `event/subscribe`, `event/unsubscribe`, `event/poll` | implemented in Phase 3 | §11 |
 
 Cancellation is spelled `{"kind":"cancel","id":...}` rather than a `$/cancel`
@@ -846,8 +847,7 @@ derives its tool surface from `AGENT_METHODS` and fails at import if a method
 has no schema or a schema names a host-only method. Adding an agent method
 therefore surfaces it on the CLI and in MCP, or breaks loudly.
 
-`RuntimeCore.candidate_verify` is domain but deliberately NOT in `METHODS`: the
-CLI's `verify` composes it, and the wire does not grow a tool for it.
+`RuntimeCore.candidate_verify` is HOST ONLY (`candidate/verify`); MCP does not grow a tool for it. Optional `runId` selects a candidate, omitted means the session source; the result carries `target` and `checkedUtc`.
 
 ### Still GAP after Phase 2
 
@@ -1104,8 +1104,7 @@ different object. The Runtime still does not manage it. `workspace/pipelineStatu
 
 ### 11.5 Still GAP after Phase 3
 
-`verify/*` as protocol methods (the domain has `RuntimeCore.candidate_verify`
-and the CLI exposes it; the wire does not), `artifact/exportTo`,
+`verify/*` as a family of protocol methods (the host now has `candidate/verify`; the rest of the family is still GAP), `artifact/exportTo`,
 `provider/configure`, `policy/set`, `workspace/snapshot`, `workspace/restore`,
 `workspace/delete`, section and heading structure (desktop gap 6), descendant
 containment for child processes, and last-writer-wins on plan and approval

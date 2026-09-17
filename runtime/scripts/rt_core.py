@@ -85,6 +85,7 @@ from rt_session import (  # noqa: E402
     full_text_spec,
     load_profile,
     region_runs_with_faces,
+    now_utc,
     residue_profile,
 )
 
@@ -127,6 +128,7 @@ HOST_ONLY_METHODS: tuple[str, ...] = (
     "approval/resolve",
     "plan/apply",
     "document/renderPrepare",
+    "candidate/verify",
 )
 
 METHODS: tuple[str, ...] = (AGENT_METHODS + PROTOCOL_ONLY_METHODS
@@ -811,35 +813,46 @@ class RuntimeCore:
                      "preedit rewrites and rezips the package"),
         }
 
-    def candidate_verify(self, session_id, run_id) -> dict:
-        """Re-run the offline checks against a published candidate.
+    def candidate_verify(self, session_id, run_id=None) -> dict:
+        """Re-run the offline checks against the session source or a candidate.
 
-        Domain, but NOT a v0 protocol method — it is absent from ``METHODS`` on
-        purpose, so it does not silently widen the MCP tool surface. The CLI
-        exposes it; the wire does not.
-
-        The receipt is read first, which means the candidate bytes are
+        HOST ONLY on the wire (``candidate/verify``). Absent from the MCP tool
+        surface on purpose. ``run_id`` omitted means the session source;
+        otherwise the receipt is read first so the candidate bytes are
         re-verified against their binding before any checker is asked about
         them (``rt_apply.read_receipt``).
         """
         session = self.store.get(session_id)
-        receipt = read_receipt(session, run_id)
-        artifact = session.candidates_dir / run_id / receipt["candidate"]["path"]
+        checked_utc = now_utc()
+        if run_id is None:
+            artifact = session.source
+            candidate = None
+            target = {"source": True}
+            declaration = None
+            receipt_residue: dict = {}
+        else:
+            run_id = self._bare_run_id(run_id)
+            receipt = read_receipt(session, run_id)
+            artifact = session.candidates_dir / run_id / receipt["candidate"]["path"]
+            candidate = receipt["candidate"]
+            target = {"runId": run_id}
+            # The declaration comes from the RECEIPT, never from this call. A
+            # candidate that passed under a declared keep list must be
+            # re-checkable under the same one, and letting a re-check supply
+            # its own policy would make "verify" mean "verify against whatever
+            # I now claim".
+            recorded = receipt.get("exemptions") or {}
+            declaration = recorded.get("declares") or None
+            receipt_residue = receipt.get("residue") if isinstance(
+                receipt.get("residue"), dict) else {}
         _, profile_path, residue_meta = residue_profile(self.tools, session)
-        # The declaration comes from the RECEIPT, never from this call. A
-        # candidate that passed under a declared keep list must be re-checkable
-        # under the same one, and letting a re-check supply its own policy would
-        # make "verify" mean "verify against whatever I now claim".
-        recorded = receipt.get("exemptions") or {}
-        declaration = recorded.get("declares") or None
         checks = verification_report(self.tools, profile_path, artifact, declaration)
         residue = dict(residue_meta)
-        receipt_residue = receipt.get("residue") if isinstance(
-            receipt.get("residue"), dict) else {}
         if "declaration" in receipt_residue:
             residue["declaration"] = receipt_residue["declaration"]
         else:
             residue["declaration"] = declaration
         return {"sessionId": session.id, "runId": run_id,
-                "candidate": receipt["candidate"], "checks": checks,
+                "target": target, "checkedUtc": checked_utc,
+                "candidate": candidate, "checks": checks,
                 "residue": residue}
