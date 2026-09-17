@@ -107,6 +107,34 @@ def test_a_missing_credential_is_a_provider_failure_not_a_crash():
     assert excinfo.value.data["credentialRef"] == CREDENTIAL_ENV
 
 
+def test_omitting_credential_means_none_is_required():
+    """A keyless OpenAI-compatible bridge is a reference of source none, not a
+    missing env var. The adapter must complete without an Authorization header.
+    """
+    with FakeRouter(lambda path, body: {"json": completion("ok")}) as srv:
+        client = RouterAdapter(
+            {"providerId": "keyless", "baseUrl": srv.base_url,
+             "model": "fake-model"},
+            environ={})
+        public = client.capabilities().public()
+        assert public["authOwnership"] == "provider_managed"
+        assert public["notes"]["credential"]["state"] == "not_required"
+        response = client.complete(request_of())
+        assert srv.last_authorization() is None
+    assert response.text == "ok"
+
+
+def test_source_none_is_the_same_as_omitting_the_block():
+    with FakeRouter(lambda path, body: {"json": completion("ok")}) as srv:
+        client = RouterAdapter(
+            router_config(srv.base_url, credential={"source": "none"}),
+            environ={})
+        assert client.capabilities().public()["notes"]["credential"]["state"] \
+            == "not_required"
+        client.complete(request_of())
+        assert srv.last_authorization() is None
+
+
 def test_the_os_store_source_says_it_is_not_implemented():
     config = router_config("http://127.0.0.1:1/v1",
                            credential={"source": "os_store", "key": "some-key"})
@@ -169,8 +197,16 @@ def test_the_request_body_carries_the_model_and_the_tools(env):
         body = srv.requests[-1]["body"]
     assert srv.requests[-1]["path"].endswith("/chat/completions")
     assert body["model"] == "fake-model"
+    assert "max_tokens" not in body
     assert body["tools"][0]["function"]["name"] == "plan_propose"
+    assert "tool_choice" not in body
     assert body["messages"][0]["role"] == "system"
+
+
+def test_max_tokens_is_sent_only_when_configured(env):
+    with FakeRouter(lambda path, body: {"json": completion("ok")}) as srv:
+        adapter(srv, env, maxTokens=256).complete(request_of())
+        assert srv.requests[-1]["body"]["max_tokens"] == 256
 
 
 # --- tool-call round trip ---------------------------------------------------
@@ -187,6 +223,120 @@ def test_a_tool_call_comes_back_parsed(env):
     assert call.arguments == {"sessionId": "abc", "include": ["regions"]}
 
 
+def test_legacy_function_call_is_parsed_as_a_tool_call(env):
+    reply = {"choices": [{"index": 0, "finish_reason": "function_call",
+                          "message": {"role": "assistant", "content": None,
+                                      "function_call": {
+                                          "name": "session_list",
+                                          "arguments": "{}"}}}]}
+    with FakeRouter(lambda path, body: {"json": reply}) as srv:
+        response = adapter(srv, env).complete(request_of())
+    assert response.tool_calls[0].name == "session_list"
+    assert response.tool_calls[0].arguments == {}
+
+
+def test_json_assistant_text_is_recovered_as_a_tool_call_when_tools_were_offered(env):
+    """The live Cursor bridge on this PC emitted this instead of tool_calls."""
+    blob = json.dumps({"name": "document_inspect",
+                       "arguments": {"sessionId": "s1"}})
+    tools = [{"name": "document_inspect", "description": "d",
+              "inputSchema": {"type": "object"}}]
+    with FakeRouter(lambda path, body: {"json": completion(blob)}) as srv:
+        response = adapter(srv, env).complete(request_of(tools=tools))
+    assert response.finish_reason == "tool_calls"
+    assert response.text is None
+    assert response.tool_calls[0].name == "document_inspect"
+    assert response.tool_calls[0].arguments == {"sessionId": "s1"}
+
+
+def test_json_assistant_text_that_is_not_an_offered_tool_stays_text(env):
+    blob = json.dumps({"name": "not_a_tool", "arguments": {}})
+    tools = [{"name": "document_inspect", "description": "d",
+              "inputSchema": {"type": "object"}}]
+    with FakeRouter(lambda path, body: {"json": completion(blob)}) as srv:
+        response = adapter(srv, env).complete(request_of(tools=tools))
+    assert response.tool_calls == ()
+    assert response.text == blob
+
+
+def test_prompt_mode_omits_the_tools_array_and_recovers_json_text(env):
+    tools = [{"name": "document_inspect", "description": "look",
+              "inputSchema": {"type": "object"}}]
+    blob = json.dumps({"name": "document_inspect",
+                       "arguments": {"sessionId": "s1"}})
+    with FakeRouter(lambda path, body: {"json": completion(blob)}) as srv:
+        client = adapter(srv, env, toolsInBody=False)
+        response = client.complete(request_of(tools=tools))
+        body = srv.requests[-1]["body"]
+    assert "tools" not in body
+    assert "document_inspect" in body["messages"][0]["content"]
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls[0].name == "document_inspect"
+
+
+def test_prompt_mode_history_is_plain_chat_not_role_tool(env):
+    tools = [{"name": "session_list", "description": "d",
+              "inputSchema": {"type": "object"}}]
+    seen = []
+
+    def responder(path, body):
+        seen.append(body)
+        if len(seen) == 1:
+            return {"json": completion(json.dumps(
+                {"name": "session_list", "arguments": {}}))}
+        return {"json": completion("done")}
+
+    with FakeRouter(responder) as srv:
+        client = adapter(srv, env, toolsInBody=False)
+        first = client.complete(request_of(tools=tools))
+        history = [{"tool": first.tool_calls[0].name,
+                    "callId": first.tool_calls[0].call_id,
+                    "arguments": first.tool_calls[0].arguments,
+                    "ok": True,
+                    "result": {"sessions": [{"sessionId": "s1"}]}}]
+        second = client.complete(request_of(tools=tools, history=history))
+    assert second.text == "done"
+    roles = [m["role"] for m in seen[1]["messages"]]
+    assert "tool" not in roles
+    assert any(m["role"] == "assistant" and "session_list" in (m.get("content") or "")
+               for m in seen[1]["messages"])
+
+
+def test_prompt_mode_slims_inspect_history(env):
+    tools = [{"name": "document_inspect", "description": "look"}]
+    inspect_result = {
+        "documentHash": "abc",
+        "summary": {"anchors": ["I.  서론"], "fillTargetCount": 0,
+                    "noise": "drop-me"},
+        "regions": {"regions": []},
+        "graph": {"huge": True},
+    }
+    seen = []
+
+    def responder(path, body):
+        seen.append(body)
+        if len(seen) == 1:
+            return {"json": completion(json.dumps(
+                {"name": "document_inspect",
+                 "arguments": {"sessionId": "s"}}))}
+        return {"json": completion("done")}
+
+    with FakeRouter(responder) as srv:
+        client = adapter(srv, env, toolsInBody=False)
+        first = client.complete(request_of(tools=tools))
+        client.complete(request_of(tools=tools, history=[{
+            "tool": first.tool_calls[0].name,
+            "callId": first.tool_calls[0].call_id,
+            "arguments": first.tool_calls[0].arguments,
+            "ok": True, "result": inspect_result,
+        }]))
+    user = [m for m in seen[1]["messages"] if m["role"] == "user"][-1]
+    payload = json.loads(user["content"])
+    assert payload["result"]["summary"]["anchors"] == ["I.  서론"]
+    assert "graph" not in payload["result"]
+    assert "noise" not in payload["result"]["summary"]
+
+
 def test_the_second_turn_carries_the_tool_result_back(env):
     seen = []
 
@@ -200,13 +350,30 @@ def test_the_second_turn_carries_the_tool_result_back(env):
     with FakeRouter(responder) as srv:
         client = adapter(srv, env)
         first = client.complete(request_of())
-        history = [{"tool": first.tool_calls[0].name, "ok": True,
+        history = [{"tool": first.tool_calls[0].name,
+                    "callId": first.tool_calls[0].call_id,
+                    "arguments": first.tool_calls[0].arguments,
+                    "ok": True,
                     "result": {"sessions": [{"sessionId": "s1"}]}}]
         second = client.complete(request_of(history=history))
     assert second.text == "done"
     tool_messages = [m for m in seen[1]["messages"] if m["role"] == "tool"]
     assert tool_messages and tool_messages[0]["name"] == "session_list"
+    assert tool_messages[0]["tool_call_id"] == "tc-1"
     assert "s1" in tool_messages[0]["content"]
+    echoed = [m for m in seen[1]["messages"] if m.get("tool_calls")]
+    assert echoed and echoed[0]["tool_calls"][0]["id"] == "tc-1"
+    assert echoed[0]["tool_calls"][0]["function"]["name"] == "session_list"
+
+
+def test_usage_from_the_gateway_is_surfaced_not_dropped(env):
+    reply = completion("hello there")
+    reply["usage"] = {"prompt_tokens": 11, "completion_tokens": 3,
+                      "total_tokens": 14}
+    with FakeRouter(lambda path, body: {"json": reply}) as srv:
+        response = adapter(srv, env).complete(request_of())
+    assert response.public()["usage"]["total_tokens"] == 14
+    assert response.raw["usage"]["prompt_tokens"] == 11
 
 
 def test_tool_arguments_that_are_not_json_are_a_provider_failure(env):
@@ -265,6 +432,21 @@ def test_a_streaming_request_sets_the_stream_flag(env):
         client = adapter(srv, env, capabilities={"streaming": "yes"})
         list(client.stream(request_of()))
         assert srv.requests[-1]["body"]["stream"] is True
+
+
+def test_a_stream_done_event_carries_usage_when_the_gateway_sends_it(env):
+    lines = sse_lines(["ok"])
+    lines.insert(-1, "data: " + json.dumps(
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+         "usage": {"prompt_tokens": 4, "completion_tokens": 1,
+                   "total_tokens": 5}}))
+    with FakeRouter(lambda path, body: {"sse": lines}) as srv:
+        client = adapter(srv, env, capabilities={"streaming": "yes"})
+        chunks = list(client.stream(request_of()))
+    done = chunks[-1]
+    assert done["type"] == "done"
+    assert done["finishReason"] == "stop"
+    assert done["usage"]["total_tokens"] == 5
 
 
 def test_a_malformed_stream_chunk_is_a_provider_failure(env):

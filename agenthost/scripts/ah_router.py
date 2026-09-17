@@ -66,6 +66,7 @@ SECRET_SHAPED_KEYS = frozenset({
 CONFIG_KEYS = frozenset({
     "providerId", "baseUrl", "model", "credential", "capabilities",
     "timeoutSeconds", "maxResponseBytes", "extraHeaders", "notes",
+    "maxTokens", "toolsInBody",
 })
 CREDENTIAL_KEYS = frozenset({"source", "key", "scheme", "header"})
 
@@ -168,6 +169,20 @@ class RouterAdapter(ProviderAdapter):
         self.timeout = float(config.get("timeoutSeconds") or DEFAULT_TIMEOUT)
         self.max_bytes = int(config.get("maxResponseBytes")
                              or DEFAULT_MAX_RESPONSE_BYTES)
+        raw_max = config.get("maxTokens")
+        if raw_max is None:
+            self.max_tokens = None
+        else:
+            self.max_tokens = int(raw_max)
+            if self.max_tokens < 1:
+                raise AgentHostError("config_invalid", "maxTokens must be positive",
+                                     offered=self.max_tokens)
+        tools_in_body = config.get("toolsInBody", True)
+        if tools_in_body not in (True, False):
+            raise AgentHostError("config_invalid",
+                                 "toolsInBody must be a boolean",
+                                 offered=tools_in_body)
+        self.tools_in_body = bool(tools_in_body)
         self.extra_headers = dict(config.get("extraHeaders") or {})
         _reject_secret_shaped(self.extra_headers, "extraHeaders")
         self.notes = dict(config.get("notes") or {})
@@ -175,6 +190,18 @@ class RouterAdapter(ProviderAdapter):
         self._opener = opener or urllib.request.urlopen
 
     # -- contract -----------------------------------------------------------
+    def credential_state(self) -> dict:
+        """Configured, missing, or not required — decided WITHOUT reading a value."""
+        reference = self.credential.public()
+        if self.credential.source == "none":
+            return {"state": "not_required", **reference}
+        if self.credential.source == "env":
+            present = bool((self._environ.get(self.credential.key) or "").strip())
+            return {"state": "configured" if present else "missing", **reference}
+        return {"state": "unsupported",
+                "reason": "OS credential-store lookup is not implemented",
+                **reference}
+
     def capabilities(self) -> CapabilityProfile:
         base = CapabilityProfile(
             provider_id=self.provider_id,
@@ -200,7 +227,10 @@ class RouterAdapter(ProviderAdapter):
                                "adapter sends none; declare it in config"),
             },
             notes={"baseUrl": self.base_url,
-                   "credentialRef": self.credential.public(), **self.notes},
+                   "credentialRef": self.credential.public(),
+                   "credential": self.credential_state(),
+                   "toolsInBody": self.tools_in_body,
+                   **self.notes},
         )
         return base.with_overrides(self.overrides)
 
@@ -295,25 +325,155 @@ class RouterAdapter(ProviderAdapter):
                                     "context": request.context},
                                    ensure_ascii=False, sort_keys=True)},
         ]
+        if request.tools and not self.tools_in_body:
+            catalogue = [{"name": tool["name"],
+                          "description": tool["description"]}
+                         for tool in request.tools]
+            messages[0]["content"] += (
+                " Tools: reply with one JSON object "
+                '{"name": "<tool>", "arguments": {..}} as the entire message. '
+                "Catalogue: " + json.dumps(catalogue, ensure_ascii=False)
+            )
         for entry in request.history:
-            messages.append({
-                "role": "tool",
-                "name": entry.get("tool"),
-                "content": json.dumps(
-                    {"ok": entry.get("ok"),
-                     "result": entry.get("result"), "error": entry.get("error")},
-                    ensure_ascii=False, sort_keys=True),
-            })
+            # OpenAI-compatible gateways require the assistant tool_calls
+            # message that the tool result answers, plus tool_call_id. The
+            # host already keeps both; dropping them made a second turn look
+            # like an orphan tool message and a keyless Cursor bridge (and
+            # most real routers) refuse it.
+            # Prompt-mode (toolsInBody false) cannot send those wire shapes:
+            # this Cursor bridge 500s on a `tools` array after ~300s.
+            call_id = str(entry.get("callId") or f"call-{entry.get('tool')}")
+            arguments = entry.get("arguments") or {}
+            if not isinstance(arguments, str):
+                arguments = json.dumps(arguments, ensure_ascii=False,
+                                       sort_keys=True)
+            if self.tools_in_body:
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": entry.get("tool"),
+                                     "arguments": arguments},
+                    }],
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": entry.get("tool"),
+                    "content": json.dumps(
+                        {"ok": entry.get("ok"),
+                         "result": entry.get("result"),
+                         "error": entry.get("error")},
+                        ensure_ascii=False, sort_keys=True),
+                })
+            else:
+                parsed_args = arguments
+                if isinstance(arguments, str):
+                    try:
+                        parsed_args = loads_strict(arguments)
+                    except StrictJsonError:
+                        parsed_args = arguments
+                messages.append({
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {"name": entry.get("tool"), "arguments": parsed_args},
+                        ensure_ascii=False, sort_keys=True),
+                })
+                messages.append({
+                    "role": "user",
+                    "content": json.dumps(
+                        {"ok": entry.get("ok"),
+                         "result": self._prompt_result(entry),
+                         "error": entry.get("error")},
+                        ensure_ascii=False, sort_keys=True),
+                })
         body = {"model": self.model, "messages": messages}
-        if request.tools:
+        if self.max_tokens is not None:
+            body["max_tokens"] = self.max_tokens
+        if request.tools and self.tools_in_body:
             body["tools"] = [{"type": "function",
                               "function": {"name": tool["name"],
                                            "description": tool["description"],
                                            "parameters": tool["inputSchema"]}}
                              for tool in request.tools]
+            # Deliberately not sending tool_choice. The keyless Cursor bridge
+            # hangs when tool_choice=auto is set.
         if stream:
             body["stream"] = True
         return body
+
+    def _prompt_result(self, entry: dict):
+        """What prompt-mode history may carry: enough to continue, not a dump.
+
+        The keyless Cursor bridge has crashed (HTTP 500, process exit -1) when
+        the second turn resent a full ``document/inspect`` payload plus the
+        tool catalogue. Anchors and hashes are what the next propose needs.
+        """
+        result = entry.get("result")
+        tool = entry.get("tool")
+        if tool == "document_inspect" and isinstance(result, dict):
+            slim = {}
+            if "documentHash" in result:
+                slim["documentHash"] = result["documentHash"]
+            summary = result.get("summary")
+            if isinstance(summary, dict):
+                keep = ("anchors", "fillTargetCount", "documentHash",
+                        "pageMetrics")
+                slim["summary"] = {key: summary[key] for key in keep
+                                   if key in summary}
+            regions = result.get("regions")
+            if isinstance(regions, dict):
+                slim["regionCount"] = len(regions.get("regions") or [])
+            return slim
+        blob = json.dumps(result, ensure_ascii=False, default=str)
+        if len(blob) > 6000:
+            from ah_host import summarize
+            return {"truncated": True,
+                    "summary": summarize(tool or "", result
+                                         if isinstance(result, dict) else {})}
+        return result
+
+    def _recover_tool_calls(self, text, tools) -> tuple:
+        """Turn a JSON object in assistant text into tool_calls, or nothing.
+
+        Some gateways advertise tools then emit
+        ``{"name": "...", "arguments": {...}}`` as content with finish_reason
+        stop. That is still a tool request; treating it as closing text ends
+        the host loop with no plan. Recovery is identity-checked against the
+        offered tool names so ordinary JSON answers stay text.
+        """
+        if not isinstance(text, str) or not text.strip() or not tools:
+            return ()
+        blob = text.strip()
+        if blob.startswith("```"):
+            lines = blob.splitlines()
+            lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            blob = "\n".join(lines).strip()
+        try:
+            parsed = loads_strict(blob)
+        except StrictJsonError:
+            return ()
+        offered = {tool.get("name") for tool in tools
+                   if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
+        items = parsed if isinstance(parsed, list) else [parsed]
+        calls = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                return ()
+            name = item.get("name")
+            if name not in offered or "arguments" not in item:
+                return ()
+            try:
+                arguments = self._parse_arguments(item.get("arguments"))
+            except ProviderError:
+                return ()
+            calls.append(ToolCall(call_id=str(item.get("id") or f"recovered-{index}"),
+                                  name=name, arguments=arguments))
+        return tuple(calls)
 
     def _parse_arguments(self, raw) -> dict:
         if isinstance(raw, dict):
@@ -360,11 +520,28 @@ class RouterAdapter(ProviderAdapter):
                                   name=name,
                                   arguments=self._parse_arguments(
                                       function.get("arguments"))))
-        return ProviderResponse(text=message.get("content"),
+        if not calls:
+            legacy = message.get("function_call")
+            if isinstance(legacy, dict) and isinstance(legacy.get("name"), str) \
+                    and legacy.get("name"):
+                calls.append(ToolCall(
+                    call_id=str(legacy.get("id") or "call-0"),
+                    name=legacy["name"],
+                    arguments=self._parse_arguments(legacy.get("arguments"))))
+        raw = {"model": payload.get("model"), "id": payload.get("id")}
+        if payload.get("usage") is not None:
+            raw["usage"] = payload["usage"]
+        text = message.get("content")
+        if isinstance(text, list):
+            # Some OpenAI-compatible gateways emit content parts instead of a
+            # plain string. Join the text parts; ignore the rest.
+            text = "".join(part.get("text") or ""
+                           for part in text if isinstance(part, dict)) or None
+        return ProviderResponse(text=text if text else None,
                                 tool_calls=tuple(calls),
                                 finish_reason=str(choices[0].get("finish_reason")
                                                   or "stop"),
-                                raw={"model": payload.get("model")})
+                                raw=raw)
 
     # -- calls --------------------------------------------------------------
     def complete(self, request: ProviderRequest) -> ProviderResponse:
@@ -384,7 +561,14 @@ class RouterAdapter(ProviderAdapter):
                                 f"{self.provider_id} did not return valid JSON",
                                 provider=self.provider_id,
                                 detail=str(exc)[:400]) from exc
-        return self.parse_completion(payload)
+        parsed = self.parse_completion(payload)
+        if not parsed.tool_calls:
+            recovered = self._recover_tool_calls(parsed.text, request.tools)
+            if recovered:
+                return ProviderResponse(text=None, tool_calls=recovered,
+                                        finish_reason="tool_calls",
+                                        raw=dict(parsed.raw or {}))
+        return parsed
 
     def stream(self, request: ProviderRequest) -> Iterator[dict]:
         """Server-sent events, only when the profile actually promises it."""
@@ -392,6 +576,8 @@ class RouterAdapter(ProviderAdapter):
         response = self._post("/chat/completions",
                               self.build_body(request, stream=True), True)
         total = 0
+        finish_reason = "stop"
+        usage = None
         try:
             for raw_line in response:
                 total += len(raw_line)
@@ -406,7 +592,10 @@ class RouterAdapter(ProviderAdapter):
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
-                    yield {"type": "done", "finishReason": "stop"}
+                    done = {"type": "done", "finishReason": finish_reason}
+                    if usage is not None:
+                        done["usage"] = usage
+                    yield done
                     return
                 try:
                     chunk = loads_strict(data)
@@ -415,7 +604,12 @@ class RouterAdapter(ProviderAdapter):
                         "provider_malformed_response",
                         f"a stream chunk did not parse: {exc.detail}",
                         provider=self.provider_id, strictCode=exc.code) from exc
-                delta = ((chunk.get("choices") or [{}])[0] or {}).get("delta") or {}
+                if chunk.get("usage") is not None:
+                    usage = chunk["usage"]
+                choice = (chunk.get("choices") or [{}])[0] or {}
+                if choice.get("finish_reason"):
+                    finish_reason = str(choice["finish_reason"])
+                delta = choice.get("delta") or {}
                 if delta.get("content"):
                     yield {"type": "text", "text": delta["content"]}
                 for index, raw in enumerate(delta.get("tool_calls") or []):

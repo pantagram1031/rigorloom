@@ -192,9 +192,13 @@ class ProviderResponse:
     raw: dict = field(default_factory=dict)
 
     def public(self) -> dict:
-        return {"text": self.text,
-                "toolCalls": [call.public() for call in self.tool_calls],
-                "finishReason": self.finish_reason}
+        payload = {"text": self.text,
+                   "toolCalls": [call.public() for call in self.tool_calls],
+                   "finishReason": self.finish_reason}
+        usage = (self.raw or {}).get("usage")
+        if usage is not None:
+            payload["usage"] = usage
+        return payload
 
 
 class ProviderAdapter:
