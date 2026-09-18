@@ -163,7 +163,6 @@ function SeatOverlay({
     >
     <button
       type="button"
-      className="ov-hit"
       data-testid="overlay-seat"
       data-derivation={seat.derivation}
       data-editable={editable ? "true" : "false"}
@@ -229,8 +228,7 @@ function SpanOverlay({
       >
       <button
         type="button"
-        className="ov-hit"
-        data-testid="overlay-span"
+          data-testid="overlay-span"
         data-confidence="unmapped"
         data-editable="false"
         data-caret-target="false"
@@ -310,7 +308,6 @@ function SpanOverlay({
     >
     <button
       type="button"
-      className="ov-hit"
       data-testid={ambiguous ? "overlay-ambiguous" : "overlay-span"}
       data-confidence={span.confidence}
       data-stale={stale ? "true" : undefined}

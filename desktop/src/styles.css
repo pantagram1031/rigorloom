@@ -2078,7 +2078,7 @@ button.recent:active {
   min-width: 0;
 }
 
-.hunk-head > .ui-tooltip-anchor:has(.hunk-title) {
+.hunk-head > .hunk-title {
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
@@ -5304,21 +5304,6 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   min-width: 0;
   max-width: 100%;
 }
-.ov.ui-tooltip-anchor {
-  position: absolute;
-  display: block;
-}
-.ov-hit {
-  display: block;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  margin: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: inherit;
-}
 .ui-tooltip,
 .ui-popover-content,
 .ui-menu-content {
@@ -5475,7 +5460,7 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   font-size: var(--text-md);
   font-weight: var(--weight-head);
 }
-.ui-sheet-header .ui-tooltip-anchor:last-child {
+.ui-sheet-header > :last-child {
   margin-left: auto;
 }
 .ui-sheet[data-side="right"] {

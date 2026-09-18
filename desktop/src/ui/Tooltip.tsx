@@ -21,7 +21,14 @@ type TriggerProps = {
   onFocus?: (e: FocusEvent) => void;
   onBlur?: (e: FocusEvent) => void;
   className?: string;
+  style?: CSSProperties;
 };
+
+/** Merge our anchor ref with whatever ref the trigger element already carries. */
+function assignRef<T>(ref: unknown, value: T) {
+  if (typeof ref === "function") ref(value);
+  else if (ref && typeof ref === "object") (ref as { current: T | null }).current = value;
+}
 
 export type TooltipProps = {
   content: ReactNode;
@@ -51,7 +58,7 @@ export function Tooltip({
   anchorStyle,
 }: TooltipProps) {
   const id = useId();
-  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const tipRef = useRef<HTMLSpanElement | null>(null);
   const [uncontrolled, setUncontrolled] = useState(defaultOpen);
   const controlled = openProp !== undefined;
@@ -88,7 +95,17 @@ export function Tooltip({
   useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
 
   const child = children;
+  // The trigger element IS the anchor (shadcn's asChild): no wrapper span, so
+  // absolutely positioned triggers such as page-overlay hit targets keep their
+  // own geometry, classes and data-* attributes on the element that is measured.
+  const childRef = (child as unknown as { ref?: unknown }).ref;
   const trigger = cloneElement(child, {
+    ref: (node: HTMLElement | null) => {
+      triggerRef.current = node;
+      assignRef(childRef, node);
+    },
+    className: cn(child.props.className, anchorClassName) || undefined,
+    style: anchorStyle ? { ...(child.props.style ?? {}), ...anchorStyle } : child.props.style,
     "aria-describedby": open ? id : undefined,
     "data-tip": typeof content === "string" ? content : undefined,
     onMouseEnter: (e: MouseEvent) => {
@@ -110,14 +127,14 @@ export function Tooltip({
       child.props.onBlur?.(e);
       setOpen(false);
     },
-  } as Partial<TriggerProps> & { "aria-describedby"?: string; "data-tip"?: string });
+  } as Partial<TriggerProps> & { ref?: unknown; "aria-describedby"?: string; "data-tip"?: string });
 
   const style: CSSProperties | undefined = disablePortal
     ? undefined
     : layerFixedStyle(coords);
 
   return (
-    <span className={cn("ui-tooltip-anchor", anchorClassName)} style={anchorStyle} ref={triggerRef}>
+    <>
       {trigger}
       {open ? (
         <Portal disabled={disablePortal}>
@@ -134,6 +151,6 @@ export function Tooltip({
           </span>
         </Portal>
       ) : null}
-    </span>
+    </>
   );
 }
