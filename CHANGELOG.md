@@ -83,6 +83,29 @@ the kernel's contract shape.
   toolbar with designed pass / warn / fail / unavailable rows and a fixed
   no-render-proof footer.
 
+- **Desktop product feel (Stage 9, 2026-09-18/19):** a copy law for every
+  string (합니다체, one glossary: 후보본 · 영수증 · 입력 칸 · 승인 · 적용 · 원본 ·
+  양식 · 계획 · 검사 · 에이전트; hashes and ids only under 기술 정보), one
+  toolbar row, the structure tree as an outline with human addresses
+  (표 1 · 5행 2열), review cards as a before → after story with 승인하고 적용 as
+  the primary action, agent tool chatter folded into one step row, transitions,
+  skeleton on open, toasts without hashes, a command palette, and measured
+  startup (Home 2.0 s, open 1.0 s, hunk 25 ms medians on this PC). Ledger:
+  `docs/plans/stage9-product-feel.md`, copy law in
+  `docs/plans/analyses/stage9-copy-audit.md`.
+
+- **Desktop UI kit (Stage 10, 2026-09-19):** `desktop/src/ui/` holds 29
+  dependency-free primitives following shadcn/ui anatomy and Radix ARIA
+  (Tooltip, Popover, DropdownMenu, Dialog, Sheet, Collapsible, Tabs,
+  ToggleGroup, RadioGroup, Switch, Badge, Kbd, Separator, ScrollArea,
+  Progress, Alert, Table, Button, Input, Select, Command, Toast, …) with a
+  gallery in the dev mock (`?kit=1`). Every surface uses the kit: zero
+  `title=` tooltips and zero raw `<details>` outside it. The toolbar's font
+  box (글꼴 · 글자 모양 · 크기) is a read-only readout in the band, sized by a
+  container query so nothing overlaps at 1024 with both rails open. Reference
+  captures recaptured; built-app smoke 570 / 0. Ledger:
+  `docs/plans/stage10-modern-ui.md`.
+
 - **Fork parity for the Hawkes report (Stage 1c, 2026-09-17):** page margins
   (`margin_top/bottom/left/right/gutter`, nested `margins:`) reach `page_binding`
   and both backends; the LaTeX converter maps `\mid` and apostrophe primes

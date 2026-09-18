@@ -52,14 +52,26 @@ by CLI or GUI, with an agent proposing edits and a human approving them.
   `acceptance: true`. Providers no longer claim streaming the host does not use; `document/inspect` advertises
   `forbidden`; Anthropic direct works once a key is entered in Settings (stored in the OS credential manager).
 
-### Pipeline in the GUI (Stage 7, in progress)
-- Read-only `workspace/pipelineStatus` and a status strip; verify-from-GUI (P2) and later slices follow.
+### Pipeline in the GUI (Stage 7)
+- Read-only `workspace/pipelineStatus` and a status strip with per-stage gate states; offline verify from the
+  toolbar with designed pass / warn / fail / unavailable rows; poster reachable. Ledger `docs/plans/stage7-pipeline-gui.md`.
+
+### Release readiness (Stage 8)
+- Version bump, CHANGELOG, NSIS installer smoke (silent install into a scratch prefix, edit-phase smoke, silent
+  uninstall), 90-second demo GIF `docs/demo/desktop/demo.gif`, release record `docs/release-v0.18.0.md`.
+
+### Product feel and UI kit (Stages 9, 10)
+- Copy law (합니다체, one glossary, technical truth under 기술 정보), one toolbar row, outline tree with human
+  addresses, before → after review cards with 승인하고 적용, folded agent chatter, motion, skeletons, palette,
+  measured startup. Then a dependency-free primitive kit under `desktop/src/ui/` (shadcn anatomy, Radix ARIA)
+  adopted by every surface: zero `title=` and zero raw `<details>` outside the kit; font box as a band readout
+  sized by a container query. Ledgers `docs/plans/stage9-product-feel.md`, `docs/plans/stage10-modern-ui.md`.
 
 ## Verification evidence
 - Windows full pytest sweep: 5219 passed (before Stage 5–7 additions; suites since then green per ledger).
 - Linux (WSL): 4191 passed; the 13 remaining failures also fail on `main` in that box (no Node, CJK fonts, wheel
   toolchain) and CI installs all three.
-- Desktop: 210 headless tests; built-app smoke 568/0 (+31/0 agent-live, opt-in).
+- Desktop: 278 headless tests; built-app smoke 570/0 on the Stage 10 build (+31/0 agent-live, opt-in).
 - Every slice has a ledger row with model, wall time, tokens, and what was left undone.
 
 ## What this branch does not claim
@@ -71,6 +83,6 @@ by CLI or GUI, with an agent proposing edits and a human approving them.
 ## Follow-ups after merge
 - Close the 18 draft PRs already contained in `main` (list in `docs/plans/stage2-repo-hygiene.md`).
 - Prune `rigorloom-eval-c1-*` worktrees (branches kept).
-- Stage 7 P2–P4, Stage 8 release steps (version, NSIS smoke, demo GIF).
+- Tag v0.18.0 with the NSIS bundle after merge (`docs/release-v0.18.0.md`).
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
