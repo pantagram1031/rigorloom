@@ -391,6 +391,9 @@ test("kit styles use tokens and shadow-popover; gallery route is mounted", () =>
   assert.match(css, /\/\* kit \*\//);
   assert.match(css, /--shadow-popover/);
   assert.match(css, /\.ui-btn-primary/);
+  assert.match(css, /\.ui-btn-label/);
+  assert.match(css, /\.ui-sheet-header/);
+  assert.match(css, /\.ui-btn \{[^}]*height:\s*var\(--ctl-h\)/);
   assert.match(app, /get\("kit"\)/);
   assert.match(app, /KitGallery/);
   assert.match(capture, /kit-dark/);

@@ -9,11 +9,30 @@ import {
   type ReactNode,
 } from "react";
 
-import { cn } from "./cn";
+import { cn, uiTriggerClass } from "./cn";
 import { Portal } from "./Portal";
 import type { SlotRef } from "./ref";
 import { mergeRefs } from "./ref";
+import { Tooltip } from "./Tooltip";
 import { useLayer, useOpenState } from "./useLayer";
+
+function CloseGlyph() {
+  return (
+    <svg
+      className="icon"
+      width={16}
+      height={16}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
+    </svg>
+  );
+}
 
 export type SheetSide = "right" | "left" | "bottom";
 
@@ -84,7 +103,7 @@ export const SheetTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<H
       <button
         ref={mergeRefs(ref, ctx.triggerRef)}
         type="button"
-        className={cn("ui-btn ui-btn-secondary ui-btn-md", className)}
+        className={uiTriggerClass(className)}
         aria-haspopup="dialog"
         aria-expanded={ctx.open}
         data-state={ctx.open ? "open" : "closed"}
@@ -130,7 +149,7 @@ export function SheetContent({ className, children, ...rest }: HTMLAttributes<HT
 }
 
 export function SheetHeader({ className, children }: { className?: string; children?: ReactNode }) {
-  return <div className={cn("ui-dialog-header", className)}>{children}</div>;
+  return <div className={cn("ui-sheet-header", className)}>{children}</div>;
 }
 
 export function SheetFooter({ className, children }: { className?: string; children?: ReactNode }) {
@@ -158,13 +177,19 @@ export function SheetDescription({ className, children }: { className?: string; 
 export function SheetClose({ className, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
   const ctx = useSheet();
   return (
-    <button
-      type="button"
-      className={cn("ui-btn ui-btn-secondary ui-btn-md", className)}
-      onClick={() => ctx.setOpen(false)}
-      {...rest}
-    >
-      {children ?? "닫기"}
-    </button>
+    <Tooltip content="닫기 (Esc)">
+      <button
+        type="button"
+        className={cn("ui-btn", "ui-btn-ghost", "ui-btn-md", "ui-icon-btn", className)}
+        aria-label="닫기 (Esc)"
+        {...rest}
+        onClick={(e) => {
+          rest.onClick?.(e);
+          ctx.setOpen(false);
+        }}
+      >
+        {children ?? <CloseGlyph />}
+      </button>
+    </Tooltip>
   );
 }

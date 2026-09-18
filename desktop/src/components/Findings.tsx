@@ -45,13 +45,7 @@ export function Findings() {
           </>
         )}
         <span className="count">{checkedAt ?? ""}</span>
-        <SheetClose
-          className="ghost"
-          style={{ color: "var(--fg-muted)" }}
-          data-testid="close-findings"
-        >
-          닫기
-        </SheetClose>
+        <SheetClose data-testid="close-findings" />
       </SheetHeader>
 
       <div className="sheet-body">

@@ -58,6 +58,7 @@ import {
   setCenterMode,
   setPageFit,
   setSelection,
+  setChromeMenu,
   setState,
   setView,
   selectInspectorTab,
@@ -138,6 +139,27 @@ function fillControl(el: HTMLInputElement | HTMLTextAreaElement, value: string) 
 
 function domText(selector: string): string {
   return document.querySelector(selector)?.textContent ?? "";
+}
+
+/** Status facts live in the 자세히 popover after kit adoption. */
+function barText(): string {
+  return `${domText('[data-testid="verify-details"]')}${domText('[data-testid="verification-bar"]')}`;
+}
+
+function disclosureTrigger(testId: string): HTMLElement | null {
+  return document.querySelector(
+    `[data-testid="${testId}"] .ui-collapse-trigger, [data-testid="${testId}"] summary`,
+  );
+}
+
+async function openVerifyDetails() {
+  setState({ verifyDetailsOpen: true });
+  await settled(200);
+}
+
+async function openChromeMenu(id: "overflow" | "zoom") {
+  setChromeMenu(id);
+  await settled(200);
 }
 
 /**
@@ -440,8 +462,9 @@ async function phaseOpen(config: SmokeConfig) {
   check("검사 called candidate/verify", !!getState().verifyResult, JSON.stringify(getState().checkPhase));
   check("verify results panel is shown", !!document.querySelector('[data-testid="verify-results"]'));
   check("verify rows are present", (getState().verifyResult?.checks.checks.length ?? 0) > 0);
+  await openVerifyDetails();
   check("the bar still refuses to claim a render proof",
-    domText('[data-testid="verification-bar"]').includes("증명 없음"));
+    barText().includes("증명 없음"));
   check("채우기 실행 stays off on a non-report document",
     !document.querySelector('[data-testid="fill-run"]'));
   check("포스터 만들기 stays off on a non-report document",
@@ -820,10 +843,11 @@ async function phaseEdit(config: SmokeConfig) {
   check("the SOURCE hash is unchanged after the apply",
     activeInspect(getState())?.documentHash === sourceHash,
     `${activeInspect(getState())?.documentHash} vs ${sourceHash}`);
+  await openVerifyDetails();
   checkDom("the verification bar shows the candidate hash beside the source hash",
-    domText('[data-testid="verification-bar"]').includes(applied.candidate.sha256.slice(0, 12)) &&
-      domText('[data-testid="verification-bar"]').includes(sourceHash.slice(0, 12)),
-    domText('[data-testid="verification-bar"]').slice(0, 160));
+    barText().includes(applied.candidate.sha256.slice(0, 12)) &&
+      barText().includes(sourceHash.slice(0, 12)),
+    barText().slice(0, 160));
 
   // --- 6. the real offline verify -----------------------------------------
   await runCheck();
@@ -844,9 +868,10 @@ async function phaseEdit(config: SmokeConfig) {
     verdict?.report.acceptance === (verdict?.report.ranAll === true &&
       verdict?.report.checks.every((c) => c.state !== "ran" || c.ok === true)),
     `acceptance=${verdict?.report.acceptance} ranAll=${verdict?.report.ranAll} reason=${verdict?.report.reason}`);
+  await openVerifyDetails();
   checkDom("the bar STILL refuses to claim a render proof",
-    domText('[data-testid="verification-bar"]').includes("증명 없음"),
-    domText('[data-testid="verification-bar"]').slice(0, 200));
+    barText().includes("증명 없음"),
+    barText().slice(0, 200));
 
   // --- 7. the receipt ------------------------------------------------------
   openReceipt(applied.runId);
@@ -870,8 +895,8 @@ async function phaseEdit(config: SmokeConfig) {
     hasHangul(domText('[data-testid="receipt-panel"]')),
     domText('[data-testid="receipt-panel"]').slice(0, 120));
   checkDom("the raw JSON is behind a disclosure, not on the surface",
-    !!document.querySelector('[data-testid="receipt-raw"] summary'),
-    document.querySelector('[data-testid="receipt-raw"] summary')?.textContent ?? "");
+    !!disclosureTrigger("receipt-raw"),
+    disclosureTrigger("receipt-raw")?.textContent ?? "");
   check("the receipt claims no render proof",
     receipt?.evidence.class === "structural_only", String(receipt?.evidence.class));
   openReceipt(null);
@@ -935,8 +960,8 @@ async function phaseEdit(config: SmokeConfig) {
     cards.length === getState().events.length,
     `${cards.length} cards for ${getState().events.length} events`);
   checkDom("protocol chatter is behind a disclosure, not in the history",
-    !!document.querySelector('[data-testid="protocol-chatter"] summary'),
-    document.querySelector('[data-testid="protocol-chatter"] summary')?.textContent ?? "");
+    !!disclosureTrigger("protocol-chatter"),
+    disclosureTrigger("protocol-chatter")?.textContent ?? "");
   setState({ agentTab: "conversation" });
   await settled(200);
   setView("document");
@@ -1552,8 +1577,9 @@ async function phasePage(config: SmokeConfig) {
       `raster=${!!document.querySelector('[data-testid="page-raster"]')} grade=${graded}`);
     check("and the refusal did not promote anything to a Hancom grade",
       getState().render?.grade !== "hancom", String(getState().render?.grade));
+    await openVerifyDetails();
     check("the verification bar still says 증명 없음",
-      domText('[data-testid="verification-bar"]').includes("증명 없음"));
+      barText().includes("증명 없음"));
   } else {
     check("prepare succeeded and a page followed",
       getState().preparePhase === "ready" && getState().render?.available === true,
@@ -1723,6 +1749,7 @@ async function phaseOwn(config: SmokeConfig) {
   if (geometry?.available) {
     check("and it says whose layout it is", geometry.geometrySource === "own",
       String(geometry.geometrySource));
+    await openVerifyDetails();
     checkDom("and the status bar prints which renderer the seats stand on",
       document
         .querySelector('[data-testid="status-geometry-source"]')
@@ -1877,6 +1904,7 @@ async function phaseOwn(config: SmokeConfig) {
     if (unmappedTarget) {
       unmappedTarget.click();
       await settled(200);
+      await openVerifyDetails();
       const unmappedPick = getState().overlayPick;
       checkDom("a click on it resolves to a stated outcome and no address",
         unmappedPick?.kind === "unmapped" && (unmappedPick.label ?? "").length > 0 &&
@@ -2245,6 +2273,7 @@ async function phaseOverlay(config: SmokeConfig) {
       getState().draft.ops.length === queuedBefore &&
         (getState().draft.plan?.planId ?? null) === planBefore,
       `${getState().draft.ops.length} ops, plan ${getState().draft.plan?.planId ?? "none"}`);
+    await openVerifyDetails();
     checkDom("the status bar says 후보 N개 — 직접 선택",
       domText('[data-testid="status-overlay-pick"]').includes("후보") &&
         domText('[data-testid="status-overlay-pick"]').includes("직접 선택"),
@@ -2269,7 +2298,7 @@ async function phaseOverlay(config: SmokeConfig) {
   ).length;
 
   const clickable = editableSeats.length + editableUniques.length;
-  const drawnEditable = document.querySelectorAll('.ov[data-editable="true"]').length;
+  const drawnEditable = document.querySelectorAll(".ov-editable").length;
   checkDom("the overlay draws exactly the editable targets the runtime returned",
     drawnEditable === clickable, `${drawnEditable} drawn / ${clickable} returned`);
 
@@ -2322,7 +2351,8 @@ async function phaseOverlay(config: SmokeConfig) {
     // COMPUTED style rather than the class list, because a class that no rule
     // matches would satisfy a class-name assertion and draw nothing.
     if (seatTarget) {
-      const resting = window.getComputedStyle(seatTarget);
+      const paintedEl = (seatTarget.closest(".ov") as HTMLElement | null) ?? seatTarget;
+      const resting = window.getComputedStyle(paintedEl);
       const painted =
         resting.backgroundColor !== "rgba(0, 0, 0, 0)" &&
         resting.backgroundColor !== "transparent";
@@ -2351,6 +2381,7 @@ async function phaseOverlay(config: SmokeConfig) {
     check("the editor opened on the address the seat carries, not a neighbour",
       !!edit && `${edit.table}-${edit.row}-${edit.col}` === wantedAddress,
       `${edit ? `${edit.table}-${edit.row}-${edit.col}` : "none"} vs ${wantedAddress}`);
+    await openVerifyDetails();
     checkDom("the status bar says which address, and how the runtime found it",
       domText('[data-testid="status-overlay-pick"]').includes("그려진 선으로 잡음") &&
         document
@@ -2414,6 +2445,7 @@ async function phaseOverlay(config: SmokeConfig) {
  */
 async function caretChecks(spans: GeometrySpan[]) {
   const { addressIsCaretTarget, caretOffsetAt, clickOverlaySpan } = await import("./actions");
+  await openVerifyDetails();
   const caretSpans = spans.filter(
     (s) => s.confidence === "unique" && addressIsCaretTarget(s.address),
   );
@@ -2444,9 +2476,9 @@ async function caretChecks(spans: GeometrySpan[]) {
   }
 
   checkDom("a caret target is drawn as one, and is not dressed as a fill seat",
-    document.querySelectorAll('.ov[data-caret-target="true"]').length === caretSpans.length,
-    `${document.querySelectorAll('.ov[data-caret-target="true"]').length} drawn / ${caretSpans.length} returned`);
-  const firstTarget = document.querySelector<HTMLElement>('.ov[data-caret-target="true"]');
+    document.querySelectorAll('[data-caret-target="true"]').length === caretSpans.length,
+    `${document.querySelectorAll('[data-caret-target="true"]').length} drawn / ${caretSpans.length} returned`);
+  const firstTarget = document.querySelector<HTMLElement>('[data-caret-target="true"]');
   if (firstTarget) {
     checkDom("and it says it is text, not a button",
       window.getComputedStyle(firstTarget).cursor === "text",
@@ -2604,7 +2636,7 @@ async function caretChecks(spans: GeometrySpan[]) {
     await settled(200);
     const layer = document.querySelector<HTMLElement>('[data-testid="page-overlay"]');
     const button = document.querySelector<HTMLElement>(
-      `.ov[data-span-index="${took.index}"]`,
+      `.ov-hit[data-span-index="${took.index}"]`,
     );
     const box = layer?.getBoundingClientRect();
     if (layer && button && box && box.width > 0) {
@@ -2650,6 +2682,7 @@ async function caretChecks(spans: GeometrySpan[]) {
     }
   }
 
+  await openVerifyDetails();
   checkDom("the status bar prints the offset, or says it snapped to the line start",
     domText('[data-testid="status-overlay-pick"]').includes(
       runEdit?.caret === null ? "줄 앞" : "번째 글자 앞",
@@ -2663,11 +2696,12 @@ async function caretChecks(spans: GeometrySpan[]) {
   // product, and it was true: there was no character-level caret. There is one
   // now, so it says 삽입 — and never 수정, because nothing here overwrites.
   checkDom("the 입력 indicator finally has something true to say",
-    domText('[data-testid="verification-bar"]').includes("삽입") &&
-      !domText('[data-testid="verification-bar"]').includes("삽입/수정 없음"),
-    domText('[data-testid="verification-bar"]').slice(0, 200));
+    barText().includes("삽입") &&
+      !barText().includes("삽입/수정 없음"),
+    barText().slice(0, 200));
 
   // 글꼴, over a caret. §14's fourth field, and the reason it was added.
+  await openChromeMenu("overflow");
   const faceCell = document.querySelector('[data-testid="typeface-name"]');
   check("the toolbar names the face this RUN is set in, from the document's header",
     (faceCell?.getAttribute("data-face") ?? "").length > 0,
@@ -2676,6 +2710,13 @@ async function caretChecks(spans: GeometrySpan[]) {
   check("and the size is labelled as the RENDER's, not as a declared one",
     sizeCell?.getAttribute("data-source") === (took.sizePt ? "render" : "baseline"),
     `${sizeCell?.getAttribute("data-source")} ${sizeCell?.textContent} · span sizePt ${took.sizePt}`);
+  setChromeMenu(null);
+  await settled(200);
+  if (getState().inlineEdit?.kind !== "run") {
+    const rect = took.rect;
+    await clickOverlaySpan(took, rect[0] + (rect[2] - rect[0]) * 0.6);
+    await waitFor(() => getState().inlineEdit?.kind === "run", 12_000);
+  }
 
   // TYPE. The same commit path a seat uses, into the same queue.
   const TYPED = "지면에서 고쳐 쓴 문장";
@@ -4890,6 +4931,7 @@ async function phaseChrome(config: SmokeConfig) {
 
   const seat = inspect.regions.regions.find((r: EditableRegion) => r.kind === "cell");
   check("a fill seat to stand in", !!seat, JSON.stringify(seat ?? null));
+  await openChromeMenu("overflow");
   if (seat && seat.table !== undefined && seat.row !== undefined && seat.col !== undefined) {
     setSelection({ kind: "cell", table: seat.table, row: seat.row, col: seat.col });
     await settled(200);
@@ -4907,9 +4949,6 @@ async function phaseChrome(config: SmokeConfig) {
       checkDom("a seat whose shape differs from the body is marked in the toolbar",
         tag.includes("본문과 다름") || tag.includes("본문은 "), tag);
     }
-    checkDom("the status bar shows the address, not a line and column",
-      domText('[data-testid="status-where"]') === `표${seat.table} (${seat.row},${seat.col})`,
-      domText('[data-testid="status-where"]'));
 
     // --- 글꼴, the name the DOCUMENT declares (§14, runtime gap 16) ---------
     //
@@ -4936,7 +4975,9 @@ async function phaseChrome(config: SmokeConfig) {
       // Per language, never merged: the strip shows 한글 and the tooltip
       // carries every language the header resolved.
       const title =
-        document.querySelector('[data-testid="typeface-name"]')?.getAttribute("title") ?? "";
+        document.querySelector('[data-testid="typeface-name"]')?.getAttribute("data-tip") ??
+        document.querySelector('[data-testid="typeface-name"]')?.getAttribute("title") ??
+        "";
       checkDom("every language the document declares is in the tooltip, unmerged",
         Object.values(face).every((name) => title.includes(String(name))),
         title.slice(0, 200));
@@ -4971,21 +5012,30 @@ async function phaseChrome(config: SmokeConfig) {
   checkDom("the toolbar shows the body size from the document's own baseline",
     !baseline || domText('[data-testid="tool-size"]').includes(String(baseline.height_pt)),
     `${domText('[data-testid="tool-size"]')} vs ${JSON.stringify(baseline)}`);
+  setChromeMenu(null);
+  await openVerifyDetails();
+  if (seat && seat.table !== undefined && seat.row !== undefined && seat.col !== undefined) {
+    checkDom("the status bar shows the address, not a line and column",
+      domText('[data-testid="status-where"]') === `표${seat.table} (${seat.row},${seat.col})`,
+      domText('[data-testid="status-where"]'));
+  }
 
   checkDom("the status bar carries the Hangul insert indicator, saying neither",
     !getState().inlineEdit &&
-      domText('[data-testid="verification-bar"]').includes("입력") &&
-      !domText('[data-testid="verification-bar"]').includes("삽입"),
-    domText('[data-testid="verification-bar"]').slice(0, 200));
+      barText().includes("입력") &&
+      !barText().includes("삽입"),
+    barText().slice(0, 200));
 
   // Document zoom, one number for both modes.
   const { setZoom } = await import("./store");
   setZoom(1.2);
   await settled(160);
+  await openChromeMenu("zoom");
   checkDom("the toolbar reports the document zoom", domText('[data-testid="zoom-value"]') === "120%",
     domText('[data-testid="zoom-value"]'));
   setZoom(1);
   await settled(120);
+  setChromeMenu(null);
 
   // --- 페이지 보기, where this machine can go -------------------------------
   const { canRenderPages, setCenterMode } = await import("./store");
@@ -4997,9 +5047,10 @@ async function phaseChrome(config: SmokeConfig) {
     checkDom("and a page navigation footer",
       domText('[data-testid="page-indicator"]').includes("쪽"),
       domText('[data-testid="page-footer"]').slice(0, 160));
+    await openVerifyDetails();
     checkDom("the status bar shows a page number in 페이지 보기",
-      /쪽/.test(domText('[data-testid="verification-bar"]')),
-      domText('[data-testid="verification-bar"]').slice(0, 120));
+      /쪽/.test(barText()),
+      barText().slice(0, 120));
     setCenterMode("text");
     await settled(200);
   } else {

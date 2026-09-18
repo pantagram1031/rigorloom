@@ -145,13 +145,7 @@ export function ReceiptPanel() {
       <SheetContent className="sheet receipt" data-testid="receipt-panel" aria-label="영수증">
       <SheetHeader className="sheet-head">
         <SheetTitle>영수증</SheetTitle>
-        <SheetClose
-          className="ghost"
-          style={{ color: "var(--fg-muted)" }}
-          data-testid="close-receipt"
-        >
-          닫기
-        </SheetClose>
+        <SheetClose data-testid="close-receipt" />
       </SheetHeader>
 
       <div className="sheet-body">

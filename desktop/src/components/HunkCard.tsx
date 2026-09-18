@@ -143,12 +143,14 @@ export function HunkCard({
         <Tooltip content="이 작업을 대기열에서 뺍니다.">
           <Button
             variant="ghost"
-            className="dark-safe"
+            className="dark-safe ui-icon-btn"
             data-testid={`queue-remove-${slug}`}
             disabled={locked}
+            aria-label="대기열에서 제거"
             onClick={() => void undoQueuedOp(op.opId)}
           >
-            대기열에서 제거
+            <Icon name="x" />
+            <span className="sr-only">대기열에서 제거</span>
           </Button>
         </Tooltip>
       </div>
@@ -216,6 +218,7 @@ export function HunkCard({
           <Button
             variant="primary"
             className="point btn-icon"
+            size="sm"
             data-testid={`hunk-approve-${slug}`}
             disabled={!canDecide}
             aria-label="이 항목 포함"
@@ -230,6 +233,7 @@ export function HunkCard({
           <Button
             variant="secondary"
             className="btn-icon"
+            size="sm"
             data-testid={`hunk-reject-${slug}`}
             disabled={!canDecide}
             aria-label="이 항목 제외"

@@ -12,7 +12,7 @@ import {
 } from "react";
 
 import { cn } from "./cn";
-import { placeLayer } from "./place";
+import { layerFixedStyle, placeLayer } from "./place";
 import { Portal } from "./Portal";
 
 type TriggerProps = {
@@ -114,7 +114,7 @@ export function Tooltip({
 
   const style: CSSProperties | undefined = disablePortal
     ? undefined
-    : { position: "fixed", top: coords.top, left: coords.left };
+    : layerFixedStyle(coords);
 
   return (
     <span className={cn("ui-tooltip-anchor", anchorClassName)} style={anchorStyle} ref={triggerRef}>

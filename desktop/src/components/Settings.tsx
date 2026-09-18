@@ -169,10 +169,7 @@ export function Settings() {
       <SheetContent className="sheet settings" data-testid="settings">
         <SheetHeader className="sheet-head">
           <SheetTitle>설정</SheetTitle>
-          <span className="spacer" />
-          <SheetClose className="settings-close" data-testid="settings-close">
-            닫기 (Esc)
-          </SheetClose>
+          <SheetClose className="settings-close" data-testid="settings-close" />
         </SheetHeader>
 
       <div className="sheet-body">

@@ -83,6 +83,45 @@ test("cn drops falsy class names", () => {
   assert.equal(cn("ui-btn", false, undefined, "is-on"), "ui-btn is-on");
 });
 
+test("placeLayer flips every side and clamps to an 8px margin", () => {
+  const vp = { width: 400, height: 300 };
+  const fromBottom = placeLayer(
+    { top: 270, left: 180, bottom: 294, right: 220, width: 40, height: 24 },
+    { width: 200, height: 80 },
+    "bottom",
+    "end",
+    8,
+    vp,
+  );
+  assert.equal(fromBottom.side, "top");
+  assert.ok(fromBottom.top >= 8);
+  assert.ok(fromBottom.top + 80 <= vp.height - 8);
+  assert.ok(fromBottom.left >= 8);
+  assert.ok(fromBottom.left + 200 <= vp.width - 8);
+
+  const fromLeft = placeLayer(
+    { top: 100, left: 4, bottom: 124, right: 44, width: 40, height: 24 },
+    { width: 80, height: 32 },
+    "left",
+    "center",
+    8,
+    vp,
+  );
+  assert.equal(fromLeft.side, "right");
+  assert.ok(fromLeft.left >= 44);
+
+  const fromRight = placeLayer(
+    { top: 100, left: 360, bottom: 124, right: 396, width: 36, height: 24 },
+    { width: 80, height: 32 },
+    "right",
+    "center",
+    8,
+    vp,
+  );
+  assert.equal(fromRight.side, "left");
+  assert.ok(fromRight.left + 80 <= 360);
+});
+
 test("menu typeahead ignores modifiers and space", () => {
   assert.equal(isPrintableTypeahead("s", {}), true);
   assert.equal(isPrintableTypeahead(" ", {}), false);

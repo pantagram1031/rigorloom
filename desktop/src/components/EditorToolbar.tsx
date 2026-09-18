@@ -53,6 +53,7 @@ function ToolMenu({
   testId,
   summary,
   ariaLabel,
+  iconOnly,
   children,
 }: {
   id?: Exclude<ChromeMenu, null>;
@@ -60,9 +61,27 @@ function ToolMenu({
   testId: string;
   summary?: ReactNode;
   ariaLabel?: string;
+  iconOnly?: boolean;
   children: ReactNode;
 }) {
   const open = useWorkspace((s) => (id ? s.chromeMenu === id : false));
+  const trigger = (
+    <DropdownMenuTrigger
+      className={iconOnly ? "ui-btn-ghost ui-icon-btn" : undefined}
+      data-testid={testId}
+      aria-label={ariaLabel ?? label}
+    >
+      {iconOnly ? (
+        <span aria-hidden="true">···</span>
+      ) : (
+        <>
+          <span className="tool-label">{label}</span>
+          {summary ? <span className="tool-value">{summary}</span> : null}
+          <Icon name="chevron-down" />
+        </>
+      )}
+    </DropdownMenuTrigger>
+  );
   return (
     <DropdownMenu
       open={id ? open : undefined}
@@ -75,11 +94,7 @@ function ToolMenu({
           : undefined
       }
     >
-      <DropdownMenuTrigger data-testid={testId} aria-label={ariaLabel ?? label}>
-        <span className="tool-label">{label}</span>
-        {summary ? <span className="tool-value">{summary}</span> : null}
-        <Icon name="chevron-down" />
-      </DropdownMenuTrigger>
+      {iconOnly ? <Tooltip content={ariaLabel ?? label}>{trigger}</Tooltip> : trigger}
       <DropdownMenuContent className="toolmenu-body">
         {children}
       </DropdownMenuContent>
@@ -301,7 +316,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
             <span className="tool-action-label">열기</span>
           </Button>
         </Tooltip>
-        <ToolMenu id="overflow" label="···" testId="tool-overflow" ariaLabel="더 보기">
+        <ToolMenu id="overflow" label="더 보기" testId="tool-overflow" ariaLabel="더 보기" iconOnly>
           <Tooltip content={exportTip}>
             <DropdownMenuItem
               data-testid="act-export"

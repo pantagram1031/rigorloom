@@ -10,9 +10,19 @@ export type Box = {
   height: number;
 };
 
+const MARGIN = 8;
+
+const OPPOSITE: Record<LayerSide, LayerSide> = {
+  top: "bottom",
+  bottom: "top",
+  left: "right",
+  right: "left",
+};
+
 /**
- * Position a layer next to a trigger. Flips on overflow so the layer never
- * covers the trigger's box. `gap` is the air between them.
+ * Position a layer next to a trigger. Flips to the opposite side on overflow,
+ * then clamps within the viewport with an 8 px margin, for all four sides.
+ * `gap` is the air between them.
  */
 export function placeLayer(
   trigger: Box,
@@ -48,22 +58,37 @@ export function placeLayer(
     }
   };
 
-  place(next);
-  if (next === "top" && top < 8) {
-    next = "bottom";
-    place(next);
-  } else if (next === "bottom" && top + layer.height > viewport.height - 8) {
-    next = "top";
-    place(next);
-  } else if (next === "left" && left < 8) {
-    next = "right";
-    place(next);
-  } else if (next === "right" && left + layer.width > viewport.width - 8) {
-    next = "left";
+  const overflows = (s: LayerSide) => {
+    place(s);
+    if (s === "top") return top < MARGIN;
+    if (s === "bottom") return top + layer.height > viewport.height - MARGIN;
+    if (s === "left") return left < MARGIN;
+    return left + layer.width > viewport.width - MARGIN;
+  };
+
+  if (overflows(next)) {
+    next = OPPOSITE[next];
     place(next);
   }
 
-  left = Math.min(Math.max(8, left), Math.max(8, viewport.width - layer.width - 8));
-  top = Math.min(Math.max(8, top), Math.max(8, viewport.height - layer.height - 8));
+  left = Math.min(Math.max(MARGIN, left), Math.max(MARGIN, viewport.width - layer.width - MARGIN));
+  top = Math.min(Math.max(MARGIN, top), Math.max(MARGIN, viewport.height - layer.height - MARGIN));
   return { top, left, side: next };
+}
+
+/** Inline style for a portaled layer so leftover absolute `bottom`/`right` cannot clip it. */
+export function layerFixedStyle(coords: { top: number; left: number }): {
+  position: "fixed";
+  top: number;
+  left: number;
+  right: "auto";
+  bottom: "auto";
+} {
+  return {
+    position: "fixed",
+    top: coords.top,
+    left: coords.left,
+    right: "auto",
+    bottom: "auto",
+  };
 }

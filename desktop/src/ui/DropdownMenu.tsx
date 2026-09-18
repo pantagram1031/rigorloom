@@ -13,8 +13,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { cn } from "./cn";
-import { placeLayer, type LayerAlign, type LayerSide } from "./place";
+import { cn, uiTriggerClass } from "./cn";
+import { layerFixedStyle, placeLayer, type LayerAlign, type LayerSide } from "./place";
 import { Portal } from "./Portal";
 import type { SlotRef } from "./ref";
 import { mergeRefs } from "./ref";
@@ -72,7 +72,7 @@ export const DropdownMenuTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttri
       <button
         ref={mergeRefs(ref, ctx.triggerRef)}
         type="button"
-        className={cn("ui-btn ui-btn-secondary ui-btn-md", className)}
+        className={uiTriggerClass(className)}
         aria-haspopup="menu"
         aria-expanded={ctx.open}
         aria-controls={ctx.contentId}
@@ -112,17 +112,27 @@ export function DropdownMenuContent({
     const trigger = ctx.triggerRef.current;
     const content = ctx.contentRef.current;
     if (!trigger || !content || typeof window === "undefined") return;
-    const t = trigger.getBoundingClientRect();
-    const c = content.getBoundingClientRect();
-    const placed = placeLayer(
-      { top: t.top, left: t.left, bottom: t.bottom, right: t.right, width: t.width, height: t.height },
-      { width: c.width || 180, height: c.height || 120 },
-      side,
-      align,
-      6,
-      { width: window.innerWidth, height: window.innerHeight },
-    );
-    setCoords(placed);
+    const update = () => {
+      const t = trigger.getBoundingClientRect();
+      const c = content.getBoundingClientRect();
+      const placed = placeLayer(
+        { top: t.top, left: t.left, bottom: t.bottom, right: t.right, width: t.width, height: t.height },
+        { width: c.width || 180, height: c.height || 120 },
+        side,
+        align,
+        6,
+        { width: window.innerWidth, height: window.innerHeight },
+      );
+      setCoords(placed);
+    };
+    update();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    ro?.observe(content);
+    window.addEventListener("resize", update);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", update);
+    };
   }, [ctx.open, ctx.disablePortal, ctx.triggerRef, ctx.contentRef, side, align]);
 
   const onMenuKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -158,7 +168,7 @@ export function DropdownMenuContent({
 
   const style: CSSProperties | undefined = ctx.disablePortal
     ? undefined
-    : { position: "fixed", top: coords.top, left: coords.left };
+    : { ...layerFixedStyle(coords), maxHeight: "calc(100vh - 16px)" };
 
   return (
     <Portal disabled={ctx.disablePortal}>

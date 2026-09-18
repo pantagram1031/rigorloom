@@ -8,7 +8,6 @@ import { dismissFirstRunHint, setState, showToast, useWorkspace } from "../store
 import type { Recent } from "../types";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
-import { Alert } from "../ui/Alert";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card, CardContent } from "../ui/Card";
@@ -151,7 +150,8 @@ export function Home() {
         </div>
 
         {!firstRunHintDismissed ? (
-          <Alert className="first-run" data-testid="first-run-hint" title={"처음이신가요"}>
+          <div className="first-run" data-testid="first-run-hint">
+            <span className="first-run-kicker">처음이신가요</span>
             <ol>
               <li>열기</li>
               <li>검토</li>
@@ -159,19 +159,20 @@ export function Home() {
             </ol>
             <Button
               variant="ghost"
-              className="first-run-dismiss"
+              className="first-run-dismiss ui-icon-btn"
               data-testid="first-run-dismiss"
+              aria-label="닫기"
               onClick={() => dismissFirstRunHint()}
             >
-              닫기
+              <Icon name="x" />
             </Button>
-          </Alert>
+          </div>
         ) : null}
 
         <div className="home-open-row">
           <Button
             variant="primary"
-            className="big btn-icon"
+            className="btn-icon"
             data-testid="home-open"
             onClick={() => void openViaDialog()}
           >
@@ -181,7 +182,7 @@ export function Home() {
           <Tooltip content="빈 양식이나 form_profile.json을 연결해 엽니다">
             <Button
               variant="secondary"
-              className="big btn-icon"
+              className="btn-icon"
               data-testid="home-bind-form"
               onClick={() => void bindFormAndOpen()}
             >

@@ -38,7 +38,7 @@ import { RadioGroup, RadioGroupItem } from "./RadioGroup";
 import { ScrollArea } from "./ScrollArea";
 import { Select } from "./Select";
 import { Separator } from "./Separator";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "./Sheet";
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "./Sheet";
 import { Skeleton, SkeletonRows } from "./Skeleton";
 import { Switch } from "./Switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./Table";
@@ -190,8 +190,9 @@ export function KitGallery() {
               <SheetContent>
                 <SheetHeader>
                   <SheetTitle>설정</SheetTitle>
-                  <SheetDescription>제공자와 테마.</SheetDescription>
+                  <SheetClose />
                 </SheetHeader>
+                <SheetDescription>제공자와 테마.</SheetDescription>
                 <p className="kit-note">오른쪽 패널 · width token</p>
               </SheetContent>
             </Sheet>
