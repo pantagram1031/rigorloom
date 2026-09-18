@@ -112,23 +112,29 @@ const toolbarState = {
   chromeMenu: null,
 };
 
-test("overflow menu keeps 저장/내보내기, 되돌리기, 양식 연결, 서식 behind one control", () => {
+test("overflow menu keeps 저장/내보내기, 되돌리기, 양식 연결 behind one control; 서식 stays in the band", () => {
   const overflow = renderToolbar({ ...toolbarState, chromeMenu: "overflow" });
   const zoom = renderToolbar({ ...toolbarState, chromeMenu: "zoom" });
   const html = overflow + zoom;
   assert.match(overflow, /data-testid="tool-overflow"/);
   const overflowAt = overflow.indexOf('data-testid="tool-overflow"');
   const overflowSlice = overflow.slice(overflowAt);
+  // The menu layer itself: from the trigger to the end of its role="menu" element.
+  const menuEnd = overflowSlice.indexOf('</div></span>', overflowSlice.indexOf('role="menu"'));
+  const menuSlice = overflowSlice.slice(0, menuEnd);
   assert.match(overflowSlice, /data-testid="act-export"/);
   assert.match(overflowSlice, /저장\/내보내기/);
   assert.match(overflowSlice, /data-testid="act-undo"/);
   assert.match(overflowSlice, /되돌리기/);
   assert.match(overflowSlice, /data-testid="act-bind-form"/);
   assert.match(overflowSlice, /양식 연결/);
-  assert.match(overflowSlice, /data-testid="tool-format"/);
-  assert.match(overflowSlice, /data-testid="tool-typeface"/);
-  assert.match(overflowSlice, /data-testid="tool-charpr"/);
-  assert.match(overflowSlice, /data-testid="tool-size"/);
+  // The font box is read-only and must not sit inside a menu: opening a menu
+  // moves focus, which commits the seat editor and ends the caret it describes.
+  const closed = renderToolbar(toolbarState);
+  for (const id of ["tool-format", "tool-typeface", "tool-charpr", "tool-size"]) {
+    assert.match(closed, new RegExp(`data-testid="${id}"`), `${id} visible with every menu closed`);
+    assert.doesNotMatch(menuSlice, new RegExp(`data-testid="${id}"`), `${id} not inside the overflow`);
+  }
   assert.match(html, /data-testid="act-open"/);
   assert.match(html, />열기</);
   assert.match(html, /data-testid="toolbar-check"/);
@@ -154,11 +160,16 @@ test("overflow menu keeps 저장/내보내기, 되돌리기, 양식 연결, 서�
 test("toolbar is a single nowrap row at 1024 and 1280", () => {
   assert.match(css, /\.toolbar\s*\{[^}]*flex-wrap:\s*nowrap/);
   assert.doesNotMatch(css, /\.toolbar\s*\{[^}]*flex-wrap:\s*wrap/);
-  const rule1024 = /@media \(min-width:\s*1024px\)\s*\{[^}]*\.toolbar\s*\{[^}]*flex-wrap:\s*nowrap/;
-  const rule1280 = /@media \(min-width:\s*1280px\)\s*\{[^}]*\.toolbar\s*\{[^}]*flex-wrap:\s*nowrap/;
-  assert.match(css, rule1024);
-  assert.match(css, rule1280);
+  // The band never wraps at any width: it is a grid whose side columns keep
+  // their content width, and a container query sheds detail (action labels,
+  // the zoom label, the font box) as the band itself narrows, so the three
+  // clusters cannot meet at 1024 with both rails open.
   assert.match(css, /\.toolbar\s*\{[^}]*display:\s*grid/);
+  assert.match(css, /\.toolbar\s*\{[^}]*grid-template-columns:\s*minmax\(max-content, 1fr\) auto minmax\(max-content, 1fr\)/);
+  assert.match(css, /\.center-toolbar\s*\{\s*container:\s*toolbar \/ inline-size/);
+  assert.match(css, /@container toolbar \(max-width:\s*560px\)\s*\{[^}]*\.tool-action-label[^}]*display:\s*none/);
+  assert.match(css, /@container toolbar \(max-width:\s*600px\)\s*\{[^}]*\.tool-format\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(css, /@media \(min-width:\s*10\d\dpx\)\s*\{[^}]*\.toolbar/);
   assert.match(css, /\.pipeline-strip\s*\{[^}]*height:\s*28px/);
 });
 

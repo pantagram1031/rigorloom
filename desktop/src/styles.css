@@ -2901,7 +2901,9 @@ button.recent:active {
    thing, which is the whole point of a band. */
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  /* Side columns never shrink below their content: the centre shifts a few
+     pixels when the rails are open at 1024 rather than letting clusters meet. */
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
   align-items: center;
   gap: var(--s2);
   flex: none;
@@ -2960,6 +2962,65 @@ button.tool-value:hover:not(:disabled) { background: var(--bg-hover); }
 button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .tool-note { color: var(--fg-faint); }
+
+/* The font box. Read-only, in the band, never in a menu (a menu takes focus
+   and focus ends the caret it would describe). Truncates before it wraps. */
+.tool-format {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  padding-right: var(--s2);
+  margin-right: var(--s1);
+  border-right: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.tool-format .tool-group { min-width: 0; }
+
+.tool-format [data-testid="typeface-name"] {
+  display: inline-block;
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+/* The band is a container: what the readout shows depends on the room the
+   band actually has between the rails, not on the window. It sheds detail
+   from the right end inward, and disappears before it could touch the mode
+   switch. Nothing overlaps at any width. */
+.center-toolbar { container: toolbar / inline-size; }
+
+@container toolbar (max-width: 1100px) {
+  .tool-format .tool-note { display: none; }
+}
+
+@container toolbar (max-width: 960px) {
+  .tool-format [data-testid="tool-charpr"] { display: none; }
+}
+
+@container toolbar (max-width: 820px) {
+  .tool-format .tool-label { display: none; }
+  .tool-format [data-testid="typeface-name"] { max-width: 8ch; }
+}
+
+@container toolbar (max-width: 700px) {
+  .tool-format [data-testid="tool-typeface"] { display: none; }
+}
+
+@container toolbar (max-width: 600px) {
+  .tool-format { display: none; }
+}
+
+/* Narrow band (1024 with both rails open): icon-only actions and a bare
+   percentage on the zoom trigger, so the three clusters never meet. */
+@container toolbar (max-width: 560px) {
+  .toolbar .tool-action-label,
+  [data-testid="tool-zoom"] > .tool-label { display: none; }
+  .toolbar { gap: var(--s1); padding: 0 var(--s2); }
+  .toolbar .ui-btn[data-testid="tool-zoom"] { padding: 0 var(--s2); }
+}
 
 .tool-sep {
   width: 1px;
@@ -4731,25 +4792,6 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 /* ══ R7 fit: rail footer, toolbar wrap, verify definition list ═════════ */
 
-@media (max-width: 1023px) {
-  .toolbar .tool-action-label,
-  .toolbar > .toolmenu > summary > .tool-label,
-  .tool-cluster > .toolmenu > summary > .tool-label {
-    display: none;
-  }
-}
-
-@media (min-width: 1024px) {
-  .toolbar {
-    flex-wrap: nowrap;
-  }
-}
-
-@media (min-width: 1280px) {
-  .toolbar {
-    flex-wrap: nowrap;
-  }
-}
 
 /* ══ F5 feel: skeleton, progress, first-run, palette ═══════════════════ */
 

@@ -32,12 +32,10 @@ import {
 import type { InspectResult, RegionText, TypefaceByLang } from "../types";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "../ui/DropdownMenu";
@@ -229,8 +227,13 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
       ? `이 자리는 ${name}(charPr ${charPr.id}) 을 물려받는데, 서식 검사가 권하는 본문 모양은 ${suggestedName}(charPr ${charPr.suggested}) 입니다`
       : `이 문서의 본문 모양은 charPr ${charPr.suggested} 입니다`;
 
+  // Read-only readout of the face, charPr and size at the selection or caret.
+  // It lives in the toolbar itself, never inside a menu: opening a menu moves
+  // focus, and moving focus commits the seat editor, which ends the very caret
+  // this readout describes. Word and 한글 keep the font box in the band for the
+  // same reason.
   const formatBody = (
-    <>
+    <div className="tool-format" data-testid="tool-format" aria-label="서식">
       <div className="tool-group" data-testid="tool-typeface">
         <span className="tool-label">글꼴</span>
         <Tooltip content={typefaceTip}>
@@ -272,7 +275,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         </Tooltip>
         <span className="tool-note tiny">{caret?.sizePt ? "지면에서 잰 값" : "본문 기준"}</span>
       </div>
-    </>
+    </div>
   );
 
   const exportTip = applied
@@ -357,11 +360,6 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
               양식 연결
             </DropdownMenuItem>
           </Tooltip>
-          <DropdownMenuSeparator />
-          <Collapsible className="disclosure" data-testid="tool-format">
-            <CollapsibleTrigger>서식</CollapsibleTrigger>
-            <CollapsibleContent>{formatBody}</CollapsibleContent>
-          </Collapsible>
         </ToolMenu>
       </div>
 
@@ -451,6 +449,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
       </div>
 
       <div className="tool-cluster tool-right">
+        {formatBody}
         <Tooltip content={checkTip}>
           <Button
             variant="secondary"

@@ -211,7 +211,6 @@ async function openChromeMenu(id: "overflow" | "zoom") {
     if (trigger && trigger.getAttribute("data-state") !== "open") trigger.click();
     await waitUntil(() => layerIsOpen(testId), 3000);
   }
-  if (id === "overflow") await openDisclosure("tool-format");
 }
 
 function overlayEditableDrawn(): number {
@@ -745,6 +744,12 @@ async function phaseEdit(config: SmokeConfig) {
     `${getState().draft.plan?.boundSha256} vs ${sourceHash}`);
   check("the plan validated", getState().draft.validation?.ok === true,
     JSON.stringify(getState().draft.validation?.hard ?? []));
+  // The state is settled; give React a bounded moment to paint the queue row
+  // before reading the DOM, so a slow machine fails on substance, not timing.
+  await waitUntil(
+    () => !!document.querySelector(`[data-testid="queue-op-${clean.table}-${clean.row}-${clean.col}"]`),
+    5000,
+  );
   checkDom("the review queue is rendered with the op",
     !!document.querySelector(`[data-testid="queue-op-${clean.table}-${clean.row}-${clean.col}"]`),
     document.querySelectorAll('[data-testid^="queue-op-"]').length + " rows");
@@ -844,6 +849,7 @@ async function phaseEdit(config: SmokeConfig) {
       stale?.kind === "other_session", JSON.stringify(stale));
     check("a stale queue cannot be approved",
       canRequestApproval(getState()) === false, `approvable=${canRequestApproval(getState())}`);
+    await waitUntil(() => !!document.querySelector('[data-testid="queue-stale"]'), 5000);
     checkDom("the stale refusal is on screen with both hashes",
       !!document.querySelector('[data-testid="queue-stale"]') &&
         domText('[data-testid="queue-stale"]').includes(sourceHash.slice(0, 16)),
@@ -2783,7 +2789,14 @@ async function caretChecks(spans: GeometrySpan[]) {
     barText().slice(0, 200));
 
   // 글꼴, over a caret. §14's fourth field, and the reason it was added.
-  await openChromeMenu("overflow");
+  // The size cell reads the RUN edit's measured size, so the caret edit must
+  // exist before the band is asked about it. The readout sits in the band
+  // itself: opening a menu would move focus, and focus ends the caret.
+  if (getState().inlineEdit?.kind !== "run") {
+    const rect = took.rect;
+    await clickOverlaySpan(took, rect[0] + (rect[2] - rect[0]) * 0.6);
+    await waitFor(() => getState().inlineEdit?.kind === "run", 12_000);
+  }
   const faceCell = document.querySelector('[data-testid="typeface-name"]');
   check("the toolbar names the face this RUN is set in, from the document's header",
     (faceCell?.getAttribute("data-face") ?? "").length > 0,
@@ -2792,13 +2805,6 @@ async function caretChecks(spans: GeometrySpan[]) {
   check("and the size is labelled as the RENDER's, not as a declared one",
     sizeCell?.getAttribute("data-source") === (took.sizePt ? "render" : "baseline"),
     `${sizeCell?.getAttribute("data-source")} ${sizeCell?.textContent} · span sizePt ${took.sizePt}`);
-  setChromeMenu(null);
-  await settled(200);
-  if (getState().inlineEdit?.kind !== "run") {
-    const rect = took.rect;
-    await clickOverlaySpan(took, rect[0] + (rect[2] - rect[0]) * 0.6);
-    await waitFor(() => getState().inlineEdit?.kind === "run", 12_000);
-  }
 
   // TYPE. The same commit path a seat uses, into the same queue.
   const TYPED = "지면에서 고쳐 쓴 문장";
@@ -5002,7 +5008,6 @@ async function phaseChrome(config: SmokeConfig) {
 
   const seat = inspect.regions.regions.find((r: EditableRegion) => r.kind === "cell");
   check("a fill seat to stand in", !!seat, JSON.stringify(seat ?? null));
-  await openChromeMenu("overflow");
   if (seat && seat.table !== undefined && seat.row !== undefined && seat.col !== undefined) {
     setSelection({ kind: "cell", table: seat.table, row: seat.row, col: seat.col });
     await settled(200);
