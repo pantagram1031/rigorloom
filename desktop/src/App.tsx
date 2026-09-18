@@ -41,6 +41,7 @@ import {
   type View,
 } from "./store";
 import { DocumentView } from "./views/DocumentView";
+import { KitGallery } from "./ui/Gallery";
 
 export { CLI_DOCS_PATH, CLI_DOCS_URL } from "./components/Welcome";
 
@@ -88,6 +89,13 @@ function canBindDragDrop(): boolean {
 }
 
 export default function App() {
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("kit") === "1") {
+    return <KitGallery />;
+  }
+  return <AppShell />;
+}
+
+function AppShell() {
   const phase = useWorkspace((s) => s.phase);
   const phaseNote = useWorkspace((s) => s.phaseNote);
   const fatal = useWorkspace((s) => s.fatal);

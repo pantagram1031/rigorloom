@@ -24,6 +24,10 @@ if (!CHROME) {
 }
 
 const STATES = ["home", "workspace", "review", "history", "agent", "popover", "palette", "settings"];
+const KIT_STATES = {
+  kit: { theme: "light", query: "?kit=1" },
+  "kit-dark": { theme: "dark", query: "?kit=1&theme=dark" },
+};
 const SIZES = [
   [1280, 800],
   [1920, 1080],
@@ -426,6 +430,50 @@ async function withCdp(fn) {
   }
 }
 
+async function captureKit(cdp, state) {
+  const spec = KIT_STATES[state];
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 800,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await cdp.send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-color-scheme", value: spec.theme }],
+  });
+  const loaded = cdp.once("Page.loadEventFired");
+  const nav = await cdp.send("Page.navigate", { url: `${URL}/${spec.query}` });
+  if (nav.errorText) throw new Error(`navigate failed: ${nav.errorText}`);
+  await Promise.race([
+    loaded,
+    sleep(15000).then(() => {
+      throw new Error("timeout waiting for kit Page.loadEventFired");
+    }),
+  ]);
+  await waitFor(cdp, `!!document.querySelector('[data-testid="kit-gallery"]')`, 20000);
+  await cdp.eval(`document.documentElement.dataset.theme = ${JSON.stringify(spec.theme)}`);
+  await sleep(250);
+  const height = await cdp.eval(
+    `Math.ceil((document.querySelector('[data-testid="kit-gallery"]')?.scrollHeight || 800) + 16)`,
+  );
+  const shotHeight = Math.min(Math.max(Number(height) || 800, 800), 4200);
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: shotHeight,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await sleep(250);
+  const shot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+    captureBeyondViewport: true,
+  });
+  const file = path.join(OUT, `${state}-1280x800-${spec.theme}.png`);
+  await writeFile(file, Buffer.from(shot.data, "base64"));
+  console.log("wrote", path.basename(file));
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes("gif")) {
@@ -436,13 +484,20 @@ async function main() {
     await assembleGif(frames);
     return;
   }
+  const kitArgs = args.filter((a) => a === "kit" || a === "kit-dark");
+  const rest = args.filter((a) => a !== "kit" && a !== "kit-dark");
   await withCdp(async (cdp) => {
-    const filter = new Set(args);
+    if (kitArgs.length || args.length === 0) {
+      const which = kitArgs.length ? kitArgs : ["kit", "kit-dark"];
+      for (const state of which) await captureKit(cdp, state);
+    }
+    if (args.length && kitArgs.length && rest.length === 0) return;
+    const filter = new Set(rest);
     for (const theme of THEMES) {
       for (const [width, height] of SIZES) {
         for (const state of STATES) {
           const name = `${state}-${width}x${height}-${theme}.png`;
-          if (filter.size && !filter.has(name)) continue;
+          if (filter.size && !filter.has(name) && !filter.has(state)) continue;
           await captureOne(cdp, width, height, theme, state);
         }
       }

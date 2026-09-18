@@ -540,6 +540,7 @@ function insideTauri(): boolean {
 
 export function installDevMock(): void {
   if (insideTauri()) return;
+  if (new URLSearchParams(window.location.search).get("kit") === "1") return;
   const internals: Internals = {
     invoke: (cmd, args) =>
       new Promise((resolve, reject) => {
