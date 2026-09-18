@@ -36,7 +36,7 @@ ARIA (Radix semantics) but with our tokens.
 - Dark mode by token only (already the rule).
 
 ## Slices
-- [ ] M1 Kit: `desktop/src/ui/` with Tooltip, Popover, DropdownMenu (items, separators, shortcuts, submenu-free),
+- [x] M1 Kit (grok-xhigh, 17 min, 255k in / 82k out; tests 249 → 277; gallery reviewed light+dark): `desktop/src/ui/` with Tooltip, Popover, DropdownMenu (items, separators, shortcuts, submenu-free),
       Dialog, Sheet, Collapsible/Accordion, Tabs, ToggleGroup (segmented), RadioGroup, Switch, Badge (variants),
       Kbd, Separator, ScrollArea, Progress, Alert, Table, Button (variants: primary / secondary / ghost /
       destructive / link; sizes sm / md), Input, Textarea, Select (native-backed with styled trigger), Command
@@ -59,3 +59,4 @@ themes. The built-app smoke must stay green at the end (driver relocations allow
 | When | What | Result |
 |---|---|---|
 | 2026-09-19 01:40 | Inventory and plan | M1 launched |
+| 2026-09-19 02:35 | M1 landed | kit gallery coherent in both themes; nits for M2/M3: tooltip demo row overlaps, toast/skeleton demo oversized. M2+M3 launched as one lane |
