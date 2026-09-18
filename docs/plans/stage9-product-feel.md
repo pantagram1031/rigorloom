@@ -42,8 +42,12 @@ human, receipts stay complete), but honesty moves to the details layer instead o
       placeholder only, no protocol notes in the visible thread.
 - [x] F5 Feel (grok-xhigh, 30 min; tests 234 → 240; captures reviewed, incl. palette): transitions, skeleton on open, top-right toasts without hashes, window and rail state persisted,
       Ctrl+K palette, focus management; first-run three-step hint, dismissible.
-- [ ] F6 Startup and latency in the built app: measure cold start → Home, Home → 소논문 open, click → hunk queued;
-      targets 2.0 s / 1.5 s / 100 ms; fix the largest cause found (sidecar start, inspect payload, bundle size).
+- [x] F6 Startup and latency in the built app: measure cold start → Home, Home → 소논문 open, click → hunk queued;
+      targets 2.0 s / 1.5 s / 100 ms / 1.0 s sidecar. Cause: Home waited on sidecar+task packs+splash timer;
+      open waited on duplicate `form_inspect` (`forbidden` + `readRegion`) before tree/paper; hunk DOM waited
+      on `plan/propose` (React 18 batch) and IPC timing. After: Home 4334→2445 ms (still 0.45 s over; remainder
+      is WebView2 process+first paint, not the sidecar), open 2877→679 ms, hunk 139→19 ms, sidecar 654→563 ms.
+      `npm test` 240 pass; default smoke 570 passed, 0 failed.
 - [ ] F7 Fable walk-through of the built app (ten minutes, screenshots); defects → F8 fit and finish.
 
 ## Ledger
@@ -53,3 +57,4 @@ human, receipts stay complete), but honesty moves to the details layer instead o
 | 2026-09-18 19:10 | F0 and F1 landed | F2–F4 launched as one lane on grok-xhigh using the audit as the copy source |
 | 2026-09-18 19:45 | F2–F4 landed in one grok-xhigh lane (33 min, 650k in / 87k out; tests 229 → 234); Fable reviewed four captures: accepted | defects for F5 part A: 표 numbering tree (1-based) vs document (0-based), 'none' in 선택 header, 채움 자리 wording, strip labels, 쓰기 전 확인 chip, doubled 기록 heading |
 | 2026-09-18 20:20 | F5 landed | remaining nits for F8: first-run hint 닫기 too faint; Home status bar shows only a dot |
+| 2026-09-18 21:35 | F6 measured and fixed in the built exe | before/after medians (3 runs): Home 4334→2445 ms (target 2000; remainder WebView2), open 2877→679 ms (target 1500), hunk 139→19 ms (target 100; 소논문 has 0 fill seats so hunk used kstartup corpus), sidecar first JSONL 654→563 ms / RSS 26.7 MiB (target 1000). Tests 240. Smoke 570/0. |

@@ -44,6 +44,7 @@ function fixture() {
     },
     stopDocumentEvents: () => {}, loadInspect: async () => {}, loadText: async () => {},
     loadPipelineStatus: async () => {},
+    forbiddenLoads: new Map(),
     rememberRecent: () => {}, startEvents: async () => {},
     verifyReversal: async () => { calls.reversal++; },
     showToast: () => { calls.toast++; },

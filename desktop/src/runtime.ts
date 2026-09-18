@@ -154,6 +154,8 @@ export const pipelineStatus = (path: string) =>
  * them. MCP's include enum still omits `forbidden` — JSON-RPC/CLI accept it.
  */
 export const INSPECT_INCLUDE = ["summary", "graph", "regions", "forbidden"] as const;
+/** Tree + document first paint. Residue (`forbidden`) is a second inspect. */
+export const INSPECT_TREE_INCLUDE = ["summary", "graph", "regions"] as const;
 
 export const inspect = (
   sessionId: string,
@@ -596,6 +598,9 @@ export const smokeConfig = () =>
   }>("smoke_config");
 
 export const smokeFinish = (report: unknown) => invoke<void>("smoke_finish", { report });
+
+/** Milliseconds since process start. First call per name sticks and may print `t_<name>_ms`. */
+export const timingMark = (name: string) => invoke<number>("timing_mark", { name });
 
 /** A `hold` phase saying "the UI is arranged"; the window stays open. */
 export const smokeReady = (detail: unknown) => invoke<void>("smoke_ready", { detail });

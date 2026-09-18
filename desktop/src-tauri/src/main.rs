@@ -14,8 +14,11 @@ mod prefs;
 mod sidecar;
 mod taskpacks;
 
+use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -26,6 +29,66 @@ use sidecar::{resolve_launch, CancelHandle, Sidecar, SidecarStatus, EVENT_STATUS
 /// without a config file. Ignored by a packaged build, which uses the bundled
 /// one-dir sidecar under `bundle.resources`.
 const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+
+static PROCESS_STARTED: OnceLock<Instant> = OnceLock::new();
+static TIMING_MARKS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+
+fn process_started() -> Instant {
+    *PROCESS_STARTED.get_or_init(Instant::now)
+}
+
+fn timing_enabled() -> bool {
+    matches!(std::env::var("RIGORLOOM_TIMING"), Ok(value) if value == "1")
+}
+
+fn attach_timing_console() {
+    let _ = process_started();
+    if !timing_enabled() {
+        return;
+    }
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::System::Console::AttachConsole(0xFFFF_FFFF);
+    }
+}
+
+fn write_timing_line(name: &str, ms: u64) {
+    let line = format!("t_{name}_ms={ms}");
+    eprintln!("{line}");
+    println!("{line}");
+    let _ = std::io::stdout().flush();
+    let payload = format!("{{\"name\":{name:?},\"ms\":{ms}}}\n");
+    if let Ok(dir) = std::env::var("RIGORLOOM_APPDATA") {
+        let path = Path::new(&dir).join("timing.jsonl");
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = file.write_all(payload.as_bytes());
+        }
+    }
+}
+
+/// Elapsed milliseconds since process start. First call for a name is sticky
+/// and, with `RIGORLOOM_TIMING=1`, printed as `t_<name>_ms`.
+#[tauri::command]
+fn timing_mark(name: String) -> u64 {
+    let started = process_started();
+    let ms = started.elapsed().as_millis() as u64;
+    let marks = TIMING_MARKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = marks.lock().unwrap();
+    if let Some(existing) = guard.get(&name) {
+        return *existing;
+    }
+    guard.insert(name.clone(), ms);
+    drop(guard);
+    if timing_enabled() {
+        write_timing_line(&name, ms);
+    }
+    ms
+}
 
 struct Runtime(Mutex<Sidecar>);
 
@@ -823,6 +886,7 @@ fn install_panic_hook(app: AppHandle) {
 }
 
 fn main() {
+    attach_timing_console();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Runtime(Mutex::new(Sidecar::default())))
@@ -859,7 +923,19 @@ fn main() {
             smoke_ready,
             smoke_final,
             smoke_finish,
+            timing_mark,
         ])
+        .on_page_load(|window, payload| {
+            if payload.event() != tauri::webview::PageLoadEvent::Started {
+                return;
+            }
+            let phase = std::env::var("RIGORLOOM_SMOKE").unwrap_or_default();
+            let script = format!(
+                "window.__RIGORLOOM_SMOKE_PHASE = {};",
+                serde_json::to_string(&phase).unwrap_or_else(|_| "\"\"".into())
+            );
+            let _ = window.eval(&script);
+        })
         .setup(|app| {
             install_panic_hook(app.handle().clone());
             if let Some(window) = app.get_webview_window("main") {

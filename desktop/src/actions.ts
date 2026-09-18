@@ -7,6 +7,7 @@
  */
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { flushSync } from "react-dom";
 
 import * as rt from "./runtime";
 import {
@@ -144,19 +145,54 @@ function ownsDraftFence(fence: DraftFence): boolean {
 }
 
 /** Load a session's inspect once and cache it. */
+const forbiddenLoads = new Map<string, Promise<void>>();
+
+/** Residue is a second `form_inspect`. Tree and paper must not wait for it. */
+function mergeForbidden(sessionId: string): Promise<void> {
+  const existing = forbiddenLoads.get(sessionId);
+  if (existing) return existing;
+  let work!: Promise<void>;
+  work = (async () => {
+    try {
+      const extra = await rt.inspect(sessionId, ["forbidden"]);
+      const current = getState().inspects[sessionId];
+      if (!current || getState().activeSessionId !== sessionId) return;
+      setState({
+        inspects: {
+          ...getState().inspects,
+          [sessionId]: { ...current, forbidden: extra.forbidden },
+        },
+      });
+    } catch {
+      // Tree already painted. Absence of `forbidden` stays absence, never an
+      // invented empty inventory.
+    }
+  })().finally(() => {
+    if (forbiddenLoads.get(sessionId) === work) forbiddenLoads.delete(sessionId);
+  });
+  forbiddenLoads.set(sessionId, work);
+  return work;
+}
+
 export async function loadInspect(sessionId: string, force = false): Promise<boolean> {
-  if (!force && getState().inspects[sessionId]) {
+  const cached = getState().inspects[sessionId];
+  if (!force && cached) {
     setState({ inspectPhase: "ready", inspectError: null });
+    if (!cached.forbidden) void mergeForbidden(sessionId);
     return true;
   }
   setState({ inspectPhase: "starting", inspectError: null });
   try {
-    const result = await rt.inspect(sessionId);
+    if (force) forbiddenLoads.delete(sessionId);
+    const result = await rt.inspect(sessionId, rt.INSPECT_TREE_INCLUDE);
     setState({
       inspects: { ...getState().inspects, [sessionId]: result },
       inspectPhase: "ready",
       inspectError: null,
+      // Paper renders from the graph; do not block first paint on readRegion.
+      ...(getState().texts[sessionId] ? {} : { textPhase: "ready" as const }),
     });
+    void mergeForbidden(sessionId);
     return true;
   } catch (e) {
     setState({ inspectPhase: "failed", inspectError: rt.asRuntimeError(e) });
@@ -196,7 +232,9 @@ export async function loadText(sessionId: string, force = false): Promise<boolea
     return true;
   }
 
-  setState({ textPhase: "starting", textError: null });
+  if (getState().textPhase !== "ready") {
+    setState({ textPhase: "starting", textError: null });
+  }
   const collected: RegionText[] = [];
   let refused: unknown = null;
   for (let i = 0; i < wanted.length; i += REGION_CHUNK) {
@@ -459,9 +497,10 @@ export async function selectSession(sessionId: string) {
         }
       : {}),
   });
-  await rt.savePrefs({ lastSessionId: sessionId });
+  void rt.savePrefs({ lastSessionId: sessionId });
   await loadInspect(sessionId);
   await loadText(sessionId);
+  await (forbiddenLoads.get(sessionId) ?? Promise.resolve());
   await loadCandidates(sessionId);
   if (
     eventSelection !== eventSelectionGeneration ||
@@ -725,15 +764,20 @@ export async function openPath(
   binding?: FormBinding | null,
 ): Promise<string | null> {
   try {
+    await whenRuntimeReady();
     const opened = await rt.openPath(path, binding);
     const openedPaths = { ...getState().openedPaths, [opened.sessionId]: path };
     sessionFormBindings.set(opened.sessionId, binding ?? null);
     setState({ openedPaths });
     // Persisted so a relaunch can still name where a session came from; the
-    // Runtime deliberately does not keep the source path.
-    await rt.savePrefs({ openedPaths });
-    await refreshSessions();
+    // Runtime deliberately does not keep the source path. Do not block the
+    // tree's first paint on the prefs write or the session list.
+    const persist = rt.savePrefs({ openedPaths });
+    const listed = refreshSessions();
     await selectSession(opened.sessionId);
+    await listed;
+    rememberRecent(opened.sessionId);
+    await persist;
     return opened.sessionId;
   } catch (e) {
     markRecentMissing(path);
@@ -1267,24 +1311,30 @@ async function setQueue(
   // suspension we check whether we still hold the latest token; if not, a
   // newer setQueue has taken over and this one must return silently rather
   // than overwriting the newer result.
-  setState({
-    draft: {
-      ...state.draft,
-      // The preceding plan belongs to the preceding queue. Leaving it visible
-      // while a replacement proposal is in flight would let the review pane
-      // offer bytes the user has already changed.
-      plan: null,
-      validation: null,
-      boundSha256: null,
-      ops,
-      sessionId,
-      phase: "starting",
-      error: null,
-      rewrittenFromAgent: rewritten,
-      baseRunId,
-      reverses,
-    },
-  });
+  const revealQueue = () => {
+    setState({
+      draft: {
+        ...state.draft,
+        // The preceding plan belongs to the preceding queue. Leaving it visible
+        // while a replacement proposal is in flight would let the review pane
+        // offer bytes the user has already changed.
+        plan: null,
+        validation: null,
+        boundSha256: null,
+        ops,
+        sessionId,
+        phase: "starting",
+        error: null,
+        rewrittenFromAgent: rewritten,
+        baseRunId,
+        reverses,
+      },
+    });
+  };
+  // Force the hunk into the 검토 DOM before `plan/propose` — React 18 would
+  // otherwise keep the empty queue on screen until that RPC returns.
+  if (typeof flushSync === "function") flushSync(revealQueue);
+  else revealQueue();
 
   // Only this exact draft object owns the results below. Agent adoption uses
   // the same ownership rule, so neither path can overwrite newer user intent.
@@ -3260,14 +3310,48 @@ export const resetUiZoom = () => void applyUiZoom(1);
 // --- lifecycle --------------------------------------------------------------
 
 /**
+ * `openPath` during the Home-first window: sidecar may still be coming up.
+ * Resolved after `runtime_start` answers, or on a failed boot so waiters fail
+ * on the invoke instead of hanging.
+ */
+let notifyRuntimeReady: (() => void) | null = null;
+let runtimeGate = new Promise<void>((resolve) => {
+  notifyRuntimeReady = resolve;
+});
+
+function resetRuntimeGate() {
+  runtimeGate = new Promise<void>((resolve) => {
+    notifyRuntimeReady = resolve;
+  });
+}
+
+function unblockRuntime() {
+  notifyRuntimeReady?.();
+}
+
+async function whenRuntimeReady(): Promise<void> {
+  if (getState().status?.running) return;
+  await runtimeGate;
+}
+
+/**
  * Start the runtime and restore what the last run was doing.
  *
  * Objective: close and reopen without a terminal. The Runtime already persists
  * sessions on disk under `--root`, so reattaching is remembering the root and
  * the session id and then calling `session/list`.
+ *
+ * Home is marked ready as soon as prefs are in and nothing has to be restored,
+ * so first paint does not wait for the sidecar, task packs, or the agent host.
  */
 export async function boot(): Promise<void> {
-  setState({ phase: "starting", phaseNote: "런타임을 시작하는 중", fatal: null });
+  resetRuntimeGate();
+  const homeAlreadyUp = getState().phase === "ready";
+  if (!homeAlreadyUp) {
+    setState({ phase: "starting", phaseNote: "런타임을 시작하는 중", fatal: null });
+  } else {
+    setState({ phaseNote: "런타임을 시작하는 중" });
+  }
   try {
     const prefs = await rt.loadPrefs();
     bindChromePrefsWriter((patch) => {
@@ -3301,21 +3385,25 @@ export async function boot(): Promise<void> {
       setState({ openedPaths: prefs.openedPaths as Record<string, string> });
     }
 
+    const remembered = prefs.lastSessionId as string | undefined;
+    if (!remembered) {
+      setState({ phase: "ready", phaseNote: "" });
+    }
+
     const { status } = await rt.start(root);
     setState({ status, root: status.root ?? root, phaseNote: "능력을 확인하는 중" });
 
     setState({ capabilities: await rt.capabilities() });
-    // Whether the dev-mode agent door is reachable from this build. Cheap:
-    // it is a file existence check, not a spawn.
-    await refreshAgentTool();
-    // Phase 5, and all three are cheap for the same reason: a path test, a
-    // prefs read, and one short-lived child. None of them touches a provider
-    // and none of them needs a credential, so a cold boot with nothing
-    // configured still ends with a composer that can explain itself.
-    await refreshAgentHost();
-    await loadProviderSettings();
-    await loadTaskPacks();
-    setState({ phaseNote: "열린 문서를 찾는 중" });
+    unblockRuntime();
+
+    const extras = Promise.all([
+      refreshAgentTool(),
+      refreshAgentHost(),
+      loadProviderSettings(),
+      loadTaskPacks(),
+    ]);
+
+    setState({ phaseNote: remembered ? "열린 문서를 찾는 중" : "" });
     await refreshSessions();
 
     if (!prefsHadRecents) {
@@ -3323,7 +3411,6 @@ export async function boot(): Promise<void> {
       if (derived.length > 0) setState({ recents: derived });
     }
 
-    const remembered = prefs.lastSessionId as string | undefined;
     const sessions = getState().sessions;
     const target =
       remembered && sessions.find((s) => s.sessionId === remembered)?.sessionId;
@@ -3340,7 +3427,9 @@ export async function boot(): Promise<void> {
       await selectSession(target);
     }
     setState({ phase: "ready", phaseNote: "" });
+    await extras;
   } catch (e) {
+    unblockRuntime();
     setState({ phase: "failed", fatal: rt.asRuntimeError(e) });
   }
 }
@@ -3348,6 +3437,7 @@ export async function boot(): Promise<void> {
 /** A dead sidecar must be recoverable without losing document state. */
 export async function restartRuntime(): Promise<void> {
   const keepSession = getState().activeSessionId;
+  resetRuntimeGate();
   setState({ phase: "starting", phaseNote: "런타임을 다시 시작하는 중", fatal: null });
   try {
     const { status } = await rt.start(getState().root);
@@ -3355,6 +3445,7 @@ export async function restartRuntime(): Promise<void> {
     // pretending otherwise would leave the timeline silently frozen.
     forgetDocumentEvents();
     setState({ status, capabilities: await rt.capabilities(), eventSubscription: null });
+    unblockRuntime();
     await refreshSessions();
     if (keepSession && getState().sessions.some((s) => s.sessionId === keepSession)) {
       setState({ activeSessionId: keepSession });
@@ -3362,6 +3453,7 @@ export async function restartRuntime(): Promise<void> {
     }
     setState({ phase: "ready", phaseNote: "" });
   } catch (e) {
+    unblockRuntime();
     setState({ phase: "failed", fatal: rt.asRuntimeError(e) });
   }
 }

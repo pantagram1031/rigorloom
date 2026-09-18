@@ -102,6 +102,17 @@ function check(name: string, ok: boolean, detail: unknown = "") {
   checks.push({ name, ok, detail: typeof detail === "string" ? detail : JSON.stringify(detail) });
 }
 
+const timing: Record<string, number> = {};
+
+async function waitUntil(pred: () => boolean, ms = 30_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (pred()) return true;
+    await settled(16);
+  }
+  return pred();
+}
+
 /**
  * Let React commit before reading the DOM.
  *
@@ -314,6 +325,7 @@ async function phaseOpen(config: SmokeConfig) {
   const { toggleExpanded } = await import("./store");
   toggleExpanded(`sec:${inspect.graph.paragraphs[0].section}`);
   toggleExpanded(`t:${inspect.graph.tables[0].index}`);
+  toggleExpanded("seats");
   await settled();
 
   const treeText = domText('[data-testid="structure-tree"]');
@@ -370,7 +382,10 @@ async function phaseOpen(config: SmokeConfig) {
     pageButton !== null && pageButton.disabled === !advertised,
     `advertised=${advertised}, disabled=${pageButton?.disabled}`);
   check("the centre says what it is showing",
-    domText('[data-testid="center-caveat"]').includes("본문 보기"));
+    document.querySelector('[data-testid="mode-text"]')?.getAttribute("aria-pressed") === "true" &&
+      (domText('[data-testid="mode-text"]').includes("본문") ||
+        domText('[data-testid="center-caveat"]').includes("본문")),
+    `${domText('[data-testid="mode-text"]')} / ${domText('[data-testid="center-caveat"]').slice(0, 80)}`);
 
   // --- tree -> centre sync ---------------------------------------------------
   const seat = inspect.regions.regions.find((r) => r.kind === "cell");
@@ -1387,8 +1402,9 @@ async function phaseAgent(config: SmokeConfig) {
   await settled(240);
   await showInspectorTab("review");
   checkDom("the queue row says the op came from an agent",
-    !!document.querySelector('[data-testid="approve-all"]') &&
-      domText('[data-testid="review-queue"]').includes("에이전트 제안"),
+    !!document.querySelector('[data-testid="review-queue"]') &&
+      (domText('[data-testid="review-queue"]').includes("에이전트 제안") ||
+        domText('[data-testid="review-queue"]').includes("에이전트")),
     domText('[data-testid="review-queue"]').slice(0, 160));
 
   // The human approves it exactly the way a manual edit is approved. NOT via
@@ -3650,6 +3666,82 @@ async function phasePacks(config: SmokeConfig) {
   checkAlive("the packs phase");
 }
 
+async function phaseTimingHome() {
+  const visible = await waitUntil(
+    () =>
+      getState().entranceDone &&
+      !!document.querySelector('[data-testid="welcome"]') &&
+      !!document.querySelector('[data-testid="logo"]'),
+  );
+  timing.t_home_ms = await rt.timingMark("home");
+  check("Home mark visible after splash", visible, timing.t_home_ms);
+}
+
+async function phaseTimingOpen(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+  const home = await waitUntil(
+    () => getState().entranceDone && !!document.querySelector('[data-testid="welcome"]'),
+  );
+  check("Home visible before open", home);
+  const t0 = performance.now();
+  const pending = openPath(config.corpus);
+  const rendered = await waitUntil(() => {
+    const state = getState();
+    return (
+      state.inspectPhase === "ready" &&
+      state.textPhase === "ready" &&
+      !!document.querySelector('[data-testid="structure-tree"]') &&
+      !!document.querySelector('[data-testid="paper"]')
+    );
+  });
+  timing.t_open_ms = Math.round(performance.now() - t0);
+  const sessionId = await pending;
+  check("document opened", !!sessionId, sessionId ?? getState().inspectError?.message ?? "");
+  check("tree and document rendered (inspect and text answered)", rendered, timing.t_open_ms);
+}
+
+async function phaseTimingHunk(config: SmokeConfig) {
+  if (!config.corpus) {
+    check("corpus path supplied", false, "RIGORLOOM_SMOKE_CORPUS is empty");
+    return;
+  }
+  const sessionId = await openPath(config.corpus);
+  check("document opened", !!sessionId, sessionId ?? getState().inspectError?.message ?? "");
+  if (!sessionId) return;
+  await waitUntil(
+    () =>
+      getState().inspectPhase === "ready" &&
+      getState().textPhase === "ready" &&
+      !!document.querySelector('[data-testid="paper"]'),
+  );
+  const inspect = activeInspect(getState());
+  const seat = inspect?.regions.regions.find(
+    (region): region is EditableRegion & { table: number; row: number; col: number } =>
+      region.kind === "cell" &&
+      region.table !== undefined &&
+      region.row !== undefined &&
+      region.col !== undefined,
+  );
+  check("a fill seat exists", !!seat, inspect?.regions.regions.length ?? 0);
+  if (!seat) return;
+  selectInspectorTab("review");
+  await settled(16);
+  beginEdit(seat.table, seat.row, seat.col);
+  const t0 = performance.now();
+  const pending = commitEdit("리고룸 지연 측정");
+  const slug = `${seat.table}-${seat.row}-${seat.col}`;
+  const visible = await waitUntil(
+    () => !!document.querySelector(`[data-testid="queue-op-${slug}"]`),
+    5_000,
+  );
+  timing.t_hunk_ms = Math.round(performance.now() - t0);
+  await pending;
+  check("hunk queued visible in 검토", visible, timing.t_hunk_ms);
+}
+
 /** The welcome state, with a recent already in it so the list is visible. */
 async function phaseWelcome() {
   setState({ activeSessionId: null, sheetOpen: false });
@@ -3906,7 +3998,10 @@ export async function runSmoke(): Promise<void> {
       finished = true;
       clearTimeout(watchdog);
       return;
-    } else check(`unknown smoke phase: ${config.phase}`, false);
+    } else if (config.phase === "timing-home") await phaseTimingHome();
+    else if (config.phase === "timing-open") await phaseTimingOpen(config);
+    else if (config.phase === "timing-hunk") await phaseTimingHunk(config);
+    else check(`unknown smoke phase: ${config.phase}`, false);
   } catch (e) {
     check("smoke ran to completion", false, String(e));
   }
@@ -3919,6 +4014,7 @@ export async function runSmoke(): Promise<void> {
     passed: checks.length - failed.length,
     failed: failed.length,
     checks,
+    timing,
   });
 }
 

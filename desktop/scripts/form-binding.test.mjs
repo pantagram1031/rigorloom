@@ -72,6 +72,7 @@ function helpers() {
       state = { ...state, ...patch };
     },
     refreshSessions: async () => {},
+    whenRuntimeReady: async () => {},
     selectSession: async (id) => {
       ctx.rememberRecent(id);
     },

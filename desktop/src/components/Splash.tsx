@@ -1,10 +1,11 @@
 /**
- * The entrance. ≤ 400 ms, once per launch, skippable by click.
+ * The entrance. Tied to Home readiness, skippable by click, once per launch.
  *
- * It exists because the measured cold start is about 1.5 s to a usable window
- * (spike finding 4) and that time has to be spent somewhere. A blank pane
- * spends it looking broken; the mark weaving itself spends it saying an
- * application started. Home then has to be visible within a second of mount.
+ * It exists because the measured cold start spends time in WebView2 and the
+ * sidecar before a person can use the window. A blank pane spends that time
+ * looking broken; the mark weaving itself spends it saying an application
+ * started. The timer is a cap, not the dismiss rule — dismiss happens when
+ * Home is ready to show, or when the person clicks.
  *
  * It never replays. `entranceDone` lives in the store and a view switch does
  * not touch it — re-running the entrance on every navigation is exactly the
@@ -22,22 +23,26 @@ export function Splash({
   onDone,
   /** Screenshot support: hold the entrance open instead of letting it finish. */
   frozen = false,
+  /** Home is mounted and may be uncovered. Not a wall-clock timer. */
+  ready = false,
 }: {
   note: string;
   onDone: () => void;
   frozen?: boolean;
+  ready?: boolean;
 }) {
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
     if (frozen) return;
-    const start = window.setTimeout(() => setLeaving(true), TOTAL_MS);
-    const end = window.setTimeout(onDone, TOTAL_MS + FADE_MS);
-    return () => {
-      window.clearTimeout(start);
-      window.clearTimeout(end);
-    };
-  }, [onDone, frozen]);
+    if (!ready) {
+      const cap = window.setTimeout(onDone, TOTAL_MS + FADE_MS);
+      return () => window.clearTimeout(cap);
+    }
+    setLeaving(true);
+    onDone();
+    return undefined;
+  }, [onDone, frozen, ready]);
 
   return (
     <div

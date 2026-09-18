@@ -39,22 +39,10 @@ import {
   type View,
 } from "./store";
 import { DocumentView } from "./views/DocumentView";
-import { runSmoke, smokeIntent } from "./smoke";
 
 export { CLI_DOCS_PATH, CLI_DOCS_URL } from "./components/Welcome";
 
-/** Fallback for the window between React mounting and the entrance ending. */
-function Boot({ note }: { note: string }) {
-  return (
-    <div className="boot" data-testid="boot">
-      <Logo size={48} className="mark" />
-      <div className="bar">
-        <i />
-      </div>
-      <p className="note">{note || "여는 중"}</p>
-    </div>
-  );
-}
+let homeTimingScheduled = false;
 
 function Fatal({
   code,
@@ -117,6 +105,19 @@ export default function App() {
     const subscriptions = new RuntimeSubscriptionScope();
 
     (async () => {
+      // Hold-entrance must win before the splash may dismiss. After that, Home
+      // is ready: do not wait for activity subscriptions or the sidecar.
+      let smokePhase: string | null = null;
+      try {
+        const config = await rt.smokeConfig();
+        smokePhase = config.phase ?? null;
+      } catch {
+        smokePhase = null;
+      }
+      if (subscriptions.isDisposed) return;
+      if (smokePhase === "hold-entrance") setState({ holdEntrance: true });
+      else setState({ phase: "ready", phaseNote: "" });
+
       if (!(await subscriptions.add(rt.onActivity(pushActivity)))) return;
       // The document's own history. Arrives as batched `event` notifications,
       // already split from protocol chatter in Rust; the store de-duplicates
@@ -152,17 +153,12 @@ export default function App() {
         }
       }
 
-      // Read the launcher's intent before boot: the entrance screenshot needs
-      // the splash pinned open, and it is gone within 400 ms of mount otherwise.
-      const intent = await smokeIntent();
-      if (subscriptions.isDisposed) return;
-      if (intent?.phase === "hold-entrance") setState({ holdEntrance: true });
-
       await boot();
       if (subscriptions.isDisposed) return;
-      // Scripted evidence runs against the built app, through the same
-      // actions a click uses. No-op unless the launcher asked for it.
-      await runSmoke();
+      if (smokePhase) {
+        const { runSmoke } = await import("./smoke");
+        await runSmoke();
+      }
     })().catch((error) => {
       if (subscriptions.isDisposed) return;
       subscriptions.dispose();
@@ -175,6 +171,14 @@ export default function App() {
       stopDocumentEvents();
     };
   }, []);
+
+  useEffect(() => {
+    if (homeTimingScheduled) return;
+    if (phase !== "ready" || !entranceDone) return;
+    if (!document.querySelector('[data-testid="welcome"]')) return;
+    homeTimingScheduled = true;
+    void rt.timingMark("home");
+  }, [phase, entranceDone]);
 
   // Keyboard. Ctrl+O open · Ctrl+S save/export · Ctrl+Shift+H home · Ctrl+1/2 views · Ctrl+= / - / 0 app zoom ·
   // Ctrl+C copies the selected cell's text.
@@ -273,30 +277,21 @@ export default function App() {
     return <Fatal code={fatal.code} message={fatal.message} onRetry={() => void boot()} />;
   }
 
-  // The entrance covers the cold start; underneath, the app boots for real.
+  // Home mounts under the entrance so first paint is not gated on the sidecar.
+  // Splash stays until `phase === "ready"` (prefs in, nothing left to restore)
+  // or the person clicks through. `hold-entrance` freezes it for screenshots.
   const showSplash = !entranceDone;
-  if (phase !== "ready") {
-    return (
-      <>
-        {showSplash ? (
-          <Splash
-            note={phaseNote}
-            frozen={holdEntrance}
-            onDone={() => setState({ entranceDone: true })}
-          />
-        ) : (
-          <Boot note={phaseNote} />
-        )}
-      </>
-    );
-  }
-
   const sidecarDown = status !== null && !status.running;
 
   return (
     <div className="shell">
       {showSplash ? (
-        <Splash note={phaseNote} onDone={() => setState({ entranceDone: true })} />
+        <Splash
+          note={phaseNote}
+          frozen={holdEntrance}
+          ready={phase === "ready"}
+          onDone={() => setState({ entranceDone: true })}
+        />
       ) : null}
 
       <header className="titlebar">

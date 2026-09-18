@@ -352,6 +352,8 @@ function handle(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "smoke_ready":
     case "smoke_finish":
       return null;
+    case "timing_mark":
+      return 0;
     case "runtime_call":
       return call(String(args.method), (args.params ?? {}) as Record<string, unknown>);
     // The event plugin. Nothing ever fires in browser mode — there is no

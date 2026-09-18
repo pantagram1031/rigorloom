@@ -358,8 +358,8 @@ export interface WorkspaceState {
   /** Candidate count per session when the 기록 tab was last viewed. */
   historyCandidatesSeen: Record<string, number>;
   phase: Phase;
-  /** What the loading state says while `phase === "starting"`. ~1.5 s to first
-   *  usable paint is the measured reality (spike M1/M2), so it is designed. */
+  /** What the loading state says while `phase === "starting"`. Home itself
+   *  paints as soon as the webview can, without waiting for the sidecar. */
   phaseNote: string;
   fatal: RuntimeError | null;
   status: SidecarStatus | null;
@@ -780,7 +780,8 @@ const initial: WorkspaceState = {
   chromeMenu: null,
   agentTurnsSeen: 0,
   historyCandidatesSeen: {},
-  phase: "idle",
+  // Home is the first paint. Sidecar boot must not cover the welcome mark.
+  phase: "ready",
   phaseNote: "",
   fatal: null,
   status: null,
@@ -886,7 +887,10 @@ const initial: WorkspaceState = {
   recents: [],
   homeOpen: true,
   entranceDone: false,
-  holdEntrance: false,
+  holdEntrance:
+    typeof window !== "undefined" &&
+    (window as unknown as { __RIGORLOOM_SMOKE_PHASE?: string }).__RIGORLOOM_SMOKE_PHASE ===
+      "hold-entrance",
   dragOver: false,
 
   activity: [],

@@ -282,6 +282,12 @@ test("splash is ≤ 400 ms unless smoke holds it, and recents fallback exists", 
   assert.ok(Number.isFinite(total) && Number.isFinite(fade));
   assert.ok(total + fade <= 400, `entrance ${total}+${fade}ms`);
   assert.match(splashSource, /frozen/);
+  assert.match(splashSource, /ready/);
+  assert.match(appSource, /ready=\{phase === "ready"\}/);
+  assert.match(appSource, /timingMark\("home"\)/);
+  assert.match(actionsSource, /INSPECT_TREE_INCLUDE/);
+  const cssSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  assert.match(cssSource, /font-display:\s*swap/);
   assert.match(actionsSource, /export function recentsFromSessions/);
   assert.match(welcomeSource, /return "어제"/);
   assert.match(welcomeSource, /return "방금"/);
