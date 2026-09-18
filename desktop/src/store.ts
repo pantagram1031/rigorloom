@@ -613,6 +613,8 @@ export interface WorkspaceState {
   toasts: ToastItem[];
   paletteOpen: boolean;
   firstRunHintDismissed: boolean;
+  /** Chrome colour. `auto` follows the OS; persisted through prefs. */
+  colorTheme: "auto" | "light" | "dark";
   recents: Recent[];
   /**
    * Home is showing. A live session stays in memory; the three columns hide.
@@ -884,6 +886,7 @@ const initial: WorkspaceState = {
   toasts: [],
   paletteOpen: false,
   firstRunHintDismissed: false,
+  colorTheme: "auto",
   recents: [],
   homeOpen: true,
   entranceDone: false,
@@ -1211,6 +1214,22 @@ export function dismissFirstRunHint() {
   if (state.firstRunHintDismissed) return;
   setState({ firstRunHintDismissed: true });
   rememberChrome({ firstRunHintDismissed: true });
+}
+
+export function paintColorTheme(theme: WorkspaceState["colorTheme"] = state.colorTheme) {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (theme === "light" || theme === "dark") {
+    root.dataset.theme = theme;
+    return;
+  }
+  delete root.dataset.theme;
+}
+
+export function setColorTheme(colorTheme: WorkspaceState["colorTheme"]) {
+  setState({ colorTheme });
+  paintColorTheme(colorTheme);
+  rememberChrome({ colorTheme });
 }
 
 export function toggleExpanded(id: string) {

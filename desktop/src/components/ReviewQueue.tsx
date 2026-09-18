@@ -27,14 +27,15 @@
 import { useEffect, useState } from "react";
 
 import {
-  applyApproved,
+  approveAndApply,
+  approveOnly,
   redoQueuedOp,
   reproposeDraft,
-  requestApprovalForDraft,
   resolveApprovalDecision,
   cancelApply,
   clearQueue,
   resolveRecovery,
+  undoQueuedOp,
 } from "../actions";
 import {
   hunkReviewState,
@@ -111,10 +112,10 @@ export function hunkProvenance(
   };
 }
 
-/** Same path as the 모두 승인 button. Does not mutate op params. */
+/** Same path as 승인만: record the displayed hash, do not apply. */
 export function approveDisplayedPlan(): void {
   if (getState().isComposing) return;
-  void resolveApprovalDecision("approved");
+  void approveOnly();
 }
 
 export function rejectDisplayedPlan(): void {
@@ -128,26 +129,25 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
 }
 
-function decideTitle(composing: boolean, approvalBound: boolean): string {
-  return composing
-    ? "입력 조합이 끝나기 전에는 승인하지 않습니다"
-    : approvalBound
-      ? "화면에 보이는 계획에 승인을 기록합니다"
-      : "현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다";
-}
-
 function approveAllTitle(
   composing: boolean,
-  approvalBound: boolean,
+  canRun: boolean,
   recoveryBlocksApply: boolean,
 ): string {
   if (composing) return "입력 조합이 끝나기 전에는 승인하지 않습니다";
   if (recoveryBlocksApply) return "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다";
-  if (!approvalBound) return "현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다";
-  return "화면에 보이는 계획에 승인을 기록합니다";
+  if (!canRun) return "확인을 통과한 계획만 승인하고 적용할 수 있습니다";
+  return "화면에 보이는 계획을 승인하고 적용합니다";
 }
 
-/** 모두 승인 in the 검토 tab header. Binds the displayed plan hash. */
+function primaryBusyLabel(approvalPhase: string, applyPhase: string): string {
+  if (applyPhase === "starting") return "적용하는 중…";
+  if (approvalPhase === "resolving") return "기록하는 중…";
+  if (approvalPhase === "requesting") return "요청하는 중…";
+  return "승인하고 적용";
+}
+
+/** Primary 검토 action. Request → approve → apply, each still a Runtime step. */
 export function ApproveAllButton() {
   const draft = useWorkspace((s) => s.draft);
   const composing = useWorkspace((s) => s.isComposing);
@@ -156,36 +156,89 @@ export function ApproveAllButton() {
   const applyPhase = useWorkspace((s) => s.applyPhase);
   const recovery = useWorkspace((s) => s.recovery);
   const approvalBound = useWorkspace(hasActiveApprovalBinding);
-  const locked = approvalPhase === "resolving" || applyPhase === "starting";
+  const approvable = useWorkspace(canRequestApproval);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const locked =
+    approvalPhase === "requesting" ||
+    approvalPhase === "resolving" ||
+    applyPhase === "starting";
   const recoveryBlocksApply =
     !!recovery &&
     recovery.outcome !== "not_applied" &&
     recovery.planId === draft.plan?.planId &&
     recovery.approvalId === approval?.approvalId;
-  const canDecide = approvalBound && !locked && !composing;
-  const disabled = !canDecide || recoveryBlocksApply;
+  const canRun =
+    draft.ops.length > 0 &&
+    !locked &&
+    !composing &&
+    !recoveryBlocksApply &&
+    (((!approval || approval.state === "rejected") &&
+      (approvable || approval?.state === "rejected")) ||
+      (approval?.state === "pending" && approvalBound) ||
+      (approval?.state === "approved" && approvalBound));
+  const canApproveOnly = canRun && approval?.state !== "approved";
   const count = draft.ops.length;
-  const label = "모두 승인";
+  const label = primaryBusyLabel(approvalPhase, applyPhase);
   return (
-    <button
-      type="button"
-      className="action point approve-all"
-      data-testid="approve-all"
-      disabled={disabled || count === 0}
-      title={approveAllTitle(composing, approvalBound, recoveryBlocksApply)}
-      aria-label={label}
-      onClick={() => {
-        if (getState().isComposing) return;
-        approveDisplayedPlan();
-      }}
-    >
-      {label}
-      {count > 0 ? (
-        <span className="tab-badge" data-testid="approve-all-count">
-          {count}
-        </span>
+    <div className="approve-split approve-all">
+      <button
+        type="button"
+        className="action point"
+        data-testid="approve-and-apply"
+        disabled={!canRun}
+        title={approveAllTitle(composing, canRun, recoveryBlocksApply)}
+        aria-label="승인하고 적용"
+        onClick={() => {
+          if (getState().isComposing) return;
+          setMenuOpen(false);
+          void approveAndApply();
+        }}
+      >
+        {label}
+        {count > 0 ? (
+          <span className="tab-badge" data-testid="approve-all-count">
+            {count}
+          </span>
+        ) : null}
+      </button>
+      <button
+        type="button"
+        className="action point split-caret"
+        data-testid="approve-only-menu"
+        disabled={!canApproveOnly}
+        title="승인만"
+        aria-label="승인만"
+        aria-expanded={menuOpen}
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        ▾
+      </button>
+      {menuOpen ? (
+        <button
+          type="button"
+          className="action approve-only-item"
+          data-testid="approve-only"
+          disabled={!canApproveOnly}
+          title="화면에 보이는 계획에 승인을 기록합니다. 적용은 하지 않습니다."
+          onClick={() => {
+            if (getState().isComposing) return;
+            setMenuOpen(false);
+            void approveOnly();
+          }}
+        >
+          승인만
+        </button>
       ) : null}
-    </button>
+      {applyPhase === "starting" ? (
+        <button
+          className="ghost dark-safe"
+          data-testid="cancel-apply"
+          onClick={() => void cancelApply()}
+        >
+          멈추기
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -193,7 +246,6 @@ export function ReviewQueue() {
   const draft = useWorkspace((s) => s.draft);
   const validation = draft.validation;
   const staleness = useWorkspace(draftStaleness);
-  const approvable = useWorkspace(canRequestApproval);
   const approval = useWorkspace((s) => s.approval);
   const approvalPhase = useWorkspace((s) => s.approvalPhase);
   const approvalError = useWorkspace((s) => s.approvalError);
@@ -215,16 +267,12 @@ export function ReviewQueue() {
   const [focused, setFocused] = useState(0);
   const [openProvenance, setOpenProvenance] = useState<Record<string, boolean>>({});
 
-  const locked = approvalPhase === "resolving" || applyPhase === "starting";
+  const locked =
+    approvalPhase === "requesting" ||
+    approvalPhase === "resolving" ||
+    applyPhase === "starting";
   const locatable = !!activeSessionId && draft.sessionId === activeSessionId;
-  const recoveryBlocksApply =
-    !!recovery &&
-    recovery.outcome !== "not_applied" &&
-    recovery.planId === draft.plan?.planId &&
-    recovery.approvalId === approval?.approvalId;
   const canDecide = approvalBound && !locked && !composing;
-  const canApply =
-    approvalBound && applyPhase !== "starting" && !recoveryBlocksApply && !composing;
 
   const appliedForPlan = !!applied && !!draft.plan && applied.planId === draft.plan.planId;
   const stateId = hunkReviewState({
@@ -232,7 +280,6 @@ export function ReviewQueue() {
     approvalState: approval?.state,
     applied: appliedForPlan,
   });
-  const title = decideTitle(composing, approvalBound);
 
   const receipt = head ? receipts[head] : undefined;
   const refusalMessage = queueRefusalMessage({
@@ -266,12 +313,20 @@ export function ReviewQueue() {
         setFocused(action.index);
         return;
       }
-      if (action.type === "approve-all" || action.type === "approve-hunk") {
-        approveDisplayedPlan();
+      if (action.type === "approve-and-apply") {
+        void approveAndApply();
+        return;
+      }
+      if (action.type === "approve-all") {
+        void approveOnly();
+        return;
+      }
+      if (action.type === "approve-hunk") {
         return;
       }
       if (action.type === "reject-hunk") {
-        rejectDisplayedPlan();
+        const op = draft.ops[action.index];
+        if (op) void undoQueuedOp(op.opId);
         return;
       }
       const op = draft.ops[action.index];
@@ -328,6 +383,11 @@ export function ReviewQueue() {
         <span className="count" data-testid="queue-count">
           {draft.ops.length}
         </span>
+        {approval?.state === "pending" ? (
+          <span className="tiny dim" data-testid="queue-requested">
+            {approval.requestedBy} · {relativeWhen(approval.requestedUtc)}
+          </span>
+        ) : null}
       </h3>
 
       {refusalMessage ? (
@@ -417,17 +477,15 @@ export function ReviewQueue() {
             onLocate={() => locateQueuedOp(op)}
             onApprove={() => {
               if (getState().isComposing) return;
-              approveDisplayedPlan();
               const next = Math.min(index + 1, Math.max(0, draft.ops.length - 1));
               setFocused(next);
               window.requestAnimationFrame(() => focusHunkAt(next));
             }}
             onReject={() => {
               if (getState().isComposing) return;
-              rejectDisplayedPlan();
+              void undoQueuedOp(op.opId);
             }}
-            canDecide={canDecide}
-            decideTitle={title}
+            canDecide={!locked && !composing}
             regions={texts}
             stateId={stateId}
             showToast={showToast}
@@ -452,6 +510,18 @@ export function ReviewQueue() {
               <details className="disclosure">
                 <summary>기술 정보</summary>
                 <p className="mono tiny">{draft.plan.planHash}</p>
+                {approval ? (
+                  <dl className="kv">
+                    <dt>요청자</dt>
+                    <dd>{approval.requestedBy}</dd>
+                    <dt>요청 시각</dt>
+                    <dd className="mono">{approval.requestedUtc}</dd>
+                    <dt>계획</dt>
+                    <dd className="mono">{approval.planId}</dd>
+                    <dt>해시</dt>
+                    <dd className="mono">{approval.planHash}</dd>
+                  </dl>
+                ) : null}
               </details>
             ) : null}
           </div>
@@ -486,125 +556,32 @@ export function ReviewQueue() {
         <p className="empty">계획을 확인하는 중입니다.</p>
       ) : null}
 
-      {/* ── the approval gate ─────────────────────────────────────────────
-          The one place 단청 vermilion is spent. Everything above is teal. */}
-      {approval && approval.state === "approved" ? (
-        <div className="approval-gate" data-testid="approval-resolved">
-          <div className="gate-head">
-            <span className="gate-dot" aria-hidden="true" />
-            <strong>승인됨</strong>
-          </div>
-          <p className="prose">승인 결정이 기록되었습니다. 적용할 수 있습니다.</p>
-          <div className="gate-actions">
-            <button
-              className="action point"
-              data-testid="apply-approved"
-              disabled={!canApply}
-              title={
-                composing
-                  ? "입력 조합이 끝나기 전에는 적용하지 않습니다"
-                  : recoveryBlocksApply
-                    ? "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다"
-                    : approvalBound
-                      ? "승인된 이 계획을 적용합니다"
-                      : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
-              }
-              onClick={() => {
-                if (getState().isComposing) return;
-                void applyApproved();
-              }}
-            >
-              {applyPhase === "starting" ? "적용하는 중…" : "승인된 계획 적용"}
-            </button>
-            {applyPhase === "starting" ? (
-              <button
-                className="ghost dark-safe"
-                data-testid="cancel-apply"
-                onClick={() => void cancelApply()}
-              >
-                멈추기
-              </button>
-            ) : null}
-          </div>
-        </div>
-      ) : approval && approval.state === "pending" ? (
-        <div className="approval-gate" data-testid="approval-gate">
-          <div className="gate-head">
-            <span className="gate-dot" aria-hidden="true" />
-            <strong>승인을 기다립니다</strong>
-            <Tag tone="none">{approval.requestedBy}</Tag>
-            <span className="dim">{relativeWhen(approval.requestedUtc)}</span>
-          </div>
-          <p className="prose">승인해도 문서는 아직 바뀌지 않습니다.</p>
-          <div className="gate-actions">
-            <button
-              className="action point"
-              data-testid="approve"
-              disabled={!canDecide}
-              title={title}
-              onClick={() => {
-                if (getState().isComposing) return;
-                approveDisplayedPlan();
-              }}
-            >
-              {approvalPhase === "resolving" ? "기록하는 중…" : "승인"}
-            </button>
-            <button
-              className="action"
-              data-testid="reject"
-              disabled={!canDecide}
-              title={
-                composing
-                  ? "입력 조합이 끝나기 전에는 거절하지 않습니다"
-                  : approvalBound
-                    ? "이 승인 요청을 거절합니다"
-                    : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
-              }
-              onClick={() => {
-                if (getState().isComposing) return;
-                rejectDisplayedPlan();
-              }}
-            >
-              거절
-            </button>
-          </div>
-          <details className="disclosure">
-            <summary>기술 정보</summary>
-            <dl className="kv">
-              <dt>요청자</dt>
-              <dd>{approval.requestedBy}</dd>
-              <dt>요청 시각</dt>
-              <dd className="mono">{approval.requestedUtc}</dd>
-              <dt>작업 수</dt>
-              <dd>{draft.ops.length}</dd>
-              <dt>계획</dt>
-              <dd className="mono">{approval.planId}</dd>
-              <dt>해시</dt>
-              <dd className="mono">{approval.planHash}</dd>
-            </dl>
-          </details>
-        </div>
-      ) : (
-        <div className="gate-actions">
+      <div className="gate-actions">
+        {approval?.state === "pending" ? (
           <button
-            className="action primary"
-            data-testid="request-approval"
-            disabled={!approvable}
+            className="action"
+            data-testid="reject"
+            disabled={!canDecide}
             title={
-              approvable
-                ? "사람이 승인해야 문서가 바뀝니다"
-                : "확인을 통과한 계획만 승인을 요청할 수 있습니다"
+              composing
+                ? "입력 조합이 끝나기 전에는 거절하지 않습니다"
+                : approvalBound
+                  ? "이 승인 요청을 거절합니다"
+                  : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
             }
-            onClick={() => void requestApprovalForDraft()}
+            onClick={() => {
+              if (getState().isComposing) return;
+              rejectDisplayedPlan();
+            }}
           >
-            {approvalPhase === "requesting" ? "요청하는 중…" : "승인 요청"}
+            거절
           </button>
-          {redo}
-          <button className="ghost dark-safe" disabled={locked} onClick={() => void clearQueue()}>
-            대기열 비우기
-          </button>
-        </div>
-      )}
+        ) : null}
+        {redo}
+        <button className="ghost dark-safe" disabled={locked} onClick={() => void clearQueue()}>
+          대기열 비우기
+        </button>
+      </div>
 
       {approvalError ? (
         <div className="refusal" data-testid="approval-error">

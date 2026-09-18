@@ -134,6 +134,8 @@ function fixture() {
     verifyReversal: async () => true,
     showToast: () => {},
     seatText: () => "",
+    selectInspectorTab: () => {},
+    dismissFirstRunHint: () => {},
   });
   vm.runInContext(
     `${stripTypeScriptTypes(implementation).replaceAll("export ", "")}

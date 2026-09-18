@@ -14,6 +14,7 @@ import {
   stepUiZoom,
   toggleFullscreen,
   toggleLeftRail,
+  approveAndApply,
 } from "./actions";
 import { Icon } from "./components/Icon";
 import { Logo } from "./components/Logo";
@@ -31,6 +32,7 @@ import {
   leaveHome,
   pushActivity,
   pushHostEvents,
+  paintColorTheme,
   setChromeMenu,
   setState,
   setView,
@@ -99,6 +101,7 @@ export default function App() {
   );
   const homeOpen = useWorkspace((s) => s.homeOpen);
   const chromeMenu = useWorkspace((s) => s.chromeMenu);
+  const colorTheme = useWorkspace((s) => s.colorTheme);
   const openMenu = chromeMenu === "open";
 
   useEffect(() => {
@@ -173,6 +176,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    paintColorTheme(colorTheme);
+    if (colorTheme !== "auto" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => paintColorTheme("auto");
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [colorTheme]);
+
+  useEffect(() => {
     if (homeTimingScheduled) return;
     if (phase !== "ready" || !entranceDone) return;
     if (!document.querySelector('[data-testid="welcome"]')) return;
@@ -205,6 +217,12 @@ export default function App() {
       if ((e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey) {
         e.preventDefault();
         toggleCommandPalette();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === "Enter") {
+        if (e.isComposing || getState().isComposing) return;
+        e.preventDefault();
+        void approveAndApply();
         return;
       }
       // A shortcut must never reach past a text field the user is typing in.

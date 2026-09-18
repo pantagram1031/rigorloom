@@ -40,7 +40,6 @@ import {
   bindFormAndOpen,
   exportApplied,
   openViaDialog,
-  requestApprovalForDraft,
   runCheck,
   stepUiZoom,
   toggleLeftRail,
@@ -549,19 +548,18 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           disabled={approvalPhase !== "pending" && !canApprove}
           title={
             approvalPhase === "pending"
-              ? "오른쪽에서 승인합니다"
+              ? "오른쪽에서 승인하고 적용합니다"
               : canApprove
-                ? "대기 중인 편집의 승인을 요청합니다"
+                ? "검토 탭에서 승인하고 적용합니다"
                 : "입력 칸에 값을 넣으면 승인을 요청할 수 있습니다"
           }
           onClick={() => {
-            if (approvalPhase === "pending") {
+            selectInspectorTab("review");
+            window.requestAnimationFrame(() => {
               document
-                .querySelector('[data-testid="approval-gate"]')
+                .querySelector('[data-testid="approve-and-apply"]')
                 ?.scrollIntoView({ block: "center" });
-              return;
-            }
-            void requestApprovalForDraft();
+            });
           }}
         >
           <Icon name="check" />

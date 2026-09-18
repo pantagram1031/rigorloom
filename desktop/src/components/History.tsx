@@ -140,11 +140,12 @@ function Row({
         <button
           className="ghost dark-safe btn-icon"
           data-testid={`history-receipt-${runId}`}
-          title="영수증"
-          aria-label="자세히"
+          title="영수증 보기"
+          aria-label="영수증 보기"
           onClick={() => void loadReceipt(runId)}
         >
           <Icon name="receipt" />
+          영수증 보기
         </button>
         <button
           className="action btn-icon"
@@ -219,16 +220,66 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
   });
 
   return (
-    <div className="receipt-block" data-testid="compare-inspect">
-      <h4>비교</h4>
+    <div className="compare-popover" data-testid="compare-inspect">
+      <button
+        className="action primary"
+        data-testid="compare-run"
+        disabled={!leftRunId || phase === "starting"}
+        onClick={() => {
+          setCompareAgainst({ source: true });
+          void runCompareInspect();
+        }}
+      >
+        {phase === "starting" ? "비교 중…" : "이 후보본을 원본과 비교"}
+      </button>
+      <details className="disclosure" data-testid="compare-other">
+        <summary>다른 후보본과</summary>
+        <div className="gate-actions">
+          <button
+            className="ghost dark-safe"
+            data-testid="compare-against-source"
+            aria-pressed={againstIsSource(against)}
+            onClick={() => setCompareAgainst({ source: true })}
+          >
+            원본
+          </button>
+          {rows
+            .filter((row) => row.runId && row.runId !== leftRunId)
+            .map((row, index) => (
+              <button
+                key={row.runId}
+                className="ghost dark-safe"
+                data-testid={`compare-against-${row.runId}`}
+                aria-pressed={"runId" in against && against.runId === row.runId}
+                onClick={() => {
+                  setCompareAgainst({ runId: row.runId! });
+                  void runCompareInspect();
+                }}
+              >
+                후보본 {index + 1}
+              </button>
+            ))}
+        </div>
+      </details>
+      <label className="prose tiny">
+        <input
+          type="checkbox"
+          data-testid="compare-use-selection"
+          checked={useSelection}
+          onChange={(e) => setCompareUseSelection(e.target.checked)}
+        />{" "}
+        선택한 자리만
+      </label>
       <details className="disclosure">
         <summary>기술 정보</summary>
         <p className="prose tiny">
           candidate/compare 만 씁니다. verify/* 는 프로토콜에 없습니다.
         </p>
-      </details>
-      <p className="prose tiny">왼쪽 후보본</p>
-      <div className="gate-actions">
+        <p className="mono tiny">
+          왼쪽 {leftRunId ?? "—"}
+          {" · "}
+          대상 {againstIsSource(against) ? "원본" : "runId" in against ? against.runId : "—"}
+        </p>
         {rows.map((row) => (
           <button
             key={row.runId}
@@ -240,51 +291,7 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
             {(row.runId ?? "").slice(0, 12)}
           </button>
         ))}
-      </div>
-      <p className="prose tiny">비교 대상</p>
-      <div className="gate-actions">
-        <button
-          className="ghost dark-safe"
-          data-testid="compare-against-source"
-          aria-pressed={againstIsSource(against)}
-          onClick={() => setCompareAgainst({ source: true })}
-        >
-          원본
-        </button>
-        {rows
-          .filter((row) => row.runId && row.runId !== leftRunId)
-          .map((row) => (
-            <button
-              key={row.runId}
-              className="ghost dark-safe"
-              data-testid={`compare-against-${row.runId}`}
-              aria-pressed={"runId" in against && against.runId === row.runId}
-              onClick={() => setCompareAgainst({ runId: row.runId! })}
-            >
-              {(row.runId ?? "").slice(0, 12)}
-            </button>
-          ))}
-      </div>
-      <label className="prose tiny">
-        <input
-          type="checkbox"
-          data-testid="compare-use-selection"
-          checked={useSelection}
-          onChange={(e) => setCompareUseSelection(e.target.checked)}
-        />{" "}
-        지금 고른 자리만
-      </label>
-      <div className="gate-actions">
-        <button
-          className="ghost dark-safe btn-icon"
-          data-testid="compare-run"
-          disabled={!leftRunId || phase === "starting"}
-          onClick={() => void runCompareInspect()}
-        >
-          <Icon name="compare" />
-          {phase === "starting" ? "비교 중…" : "비교"}
-        </button>
-      </div>
+      </details>
 
       {refusals.acceptanceRefused ? (
         <div className="refusal" data-testid="compare-acceptance-refusal">

@@ -122,7 +122,7 @@ export function Home() {
   return (
     <div className="welcome home" data-testid="welcome">
       <div className="home-inner">
-        <Logo size={64} className="mark" />
+        <Logo size={48} className="mark" />
         <div>
           <h1>Rigorloom</h1>
           <p className="lede">
@@ -140,7 +140,7 @@ export function Home() {
             </ol>
             <button
               type="button"
-              className="ghost"
+              className="first-run-dismiss"
               data-testid="first-run-dismiss"
               onClick={() => dismissFirstRunHint()}
             >

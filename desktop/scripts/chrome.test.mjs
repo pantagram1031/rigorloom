@@ -51,6 +51,7 @@ function renderToolbar(state) {
           exportApplied: () => {},
           openViaDialog: () => {},
           requestApprovalForDraft: () => {},
+          approveAndApply: () => {},
           runCheck: () => {},
           stepUiZoom: () => {},
           toggleLeftRail: () => {},

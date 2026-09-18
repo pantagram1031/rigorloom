@@ -4020,7 +4020,7 @@ export async function runSmoke(): Promise<void> {
 
 /**
  * G6b. A real router session through the built app: Settings → Composer →
- * plan-arrival → 검토 hunks → 모두 승인 → 적용 → 기록/영수증.
+ * plan-arrival → 검토 hunks → 승인하고 적용 → 기록/영수증.
  *
  * Opt-in. The harness only launches this phase when
  * `RIGORLOOM_SMOKE_AGENT_BASEURL` is set. Assertions read runtime payloads,
@@ -4423,22 +4423,15 @@ async function phaseAgentLive(config: SmokeConfig) {
     domText('[data-testid="review-queue"]').slice(0, 240));
   await holdNativeAgent("native-agent-review");
 
-  const approve = document.querySelector<HTMLButtonElement>('[data-testid="approve-all"]');
-  checkDom("모두 승인 is offered", !!approve && approve.disabled === false,
+  const approve = document.querySelector<HTMLButtonElement>('[data-testid="approve-and-apply"]');
+  checkDom("승인하고 적용 is offered", !!approve && approve.disabled === false,
     approve?.getAttribute("aria-label") ?? "missing");
   approve?.click();
-  await waitFor(() => getState().approval?.state === "approved", 20_000, 250);
-  const approvedHash = getState().approval?.planHash ?? "";
-  check("plan hash in the card equals the approved hash",
-    cardHash === approvedHash && approvedHash === planHash,
-    JSON.stringify({ cardHash, planHash, approvedHash }));
-
-  const apply = document.querySelector<HTMLButtonElement>('[data-testid="apply-approved"]');
-  checkDom("적용 is offered", !!apply && apply.disabled === false,
-    apply?.textContent ?? "missing");
-  apply?.click();
   await waitFor(() => getState().applyPhase === "ready" && getState().applied !== null, 120_000, 500);
   const applied = getState().applied;
+  check("plan hash in the card equals the applied plan hash",
+    cardHash === planHash,
+    JSON.stringify({ cardHash, planHash }));
   check("the approved plan applied", getState().applyPhase === "ready" && !!applied,
     applied?.runId ?? JSON.stringify(getState().applyError));
   if (!applied) return;

@@ -1,6 +1,6 @@
 /**
  * One queued op as a review hunk: a plain-language title, before/after
- * with LCS marks, 승인/거절, and 기술 정보 for ids and hashes.
+ * with LCS marks, 포함/제외, and 기술 정보 for ids and hashes.
  *
  * Render is display-only. Op params are never written here.
  */
@@ -49,7 +49,6 @@ export function HunkCard({
   onApprove,
   onReject,
   canDecide,
-  decideTitle,
   regions,
   stateId,
   showToast,
@@ -67,7 +66,6 @@ export function HunkCard({
   onApprove: () => void;
   onReject: () => void;
   canDecide: boolean;
-  decideTitle: string;
   regions: RegionText[] | undefined;
   stateId: HunkStateId;
   showToast: (msg: string, ms: number) => void;
@@ -211,24 +209,25 @@ export function HunkCard({
           className="action point btn-icon"
           data-testid={`hunk-approve-${slug}`}
           disabled={!canDecide}
-          title={decideTitle}
-          aria-label="이 항목 승인"
+          title="이 항목을 계획에 넣습니다"
+          aria-label="이 항목 포함"
+          aria-pressed="true"
           onClick={onApprove}
         >
           <Icon name="check" />
-          승인
+          포함
         </button>
         <button
           type="button"
           className="action btn-icon"
           data-testid={`hunk-reject-${slug}`}
           disabled={!canDecide}
-          title={decideTitle}
-          aria-label="이 항목 거절"
+          title="이 항목을 계획에서 뺍니다"
+          aria-label="이 항목 제외"
           onClick={onReject}
         >
           <Icon name="x" />
-          거절
+          제외
         </button>
         <details
           className="disclosure hunk-provenance"

@@ -23,7 +23,7 @@ if (!CHROME) {
   process.exit(1);
 }
 
-const STATES = ["home", "workspace", "review", "history", "agent", "popover", "palette"];
+const STATES = ["home", "workspace", "review", "history", "agent", "popover", "palette", "settings"];
 const SIZES = [
   [1280, 800],
   [1920, 1080],
@@ -122,6 +122,15 @@ async function prepareState(cdp, state) {
     return;
   }
 
+  if (state === "settings") {
+    const onHome = await cdp.eval(`!!document.querySelector('[data-testid="welcome"]')`);
+    if (!onHome) await click(cdp, '[data-testid="header-home"]');
+    await waitFor(cdp, `!!document.querySelector('[data-testid="welcome"]')`);
+    await click(cdp, '[data-testid="home-settings"]');
+    await waitFor(cdp, `!!document.querySelector('[data-testid="settings"]')`);
+    return;
+  }
+
   const onHome = await cdp.eval(`!!document.querySelector('[data-testid="welcome"]')`);
   if (onHome) {
     const hasTab = await cdp.eval(`!!document.querySelector('[data-testid="doc-tab"]')`);
@@ -161,6 +170,7 @@ async function prepareState(cdp, state) {
     }
     await click(cdp, '[data-testid="inspector-tab-review"]');
     await waitFor(cdp, `!!document.querySelector('[data-testid="queue-op-0-0-14"], [data-testid="review-queue"]')`);
+    await waitFor(cdp, `!!document.querySelector('[data-testid="approve-and-apply"]')`);
   }
 
   if (state === "history") {
@@ -321,19 +331,12 @@ async function captureGif(cdp) {
 
   await waitFor(
     cdp,
-    `!!document.querySelector('[data-testid="approve-all"]') && document.querySelector('[data-testid="approve-all"]').disabled === false`,
+    `!!document.querySelector('[data-testid="approve-and-apply"]') && document.querySelector('[data-testid="approve-and-apply"]').disabled === false`,
   );
-  await click(cdp, '[data-testid="approve-all"]');
+  await click(cdp, '[data-testid="approve-and-apply"]');
   await waitFor(
     cdp,
-    `!!document.querySelector('[data-testid="apply-approved"]') && document.querySelector('[data-testid="apply-approved"]').disabled === false`,
-  );
-  await shotFrame(cdp, frames, "approved");
-
-  await click(cdp, '[data-testid="apply-approved"]');
-  await waitFor(
-    cdp,
-    `!!document.querySelector('[data-testid="badge-history"]')`,
+    `document.querySelector('[data-testid="inspector-panel"]')?.dataset.tab === "history" || !!document.querySelector('[data-testid="badge-history"], [data-testid^="history-"]')`,
     20000,
   );
   await click(cdp, '[data-testid="inspector-tab-history"]');

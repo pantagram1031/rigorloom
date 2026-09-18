@@ -39,6 +39,16 @@ export function humanCellAddress(table: number, row: number, col: number): strin
   return `${humanTableLabel(table)} · ${row + 1}행 ${col + 1}열`;
 }
 
+/** One line for the 선택 seat pane. Anomalies win over filled/empty. */
+export function seatStateLine(input: {
+  text?: string | null;
+  scriptAnomaly?: boolean | null;
+}): "글자속성 이상" | "값 있음" | "빈 칸" {
+  if (input.scriptAnomaly) return "글자속성 이상";
+  if (typeof input.text === "string" && input.text.length > 0) return "값 있음";
+  return "빈 칸";
+}
+
 export function humanSelectionLabel(
   selection:
     | { kind: "cell"; table: number; row: number; col: number }

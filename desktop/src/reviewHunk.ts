@@ -216,7 +216,8 @@ export type ReviewHotkey =
   | { type: "approve-hunk"; index: number }
   | { type: "reject-hunk"; index: number }
   | { type: "toggle-provenance"; index: number }
-  | { type: "approve-all" };
+  | { type: "approve-all" }
+  | { type: "approve-and-apply" };
 
 export function reviewQueueHotkey(
   e: {
@@ -230,6 +231,9 @@ export function reviewQueueHotkey(
   ctx: { focused: number; count: number; composing: boolean; inEditable: boolean },
 ): ReviewHotkey {
   if (ctx.composing || e.isComposing) return { type: "none" };
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key === "Enter") {
+    return { type: "approve-and-apply" };
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return { type: "none" };
   if (ctx.count <= 0) return { type: "none" };
   if (e.shiftKey && (e.key === "A" || e.key === "a")) return { type: "approve-all" };

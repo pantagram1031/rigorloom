@@ -46,6 +46,9 @@ import {
   bumpEditIntent,
   bumpPlanGeneration,
   currentPlanGeneration,
+  dismissFirstRunHint,
+  paintColorTheme,
+  selectInspectorTab,
   type Draft,
   type QueuedOp,
   type RegionAccess,
@@ -2020,6 +2023,8 @@ export async function applyApproved(): Promise<void> {
   if (reversed) await verifyReversal(applied.runId, reversed);
   if (getState().activeSessionId === sessionId && getState().head === applied.runId) {
     showToast("후보본을 만들었습니다", 2200);
+    selectInspectorTab("history");
+    dismissFirstRunHint();
   }
 }
 
@@ -2027,6 +2032,77 @@ export async function applyApproved(): Promise<void> {
 export async function cancelApply(): Promise<void> {
   await rt.cancel(APPLY_TAG);
   showToast("적용을 멈추라고 알렸습니다. 진행 중인 한 단계는 끝납니다.", 2400);
+}
+
+let approveFlowInFlight = false;
+
+/**
+ * One human click: request the approval if none exists, record the decision
+ * against the displayed plan hash, then apply. Each step is the existing
+ * Runtime call. A refusal stops here so the refusal card can speak.
+ */
+export async function approveAndApply(): Promise<void> {
+  if (approveFlowInFlight || getState().isComposing) return;
+  if (getState().draft.ops.length === 0) return;
+  approveFlowInFlight = true;
+  try {
+    if (getState().approval?.state === "rejected") {
+      setState({ approval: null, approvalPhase: "idle", approvalError: null });
+    }
+    if (!getState().approval) {
+      await requestApprovalForDraft();
+      const after = getState();
+      if (!after.approval || after.approvalError) return;
+    }
+    if (getState().isComposing) return;
+    if (getState().approval?.state === "pending") {
+      await resolveApprovalDecision("approved");
+      const after = getState();
+      if (after.approval?.state !== "approved" || after.approvalError) return;
+    }
+    if (getState().isComposing) return;
+    if (getState().approval?.state !== "approved") return;
+    await applyApproved();
+  } finally {
+    approveFlowInFlight = false;
+  }
+}
+
+/**
+ * Record the human approval against the displayed hash and leave apply for
+ * a later Runtime call. Request first when no approval exists.
+ */
+export async function approveOnly(): Promise<void> {
+  if (getState().isComposing) return;
+  if (getState().draft.ops.length === 0) return;
+  if (getState().approval?.state === "rejected") {
+    setState({ approval: null, approvalPhase: "idle", approvalError: null });
+  }
+  if (!getState().approval) {
+    await requestApprovalForDraft();
+    const after = getState();
+    if (!after.approval || after.approvalError) return;
+  }
+  if (getState().isComposing) return;
+  if (getState().approval?.state === "pending") {
+    await resolveApprovalDecision("approved");
+  }
+}
+
+export async function pickWorkspaceFolder(): Promise<string | null> {
+  const chosen = await openFileDialog({
+    directory: true,
+    title: "기본 작업 폴더",
+  });
+  if (!chosen || Array.isArray(chosen)) return null;
+  void rt.savePrefs({ root: chosen });
+  showToast("다음 시작부터 이 폴더를 씁니다", 2200);
+  return chosen;
+}
+
+export function clearRecents(): void {
+  setState({ recents: [] });
+  void rt.savePrefs({ recents: [] });
 }
 
 /**
@@ -3370,6 +3446,11 @@ export async function boot(): Promise<void> {
     }
     if (prefs.firstRunHintDismissed === true) {
       setState({ firstRunHintDismissed: true });
+    }
+    const savedTheme = prefs.colorTheme;
+    if (savedTheme === "light" || savedTheme === "dark" || savedTheme === "auto") {
+      setState({ colorTheme: savedTheme });
+      paintColorTheme(savedTheme);
     }
     const lastTab = prefs.lastInspectorTab;
     if (lastTab === "selection" || lastTab === "review" || lastTab === "history") {

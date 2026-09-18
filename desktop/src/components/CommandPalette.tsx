@@ -4,11 +4,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  approveAndApply,
   bindFormAndOpen,
   exportApplied,
   openPath,
   openViaDialog,
-  requestApprovalForDraft,
   runCheck,
   toggleLeftRail,
 } from "../actions";
@@ -35,7 +35,7 @@ export function runCommand(id: string, recentPath?: string): void {
       return;
     case "approve":
       selectInspectorTab("review");
-      void requestApprovalForDraft();
+      void approveAndApply();
       return;
     case "export":
       void exportApplied();

@@ -8,7 +8,7 @@
 import { useEffect } from "react";
 
 import { beginEdit, bindFormToActiveDocument, needsBoundFormHint } from "../actions";
-import { humanCellAddress, humanSelectionLabel, humanTableLabel, machineTableIndex } from "../label";
+import { humanCellAddress, humanSelectionLabel, humanTableLabel, machineTableIndex, seatStateLine } from "../label";
 import {
   inspectorAgentUnread,
   inspectorHistoryBadge,
@@ -148,6 +148,7 @@ function RegionSourceSection() {
 }
 
 function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Selection, { kind: "cell" }> }) {
+  const source = useWorkspace((s) => s.selectedRegionSource);
   const table = inspect.graph.tables.find((t) => t.index === sel.table);
   const cell = table?.cells.find((c) => c.addr.row === sel.row && c.addr.col === sel.col);
   if (!cell) {
@@ -156,94 +157,80 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
   const seat = inspect.regions.regions.find(
     (r) => r.kind === "cell" && r.table === sel.table && r.row === sel.row && r.col === sel.col,
   );
+  const text =
+    (source?.region &&
+    source.address.row === sel.row &&
+    source.address.col === sel.col
+      ? source.region.text
+      : null) ??
+    cell.textPreview ??
+    "";
+  const stateLine = seatStateLine({
+    text,
+    scriptAnomaly: seat?.scriptAnomaly === true,
+  });
   return (
     <>
-      <div className="section">
-        <h3>칸 {humanCellAddress(sel.table, sel.row, sel.col)}</h3>
-        <dl className="kv">
-          <Fact
-            k="분류"
-            v={
-              <Tag tone={cell.classification === "fill_target" ? "fill" : "none"}>
-                {CLASSIFICATION_LABEL[cell.classification] ?? cell.classification}
-              </Tag>
-            }
-          />
-          {cell.spacerPattern ? <Fact k="여백 형태" v={cell.spacerPattern} /> : null}
-        </dl>
-        {cell.charPr || cell.charPrSuggested ? (
-          <details className="disclosure">
-            <summary>기술 정보</summary>
-            <dl className="kv">
-              {cell.charPr ? <Fact k="글자 모양" v={cell.charPr} /> : null}
-              {cell.charPrSuggested ? <Fact k="권장 글자 모양" v={cell.charPrSuggested} /> : null}
-            </dl>
-          </details>
-        ) : null}
-      </div>
-
-      {cell.textPreview ? (
-        <div className="section">
-          <h3>미리보기{cell.truncated ? " (잘림)" : ""}</h3>
-          <p className="prose selectable">
-            {cell.textPreview}
-          </p>
-          {cell.truncated ? (
-            <p className="empty tight">
-              전체 글자는 요청해야 옵니다.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="section">
-        <h3>쓰기 전 확인</h3>
-        {seat ? (
-          <dl className="kv">
-            <Fact
-              k="색 이상"
-              v={
-                seat.colorAnomaly ? (
-                  <Tag tone="bad">있음</Tag>
-                ) : seat.colorAnomaly === false ? (
-                  <Tag tone="ok">없음</Tag>
-                ) : (
-                  <Tag tone="none">판단 불가</Tag>
-                )
-              }
-            />
-            <Fact
-              k="글자속성 이상"
-              v={
-                seat.scriptAnomaly ? (
-                  <Tag tone="warn">있음</Tag>
-                ) : seat.scriptAnomaly === false ? (
-                  <Tag tone="ok">없음</Tag>
-                ) : (
-                  <Tag tone="none">판단 불가</Tag>
-                )
-              }
-            />
-          </dl>
-        ) : (
-          <p className="prose">
-            이 칸은 값을 넣는 자리가 아닙니다.
-          </p>
-        )}
-        {seat?.colorAnomaly ? (
-          <p className="prose danger stack-s2">
-            글자색이 본문 기준과 다릅니다. 이대로 채우면 색이 남습니다.
-          </p>
-        ) : null}
+      <div className="section" data-testid="seat-pane">
+        <h3 data-testid="seat-title">{humanCellAddress(sel.table, sel.row, sel.col)}</h3>
+        <p className="prose" data-testid="seat-state">
+          {stateLine}
+        </p>
         {seat ? (
           <button
             className="action primary stack-s3"
             data-testid="edit-seat"
             onClick={() => beginEdit(sel.table, sel.row, sel.col)}
           >
-            이 자리에 값 넣기
+            값 넣기
           </button>
-        ) : null}
+        ) : (
+          <p className="prose">이 칸은 값을 넣는 자리가 아닙니다.</p>
+        )}
+        <details className="disclosure">
+          <summary>기술 정보</summary>
+          <dl className="kv">
+            <Fact
+              k="분류"
+              v={
+                <Tag tone={cell.classification === "fill_target" ? "fill" : "none"}>
+                  {CLASSIFICATION_LABEL[cell.classification] ?? cell.classification}
+                </Tag>
+              }
+            />
+            {cell.spacerPattern ? <Fact k="여백 형태" v={cell.spacerPattern} /> : null}
+            {cell.charPr ? <Fact k="글자 모양" v={cell.charPr} /> : null}
+            {cell.charPrSuggested ? <Fact k="권장 글자 모양" v={cell.charPrSuggested} /> : null}
+            {seat ? (
+              <>
+                <Fact
+                  k="색 이상"
+                  v={
+                    seat.colorAnomaly ? (
+                      <Tag tone="bad">있음</Tag>
+                    ) : seat.colorAnomaly === false ? (
+                      <Tag tone="ok">없음</Tag>
+                    ) : (
+                      <Tag tone="none">판단 불가</Tag>
+                    )
+                  }
+                />
+                <Fact
+                  k="글자속성 이상"
+                  v={
+                    seat.scriptAnomaly ? (
+                      <Tag tone="warn">있음</Tag>
+                    ) : seat.scriptAnomaly === false ? (
+                      <Tag tone="ok">없음</Tag>
+                    ) : (
+                      <Tag tone="none">판단 불가</Tag>
+                    )
+                  }
+                />
+              </>
+            ) : null}
+          </dl>
+        </details>
       </div>
     </>
   );

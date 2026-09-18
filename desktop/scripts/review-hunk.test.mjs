@@ -180,6 +180,8 @@ function renderQueue(state, actions = {}) {
     if (id === "../actions") {
       return {
         applyApproved: () => {},
+        approveAndApply: () => {},
+        approveOnly: () => {},
         redoQueuedOp: () => {},
         reproposeDraft: () => {},
         requestApprovalForDraft: () => {},
@@ -187,6 +189,7 @@ function renderQueue(state, actions = {}) {
         cancelApply: () => {},
         clearQueue: () => {},
         resolveRecovery: () => {},
+        undoQueuedOp: () => {},
         ...actions,
       };
     }
@@ -291,6 +294,14 @@ test("j/k/a/r/Enter and Shift+A map to hunk motion and the shared approve path",
   assert.deepEqual(hit({ key: "r", shiftKey: false }), { type: "reject-hunk", index: 1 });
   assert.deepEqual(hit({ key: "Enter", shiftKey: false }), { type: "toggle-provenance", index: 1 });
   assert.deepEqual(hit({ key: "A", shiftKey: true }), { type: "approve-all" });
+  assert.deepEqual(
+    hit({ key: "Enter", ctrlKey: true, shiftKey: false }),
+    { type: "approve-and-apply" },
+  );
+  assert.deepEqual(
+    hit({ key: "Enter", ctrlKey: true, shiftKey: false }, { composing: true }),
+    { type: "none" },
+  );
   assert.deepEqual(hit({ key: "a", shiftKey: false }, { composing: true }), { type: "none" });
   assert.deepEqual(hit({ key: "j", shiftKey: false }, { inEditable: true }), { type: "none" });
   assert.deepEqual(hit({ key: "A", shiftKey: true }, { inEditable: true }), { type: "approve-all" });
@@ -317,13 +328,14 @@ test("hunk card renders before/after and LCS marks; missing before is 원문 없
   assert.match(missing, /hunk-missing/);
 });
 
-test("모두 승인 shows count badge and no hash and is gated like the existing approve", () => {
+test("승인하고 적용 is the primary and is gated like the existing approve", () => {
   const { allHtml } = renderQueue(baseState());
-  assert.match(allHtml, /data-testid="approve-all"/);
-  assert.match(allHtml, />모두 승인</);
+  assert.match(allHtml, /data-testid="approve-and-apply"/);
+  assert.match(allHtml, />승인하고 적용</);
   assert.match(allHtml, /data-testid="approve-all-count"/);
-  assert.doesNotMatch(allHtml, /모두 승인 · 1 · a1b2c3/);
-  assert.match(allHtml, /aria-label="모두 승인"/);
+  assert.doesNotMatch(allHtml, /모두 승인/);
+  assert.match(allHtml, /aria-label="승인하고 적용"/);
+  assert.match(allHtml, /data-testid="approve-only-menu"/);
 
   const composing = renderQueue(baseState({ isComposing: true })).allHtml;
   assert.match(composing, /입력 조합이 끝나기 전에는 승인하지 않습니다/);
@@ -340,7 +352,7 @@ test("모두 승인 shows count badge and no hash and is gated like the existing
       },
     }),
   ).allHtml;
-  assert.match(staleBound, /현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다/);
+  assert.match(staleBound, /확인을 통과한 계획만 승인하고 적용할 수 있습니다/);
 });
 
 test("keyboard approve and the button path leave plan JSON byte-identical", () => {
@@ -365,13 +377,13 @@ test("keyboard approve and the button path leave plan JSON byte-identical", () =
   assert.equal(JSON.stringify(ops[0]), JSON.stringify(fillOp()));
 });
 
-test("Shift+A and 모두 승인 call approveDisplayedPlan with the on-screen hash", () => {
+test("Ctrl+Enter and 승인하고 적용 call approveAndApply; Shift+A is 승인만", () => {
   const source = readFileSync(new URL("../src/components/ReviewQueue.tsx", import.meta.url), "utf8");
   assert.match(source, /export function approveDisplayedPlan\(/);
-  assert.match(source, /resolveApprovalDecision\("approved"\)/);
-  assert.match(source, /action\.type === "approve-all" \|\| action\.type === "approve-hunk"/);
-  assert.match(source, /approveDisplayedPlan\(\)/);
-  assert.match(source, /data-testid="approve-all"/);
+  assert.match(source, /void approveOnly\(\)/);
+  assert.match(source, /void approveAndApply\(\)/);
+  assert.match(source, /action\.type === "approve-and-apply"/);
+  assert.match(source, /data-testid="approve-and-apply"/);
   assert.equal(shortPlanHash("a1b2c3def456"), "a1b2c3");
 });
 
@@ -415,13 +427,14 @@ test("error empty uses EmptyState; acceptance false / exit 3 is a refusal card",
   assert.doesNotMatch(refusalBlock, /data-tone="ok"|tag ok/);
 });
 
-test("per-hunk 승인/거절 keep screen-reader names and existing queue testids", () => {
+test("per-hunk 포함/제외 keep existing queue testids", () => {
   const html = renderQueue(baseState()).html;
-  assert.match(html, /aria-label="이 항목 승인"/);
-  assert.match(html, /aria-label="이 항목 거절"/);
+  assert.match(html, /aria-label="이 항목 포함"/);
+  assert.match(html, /aria-label="이 항목 제외"/);
   assert.match(html, /data-testid="hunk-approve-0-0-14"/);
   assert.match(html, /data-testid="hunk-reject-0-0-14"/);
   assert.match(html, /data-testid="queue-value-op-1"/);
   assert.match(html, /data-testid="queue-provenance-0-0-14"/);
   assert.match(html, />기술 정보</);
+  assert.doesNotMatch(html, /aria-label="이 항목 승인"/);
 });

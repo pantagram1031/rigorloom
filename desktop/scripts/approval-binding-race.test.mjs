@@ -186,6 +186,8 @@ async function applyRuntimeCalls(state) {
     showToast: () => {},
     draftStaleness: () => null,
     headCandidate: () => null,
+    selectInspectorTab: () => {},
+    dismissFirstRunHint: () => {},
   });
   vm.runInContext(
     stripTypeScriptTypes(`${helperImplementation}\n${applyImplementation}\nglobalThis.applyForTest = applyApproved;`),

@@ -535,11 +535,14 @@ export function VerificationBar({
     return (
       <footer className="verifybar is-home" data-testid="verification-bar">
         <span
-          className={`verify-engine${engineUp ? " is-up" : " is-down"}`}
+          className={`verify-engine-status${engineUp ? " is-up" : " is-down"}`}
           data-testid="verify-engine"
-          title={engineUp ? "엔진 연결됨" : "끊김"}
-          aria-label={engineUp ? "엔진 연결됨" : "끊김"}
-        />
+          title={engineUp ? "엔진 연결됨" : "엔진 끊김"}
+          aria-label={engineUp ? "엔진 연결됨" : "엔진 끊김"}
+        >
+          <span className={`verify-engine${engineUp ? " is-up" : " is-down"}`} aria-hidden="true" />
+          {engineUp ? "엔진 연결됨" : "엔진 끊김"}
+        </span>
       </footer>
     );
   }

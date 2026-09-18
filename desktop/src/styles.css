@@ -132,7 +132,7 @@
    mode, and the two signal colours are re-tuned rather than reused. It is
    derived from the light theme, which is the designed one. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg-app: #16171a;
     --bg-panel: #1c1e21;
     --bg-raised: #24262a;
@@ -171,6 +171,46 @@
     --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.45);
     --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.55);
   }
+}
+
+:root[data-theme="dark"] {
+  --bg-app: #16171a;
+  --bg-panel: #1c1e21;
+  --bg-raised: #24262a;
+  --bg-sunken: #131417;
+  --bg-paper: #23252a;
+  --bg-hover: rgba(250, 248, 244, 0.05);
+  --bg-active: rgba(250, 248, 244, 0.085);
+
+  --fg: #e8e5df;
+  --fg-muted: #c4c2bc;
+  --fg-faint: #a4a29c;
+  --fg-on-ink: #e8e5df;
+
+  --line: #32343a;
+  --line-strong: #474a52;
+
+  --accent: #4db6a8;
+  --accent-fg: #14161a;
+  --accent-soft: rgba(77, 182, 168, 0.15);
+  --accent-line: rgba(77, 182, 168, 0.45);
+
+  --point: #f0743d;
+  --point-soft: rgba(240, 116, 61, 0.14);
+
+  --ink: #101114;
+
+  --ok: #79c295;
+  --ok-soft: rgba(121, 194, 149, 0.14);
+  --warn: #d8a75a;
+  --warn-soft: rgba(216, 167, 90, 0.14);
+  --bad: #e08b74;
+  --bad-soft: rgba(224, 139, 116, 0.14);
+  --none: #8b8c86;
+  --none-soft: rgba(139, 140, 134, 0.14);
+
+  --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.45);
+  --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.55);
 }
 
 * {
@@ -1077,21 +1117,28 @@ button.group-head .twisty {
 
 .welcome {
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: var(--s16) var(--s6);
+  padding: var(--s4) var(--s6);
   text-align: center;
+}
+
+.view-document.is-home {
+  overflow: hidden;
 }
 
 .home-inner {
   width: min(720px, 100%);
+  min-height: 0;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--s8);
+  gap: var(--s3);
+  overflow: hidden;
 }
 
 .home-open-row {
@@ -1164,7 +1211,7 @@ button.group-head .twisty {
   width: 100%;
   border: 1.5px dashed var(--line-strong);
   border-radius: var(--radius-lg);
-  padding: var(--s8) var(--s6);
+  padding: var(--s3) var(--s4);
   background: var(--bg-panel);
   transition: border-color var(--t-view) var(--ease), background var(--t-view) var(--ease);
 }
@@ -1210,6 +1257,8 @@ body.dragging .drop {
 .recents {
   width: 100%;
   text-align: left;
+  min-height: 0;
+  overflow: auto;
 }
 
 .recents h2 {
@@ -1240,25 +1289,24 @@ button.recent:active {
 }
 
 .recent .name {
-  flex: none;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: var(--s2);
   font-weight: var(--weight-emph);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 22ch;
 }
 
 .recent .folder {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-sm);
   color: var(--fg-faint);
+  direction: rtl;
+  text-align: left;
 }
 
 .recent .folder > span {
@@ -2059,6 +2107,34 @@ button.recent:active {
   gap: var(--s1);
 }
 
+.approve-split {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  margin-left: auto;
+}
+
+.approve-split > .action.point {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.approve-split .split-caret {
+  padding-left: 6px;
+  padding-right: 6px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in srgb, var(--accent-fg) 28%, transparent);
+}
+
+.approve-only-item {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 8;
+  min-width: 7em;
+}
+
 .hunk-diff {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2109,12 +2185,6 @@ button.recent:active {
   display: block;
   width: 100%;
   margin-top: 6px;
-}
-
-.approve-all {
-  margin-left: auto;
-  font-size: var(--text-xs);
-  padding: 2px var(--s2);
 }
 
 @media (max-width: 719px) {
@@ -3807,6 +3877,19 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   margin-top: var(--s2);
 }
 
+.compare-popover {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s2);
+  padding: var(--s3);
+  margin: var(--s3) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-paper);
+}
+
 .history-events {
   margin-top: var(--s3);
 }
@@ -4426,6 +4509,14 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 .verify-engine.is-up { background: var(--ok); }
 .verify-engine.is-down { background: var(--bad); }
 
+.verify-engine-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+}
+
 .verify-popover {
   position: relative;
 }
@@ -4645,6 +4736,20 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   background: var(--bg-raised);
   color: var(--fg);
   font-size: var(--text-sm);
+}
+
+.first-run-dismiss {
+  padding: 4px var(--s3);
+  min-height: var(--ctl-h);
+  border-radius: var(--radius);
+  font-size: var(--text-base);
+  font-weight: var(--weight-emph);
+  color: var(--fg);
+  background: var(--bg-sunken);
+}
+
+.first-run-dismiss:hover {
+  background: var(--bg-hover);
 }
 
 .first-run ol {

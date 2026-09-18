@@ -390,7 +390,7 @@ test("checkpoint timeline lists 원본 then candidates with the head marked", ()
   assert.match(html, /영수증 있음/);
   assert.match(html, /preedit/);
   assert.match(html, /aria-label="여기로 되돌리기"/);
-  assert.match(html, /aria-label="자세히"/);
+  assert.match(html, /aria-label="영수증 보기"/);
   assert.match(html, /data-testid="history-compare-run-B"/);
 });
 

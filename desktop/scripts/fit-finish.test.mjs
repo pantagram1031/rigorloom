@@ -344,3 +344,250 @@ test("popover has three groups and a close button", () => {
   assert.match(css, /\.verify-popover-panel\s*\{[^}]*max-width:\s*520px/);
   assert.match(css, /\.toolbar\s*\{[^}]*flex-wrap:\s*nowrap/);
 });
+
+function renderHome(state) {
+  const exports = loadCompiled("../src/components/Welcome.tsx", "Welcome.tsx", (id) => {
+    if (id === "react/jsx-runtime") return nodeRequire(id);
+    if (id === "react") return nodeRequire(id);
+    if (id === "../actions") {
+      return { openPath: () => {}, openViaDialog: () => {}, bindFormAndOpen: () => {} };
+    }
+    if (id === "../store") {
+      return {
+        useWorkspace: (selector) => selector(state),
+        setState: () => {},
+        showToast: () => {},
+        dismissFirstRunHint: () => {},
+      };
+    }
+    if (id === "../types") return {};
+    if (id === "./Logo") {
+      return { Logo: () => React.createElement("svg", { "data-testid": "logo" }) };
+    }
+    if (id === "./Icon") return { Icon };
+    throw new Error(`unexpected import: ${id}`);
+  });
+  return renderToStaticMarkup(React.createElement(exports.Home));
+}
+
+function renderSettings(state) {
+  const exports = loadCompiled("../src/components/Settings.tsx", "Settings.tsx", (id) => {
+    if (id === "react/jsx-runtime") return nodeRequire(id);
+    if (id === "react") return nodeRequire(id);
+    if (id === "../actions") {
+      return {
+        clearRecents: () => {},
+        forgetCredential: () => {},
+        pickWorkspaceFolder: () => {},
+        probeProvider: () => {},
+        refreshCredential: () => {},
+        saveProviderSettings: () => {},
+        storeCredential: () => {},
+      };
+    }
+    if (id === "../runtime") {
+      return { agentHostReadConfig: async () => ({ exists: false }) };
+    }
+    if (id === "../store") {
+      return {
+        activeStoreKey: () => "k",
+        setColorTheme: () => {},
+        setState: () => {},
+        useWorkspace: (selector) => selector(state),
+      };
+    }
+    if (id === "../types") return {};
+    if (id === "./Tag") {
+      return {
+        Tag: ({ children }) => React.createElement("span", null, children),
+      };
+    }
+    throw new Error(`unexpected import: ${id}`);
+  });
+  return renderToStaticMarkup(React.createElement(exports.Settings));
+}
+
+function renderSeatPane() {
+  const inspect = {
+    graph: {
+      tables: [
+        {
+          index: 0,
+          cells: [
+            {
+              addr: { row: 0, col: 14 },
+              classification: "fill_target",
+              textPreview: "",
+            },
+          ],
+        },
+      ],
+    },
+    regions: {
+      regions: [{ kind: "cell", table: 0, row: 0, col: 14, scriptAnomaly: false, colorAnomaly: false }],
+    },
+  };
+  const state = {
+    selection: { kind: "cell", table: 0, row: 0, col: 14 },
+    selectedRegionSource: { region: { text: "" }, address: { row: 0, col: 14 } },
+    inspectorTab: "selection",
+    view: "document",
+    draft: { ops: [] },
+    approvalPhase: "idle",
+  };
+  const exports = loadCompiled("../src/components/ContextPanel.tsx", "ContextPanel.tsx", (id) => {
+    if (id === "react/jsx-runtime") return nodeRequire(id);
+    if (id === "react") return nodeRequire(id);
+    if (id === "../actions") {
+      return { beginEdit: () => {}, bindFormToActiveDocument: () => {}, needsBoundFormHint: () => false };
+    }
+    if (id === "../label") {
+      return {
+        humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+        humanTableLabel: (t) => `표 ${t + 1}`,
+        machineTableIndex: (t) => `table ${t}`,
+        humanSelectionLabel: () => "표 1 · 1행 15열",
+        seatStateLine: ({ text, scriptAnomaly }) =>
+          scriptAnomaly ? "글자속성 이상" : text ? "값 있음" : "빈 칸",
+      };
+    }
+    if (id === "../store") {
+      return {
+        useWorkspace: (selector) => selector(state),
+        visibleInspectorTab: () => "selection",
+        selectInspectorTab: () => {},
+        markAgentTurnsSeen: () => {},
+        markHistoryCandidatesSeen: () => {},
+        inspectorHistoryBadge: () => 0,
+        inspectorAgentUnread: () => 0,
+      };
+    }
+    if (id === "../types") return {};
+    if (id === "./History") return { History: () => null };
+    if (id === "./ReviewQueue") return { ReviewQueue: () => null, ApproveAllButton: () => null };
+    if (id === "./Composer") return { Composer: () => null };
+    if (id === "./Conversation") return { Conversation: () => null };
+    if (id === "./DocumentContext") return { DocumentContext: () => null };
+    if (id === "./Tag") {
+      return {
+        Tag: ({ children }) => React.createElement("span", null, children),
+        CLASSIFICATION_LABEL: { fill_target: "채움" },
+      };
+    }
+    if (id === "./Icon") return { Icon };
+    throw new Error(`unexpected import: ${id}`);
+  });
+  return renderToStaticMarkup(React.createElement(exports.ContextPanel, { inspect }));
+}
+
+test("seat pane uses a title, one state line, 값 넣기, and 기술 정보", () => {
+  const html = renderSeatPane();
+  assert.match(html, /data-testid="seat-title"/);
+  assert.match(html, />표 1 · 1행 15열</);
+  assert.match(html, /data-testid="seat-state"/);
+  assert.match(html, />빈 칸</);
+  assert.match(html, />값 넣기</);
+  assert.match(html, />기술 정보</);
+  assert.doesNotMatch(html, /칸 표 1/);
+  assert.doesNotMatch(html, /쓰기 전 확인/);
+  assert.doesNotMatch(html, /분류 채움/);
+});
+
+test("recents keep the file name and truncate the folder from the left", () => {
+  const html = renderHome({
+    recents: [
+      {
+        path: "C:\\very\\long\\folder\\path\\양식.hwpx",
+        name: "양식.hwpx",
+        sha256: "ab",
+        bytes: 1,
+        openedUtc: "2026-09-17T00:00:00Z",
+        documentKind: "hwpx",
+      },
+    ],
+    dragOver: false,
+    inspectError: null,
+    firstRunHintDismissed: true,
+  });
+  assert.match(html, /양식\.hwpx/);
+  assert.match(html, /dir="rtl"/);
+  const nameRule = css.match(/\.recent \.name\s*\{[^}]+\}/)?.[0] ?? "";
+  assert.doesNotMatch(nameRule, /overflow:\s*hidden/);
+  assert.doesNotMatch(nameRule, /max-width:\s*22ch/);
+  const folderRule = css.match(/\.recent \.folder\s*\{[^}]+\}/)?.[0] ?? "";
+  assert.match(folderRule, /overflow:\s*hidden/);
+  assert.match(folderRule, /direction:\s*rtl/);
+});
+
+test("Home fits 800 px without a page overflow class", () => {
+  const homeRule = css.match(/\.welcome\s*\{[^}]+\}/)?.[0] ?? "";
+  assert.match(homeRule, /overflow:\s*hidden/);
+  assert.doesNotMatch(homeRule, /overflow:\s*auto/);
+  assert.match(css, /\.view-document\.is-home\s*\{[^}]*overflow:\s*hidden/);
+});
+
+test("settings sections 일반 and 에이전트 render", () => {
+  const html = renderSettings({
+    settingsOpen: true,
+    provider: { provider: "mock", scenario: "propose-one", router: {}, anthropic: {} },
+    providerProfile: null,
+    probePhase: "idle",
+    probeError: null,
+    credential: null,
+    agentHost: { available: true, mode: "mock", script: "x" },
+    colorTheme: "auto",
+    root: "C:\\dev-fixture\\runtime-root",
+    recents: [{ path: "a.hwpx" }],
+  });
+  assert.match(html, />설정</);
+  assert.match(html, /data-testid="settings-general"/);
+  assert.match(html, />일반</);
+  assert.match(html, /data-testid="settings-agent"/);
+  assert.match(html, />에이전트</);
+  assert.match(html, /data-testid="theme-auto"/);
+  assert.match(html, /data-testid="theme-light"/);
+  assert.match(html, /data-testid="theme-dark"/);
+  assert.match(html, /기본 작업 폴더/);
+  assert.match(html, /최근 문서 지우기/);
+});
+
+test("기록 compare is a compact popover and receipt is a labelled action", () => {
+  const html = renderHistory({
+    activeSessionId: "s",
+    sessions: [
+      { sessionId: "s", source: { name: "양식.hwpx", sha256: "abcdef1234567890", bytes: 12 } },
+    ],
+    candidates: {
+      s: [
+        {
+          runId: "run-demo0000",
+          createdUtc: "2026-09-16T00:00:00Z",
+          acceptance: true,
+          opKinds: ["fill_cell"],
+          sha256: "deadbeef0001",
+          receipt: "run-demo0000/receipt.json",
+          base: null,
+        },
+      ],
+    },
+    head: "run-demo0000",
+    historySelected: null,
+    undoPhase: "idle",
+    undoError: null,
+    inverseProof: null,
+    events: [],
+    compareLeftRunId: "run-demo0000",
+    compareAgainst: { source: true },
+    compareUseSelection: false,
+    comparePhase: "idle",
+    compareError: null,
+    compareResult: null,
+    receipts: { "run-demo0000": { backend: "preedit", checks: { acceptance: true }, steps: [] } },
+  });
+  assert.match(html, /class="compare-popover"/);
+  assert.match(html, /이 후보본을 원본과 비교/);
+  assert.match(html, /다른 후보본과/);
+  assert.match(html, /선택한 자리만/);
+  assert.doesNotMatch(html, /왼쪽 후보본/);
+  assert.match(html, />영수증 보기</);
+});

@@ -293,6 +293,8 @@ function renderReview(inspect) {
           humanTableLabel: (t) => `표 ${t + 1}`,
           machineTableIndex: (t) => `table ${t}`,
           humanSelectionLabel: (s) => (s ? "선택됨" : "선택 없음"),
+          seatStateLine: ({ text, scriptAnomaly }) =>
+            scriptAnomaly ? "글자속성 이상" : text ? "값 있음" : "빈 칸",
         };
       }
       if (id === "./History") return { History: () => null };

@@ -8,6 +8,18 @@ const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url)
 const queueSource = readFileSync(new URL("../src/components/ReviewQueue.tsx", import.meta.url), "utf8");
 const hunkSource = readFileSync(new URL("../src/components/HunkCard.tsx", import.meta.url), "utf8");
 const seatSource = readFileSync(new URL("../src/components/SeatEditor.tsx", import.meta.url), "utf8");
+const reviewHunkSource = readFileSync(new URL("../src/reviewHunk.ts", import.meta.url), "utf8");
+const hotkeyStart = reviewHunkSource.indexOf("export function reviewQueueHotkey(");
+const hotkeyEnd = reviewHunkSource.indexOf("\nexport function queueRefusalMessage(");
+assert.ok(hotkeyStart >= 0 && hotkeyEnd > hotkeyStart, "reviewQueueHotkey boundary changed");
+const hotkeyContext = vm.createContext({});
+vm.runInContext(
+  stripTypeScriptTypes(
+    `${reviewHunkSource.slice(hotkeyStart, hotkeyEnd).replace("export ", "")}\nglobalThis.reviewQueueHotkey = reviewQueueHotkey;`,
+  ),
+  hotkeyContext,
+);
+const reviewQueueHotkey = hotkeyContext.reviewQueueHotkey;
 
 const resolveStart = actionsSource.indexOf("export async function resolveApprovalDecision(");
 const resolveEnd = actionsSource.indexOf("\n// --- apply", resolveStart);
@@ -168,6 +180,8 @@ test("reject and apply are inert while a composition is open", async () => {
     showToast: () => {},
     draftStaleness: () => null,
     headCandidate: () => null,
+    selectInspectorTab: () => {},
+    dismissFirstRunHint: () => {},
   });
   vm.runInContext(
     stripTypeScriptTypes(`${helperImplementation}\n${applyImplementation}\nglobalThis.applyForTest = applyApproved;`),
@@ -213,7 +227,147 @@ test("the queue and seat publish composition and freeze the gate", () => {
   assert.match(hunkSource, /setState\(\{ isComposing: true \}\)/);
   assert.match(hunkSource, /if \(composing\.current \|\| native\.isComposing\) return/);
   assert.match(queueSource, /if \(getState\(\)\.isComposing\) return/);
-  assert.match(queueSource, /disabled=\{!canDecide\}/);
-  assert.match(queueSource, /disabled=\{!canApply\}/);
-  assert.doesNotMatch(queueSource, /승인하고 적용/);
+  assert.match(queueSource, /disabled=\{!canRun\}/);
+  assert.match(queueSource, /승인하고 적용/);
 });
+
+function flowSource() {
+  const start = actionsSource.indexOf("let approveFlowInFlight");
+  const end = actionsSource.indexOf("export async function pickWorkspaceFolder");
+  assert.ok(start >= 0 && end > start, "approveAndApply boundary changed");
+  return actionsSource.slice(start, end).replaceAll("export ", "");
+}
+
+test("승인하고 적용 performs request → approve → apply in order and stops on refusal", async () => {
+  const calls = [];
+  let state = {
+    isComposing: false,
+    draft: { ops: [{ opId: "op-1" }] },
+    approval: null,
+    approvalError: null,
+  };
+  const context = vm.createContext({
+    getState: () => state,
+    setState: (patch) => {
+      state = { ...state, ...patch };
+    },
+    async requestApprovalForDraft() {
+      calls.push("request");
+      if (state.failRequest) {
+        state = { ...state, approvalError: { code: "nope", message: "refused" } };
+        return;
+      }
+      state = {
+        ...state,
+        approval: { approvalId: "a1", state: "pending", planId: "p", planHash: "h" },
+      };
+    },
+    async resolveApprovalDecision(decision) {
+      calls.push(`approve:${decision}`);
+      if (state.failApprove) {
+        state = { ...state, approvalError: { code: "nope", message: "refused" } };
+        return;
+      }
+      state = { ...state, approval: { ...state.approval, state: "approved" } };
+    },
+    async applyApproved() {
+      calls.push("apply");
+    },
+  });
+  vm.runInContext(
+    `${stripTypeScriptTypes(flowSource())}
+globalThis.approveAndApply = approveAndApply;
+globalThis.approveOnly = approveOnly;`,
+    context,
+  );
+
+  await context.approveAndApply();
+  assert.deepEqual(calls, ["request", "approve:approved", "apply"]);
+
+  calls.length = 0;
+  state = {
+    isComposing: false,
+    draft: { ops: [{ opId: "op-1" }] },
+    approval: null,
+    approvalError: null,
+    failRequest: true,
+  };
+  await context.approveAndApply();
+  assert.deepEqual(calls, ["request"]);
+  assert.equal(state.approval, null);
+
+  calls.length = 0;
+  state = {
+    isComposing: false,
+    draft: { ops: [{ opId: "op-1" }] },
+    approval: { approvalId: "a1", state: "pending", planId: "p", planHash: "h" },
+    approvalError: null,
+    failApprove: true,
+  };
+  await context.approveAndApply();
+  assert.deepEqual(calls, ["approve:approved"]);
+});
+
+test("승인만 records the hash and leaves apply uncalled", async () => {
+  const calls = [];
+  let state = {
+    isComposing: false,
+    draft: { ops: [{ opId: "op-1" }] },
+    approval: null,
+    approvalError: null,
+  };
+  const context = vm.createContext({
+    getState: () => state,
+    setState: (patch) => {
+      state = { ...state, ...patch };
+    },
+    async requestApprovalForDraft() {
+      calls.push("request");
+      state = {
+        ...state,
+        approval: { approvalId: "a1", state: "pending", planId: "p", planHash: "h" },
+      };
+    },
+    async resolveApprovalDecision(decision) {
+      calls.push(`approve:${decision}`);
+      state = { ...state, approval: { ...state.approval, state: "approved" } };
+    },
+    async applyApproved() {
+      calls.push("apply");
+    },
+  });
+  vm.runInContext(
+    `${stripTypeScriptTypes(flowSource())}
+globalThis.approveOnly = approveOnly;`,
+    context,
+  );
+  await context.approveOnly();
+  assert.deepEqual(calls, ["request", "approve:approved"]);
+  assert.equal(state.approval.state, "approved");
+});
+
+test("Ctrl+Enter is inert while composing", () => {
+  const hit = (e, ctx) => JSON.parse(JSON.stringify(reviewQueueHotkey(e, ctx)));
+  assert.deepEqual(
+    hit(
+      { key: "Enter", ctrlKey: true, shiftKey: false, isComposing: true },
+      { focused: 0, count: 1, composing: false, inEditable: false },
+    ),
+    { type: "none" },
+  );
+  assert.deepEqual(
+    hit(
+      { key: "Enter", ctrlKey: true, shiftKey: false },
+      { focused: 0, count: 1, composing: true, inEditable: true },
+    ),
+    { type: "none" },
+  );
+  assert.deepEqual(
+    hit(
+      { key: "Enter", ctrlKey: true, shiftKey: false },
+      { focused: 0, count: 1, composing: false, inEditable: true },
+    ),
+    { type: "approve-and-apply" },
+  );
+});
+

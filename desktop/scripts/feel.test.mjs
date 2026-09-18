@@ -177,6 +177,7 @@ test("palette lists toolbar actions and switches the 검토 tab", () => {
       if (id === "react/jsx-runtime" || id === "react") return nodeRequire(id);
       if (id === "../actions") {
         return {
+          approveAndApply: () => {},
           bindFormAndOpen: () => {},
           exportApplied: () => {},
           openPath: () => {},
@@ -212,6 +213,7 @@ test("palette lists toolbar actions and switches the 검토 tab", () => {
   assert.deepEqual(tabs, ["review"]);
   assert.match(appSource, /toggleCommandPalette/);
   assert.match(captureSource, /"palette"/);
+  assert.match(captureSource, /"settings"/);
 });
 
 test("toast strips hashes and auto-dismisses; errors stay", async () => {

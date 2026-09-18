@@ -22,14 +22,16 @@
 import { useEffect, useState } from "react";
 
 import {
+  clearRecents,
   forgetCredential,
+  pickWorkspaceFolder,
   probeProvider,
   refreshCredential,
   saveProviderSettings,
   storeCredential,
 } from "../actions";
 import * as rt from "../runtime";
-import { activeStoreKey, setState, useWorkspace } from "../store";
+import { activeStoreKey, setColorTheme, setState, useWorkspace } from "../store";
 import type { ProviderId, ProviderSettings } from "../types";
 import { Tag } from "./Tag";
 
@@ -109,10 +111,14 @@ export function Settings() {
   const probeError = useWorkspace((s) => s.probeError);
   const credential = useWorkspace((s) => s.credential);
   const host = useWorkspace((s) => s.agentHost);
+  const colorTheme = useWorkspace((s) => s.colorTheme);
+  const root = useWorkspace((s) => s.root);
+  const recents = useWorkspace((s) => s.recents);
 
   const [draft, setDraft] = useState<ProviderSettings>(saved);
   const [secret, setSecret] = useState("");
   const [config, setConfig] = useState<{ path: string; body: unknown } | null>(null);
+  const [folder, setFolder] = useState(root ?? "");
 
   // Re-seed from the store whenever the pane opens: it is a dialog over shared
   // state, not a second copy of it.
@@ -120,6 +126,7 @@ export function Settings() {
     if (open) {
       setDraft(saved);
       setSecret("");
+      setFolder(root ?? "");
       void refreshCredential();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -149,7 +156,7 @@ export function Settings() {
   return (
     <div className="sheet settings" data-testid="settings">
       <div className="sheet-head">
-        <h2>설정 — 에이전트 제공자</h2>
+        <h2>설정</h2>
         <span className="spacer" />
         <button className="ghost" data-testid="settings-close" onClick={() => setState({ settingsOpen: false })}>
           닫기 (Esc)
@@ -157,6 +164,62 @@ export function Settings() {
       </div>
 
       <div className="sheet-body">
+        <section className="section" data-testid="settings-general">
+          <h3>일반</h3>
+          <p className="prose tiny">테마</p>
+          <div className="radios" role="radiogroup" aria-label="테마">
+            {(
+              [
+                ["auto", "자동"],
+                ["light", "밝게"],
+                ["dark", "어둡게"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                className="radio"
+                role="radio"
+                aria-checked={colorTheme === id}
+                data-testid={`theme-${id}`}
+                onClick={() => setColorTheme(id)}
+              >
+                <span className="primary">{label}</span>
+              </button>
+            ))}
+          </div>
+          <label className="field">
+            <span>기본 작업 폴더</span>
+            <input
+              data-testid="settings-workspace-folder"
+              value={folder}
+              readOnly
+            />
+          </label>
+          <div className="row-actions">
+            <button
+              className="action"
+              data-testid="settings-pick-folder"
+              onClick={() => {
+                void pickWorkspaceFolder().then((next) => {
+                  if (next) setFolder(next);
+                });
+              }}
+            >
+              폴더 고르기
+            </button>
+            <button
+              className="action"
+              data-testid="settings-clear-recents"
+              disabled={recents.length === 0}
+              onClick={() => clearRecents()}
+            >
+              최근 문서 지우기
+            </button>
+          </div>
+        </section>
+
+        <div data-testid="settings-agent">
+        <h3>에이전트</h3>
         <section className="section">
           <h3>에이전트 호스트</h3>
           {host?.available ? (
@@ -453,6 +516,7 @@ export function Settings() {
             </p>
           </section>
         ) : null}
+        </div>
       </div>
     </div>
   );
