@@ -48,7 +48,7 @@ human, receipts stay complete), but honesty moves to the details layer instead o
       on `plan/propose` (React 18 batch) and IPC timing. After: Home 4334→2445 ms (still 0.45 s over; remainder
       is WebView2 process+first paint, not the sidecar), open 2877→679 ms, hunk 139→19 ms, sidecar 654→563 ms.
       `npm test` 240 pass; default smoke 570 passed, 0 failed.
-- [ ] F7 Fable walk-through of the built app (ten minutes, screenshots); defects → F8 fit and finish.
+- [x] F7 Fable walk-through (2026-09-18 22:05, dev mock at 1280×800, every tab plus settings) of the built app (ten minutes, screenshots); defects → F8 fit and finish.
 
 ## Ledger
 | When | What | Result |
@@ -58,3 +58,4 @@ human, receipts stay complete), but honesty moves to the details layer instead o
 | 2026-09-18 19:45 | F2–F4 landed in one grok-xhigh lane (33 min, 650k in / 87k out; tests 229 → 234); Fable reviewed four captures: accepted | defects for F5 part A: 표 numbering tree (1-based) vs document (0-based), 'none' in 선택 header, 채움 자리 wording, strip labels, 쓰기 전 확인 chip, doubled 기록 heading |
 | 2026-09-18 20:20 | F5 landed | remaining nits for F8: first-run hint 닫기 too faint; Home status bar shows only a dot |
 | 2026-09-18 21:35 | F6 measured and fixed in the built exe | before/after medians (3 runs): Home 4334→2445 ms (target 2000; remainder WebView2), open 2877→679 ms (target 1500), hunk 139→19 ms (target 100; 소논문 has 0 fill seats so hunk used kstartup corpus), sidecar first JSONL 654→563 ms / RSS 26.7 MiB (target 1000). Tests 240. Smoke 570/0. |
+| 2026-09-18 22:05 | F7 walk-through | flow: one edit needs 승인 요청 → 모두 승인 → 승인된 계획 적용 and shows two 승인 buttons at once → F8 makes it 승인하고 적용 (one primary, 승인만 as the split); seat pane still jargon (분류 채움 / 쓰기 전 확인 / 색 이상); recents truncate the file name; Home scrolls at 800 px; 기록 compare block raw; Settings is only the provider page; hint 닫기 faint; Home status bar dot without text. Note: the browser tool's synthetic Korean typing never fires compositionend, so Enter is held by the IME guard (correct behaviour, not a defect) |
