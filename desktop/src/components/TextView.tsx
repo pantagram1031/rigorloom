@@ -37,6 +37,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { beginEdit, cancelEdit, commitEdit } from "../actions";
+import { humanTableLabel } from "../label";
 import { SeatEditor } from "./SeatEditor";
 import {
   activeText,
@@ -296,12 +297,14 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
   const select = (selection: Selection) => setSelection(selection);
 
   return (
-    <div className="center-scroll" ref={scroller} data-testid="text-view">
+    <div className="center-scroll" ref={scroller} data-testid="text-view" tabIndex={-1}>
       <article className="paper" data-testid="paper">
         {tables.map((table) => (
           <div key={table.index} className="table-scroll">
           <table className="doc-table">
-            <caption>표 {table.index}</caption>
+            <caption data-testid={`table-caption-${table.index}`}>
+              {humanTableLabel(table.index)}
+            </caption>
             <tbody>
               {table.rows.map(({ row, lead, spans }) => (
                 <tr key={row}>

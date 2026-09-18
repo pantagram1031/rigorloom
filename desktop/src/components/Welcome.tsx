@@ -4,7 +4,7 @@
  * link row. The three columns stay unmounted until a session is shown.
  */
 import { bindFormAndOpen, openPath, openViaDialog } from "../actions";
-import { setState, showToast, useWorkspace } from "../store";
+import { dismissFirstRunHint, setState, showToast, useWorkspace } from "../store";
 import type { Recent } from "../types";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
@@ -117,6 +117,7 @@ export function Home() {
   const recents = useWorkspace((s) => s.recents);
   const dragOver = useWorkspace((s) => s.dragOver);
   const error = useWorkspace((s) => s.inspectError);
+  const firstRunHintDismissed = useWorkspace((s) => s.firstRunHintDismissed);
 
   return (
     <div className="welcome home" data-testid="welcome">
@@ -129,6 +130,24 @@ export function Home() {
             영수증을 남깁니다.
           </p>
         </div>
+
+        {!firstRunHintDismissed ? (
+          <div className="first-run" data-testid="first-run-hint">
+            <ol>
+              <li>열기</li>
+              <li>검토</li>
+              <li>승인</li>
+            </ol>
+            <button
+              type="button"
+              className="ghost"
+              data-testid="first-run-dismiss"
+              onClick={() => dismissFirstRunHint()}
+            >
+              닫기
+            </button>
+          </div>
+        ) : null}
 
         <div className="home-open-row">
           <button

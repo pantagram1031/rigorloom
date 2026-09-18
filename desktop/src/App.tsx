@@ -17,9 +17,11 @@ import {
 } from "./actions";
 import { Icon } from "./components/Icon";
 import { Logo } from "./components/Logo";
+import { CommandPalette, toggleCommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { Splash } from "./components/Splash";
 import { Toast } from "./components/Toast";
+import { focusDocumentSurface } from "./focus";
 import * as rt from "./runtime";
 import { deliverDocumentEvents, stopDocumentEvents } from "./documentEvents";
 import { RuntimeSubscriptionScope } from "./runtimeSubscriptions";
@@ -190,6 +192,15 @@ export default function App() {
         // One place, one order: innermost overlay first. Handled centrally so
         // two components cannot both decide what Esc meant.
         if (closeTopmostOverlay()) e.preventDefault();
+        else {
+          e.preventDefault();
+          focusDocumentSurface();
+        }
+        return;
+      }
+      if ((e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey) {
+        e.preventDefault();
+        toggleCommandPalette();
         return;
       }
       // A shortcut must never reach past a text field the user is typing in.
@@ -315,7 +326,10 @@ export default function App() {
             data-testid="doc-tab"
             title="문서로 돌아가기"
             aria-current={homeOpen ? undefined : "page"}
-            onClick={() => leaveHome()}
+            onClick={() => {
+              leaveHome();
+              focusDocumentSurface();
+            }}
           >
             <span className="name" data-testid="doc-name">
               {session.source.name}
@@ -406,6 +420,7 @@ export default function App() {
           part of either room, and reopening it after Ctrl+2 must not lose what
           the probe found. */}
       <Settings />
+      <CommandPalette />
 
       {dragOver ? (
         <div className="dropveil" data-testid="dropveil">

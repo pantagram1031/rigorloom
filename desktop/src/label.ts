@@ -25,9 +25,41 @@ export function labelOf(value: unknown, fallback = ""): string {
   return fallback;
 }
 
+/** 1-based table label for chrome. Runtime indexes stay 0-based (기술 정보). */
+export function humanTableLabel(index: number): string {
+  return `표 ${index + 1}`;
+}
+
+export function machineTableIndex(index: number): string {
+  return `table ${index}`;
+}
+
 /** 1-based table cell address for chrome. Runtime indexes stay 0-based. */
 export function humanCellAddress(table: number, row: number, col: number): string {
-  return `표 ${table + 1} · ${row + 1}행 ${col + 1}열`;
+  return `${humanTableLabel(table)} · ${row + 1}행 ${col + 1}열`;
+}
+
+export function humanSelectionLabel(
+  selection:
+    | { kind: "cell"; table: number; row: number; col: number }
+    | { kind: "table"; table: number }
+    | { kind: "paragraph"; atPara: number }
+    | null,
+): string {
+  if (!selection) return "선택 없음";
+  if (selection.kind === "cell") return humanCellAddress(selection.table, selection.row, selection.col);
+  if (selection.kind === "table") return humanTableLabel(selection.table);
+  return `문단 ${selection.atPara}`;
+}
+
+/** Strip plan hashes and hex ids so a toast never shows one. */
+export function scrubToastText(text: string): string {
+  return text
+    .replace(/\b[0-9a-fA-F]{8,}\b/g, "")
+    .replace(/\b[0-9a-fA-F]{6,}(?:…|\.\.\.)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.,])/g, "$1")
+    .trim();
 }
 
 export function quoteKo(text: string): string {

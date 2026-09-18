@@ -7,7 +7,7 @@
 import { useMemo } from "react";
 
 import { selectStructureNode } from "../actions";
-import { humanCellAddress, trimLabel } from "../label";
+import { humanCellAddress, humanTableLabel, trimLabel } from "../label";
 import {
   selectionId,
   toggleExpanded,
@@ -289,7 +289,7 @@ export function StructureTree({
             <Row
               id={id}
               depth={0}
-              label={`표 ${table.index + 1}`}
+              label={humanTableLabel(table.index)}
               hint={`${table.cells.length}칸`}
               expandable
               expanded={open}

@@ -374,7 +374,6 @@ export function History() {
 
   return (
     <div className="section history" data-testid="history">
-      <h3 data-testid="history-heading">기록</h3>
 
       <ul className="history-rows checkpoint-list">
         {sourceHash ? (

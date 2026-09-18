@@ -264,6 +264,12 @@ export function HunkCard({
             <dd>{op.kind}</dd>
             <dt>주소</dt>
             <dd>{hunkAddress(op)}</dd>
+            {op.kind === "fill_cell" ? (
+              <>
+                <dt>table</dt>
+                <dd>table {op.table}</dd>
+              </>
+            ) : null}
             <dt>제안자</dt>
             <dd data-testid={`queue-prov-proposer-${slug}`}>{provenance.proposer}</dd>
             <dt>백엔드</dt>

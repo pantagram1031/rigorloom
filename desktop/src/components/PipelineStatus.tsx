@@ -7,6 +7,7 @@ import {
   gateStateLabel,
   gateTone,
   stagesDone,
+  stripNextLabel,
   stripSummary,
 } from "../pipelineStatus";
 import { getState, setLeftRailCollapsed, useWorkspace } from "../store";
@@ -59,7 +60,7 @@ export function PipelineStrip() {
   }
   if (!status?.found) return null;
   const { done, total } = stagesDone(status);
-  const next = status.nextGate?.gate?.name ?? status.nextGate?.stageId ?? "없음";
+  const next = stripNextLabel(status);
   return (
     <div className="pipeline-strip" data-testid="pipeline-strip" data-state="found">
       <button
@@ -71,11 +72,11 @@ export function PipelineStrip() {
       >
         <span className="pipeline-strip-text" data-testid="pipeline-strip-text">
           <span className="mono">{status.slug}</span>
-          <span className="sep" />
-          <span data-testid="pipeline-strip-progress">
-            {done}/{total}
+          {" · "}
+          <span className="pipeline-strip-progress" data-testid="pipeline-strip-progress">
+            {done}/{total} 단계
           </span>
-          <span className="sep" />
+          {" · "}
           <span data-testid="pipeline-strip-next">{next}</span>
         </span>
         <Icon name="chevron-down" />

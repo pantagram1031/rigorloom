@@ -17,6 +17,7 @@ const {
   AURALAB_PIPELINE_STATUS,
   PIPELINE_NOT_FOUND,
   stripSummary,
+  stripNextLabel,
   stagesDone,
 } = await import("../src/pipelineStatus.ts");
 
@@ -72,6 +73,7 @@ function renderPipeline(state, { refreshCalls } = { refreshCalls: [] }) {
         gateTone: () => "none",
         stagesDone,
         stripSummary,
+        stripNextLabel,
       };
     }
     if (id === "../store") {
@@ -103,7 +105,7 @@ function renderPipeline(state, { refreshCalls } = { refreshCalls: [] }) {
   };
 }
 
-test("the strip renders slug, N/M and next gate from the AURALAB mock", () => {
+test("the strip renders slug, N/M 단계 and next gate from the AURALAB mock", () => {
   const { strip } = renderPipeline({
     pipelineStatus: AURALAB_PIPELINE_STATUS,
     pipelinePhase: "ready",
@@ -112,10 +114,10 @@ test("the strip renders slug, N/M and next gate from the AURALAB mock", () => {
   assert.match(strip, /data-testid="pipeline-strip"/);
   assert.match(strip, /report-auralab-classroom/);
   assert.match(strip, /data-testid="pipeline-strip-progress"/);
-  assert.match(strip, />12\/12</);
-  assert.doesNotMatch(strip, /pipeline-strip-progress">[^<]*단계/);
+  assert.match(strip, />12\/12 단계</);
   assert.match(strip, /data-testid="pipeline-strip-next"/);
-  assert.match(strip, />없음</);
+  assert.match(strip, />완료</);
+  assert.doesNotMatch(strip, />없음</);
   assert.match(strip, /data-testid="pipeline-refresh"/);
   assert.match(strip, /title="다시 읽기"/);
   assert.doesNotMatch(strip, />다시 읽기</);

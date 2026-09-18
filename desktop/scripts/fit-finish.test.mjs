@@ -69,6 +69,9 @@ function renderDocumentView(state) {
     if (id === "../actions") {
       return { openViaDialog() {}, selectSession() {}, toggleLeftRail() {} };
     }
+    if (id === "../focus") {
+      return { focusDocumentSurface: () => false };
+    }
     if (id === "../store") {
       return {
         useWorkspace: (selector) => selector(state),
@@ -90,6 +93,11 @@ function renderDocumentView(state) {
     if (id === "../components/ReceiptPanel") return { ReceiptPanel: () => null };
     if (id === "../components/SessionList") {
       return { SessionList: () => React.createElement("div", { "data-testid": "session-list" }) };
+    }
+    if (id === "../components/Skeleton") {
+      return {
+        SkeletonRows: () => React.createElement("div", { "data-testid": "tree-skeleton" }),
+      };
     }
     if (id === "../components/StructureTree") {
       return {
@@ -280,9 +288,7 @@ test("기록 header has no glued count", () => {
     compareResult: null,
     receipts: { "run-A": { backend: "preedit", checks: { acceptance: true }, steps: [] } },
   });
-  assert.match(html, /data-testid="history-heading"/);
-  const heading = innerOfTestId(html, "history-heading");
-  assert.equal(heading, "기록");
+  assert.doesNotMatch(html, /<h3[^>]*>기록/);
   assert.doesNotMatch(html, /기록1/);
   assert.doesNotMatch(html, /data-testid="history-count"/);
 });

@@ -33,12 +33,15 @@ import {
   providerConfigFields,
   selectionId,
   setCenterMode,
+  setPaletteOpen,
   setState,
   setSelection,
   setView,
+  showErrorToast,
   showToast,
   queuedOpAt,
   queuedRunOpAt,
+  bindChromePrefsWriter,
   bumpEditIntent,
   bumpPlanGeneration,
   currentPlanGeneration,
@@ -562,7 +565,7 @@ export async function runFill(): Promise<void> {
       fillError: error,
       fillResult: null,
     });
-    showToast(error.message);
+    showErrorToast(error.message);
   }
 }
 
@@ -616,7 +619,7 @@ export async function runPoster(): Promise<void> {
       posterError: error,
       posterResult: null,
     });
-    showToast(error.message);
+    showErrorToast(error.message);
   }
 }
 
@@ -3011,7 +3014,7 @@ export async function runCheck(): Promise<void> {
       verifyResult: null,
       candidateVerdict: null,
     });
-    showToast(rt.asRuntimeError(e).message);
+    showErrorToast(rt.asRuntimeError(e).message);
   }
 }
 
@@ -3267,12 +3270,30 @@ export async function boot(): Promise<void> {
   setState({ phase: "starting", phaseNote: "런타임을 시작하는 중", fatal: null });
   try {
     const prefs = await rt.loadPrefs();
+    bindChromePrefsWriter((patch) => {
+      void rt.savePrefs(patch);
+    });
     const root = (prefs.root as string | undefined) ?? (await rt.defaultRoot());
 
     // Restore chrome before the window is shown, so nothing visibly resizes.
     const savedZoom = Number(prefs.uiZoom);
     if (Number.isFinite(savedZoom) && savedZoom !== 1) {
       await applyUiZoom(savedZoom, false);
+    }
+    const savedDocZoom = Number(prefs.lastZoom);
+    if (Number.isFinite(savedDocZoom) && savedDocZoom > 0) {
+      setState({ zoom: Math.min(4, Math.max(0.5, savedDocZoom)), pageFit: "free" });
+    }
+    if (prefs.firstRunHintDismissed === true) {
+      setState({ firstRunHintDismissed: true });
+    }
+    const lastTab = prefs.lastInspectorTab;
+    if (lastTab === "selection" || lastTab === "review" || lastTab === "history") {
+      setState({
+        inspectorTab: lastTab,
+        inspectorTabUserSet: true,
+        lastNonAgentInspectorTab: lastTab,
+      });
     }
     const prefsHadRecents = Array.isArray(prefs.recents);
     if (prefsHadRecents) setState({ recents: prefs.recents as Recent[] });
@@ -3308,7 +3329,10 @@ export async function boot(): Promise<void> {
       remembered && sessions.find((s) => s.sessionId === remembered)?.sessionId;
 
     if (prefs.leftRailCollapsed === true) setState({ leftRailCollapsed: true });
-    if (prefs.lastView === "agent") setView("agent");
+    if (lastTab === "agent") setView("agent");
+    else if (lastTab === "selection" || lastTab === "review" || lastTab === "history") {
+      setState({ view: "document" });
+    } else if (prefs.lastView === "agent") setView("agent");
     else setState({ view: "document" });
 
     if (target) {
@@ -3826,6 +3850,10 @@ export function toggleLeftRail(): void {
 
 export function closeTopmostOverlay(): boolean {
   const state = getState();
+  if (state.paletteOpen) {
+    setPaletteOpen(false);
+    return true;
+  }
   if (state.inlineEdit) {
     cancelEdit();
     return true;

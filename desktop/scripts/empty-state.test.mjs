@@ -220,6 +220,9 @@ test("ReviewQueue empty state keeps review-queue-empty and is not a prose wall",
         shortPlanHash: (hash) => (hash ? String(hash).slice(0, 6) : null),
       };
     }
+    if (id === "../focus") {
+      return { focusFirstHunk: () => false, focusHunkAt: () => false };
+    }
     if (id === "./HunkCard") {
       return { HunkCard: () => null };
     }

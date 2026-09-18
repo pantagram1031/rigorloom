@@ -173,7 +173,7 @@ test("the toolbar hint becomes the 선택 empty state; Esc closes chrome menus",
   assert.doesNotMatch(docSource, /center-caveat/);
   assert.doesNotMatch(docSource, /CenterCaveat/);
   assert.match(contextSource, /data-testid="center-caveat"/);
-  assert.match(contextSource, /채움 자리를 눌러 값을 넣습니다/);
+  assert.match(contextSource, /입력 칸을 누르면 값을 넣을 수 있습니다/);
   assert.match(actionsSource, /if \(state\.chromeMenu\)/);
   assert.match(actionsSource, /chromeMenu: null/);
   const before = getState().chromeMenu;

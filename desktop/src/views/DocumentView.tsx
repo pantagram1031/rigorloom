@@ -8,6 +8,7 @@
  * This component holds no state. Everything it draws comes from the one
  * Workspace store.
  */
+import { useEffect } from "react";
 import { openViaDialog, selectSession, toggleLeftRail } from "../actions";
 import { ContextPanel } from "../components/ContextPanel";
 import { Icon } from "../components/Icon";
@@ -17,11 +18,13 @@ import { PagePreview } from "../components/PagePreview";
 import { PipelinePanel, PipelineStrip } from "../components/PipelineStatus";
 import { ReceiptPanel } from "../components/ReceiptPanel";
 import { SessionList } from "../components/SessionList";
+import { SkeletonRows } from "../components/Skeleton";
 import { StructureTree } from "../components/StructureTree";
 import { TextView } from "../components/TextView";
 import { VerificationBar } from "../components/VerificationBar";
 import { VerifyPanel } from "../components/VerifyResults";
 import { Home } from "../components/Welcome";
+import { focusDocumentSurface } from "../focus";
 import {
   activeCandidates,
   activeInspect,
@@ -36,6 +39,12 @@ export function DocumentView() {
   const capabilities = useWorkspace((s) => s.capabilities);
   const inspectPhase = useWorkspace((s) => s.inspectPhase);
   const inspectError = useWorkspace((s) => s.inspectError);
+  const fillPhase = useWorkspace((s) => s.fillPhase);
+  const posterPhase = useWorkspace((s) => s.posterPhase);
+  const checkPhase = useWorkspace((s) => s.checkPhase);
+  const loadingDoc = inspectPhase === "starting";
+  const runBusy =
+    checkPhase === "starting" || fillPhase === "starting" || posterPhase === "starting";
   const mode = useWorkspace((s) => s.centerMode);
   const zoom = useWorkspace((s) => s.zoom);
   const candidates = useWorkspace(activeCandidates);
@@ -44,9 +53,15 @@ export function DocumentView() {
   const paraCount = inspect?.graph.paragraphs.length ?? 0;
   const tableCount = inspect?.graph.tables.length ?? 0;
   const fillCount = inspect?.summary.fillTargetCount ?? 0;
+  const sessionId = session?.sessionId ?? null;
   const railTitle = inspect
     ? `문단 ${paraCount} · 표 ${tableCount} · 입력 칸 ${fillCount}`
     : "구조";
+
+  useEffect(() => {
+    if (home || inspectPhase !== "ready" || !inspect) return;
+    focusDocumentSurface();
+  }, [home, inspectPhase, sessionId]);
 
   if (home) {
     return (
@@ -107,7 +122,7 @@ export function DocumentView() {
               </div>
               <div className="panel-body" data-testid="left-rail-scroll">
                 {inspectPhase === "starting" ? (
-                  <p className="empty">문서를 읽는 중입니다. 서식을 뜯어보는 데 몇 초 걸립니다.</p>
+                  <SkeletonRows testId="tree-skeleton" />
                 ) : inspectError && inspect ? (
                   <div className="section">
                     <h3 style={{ color: "var(--bad)" }}>문서를 다시 읽지 못했습니다</h3>
@@ -116,7 +131,7 @@ export function DocumentView() {
                 ) : inspect ? (
                   <StructureTree inspect={inspect} capabilities={capabilities} />
                 ) : (
-                  <p className="empty">문서를 열면 구역, 표, 채움 자리가 여기에 펼쳐집니다.</p>
+                  <p className="empty">문서를 열면 구역, 표, 입력 칸이 여기에 펼쳐집니다.</p>
                 )}
               </div>
               <details className="work-disclosure" data-testid="pipeline-disclosure">
@@ -138,14 +153,23 @@ export function DocumentView() {
         <main className="panel center" aria-label="문서">
           <PipelineStrip />
           <VerifyPanel />
-          <EditorToolbar inspect={inspect} />
+          <div className="center-toolbar">
+            <EditorToolbar inspect={inspect} />
+            {runBusy ? <div className="run-progress" data-testid="run-progress" /> : null}
+          </div>
           {mode === "text" ? (
             <div className="doc-zoom" style={{ zoom }}>
-              {inspect ? <TextView inspect={inspect} /> : null}
+              {inspect ? (
+                <TextView inspect={inspect} />
+              ) : loadingDoc ? (
+                <SkeletonRows rows={10} testId="document-skeleton" />
+              ) : null}
             </div>
-          ) : (
-            inspect ? <PagePreview inspect={inspect} /> : null
-          )}
+          ) : inspect ? (
+            <PagePreview inspect={inspect} />
+          ) : loadingDoc ? (
+            <SkeletonRows rows={8} testId="document-skeleton" />
+          ) : null}
         </main>
 
         <ContextPanel inspect={inspect} />

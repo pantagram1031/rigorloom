@@ -8,14 +8,13 @@
 import { useEffect } from "react";
 
 import { beginEdit, bindFormToActiveDocument, needsBoundFormHint } from "../actions";
-import { humanCellAddress } from "../label";
+import { humanCellAddress, humanSelectionLabel, humanTableLabel, machineTableIndex } from "../label";
 import {
   inspectorAgentUnread,
   inspectorHistoryBadge,
   markAgentTurnsSeen,
   markHistoryCandidatesSeen,
   selectInspectorTab,
-  selectionId,
   useWorkspace,
   visibleInspectorTab,
   type InspectorTab,
@@ -291,7 +290,7 @@ function SelectionPane({ inspect }: { inspect: InspectResult | null }) {
   if (!inspect || !selection) {
     return (
       <p className="empty" data-testid="center-caveat">
-        본문 보기 — 채움 자리를 눌러 값을 넣습니다. 승인 전에는 문서가 바뀌지 않습니다
+        입력 칸을 누르면 값을 넣을 수 있습니다. 승인 전에는 문서가 바뀌지 않습니다.
       </p>
     );
   }
@@ -313,7 +312,7 @@ function SelectionPane({ inspect }: { inspect: InspectResult | null }) {
   }
   return (
     <div className="section">
-      <h3>표 {selection.table}</h3>
+      <h3>{humanTableLabel(selection.table)}</h3>
       <dl className="kv">
         <Fact
           k="칸"
@@ -322,6 +321,12 @@ function SelectionPane({ inspect }: { inspect: InspectResult | null }) {
           )}
         />
       </dl>
+      <details className="disclosure">
+        <summary>기술 정보</summary>
+        <dl className="kv">
+          <Fact k="table" v={machineTableIndex(selection.table)} />
+        </dl>
+      </details>
     </div>
   );
 }
@@ -344,7 +349,6 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
   const candidateCount = useWorkspace((s) =>
     s.activeSessionId ? (s.candidates?.[s.activeSessionId] ?? []).length : 0,
   );
-  const id = selectionId(selection);
 
   useEffect(() => {
     if (tab === "agent" && typeof markAgentTurnsSeen === "function") markAgentTurnsSeen();
@@ -382,6 +386,7 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
 
   return (
     <aside className="panel inspector" aria-label="패널" data-testid="context-panel">
+      <div className="inspector-chrome">
       <div
         className="inspector-tabs"
         role="tablist"
@@ -444,9 +449,9 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
         })}
       </div>
       <div className="panel-head inspector-head">
-        <span className="panel-title">
+        <span className="panel-title" data-testid={tab === "history" ? "history-heading" : undefined}>
           {tab === "selection"
-            ? "선택 항목"
+            ? "선택"
             : tab === "review"
               ? "검토"
               : tab === "history"
@@ -455,7 +460,7 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
         </span>
         {tab === "selection" ? (
           <span className="count" data-testid="selection-id">
-            {id}
+            {humanSelectionLabel(selection)}
           </span>
         ) : null}
         {tab === "review" ? <ApproveAllButton /> : null}
@@ -464,6 +469,7 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
             {providerId}
           </span>
         ) : null}
+      </div>
       </div>
       {tab === "review" && needsBoundFormHint(inspect) ? (
         <div className="form-bind-hint" data-testid="form-bind-hint">

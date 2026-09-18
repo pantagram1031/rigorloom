@@ -77,7 +77,7 @@ export function DocumentContext() {
               <dl className="kv">
                 <Fact k="표" v={String(inspect.summary.formatHints.table_count)} />
                 <Fact k="문단" v={String(inspect.graph.paragraphs.length)} />
-                <Fact k="채움 자리" v={String(inspect.summary.fillTargetCount)} />
+                <Fact k="입력 칸" v={String(inspect.summary.fillTargetCount)} />
                 <Fact k="여백 칸" v={String(inspect.summary.spacerCells.length)} />
                 <Fact
                   k="수식 자리"

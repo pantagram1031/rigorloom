@@ -198,6 +198,7 @@ function renderReceipt(receipt) {
         return {
           formatBytes: (n) => `${n} B`,
           humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+          humanTableLabel: (t) => `표 ${t + 1}`,
           quoteKo: (s) => `「${s}」`,
           shortHash: (v, n = 12) => String(v ?? "").slice(0, n),
           stampWhen: (iso) => (iso ? String(iso).replace("T", " ").slice(0, 16) : ""),
@@ -288,6 +289,9 @@ function renderReview(inspect) {
       if (id === "../label") {
         return {
           humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+          humanTableLabel: (t) => `표 ${t + 1}`,
+          machineTableIndex: (t) => `table ${t}`,
+          humanSelectionLabel: (s) => (s ? "선택됨" : "선택 없음"),
         };
       }
       if (id === "./History") return { History: () => null };

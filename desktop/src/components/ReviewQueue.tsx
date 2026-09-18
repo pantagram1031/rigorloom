@@ -55,6 +55,7 @@ import {
   type QueuedOp,
 } from "../store";
 import { relativeWhen } from "../label";
+import { focusFirstHunk, focusHunkAt } from "../focus";
 import type { PlanFinding } from "../types";
 import { hasActiveApprovalBinding } from "../workspace/reviewSummary";
 import { EmptyIconInbox, EmptyState } from "./EmptyState";
@@ -246,6 +247,12 @@ export function ReviewQueue() {
   }, [draft.ops.length, focused]);
 
   useEffect(() => {
+    if (draft.ops.length === 0) return;
+    const id = window.requestAnimationFrame(() => focusFirstHunk());
+    return () => window.cancelAnimationFrame(id);
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const action = reviewQueueHotkey(e, {
         focused,
@@ -411,6 +418,9 @@ export function ReviewQueue() {
             onApprove={() => {
               if (getState().isComposing) return;
               approveDisplayedPlan();
+              const next = Math.min(index + 1, Math.max(0, draft.ops.length - 1));
+              setFocused(next);
+              window.requestAnimationFrame(() => focusHunkAt(next));
             }}
             onReject={() => {
               if (getState().isComposing) return;
@@ -429,7 +439,9 @@ export function ReviewQueue() {
         <div className="queue-verdict" data-testid="queue-verdict">
           <div className="queue-verdict-head">
             {validation.ok ? (
-              <Tag tone="ok">쓰기 전 확인 통과</Tag>
+              <Tag tone="ok" title="쓰기 전 확인 통과">
+                검사 통과
+              </Tag>
             ) : (
               <Tag tone="bad">막힘 {validation.counts.hard}</Tag>
             )}
@@ -454,7 +466,7 @@ export function ReviewQueue() {
               </p>
             ))}
           <details className="disclosure">
-            <summary>이 확인이 닿지 못하는 것</summary>
+            <summary>검사가 보지 않는 것</summary>
             <p className="prose">{validation.preflight.note}</p>
             <ul className="deferred">
               {validation.preflight.deferred.map((code) => (

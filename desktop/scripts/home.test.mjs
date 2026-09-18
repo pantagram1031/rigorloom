@@ -54,6 +54,7 @@ function renderHome(state) {
           useWorkspace: (selector) => selector(state),
           setState: () => {},
           showToast: () => {},
+          dismissFirstRunHint: () => {},
         };
       }
       if (id === "../types") return {};
@@ -121,11 +122,17 @@ test("a missing recent is not clickable and shows 찾을 수 없음", () => {
   assert.doesNotMatch(missingBlock.slice(0, 160), /<button/);
 });
 
-test("first-run line shows when there are no recents", () => {
-  const html = renderHome({ recents: [], dragOver: false, inspectError: null });
+test("first-run line shows when there are no recents and the hint was dismissed", () => {
+  const html = renderHome({
+    recents: [],
+    dragOver: false,
+    inspectError: null,
+    firstRunHintDismissed: true,
+  });
   assert.match(html, /data-testid="home-onboarding"/);
   assert.match(html, /처음이신가요\? 양식 HWPX 파일 하나를 열면 시작됩니다/);
   assert.doesNotMatch(html, /data-testid="recents"/);
+  assert.doesNotMatch(html, /data-testid="first-run-hint"/);
 });
 
 test("header 홈 toggles Home without dropping the session", () => {

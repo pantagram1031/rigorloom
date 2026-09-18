@@ -200,6 +200,7 @@ function renderQueue(state, actions = {}) {
       };
     }
     if (id === "../reviewHunk") return reviewHunk;
+    if (id === "../focus") return { focusFirstHunk: () => false, focusHunkAt: () => false };
     if (id === "./HunkCard") return hunkCard;
     if (id === "./Tag") return tag;
     throw new Error(`unexpected import: ${id}`);

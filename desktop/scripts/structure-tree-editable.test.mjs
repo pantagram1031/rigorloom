@@ -72,6 +72,7 @@ function render(inspect, expanded = ["t:0"]) {
       if (id === "../label") {
         return {
           humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+          humanTableLabel: (t) => `표 ${t + 1}`,
           trimLabel: (text, max = 34) => {
             const flat = String(text).replace(/\s+/g, " ").trim();
             return flat.length > max ? `${flat.slice(0, max)}…` : flat;

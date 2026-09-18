@@ -369,7 +369,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         <button
           className="action btn-icon"
           data-testid="act-open"
-          title="문서 열기 (Ctrl+O)"
+          title="문서를 엽니다 (Ctrl+O)"
           onClick={() => void openViaDialog()}
         >
           <Icon name="open" />
@@ -534,7 +534,7 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
               ? `오프라인 검사 · 막힘 ${hard}`
               : findings.length > 0
                 ? `오프라인 검사 · ${findings.length}건`
-                : "오프라인 검사를 돌립니다. 페이지 그림은 증거가 아닙니다."
+                : "오프라인 검사를 돌립니다"
           }
           onClick={() => void runCheck()}
         >
@@ -549,10 +549,10 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
           disabled={approvalPhase !== "pending" && !canApprove}
           title={
             approvalPhase === "pending"
-              ? "승인 게이트가 열려 있습니다. 오른쪽 패널에서 결정합니다."
+              ? "오른쪽에서 승인합니다"
               : canApprove
                 ? "대기 중인 편집의 승인을 요청합니다"
-                : "승인을 요청할 편집이 없습니다. 채움 자리에 값을 넣으면 대기열에 쌓입니다."
+                : "입력 칸에 값을 넣으면 승인을 요청할 수 있습니다"
           }
           onClick={() => {
             if (approvalPhase === "pending") {

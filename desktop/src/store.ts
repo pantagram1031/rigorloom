@@ -65,6 +65,13 @@ export type ChromeMenu = "overflow" | "zoom" | "open" | null;
  */
 export type InspectorTab = "selection" | "review" | "history" | "agent";
 
+export type ToastItem = {
+  id: number;
+  text: string;
+  at: number;
+  sticky: boolean;
+};
+
 /**
  * What the centre of Document view shows.
  *
@@ -603,7 +610,9 @@ export interface WorkspaceState {
   // --- chrome --------------------------------------------------------------
   /** Webview zoom factor, 0.5-2.0, persisted. */
   uiZoom: number;
-  toast: { text: string; at: number } | null;
+  toasts: ToastItem[];
+  paletteOpen: boolean;
+  firstRunHintDismissed: boolean;
   recents: Recent[];
   /**
    * Home is showing. A live session stays in memory; the three columns hide.
@@ -871,7 +880,9 @@ const initial: WorkspaceState = {
   editIntentGeneration: 0,
 
   uiZoom: 1,
-  toast: null,
+  toasts: [],
+  paletteOpen: false,
+  firstRunHintDismissed: false,
   recents: [],
   homeOpen: true,
   entranceDone: false,
@@ -1041,6 +1052,7 @@ export function markHistoryCandidatesSeen() {
 export function selectInspectorTab(tab: InspectorTab) {
   if (tab === "agent") {
     setView("agent");
+    rememberChrome({ lastInspectorTab: "agent" });
     return;
   }
   const bump =
@@ -1054,6 +1066,7 @@ export function selectInspectorTab(tab: InspectorTab) {
     lastNonAgentInspectorTab: tab,
     editIntentGeneration: bump,
   });
+  rememberChrome({ lastInspectorTab: tab });
   if (tab === "history") markHistoryCandidatesSeen();
 }
 
@@ -1110,6 +1123,8 @@ export const setVerifyDetailsOpen = (verifyDetailsOpen: boolean) =>
 
 export const setChromeMenu = (chromeMenu: ChromeMenu) => setState({ chromeMenu });
 
+export const setPaletteOpen = (paletteOpen: boolean) => setState({ paletteOpen });
+
 export const setCenterMode = (centerMode: CenterMode) => setState({ centerMode });
 
 export const setSelection = (selection: Selection) => setState({ selection });
@@ -1125,12 +1140,73 @@ export function locateSelection(selection: Selection) {
   setState({ selection, locateNonce: state.locateNonce + 1 });
 }
 
-let toastTimer: number | undefined;
+const TOAST_CAP = 3;
+let toastSeq = 0;
+const toastTimers = new Map<number, number>();
+type PrefsPatch = Record<string, unknown>;
+let chromePrefsWriter: ((patch: PrefsPatch) => void) | null = null;
 
-export function showToast(text: string, ms = 1100) {
-  setState({ toast: { text, at: Date.now() } });
-  window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => setState({ toast: null }), ms);
+export function bindChromePrefsWriter(fn: ((patch: PrefsPatch) => void) | null) {
+  chromePrefsWriter = fn;
+}
+
+function rememberChrome(patch: PrefsPatch) {
+  chromePrefsWriter?.(patch);
+}
+
+function scheduleToastDismiss(id: number, ms: number) {
+  const existing = toastTimers.get(id);
+  if (existing !== undefined) globalThis.clearTimeout(existing);
+  const handle = globalThis.setTimeout(() => dismissToast(id), ms) as unknown as number;
+  toastTimers.set(id, handle);
+}
+
+export function dismissToast(id: number) {
+  const existing = toastTimers.get(id);
+  if (existing !== undefined) globalThis.clearTimeout(existing);
+  toastTimers.delete(id);
+  if (!state.toasts.some((row) => row.id === id)) return;
+  setState({ toasts: state.toasts.filter((row) => row.id !== id) });
+}
+
+function scrubToastText(text: string): string {
+  return text
+    .replace(/\b[0-9a-fA-F]{8,}\b/g, "")
+    .replace(/\b[0-9a-fA-F]{6,}(?:…|\.\.\.)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.,])/g, "$1")
+    .trim();
+}
+
+function pushToast(text: string, sticky: boolean, ms: number) {
+  const clean = scrubToastText(text);
+  if (!clean) return;
+  const next: ToastItem = { id: ++toastSeq, text: clean, at: Date.now(), sticky };
+  let stack = [...state.toasts, next];
+  while (stack.length > TOAST_CAP) {
+    const drop = stack.find((row) => !row.sticky) ?? stack[0];
+    if (!drop) break;
+    const timer = toastTimers.get(drop.id);
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+    toastTimers.delete(drop.id);
+    stack = stack.filter((row) => row.id !== drop.id);
+  }
+  setState({ toasts: stack });
+  if (!sticky) scheduleToastDismiss(next.id, ms);
+}
+
+export function showToast(text: string, ms = 4000) {
+  pushToast(text, false, ms);
+}
+
+export function showErrorToast(text: string) {
+  pushToast(text, true, 0);
+}
+
+export function dismissFirstRunHint() {
+  if (state.firstRunHintDismissed) return;
+  setState({ firstRunHintDismissed: true });
+  rememberChrome({ firstRunHintDismissed: true });
 }
 
 export function toggleExpanded(id: string) {
@@ -1147,8 +1223,11 @@ export function toggleExpanded(id: string) {
  * silently overrode the number the person just typed would be a control that
  * does not do what it says.
  */
-export const setZoom = (zoom: number) =>
-  setState({ zoom: Math.min(4, Math.max(0.5, zoom)), pageFit: "free" });
+export const setZoom = (zoom: number) => {
+  const next = Math.min(4, Math.max(0.5, zoom));
+  setState({ zoom: next, pageFit: "free" });
+  rememberChrome({ lastZoom: next });
+};
 
 /** Enter (or leave) a fit mode. The scale itself is measured by the page view. */
 export const setPageFit = (pageFit: PageFit) => setState({ pageFit });

@@ -103,10 +103,16 @@ export function gateTone(
   return "none";
 }
 
+export function stripNextLabel(status: PipelineStatus): string {
+  const { done, total } = stagesDone(status);
+  if (total > 0 && done === total && !status.nextGate) return "완료";
+  const next = status.nextGate?.gate?.name ?? status.nextGate?.stageId;
+  if (!next) return "다음 게이트 없음";
+  return `다음 게이트 ${next}`;
+}
+
 export function stripSummary(status: PipelineStatus): string {
   const { done, total } = stagesDone(status);
-  const next = status.nextGate?.gate?.name ?? status.nextGate?.stageId ?? "없음";
   const slug = status.slug ?? "—";
-  const mode = status.mode ?? "—";
-  return `${slug} · ${mode} · ${done}/${total} 단계 완료 · 다음 게이트 ${next}`;
+  return `${slug} · ${done}/${total} 단계 · ${stripNextLabel(status)}`;
 }

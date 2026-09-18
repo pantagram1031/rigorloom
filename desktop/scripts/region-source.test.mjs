@@ -272,6 +272,9 @@ function renderContext(overrides = {}) {
       if (id === "../label") {
         return {
           humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+          humanTableLabel: (t) => `표 ${t + 1}`,
+          machineTableIndex: (t) => `table ${t}`,
+          humanSelectionLabel: (s) => (s ? "선택됨" : "선택 없음"),
         };
       }
       if (id === "../store") {
@@ -300,7 +303,7 @@ function renderContext(overrides = {}) {
       }
       if (id === "../types") return {};
       if (id === "./History") return { History: () => null };
-      if (id === "./ReviewQueue") return { ReviewQueue: () => null };
+      if (id === "./ReviewQueue") return { ReviewQueue: () => null, ApproveAllButton: () => null };
       if (id === "./Composer") return { Composer: () => null };
       if (id === "./Conversation") return { Conversation: () => null };
       if (id === "./DocumentContext") return { DocumentContext: () => null };

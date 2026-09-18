@@ -1,15 +1,36 @@
 /**
- * A transient confirmation, for changes that are visible everywhere and so
- * need no permanent chrome — the UI zoom level being the only current caller.
+ * Small top-right confirmations. Errors stay until closed; the rest fade at 4 s.
  */
-import { useWorkspace } from "../store";
+import { dismissToast, useWorkspace } from "../store";
 
 export function Toast() {
-  const toast = useWorkspace((s) => s.toast);
-  if (!toast) return null;
+  const toasts = useWorkspace((s) => s.toasts);
+  if (toasts.length === 0) return null;
   return (
-    <div className="toast" role="status" aria-live="polite" data-testid="toast">
-      {toast.text}
+    <div className="toast-stack" data-testid="toast-stack">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className={`toast${toast.sticky ? " is-error" : ""}`}
+          role={toast.sticky ? "alert" : "status"}
+          aria-live={toast.sticky ? "assertive" : "polite"}
+          data-testid="toast"
+          data-sticky={toast.sticky ? "true" : "false"}
+        >
+          <span>{toast.text}</span>
+          {toast.sticky ? (
+            <button
+              type="button"
+              className="toast-close"
+              data-testid={`toast-close-${toast.id}`}
+              aria-label="닫기"
+              onClick={() => dismissToast(toast.id)}
+            >
+              ×
+            </button>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }

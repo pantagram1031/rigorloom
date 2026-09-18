@@ -23,7 +23,7 @@ if (!CHROME) {
   process.exit(1);
 }
 
-const STATES = ["home", "workspace", "review", "history", "agent", "popover"];
+const STATES = ["home", "workspace", "review", "history", "agent", "popover", "palette"];
 const SIZES = [
   [1280, 800],
   [1920, 1080],
@@ -171,6 +171,20 @@ async function prepareState(cdp, state) {
   if (state === "agent") {
     await click(cdp, '[data-testid="inspector-tab-agent"]');
     await waitFor(cdp, `document.querySelector('[data-testid="inspector-panel"]')?.dataset.tab === "agent"`);
+  }
+
+  if (state === "palette") {
+    await cdp.eval(`{
+      window.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "k",
+        code: "KeyK",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+      true;
+    }`);
+    await waitFor(cdp, `!!document.querySelector('[data-testid="command-palette"]')`);
   }
 
   if (state === "popover") {
