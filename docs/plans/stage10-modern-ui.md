@@ -43,10 +43,10 @@ ARIA (Radix semantics) but with our tokens.
       (adopt the existing palette), Toast (adopt), Skeleton (adopt), EmptyState (adopt). Each with a headless
       test for role/keyboard behaviour. A `docs/demo/desktop/kit.html` gallery route in the dev mock (`?kit=1`)
       showing every primitive in light and dark.
-- [ ] M2 Adopt in the chrome and inspector: toolbar buttons and menus, status bar popover, inspector tabs,
+- [x] M2 (with M3, one grok-xhigh lane, 51 min; gates 0/0/0; tests 277) Adopt in the chrome and inspector: toolbar buttons and menus, status bar popover, inspector tabs,
       tree collapsibles, hunk 기술 정보, receipt sections, history compare popover, settings (sheet + tabs +
       segmented theme + switches), toasts, tooltips replacing every `title=`.
-- [ ] M3 Adopt in the remaining surfaces: Home (button variants, recents as Items), agent tab (message
+- [x] M3 Adopt in the remaining surfaces: Home (button variants, recents as Items), agent tab (message
       bubbles as Items, plan card as Card), pipeline strip and result cards (Progress, Alert, Table), Findings.
 - [ ] M4 Consistency sweep + captures: zero raw `<details>` and zero `title=` tooltips outside the kit; dark
       mode gallery reviewed; recapture all reference PNGs; native smoke green.
@@ -60,3 +60,4 @@ themes. The built-app smoke must stay green at the end (driver relocations allow
 |---|---|---|
 | 2026-09-19 01:40 | Inventory and plan | M1 launched |
 | 2026-09-19 02:35 | M1 landed | kit gallery coherent in both themes; nits for M2/M3: tooltip demo row overlaps, toast/skeleton demo oversized. M2+M3 launched as one lane |
+| 2026-09-19 03:30 | M2+M3 landed; Fable reviewed captures | adoption complete but the swap broke layout: icon+label Buttons stack and wrap, toolbar taller, Sheet header centred with a giant close, 자세히 popover clipped at the viewport bottom, first-run hint too heavy, hunk header wraps, dark paper too black → M4 fixes at the kit level, then rebuild + smoke |
