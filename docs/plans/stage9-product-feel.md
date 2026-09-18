@@ -40,7 +40,7 @@ human, receipts stay complete), but honesty moves to the details layer instead o
       기술 정보; approval-waiting card compact; receipt summary line first, technical block copyable below.
 - [x] F4 Agent tab: tool chatter collapsed into one expandable step row, compact plan card, composer with a
       placeholder only, no protocol notes in the visible thread.
-- [ ] F5 Feel: transitions, skeleton on open, top-right toasts without hashes, window and rail state persisted,
+- [x] F5 Feel (grok-xhigh, 30 min; tests 234 → 240; captures reviewed, incl. palette): transitions, skeleton on open, top-right toasts without hashes, window and rail state persisted,
       Ctrl+K palette, focus management; first-run three-step hint, dismissible.
 - [ ] F6 Startup and latency in the built app: measure cold start → Home, Home → 소논문 open, click → hunk queued;
       targets 2.0 s / 1.5 s / 100 ms; fix the largest cause found (sidecar start, inspect payload, bundle size).
@@ -52,3 +52,4 @@ human, receipts stay complete), but honesty moves to the details layer instead o
 | 2026-09-18 06:40 | Audit from fresh captures | eight findings above; F0 and F1 launched |
 | 2026-09-18 19:10 | F0 and F1 landed | F2–F4 launched as one lane on grok-xhigh using the audit as the copy source |
 | 2026-09-18 19:45 | F2–F4 landed in one grok-xhigh lane (33 min, 650k in / 87k out; tests 229 → 234); Fable reviewed four captures: accepted | defects for F5 part A: 표 numbering tree (1-based) vs document (0-based), 'none' in 선택 header, 채움 자리 wording, strip labels, 쓰기 전 확인 chip, doubled 기록 heading |
+| 2026-09-18 20:20 | F5 landed | remaining nits for F8: first-run hint 닫기 too faint; Home status bar shows only a dot |
