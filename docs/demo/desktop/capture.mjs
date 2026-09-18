@@ -214,7 +214,7 @@ async function navigate(cdp) {
   }
   await waitFor(
     cdp,
-    `location.port === "5184" && !!document.querySelector('[data-testid="splash"], [data-testid="welcome"]')`,
+    `location.port === "5184" && !!document.querySelector('[data-testid="splash"], [data-testid="welcome"], [data-testid="view-document"]')`,
     20000,
   );
 }

@@ -269,9 +269,8 @@ function SelectionPane({ inspect }: { inspect: InspectResult | null }) {
   const selection = useWorkspace((s) => s.selection);
   if (!inspect || !selection) {
     return (
-      <p className="empty">
-        왼쪽에서 문단이나 표의 칸을 고르면 그 자리에 대해 아는 것을 여기에 모아
-        보여 줍니다.
+      <p className="empty" data-testid="center-caveat">
+        본문 보기 — 채움 자리를 눌러 값을 넣습니다. 승인 전에는 문서가 바뀌지 않습니다
       </p>
     );
   }

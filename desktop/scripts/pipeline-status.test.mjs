@@ -75,7 +75,11 @@ function renderPipeline(state, { refreshCalls } = { refreshCalls: [] }) {
       };
     }
     if (id === "../store") {
-      return { useWorkspace: (selector) => selector(state) };
+      return {
+        useWorkspace: (selector) => selector(state),
+        getState: () => state,
+        setLeftRailCollapsed: () => {},
+      };
     }
     if (id === "./EmptyState") return emptyState;
     if (id === "./FillResults") {
@@ -99,7 +103,7 @@ function renderPipeline(state, { refreshCalls } = { refreshCalls: [] }) {
   };
 }
 
-test("the strip renders slug, mode, progress and next gate from the AURALAB mock", () => {
+test("the strip renders slug, N/M and next gate from the AURALAB mock", () => {
   const { strip } = renderPipeline({
     pipelineStatus: AURALAB_PIPELINE_STATUS,
     pipelinePhase: "ready",
@@ -107,10 +111,14 @@ test("the strip renders slug, mode, progress and next gate from the AURALAB mock
   });
   assert.match(strip, /data-testid="pipeline-strip"/);
   assert.match(strip, /report-auralab-classroom/);
-  assert.match(strip, /autonomous/);
-  assert.match(strip, /12\/12 단계 완료/);
-  assert.match(strip, /다음 게이트 없음/);
+  assert.match(strip, /data-testid="pipeline-strip-progress"/);
+  assert.match(strip, />12\/12</);
+  assert.doesNotMatch(strip, /pipeline-strip-progress">[^<]*단계/);
+  assert.match(strip, /data-testid="pipeline-strip-next"/);
+  assert.match(strip, />없음</);
   assert.match(strip, /data-testid="pipeline-refresh"/);
+  assert.match(strip, /title="다시 읽기"/);
+  assert.doesNotMatch(strip, />다시 읽기</);
 });
 
 test("the panel lists each AURALAB stage with its copied gate state", () => {

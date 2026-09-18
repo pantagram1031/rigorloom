@@ -299,6 +299,16 @@ export function VerificationBar({
           />
         ) : null}
         <Fact
+          k="형식"
+          nonce={backendTag}
+          title={GLOSSARY.source}
+          v={
+            <span className="latin-caps" data-testid="verify-backend">
+              {backendTag}
+            </span>
+          }
+        />
+        <Fact
           k="원본"
           v={hash ? <span title={hash}>{hash.slice(0, 12)}</span> : "—"}
           title={hash ? `${GLOSSARY.source} ${hash}` : GLOSSARY.source}
@@ -525,12 +535,11 @@ export function VerificationBar({
     return (
       <footer className="verifybar is-home" data-testid="verification-bar">
         <span
-          className="verify-engine"
+          className={`verify-engine${engineUp ? " is-up" : " is-down"}`}
           data-testid="verify-engine"
-          title={GLOSSARY.engine}
-        >
-          {engineUp ? "엔진 연결됨" : "끊김"}
-        </span>
+          title={engineUp ? "엔진 연결됨" : "끊김"}
+          aria-label={engineUp ? "엔진 연결됨" : "끊김"}
+        />
       </footer>
     );
   }
@@ -542,25 +551,18 @@ export function VerificationBar({
           <span className="name" data-testid="verify-doc-name">
             {docName}
           </span>
-          <span className="latin-caps" data-testid="verify-backend">
-            {backendTag}
-          </span>
         </span>
         <span className="sep" />
         <span className="verify-pill" data-testid="verify-pill" title={PILL_CAVEAT}>
-          <Icon
-            name={pill.tone === "ok" ? "check" : pill.tone === "bad" ? "x" : pill.tone === "warn" ? "warn" : "search"}
-          />
           <Tag tone={pill.tone}>{pill.label}</Tag>
         </span>
         <span className="sep" />
         <span
-          className="verify-engine"
+          className={`verify-engine${engineUp ? " is-up" : " is-down"}`}
           data-testid="verify-engine"
-          title={GLOSSARY.engine}
-        >
-          {engineUp ? "엔진 연결됨" : "끊김"}
-        </span>
+          title={engineUp ? `${GLOSSARY.engine} — 엔진 연결됨` : `${GLOSSARY.engine} — 끊김`}
+          aria-label={engineUp ? "엔진 연결됨" : "끊김"}
+        />
       </div>
       <div className="right">
         <div className={`verify-popover${detailsOpen ? " is-open" : ""}`}>
@@ -570,11 +572,11 @@ export function VerificationBar({
             data-testid="verify-details-toggle"
             aria-expanded={detailsOpen}
             aria-controls="verify-details-popover"
-            title="쪽, 위치, 원본, 후보본 등 자세한 상태"
+            title="자세히"
+            aria-label="자세히"
             onClick={() => setState({ verifyDetailsOpen: !detailsOpen })}
           >
             <Icon name="list" />
-            자세히
           </button>
           <div
             id="verify-details-popover"

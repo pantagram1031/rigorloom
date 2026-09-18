@@ -333,5 +333,5 @@ test("popover has three groups and a close button", () => {
   assert.match(html, /data-testid="status-where"/);
   assert.match(html, /data-testid="run-check"/);
   assert.match(css, /\.verify-popover-panel\s*\{[^}]*max-width:\s*520px/);
-  assert.match(css, /\.toolbar\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /\.toolbar\s*\{[^}]*flex-wrap:\s*nowrap/);
 });

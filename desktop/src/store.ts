@@ -56,6 +56,7 @@ import type {
 } from "./types";
 
 export type View = "document" | "agent";
+export type ChromeMenu = "overflow" | "zoom" | "open" | null;
 
 /**
  * Right inspector tabs. `view === "agent"` still exists so Ctrl+2 and
@@ -343,6 +344,8 @@ export interface WorkspaceState {
   leftRailCollapsed: boolean;
   /** Verification-bar 자세히 popover. */
   verifyDetailsOpen: boolean;
+  /** Open chrome menu: toolbar overflow, zoom, or header 문서 열기. */
+  chromeMenu: ChromeMenu;
   /** `turns.length` when the 에이전트 tab was last viewed. */
   agentTurnsSeen: number;
   /** Candidate count per session when the 기록 tab was last viewed. */
@@ -765,6 +768,7 @@ const initial: WorkspaceState = {
   lastNonAgentInspectorTab: "selection",
   leftRailCollapsed: false,
   verifyDetailsOpen: false,
+  chromeMenu: null,
   agentTurnsSeen: 0,
   historyCandidatesSeen: {},
   phase: "idle",
@@ -1103,6 +1107,8 @@ export function isHome(s: WorkspaceState = state): boolean {
 
 export const setVerifyDetailsOpen = (verifyDetailsOpen: boolean) =>
   setState({ verifyDetailsOpen });
+
+export const setChromeMenu = (chromeMenu: ChromeMenu) => setState({ chromeMenu });
 
 export const setCenterMode = (centerMode: CenterMode) => setState({ centerMode });
 

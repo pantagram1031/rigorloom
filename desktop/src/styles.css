@@ -260,6 +260,9 @@ summary:focus-visible,
   background: var(--ink);
   color: var(--fg-on-ink);
   flex: none;
+  overflow: visible;
+  position: relative;
+  z-index: 30;
 }
 
 .brand {
@@ -1258,12 +1261,12 @@ button.recent:active {
   display: flex;
   align-items: center;
   gap: var(--s4);
-  flex-wrap: wrap;
-  padding: var(--s2) var(--s4);
+  flex-wrap: nowrap;
+  padding: 0 var(--s4);
   background: var(--bg-panel);
   border-top: 1px solid var(--line);
   flex: none;
-  min-height: 38px;
+  min-height: 32px;
 }
 
 .verifybar.is-home {
@@ -2651,18 +2654,32 @@ button.recent:active {
    sunken relative to the panel so the paper below reads as the raised
    thing, which is the whole point of a band. */
 .toolbar {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: var(--s2);
   flex: none;
+  flex-wrap: nowrap;
   min-height: 40px;
+  height: 40px;
   padding: 0 var(--s3);
   background: var(--bg-sunken);
   border-bottom: 1px solid var(--line);
   font-size: var(--text-sm);
   overflow: visible;
 }
+
+.tool-cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.tool-left { justify-self: start; }
+.tool-center { justify-self: center; }
+.tool-right { justify-self: end; justify-content: flex-end; }
 
 .toolbar > .spacer {
   flex: 1 1 8px;
@@ -2737,6 +2754,68 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   border-color: var(--line-strong);
 }
 
+.tool-rail {
+  width: var(--ctl-h);
+  padding: 0;
+}
+
+.tool-badge {
+  min-width: 1.25em;
+  height: 1.25em;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-fg);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-emph);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25em;
+  text-align: center;
+}
+
+.tool-badge[hidden] { display: none; }
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  justify-content: flex-start;
+  min-height: var(--ctl-h);
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.menu-item:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.titlebar .toolmenu > summary {
+  color: var(--fg-on-ink);
+  list-style: none;
+}
+
+.titlebar .toolmenu > summary::-webkit-details-marker { display: none; }
+
+.titlebar .toolmenu-body {
+  right: 0;
+  left: auto;
+}
+
+[data-testid="tool-overflow"] > summary > .icon {
+  display: none;
+}
+
 .toolmenu {
   flex: none;
   position: relative;
@@ -2781,6 +2860,18 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   border-radius: var(--radius);
   box-shadow: var(--shadow-pop);
   white-space: normal;
+}
+
+.toolmenu-body .toolmenu {
+  width: 100%;
+}
+
+.toolmenu-body .toolmenu-body {
+  position: static;
+  box-shadow: none;
+  border: 0;
+  padding: var(--s2) 0 0;
+  min-width: 0;
 }
 
 /* ── which renderer drew this page (§11.1c) ──────────────────────────────
@@ -3759,13 +3850,37 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   display: flex;
   align-items: center;
   gap: var(--s2);
-  padding: var(--s2) var(--s4);
+  padding: 0 var(--s4);
   border-bottom: 1px solid var(--line);
   background: var(--bg-sunken);
   flex: none;
-  min-height: 34px;
+  height: 28px;
+  min-height: 28px;
   font-size: var(--text-sm);
-  color: var(--fg-muted);
+  color: var(--fg);
+}
+
+.pipeline-strip-main {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pipeline-strip-main:hover {
+  color: var(--fg);
+}
+
+.pipeline-strip-main .icon {
+  flex: none;
+  color: var(--fg);
 }
 
 .pipeline-strip-text {
@@ -3784,6 +3899,20 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   height: 12px;
   background: var(--line);
   flex: none;
+}
+
+.pipeline-refresh {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+}
+
+.pipeline-refresh:hover {
+  background: var(--bg-hover);
 }
 
 .pipeline-panel {
@@ -4137,6 +4266,17 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   font-variant-numeric: tabular-nums;
 }
 
+.verify-engine {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--none);
+  flex: none;
+}
+
+.verify-engine.is-up { background: var(--ok); }
+.verify-engine.is-down { background: var(--bad); }
+
 .verify-popover {
   position: relative;
 }
@@ -4273,9 +4413,22 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 /* ══ R7 fit: rail footer, toolbar wrap, verify definition list ═════════ */
 
-@media (max-width: 1024px) {
+@media (max-width: 1023px) {
   .toolbar .tool-action-label,
-  .toolbar > .toolmenu > summary > .tool-label {
+  .toolbar > .toolmenu > summary > .tool-label,
+  .tool-cluster > .toolmenu > summary > .tool-label {
     display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .toolbar {
+    flex-wrap: nowrap;
+  }
+}
+
+@media (min-width: 1280px) {
+  .toolbar {
+    flex-wrap: nowrap;
   }
 }

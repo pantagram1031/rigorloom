@@ -30,19 +30,6 @@ import {
   useWorkspace,
 } from "../store";
 
-function CenterCaveat() {
-  const mode = useWorkspace((s) => s.centerMode);
-  return (
-    <div className="center-head">
-      <span className="caveat" data-testid="center-caveat">
-        {mode === "text"
-          ? "본문 보기 — 채움 자리를 눌러 값을 넣습니다. 승인 전에는 문서가 바뀌지 않습니다"
-          : "페이지 보기 — 실제로 그려진 지면입니다. 그림은 증거가 아닙니다"}
-      </span>
-    </div>
-  );
-}
-
 export function DocumentView() {
   const inspect = useWorkspace(activeInspect);
   const session = useWorkspace(activeSession);
@@ -152,7 +139,6 @@ export function DocumentView() {
           <PipelineStrip />
           <VerifyPanel />
           <EditorToolbar inspect={inspect} />
-          <CenterCaveat />
           {mode === "text" ? (
             <div className="doc-zoom" style={{ zoom }}>
               {inspect ? <TextView inspect={inspect} /> : null}

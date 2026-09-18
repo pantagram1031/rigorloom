@@ -9,12 +9,23 @@ import {
   stagesDone,
   stripSummary,
 } from "../pipelineStatus";
-import { useWorkspace } from "../store";
+import { getState, setLeftRailCollapsed, useWorkspace } from "../store";
 import { EmptyIconDoc, EmptyState } from "./EmptyState";
 import { FillCard } from "./FillResults";
 import { PosterCard } from "./PosterResults";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
+
+function togglePipelineDisclosure() {
+  const wasCollapsed = getState().leftRailCollapsed;
+  if (wasCollapsed) setLeftRailCollapsed(false);
+  const apply = () => {
+    const el = document.querySelector<HTMLDetailsElement>('[data-testid="pipeline-disclosure"]');
+    if (el) el.open = !el.open;
+  };
+  if (wasCollapsed) requestAnimationFrame(() => requestAnimationFrame(apply));
+  else apply();
+}
 
 export function PipelineStrip() {
   const status = useWorkspace((s) => s.pipelineStatus);
@@ -24,46 +35,60 @@ export function PipelineStrip() {
   if (phase === "failed" && error) {
     return (
       <div className="pipeline-strip" data-testid="pipeline-strip" data-state="error">
-        <span className="pipeline-strip-text">파이프라인 헤더를 읽지 못했습니다</span>
         <button
           type="button"
-          className="ghost btn-icon"
+          className="pipeline-strip-main"
+          title="파이프라인"
+          onClick={() => togglePipelineDisclosure()}
+        >
+          <span className="pipeline-strip-text">파이프라인 헤더를 읽지 못했습니다</span>
+          <Icon name="chevron-down" />
+        </button>
+        <button
+          type="button"
+          className="pipeline-refresh btn-icon"
           data-testid="pipeline-refresh"
           title="다시 읽기"
+          aria-label="다시 읽기"
           onClick={() => void refreshPipelineStatus()}
         >
           <Icon name="search" />
-          다시 읽기
         </button>
       </div>
     );
   }
   if (!status?.found) return null;
   const { done, total } = stagesDone(status);
+  const next = status.nextGate?.gate?.name ?? status.nextGate?.stageId ?? "없음";
   return (
     <div className="pipeline-strip" data-testid="pipeline-strip" data-state="found">
-      <span className="pipeline-strip-text" data-testid="pipeline-strip-text">
-        <span className="mono">{status.slug}</span>
-        <span className="sep" />
-        <span>{status.mode}</span>
-        <span className="sep" />
-        <span data-testid="pipeline-strip-progress">
-          {done}/{total} 단계 완료
-        </span>
-        <span className="sep" />
-        <span data-testid="pipeline-strip-next">
-          다음 게이트 {status.nextGate?.gate?.name ?? status.nextGate?.stageId ?? "없음"}
-        </span>
-      </span>
       <button
         type="button"
-        className="ghost btn-icon"
-        data-testid="pipeline-refresh"
+        className="pipeline-strip-main"
         title={stripSummary(status)}
+        aria-label="파이프라인"
+        onClick={() => togglePipelineDisclosure()}
+      >
+        <span className="pipeline-strip-text" data-testid="pipeline-strip-text">
+          <span className="mono">{status.slug}</span>
+          <span className="sep" />
+          <span data-testid="pipeline-strip-progress">
+            {done}/{total}
+          </span>
+          <span className="sep" />
+          <span data-testid="pipeline-strip-next">{next}</span>
+        </span>
+        <Icon name="chevron-down" />
+      </button>
+      <button
+        type="button"
+        className="pipeline-refresh btn-icon"
+        data-testid="pipeline-refresh"
+        title="다시 읽기"
+        aria-label="다시 읽기"
         onClick={() => void refreshPipelineStatus()}
       >
         <Icon name="search" />
-        다시 읽기
       </button>
     </div>
   );

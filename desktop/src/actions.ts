@@ -3834,6 +3834,10 @@ export function closeTopmostOverlay(): boolean {
     openReceipt(null);
     return true;
   }
+  if (state.chromeMenu) {
+    setState({ chromeMenu: null });
+    return true;
+  }
   if (state.verifyDetailsOpen) {
     setState({ verifyDetailsOpen: false });
     return true;

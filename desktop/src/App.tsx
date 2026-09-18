@@ -6,6 +6,7 @@ import {
   bindFormAndOpen,
   closeTopmostOverlay,
   copySelection,
+  exportApplied,
   openDropped,
   openViaDialog,
   resetUiZoom,
@@ -28,6 +29,7 @@ import {
   leaveHome,
   pushActivity,
   pushHostEvents,
+  setChromeMenu,
   setState,
   setView,
   toggleHome,
@@ -106,6 +108,8 @@ export default function App() {
     (s) => s.sessions.find((x) => x.sessionId === s.activeSessionId) ?? null,
   );
   const homeOpen = useWorkspace((s) => s.homeOpen);
+  const chromeMenu = useWorkspace((s) => s.chromeMenu);
+  const openMenu = chromeMenu === "open";
 
   useEffect(() => {
     const subscriptions = new RuntimeSubscriptionScope();
@@ -170,7 +174,7 @@ export default function App() {
     };
   }, []);
 
-  // Keyboard. Ctrl+O open · Ctrl+Shift+H home · Ctrl+1/2 views · Ctrl+= / - / 0 app zoom ·
+  // Keyboard. Ctrl+O open · Ctrl+S save/export · Ctrl+Shift+H home · Ctrl+1/2 views · Ctrl+= / - / 0 app zoom ·
   // Ctrl+C copies the selected cell's text.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -197,6 +201,11 @@ export default function App() {
       if (typing) return;
       if (!e.ctrlKey || e.altKey) return;
       switch (e.key) {
+        case "s":
+        case "S":
+          e.preventDefault();
+          void exportApplied();
+          break;
         case "o":
         case "O":
           e.preventDefault();
@@ -334,19 +343,50 @@ export default function App() {
           </>
         ) : null}
 
-        <button className="ghost btn-icon" title="Ctrl+O" onClick={() => void openViaDialog()}>
-          <Icon name="open" />
-          문서 열기
-        </button>
-        <button
-          className="ghost btn-icon"
-          data-testid="bind-form"
-          title="빈 양식이나 form_profile.json을 연결해 엽니다"
-          onClick={() => void bindFormAndOpen()}
+        <details
+          className="toolmenu header-open"
+          data-testid="header-open-menu"
+          open={openMenu}
+          onToggle={(e) => {
+            const next = (e.currentTarget as HTMLDetailsElement).open;
+            if (next && getState().chromeMenu !== "open") setChromeMenu("open");
+            else if (!next && getState().chromeMenu === "open") setChromeMenu(null);
+          }}
         >
-          <Icon name="link" />
-          양식 연결
-        </button>
+          <summary className="ghost btn-icon" aria-haspopup="menu" aria-expanded={openMenu}>
+            <Icon name="open" />
+            문서 열기
+          </summary>
+          <div className="toolmenu-body" role="menu">
+            <button
+              type="button"
+              className="menu-item"
+              role="menuitem"
+              title="Ctrl+O"
+              onClick={() => {
+                setChromeMenu(null);
+                void openViaDialog();
+              }}
+            >
+              <Icon name="open" />
+              열기
+            </button>
+            <button
+              type="button"
+              className="menu-item"
+              role="menuitem"
+              data-testid="bind-form"
+              title="빈 양식이나 form_profile.json을 연결해 엽니다"
+              onClick={() => {
+                setChromeMenu(null);
+                void bindFormAndOpen();
+              }}
+            >
+              <Icon name="link" />
+              양식과 함께 열기
+            </button>
+          </div>
+        </details>
         <button
           className="ghost btn-icon"
           data-testid="open-settings"

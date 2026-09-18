@@ -50,10 +50,13 @@ import {
   canRenderPages,
   canRequestApproval,
   cellKey,
+  getState,
   selectInspectorTab,
   setCenterMode,
+  setChromeMenu,
   setZoom,
   useWorkspace,
+  type ChromeMenu,
   type Selection,
 } from "../store";
 import type { InspectResult, RegionText, TypefaceByLang } from "../types";
@@ -76,25 +79,45 @@ import { Tag } from "./Tag";
  * no portal to keep in step with the window.
  */
 function ToolMenu({
+  id,
   label,
   testId,
   summary,
+  ariaLabel,
   children,
 }: {
+  id?: Exclude<ChromeMenu, null>;
   label: string;
   testId: string;
   /** What the closed menu shows, so a glance still answers the question. */
   summary?: React.ReactNode;
+  ariaLabel?: string;
   children: React.ReactNode;
 }) {
+  const open = useWorkspace((s) => (id ? s.chromeMenu === id : false));
   return (
-    <details className="toolmenu" data-testid={testId}>
-      <summary>
+    <details
+      className="toolmenu"
+      data-testid={testId}
+      open={id ? open : undefined}
+      onToggle={
+        id
+          ? (e) => {
+              const next = (e.currentTarget as HTMLDetailsElement).open;
+              if (next && getState().chromeMenu !== id) setChromeMenu(id);
+              else if (!next && getState().chromeMenu === id) setChromeMenu(null);
+            }
+          : undefined
+      }
+    >
+      <summary aria-label={ariaLabel} aria-haspopup="menu" aria-expanded={id ? open : undefined}>
         <span className="tool-label">{label}</span>
         {summary ? <span className="tool-value">{summary}</span> : null}
         <Icon name="chevron-down" />
       </summary>
-      <div className="toolmenu-body">{children}</div>
+      <div className="toolmenu-body" role="menu">
+        {children}
+      </div>
     </details>
   );
 }
@@ -255,125 +278,8 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
       ? (typefaces?.reason ?? "이 빌드는 글꼴 이름을 읽지 못했습니다")
       : null;
 
-  return (
-    <div className="toolbar" data-testid="editor-toolbar" role="toolbar" aria-label="편집 도구">
-      {/* THE FIVE ACTIONS, first and unqualified.
-          Until now these were scattered across four places — 열기 in the title
-          bar, 검사 here, 내보내기 in the verification bar, 되돌리기 behind a tab
-          in the other view, 승인 in the right-hand panel — and a person doing
-          the ordinary loop had to learn where each of them lived. They are one
-          row now. The panels that own the detail still own it; these are the
-          doors. Each says why it is unavailable rather than being greyed in
-          silence. */}
-      <div className="tool-actions" data-testid="tool-actions">
-        <button
-          className="action btn-icon"
-          data-testid="toggle-left-rail"
-          title={railCollapsed ? "구조 레일 펼치기 (Ctrl+B)" : "구조 레일 접기 (Ctrl+B)"}
-          aria-pressed={railCollapsed}
-          aria-label={railCollapsed ? "구조 레일 펼치기" : "구조 레일 접기"}
-          onClick={() => toggleLeftRail()}
-        >
-          <Icon name={railCollapsed ? "chevron-right" : "chevron-left"} />
-          <span className="tool-action-label">{railCollapsed ? "구조 펼치기" : "구조 접기"}</span>
-        </button>
-        <button
-          className="action btn-icon"
-          data-testid="act-open"
-          title="문서 열기 (Ctrl+O)"
-          onClick={() => void openViaDialog()}
-        >
-          <Icon name="open" />
-          <span className="tool-action-label">열기</span>
-        </button>
-        <button
-          className="action btn-icon"
-          data-testid="act-bind-form"
-          title="빈 양식이나 form_profile.json을 연결해 엽니다"
-          onClick={() => void bindFormAndOpen()}
-        >
-          <Icon name="link" />
-          <span className="tool-action-label">양식 연결</span>
-        </button>
-        <button
-          className="action btn-icon"
-          data-testid="act-export"
-          disabled={!applied || exportPhase === "starting"}
-          title={
-            applied
-              ? "후보본과 영수증을 함께 저장합니다"
-              : "아직 내보낼 후보본이 없습니다. 편집을 승인해 적용하면 생깁니다."
-          }
-          onClick={() => void exportApplied()}
-        >
-          <Icon name="save" />
-          <span className="tool-action-label">
-            {exportPhase === "starting" ? "내보내는 중…" : "저장/내보내기"}
-          </span>
-        </button>
-        <button
-          className="action btn-icon"
-          data-testid="act-undo"
-          title="되돌리기와 후보본 계보를 봅니다"
-          onClick={() => selectInspectorTab("history")}
-        >
-          <Icon name="undo" />
-          <span className="tool-action-label">되돌리기</span>
-        </button>
-        <button
-          className="action btn-icon"
-          data-testid="toolbar-check"
-          disabled={!inspect || checkPhase === "starting"}
-          title="오프라인 검사를 돌립니다. 페이지 그림은 증거가 아닙니다."
-          onClick={() => void runCheck()}
-        >
-          <Icon name="search" />
-          <span className="tool-action-label">
-            {checkPhase === "starting"
-              ? "검사 중…"
-              : checkPhase === "idle"
-                ? "검사"
-                : hard > 0
-                  ? `막힘 ${hard}`
-                  : `검사 ${findings.length}`}
-          </span>
-        </button>
-        <button
-          className={approvalPhase === "pending" ? "action point btn-icon" : "action btn-icon"}
-          data-testid="act-approve"
-          disabled={approvalPhase !== "pending" && !canApprove}
-          title={
-            approvalPhase === "pending"
-              ? "승인 게이트가 열려 있습니다. 오른쪽 패널에서 결정합니다."
-              : canApprove
-                ? "대기 중인 편집의 승인을 요청합니다"
-                : "승인을 요청할 편집이 없습니다. 채움 자리에 값을 넣으면 대기열에 쌓입니다."
-          }
-          onClick={() => {
-            if (approvalPhase === "pending") {
-              document
-                .querySelector('[data-testid="approval-gate"]')
-                ?.scrollIntoView({ block: "center" });
-              return;
-            }
-            void requestApprovalForDraft();
-          }}
-        >
-          <Icon name="check" />
-          <span className="tool-action-label">
-            {approvalPhase === "pending" ? "승인 대기" : "승인"}
-          </span>
-        </button>
-      </div>
-
-      <div className="tool-sep" />
-
-      {/* 서식 — looked up, not watched. §14's two absences stay apart inside. */}
-      <ToolMenu
-        label="서식"
-        testId="tool-format"
-        summary={name ?? (charPr.id !== null ? `charPr ${charPr.id}` : "—")}
-      >
+  const formatBody = (
+    <>
       {/* 글꼴. The face the DOCUMENT declares, never a default (§14). */}
       <div className="tool-group" data-testid="tool-typeface">
         <span className="tool-label">글꼴</span>
@@ -400,8 +306,6 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         ) : null}
       </div>
 
-      <div className="tool-sep" />
-
       {/* 글자 모양. The id stays: it is what a plan op carries, and it is what
           the T30 preflight names. The mismatch tag reads in NAMES now. */}
       <div className="tool-group" data-testid="tool-charpr">
@@ -425,18 +329,11 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         ) : null}
       </div>
 
-      <div className="tool-sep" />
-
       {/* 크기, AND WHOSE SIZE IT IS.
           Two different facts share this control and they are never merged.
           `baselineCharPr.height_pt` is what the document's HEADER declares for
           the body shape. `span.sizePt` is what the RENDERER drew the caret's
-          line at, read out of the PDF. §14.1 is explicit that a run's charPr
-          carries no point size of its own, so with a caret open the honest
-          number is the render's — labelled 지면에서 잰 값, because a measured
-          size presented as a declared one would be the same class of
-          fabrication as a font name nobody declared. A line set in two sizes
-          at once carries no `sizePt` at all and falls back to the baseline. */}
+          line at, read out of the PDF. */}
       <div className="tool-group" data-testid="tool-size">
         <span className="tool-label">크기</span>
         <span
@@ -453,127 +350,234 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         </span>
         <span className="tool-note tiny">{caret?.sizePt ? "지면에서 잰 값" : "본문 기준"}</span>
       </div>
-      </ToolMenu>
+    </>
+  );
 
-      <div className="tool-sep" />
-
-      {/* The mode switch, moved here from the centre's own head. */}
-      <div className="modeswitch" role="group" aria-label="가운데 화면 모드">
+  return (
+    <div className="toolbar" data-testid="editor-toolbar" role="toolbar" aria-label="편집 도구">
+      <div className="tool-cluster tool-left" data-testid="tool-actions">
         <button
-          aria-pressed={mode === "text"}
-          data-testid="mode-text"
-          title="문서의 글과 표를 읽기 순서로 (Ctrl+1 은 화면 전환입니다)"
-          onClick={() => setCenterMode("text")}
+          className="action btn-icon tool-rail"
+          data-testid="toggle-left-rail"
+          title={railCollapsed ? "구조 레일 펼치기 (Ctrl+B)" : "구조 레일 접기 (Ctrl+B)"}
+          aria-pressed={railCollapsed}
+          aria-label={railCollapsed ? "구조 펼치기" : "구조 접기"}
+          onClick={() => toggleLeftRail()}
         >
-          본문 보기
+          <Icon name={railCollapsed ? "chevron-right" : "chevron-left"} />
         </button>
         <button
-          aria-pressed={mode === "page"}
-          data-testid="mode-page"
-          disabled={!canRender}
-          title={
-            canRender
-              ? "실제 페이지 그림"
-              : "이 런타임에는 문서를 그림으로 그리는 방법이 아직 없습니다"
-          }
-          onClick={() => setCenterMode("page")}
+          className="action btn-icon"
+          data-testid="act-open"
+          title="문서 열기 (Ctrl+O)"
+          onClick={() => void openViaDialog()}
         >
-          페이지 보기
+          <Icon name="open" />
+          <span className="tool-action-label">열기</span>
         </button>
-      </div>
-
-      <div className="tool-sep" />
-
-      {/* Document zoom. One number, meaning the same thing in both modes. */}
-      <div className="tool-group zoomer" data-testid="tool-zoom">
-        <button
-          className="ghost"
-          aria-label="문서 축소"
-          disabled={zoom <= 0.5}
-          onClick={() => setZoom(zoom - 0.1)}
-        >
-          −
-        </button>
-        <button
-          className="tool-value mono"
-          data-testid="zoom-value"
-          title="100% 로 되돌립니다"
-          onClick={() => setZoom(1)}
-        >
-          {Math.round(zoom * 100)}%
-        </button>
-        <button
-          className="ghost"
-          aria-label="문서 확대"
-          disabled={zoom >= 4}
-          onClick={() => setZoom(zoom + 0.1)}
-        >
-          +
-        </button>
-      </div>
-
-      <span className="spacer" />
-
-      {/* State, right-aligned, in the order a person asks about it. */}
-      <div className="tool-group" data-testid="tool-state">
-        {queued > 0 ? (
-          <Tag tone="fill" title="아직 문서는 바뀌지 않았습니다">
-            대기 {queued}
-          </Tag>
-        ) : null}
-        {approvalPhase === "pending" ? (
-          <Tag tone="warn" title="사람이 승인해야 다음으로 갑니다">
-            승인 대기
-          </Tag>
-        ) : null}
-        {applied ? (
-          <Tag tone="ok" title={applied.candidate.sha256}>
-            후보본 있음
-          </Tag>
-        ) : null}
-      </div>
-
-      <div className="tool-sep" />
-
-      {/* 화면 — the WHOLE application's scale, not the document's. Two numbers
-          that both read as a percentage sat side by side in the strip and were
-          routinely mistaken for each other; the one people change with the
-          keyboard belongs in a menu that names its own shortcuts. */}
-      <ToolMenu label="화면" testId="tool-uizoom" summary={`${Math.round(uiZoom * 100)}%`}>
-        <div className="tool-group zoomer">
+        <ToolMenu id="overflow" label="···" testId="tool-overflow" ariaLabel="더 보기">
           <button
-            className="ghost"
-            aria-label="화면 축소"
-            title="Ctrl+−"
-            disabled={uiZoom <= 0.5}
-            onClick={() => stepUiZoom(-1)}
+            type="button"
+            className="menu-item"
+            role="menuitem"
+            data-testid="act-export"
+            disabled={!applied || exportPhase === "starting"}
+            title={
+              applied
+                ? "후보본과 영수증을 함께 저장합니다 (Ctrl+S)"
+                : "아직 내보낼 후보본이 없습니다. 편집을 승인해 적용하면 생깁니다."
+            }
+            onClick={() => {
+              setChromeMenu(null);
+              void exportApplied();
+            }}
           >
-            −
+            <Icon name="save" />
+            {exportPhase === "starting" ? "내보내는 중…" : "저장/내보내기"}
           </button>
           <button
-            className="tool-value mono"
-            data-testid="uizoom-value"
-            title="Ctrl+0 으로 되돌립니다"
-            disabled={uiZoom === 1}
-            onClick={() => void applyUiZoom(1)}
+            type="button"
+            className="menu-item"
+            role="menuitem"
+            data-testid="act-undo"
+            title="되돌리기와 후보본 계보를 봅니다"
+            onClick={() => {
+              setChromeMenu(null);
+              selectInspectorTab("history");
+            }}
           >
-            {Math.round(uiZoom * 100)}%
+            <Icon name="undo" />
+            되돌리기
           </button>
           <button
-            className="ghost"
-            aria-label="화면 확대"
-            title="Ctrl+="
-            disabled={uiZoom >= 2}
-            onClick={() => stepUiZoom(1)}
+            type="button"
+            className="menu-item"
+            role="menuitem"
+            data-testid="act-bind-form"
+            title="빈 양식이나 form_profile.json을 연결해 엽니다"
+            onClick={() => {
+              setChromeMenu(null);
+              void bindFormAndOpen();
+            }}
           >
-            +
+            <Icon name="link" />
+            양식 연결
+          </button>
+          <ToolMenu
+            label="서식"
+            testId="tool-format"
+            summary={name ?? (charPr.id !== null ? `charPr ${charPr.id}` : "—")}
+          >
+            {formatBody}
+          </ToolMenu>
+        </ToolMenu>
+      </div>
+
+      <div className="tool-cluster tool-center">
+        <div className="modeswitch" role="group" aria-label="가운데 화면 모드">
+          <button
+            aria-pressed={mode === "text"}
+            data-testid="mode-text"
+            title="문서의 글과 표를 읽기 순서로"
+            onClick={() => setCenterMode("text")}
+          >
+            본문
+          </button>
+          <button
+            aria-pressed={mode === "page"}
+            data-testid="mode-page"
+            disabled={!canRender}
+            title={
+              canRender
+                ? "실제 페이지 그림"
+                : "이 런타임에는 문서를 그림으로 그리는 방법이 아직 없습니다"
+            }
+            onClick={() => setCenterMode("page")}
+          >
+            페이지
           </button>
         </div>
-        <p className="tool-note tiny">
-          창 전체를 키웁니다. 문서만 키우려면 왼쪽의 문서 배율을 쓰십시오. Ctrl+= · Ctrl+− ·
-          Ctrl+0
-        </p>
-      </ToolMenu>
+        <ToolMenu
+          id="zoom"
+          label="배율"
+          testId="tool-zoom"
+          summary={`${Math.round(zoom * 100)}%`}
+          ariaLabel="배율"
+        >
+          <div className="tool-group zoomer">
+            <span className="tool-label">문서</span>
+            <button
+              className="ghost"
+              aria-label="문서 축소"
+              disabled={zoom <= 0.5}
+              onClick={() => setZoom(zoom - 0.1)}
+            >
+              −
+            </button>
+            <button
+              className="tool-value mono"
+              data-testid="zoom-value"
+              title="100% 로 되돌립니다"
+              onClick={() => setZoom(1)}
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              className="ghost"
+              aria-label="문서 확대"
+              disabled={zoom >= 4}
+              onClick={() => setZoom(zoom + 0.1)}
+            >
+              +
+            </button>
+          </div>
+          <div className="tool-group zoomer" data-testid="tool-uizoom">
+            <span className="tool-label">화면</span>
+            <button
+              className="ghost"
+              aria-label="화면 축소"
+              title="Ctrl+−"
+              disabled={uiZoom <= 0.5}
+              onClick={() => stepUiZoom(-1)}
+            >
+              −
+            </button>
+            <button
+              className="tool-value mono"
+              data-testid="uizoom-value"
+              title="Ctrl+0 으로 되돌립니다"
+              disabled={uiZoom === 1}
+              onClick={() => void applyUiZoom(1)}
+            >
+              {Math.round(uiZoom * 100)}%
+            </button>
+            <button
+              className="ghost"
+              aria-label="화면 확대"
+              title="Ctrl+="
+              disabled={uiZoom >= 2}
+              onClick={() => stepUiZoom(1)}
+            >
+              +
+            </button>
+          </div>
+        </ToolMenu>
+      </div>
+
+      <div className="tool-cluster tool-right">
+        <button
+          className="action btn-icon"
+          data-testid="toolbar-check"
+          disabled={!inspect || checkPhase === "starting"}
+          title={
+            hard > 0
+              ? `오프라인 검사 · 막힘 ${hard}`
+              : findings.length > 0
+                ? `오프라인 검사 · ${findings.length}건`
+                : "오프라인 검사를 돌립니다. 페이지 그림은 증거가 아닙니다."
+          }
+          onClick={() => void runCheck()}
+        >
+          <Icon name="search" />
+          <span className="tool-action-label">{checkPhase === "starting" ? "검사 중" : "검사"}</span>
+        </button>
+        <button
+          className={
+            approvalPhase === "pending" ? "action primary point btn-icon" : "action primary btn-icon"
+          }
+          data-testid="act-approve"
+          disabled={approvalPhase !== "pending" && !canApprove}
+          title={
+            approvalPhase === "pending"
+              ? "승인 게이트가 열려 있습니다. 오른쪽 패널에서 결정합니다."
+              : canApprove
+                ? "대기 중인 편집의 승인을 요청합니다"
+                : "승인을 요청할 편집이 없습니다. 채움 자리에 값을 넣으면 대기열에 쌓입니다."
+          }
+          onClick={() => {
+            if (approvalPhase === "pending") {
+              document
+                .querySelector('[data-testid="approval-gate"]')
+                ?.scrollIntoView({ block: "center" });
+              return;
+            }
+            void requestApprovalForDraft();
+          }}
+        >
+          <Icon name="check" />
+          <span className="tool-action-label">
+            {approvalPhase === "pending" ? "승인 대기" : "승인"}
+          </span>
+          <span
+            className="tool-badge"
+            data-testid="tool-state"
+            hidden={queued === 0}
+            title={queued > 0 ? "아직 문서는 바뀌지 않았습니다" : undefined}
+          >
+            {queued}
+          </span>
+        </button>
+      </div>
     </div>
   );
 }
