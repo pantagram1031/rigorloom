@@ -143,23 +143,81 @@ function domText(selector: string): string {
 
 /** Status facts live in the 자세히 popover after kit adoption. */
 function barText(): string {
-  return `${domText('[data-testid="verify-details"]')}${domText('[data-testid="verification-bar"]')}`;
+  const details = Array.from(document.querySelectorAll('[data-testid="verify-details"]'))
+    .map((el) => el.textContent ?? "")
+    .join("");
+  return `${details}${domText('[data-testid="verification-bar"]')}`;
 }
 
 function disclosureTrigger(testId: string): HTMLElement | null {
-  return document.querySelector(
-    `[data-testid="${testId}"] .ui-collapse-trigger, [data-testid="${testId}"] summary`,
+  const root = document.querySelector(`[data-testid="${testId}"]`);
+  if (!root) return null;
+  return (
+    root.querySelector<HTMLElement>(".ui-collapse-trigger, [aria-expanded], summary") ??
+    (root.getAttribute("aria-expanded") != null ? (root as HTMLElement) : null)
   );
 }
 
+function disclosureIsOpen(testId: string): boolean {
+  const root = document.querySelector(`[data-testid="${testId}"]`);
+  if (!root) return false;
+  if (root.getAttribute("data-state") === "open") return true;
+  if ((root as HTMLDetailsElement).open === true) return true;
+  const trigger = disclosureTrigger(testId);
+  return trigger?.getAttribute("data-state") === "open" || trigger?.getAttribute("aria-expanded") === "true";
+}
+
+async function openDisclosure(testId: string): Promise<boolean> {
+  if (disclosureIsOpen(testId)) return true;
+  const trigger = disclosureTrigger(testId);
+  if (trigger instanceof HTMLElement) trigger.click();
+  else {
+    const details = document.querySelector<HTMLDetailsElement>(`[data-testid="${testId}"]`);
+    if (details && "open" in details) details.open = true;
+  }
+  return waitUntil(() => disclosureIsOpen(testId), 3000);
+}
+
+function tipText(el: Element | null): string {
+  if (!el) return "";
+  const described = el.getAttribute("aria-describedby");
+  const live = described ? (document.getElementById(described)?.textContent ?? "") : "";
+  return el.getAttribute("data-tip") || el.getAttribute("title") || live;
+}
+
+function layerIsOpen(testId: string): boolean {
+  const el = document.querySelector(`[data-testid="${testId}"]`);
+  return el?.getAttribute("data-state") === "open" || el?.getAttribute("aria-expanded") === "true";
+}
+
 async function openVerifyDetails() {
+  if (document.querySelector('[data-testid="verify-details"]')) {
+    setState({ verifyDetailsOpen: true });
+    return;
+  }
   setState({ verifyDetailsOpen: true });
-  await settled(200);
+  if (!(await waitUntil(() => !!document.querySelector('[data-testid="verify-details"]'), 1500))) {
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="verify-details-toggle"]');
+    if (toggle && toggle.getAttribute("data-state") !== "open") toggle.click();
+    await waitUntil(() => !!document.querySelector('[data-testid="verify-details"]'), 3000);
+  }
 }
 
 async function openChromeMenu(id: "overflow" | "zoom") {
-  setChromeMenu(id);
-  await settled(200);
+  const testId = id === "overflow" ? "tool-overflow" : "tool-zoom";
+  if (!layerIsOpen(testId)) setChromeMenu(id);
+  if (!(await waitUntil(() => layerIsOpen(testId), 1500))) {
+    const trigger = document.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
+    if (trigger && trigger.getAttribute("data-state") !== "open") trigger.click();
+    await waitUntil(() => layerIsOpen(testId), 3000);
+  }
+  if (id === "overflow") await openDisclosure("tool-format");
+}
+
+function overlayEditableDrawn(): number {
+  return document.querySelectorAll(
+    '[data-testid="overlay-seat"][data-editable="true"], [data-testid="overlay-span"][data-editable="true"]',
+  ).length;
 }
 
 /**
@@ -237,7 +295,17 @@ async function applyApprovedPlan() {
  */
 async function showInspectorTab(tab: "selection" | "review" | "history" | "agent") {
   selectInspectorTab(tab);
-  await settled(240);
+  const trigger = document.querySelector<HTMLButtonElement>(`[data-testid="inspector-tab-${tab}"]`);
+  if (trigger && trigger.getAttribute("aria-selected") !== "true" && trigger.getAttribute("data-state") !== "active") {
+    trigger.click();
+  }
+  await waitUntil(
+    () =>
+      trigger?.getAttribute("aria-selected") === "true" ||
+      trigger?.getAttribute("data-state") === "active" ||
+      !trigger,
+    2000,
+  );
 }
 
 /**
@@ -894,6 +962,7 @@ async function phaseEdit(config: SmokeConfig) {
   checkDom("the receipt panel reads in Korean, not JSON",
     hasHangul(domText('[data-testid="receipt-panel"]')),
     domText('[data-testid="receipt-panel"]').slice(0, 120));
+  await waitUntil(() => !!disclosureTrigger("receipt-raw"), 3000);
   checkDom("the raw JSON is behind a disclosure, not on the surface",
     !!disclosureTrigger("receipt-raw"),
     disclosureTrigger("receipt-raw")?.textContent ?? "");
@@ -959,6 +1028,7 @@ async function phaseEdit(config: SmokeConfig) {
   checkDom("the timeline renders the document's own history",
     cards.length === getState().events.length,
     `${cards.length} cards for ${getState().events.length} events`);
+  await waitUntil(() => !!disclosureTrigger("protocol-chatter"), 3000);
   checkDom("protocol chatter is behind a disclosure, not in the history",
     !!disclosureTrigger("protocol-chatter"),
     disclosureTrigger("protocol-chatter")?.textContent ?? "");
@@ -2298,7 +2368,7 @@ async function phaseOverlay(config: SmokeConfig) {
   ).length;
 
   const clickable = editableSeats.length + editableUniques.length;
-  const drawnEditable = document.querySelectorAll(".ov-editable").length;
+  const drawnEditable = overlayEditableDrawn();
   checkDom("the overlay draws exactly the editable targets the runtime returned",
     drawnEditable === clickable, `${drawnEditable} drawn / ${clickable} returned`);
 
@@ -2351,7 +2421,10 @@ async function phaseOverlay(config: SmokeConfig) {
     // COMPUTED style rather than the class list, because a class that no rule
     // matches would satisfy a class-name assertion and draw nothing.
     if (seatTarget) {
-      const paintedEl = (seatTarget.closest(".ov") as HTMLElement | null) ?? seatTarget;
+      const paintedEl =
+        (seatTarget.closest(".ov-seat") as HTMLElement | null) ??
+        (seatTarget.closest(".ov") as HTMLElement | null) ??
+        seatTarget;
       const resting = window.getComputedStyle(paintedEl);
       const painted =
         resting.backgroundColor !== "rgba(0, 0, 0, 0)" &&
@@ -2476,9 +2549,12 @@ async function caretChecks(spans: GeometrySpan[]) {
   }
 
   checkDom("a caret target is drawn as one, and is not dressed as a fill seat",
-    document.querySelectorAll('[data-caret-target="true"]').length === caretSpans.length,
-    `${document.querySelectorAll('[data-caret-target="true"]').length} drawn / ${caretSpans.length} returned`);
-  const firstTarget = document.querySelector<HTMLElement>('[data-caret-target="true"]');
+    document.querySelectorAll('[data-testid="overlay-span"][data-caret-target="true"]').length ===
+      caretSpans.length,
+    `${document.querySelectorAll('[data-testid="overlay-span"][data-caret-target="true"]').length} drawn / ${caretSpans.length} returned`);
+  const firstTarget = document.querySelector<HTMLElement>(
+    '[data-testid="overlay-span"][data-caret-target="true"]',
+  );
   if (firstTarget) {
     checkDom("and it says it is text, not a button",
       window.getComputedStyle(firstTarget).cursor === "text",
@@ -2633,10 +2709,16 @@ async function caretChecks(spans: GeometrySpan[]) {
   // offset that comes back is the one the runtime's own boxes resolve there.
   if (took.charX) {
     cancelEdit();
-    await settled(200);
+    await waitUntil(
+      () =>
+        !!document.querySelector(
+          `.ov-hit[data-span-index="${took.index}"], [data-testid="overlay-span"][data-span-index="${took.index}"]`,
+        ),
+      3000,
+    );
     const layer = document.querySelector<HTMLElement>('[data-testid="page-overlay"]');
     const button = document.querySelector<HTMLElement>(
-      `.ov-hit[data-span-index="${took.index}"]`,
+      `.ov-hit[data-span-index="${took.index}"], [data-testid="overlay-span"][data-span-index="${took.index}"]`,
     );
     const box = layer?.getBoundingClientRect();
     if (layer && button && box && box.width > 0) {
@@ -2888,8 +2970,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     const { loadGeometry } = await import("./actions");
     await loadGeometry(1);
     await settled(300);
-    const list = document.querySelector<HTMLDetailsElement>('[data-testid="skipped-list"]');
-    if (list) list.open = true;
+    await openDisclosure("skipped-list");
     if (stop === "own-zoom") {
       const { setZoom } = await import("./store");
       setZoom(1.5);
@@ -2951,8 +3032,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     // the capture then photographed a closed menu under a caption promising an
     // open one.
     for (let i = 0; i < 2; i += 1) {
-      const menu = document.querySelector<HTMLDetailsElement>('[data-testid="tool-format"]');
-      if (menu) menu.open = true;
+      await openChromeMenu("overflow");
       await settled(250);
     }
     await ready(`shot-${stop}`);
@@ -3328,10 +3408,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
       await settled(400);
     }
     await loadTaskPacks();
-    const shotPacks = document.querySelector(
-      '[data-testid="work-packs-disclosure"]',
-    ) as HTMLDetailsElement | null;
-    if (shotPacks) shotPacks.open = true;
+    await openDisclosure("work-packs-disclosure");
     setView("agent");
     // `packs` photographs the declaration panel. `packs-result` photographs a
     // REAL `module/check` answer, and only when this machine has an enablement
@@ -3537,10 +3614,7 @@ async function phasePacks(config: SmokeConfig) {
 
   const { loadTaskPacks, openPack, runModuleCheck } = await import("./actions");
   await loadTaskPacks();
-  const phasePacks = document.querySelector(
-    '[data-testid="work-packs-disclosure"]',
-  ) as HTMLDetailsElement | null;
-  if (phasePacks) phasePacks.open = true;
+  await openDisclosure("work-packs-disclosure");
   setView("agent");
   await settled(300);
 
@@ -3917,8 +3991,7 @@ async function phaseBound(config: SmokeConfig) {
   check("the bound profile sha is the digest inspect returned", sha.length === 64, sha || "none");
   const shaPrefix = sha.slice(0, 12);
 
-  setState({ verifyDetailsOpen: true });
-  await settled(160);
+  await openVerifyDetails();
   const judgement = domText('[data-testid="verify-judgement-source"]');
   checkDom(
     "자세히 popover 판정 기준 reads 연결된 양식 with the sha prefix",
@@ -4215,15 +4288,13 @@ async function phasePipelineNative(config: SmokeConfig) {
   if (!sessionId) return;
   await settled(400);
 
-  const disclosure = document.querySelector<HTMLDetailsElement>(
-    '[data-testid="pipeline-disclosure"]',
-  );
-  if (disclosure) disclosure.open = true;
+  await openDisclosure("pipeline-disclosure");
   await settled(300);
   checkDom(
     "파이프라인 disclosure is open",
-    !!disclosure && disclosure.open === true,
-    disclosure ? `open=${disclosure.open}` : "missing",
+    disclosureIsOpen("pipeline-disclosure"),
+    document.querySelector('[data-testid="pipeline-disclosure"]')?.getAttribute("data-state") ??
+      "missing",
   );
 
   const status = getState().pipelineStatus;
@@ -4974,10 +5045,7 @@ async function phaseChrome(config: SmokeConfig) {
         `${shown} in ${Object.values(face).join("/")}`);
       // Per language, never merged: the strip shows 한글 and the tooltip
       // carries every language the header resolved.
-      const title =
-        document.querySelector('[data-testid="typeface-name"]')?.getAttribute("data-tip") ??
-        document.querySelector('[data-testid="typeface-name"]')?.getAttribute("title") ??
-        "";
+      const title = tipText(document.querySelector('[data-testid="typeface-name"]'));
       checkDom("every language the document declares is in the tooltip, unmerged",
         Object.values(face).every((name) => title.includes(String(name))),
         title.slice(0, 200));
@@ -5061,10 +5129,7 @@ async function phaseChrome(config: SmokeConfig) {
   // --- 작업 팩 ---------------------------------------------------------------
   const { loadTaskPacks } = await import("./actions");
   await loadTaskPacks();
-  const workRail = document.querySelector(
-    '[data-testid="work-packs-disclosure"]',
-  ) as HTMLDetailsElement | null;
-  if (workRail) workRail.open = true;
+  await openDisclosure("work-packs-disclosure");
   setView("agent");
   await settled(300);
   const packs = getState().taskPacks;
