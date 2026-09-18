@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 
 import { Logo } from "./Logo";
+import { Tooltip } from "../ui/Tooltip";
 
 const TOTAL_MS = 160;
 const FADE_MS = 200;
@@ -45,16 +46,17 @@ export function Splash({
   }, [onDone, frozen, ready]);
 
   return (
-    <div
-      className={`splash${leaving ? " leaving" : ""}`}
-      data-testid="splash"
-      onClick={frozen ? undefined : onDone}
-      role="presentation"
-      title="눌러서 건너뛰기"
-    >
-      <Logo size={72} draw />
-      <div className="wordmark">Rigorloom</div>
-      <p className="note">{note}</p>
-    </div>
+    <Tooltip content="눌러서 건너뛰기">
+      <div
+        className={`splash${leaving ? " leaving" : ""}`}
+        data-testid="splash"
+        onClick={frozen ? undefined : onDone}
+        role="presentation"
+      >
+        <Logo size={72} draw />
+        <div className="wordmark">Rigorloom</div>
+        <p className="note">{note}</p>
+      </div>
+    </Tooltip>
   );
 }

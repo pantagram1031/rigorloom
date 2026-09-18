@@ -49,6 +49,7 @@ import {
   type Selection,
 } from "../store";
 import type { GraphCell, InspectResult, RegionText, TextRun } from "../types";
+import { Tooltip } from "../ui/Tooltip";
 
 /**
  * A queued edit, drawn in the document as a proposal.
@@ -88,13 +89,14 @@ function QueuedValue({ op }: { op: QueuedOp }) {
 function Run({ run }: { run: TextRun }) {
   if (!run.color_anomaly) return <>{run.text}</>;
   return (
-    <span
-      className="run-anomaly"
-      style={run.color_value ? { color: run.color_value } : undefined}
-      title={`본문 기준과 다른 색: ${run.color_value ?? "알 수 없음"}`}
-    >
-      {run.text}
-    </span>
+    <Tooltip content={`본문 기준과 다른 색: ${run.color_value ?? "알 수 없음"}`}>
+      <span
+        className="run-anomaly"
+        style={run.color_value ? { color: run.color_value } : undefined}
+      >
+        {run.text}
+      </span>
+    </Tooltip>
   );
 }
 
@@ -338,11 +340,6 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                           .filter(Boolean)
                           .join(" ")}
                         aria-selected={currentId === id}
-                        title={
-                          seat
-                            ? `${cell.addr.row + 1}행 ${cell.addr.col + 1}열 · 입력 칸`
-                            : `${cell.addr.row + 1}행 ${cell.addr.col + 1}열 · ${cell.classification}`
-                        }
                         onClick={() => {
                           const selection = {
                             kind: "cell" as const,
@@ -368,7 +365,17 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                             onCancel={cancelEdit}
                           />
                         ) : (
-                          <CellBody cell={cell} region={region} queued={queued} />
+                          <Tooltip
+                            content={
+                              seat
+                                ? `${cell.addr.row + 1}행 ${cell.addr.col + 1}열 · 입력 칸`
+                                : `${cell.addr.row + 1}행 ${cell.addr.col + 1}열 · ${cell.classification}`
+                            }
+                          >
+                            <span>
+                              <CellBody cell={cell} region={region} queued={queued} />
+                            </span>
+                          </Tooltip>
                         )}
                       </td>
                     );
@@ -395,9 +402,10 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                   data-node-id={id}
                   data-testid={`doc-para-${para.at_para}`}
                   aria-selected={currentId === id}
-                  title={`at_para ${para.at_para}`}
                   onClick={() => select({ kind: "paragraph", atPara: para.at_para })}
                 >
+                  <Tooltip content={`at_para ${para.at_para}`}>
+                    <span>
                   {queuedByNode.get(id) ? (
                     <QueuedValue op={queuedByNode.get(id)!} />
                   ) : region?.runs?.length ? (
@@ -405,6 +413,8 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                   ) : (
                     para.text
                   )}
+                    </span>
+                  </Tooltip>
                 </p>
               );
             })}

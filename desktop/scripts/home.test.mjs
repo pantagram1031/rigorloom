@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -64,6 +65,8 @@ function renderHome(state) {
         };
       }
       if (id === "./Icon") return { Icon };
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -238,6 +241,8 @@ test("VerificationBar on Home shows only the engine connection", () => {
       if (id === "../verifyReport") {
         return { worstVerifyVerdict: () => null, verifyTargetLabel: () => "원본" };
       }
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });

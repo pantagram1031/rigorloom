@@ -18,6 +18,7 @@ import {
   type ReviewVerificationState,
 } from "../workspace/reviewSummary";
 import { Tag } from "./Tag";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
 
 function Fact({ k, v }: { k: string; v: React.ReactNode }) {
   return (
@@ -54,9 +55,10 @@ export function DocumentContext() {
   const verificationState = useWorkspace(activeReviewVerificationState);
 
   return (
-    <details className="disclosure document-facts" data-testid="document-facts">
-      <summary>문서 정보</summary>
-      {!session ? (
+    <Collapsible className="disclosure document-facts" data-testid="document-facts">
+        <CollapsibleTrigger>문서 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+{!session ? (
         <p className="empty">문서를 열면 여기에 문서의 상태가 모입니다.</p>
       ) : (
         <>
@@ -131,6 +133,7 @@ export function DocumentContext() {
           </div>
         </>
       )}
-    </details>
+      </CollapsibleContent>
+      </Collapsible>
   );
 }

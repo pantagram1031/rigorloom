@@ -28,6 +28,7 @@
 import { useWorkspace } from "../store";
 import type { Activity, RuntimeEvent } from "../types";
 import { Tag } from "./Tag";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
 
 /** Korean product language for each event kind the Runtime appends. */
 const SAID: Record<string, (d: Record<string, unknown>) => string> = {
@@ -82,10 +83,12 @@ function EventCard({ event }: { event: RuntimeEvent }) {
         <span className="when mono">{event.at}</span>
       </div>
       <p className="said">{said}</p>
-      <details>
-        <summary>원본 기록</summary>
-        <pre>{JSON.stringify(event, null, 2)}</pre>
-      </details>
+      <Collapsible>
+        <CollapsibleTrigger>원본 기록</CollapsibleTrigger>
+        <CollapsibleContent>
+<pre>{JSON.stringify(event, null, 2)}</pre>
+      </CollapsibleContent>
+      </Collapsible>
     </article>
   );
 }
@@ -147,9 +150,10 @@ export function Timeline() {
           newestFirst.map((event) => <EventCard key={event.seq} event={event} />)
         )}
 
-        <details className="disclosure" data-testid="protocol-chatter">
-          <summary>이 셸과 런타임이 주고받은 것 ({activity.length})</summary>
-          <p className="prose tiny">
+        <Collapsible className="disclosure" data-testid="protocol-chatter">
+        <CollapsibleTrigger>이 셸과 런타임이 주고받은 것 ({activity.length})</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="prose tiny">
             위쪽은 문서에 일어난 일이고, 여기는 그 일을 하려고 오간 말입니다. 진단용입니다.
           </p>
           <ul className="chatter">
@@ -162,7 +166,8 @@ export function Timeline() {
                 </li>
               ))}
           </ul>
-        </details>
+      </CollapsibleContent>
+      </Collapsible>
       </div>
     </div>
   );

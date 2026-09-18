@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL("../src/components/StructureTree.tsx", import.meta.url), "utf8");
@@ -102,6 +103,8 @@ function render(inspect, expanded = ["t:0"]) {
         };
       }
       if (id === "./Icon") return { Icon };
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -195,7 +198,7 @@ test("tree rows use 1-based human addresses and keep charPr off the row text", (
     }),
   );
   assert.match(html, /표 1 · 5행 2열/);
-  assert.match(html, /title="charPr 11 → 23"/);
-  const withoutTitles = html.replace(/\stitle="[^"]*"/g, "");
+  assert.match(html, /data-tip="charPr 11 → 23"/);
+  const withoutTitles = html.replace(/\s(?:title|data-tip)="[^"]*"/g, "");
   assert.doesNotMatch(withoutTitles, /charPr/);
 });

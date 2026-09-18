@@ -1,36 +1,26 @@
 /**
  * Small top-right confirmations. Errors stay until closed; the rest fade at 4 s.
+ * Hashes never appear here.
  */
+import { Toast as KitToast, ToastViewport } from "../ui/Toast";
 import { dismissToast, useWorkspace } from "../store";
 
 export function Toast() {
   const toasts = useWorkspace((s) => s.toasts);
   if (toasts.length === 0) return null;
   return (
-    <div className="toast-stack" data-testid="toast-stack">
+    <ToastViewport className="toast-stack" data-testid="toast-stack">
       {toasts.map((toast) => (
-        <div
+        <KitToast
           key={toast.id}
-          className={`toast${toast.sticky ? " is-error" : ""}`}
-          role={toast.sticky ? "alert" : "status"}
-          aria-live={toast.sticky ? "assertive" : "polite"}
+          variant={toast.sticky ? "destructive" : "default"}
           data-testid="toast"
           data-sticky={toast.sticky ? "true" : "false"}
+          onClose={toast.sticky ? () => dismissToast(toast.id) : undefined}
         >
-          <span>{toast.text}</span>
-          {toast.sticky ? (
-            <button
-              type="button"
-              className="toast-close"
-              data-testid={`toast-close-${toast.id}`}
-              aria-label="닫기"
-              onClick={() => dismissToast(toast.id)}
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
+          {toast.text}
+        </KitToast>
       ))}
-    </div>
+    </ToastViewport>
   );
 }

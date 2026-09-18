@@ -8,6 +8,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
@@ -87,7 +88,9 @@ function renderPoster(state) {
       };
     }
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.PosterCard));
 }

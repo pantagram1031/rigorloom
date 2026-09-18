@@ -8,6 +8,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const require = createRequire(import.meta.url);
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
@@ -323,6 +324,8 @@ function renderContext(overrides = {}) {
         };
       }
       if (id === "./Icon") return { Icon };
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });

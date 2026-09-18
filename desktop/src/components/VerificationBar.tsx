@@ -12,6 +12,9 @@ import {
   worstVerifyVerdict,
   verifyTargetLabel,
 } from "../verifyReport";
+import { Badge, type BadgeVariant } from "../ui/Badge";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/Popover";
+import { Tooltip } from "../ui/Tooltip";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
@@ -51,6 +54,13 @@ export function judgementCriterion(residue?: {
 const PILL_CAVEAT =
   "서식 점검입니다. 색·글꼴 등 서식 이상을 읽습니다. 제출용 검사가 아니며, 페이지 그림은 증거가 아닙니다.";
 
+function pillVariant(tone: "none" | "ok" | "warn" | "bad"): BadgeVariant {
+  if (tone === "ok") return "success";
+  if (tone === "warn") return "warning";
+  if (tone === "bad") return "destructive";
+  return "outline";
+}
+
 function Fact({
   k,
   v,
@@ -62,14 +72,16 @@ function Fact({
   title?: string;
   nonce?: string | number;
 }) {
-  return (
-    <div className="fact" title={title}>
+  const body = (
+    <div className="fact">
       <dt className="k">{k}</dt>
       <dd className="v xfade" key={nonce}>
         {v}
       </dd>
     </div>
   );
+  if (!title) return body;
+  return <Tooltip content={title}>{body}</Tooltip>;
 }
 
 function Group({
@@ -180,13 +192,12 @@ export function VerificationBar({
           className="ghost btn-icon"
           data-testid="verify-details-close"
           aria-label="닫기"
-          title="닫기"
           onClick={() => setState({ verifyDetailsOpen: false })}
         >
           <Icon name="x" />
         </button>
       </div>
-      <Group title="문서" testId="verify-group-document">
+      <Group title={"문서"} testId="verify-group-document">
         <Fact
           k="쪽"
           nonce={`${mode}-${page}-${pageCount}`}
@@ -229,7 +240,7 @@ export function VerificationBar({
           }
           v={
             caret ? (
-              <Tag tone="fill" title="글자 단위 커서가 열려 있습니다">
+              <Tag tone="fill" title={"글자 단위 커서가 열려 있습니다"}>
                 삽입
               </Tag>
             ) : (
@@ -310,7 +321,7 @@ export function VerificationBar({
         />
         <Fact
           k="원본"
-          v={hash ? <span title={hash}>{hash.slice(0, 12)}</span> : "—"}
+          v={hash ? <span>{hash.slice(0, 12)}</span> : "—"}
           title={hash ? `${GLOSSARY.source} ${hash}` : GLOSSARY.source}
           nonce={hash ?? "none"}
         />
@@ -322,14 +333,15 @@ export function VerificationBar({
           }
           v={
             applied ? (
-              <button
-                className="linkish mono"
-                data-testid="candidate-hash"
-                title="영수증을 엽니다"
-                onClick={() => openReceipt(applied.runId)}
-              >
-                {applied.candidate.sha256.slice(0, 12)}
-              </button>
+              <Tooltip content="영수증을 엽니다">
+                <button
+                  className="linkish mono"
+                  data-testid="candidate-hash"
+                  onClick={() => openReceipt(applied.runId)}
+                >
+                  {applied.candidate.sha256.slice(0, 12)}
+                </button>
+              </Tooltip>
             ) : candidates.length === 0 ? (
               <Tag tone="none">없음</Tag>
             ) : (
@@ -365,7 +377,7 @@ export function VerificationBar({
           />
         ) : null}
       </Group>
-      <Group title="검사" testId="verify-group-check">
+      <Group title={"검사"} testId="verify-group-check">
         <Fact
           k="적용 시 검사"
           nonce={verdict ? `${verdict.runId}-${verdict.report.acceptance}` : "none"}
@@ -389,7 +401,7 @@ export function VerificationBar({
         <Fact
           k="대상"
           nonce={verifyResult ? `${verifyResult.runId ?? "source"}-${verifyResult.checkedUtc}` : "none"}
-          title="지금 다시 돌린 검사가 본 문서입니다. 원본이거나 후보본 한 건입니다."
+          title={"지금 다시 돌린 검사가 본 문서입니다. 원본이거나 후보본 한 건입니다."}
           v={
             <span className="mono" data-testid="verify-run-target">
               {verifyResult ? verifyTargetLabel(verifyResult) : "—"}
@@ -399,7 +411,7 @@ export function VerificationBar({
         <Fact
           k="실행 시각"
           nonce={verifyResult?.checkedUtc ?? checkedAt ?? "none"}
-          title="candidate/verify 가 검사를 끝낸 시각입니다."
+          title={"candidate/verify 가 검사를 끝낸 시각입니다."}
           v={
             <span className="mono" data-testid="verify-run-time">
               {verifyResult?.checkedUtc ?? checkedAt ?? "—"}
@@ -410,7 +422,7 @@ export function VerificationBar({
           <Fact
             k="검토 대기"
             nonce={queued}
-            title="승인을 기다리는 작업. 아직 문서는 바뀌지 않았습니다."
+            title={"승인을 기다리는 작업. 아직 문서는 바뀌지 않았습니다."}
             v={<Tag tone="fill">{queued}건</Tag>}
           />
         ) : null}
@@ -448,7 +460,7 @@ export function VerificationBar({
           }
         />
       </Group>
-      <Group title="엔진" testId="verify-group-engine">
+      <Group title={"엔진"} testId="verify-group-engine">
         <Fact
           k="엔진"
           nonce={`${status?.running}-${status?.pid}`}
@@ -489,26 +501,28 @@ export function VerificationBar({
             >
               영수증 보기
             </button>
-            <button
-              className="action"
-              data-testid="export-candidate"
-              disabled={exportPhase === "starting"}
-              title="후보본과 영수증을 함께 저장합니다"
-              onClick={() => void exportApplied()}
-            >
-              {exportPhase === "starting" ? "내보내는 중…" : "내보내기"}
-            </button>
+            <Tooltip content="후보본과 영수증을 함께 저장합니다">
+              <button
+                className="action"
+                data-testid="export-candidate"
+                disabled={exportPhase === "starting"}
+                onClick={() => void exportApplied()}
+              >
+                {exportPhase === "starting" ? "내보내는 중…" : "내보내기"}
+              </button>
+            </Tooltip>
           </>
         ) : null}
         {exportResult && !reopened ? (
-          <button
-            className="action"
-            data-testid="reopen-export"
-            title={exportResult.path}
-            onClick={() => void reopenExported()}
-          >
-            내보낸 파일 열어 확인
-          </button>
+          <Tooltip content={exportResult.path}>
+            <button
+              className="action"
+              data-testid="reopen-export"
+              onClick={() => void reopenExported()}
+            >
+              내보낸 파일 열어 확인
+            </button>
+          </Tooltip>
         ) : null}
         {verifyResult && !verifyPanelOpen ? (
           <button
@@ -534,15 +548,16 @@ export function VerificationBar({
   if (home) {
     return (
       <footer className="verifybar is-home" data-testid="verification-bar">
-        <span
-          className={`verify-engine-status${engineUp ? " is-up" : " is-down"}`}
-          data-testid="verify-engine"
-          title={engineUp ? "엔진 연결됨" : "엔진 끊김"}
-          aria-label={engineUp ? "엔진 연결됨" : "엔진 끊김"}
-        >
-          <span className={`verify-engine${engineUp ? " is-up" : " is-down"}`} aria-hidden="true" />
-          {engineUp ? "엔진 연결됨" : "엔진 끊김"}
-        </span>
+        <Tooltip content={engineUp ? "엔진 연결됨" : "엔진 끊김"}>
+          <span
+            className={`verify-engine-status${engineUp ? " is-up" : " is-down"}`}
+            data-testid="verify-engine"
+            aria-label={engineUp ? "엔진 연결됨" : "엔진 끊김"}
+          >
+            <span className={`verify-engine${engineUp ? " is-up" : " is-down"}`} aria-hidden="true" />
+            {engineUp ? "엔진 연결됨" : "엔진 끊김"}
+          </span>
+        </Tooltip>
       </footer>
     );
   }
@@ -550,47 +565,49 @@ export function VerificationBar({
   return (
     <footer className="verifybar" data-testid="verification-bar">
       <div className="verify-summary" data-testid="verify-summary">
-        <span className="verify-doc" title={hash ?? undefined}>
-          <span className="name" data-testid="verify-doc-name">
-            {docName}
+        <Tooltip content={hash ?? docName}>
+          <span className="verify-doc">
+            <span className="name" data-testid="verify-doc-name">
+              {docName}
+            </span>
           </span>
-        </span>
+        </Tooltip>
         <span className="sep" />
-        <span className="verify-pill" data-testid="verify-pill" title={PILL_CAVEAT}>
-          <Tag tone={pill.tone}>{pill.label}</Tag>
-        </span>
+        <Tooltip content={PILL_CAVEAT}>
+          <span className="verify-pill" data-testid="verify-pill">
+            <Badge variant={pillVariant(pill.tone)}>{pill.label}</Badge>
+          </span>
+        </Tooltip>
         <span className="sep" />
-        <span
-          className={`verify-engine${engineUp ? " is-up" : " is-down"}`}
-          data-testid="verify-engine"
-          title={engineUp ? `${GLOSSARY.engine} — 엔진 연결됨` : `${GLOSSARY.engine} — 끊김`}
-          aria-label={engineUp ? "엔진 연결됨" : "끊김"}
-        />
+        <Tooltip content={engineUp ? `${GLOSSARY.engine} — 엔진 연결됨` : `${GLOSSARY.engine} — 끊김`}>
+          <span
+            className={`verify-engine${engineUp ? " is-up" : " is-down"}`}
+            data-testid="verify-engine"
+            aria-label={engineUp ? "엔진 연결됨" : "끊김"}
+          />
+        </Tooltip>
       </div>
       <div className="right">
-        <div className={`verify-popover${detailsOpen ? " is-open" : ""}`}>
-          <button
-            type="button"
+        <Popover
+          open={detailsOpen}
+          onOpenChange={(next) => setState({ verifyDetailsOpen: next })}
+        >
+          <PopoverTrigger
             className="action btn-icon"
             data-testid="verify-details-toggle"
-            aria-expanded={detailsOpen}
-            aria-controls="verify-details-popover"
-            title="자세히"
             aria-label="자세히"
-            onClick={() => setState({ verifyDetailsOpen: !detailsOpen })}
           >
             <Icon name="list" />
-          </button>
-          <div
+          </PopoverTrigger>
+          <PopoverContent
             id="verify-details-popover"
             className="verify-popover-panel"
-            hidden={!detailsOpen}
-            role="dialog"
             aria-label="검사 자세히"
+            align="end"
           >
             {chips}
-          </div>
-        </div>
+          </PopoverContent>
+        </Popover>
       </div>
     </footer>
   );

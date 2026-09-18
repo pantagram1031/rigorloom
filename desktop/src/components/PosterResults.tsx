@@ -18,6 +18,11 @@ import {
   verdictTone,
 } from "../verifyReport";
 import { Tag } from "./Tag";
+import { Alert } from "../ui/Alert";
+import { Button } from "../ui/Button";
+import { Card, CardContent } from "../ui/Card";
+import { Progress } from "../ui/Progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/Table";
 
 function findingWhere(item: { at?: string; page?: number | null }): string {
   const parts: string[] = [];
@@ -35,28 +40,25 @@ export function PosterCard() {
   const runnable = canRunPoster(status, capabilities);
 
   return (
-    <div className="fill-card poster-card" data-testid="poster-card">
+    <Card className="fill-card poster-card" data-testid="poster-card">
+      <CardContent>
       <div className="fill-card-actions">
         {runnable && phase !== "starting" ? (
-          <button
-            type="button"
-            className="action"
-            data-testid="poster-run"
-            onClick={() => void runPoster()}
-          >
+          <Button variant="secondary" data-testid="poster-run" onClick={() => void runPoster()}>
             포스터 만들기
-          </button>
+          </Button>
         ) : null}
       </div>
       {phase === "starting" ? (
         <div className="fill-progress" data-testid="poster-progress">
+          <Progress />
           <Tag tone="none">포스터 만드는 중</Tag>
         </div>
       ) : null}
       {phase === "failed" && error ? (
-        <p className="prose" data-testid="poster-error">
+        <Alert variant="destructive" data-testid="poster-error">
           {error.message}
-        </p>
+        </Alert>
       ) : null}
       {result ? (
         <div className="fill-result" data-testid="poster-result" data-state={result.state}>
@@ -115,20 +117,30 @@ export function PosterCard() {
               );
             })}
           </ul>
-          <ul className="fill-outputs" data-testid="poster-outputs">
+          <Table className="fill-outputs" data-testid="poster-outputs">
+            <TableHeader>
+              <TableRow>
+                <TableHead>역할</TableHead>
+                <TableHead>해시</TableHead>
+                <TableHead>크기</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
             {result.outputs.map((row) => (
-              <li key={row.role} data-testid={`poster-output-${row.role}`}>
-                <span className="mono">{row.role}</span>
-                <span className="mono">{row.sha256}</span>
-                <span>{row.bytes} B</span>
-              </li>
+              <TableRow key={row.role} data-testid={`poster-output-${row.role}`}>
+                <TableCell className="mono">{row.role}</TableCell>
+                <TableCell className="mono">{row.sha256}</TableCell>
+                <TableCell>{row.bytes} B</TableCell>
+              </TableRow>
             ))}
-          </ul>
+            </TableBody>
+          </Table>
           <p className="verify-footer" data-testid="poster-footer">
             {POSTER_FOOTER}
           </p>
         </div>
       ) : null}
-    </div>
+      </CardContent>
+    </Card>
   );
 }

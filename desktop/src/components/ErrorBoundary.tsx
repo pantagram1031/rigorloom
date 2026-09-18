@@ -14,6 +14,7 @@
  * would have named itself on screen.
  */
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
 
 interface State {
   error: Error | null;
@@ -46,11 +47,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             {this.state.error.message}
           </p>
           {this.state.stack ? (
-            <details style={{ marginTop: "var(--s3)" }}>
-              <summary style={{ fontSize: "var(--text-xs)", color: "var(--fg-faint)" }}>
-                자세히
-              </summary>
-              <pre
+            <Collapsible style={{ marginTop: "var(--s3)" }}>
+        <CollapsibleTrigger>자세히</CollapsibleTrigger>
+        <CollapsibleContent>
+<pre
                 style={{
                   fontFamily: "var(--font-mono)",
                   fontSize: "var(--text-xs)",
@@ -60,7 +60,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
               >
                 {this.state.stack}
               </pre>
-            </details>
+      </CollapsibleContent>
+      </Collapsible>
           ) : null}
         </div>
       </div>

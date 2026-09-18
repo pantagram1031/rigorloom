@@ -34,6 +34,13 @@ import { EmptyIconHistory, EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 import { Timeline } from "./Timeline";
+import { Alert } from "../ui/Alert";
+import { Button } from "../ui/Button";
+import { Checkbox } from "../ui/Checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Item } from "../ui/Item";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/Popover";
+import { Tooltip } from "../ui/Tooltip";
 
 /** `2026-09-02T11:04:07Z` → `11:04:07`. The date is on the receipt. */
 function clock(utc: string | undefined): string {
@@ -87,40 +94,50 @@ function Row({
         aria-current={isHead ? "true" : undefined}
         onClick={() => selectHistory(selected ? null : runId)}
       >
-        <span>{relativeWhen(row.createdUtc) || clock(row.createdUtc) || "후보본"}</span>
-        {backend ? <Tag tone="none">{backend}</Tag> : null}
-        {isHead ? (
-          <Tag tone="ok" title="지금 이 후보본을 문서의 현재 상태로 보고 있습니다">
-            현재
-          </Tag>
-        ) : null}
-        {row.reverses ? (
-          <Tag tone="warn" title={`되돌림 대상 ${row.reverses.runId.slice(0, 12)}`}>
-            되돌리기
-          </Tag>
-        ) : null}
-        {undoneBy ? (
-          <Tag tone="none" title={`${undoneBy.runId?.slice(0, 12)} 이(가) 되돌렸습니다`}>
-            되돌려짐
-          </Tag>
-        ) : null}
-        {row.acceptance === true ? (
-          <Tag tone="ok">검사 통과</Tag>
-        ) : row.acceptance === false ? (
-          <Tag tone="warn">검사 미통과</Tag>
-        ) : (
-          <Tag tone="none">검사 결과 없음</Tag>
-        )}
-        <span
-          className={`receipt-dot${receiptPresent ? " is-on" : ""}`}
-          title={receiptPresent ? "영수증 있음" : "영수증 없음"}
-          data-testid={`history-receipt-dot-${runId}`}
+        <Item
+          icon={<Icon name={isHead ? "check" : "history"} />}
+          title={<span>{relativeWhen(row.createdUtc) || clock(row.createdUtc) || "후보본"}</span>}
+          active={selected}
+          trailing={
+            <>
+              {backend ? <Tag tone="none">{backend}</Tag> : null}
+              {isHead ? (
+                <Tag tone="ok" title={"지금 이 후보본을 문서의 현재 상태로 보고 있습니다"}>
+                  현재
+                </Tag>
+              ) : null}
+              {row.reverses ? (
+                <Tag tone="warn" title={`되돌림 대상 ${row.reverses.runId.slice(0, 12)}`}>
+                  되돌리기
+                </Tag>
+              ) : null}
+              {undoneBy ? (
+                <Tag tone="none" title={`${undoneBy.runId?.slice(0, 12)} 이(가) 되돌렸습니다`}>
+                  되돌려짐
+                </Tag>
+              ) : null}
+              {row.acceptance === true ? (
+                <Tag tone="ok">검사 통과</Tag>
+              ) : row.acceptance === false ? (
+                <Tag tone="warn">검사 미통과</Tag>
+              ) : (
+                <Tag tone="none">검사 결과 없음</Tag>
+              )}
+              <Tooltip content={receiptPresent ? "영수증 있음" : "영수증 없음"}>
+                <span
+                  className={`receipt-dot${receiptPresent ? " is-on" : ""}`}
+                  data-testid={`history-receipt-dot-${runId}`}
+                />
+              </Tooltip>
+            </>
+          }
         />
       </button>
 
-      <details className="disclosure" data-testid={`history-facts-${runId}`}>
-        <summary>기술 정보</summary>
-        <p className="mono tiny">
+      <Collapsible className="disclosure" data-testid={`history-facts-${runId}`}>
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny">
           {opSummary(row)}
           {" · "}
           {row.base ? `이전 ${row.base.runId.slice(0, 12)} 위에` : "원본에서 바로"}
@@ -134,38 +151,45 @@ function Row({
           {" · "}
           {receiptPresent ? "영수증 있음" : "영수증 없음"}
         </p>
-      </details>
+      </CollapsibleContent>
+      </Collapsible>
 
       <div className="checkpoint-actions">
-        <button
-          className="ghost dark-safe btn-icon"
-          data-testid={`history-receipt-${runId}`}
-          title="영수증 보기"
-          aria-label="영수증 보기"
-          onClick={() => void loadReceipt(runId)}
-        >
-          <Icon name="receipt" />
-          영수증 보기
-        </button>
-        <button
-          className="action btn-icon"
-          data-testid={`history-restore-${runId}`}
-          disabled={undoPhase === "starting"}
-          title="되돌리는 계획을 제안합니다. 원본은 바뀌지 않습니다."
-          aria-label="여기로 되돌리기"
-          onClick={() => void restoreRun(runId)}
-        >
-          <Icon name="undo" />
-        </button>
-        <button
-          className="ghost dark-safe btn-icon"
-          data-testid={`history-compare-${runId}`}
-          title="비교"
-          aria-label="비교"
-          onClick={() => setCompareLeft(runId)}
-        >
-          <Icon name="compare" />
-        </button>
+        <Tooltip content="영수증 보기">
+          <Button
+            variant="ghost"
+            className="dark-safe btn-icon"
+            data-testid={`history-receipt-${runId}`}
+            aria-label="영수증 보기"
+            onClick={() => void loadReceipt(runId)}
+          >
+            <Icon name="receipt" />
+            영수증 보기
+          </Button>
+        </Tooltip>
+        <Tooltip content="되돌리는 계획을 제안합니다. 원본은 바뀌지 않습니다.">
+          <Button
+            variant="secondary"
+            className="btn-icon"
+            data-testid={`history-restore-${runId}`}
+            disabled={undoPhase === "starting"}
+            aria-label="여기로 되돌리기"
+            onClick={() => void restoreRun(runId)}
+          >
+            <Icon name="undo" />
+          </Button>
+        </Tooltip>
+        <Tooltip content="비교">
+          <Button
+            variant="ghost"
+            className="dark-safe btn-icon"
+            data-testid={`history-compare-${runId}`}
+            aria-label="비교"
+            onClick={() => setCompareLeft(runId)}
+          >
+            <Icon name="compare" />
+          </Button>
+        </Tooltip>
       </div>
 
       {selected ? (
@@ -175,21 +199,23 @@ function Row({
           data-testid={`history-detail-${runId}`}
         >
           <div className="gate-actions">
-            <button
-              className="ghost dark-safe"
+            <Button
+              variant="ghost"
+              className="dark-safe"
               data-testid={`history-head-${runId}`}
               disabled={isHead}
               onClick={() => void setHead(runId)}
             >
               이 후보본을 현재로
-            </button>
-            <button
-              className="ghost dark-safe"
+            </Button>
+            <Button
+              variant="ghost"
+              className="dark-safe"
               data-testid={`history-export-${runId}`}
               onClick={() => void exportApplied(undefined, runId)}
             >
               이 후보본 내보내기
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -220,9 +246,18 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
   });
 
   return (
-    <div className="compare-popover" data-testid="compare-inspect">
-      <button
-        className="action primary"
+    <Popover disablePortal>
+      <PopoverTrigger className="action" data-testid="compare-inspect-open">
+        비교
+      </PopoverTrigger>
+      <PopoverContent
+        forceMount
+        className="compare-popover"
+        data-testid="compare-inspect"
+        align="start"
+      >
+      <Button
+        variant="primary"
         data-testid="compare-run"
         disabled={!leftRunId || phase === "starting"}
         onClick={() => {
@@ -231,24 +266,27 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
         }}
       >
         {phase === "starting" ? "비교 중…" : "이 후보본을 원본과 비교"}
-      </button>
-      <details className="disclosure" data-testid="compare-other">
-        <summary>다른 후보본과</summary>
-        <div className="gate-actions">
-          <button
-            className="ghost dark-safe"
+      </Button>
+      <Collapsible className="disclosure" data-testid="compare-other">
+        <CollapsibleTrigger>다른 후보본과</CollapsibleTrigger>
+        <CollapsibleContent>
+<div className="gate-actions">
+          <Button
+            variant="ghost"
+            className="dark-safe"
             data-testid="compare-against-source"
             aria-pressed={againstIsSource(against)}
             onClick={() => setCompareAgainst({ source: true })}
           >
             원본
-          </button>
+          </Button>
           {rows
             .filter((row) => row.runId && row.runId !== leftRunId)
             .map((row, index) => (
-              <button
+              <Button
                 key={row.runId}
-                className="ghost dark-safe"
+                variant="ghost"
+                className="dark-safe"
                 data-testid={`compare-against-${row.runId}`}
                 aria-pressed={"runId" in against && against.runId === row.runId}
                 onClick={() => {
@@ -257,22 +295,22 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
                 }}
               >
                 후보본 {index + 1}
-              </button>
+              </Button>
             ))}
         </div>
-      </details>
-      <label className="prose tiny">
-        <input
-          type="checkbox"
-          data-testid="compare-use-selection"
-          checked={useSelection}
-          onChange={(e) => setCompareUseSelection(e.target.checked)}
-        />{" "}
+      </CollapsibleContent>
+      </Collapsible>
+      <Checkbox
+        data-testid="compare-use-selection"
+        checked={useSelection}
+        onCheckedChange={(next) => setCompareUseSelection(next)}
+      >
         선택한 자리만
-      </label>
-      <details className="disclosure">
-        <summary>기술 정보</summary>
-        <p className="prose tiny">
+      </Checkbox>
+      <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="prose tiny">
           candidate/compare 만 씁니다. verify/* 는 프로토콜에 없습니다.
         </p>
         <p className="mono tiny">
@@ -281,17 +319,19 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
           대상 {againstIsSource(against) ? "원본" : "runId" in against ? against.runId : "—"}
         </p>
         {rows.map((row) => (
-          <button
+          <Button
             key={row.runId}
-            className="ghost dark-safe"
+            variant="ghost"
+            className="dark-safe"
             data-testid={`compare-left-${row.runId}`}
             aria-pressed={row.runId === leftRunId}
             onClick={() => setCompareLeft(row.runId ?? null)}
           >
             {(row.runId ?? "").slice(0, 12)}
-          </button>
+          </Button>
         ))}
-      </details>
+      </CollapsibleContent>
+      </Collapsible>
 
       {refusals.acceptanceRefused ? (
         <div className="refusal" data-testid="compare-acceptance-refusal">
@@ -313,7 +353,8 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
         </div>
       ) : null}
       {result ? <ComparePayload compare={result} /> : null}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -330,13 +371,15 @@ function ComparePayload({ compare }: { compare: CandidateCompare }) {
         )}
       </div>
       <p className="prose tiny">{compare.note}</p>
-      <details className="disclosure" data-testid="compare-raw">
-        <summary>기술 정보</summary>
-        <p className="mono tiny" data-testid="compare-artifact-equal">
+      <Collapsible className="disclosure" data-testid="compare-raw">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny" data-testid="compare-artifact-equal">
           파일 전체 해시 일치: {String(compare.artifactEqual)} · 비교 기준 {compare.normalizer}
         </p>
         <pre>{JSON.stringify(compare, null, 2)}</pre>
-      </details>
+      </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
@@ -364,7 +407,7 @@ export function History() {
       <div className="section" data-testid="history-empty">
         <EmptyState
           icon={<EmptyIconHistory />}
-          title="아직 후보본이 없습니다"
+          title={"아직 후보본이 없습니다"}
           body="승인하고 적용할 때마다 여기에 하나씩 쌓입니다."
         />
       </div>
@@ -391,12 +434,16 @@ export function History() {
             <p className="history-head">
               <span>원본</span>
             </p>
-            <details className="disclosure">
-              <summary>기술 정보</summary>
-              <p className="mono tiny" title={sourceHash}>
-                {sourceHash.slice(0, 12)}
+            <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny">
+                <Tooltip content={sourceHash}>
+                  <span>{sourceHash.slice(0, 12)}</span>
+                </Tooltip>
               </p>
-            </details>
+      </CollapsibleContent>
+      </Collapsible>
           </li>
         ) : null}
         {ordered.map((row) => (
@@ -415,17 +462,19 @@ export function History() {
 
       {rows.length > 0 ? <CompareInspect rows={rows} /> : null}
 
-      <details className="disclosure history-events" data-testid="history-events">
-        <summary>이벤트 ({eventCount})</summary>
-        <Timeline />
-      </details>
+      <Collapsible className="disclosure history-events" data-testid="history-events">
+        <CollapsibleTrigger>이벤트 ({eventCount})</CollapsibleTrigger>
+        <CollapsibleContent>
+<Timeline />
+      </CollapsibleContent>
+      </Collapsible>
 
       {undoError ? (
-        <div className="refusal" data-testid="undo-error">
+        <Alert variant="destructive" className="refusal" data-testid="undo-error">
           <Tag tone="bad">되돌리기를 만들지 못했습니다</Tag>
           <p className="prose">{undoError.message}</p>
           <p className="mono tiny">{undoError.code}</p>
-        </div>
+        </Alert>
       ) : null}
 
       {proof ? (
@@ -450,9 +499,10 @@ export function History() {
                 ? "다시 읽은 값이 되돌리기 이전 값과 다릅니다."
                 : "비교할 수 있는 자리가 없었습니다."}
           </p>
-          <details className="disclosure">
-            <summary>기술 정보</summary>
-            <p className="mono tiny" data-testid="inverse-proof-bytes">
+          <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny" data-testid="inverse-proof-bytes">
               파일 전체 해시 일치: {String(proof.compare.artifactEqual)} · 비교 기준{" "}
               {proof.compare.normalizer}
             </p>
@@ -464,7 +514,8 @@ export function History() {
                 </li>
               ))}
             </ul>
-          </details>
+      </CollapsibleContent>
+      </Collapsible>
         </div>
       ) : null}
     </div>

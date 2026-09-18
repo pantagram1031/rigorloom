@@ -76,6 +76,8 @@ import { useWorkspace, type InlineRunEdit } from "../store";
 import type { GeometryResult, GeometrySeat, GeometrySpan, NormRect } from "../types";
 import { SeatEditor } from "./SeatEditor";
 import { Tag } from "./Tag";
+import { Button } from "../ui/Button";
+import { Tooltip } from "../ui/Tooltip";
 
 /** A normalized rect as CSS percentages. The only coordinate maths here. */
 function place(rect: NormRect): React.CSSProperties {
@@ -146,24 +148,27 @@ function SeatOverlay({
   }
 
   return (
-    <button
-      type="button"
-      className={[
+    <Tooltip
+      content={`표${seat.table} (${seat.row},${seat.col})\n${
+        DERIVATION_NOTE[seat.derivation] ?? "런타임이 이 자리를 어떻게 잡았는지 알 수 없습니다."
+      }${stale ? "\n후보본과 다름 — 이 그림은 원본 기준입니다" : ""}`}
+      anchorClassName={[
         "ov ov-seat",
         `ov-${seat.derivation}`,
         editable ? "ov-editable" : "ov-inert",
         picked ? "ov-picked" : "",
         stale ? "ov-stale" : "",
       ].join(" ")}
-      style={place(seat.rect)}
+      anchorStyle={place(seat.rect)}
+    >
+    <button
+      type="button"
+      className="ov-hit"
       data-testid="overlay-seat"
       data-derivation={seat.derivation}
       data-editable={editable ? "true" : "false"}
       data-stale={stale ? "true" : undefined}
       data-address={`${seat.table}-${seat.row}-${seat.col}`}
-      title={`표${seat.table} (${seat.row},${seat.col})\n${
-        DERIVATION_NOTE[seat.derivation] ?? "런타임이 이 자리를 어떻게 잡았는지 알 수 없습니다."
-      }${stale ? "\n후보본과 다름 — 이 그림은 원본 기준입니다" : ""}`}
       aria-label={
         editable
           ? `표${seat.table} ${seat.row}행 ${seat.col}열 — 빈 자리, 눌러서 값 넣기`
@@ -174,6 +179,7 @@ function SeatOverlay({
         clickOverlaySeat(seat);
       }}
     />
+    </Tooltip>
   );
 }
 
@@ -212,10 +218,18 @@ function SpanOverlay({
     if (source !== "own") return null;
     const knows = !!span.sidecarAddress;
     return (
+      <Tooltip
+        content={
+          knows
+            ? "이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다. 자체 렌더러는 어디서 그렸는지 알지만, 서식 스캔이 확인해 주지 않은 주소는 쓰지 않습니다."
+            : "이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다."
+        }
+        anchorClassName={["ov", "ov-span", "ov-line", picked ? "ov-picked" : ""].join(" ")}
+        anchorStyle={place(span.rect)}
+      >
       <button
         type="button"
-        className={["ov", "ov-span", "ov-line", picked ? "ov-picked" : ""].join(" ")}
-        style={place(span.rect)}
+        className="ov-hit"
         data-testid="overlay-span"
         data-confidence="unmapped"
         data-editable="false"
@@ -224,16 +238,12 @@ function SpanOverlay({
         data-address-basis={span.addressBasis ?? ""}
         data-line-mode={span.lineMode ?? ""}
         data-span-index={span.index}
-        title={
-          knows
-            ? "이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다. 자체 렌더러는 어디서 그렸는지 알지만, 서식 스캔이 확인해 주지 않은 주소는 쓰지 않습니다."
-            : "이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다."
-        }
         onClick={(e) => {
           e.stopPropagation();
           void clickOverlaySpan(span);
         }}
       />
+      </Tooltip>
     );
   }
 
@@ -277,16 +287,30 @@ function SpanOverlay({
     );
   }
 
+  const spanTip = ambiguous
+    ? `“${span.text}” — 같은 글자를 가진 주소가 ${count}개입니다. 어느 것인지 런타임은 고르지 않습니다.`
+    : caretTarget
+      ? `${addressLabel(span.address!)} — 눌러서 이 줄에 커서를 놓습니다${
+          span.charX ? "" : "\n이 줄은 글자별 위치가 없어 줄 앞으로 붙습니다."
+        }`
+      : span.address
+        ? `${addressLabel(span.address)}${editable ? "" : " — 값을 넣는 자리가 아닙니다"}`
+        : "";
+
   return (
-    <button
-      type="button"
-      className={[
+    <Tooltip
+      content={spanTip || "줄"}
+      anchorClassName={[
         "ov ov-span",
         ambiguous ? "ov-ambiguous" : editable ? "ov-editable" : caretTarget ? "ov-caret" : "ov-inert",
         picked ? "ov-picked" : "",
         stale ? "ov-stale" : "",
       ].join(" ")}
-      style={place(span.rect)}
+      anchorStyle={place(span.rect)}
+    >
+    <button
+      type="button"
+      className="ov-hit"
       data-testid={ambiguous ? "overlay-ambiguous" : "overlay-span"}
       data-confidence={span.confidence}
       data-stale={stale ? "true" : undefined}
@@ -294,17 +318,6 @@ function SpanOverlay({
       data-caret-target={caretTarget ? "true" : "false"}
       data-has-offsets={span.charX ? "true" : "false"}
       data-span-index={span.index}
-      title={
-        ambiguous
-          ? `“${span.text}” — 같은 글자를 가진 주소가 ${count}개입니다. 어느 것인지 런타임은 고르지 않습니다.`
-          : caretTarget
-            ? `${addressLabel(span.address!)} — 눌러서 이 줄에 커서를 놓습니다${
-                span.charX ? "" : "\n이 줄은 글자별 위치가 없어 줄 앞으로 붙습니다."
-              }`
-            : span.address
-              ? `${addressLabel(span.address)}${editable ? "" : " — 값을 넣는 자리가 아닙니다"}`
-              : ""
-      }
       onClick={(e) => {
         e.stopPropagation();
         // WHERE in the line, as a fraction of the PAGE — the units `charX` is
@@ -322,6 +335,7 @@ function SpanOverlay({
     >
       {ambiguous ? <span className="ov-badge">{count}</span> : null}
     </button>
+    </Tooltip>
   );
 }
 
@@ -396,7 +410,7 @@ function CandidateChooser() {
                 {drawnHere ? (
                   <Tag
                     tone="none"
-                    title="자체 렌더러는 이 줄을 여기서 그렸다고 말합니다. 서식 스캔이 확인해 주지 않았으므로 자동으로 고르지는 않습니다."
+                    title={"자체 렌더러는 이 줄을 여기서 그렸다고 말합니다. 서식 스캔이 확인해 주지 않았으므로 자동으로 고르지는 않습니다."}
                   >
                     렌더러 지목
                   </Tag>
@@ -405,7 +419,7 @@ function CandidateChooser() {
                   <span className="dim tiny">{candidate.classification}</span>
                 ) : null}
                 {editable ? null : caretRow ? (
-                  <Tag tone="none" title="이 문단 줄에 커서를 놓습니다. 줄 앞에서 시작합니다.">
+                  <Tag tone="none" title={"이 문단 줄에 커서를 놓습니다. 줄 앞에서 시작합니다."}>
                     문단 줄
                   </Tag>
                 ) : (
@@ -416,9 +430,9 @@ function CandidateChooser() {
           );
         })}
       </ul>
-      <button className="ghost" data-testid="overlay-chooser-dismiss" onClick={dismissOverlayPick}>
+      <Button variant="ghost" data-testid="overlay-chooser-dismiss" onClick={dismissOverlayPick}>
         닫기
-      </button>
+      </Button>
     </div>
   );
 }
@@ -467,14 +481,12 @@ function GeometryLegend({ geometry }: { geometry: GeometryResult }) {
           means both witnesses said the same thing, 불일치 means neither was
           used, 미확인 means the renderer knew and was not believed. */}
       {mapping.crossCheck && (mapping.crossCheck.declared ?? 0) > 0 ? (
-        <span
-          className="mono tiny dim"
-          data-testid="overlay-crosscheck"
-          title="자체 렌더러가 스스로 밝힌 주소를 서식 스캔과 대조한 결과입니다. 렌더러 말만으로 주소를 정하지는 않습니다."
-        >
-          렌더러 대조 — 확인 {mapping.crossCheck.agree ?? 0} · 불일치{" "}
-          {mapping.crossCheck.disagree ?? 0} · 미확인 {mapping.crossCheck.sidecarOnly ?? 0}
-        </span>
+        <Tooltip content="자체 렌더러가 스스로 밝힌 주소를 서식 스캔과 대조한 결과입니다. 렌더러 말만으로 주소를 정하지는 않습니다.">
+          <span className="mono tiny dim" data-testid="overlay-crosscheck">
+            렌더러 대조 — 확인 {mapping.crossCheck.agree ?? 0} · 불일치{" "}
+            {mapping.crossCheck.disagree ?? 0} · 미확인 {mapping.crossCheck.sidecarOnly ?? 0}
+          </span>
+        </Tooltip>
       ) : null}
       {editableSeats + editableSpans === 0 ? (
         <span className="dim">

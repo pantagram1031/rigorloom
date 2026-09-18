@@ -19,6 +19,11 @@ import {
   verdictTone,
 } from "../verifyReport";
 import { Tag } from "./Tag";
+import { Alert } from "../ui/Alert";
+import { Button } from "../ui/Button";
+import { Card, CardContent } from "../ui/Card";
+import { Progress } from "../ui/Progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/Table";
 
 function findingWhere(item: { at?: string; page?: number | null }): string {
   const parts: string[] = [];
@@ -37,31 +42,23 @@ export function FillCard() {
   const runnable = canRunFill(status, capabilities);
 
   return (
-    <div className="fill-card" data-testid="fill-card">
+    <Card className="fill-card" data-testid="fill-card">
+      <CardContent>
       <div className="fill-card-actions">
         {runnable && phase !== "starting" ? (
-          <button
-            type="button"
-            className="action"
-            data-testid="fill-run"
-            onClick={() => void runFill()}
-          >
+          <Button variant="secondary" data-testid="fill-run" onClick={() => void runFill()}>
             채우기 실행
-          </button>
+          </Button>
         ) : null}
         {phase === "starting" ? (
-          <button
-            type="button"
-            className="ghost"
-            data-testid="fill-cancel"
-            onClick={() => void cancelFill()}
-          >
+          <Button variant="ghost" data-testid="fill-cancel" onClick={() => void cancelFill()}>
             멈추기
-          </button>
+          </Button>
         ) : null}
       </div>
       {phase === "starting" ? (
         <div className="fill-progress" data-testid="fill-progress">
+          <Progress />
           <Tag tone="none">채우는 중</Tag>
           <span data-testid="fill-progress-iter">
             반복 {progress?.iteration ?? "…"}
@@ -77,9 +74,9 @@ export function FillCard() {
         </div>
       ) : null}
       {phase === "failed" && error ? (
-        <p className="prose" data-testid="fill-error">
+        <Alert variant="destructive" data-testid="fill-error">
           {error.message}
-        </p>
+        </Alert>
       ) : null}
       {result ? (
         <div className="fill-result" data-testid="fill-result" data-state={result.state}>
@@ -150,20 +147,30 @@ export function FillCard() {
               },
             )}
           </ul>
-          <ul className="fill-outputs" data-testid="fill-outputs">
+          <Table className="fill-outputs" data-testid="fill-outputs">
+            <TableHeader>
+              <TableRow>
+                <TableHead>역할</TableHead>
+                <TableHead>해시</TableHead>
+                <TableHead>크기</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
             {result.outputs.map((row) => (
-              <li key={row.role} data-testid={`fill-output-${row.role}`}>
-                <span className="mono">{row.role}</span>
-                <span className="mono">{row.sha256}</span>
-                <span>{row.bytes} B</span>
-              </li>
+              <TableRow key={row.role} data-testid={`fill-output-${row.role}`}>
+                <TableCell className="mono">{row.role}</TableCell>
+                <TableCell className="mono">{row.sha256}</TableCell>
+                <TableCell>{row.bytes} B</TableCell>
+              </TableRow>
             ))}
-          </ul>
+            </TableBody>
+          </Table>
           <p className="verify-footer" data-testid="fill-footer">
             {FILL_FOOTER}
           </p>
         </div>
       ) : null}
-    </div>
+      </CardContent>
+    </Card>
   );
 }

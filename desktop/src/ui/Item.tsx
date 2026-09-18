@@ -2,7 +2,7 @@ import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
 
 import { cn } from "./cn";
 
-export type ItemProps = HTMLAttributes<HTMLDivElement> & {
+export type ItemProps = Omit<HTMLAttributes<HTMLDivElement>, "title"> & {
   icon?: ReactNode;
   title: ReactNode;
   description?: ReactNode;

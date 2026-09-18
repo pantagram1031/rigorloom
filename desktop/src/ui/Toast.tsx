@@ -36,6 +36,14 @@ export const Toast = forwardRef<HTMLDivElement, ToastProps>(function Toast(
   );
 });
 
-export function ToastViewport({ className, children }: { className?: string; children?: ReactNode }) {
-  return <div className={cn("ui-toast-stack", className)}>{children}</div>;
+export function ToastViewport({
+  className,
+  children,
+  ...rest
+}: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div className={cn("ui-toast-stack", className)} {...rest}>
+      {children}
+    </div>
+  );
 }

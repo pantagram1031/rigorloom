@@ -1,20 +1,41 @@
 /**
- * A semantic chip. Colour is never the only signal: every tone here is
- * accompanied by its own word, because the target user reviews documents for
- * hours and may be colour-vision-deficient.
+ * Semantic chip. Colour is never the only signal: every tone is accompanied
+ * by its own word. Maps onto kit Badge variants; hover copy uses Tooltip.
  */
+import type { ReactNode } from "react";
+
+import { Badge, type BadgeVariant } from "../ui/Badge";
+import { Tooltip } from "../ui/Tooltip";
+
 export type Tone = "fill" | "guide" | "static" | "spacer" | "ok" | "warn" | "bad" | "none";
 
-export function Tag({ tone, children, title }: {
+const TONE_VARIANT: Record<Tone, BadgeVariant> = {
+  fill: "default",
+  guide: "secondary",
+  static: "outline",
+  spacer: "outline",
+  ok: "success",
+  warn: "warning",
+  bad: "destructive",
+  none: "outline",
+};
+
+export function Tag({
+  tone,
+  children,
+  title,
+}: {
   tone: Tone;
-  children: React.ReactNode;
+  children: ReactNode;
   title?: string;
 }) {
-  return (
-    <span className={`tag ${tone}`} title={title}>
+  const chip = (
+    <Badge variant={TONE_VARIANT[tone]} className={`tag ${tone}`} data-tone={tone}>
       {children}
-    </span>
+    </Badge>
   );
+  if (!title) return chip;
+  return <Tooltip content={title}>{chip}</Tooltip>;
 }
 
 /** Korean product labels for the four cell classifications the engine emits

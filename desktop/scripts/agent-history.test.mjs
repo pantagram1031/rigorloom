@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -92,7 +93,9 @@ function renderConversation(state) {
       };
     }
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.Conversation));
 }
@@ -113,7 +116,9 @@ function renderComposer(state) {
         setState: () => {},
       };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.Composer));
 }
@@ -180,7 +185,9 @@ function renderHistory(state) {
       return { Timeline: () => React.createElement("div", { "data-testid": "timeline" }) };
     }
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.History));
 }
@@ -221,7 +228,7 @@ test("plan-arrival card names the queued edits, switches to 검토, and the revi
   });
   assert.match(html, /data-testid="plan-arrival-turn-1"/);
   assert.match(html, /계획 3건 · 검토에서 보기/);
-  assert.match(html, /class="bubble bubble-user"/);
+  assert.match(html, /bubble bubble-user/);
   assert.match(html, /class="system-row"/);
   assert.match(html, /1단계 작업/);
   assert.match(html, /data-testid="turn-steps-turn-1"/);
@@ -296,7 +303,7 @@ test("agent thread collapses tool rows into one expandable step row", () => {
   assert.match(html, /data-testid="system-row-2"/);
   assert.match(html, /data-testid="system-row-3"/);
   const details = html.match(
-    /<details class="disclosure turn-steps" data-testid="turn-steps-turn-2">[\s\S]*?<\/details>/,
+    /data-testid="turn-steps-turn-2"[\s\S]*?data-testid="system-row-1"/,
   )?.[0];
   assert.ok(details);
   assert.match(details, /data-testid="system-row-1"/);

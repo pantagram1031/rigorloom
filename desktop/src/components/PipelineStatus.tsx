@@ -16,13 +16,18 @@ import { FillCard } from "./FillResults";
 import { PosterCard } from "./PosterResults";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
+import { Button } from "../ui/Button";
+import { Progress } from "../ui/Progress";
+import { Tooltip } from "../ui/Tooltip";
 
 function togglePipelineDisclosure() {
   const wasCollapsed = getState().leftRailCollapsed;
   if (wasCollapsed) setLeftRailCollapsed(false);
   const apply = () => {
-    const el = document.querySelector<HTMLDetailsElement>('[data-testid="pipeline-disclosure"]');
-    if (el) el.open = !el.open;
+    const el = document.querySelector<HTMLButtonElement>(
+      '[data-testid="pipeline-disclosure"] .ui-collapse-trigger',
+    );
+    el?.click();
   };
   if (wasCollapsed) requestAnimationFrame(() => requestAnimationFrame(apply));
   else apply();
@@ -36,25 +41,27 @@ export function PipelineStrip() {
   if (phase === "failed" && error) {
     return (
       <div className="pipeline-strip" data-testid="pipeline-strip" data-state="error">
-        <button
-          type="button"
-          className="pipeline-strip-main"
-          title="파이프라인"
-          onClick={() => togglePipelineDisclosure()}
-        >
-          <span className="pipeline-strip-text">파이프라인 헤더를 읽지 못했습니다</span>
-          <Icon name="chevron-down" />
-        </button>
-        <button
-          type="button"
-          className="pipeline-refresh btn-icon"
-          data-testid="pipeline-refresh"
-          title="다시 읽기"
-          aria-label="다시 읽기"
-          onClick={() => void refreshPipelineStatus()}
-        >
-          <Icon name="search" />
-        </button>
+        <Tooltip content="파이프라인">
+          <button
+            type="button"
+            className="pipeline-strip-main"
+            onClick={() => togglePipelineDisclosure()}
+          >
+            <span className="pipeline-strip-text">파이프라인 헤더를 읽지 못했습니다</span>
+            <Icon name="chevron-down" />
+          </button>
+        </Tooltip>
+        <Tooltip content="다시 읽기">
+          <Button
+            variant="ghost"
+            className="pipeline-refresh btn-icon"
+            data-testid="pipeline-refresh"
+            aria-label="다시 읽기"
+            onClick={() => void refreshPipelineStatus()}
+          >
+            <Icon name="search" />
+          </Button>
+        </Tooltip>
       </div>
     );
   }
@@ -63,34 +70,37 @@ export function PipelineStrip() {
   const next = stripNextLabel(status);
   return (
     <div className="pipeline-strip" data-testid="pipeline-strip" data-state="found">
-      <button
-        type="button"
-        className="pipeline-strip-main"
-        title={stripSummary(status)}
-        aria-label="파이프라인"
-        onClick={() => togglePipelineDisclosure()}
-      >
-        <span className="pipeline-strip-text" data-testid="pipeline-strip-text">
-          <span className="mono">{status.slug}</span>
-          {" · "}
-          <span className="pipeline-strip-progress" data-testid="pipeline-strip-progress">
-            {done}/{total} 단계
+      <Tooltip content={stripSummary(status)}>
+        <button
+          type="button"
+          className="pipeline-strip-main"
+          aria-label="파이프라인"
+          onClick={() => togglePipelineDisclosure()}
+        >
+          <span className="pipeline-strip-text" data-testid="pipeline-strip-text">
+            <span className="mono">{status.slug}</span>
+            {" · "}
+            <span className="pipeline-strip-progress" data-testid="pipeline-strip-progress">
+              {done}/{total} 단계
+            </span>
+            {" · "}
+            <span data-testid="pipeline-strip-next">{next}</span>
           </span>
-          {" · "}
-          <span data-testid="pipeline-strip-next">{next}</span>
-        </span>
-        <Icon name="chevron-down" />
-      </button>
-      <button
-        type="button"
-        className="pipeline-refresh btn-icon"
-        data-testid="pipeline-refresh"
-        title="다시 읽기"
-        aria-label="다시 읽기"
-        onClick={() => void refreshPipelineStatus()}
-      >
-        <Icon name="search" />
-      </button>
+          <Progress value={total ? (done / total) * 100 : 0} className="pipeline-strip-bar" />
+          <Icon name="chevron-down" />
+        </button>
+      </Tooltip>
+      <Tooltip content="다시 읽기">
+        <Button
+          variant="ghost"
+          className="pipeline-refresh btn-icon"
+          data-testid="pipeline-refresh"
+          aria-label="다시 읽기"
+          onClick={() => void refreshPipelineStatus()}
+        >
+          <Icon name="search" />
+        </Button>
+      </Tooltip>
     </div>
   );
 }
@@ -109,9 +119,9 @@ export function PipelinePanel() {
         <p className="prose" data-testid="pipeline-error">
           {error.message}
         </p>
-        <button type="button" className="action" data-testid="pipeline-refresh" onClick={() => void refreshPipelineStatus()}>
+        <Button type="button" variant="secondary" data-testid="pipeline-refresh" onClick={() => void refreshPipelineStatus()}>
           다시 읽기
-        </button>
+        </Button>
       </div>
     );
   }
@@ -119,7 +129,7 @@ export function PipelinePanel() {
     return (
       <EmptyState
         icon={<EmptyIconDoc />}
-        title="보고서 작업 폴더가 아닙니다"
+        title={"보고서 작업 폴더가 아닙니다"}
         body="이 문서 위쪽으로 PIPELINE.md가 없습니다. 보고서 워크스페이스를 열면 단계와 게이트가 여기에 펼쳐집니다."
         testId="pipeline-empty"
       />
@@ -130,15 +140,15 @@ export function PipelinePanel() {
     <div className="pipeline-panel" data-testid="pipeline-panel">
       <div className="pipeline-panel-head">
         <span className="mono">{status.slug}</span>
-        <button
-          type="button"
-          className="ghost btn-icon"
+        <Button
+          variant="ghost"
+          className="btn-icon"
           data-testid="pipeline-refresh"
           onClick={() => void refreshPipelineStatus()}
         >
           <Icon name="search" />
           다시 읽기
-        </button>
+        </Button>
       </div>
       <ul className="pipeline-stages" data-testid="pipeline-stages">
         {status.stages.map((row) => (
@@ -151,9 +161,9 @@ export function PipelinePanel() {
             </span>
             <Tag tone={gateTone(row.gate)}>{gateStateLabel(row.gate)}</Tag>
             {row.gate?.at ? (
-              <span className="pipeline-stage-at mono" title={row.gate.at}>
-                {row.gate.at}
-              </span>
+              <Tooltip content={row.gate.at}>
+                <span className="pipeline-stage-at mono">{row.gate.at}</span>
+              </Tooltip>
             ) : null}
           </li>
         ))}

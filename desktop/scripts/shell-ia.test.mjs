@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -158,8 +159,15 @@ test("setView('agent') and Ctrl+2 select the 에이전트 inspector tab without 
     assert.doesNotMatch(appSource, /viewswitch/);
     assert.doesNotMatch(appSource, /data-testid="view-agent"/);
     assert.match(contextSource, /data-testid=\{`inspector-tab-\$\{row\.id\}`\}/);
-    assert.match(contextSource, /tab === "review" \? <ReviewQueue/);
-    const agentHost = contextSource.slice(contextSource.lastIndexOf('tab === "agent"'));
+    assert.match(contextSource, /<TabsList className="inspector-tabs"/);
+    assert.match(contextSource, /value="review"/);
+    assert.match(contextSource, /<ReviewQueue \/>/);
+    const reviewHost = contextSource.slice(
+      contextSource.indexOf('value="review"'),
+      contextSource.indexOf('value="history"'),
+    );
+    assert.match(reviewHost, /<ReviewQueue/);
+    const agentHost = contextSource.slice(contextSource.lastIndexOf('value="agent"'));
     assert.doesNotMatch(agentHost, /<ReviewQueue/);
   } finally {
     setState({
@@ -243,6 +251,8 @@ test("the 자세히 popover lists every former verification chip", () => {
       if (id === "../verifyReport") {
         return { worstVerifyVerdict: () => null, verifyTargetLabel: () => "원본" };
       }
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -286,11 +296,14 @@ test("the 자세히 popover lists every former verification chip", () => {
 });
 
 test("ContextPanel tab strip is keyboard-labelled and keeps approvals in 검토", () => {
-  assert.match(contextSource, /role="tablist"/);
-  assert.match(contextSource, /ArrowRight/);
+  const tabsSource = readFileSync(new URL("../src/ui/Tabs.tsx", import.meta.url), "utf8");
+  assert.match(tabsSource, /role="tablist"/);
+  assert.match(tabsSource, /ArrowRight/);
   assert.match(contextSource, /inspector-tabs/);
-  assert.match(contextSource, /tab === "review" \? <ReviewQueue/);
-  const agentSlice = contextSource.slice(contextSource.lastIndexOf('tab === "agent"'));
+  assert.match(contextSource, /<TabsList className="inspector-tabs"/);
+  assert.match(contextSource, /value="review"/);
+  assert.match(contextSource, /<ReviewQueue \/>/);
+  const agentSlice = contextSource.slice(contextSource.lastIndexOf('value="agent"'));
   assert.doesNotMatch(agentSlice, /<ReviewQueue/);
   assert.match(agentSlice, /<Conversation/);
   assert.match(agentSlice, /<Composer/);

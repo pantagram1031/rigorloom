@@ -188,22 +188,33 @@ async function prepareState(cdp, state) {
   }
 
   if (state === "palette") {
-    await cdp.eval(`{
-      window.dispatchEvent(new KeyboardEvent("keydown", {
-        key: "k",
-        code: "KeyK",
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      }));
-      true;
-    }`);
+    const sendPalette = () =>
+      cdp.eval(`{
+        window.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "k",
+          code: "KeyK",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+        true;
+      }`);
+    await sendPalette();
+    const opened = await cdp.eval(`!!document.querySelector('[data-testid="command-palette"]')`);
+    if (!opened) await sendPalette();
     await waitFor(cdp, `!!document.querySelector('[data-testid="command-palette"]')`);
   }
 
   if (state === "popover") {
     await click(cdp, '[data-testid="verify-details-toggle"]');
-    await waitFor(cdp, `document.querySelector('[data-testid="verify-details-toggle"]')?.getAttribute("aria-expanded") === "true"`);
+    const opened = await cdp.eval(
+      `document.querySelector('[data-testid="verify-details-toggle"]')?.getAttribute("aria-expanded") === "true"`,
+    );
+    if (!opened) await click(cdp, '[data-testid="verify-details-toggle"]');
+    await waitFor(
+      cdp,
+      `document.querySelector('[data-testid="verify-details-toggle"]')?.getAttribute("aria-expanded") === "true" && !!document.querySelector('[data-testid="verify-details"]')`,
+    );
   }
 }
 
@@ -228,21 +239,28 @@ async function captureOne(cdp, width, height, theme, state) {
 }
 
 async function navigate(cdp) {
-  const already = await cdp.eval(`location.port === "5184"`).catch(() => false);
-  if (!already) {
-    const loaded = cdp.once("Page.loadEventFired");
+  const href = await cdp.eval(`location.href`).catch(() => "");
+  const onKit = typeof href === "string" && href.includes("kit=");
+  const onApp =
+    !onKit &&
+    typeof href === "string" &&
+    (href === URL || href.startsWith(`${URL}/`));
+  const loaded = cdp.once("Page.loadEventFired");
+  if (onApp) {
+    await cdp.send("Page.reload", { ignoreCache: false });
+  } else {
     const nav = await cdp.send("Page.navigate", { url: URL });
     if (nav.errorText) throw new Error(`navigate failed: ${nav.errorText}`);
-    await Promise.race([
-      loaded,
-      sleep(15000).then(() => {
-        throw new Error("timeout waiting for Page.loadEventFired");
-      }),
-    ]);
   }
+  await Promise.race([
+    loaded,
+    sleep(15000).then(() => {
+      throw new Error("timeout waiting for Page.loadEventFired");
+    }),
+  ]);
   await waitFor(
     cdp,
-    `location.port === "5184" && !!document.querySelector('[data-testid="splash"], [data-testid="welcome"], [data-testid="view-document"]')`,
+    `location.port === "5184" && !location.search.includes("kit=") && !!document.querySelector('[data-testid="splash"], [data-testid="welcome"], [data-testid="view-document"]')`,
     20000,
   );
 }

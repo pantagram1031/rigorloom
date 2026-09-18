@@ -7,6 +7,12 @@ import { formatBytes, humanCellAddress, quoteKo, shortHash, stampWhen } from "..
 import { showToast, useWorkspace } from "../store";
 import type { Receipt } from "../types";
 import { Tag } from "./Tag";
+import { Button } from "../ui/Button";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/Card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "../ui/Sheet";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/Table";
+import { Tooltip } from "../ui/Tooltip";
 
 function stepTitle(step: { kind: string; result?: unknown; subcommand?: string }): string {
   const result =
@@ -46,18 +52,14 @@ function copyValue(value: string): void {
 function CopyHash({ value, testId }: { value: string; testId?: string }) {
   return (
     <span className="hash-copy">
-      <span className="mono hash" title={value}>
-        {shortHash(value)}
-      </span>
-      <button
-        type="button"
-        className="linkish"
-        data-testid={testId}
-        title="복사"
-        onClick={() => copyValue(value)}
-      >
-        복사
-      </button>
+      <Tooltip content={value}>
+        <span className="mono hash">{shortHash(value)}</span>
+      </Tooltip>
+      <Tooltip content="복사">
+        <Button variant="link" data-testid={testId} onClick={() => copyValue(value)}>
+          복사
+        </Button>
+      </Tooltip>
     </span>
   );
 }
@@ -138,21 +140,19 @@ export function ReceiptPanel() {
   const receipt = useWorkspace((s) => (s.receiptOpen ? s.receipts[s.receiptOpen] : undefined));
   const error = useWorkspace((s) => s.receiptError);
 
-  if (!runId) return null;
-
   return (
-    <section className="sheet receipt" data-testid="receipt-panel" aria-label="영수증">
-      <header className="sheet-head">
-        <h3>영수증</h3>
-        <button
+    <Sheet open={!!runId} onOpenChange={(open) => { if (!open) openReceipt(null); }}>
+      <SheetContent className="sheet receipt" data-testid="receipt-panel" aria-label="영수증">
+      <SheetHeader className="sheet-head">
+        <SheetTitle>영수증</SheetTitle>
+        <SheetClose
           className="ghost"
           style={{ color: "var(--fg-muted)" }}
           data-testid="close-receipt"
-          onClick={() => openReceipt(null)}
         >
           닫기
-        </button>
-      </header>
+        </SheetClose>
+      </SheetHeader>
 
       <div className="sheet-body">
         {error ? (
@@ -166,9 +166,12 @@ export function ReceiptPanel() {
           <p className="empty">영수증을 읽는 중입니다.</p>
         ) : (
           <>
-            <div className="receipt-summary" data-testid="receipt-summary">
-              {summaryLine(receipt)}
-            </div>
+            <Card className="receipt-summary" data-testid="receipt-summary">
+              <CardHeader>
+                <CardTitle>요약</CardTitle>
+              </CardHeader>
+              <CardContent>{summaryLine(receipt)}</CardContent>
+            </Card>
             <p className="prose tiny" data-testid="receipt-honesty">
               이 영수증은 바이트와 오프라인 검사만 증명합니다. 페이지 그림은 증거가 아닙니다.
             </p>
@@ -217,34 +220,53 @@ export function ReceiptPanel() {
 
             <div className="receipt-block">
               <h4>파일</h4>
-              <dl className="kv">
-                <dt>원본</dt>
-                <dd>
-                  {receipt.source.name} · <CopyHash value={receipt.source.sha256} /> ·{" "}
-                  {formatBytes(receipt.source.bytes)}
-                </dd>
-                <dt>후보본</dt>
-                <dd>
-                  {receipt.candidate.path} · <CopyHash value={receipt.candidate.sha256} /> ·{" "}
-                  {formatBytes(receipt.candidate.bytes)}
-                </dd>
-              </dl>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>구분</TableHead>
+                    <TableHead>이름</TableHead>
+                    <TableHead>해시</TableHead>
+                    <TableHead>크기</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell>원본</TableCell>
+                    <TableCell>{receipt.source.name}</TableCell>
+                    <TableCell>
+                      <CopyHash value={receipt.source.sha256} />
+                    </TableCell>
+                    <TableCell>{formatBytes(receipt.source.bytes)}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>후보본</TableCell>
+                    <TableCell>{receipt.candidate.path}</TableCell>
+                    <TableCell>
+                      <CopyHash value={receipt.candidate.sha256} />
+                    </TableCell>
+                    <TableCell>{formatBytes(receipt.candidate.bytes)}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
             </div>
 
             <Checks receipt={receipt} />
 
-            <details className="disclosure" data-testid="receipt-raw">
-              <summary>기술 정보</summary>
-              <p className="mono tiny">{runId}</p>
+            <Collapsible className="disclosure" data-testid="receipt-raw">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny">{runId}</p>
               <p className="mono tiny">{receipt.backend} · {receipt.planHash}</p>
               <p className="prose tiny">
                 <Tag tone="none">{receipt.evidence.class}</Tag> {receipt.evidence.note}
               </p>
               <pre>{JSON.stringify(receipt, null, 2)}</pre>
-            </details>
+      </CollapsibleContent>
+      </Collapsible>
           </>
         )}
       </div>
-    </section>
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -142,13 +142,15 @@ export const TabsTrigger = forwardRef<HTMLButtonElement, TabsTriggerProps>(funct
 
 export type TabsContentProps = HTMLAttributes<HTMLDivElement> & {
   value: string;
+  forceMount?: boolean;
 };
 
-export function TabsContent({ value, className, children, ...rest }: TabsContentProps) {
+export function TabsContent({ value, className, children, forceMount, ...rest }: TabsContentProps) {
   const ctx = useTabs();
   const active = ctx.value === value;
   const panelId = `${ctx.baseId}-panel-${value}`;
   const tabId = `${ctx.baseId}-tab-${value}`;
+  if (!active && !forceMount) return null;
   return (
     <div
       role="tabpanel"
@@ -160,7 +162,7 @@ export function TabsContent({ value, className, children, ...rest }: TabsContent
       tabIndex={0}
       {...rest}
     >
-      {active ? children : null}
+      {children}
     </div>
   );
 }

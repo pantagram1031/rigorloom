@@ -16,6 +16,9 @@ import type { Session } from "../types";
 import { Icon } from "./Icon";
 import { EmptyIconDoc, EmptyState } from "./EmptyState";
 import { TaskPacks } from "./TaskPacks";
+import { Button } from "../ui/Button";
+import { Item } from "../ui/Item";
+import { Tooltip } from "../ui/Tooltip";
 
 export function SessionList({
   onSelect,
@@ -36,7 +39,7 @@ export function SessionList({
         {sessions.length === 0 ? (
           <EmptyState
             icon={<EmptyIconDoc />}
-            title="연 문서가 없습니다"
+            title={"연 문서가 없습니다"}
             body="문서를 열면 이 목록에 나타납니다."
           />
         ) : (
@@ -48,30 +51,38 @@ export function SessionList({
               data-testid={`session-${s.sessionId}`}
               onClick={() => onSelect(s.sessionId)}
             >
-              <span className="primary">{s.source.name}</span>
-              <span className="secondary">
-                {s.source.sha256.slice(0, 12)} · {(s.source.bytes / 1024).toFixed(1)} KiB
-              </span>
-              <span className="secondary">{s.openedUtc}</span>
+              <Item
+                title={<span className="primary">{s.source.name}</span>}
+                description={
+                  <>
+                    <span className="secondary">
+                      {s.source.sha256.slice(0, 12)} · {(s.source.bytes / 1024).toFixed(1)} KiB
+                    </span>
+                    <span className="secondary">{s.openedUtc}</span>
+                  </>
+                }
+                active={s.sessionId === active}
+              />
             </button>
           ))
         )}
       </div>
       <div className="section">
-        <button className="action primary" onClick={onOpen} style={{ width: "100%" }}>
+        <Button variant="primary" onClick={onOpen} style={{ width: "100%" }}>
           문서 열기
-        </button>
-        <button
-          type="button"
-          className="action btn-icon"
-          data-testid="bind-form"
-          title="빈 양식이나 form_profile.json을 연결해 엽니다"
-          onClick={() => void bindFormAndOpen()}
-          style={{ width: "100%", marginTop: "var(--s2)" }}
-        >
-          <Icon name="link" />
-          양식 연결
-        </button>
+        </Button>
+        <Tooltip content="빈 양식이나 form_profile.json을 연결해 엽니다">
+          <Button
+            variant="secondary"
+            className="btn-icon"
+            data-testid="bind-form"
+            onClick={() => void bindFormAndOpen()}
+            style={{ width: "100%", marginTop: "var(--s2)" }}
+          >
+            <Icon name="link" />
+            양식 연결
+          </Button>
+        </Tooltip>
       </div>
       <TaskPacks />
       <div className="section">

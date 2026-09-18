@@ -31,6 +31,8 @@ export type TooltipProps = {
   defaultOpen?: boolean;
   disablePortal?: boolean;
   className?: string;
+  anchorClassName?: string;
+  anchorStyle?: CSSProperties;
 };
 
 /**
@@ -45,6 +47,8 @@ export function Tooltip({
   defaultOpen = false,
   disablePortal = false,
   className,
+  anchorClassName,
+  anchorStyle,
 }: TooltipProps) {
   const id = useId();
   const triggerRef = useRef<HTMLSpanElement | null>(null);
@@ -86,6 +90,7 @@ export function Tooltip({
   const child = children;
   const trigger = cloneElement(child, {
     "aria-describedby": open ? id : undefined,
+    "data-tip": typeof content === "string" ? content : undefined,
     onMouseEnter: (e: MouseEvent) => {
       child.props.onMouseEnter?.(e);
       window.clearTimeout(hoverTimer.current);
@@ -105,14 +110,14 @@ export function Tooltip({
       child.props.onBlur?.(e);
       setOpen(false);
     },
-  } as Partial<TriggerProps> & { "aria-describedby"?: string });
+  } as Partial<TriggerProps> & { "aria-describedby"?: string; "data-tip"?: string });
 
   const style: CSSProperties | undefined = disablePortal
     ? undefined
     : { position: "fixed", top: coords.top, left: coords.left };
 
   return (
-    <span className="ui-tooltip-anchor" ref={triggerRef}>
+    <span className={cn("ui-tooltip-anchor", anchorClassName)} style={anchorStyle} ref={triggerRef}>
       {trigger}
       {open ? (
         <Portal disabled={disablePortal}>

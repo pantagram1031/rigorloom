@@ -24,6 +24,9 @@ import { TextView } from "../components/TextView";
 import { VerificationBar } from "../components/VerificationBar";
 import { VerifyPanel } from "../components/VerifyResults";
 import { Home } from "../components/Welcome";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Button } from "../ui/Button";
+import { Tooltip } from "../ui/Tooltip";
 import { focusDocumentSurface } from "../focus";
 import {
   activeCandidates,
@@ -85,22 +88,23 @@ export function DocumentView() {
         >
           {collapsed ? (
             <div className="icon-rail" data-testid="left-rail-collapsed">
-              <button
-                type="button"
-                className="icon-rail-btn"
-                data-testid="toggle-left-rail"
-                title={`${railTitle} (Ctrl+B)`}
-                aria-label="구조 레일 펼치기"
-                aria-pressed="true"
-                onClick={() => toggleLeftRail()}
-              >
-                <Icon name="list" />
-                {inspect ? (
-                  <span className="icon-rail-count" aria-hidden="true">
-                    {paraCount}
-                  </span>
-                ) : null}
-              </button>
+              <Tooltip content={`${railTitle} (Ctrl+B)`}>
+                <Button
+                  variant="ghost"
+                  className="icon-rail-btn"
+                  data-testid="toggle-left-rail"
+                  aria-label="구조 레일 펼치기"
+                  aria-pressed="true"
+                  onClick={() => toggleLeftRail()}
+                >
+                  <Icon name="list" />
+                  {inspect ? (
+                    <span className="icon-rail-count" aria-hidden="true">
+                      {paraCount}
+                    </span>
+                  ) : null}
+                </Button>
+              </Tooltip>
             </div>
           ) : (
             <>
@@ -109,16 +113,17 @@ export function DocumentView() {
                 <span className="count">
                   {inspect ? `${paraCount}문단 · ${tableCount}표` : ""}
                 </span>
-                <button
-                  type="button"
-                  className="ghost rail-toggle"
-                  data-testid="toggle-left-rail-panel"
-                  title="구조 레일 접기 (Ctrl+B)"
-                  aria-label="구조 레일 접기"
-                  onClick={() => toggleLeftRail()}
-                >
-                  <Icon name="chevron-left" />
-                </button>
+                <Tooltip content="구조 레일 접기 (Ctrl+B)">
+                  <Button
+                    variant="ghost"
+                    className="rail-toggle"
+                    data-testid="toggle-left-rail-panel"
+                    aria-label="구조 레일 접기"
+                    onClick={() => toggleLeftRail()}
+                  >
+                    <Icon name="chevron-left" />
+                  </Button>
+                </Tooltip>
               </div>
               <div className="panel-body" data-testid="left-rail-scroll">
                 {inspectPhase === "starting" ? (
@@ -134,18 +139,22 @@ export function DocumentView() {
                   <p className="empty">문서를 열면 구역, 표, 입력 칸이 여기에 펼쳐집니다.</p>
                 )}
               </div>
-              <details className="work-disclosure" data-testid="pipeline-disclosure">
-                <summary>파이프라인</summary>
-                <PipelinePanel />
-              </details>
-              <details className="work-disclosure" data-testid="work-packs-disclosure">
-                <summary>문서 / 작업 팩</summary>
-                <SessionList
+              <Collapsible className="work-disclosure" data-testid="pipeline-disclosure">
+        <CollapsibleTrigger>파이프라인</CollapsibleTrigger>
+        <CollapsibleContent>
+<PipelinePanel />
+      </CollapsibleContent>
+      </Collapsible>
+              <Collapsible className="work-disclosure" data-testid="work-packs-disclosure">
+        <CollapsibleTrigger>문서 / 작업 팩</CollapsibleTrigger>
+        <CollapsibleContent>
+<SessionList
                   embedded
                   onSelect={(id) => void selectSession(id)}
                   onOpen={() => void openViaDialog()}
                 />
-              </details>
+      </CollapsibleContent>
+      </Collapsible>
             </>
           )}
         </nav>

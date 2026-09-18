@@ -11,6 +11,9 @@
  */
 import { locateSelection, setState, useWorkspace } from "../store";
 import { Tag } from "./Tag";
+import { Button } from "../ui/Button";
+import { Item } from "../ui/Item";
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "../ui/Sheet";
 
 export function Findings() {
   const open = useWorkspace((s) => s.sheetOpen);
@@ -24,9 +27,10 @@ export function Findings() {
   const warn = findings.filter((f) => f.severity === "warn").length;
 
   return (
-    <section className="sheet" data-testid="findings-sheet" aria-label="검사 결과">
-      <header className="sheet-head">
-        <h3>검사 결과</h3>
+    <Sheet open={open} onOpenChange={(next) => setState({ sheetOpen: next })}>
+      <SheetContent className="sheet" data-testid="findings-sheet" aria-label="검사 결과">
+      <SheetHeader className="sheet-head">
+        <SheetTitle>검사 결과</SheetTitle>
         {phase === "starting" ? (
           <Tag tone="none">읽는 중</Tag>
         ) : phase === "failed" ? (
@@ -41,15 +45,14 @@ export function Findings() {
           </>
         )}
         <span className="count">{checkedAt ?? ""}</span>
-        <button
+        <SheetClose
           className="ghost"
           style={{ color: "var(--fg-muted)" }}
-          onClick={() => setState({ sheetOpen: false })}
           data-testid="close-findings"
         >
           닫기
-        </button>
-      </header>
+        </SheetClose>
+      </SheetHeader>
 
       <div className="sheet-body">
         {phase === "starting" ? (
@@ -68,21 +71,26 @@ export function Findings() {
           </p>
         ) : (
           findings.map((f, i) => (
-            <button
+            <Button
               key={`${f.code}-${f.where}-${i}`}
+              variant="ghost"
               className="finding"
               data-testid={`finding-${i}`}
               disabled={!f.selection}
               onClick={() => f.selection && locateSelection(f.selection)}
             >
-              <span className="where">{f.where}</span>
-              <span className="what">{f.message}</span>
-              <Tag
-                tone={f.severity === "hard" ? "bad" : f.severity === "warn" ? "warn" : "ok"}
-              >
-                {f.severity === "hard" ? "막힘" : f.severity === "warn" ? "주의" : "확인"}
-              </Tag>
-            </button>
+              <Item
+                title={<span className="where">{f.where}</span>}
+                description={<span className="what">{f.message}</span>}
+                trailing={
+                  <Tag
+                    tone={f.severity === "hard" ? "bad" : f.severity === "warn" ? "warn" : "ok"}
+                  >
+                    {f.severity === "hard" ? "막힘" : f.severity === "warn" ? "주의" : "확인"}
+                  </Tag>
+                }
+              />
+            </Button>
           ))
         )}
         <p className="empty">
@@ -90,6 +98,7 @@ export function Findings() {
           렌더 증명이나 후보본 적용 시의 제출 검사 결과를 뜻하지 않습니다.
         </p>
       </div>
-    </section>
+      </SheetContent>
+    </Sheet>
   );
 }

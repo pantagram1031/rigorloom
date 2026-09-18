@@ -4921,7 +4921,16 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 }
 .kit-layers {
   align-items: flex-start;
-  min-height: 140px;
+  min-height: 220px;
+  position: relative;
+  overflow: visible;
+}
+.kit-layers .ui-tooltip,
+.kit-layers .ui-popover-content,
+.kit-layers .ui-menu-content {
+  position: relative;
+  top: auto;
+  left: auto;
 }
 .kit-previews {
   display: grid;
@@ -4952,6 +4961,8 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 .kit-toasts {
   position: static;
   align-items: stretch;
+  width: min(360px, 100%);
+  max-width: 360px;
 }
 
 .ui-btn {
@@ -5187,6 +5198,21 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 .ui-menu {
   position: relative;
   display: inline-flex;
+}
+.ov.ui-tooltip-anchor {
+  position: absolute;
+  display: block;
+}
+.ov-hit {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: inherit;
 }
 .ui-tooltip,
 .ui-popover-content,

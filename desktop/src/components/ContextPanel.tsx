@@ -28,6 +28,11 @@ import { History } from "./History";
 import { ApproveAllButton, ReviewQueue } from "./ReviewQueue";
 import { CLASSIFICATION_LABEL, Tag } from "./Tag";
 import { Icon } from "./Icon";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/Tabs";
+import { Tooltip } from "../ui/Tooltip";
 
 function Fact({ k, v }: { k: string; v: React.ReactNode }) {
   return (
@@ -94,10 +99,14 @@ function RegionSourceSection() {
         <Fact
           k="주소"
           v={
-            <span className="mono" data-testid="region-source-address" title={
-              source.address.atPara !== undefined ? `at_para ${source.address.atPara}` : undefined
-            }>
-              {formatRegionAddress(source.address)}
+            <span className="mono" data-testid="region-source-address">
+              {source.address.atPara !== undefined ? (
+                <Tooltip content={`at_para ${source.address.atPara}`}>
+                  <span>{formatRegionAddress(source.address)}</span>
+                </Tooltip>
+              ) : (
+                formatRegionAddress(source.address)
+              )}
             </span>
           }
         />
@@ -124,10 +133,12 @@ function RegionSourceSection() {
             {text || "(빈 자리)"}
           </p>
           {source.region.runs && source.region.runs.length > 0 ? (
-            <details className="disclosure">
-              <summary>기술 정보</summary>
-              <RegionRuns runs={source.region.runs} />
-            </details>
+            <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<RegionRuns runs={source.region.runs} />
+      </CollapsibleContent>
+      </Collapsible>
           ) : null}
         </div>
       ) : (
@@ -136,10 +147,12 @@ function RegionSourceSection() {
             {text || "(빈 자리)"}
           </p>
           {source.region.runs && source.region.runs.length > 0 ? (
-            <details className="disclosure">
-              <summary>기술 정보</summary>
-              <RegionRuns runs={source.region.runs} />
-            </details>
+            <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<RegionRuns runs={source.region.runs} />
+      </CollapsibleContent>
+      </Collapsible>
           ) : null}
         </div>
       )}
@@ -177,19 +190,21 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
           {stateLine}
         </p>
         {seat ? (
-          <button
-            className="action primary stack-s3"
+          <Button
+            variant="primary"
+            className="stack-s3"
             data-testid="edit-seat"
             onClick={() => beginEdit(sel.table, sel.row, sel.col)}
           >
             값 넣기
-          </button>
+          </Button>
         ) : (
           <p className="prose">이 칸은 값을 넣는 자리가 아닙니다.</p>
         )}
-        <details className="disclosure">
-          <summary>기술 정보</summary>
-          <dl className="kv">
+        <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<dl className="kv">
             <Fact
               k="분류"
               v={
@@ -230,7 +245,8 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
               </>
             ) : null}
           </dl>
-        </details>
+      </CollapsibleContent>
+      </Collapsible>
       </div>
     </>
   );
@@ -248,12 +264,14 @@ function ParagraphDetail({ inspect, atPara }: { inspect: InspectResult; atPara: 
           <Fact k="구역" v={para.section} />
           {removal ? <Fact k="삭제 후보" v={`확신도 ${removal.confidence}`} /> : null}
         </dl>
-        <details className="disclosure">
-          <summary>기술 정보</summary>
-          <dl className="kv">
+        <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<dl className="kv">
             <Fact k="문단 번호" v={String(para.para_idx)} />
           </dl>
-        </details>
+      </CollapsibleContent>
+      </Collapsible>
       </div>
       <div className="section">
         <h3>본문</h3>
@@ -308,12 +326,14 @@ function SelectionPane({ inspect }: { inspect: InspectResult | null }) {
           )}
         />
       </dl>
-      <details className="disclosure">
-        <summary>기술 정보</summary>
-        <dl className="kv">
+      <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<dl className="kv">
           <Fact k="table" v={machineTableIndex(selection.table)} />
         </dl>
-      </details>
+      </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
@@ -347,94 +367,56 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
     }
   }, [tab, candidateCount]);
 
-  function onTabListKey(e: React.KeyboardEvent<HTMLDivElement>) {
-    const idx = TABS.findIndex((row) => row.id === tab);
-    if (idx < 0) return;
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-      e.preventDefault();
-      if (typeof selectInspectorTab === "function") {
-        selectInspectorTab(TABS[(idx + 1) % TABS.length]!.id);
-      }
-    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-      e.preventDefault();
-      if (typeof selectInspectorTab === "function") {
-        selectInspectorTab(TABS[(idx - 1 + TABS.length) % TABS.length]!.id);
-      }
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      if (typeof selectInspectorTab === "function") selectInspectorTab(TABS[0]!.id);
-    } else if (e.key === "End") {
-      e.preventDefault();
-      if (typeof selectInspectorTab === "function") {
-        selectInspectorTab(TABS[TABS.length - 1]!.id);
-      }
-    }
-  }
-
   return (
     <aside className="panel inspector" aria-label="패널" data-testid="context-panel">
-      <div className="inspector-chrome">
-      <div
-        className="inspector-tabs"
-        role="tablist"
-        aria-label="패널"
-        data-testid="inspector-tabs"
-        onKeyDown={onTabListKey}
+      <Tabs
+        className="inspector-chrome"
+        value={tab}
+        defaultValue="selection"
+        onValueChange={(v) => {
+          if (typeof selectInspectorTab === "function") selectInspectorTab(v as InspectorTab);
+        }}
       >
+      <TabsList className="inspector-tabs" aria-label="패널" data-testid="inspector-tabs">
         {TABS.map((row) => {
-          const selected = tab === row.id;
           let badge: React.ReactNode = null;
           if (row.id === "review") {
             badge = (
               <>
                 {reviewCount > 0 ? (
-                  <span className="tab-badge" data-testid="badge-review">
+                  <Badge variant="secondary" className="tab-badge" data-testid="badge-review">
                     {reviewCount}
-                  </span>
+                  </Badge>
                 ) : null}
                 {reviewPending ? (
-                  <span
-                    className="tab-badge-dot"
-                    data-testid="badge-review-pending"
-                    title="승인 대기"
-                  />
+                  <Tooltip content="승인 대기">
+                    <span className="tab-badge-dot" data-testid="badge-review-pending" />
+                  </Tooltip>
                 ) : null}
               </>
             );
           } else if (row.id === "history" && historyCount > 0) {
             badge = (
-              <span className="tab-badge" data-testid="badge-history">
+              <Badge variant="secondary" className="tab-badge" data-testid="badge-history">
                 {historyCount}
-              </span>
+              </Badge>
             );
           } else if (row.id === "agent" && agentUnread > 0) {
             badge = (
-              <span className="tab-badge" data-testid="badge-agent">
+              <Badge variant="secondary" className="tab-badge" data-testid="badge-agent">
                 {agentUnread}
-              </span>
+              </Badge>
             );
           }
           return (
-            <button
-              key={row.id}
-              type="button"
-              role="tab"
-              id={`inspector-tab-${row.id}`}
-              aria-selected={selected}
-              aria-controls={`inspector-panel-${row.id}`}
-              tabIndex={selected ? 0 : -1}
-              data-testid={`inspector-tab-${row.id}`}
-              onClick={() => {
-                if (typeof selectInspectorTab === "function") selectInspectorTab(row.id);
-              }}
-            >
+            <TabsTrigger key={row.id} value={row.id} data-testid={`inspector-tab-${row.id}`}>
               <Icon name={row.icon} />
               {row.label}
               {badge}
-            </button>
+            </TabsTrigger>
           );
         })}
-      </div>
+      </TabsList>
       <div className="panel-head inspector-head">
         <span className="panel-title" data-testid={tab === "history" ? "history-heading" : undefined}>
           {tab === "selection"
@@ -457,43 +439,57 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
           </span>
         ) : null}
       </div>
-      </div>
       {tab === "review" && needsBoundFormHint(inspect) ? (
         <div className="form-bind-hint" data-testid="form-bind-hint">
           <p>
             이 문서는 완성본으로 보입니다. 양식을 연결하면 검사 판정이 정확해집니다
           </p>
-          <button
-            type="button"
-            className="ghost btn-icon"
+          <Button
+            variant="ghost"
+            className="btn-icon"
             data-testid="review-bind-form"
             onClick={() => void bindFormToActiveDocument()}
           >
             <Icon name="link" />
             양식 연결
-          </button>
+          </Button>
         </div>
       ) : null}
-      <div
-        key={tab}
-        className={`panel-body inspector-body inspector-pane${tab === "agent" ? " is-agent" : ""}`}
-        role="tabpanel"
-        id={`inspector-panel-${tab}`}
-        aria-labelledby={`inspector-tab-${tab}`}
+      <TabsContent
+        value="selection"
+        className="panel-body inspector-body inspector-pane"
         data-testid="inspector-panel"
-        data-tab={tab}
+        data-tab="selection"
       >
-        {tab === "selection" ? <SelectionPane inspect={inspect} /> : null}
-        {tab === "review" ? <ReviewQueue /> : null}
-        {tab === "history" ? <History /> : null}
-        {tab === "agent" ? (
-          <>
-            <DocumentContext />
-            <Conversation />
-            <Composer />
-          </>
-        ) : null}
-      </div>
+        <SelectionPane inspect={inspect} />
+      </TabsContent>
+      <TabsContent
+        value="review"
+        className="panel-body inspector-body inspector-pane"
+        data-testid="inspector-panel"
+        data-tab="review"
+      >
+        <ReviewQueue />
+      </TabsContent>
+      <TabsContent
+        value="history"
+        className="panel-body inspector-body inspector-pane"
+        data-testid="inspector-panel"
+        data-tab="history"
+      >
+        <History />
+      </TabsContent>
+      <TabsContent
+        value="agent"
+        className="panel-body inspector-body inspector-pane is-agent"
+        data-testid="inspector-panel"
+        data-tab="agent"
+      >
+        <DocumentContext />
+        <Conversation />
+        <Composer />
+      </TabsContent>
+      </Tabs>
     </aside>
   );
 }

@@ -32,9 +32,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       data-variant={variant}
       data-size={size}
       data-state={loading ? "loading" : "idle"}
+      {...rest}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
-      {...rest}
     >
       {loading ? <span className="ui-btn-spin" aria-hidden="true" /> : null}
       <span className="ui-btn-label">{children}</span>

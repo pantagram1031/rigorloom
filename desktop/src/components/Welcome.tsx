@@ -8,6 +8,12 @@ import { dismissFirstRunHint, setState, showToast, useWorkspace } from "../store
 import type { Recent } from "../types";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
+import { Alert } from "../ui/Alert";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { Card, CardContent } from "../ui/Card";
+import { Item } from "../ui/Item";
+import { Tooltip } from "../ui/Tooltip";
 
 /** Repo-relative CLI walkthrough. No opener/shell plugin is wired. */
 export const CLI_DOCS_PATH = "docs/QUICKSTART.md";
@@ -58,58 +64,71 @@ function RecentRow({ recent }: { recent: Recent }) {
   const folder = folderOf(recent.path);
   const time = relativeOpened(recent.openedUtc);
   const backend = recentBackend(recent);
-  const body = (
-    <>
-      <span className="name">
-        <Icon name="open" />
-        {recent.name}
-      </span>
-      {folder ? (
-        <span className="folder" title={folder} dir="rtl">
-          <span>{folder}</span>
-        </span>
-      ) : null}
-      <span className="meta">
-        <span className="latin-caps">{backend}</span>
-        {recent.formBinding ? (
-          <span className="form-tag" data-testid="recent-form-tag" title={recent.formBinding.path}>
+  const trailing = (
+    <span className="meta">
+      <Badge variant="outline" className="latin-caps">
+        {backend}
+      </Badge>
+      {recent.formBinding ? (
+        <Tooltip content={recent.formBinding.path}>
+          <span className="form-tag" data-testid="recent-form-tag">
             양식
           </span>
-        ) : null}
-        {time ? <span className="when">{time}</span> : null}
-        {recent.missing ? (
-          <span className="missing-tag" data-testid="recent-missing">
-            찾을 수 없음
-          </span>
-        ) : null}
-      </span>
-    </>
+        </Tooltip>
+      ) : null}
+      {time ? <span className="when">{time}</span> : null}
+      {recent.missing ? (
+        <span className="missing-tag" data-testid="recent-missing">
+          찾을 수 없음
+        </span>
+      ) : null}
+    </span>
   );
+  const description = folder ? (
+    <Tooltip content={folder}>
+      <span className="folder" dir="rtl">
+        <span>{folder}</span>
+      </span>
+    </Tooltip>
+  ) : undefined;
 
   if (recent.missing) {
     return (
-      <div className="recent missing" data-testid="recent-row" title={recent.path} aria-disabled="true">
-        {body}
-      </div>
+      <Tooltip content={recent.path}>
+        <div className="recent missing" data-testid="recent-row" aria-disabled="true">
+          <Item
+            icon={<Icon name="open" />}
+            title={<span className="name">{recent.name}</span>}
+            description={description}
+            trailing={trailing}
+          />
+        </div>
+      </Tooltip>
     );
   }
 
   return (
-    <button
-      type="button"
-      className="recent"
-      data-testid="recent-row"
-      title={recent.path}
-      onClick={() => void openPath(recent.path, recent.formBinding)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          void openPath(recent.path, recent.formBinding);
-        }
-      }}
-    >
-      {body}
-    </button>
+    <Tooltip content={recent.path}>
+      <button
+        type="button"
+        className="recent"
+        data-testid="recent-row"
+        onClick={() => void openPath(recent.path, recent.formBinding)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void openPath(recent.path, recent.formBinding);
+          }
+        }}
+      >
+        <Item
+          icon={<Icon name="open" />}
+          title={<span className="name">{recent.name}</span>}
+          description={description}
+          trailing={trailing}
+        />
+      </button>
+    </Tooltip>
   );
 }
 
@@ -132,50 +151,54 @@ export function Home() {
         </div>
 
         {!firstRunHintDismissed ? (
-          <div className="first-run" data-testid="first-run-hint">
+          <Alert className="first-run" data-testid="first-run-hint" title={"처음이신가요"}>
             <ol>
               <li>열기</li>
               <li>검토</li>
               <li>승인</li>
             </ol>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               className="first-run-dismiss"
               data-testid="first-run-dismiss"
               onClick={() => dismissFirstRunHint()}
             >
               닫기
-            </button>
-          </div>
+            </Button>
+          </Alert>
         ) : null}
 
         <div className="home-open-row">
-          <button
-            className="action primary big btn-icon"
+          <Button
+            variant="primary"
+            className="big btn-icon"
             data-testid="home-open"
             onClick={() => void openViaDialog()}
           >
             <Icon name="open" />
             문서 열기
-          </button>
-          <button
-            type="button"
-            className="action big btn-icon"
-            data-testid="home-bind-form"
-            title="빈 양식이나 form_profile.json을 연결해 엽니다"
-            onClick={() => void bindFormAndOpen()}
-          >
-            <Icon name="link" />
-            양식 연결
-          </button>
+          </Button>
+          <Tooltip content="빈 양식이나 form_profile.json을 연결해 엽니다">
+            <Button
+              variant="secondary"
+              className="big btn-icon"
+              data-testid="home-bind-form"
+              onClick={() => void bindFormAndOpen()}
+            >
+              <Icon name="link" />
+              양식 연결
+            </Button>
+          </Tooltip>
         </div>
 
-        <div
+        <Card
           className={`drop${dragOver ? " over" : ""}`}
           data-testid="home-drop"
         >
-          <p className="hint">파일을 끌어다 놓으세요</p>
-        </div>
+          <CardContent>
+            <p className="hint">파일을 끌어다 놓으세요</p>
+          </CardContent>
+        </Card>
 
         {error ? (
           <p className="prose danger" style={{ textAlign: "center" }}>
@@ -199,31 +222,32 @@ export function Home() {
         <div className="home-links">
           <span className="home-cli-docs" data-testid="home-cli-docs">
             <span className="home-link">CLI 문서</span>
-            <code className="mono" title={CLI_DOCS_URL}>
-              {CLI_DOCS_PATH}
-            </code>
-            <button
-              type="button"
-              className="home-link"
-              data-testid="home-cli-docs-copy"
-              title={`${CLI_DOCS_PATH} 복사`}
-              onClick={() => copyCliDocsPath()}
-            >
-              복사
-            </button>
+            <Tooltip content={CLI_DOCS_URL}>
+              <code className="mono">{CLI_DOCS_PATH}</code>
+            </Tooltip>
+            <Tooltip content={`${CLI_DOCS_PATH} 복사`}>
+              <Button
+                variant="link"
+                className="home-link"
+                data-testid="home-cli-docs-copy"
+                onClick={() => copyCliDocsPath()}
+              >
+                복사
+              </Button>
+            </Tooltip>
           </span>
           <span className="home-link-sep" aria-hidden="true">
             /
           </span>
-          <button
-            type="button"
+          <Button
+            variant="link"
             className="home-link btn-icon"
             data-testid="home-settings"
             onClick={() => setState({ settingsOpen: true })}
           >
             <Icon name="settings" />
             설정
-          </button>
+          </Button>
         </div>
       </div>
     </div>

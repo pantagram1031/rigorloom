@@ -9,6 +9,8 @@ export type CommandItemDef = {
   label: string;
   shortcut?: string;
   disabled?: boolean;
+  testId?: string;
+  recentPath?: string;
 };
 
 function filterItems(items: CommandItemDef[], query: string): CommandItemDef[] {
@@ -29,6 +31,8 @@ export function Command({
   className,
   defaultValue = "",
   autoFocus = false,
+  queryTestId,
+  itemTestId,
 }: {
   items: CommandItemDef[];
   onSelect?: (id: string) => void;
@@ -37,6 +41,8 @@ export function Command({
   className?: string;
   defaultValue?: string;
   autoFocus?: boolean;
+  queryTestId?: string;
+  itemTestId?: (id: string) => string;
 }) {
   const [query, setQuery] = useState(defaultValue);
   const [active, setActive] = useState(0);
@@ -67,6 +73,7 @@ export function Command({
       <input
         ref={input}
         className="ui-cmd-query"
+        data-testid={queryTestId}
         value={query}
         placeholder={placeholder}
         aria-label={placeholder}
@@ -84,6 +91,8 @@ export function Command({
               aria-selected={index === active}
               data-state={index === active ? "active" : "idle"}
               className="ui-cmd-item"
+              data-testid={item.testId ?? itemTestId?.(item.id) ?? `palette-item-${item.id}`}
+              data-command={item.id}
               disabled={item.disabled}
               onMouseEnter={() => setActive(index)}
               onClick={() => onSelect?.(item.id)}

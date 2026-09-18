@@ -34,6 +34,16 @@ import * as rt from "../runtime";
 import { activeStoreKey, setColorTheme, setState, useWorkspace } from "../store";
 import type { ProviderId, ProviderSettings } from "../types";
 import { Tag } from "./Tag";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
+import { RadioGroup, RadioGroupItem } from "../ui/RadioGroup";
+import { Select } from "../ui/Select";
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from "../ui/Sheet";
+import { Table, TableBody, TableCell, TableHead, TableRow } from "../ui/Table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/Tabs";
+import { ToggleGroup, ToggleGroupItem } from "../ui/ToggleGroup";
+import { Tooltip } from "../ui/Tooltip";
 
 const PROVIDERS: Array<{ id: ProviderId; label: string; blurb: string; note: string }> = [
   {
@@ -146,8 +156,6 @@ export function Settings() {
       .catch(() => setConfig(null));
   }, [open, draft.provider, credential?.state]);
 
-  if (!open) return null;
-
   const key = activeStoreKey(draft);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
 
@@ -157,55 +165,52 @@ export function Settings() {
   }
 
   return (
-    <div className="sheet settings" data-testid="settings">
-      <div className="sheet-head">
-        <h2>설정</h2>
-        <span className="spacer" />
-        <button
-          className="settings-close"
-          data-testid="settings-close"
-          onClick={() => setState({ settingsOpen: false })}
-        >
-          닫기 (Esc)
-        </button>
-      </div>
+    <Sheet open={open} onOpenChange={(next) => setState({ settingsOpen: next })}>
+      <SheetContent className="sheet settings" data-testid="settings">
+        <SheetHeader className="sheet-head">
+          <SheetTitle>설정</SheetTitle>
+          <span className="spacer" />
+          <SheetClose className="settings-close" data-testid="settings-close">
+            닫기 (Esc)
+          </SheetClose>
+        </SheetHeader>
 
       <div className="sheet-body">
-        <section className="section" data-testid="settings-general">
+        <Tabs defaultValue="general">
+          <TabsList>
+            <TabsTrigger value="general">일반</TabsTrigger>
+            <TabsTrigger value="agent">에이전트</TabsTrigger>
+          </TabsList>
+        <TabsContent value="general" forceMount data-testid="settings-general">
           <h3>일반</h3>
           <p className="prose tiny">테마</p>
-          <div className="modeswitch theme-switch" role="radiogroup" aria-label="테마">
-            {(
-              [
-                ["auto", "자동"],
-                ["light", "밝게"],
-                ["dark", "어둡게"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                role="radio"
-                aria-checked={colorTheme === id}
-                aria-pressed={colorTheme === id}
-                data-testid={`theme-${id}`}
-                onClick={() => setColorTheme(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <ToggleGroup
+            className="modeswitch theme-switch"
+            value={colorTheme}
+            onValueChange={(v) => setColorTheme(v as "auto" | "light" | "dark")}
+            aria-label="테마"
+          >
+            <ToggleGroupItem value="auto" data-testid="theme-auto">
+              자동
+            </ToggleGroupItem>
+            <ToggleGroupItem value="light" data-testid="theme-light">
+              밝게
+            </ToggleGroupItem>
+            <ToggleGroupItem value="dark" data-testid="theme-dark">
+              어둡게
+            </ToggleGroupItem>
+          </ToggleGroup>
           <label className="field">
             <span>기본 작업 폴더</span>
-            <input
+            <Input
               data-testid="settings-workspace-folder"
               value={folder}
               readOnly
             />
           </label>
           <div className="row-actions">
-            <button
-              className="action"
+            <Button
+              variant="secondary"
               data-testid="settings-pick-folder"
               onClick={() => {
                 void pickWorkspaceFolder().then((next) => {
@@ -214,28 +219,29 @@ export function Settings() {
               }}
             >
               폴더 고르기
-            </button>
-            <button
-              className="action"
+            </Button>
+            <Button
+              variant="secondary"
               data-testid="settings-clear-recents"
               disabled={recents.length === 0}
               onClick={() => clearRecents()}
             >
               최근 문서 지우기
-            </button>
+            </Button>
           </div>
-        </section>
+        </TabsContent>
 
-        <div data-testid="settings-agent">
+        <TabsContent value="agent" forceMount data-testid="settings-agent">
         <h3>에이전트</h3>
         <section className="section">
           <h3>에이전트 호스트</h3>
           <p className="prose tiny" data-testid="agent-host-status">
             {host?.available ? "연결됨 · 내장" : "찾을 수 없음"}
           </p>
-          <details className="disclosure" data-testid="agent-host-tech">
-            <summary>기술 정보</summary>
-            <dl className="kv">
+          <Collapsible className="disclosure" data-testid="agent-host-tech">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<dl className="kv">
               <dt>방식</dt>
               <dd className="mono">{host?.mode ?? "—"}</dd>
               <dt>경로</dt>
@@ -253,7 +259,8 @@ export function Settings() {
                 </>
               ) : null}
             </dl>
-          </details>
+      </CollapsibleContent>
+      </Collapsible>
           <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
             제공자와 이야기하는 것은 이 프로세스뿐입니다.
           </p>
@@ -261,40 +268,37 @@ export function Settings() {
 
         <section className="section">
           <h3>제공자</h3>
-          <div className="radios" role="radiogroup" aria-label="제공자">
+          <RadioGroup
+            className="radios"
+            value={draft.provider}
+            onValueChange={(id) => void apply({ ...draft, provider: id as ProviderId })}
+            aria-label="제공자"
+          >
             {PROVIDERS.map((row) => (
-              <button
-                key={row.id}
-                className="radio"
-                role="radio"
-                aria-checked={draft.provider === row.id}
-                data-testid={`provider-${row.id}`}
-                title={row.note}
-                onClick={() => void apply({ ...draft, provider: row.id })}
-              >
-                <span className="primary">{row.label}</span>
-                <span className="secondary">{row.blurb}</span>
-              </button>
+              <Tooltip key={row.id} content={row.note}>
+                <RadioGroupItem value={row.id} className="radio" data-testid={`provider-${row.id}`}>
+                  <span className="primary">{row.label}</span>
+                  <span className="secondary">{row.blurb}</span>
+                </RadioGroupItem>
+              </Tooltip>
             ))}
-          </div>
+          </RadioGroup>
         </section>
 
         {draft.provider === "mock" ? (
           <section className="section" data-testid="settings-mock">
             <h3>어떤 대본을 돌릴지</h3>
-            <div className="rows">
+            <Select
+              aria-label="대본"
+              value={draft.scenario}
+              onChange={(e) => void apply({ ...draft, scenario: e.target.value })}
+            >
               {MOCK_SCENARIOS.map((row) => (
-                <button
-                  key={row.id}
-                  className="row"
-                  aria-selected={draft.scenario === row.id}
-                  onClick={() => void apply({ ...draft, scenario: row.id })}
-                >
-                  <span className="primary">{row.label}</span>
-                  <span className="secondary mono">{row.id}</span>
-                </button>
+                <option key={row.id} value={row.id}>
+                  {row.label}
+                </option>
               ))}
-            </div>
+            </Select>
             <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
               열쇠도 네트워크도 쓰지 않습니다. 같은 문서에 같은 대본이면 같은 요청이 나옵니다.
             </p>
@@ -306,7 +310,7 @@ export function Settings() {
             <h3>라우터</h3>
             <label className="field">
               <span>주소</span>
-              <input
+              <Input
                 data-testid="router-baseurl"
                 value={draft.router.baseUrl}
                 placeholder="https://gateway.example.invalid/v1"
@@ -317,7 +321,7 @@ export function Settings() {
             </label>
             <label className="field">
               <span>모델</span>
-              <input
+              <Input
                 data-testid="router-model"
                 value={draft.router.model}
                 onChange={(e) =>
@@ -327,7 +331,7 @@ export function Settings() {
             </label>
             <label className="field">
               <span>자격 증명 이름</span>
-              <input
+              <Input
                 data-testid="router-storekey"
                 value={draft.router.storeKey}
                 onChange={(e) =>
@@ -343,7 +347,7 @@ export function Settings() {
             <h3>Anthropic</h3>
             <label className="field">
               <span>모델</span>
-              <input
+              <Input
                 data-testid="anthropic-model"
                 value={draft.anthropic.model}
                 placeholder={
@@ -359,7 +363,7 @@ export function Settings() {
             </label>
             <label className="field">
               <span>자격 증명 이름</span>
-              <input
+              <Input
                 data-testid="anthropic-storekey"
                 value={draft.anthropic.storeKey}
                 onChange={(e) =>
@@ -379,9 +383,9 @@ export function Settings() {
 
         {dirty ? (
           <div className="section">
-            <button className="action primary" data-testid="settings-save" onClick={() => void apply(draft)}>
+            <Button variant="primary" data-testid="settings-save" onClick={() => void apply(draft)}>
               설정 저장
-            </button>
+            </Button>
           </div>
         ) : null}
 
@@ -410,7 +414,7 @@ export function Settings() {
             </p>
             <label className="field">
               <span>값 붙여넣기</span>
-              <input
+              <Input
                 type="password"
                 autoComplete="off"
                 spellCheck={false}
@@ -421,8 +425,8 @@ export function Settings() {
               />
             </label>
             <div className="row-actions">
-              <button
-                className="action"
+              <Button
+                variant="secondary"
                 data-testid="credential-save"
                 disabled={secret.trim() === "" || !key}
                 onClick={() => {
@@ -432,15 +436,15 @@ export function Settings() {
                 }}
               >
                 저장소에 넣기
-              </button>
+              </Button>
               {credential?.state === "present" ? (
-                <button
-                  className="action"
+                <Button
+                  variant="secondary"
                   data-testid="credential-forget"
                   onClick={() => void forgetCredential()}
                 >
                   지우기
-                </button>
+                </Button>
               ) : null}
             </div>
           </section>
@@ -449,14 +453,14 @@ export function Settings() {
         <section className="section">
           <h3>연결 확인</h3>
           <div className="row-actions">
-            <button
-              className="action primary"
+            <Button
+              variant="primary"
               data-testid="probe-capabilities"
               disabled={probePhase === "starting" || !host?.available}
               onClick={() => void probeProvider()}
             >
               {probePhase === "starting" ? "물어보는 중…" : "연결 확인"}
-            </button>
+            </Button>
             <span className="tiny">
               어댑터에게 “무엇을 할 수 있나”만 묻습니다. 문서도 네트워크도 건드리지 않습니다.
             </span>
@@ -492,24 +496,24 @@ export function Settings() {
                   )}
                 </span>
               </p>
-              <table className="caps">
-                <tbody>
+              <Table className="caps">
+                <TableBody>
                   {CAPABILITY_LABELS.map(([name, label]) => {
                     const row = profile.capabilities[name];
                     const state = STATE_LABEL[row?.state ?? "unknown"] ?? STATE_LABEL.unknown;
                     return (
-                      <tr key={name} data-testid={`cap-${name}`}>
-                        <th>{label}</th>
-                        <td>
+                      <TableRow key={name} data-testid={`cap-${name}`}>
+                        <TableHead>{label}</TableHead>
+                        <TableCell>
                           <Tag tone={state.tone}>{state.text}</Tag>
-                        </td>
-                        <td className="tiny">{row?.reason ?? ""}</td>
-                        <td className="tiny mono">{row?.declaredBy ?? ""}</td>
-                      </tr>
+                        </TableCell>
+                        <TableCell className="tiny">{row?.reason ?? ""}</TableCell>
+                        <TableCell className="tiny mono">{row?.declaredBy ?? ""}</TableCell>
+                      </TableRow>
                     );
                   })}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
               <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
                 모름은 아니오가 아닙니다. 어댑터가 확인하지 않았다는 뜻이고, 확인되지 않은
                 기능은 시도하지 않습니다.
@@ -536,8 +540,10 @@ export function Settings() {
             </p>
           </section>
         ) : null}
-        </div>
+        </TabsContent>
+        </Tabs>
       </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

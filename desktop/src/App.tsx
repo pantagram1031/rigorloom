@@ -22,6 +22,17 @@ import { CommandPalette, toggleCommandPalette } from "./components/CommandPalett
 import { Settings } from "./components/Settings";
 import { Splash } from "./components/Splash";
 import { Toast } from "./components/Toast";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "./ui/DropdownMenu";
+import { Kbd } from "./ui/Kbd";
+import { Tooltip } from "./ui/Tooltip";
 import { focusDocumentSurface } from "./focus";
 import * as rt from "./runtime";
 import { deliverDocumentEvents, stopDocumentEvents } from "./documentEvents";
@@ -66,9 +77,9 @@ function Fatal({
         <p className="prose mono" style={{ marginTop: "var(--s3)" }}>
           {code}
         </p>
-        <button className="action primary" style={{ marginTop: "var(--s4)" }} onClick={onRetry}>
+        <Button variant="primary" style={{ marginTop: "var(--s4)" }} onClick={onRetry}>
           다시 시도
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -322,17 +333,18 @@ function AppShell() {
 
       <header className="titlebar">
         {session ? (
-          <button
-            type="button"
-            className="ghost home-btn"
-            data-testid="header-home"
-            title="홈 (Ctrl+Shift+H)"
-            aria-label="홈"
-            aria-pressed={homeOpen}
-            onClick={() => goHome()}
-          >
-            <Icon name="home" />
-          </button>
+          <Tooltip content="홈 (Ctrl+Shift+H)">
+            <Button
+              variant="ghost"
+              className="home-btn"
+              data-testid="header-home"
+              aria-label="홈"
+              aria-pressed={homeOpen}
+              onClick={() => goHome()}
+            >
+              <Icon name="home" />
+            </Button>
+          </Tooltip>
         ) : null}
 
         <div className="brand">
@@ -341,63 +353,59 @@ function AppShell() {
         </div>
 
         {session ? (
-          <button
-            type="button"
-            className="docchip"
-            data-testid="doc-tab"
-            title="문서로 돌아가기"
-            aria-current={homeOpen ? undefined : "page"}
-            onClick={() => {
-              leaveHome();
-              focusDocumentSurface();
-            }}
-          >
-            <span className="name" data-testid="doc-name">
-              {session.source.name}
-            </span>
-            <span className="latin-caps">{session.source.documentKind}</span>
-          </button>
+          <Tooltip content="문서로 돌아가기">
+            <button
+              type="button"
+              className="docchip"
+              data-testid="doc-tab"
+              aria-current={homeOpen ? undefined : "page"}
+              onClick={() => {
+                leaveHome();
+                focusDocumentSurface();
+              }}
+            >
+              <span className="name" data-testid="doc-name">
+                {session.source.name}
+              </span>
+              <span className="latin-caps">{session.source.documentKind}</span>
+            </button>
+          </Tooltip>
         ) : null}
 
         <span className="spacer" />
 
         {panic ? (
-          <span className="tag point" title={`${panic.location} · ${panic.logPath}`}>
-            셸 오류 기록됨
-          </span>
+          <Tooltip content={`${panic.location} · ${panic.logPath}`}>
+            <Badge variant="destructive" className="tag point">
+              셸 오류 기록됨
+            </Badge>
+          </Tooltip>
         ) : null}
 
         {sidecarDown ? (
           <>
-            <span className="tag point" data-testid="sidecar-down">
+            <Badge variant="destructive" className="tag point" data-testid="sidecar-down">
               런타임 끊김
-            </span>
-            <button className="ghost" onClick={() => void restartRuntime()}>
+            </Badge>
+            <Button variant="ghost" onClick={() => void restartRuntime()}>
               다시 시작
-            </button>
+            </Button>
           </>
         ) : null}
 
-        <details
-          className="toolmenu header-open"
-          data-testid="header-open-menu"
+        <DropdownMenu
           open={openMenu}
-          onToggle={(e) => {
-            const next = (e.currentTarget as HTMLDetailsElement).open;
-            if (next && getState().chromeMenu !== "open") setChromeMenu("open");
-            else if (!next && getState().chromeMenu === "open") setChromeMenu(null);
+          onOpenChange={(next) => {
+            if (next) setChromeMenu("open");
+            else if (getState().chromeMenu === "open") setChromeMenu(null);
           }}
         >
-          <summary className="ghost btn-icon" aria-haspopup="menu" aria-expanded={openMenu}>
+          <DropdownMenuTrigger className="ghost btn-icon" data-testid="header-open-menu">
             <Icon name="open" />
             문서 열기
-          </summary>
-          <div className="toolmenu-body" role="menu">
-            <button
-              type="button"
-              className="menu-item"
-              role="menuitem"
-              title="Ctrl+O"
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="toolmenu-body">
+            <DropdownMenuItem
               onClick={() => {
                 setChromeMenu(null);
                 void openViaDialog();
@@ -405,32 +413,35 @@ function AppShell() {
             >
               <Icon name="open" />
               열기
-            </button>
-            <button
-              type="button"
-              className="menu-item"
-              role="menuitem"
-              data-testid="bind-form"
-              title="빈 양식이나 form_profile.json을 연결해 엽니다"
-              onClick={() => {
-                setChromeMenu(null);
-                void bindFormAndOpen();
-              }}
-            >
-              <Icon name="link" />
-              양식과 함께 열기
-            </button>
-          </div>
-        </details>
-        <button
-          className="ghost btn-icon"
-          data-testid="open-settings"
-          title="에이전트 제공자 설정"
-          onClick={() => setState({ settingsOpen: true })}
-        >
-          <Icon name="settings" />
-          설정
-        </button>
+              <DropdownMenuShortcut>
+                <Kbd>Ctrl+O</Kbd>
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <Tooltip content="빈 양식이나 form_profile.json을 연결해 엽니다">
+              <DropdownMenuItem
+                data-testid="bind-form"
+                onClick={() => {
+                  setChromeMenu(null);
+                  void bindFormAndOpen();
+                }}
+              >
+                <Icon name="link" />
+                양식과 함께 열기
+              </DropdownMenuItem>
+            </Tooltip>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Tooltip content="에이전트 제공자 설정">
+          <Button
+            variant="ghost"
+            className="btn-icon"
+            data-testid="open-settings"
+            onClick={() => setState({ settingsOpen: true })}
+          >
+            <Icon name="settings" />
+            설정
+          </Button>
+        </Tooltip>
       </header>
 
       <div className="viewport">

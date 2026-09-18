@@ -8,6 +8,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
@@ -111,6 +112,8 @@ function renderHome(state) {
         return { Logo: () => React.createElement("svg", { "data-testid": "logo" }) };
       }
       if (id === "./Icon") return { Icon };
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -168,6 +171,8 @@ function renderVerification(inspect) {
       if (id === "../verifyReport") {
         return { worstVerifyVerdict: () => null, verifyTargetLabel: () => "원본" };
       }
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -212,6 +217,8 @@ function renderReceipt(receipt) {
             React.createElement("span", { "data-tone": tone }, children),
         };
       }
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -308,6 +315,8 @@ function renderReview(inspect) {
         return { Tag: ({ children }) => React.createElement("span", null, children) };
       }
       if (id === "./Icon") return { Icon };
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });

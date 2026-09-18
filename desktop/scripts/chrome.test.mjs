@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
@@ -78,6 +79,8 @@ function renderToolbar(state) {
           Tag: ({ children, title }) => React.createElement("span", { title }, children),
         };
       }
+      const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -110,26 +113,28 @@ const toolbarState = {
 };
 
 test("overflow menu keeps 저장/내보내기, 되돌리기, 양식 연결, 서식 behind one control", () => {
-  const html = renderToolbar(toolbarState);
-  assert.match(html, /data-testid="tool-overflow"/);
-  const overflowAt = html.indexOf('data-testid="tool-overflow"');
-  const overflow = html.slice(overflowAt);
-  assert.match(overflow, /data-testid="act-export"/);
-  assert.match(overflow, /저장\/내보내기/);
-  assert.match(overflow, /data-testid="act-undo"/);
-  assert.match(overflow, /되돌리기/);
-  assert.match(overflow, /data-testid="act-bind-form"/);
-  assert.match(overflow, /양식 연결/);
-  assert.match(overflow, /data-testid="tool-format"/);
-  assert.match(overflow, /data-testid="tool-typeface"/);
-  assert.match(overflow, /data-testid="tool-charpr"/);
-  assert.match(overflow, /data-testid="tool-size"/);
+  const overflow = renderToolbar({ ...toolbarState, chromeMenu: "overflow" });
+  const zoom = renderToolbar({ ...toolbarState, chromeMenu: "zoom" });
+  const html = overflow + zoom;
+  assert.match(overflow, /data-testid="tool-overflow"/);
+  const overflowAt = overflow.indexOf('data-testid="tool-overflow"');
+  const overflowSlice = overflow.slice(overflowAt);
+  assert.match(overflowSlice, /data-testid="act-export"/);
+  assert.match(overflowSlice, /저장\/내보내기/);
+  assert.match(overflowSlice, /data-testid="act-undo"/);
+  assert.match(overflowSlice, /되돌리기/);
+  assert.match(overflowSlice, /data-testid="act-bind-form"/);
+  assert.match(overflowSlice, /양식 연결/);
+  assert.match(overflowSlice, /data-testid="tool-format"/);
+  assert.match(overflowSlice, /data-testid="tool-typeface"/);
+  assert.match(overflowSlice, /data-testid="tool-charpr"/);
+  assert.match(overflowSlice, /data-testid="tool-size"/);
   assert.match(html, /data-testid="act-open"/);
   assert.match(html, />열기</);
   assert.match(html, /data-testid="toolbar-check"/);
   assert.match(html, />검사</);
   assert.match(html, /data-testid="act-approve"/);
-  assert.match(html, /class="[^"]*primary[^"]*"/);
+  assert.match(html, /ui-btn-secondary/);
   assert.match(html, /data-testid="tool-state"/);
   assert.match(html, /data-testid="mode-text"/);
   assert.match(html, />본문</);
@@ -141,9 +146,9 @@ test("overflow menu keeps 저장/내보내기, 되돌리기, 양식 연결, 서�
   assert.match(html, /data-testid="uizoom-value"/);
   assert.match(html, />문서</);
   assert.match(html, />화면</);
-  assert.match(toolbarSource, /aria-haspopup="menu"/);
-  assert.match(toolbarSource, /role="menu"/);
-  assert.match(toolbarSource, /role="menuitem"/);
+  assert.match(overflow, /aria-haspopup="menu"/);
+  assert.match(overflow, /role="menu"/);
+  assert.match(overflow, /role="menuitem"/);
 });
 
 test("toolbar is a single nowrap row at 1024 and 1280", () => {

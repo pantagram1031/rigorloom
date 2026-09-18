@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { uiFromImport } from "./kit-load.mjs";
 import vm from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -35,7 +36,9 @@ function loadCompiled(relPath, fileName, requireImpl) {
 const icon = loadCompiled("../src/components/Icon.tsx", "Icon.tsx", (id) => {
   if (id === "react/jsx-runtime") return nodeRequire(id);
   if (id === "react") return nodeRequire(id);
-  throw new Error(`unexpected import: ${id}`);
+        const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
 });
 
 test("every Icon name renders an svg", () => {

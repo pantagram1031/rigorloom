@@ -4,7 +4,6 @@ import {
   useId,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
-  type ReactNode,
 } from "react";
 
 import { cn } from "./cn";
@@ -24,12 +23,10 @@ function useCollapse(): CollapseCtx {
   return ctx;
 }
 
-export type CollapsibleProps = {
+export type CollapsibleProps = HTMLAttributes<HTMLDivElement> & {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
-  className?: string;
-  children?: ReactNode;
 };
 
 export function Collapsible({
@@ -38,12 +35,13 @@ export function Collapsible({
   onOpenChange,
   className,
   children,
+  ...rest
 }: CollapsibleProps) {
   const [open, setOpen] = useOpenState(openProp, defaultOpen, onOpenChange);
   const contentId = useId();
   return (
     <Ctx.Provider value={{ open, setOpen, contentId }}>
-      <div className={cn("ui-collapse", className)} data-state={open ? "open" : "closed"}>
+      <div className={cn("ui-collapse", className)} data-state={open ? "open" : "closed"} {...rest}>
         {children}
       </div>
     </Ctx.Provider>

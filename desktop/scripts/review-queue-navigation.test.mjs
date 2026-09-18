@@ -4,11 +4,17 @@ import test from "node:test";
 import vm from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
 
+function exportedFn(src, name) {
+  const at = src.indexOf(`export function ${name}(`);
+  assert.ok(at >= 0, `${name} missing`);
+  const fromFn = src.slice(at);
+  const endMatch = fromFn.match(/\r?\n\}\r?\n/);
+  assert.ok(endMatch && typeof endMatch.index === "number", `${name} source boundary changed`);
+  return fromFn.slice(0, endMatch.index + endMatch[0].length);
+}
+
 const source = readFileSync(new URL("../src/components/ReviewQueue.tsx", import.meta.url), "utf8");
-const start = source.indexOf("export function locateQueuedOp(");
-const end = source.indexOf("\n}\n", start);
-assert.ok(start >= 0 && end > start, "locateQueuedOp source boundary changed");
-const implementation = source.slice(start, end + 2);
+const implementation = exportedFn(source, "locateQueuedOp");
 
 function navigate(op, stateOverride = {}) {
   const calls = [];
@@ -70,10 +76,7 @@ test("another session's preserved queue cannot navigate in the active document",
   assert.match(hunkSource, /다른 문서의 대기열/);
 });
 
-const provStart = source.indexOf("export function hunkProvenance(");
-const provEnd = source.indexOf("\n}\n", provStart);
-assert.ok(provStart >= 0 && provEnd > provStart, "hunkProvenance source boundary changed");
-const provenanceSource = source.slice(provStart, provEnd + 2);
+const provenanceSource = exportedFn(source, "hunkProvenance");
 
 function project(op, draft, receipts, head) {
   const context = vm.createContext({});

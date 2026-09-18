@@ -62,6 +62,9 @@ import type {
 import { GeometryLegend, PageOverlay } from "./PageOverlay";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Button } from "../ui/Button";
+import { Tooltip } from "../ui/Tooltip";
 
 /** HWPUNIT is 1/7200 inch. */
 const HWPUNIT_PER_INCH = 7200;
@@ -198,14 +201,13 @@ function GradeBadge({ render }: { render: RenderResult }) {
 function SkippedElements({ skipped }: { skipped: SkippedElement[] }) {
   const total = skipped.reduce((sum, entry) => sum + (entry.count || 0), 0);
   return (
-    <details className="disclosure skipped" data-testid="skipped-list" data-count={skipped.length}>
-      <summary>
-        무엇을 못 그렸나{" "}
+    <Collapsible className="disclosure skipped" data-testid="skipped-list" data-count={skipped.length}>
+        <CollapsibleTrigger>무엇을 못 그렸나{" "}
         <span className="mono tiny">
           {skipped.length === 0 ? "없음" : `${skipped.length}종 · ${total}개`}
-        </span>
-      </summary>
-      {skipped.length === 0 ? (
+        </span></CollapsibleTrigger>
+        <CollapsibleContent>
+{skipped.length === 0 ? (
         <p className="tiny">이 지면에서는 렌더러가 만난 것을 모두 그렸다고 보고했습니다.</p>
       ) : (
         <ul className="skipped-items">
@@ -218,7 +220,8 @@ function SkippedElements({ skipped }: { skipped: SkippedElement[] }) {
           ))}
         </ul>
       )}
-    </details>
+      </CollapsibleContent>
+      </Collapsible>
   );
 }
 
@@ -311,10 +314,12 @@ function PrepareRefusal({ error }: { error: RuntimeError }) {
         <p className="mono tiny">converter exit {String(data.exitCode)}</p>
       ) : null}
       {typeof data.stderr === "string" && data.stderr.trim().length > 0 ? (
-        <details className="disclosure">
-          <summary>변환기가 남긴 말</summary>
-          <pre>{data.stderr}</pre>
-        </details>
+        <Collapsible className="disclosure">
+        <CollapsibleTrigger>변환기가 남긴 말</CollapsibleTrigger>
+        <CollapsibleContent>
+<pre>{data.stderr}</pre>
+      </CollapsibleContent>
+      </Collapsible>
       ) : null}
       <p className="tiny">
         원본은 이 과정에 들어가지 않습니다. 변환은 세션이 가진 사본에만 일어납니다.
@@ -399,22 +404,25 @@ function CandidateDiffers({ echo }: { echo: LayoutEcho }) {
         지면이지 렌더러가 그린 지면이 아니기 때문입니다.
       </p>
       {canPrepare ? (
-        <button
-          className="action primary"
-          data-testid="echo-redraw"
-          disabled={preparePhase === "starting" || composing}
-          title={
+        <Tooltip
+          content={
             composing
               ? "입력 조합이 끝나기 전에는 변환하지 않습니다"
               : "후보본을 PDF로 바꿔 다시 그립니다. 원본은 건드리지 않습니다."
           }
-          onClick={() => {
-            if (getState().isComposing) return;
-            void preparePages(echo.runId);
-          }}
         >
-          {preparePhase === "starting" ? "한컴을 부르는 중…" : "다시 그리기"}
-        </button>
+          <Button
+            variant="primary"
+            data-testid="echo-redraw"
+            disabled={preparePhase === "starting" || composing}
+            onClick={() => {
+              if (getState().isComposing) return;
+              void preparePages(echo.runId);
+            }}
+          >
+            {preparePhase === "starting" ? "한컴을 부르는 중…" : "다시 그리기"}
+          </Button>
+        </Tooltip>
       ) : (
         <p className="reason">
           document/renderPrepare 가 이 연결에 없습니다. 후보본을 그릴 방법이
@@ -668,58 +676,64 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
           the renderer's own, and it is 1 when there is no raster because that
           is what the runtime returned. */}
       <div className="page-footer" data-testid="page-footer">
-        <button
-          className="action primary"
-          data-testid="request-preview"
-          disabled={!sessionId || renderPhase === "starting"}
-          title="지금 문서의 페이지 그림을 요청합니다. 입력할 때마다 그리지 않습니다."
-          onClick={() => void renderCurrentPage()}
-        >
-          {renderPhase === "starting" ? "페이지를 요청하는 중…" : "페이지 그림 요청"}
-        </button>
+        <Tooltip content="지금 문서의 페이지 그림을 요청합니다. 입력할 때마다 그리지 않습니다.">
+          <Button
+            variant="primary"
+            data-testid="request-preview"
+            disabled={!sessionId || renderPhase === "starting"}
+            onClick={() => void renderCurrentPage()}
+          >
+            {renderPhase === "starting" ? "페이지를 요청하는 중…" : "페이지 그림 요청"}
+          </Button>
+        </Tooltip>
         {canPrepare ? (
-          <button
-            className="action"
-            data-testid="prepare-pages"
-            disabled={preparePhase === "starting" || composing}
-            title={
+          <Tooltip
+            content={
               composing
                 ? "입력 조합이 끝나기 전에는 변환하지 않습니다"
                 : "세션 사본을 PDF로 바꿉니다. 원본은 건드리지 않습니다."
             }
-            onClick={() => {
-              if (getState().isComposing) return;
-              void preparePages();
-            }}
           >
-            {preparePhase === "starting" ? "한컴을 부르는 중…" : "페이지 그림 만들기"}
-          </button>
+            <Button
+              variant="secondary"
+              data-testid="prepare-pages"
+              disabled={preparePhase === "starting" || composing}
+              onClick={() => {
+                if (getState().isComposing) return;
+                void preparePages();
+              }}
+            >
+              {preparePhase === "starting" ? "한컴을 부르는 중…" : "페이지 그림 만들기"}
+            </Button>
+          </Tooltip>
         ) : null}
 
         <span className="spacer" />
 
         <div className="pager">
-          <button
-            className="ghost btn-icon"
+          <Button
+            variant="ghost"
+            className="btn-icon"
             data-testid="page-prev"
             aria-label="이전 쪽"
             disabled={page <= 1}
             onClick={() => void renderCurrentPage(page - 1)}
           >
             <Icon name="chevron-left" />
-          </button>
+          </Button>
           <span className="mono" data-testid="page-indicator">
             {page}쪽 / 전체 {pageCount}
           </span>
-          <button
-            className="ghost btn-icon"
+          <Button
+            variant="ghost"
+            className="btn-icon"
             data-testid="page-next"
             aria-label="다음 쪽"
             disabled={page >= pageCount}
             onClick={() => void renderCurrentPage(page + 1)}
           >
             <Icon name="chevron-right" />
-          </button>
+          </Button>
         </div>
 
         <span className="spacer" />
@@ -729,38 +743,37 @@ export function PagePreview({ inspect }: { inspect: InspectResult }) {
             Nothing here refetches: the raster is scaled by CSS and the overlay
             rects are page fractions (§12.1). */}
         <div className="pager zoomer" data-testid="page-zoomer" data-fit={pageFit}>
-          <button
-            className="ghost"
-            data-testid="fit-width"
-            aria-pressed={pageFit === "width"}
-            title="창 너비에 맞춥니다. 창 크기가 바뀌어도 계속 맞춥니다."
-            onClick={() => setPageFit(pageFit === "width" ? "free" : "width")}
-          >
-            폭 맞춤
-          </button>
-          <button
-            className="ghost"
-            data-testid="fit-page"
-            aria-pressed={pageFit === "page"}
-            title="한 쪽이 통째로 보이게 맞춥니다."
-            onClick={() => setPageFit(pageFit === "page" ? "free" : "page")}
-          >
-            쪽 맞춤
-          </button>
-          <button className="ghost" aria-label="축소" onClick={() => setZoom(zoom - 0.1)} disabled={zoom <= 0.5}>
+          <Tooltip content="창 너비에 맞춥니다. 창 크기가 바뀌어도 계속 맞춥니다.">
+            <Button
+              variant="ghost"
+              data-testid="fit-width"
+              aria-pressed={pageFit === "width"}
+              onClick={() => setPageFit(pageFit === "width" ? "free" : "width")}
+            >
+              폭 맞춤
+            </Button>
+          </Tooltip>
+          <Tooltip content="한 쪽이 통째로 보이게 맞춥니다.">
+            <Button
+              variant="ghost"
+              data-testid="fit-page"
+              aria-pressed={pageFit === "page"}
+              onClick={() => setPageFit(pageFit === "page" ? "free" : "page")}
+            >
+              쪽 맞춤
+            </Button>
+          </Tooltip>
+          <Button variant="ghost" aria-label="축소" onClick={() => setZoom(zoom - 0.1)} disabled={zoom <= 0.5}>
             −
-          </button>
-          <button
-            className="mono"
-            data-testid="page-zoom"
-            title="100% 로 되돌립니다"
-            onClick={() => setZoom(1)}
-          >
-            {Math.round(zoom * 100)}%
-          </button>
-          <button className="ghost" aria-label="확대" onClick={() => setZoom(zoom + 0.1)} disabled={zoom >= 4}>
+          </Button>
+          <Tooltip content="100% 로 되돌립니다">
+            <Button variant="ghost" className="mono" data-testid="page-zoom" onClick={() => setZoom(1)}>
+              {Math.round(zoom * 100)}%
+            </Button>
+          </Tooltip>
+          <Button variant="ghost" aria-label="확대" onClick={() => setZoom(zoom + 0.1)} disabled={zoom >= 4}>
             +
-          </button>
+          </Button>
         </div>
       </div>
     </div>

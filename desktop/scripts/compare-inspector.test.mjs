@@ -8,6 +8,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const require = createRequire(import.meta.url);
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
@@ -238,6 +239,8 @@ function renderHistory(overrides = {}) {
         return { Timeline: () => React.createElement("div", { "data-testid": "timeline" }) };
       }
       if (id === "./Icon") return { Icon };
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -297,6 +300,8 @@ function renderReceipt(receipt) {
             React.createElement("span", { "data-tone": tone }, children),
         };
       }
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   });
@@ -376,7 +381,7 @@ test("receipt summary is first and the full JSON lives under 기술 정보", () 
   assert.ok(summaryAt >= 0 && rawAt > summaryAt);
   assert.match(html, /host-operator 승인/);
   assert.match(html, /xml 편집 1건/);
-  const raw = html.match(/data-testid="receipt-raw"[\s\S]*?<\/details>/)[0];
+  const raw = html.match(/data-testid="receipt-raw"[\s\S]*?<\/pre>/)[0];
   assert.match(raw, />기술 정보</);
   assert.match(raw, /<pre>/);
   assert.match(raw, /&quot;planHash&quot;/);

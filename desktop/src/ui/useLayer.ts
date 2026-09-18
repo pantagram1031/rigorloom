@@ -90,8 +90,11 @@ export function useLayer({
       onCloseRef.current();
     };
     document.addEventListener("keydown", onKey, true);
-    document.addEventListener("mousedown", onPointer);
+    const listenId = window.setTimeout(() => {
+      document.addEventListener("mousedown", onPointer);
+    }, 0);
     return () => {
+      window.clearTimeout(listenId);
       document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("mousedown", onPointer);
     };

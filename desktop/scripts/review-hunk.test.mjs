@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -47,7 +48,9 @@ const emptyState = loadCompiled("../src/components/EmptyState.tsx", "EmptyState.
   if (known) return known;
   if (id === "../label") return label;
   if (id === "./Icon") return { Icon };
-  throw new Error(`unexpected import: ${id}`);
+        const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
 });
 
 const diff = loadCompiled("../src/diff.ts", "diff.ts", () => {
@@ -58,7 +61,9 @@ const reviewHunk = loadCompiled("../src/reviewHunk.ts", "reviewHunk.ts", (id) =>
   if (id === "./diff") return diff;
   if (id === "./label") return label;
   if (id === "./store" || id === "./types") return {};
-  throw new Error(`unexpected import: ${id}`);
+        const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
 });
 
 const {
@@ -170,7 +175,9 @@ function renderQueue(state, actions = {}) {
     if (id === "../types") return {};
     if (id === "./Tag") return tag;
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   const exports = loadCompiled("../src/components/ReviewQueue.tsx", "ReviewQueue.tsx", (id) => {
     const known = nodeRequireReact(id);
@@ -206,7 +213,9 @@ function renderQueue(state, actions = {}) {
     if (id === "../focus") return { focusFirstHunk: () => false, focusHunkAt: () => false };
     if (id === "./HunkCard") return hunkCard;
     if (id === "./Tag") return tag;
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return {
     html: renderToStaticMarkup(React.createElement(exports.ReviewQueue)),
@@ -400,7 +409,7 @@ test("error empty uses EmptyState; acceptance false / exit 3 is a refusal card",
     }),
   ).html;
   assert.match(errored, /data-testid="review-queue-error"/);
-  assert.match(errored, /class="empty-state"/);
+  assert.match(errored, /class="empty-state/);
   assert.match(errored, /런타임이 거절했습니다/);
 
   assert.equal(
@@ -421,7 +430,7 @@ test("error empty uses EmptyState; acceptance false / exit 3 is a refusal card",
     }),
   ).html;
   assert.match(refused, /data-testid="queue-refusal"/);
-  assert.match(refused, /class="refusal"/);
+  assert.match(refused, /class="[^"]*refusal/);
   assert.match(refused, /검사 미통과/);
   const refusalBlock = refused.match(/data-testid="queue-refusal"[\s\S]*?<\/div>/)[0];
   assert.doesNotMatch(refusalBlock, /data-tone="ok"|tag ok/);

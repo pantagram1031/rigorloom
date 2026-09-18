@@ -47,6 +47,8 @@ import { labelOf } from "../label";
 import { useWorkspace } from "../store";
 import type { ModuleCheckReport, ModuleCheckRow, ModuleFinding, TaskPack } from "../types";
 import { Tag } from "./Tag";
+import { Button } from "../ui/Button";
+import { Tooltip } from "../ui/Tooltip";
 
 /** What each pack does once it is running. Intent, marked as such. */
 const PLANNED: Record<string, string> = {
@@ -112,20 +114,24 @@ function Finding({ finding, index }: { finding: ModuleFinding; index: number }) 
           the runtime could not translate gets NO link — a half address would
           select the wrong cell, and §13.4 returns null rather than half. */}
       {address ? (
-        <button
-          className="linkish mono tiny"
-          data-testid={`module-check-address-${index}`}
-          title="본문 보기에서 이 자리로 갑니다"
-          onClick={() => locateFindingAddress(address)}
-        >
-          {addressLabel(address)}
-        </button>
+        <Tooltip content="본문 보기에서 이 자리로 갑니다">
+          <Button
+            variant="link"
+            className="linkish mono tiny"
+            data-testid={`module-check-address-${index}`}
+            onClick={() => locateFindingAddress(address)}
+          >
+            {addressLabel(address)}
+          </Button>
+        </Tooltip>
       ) : finding.location != null ? (
-        <span className="dim tiny" title="런타임이 이 자리를 주소로 옮기지 못했습니다">
-          {typeof finding.location === "string"
-            ? finding.location
-            : JSON.stringify(finding.location)}
-        </span>
+        <Tooltip content="런타임이 이 자리를 주소로 옮기지 못했습니다">
+          <span className="dim tiny">
+            {typeof finding.location === "string"
+              ? finding.location
+              : JSON.stringify(finding.location)}
+          </span>
+        </Tooltip>
       ) : null}
     </li>
   );
@@ -230,21 +236,24 @@ function RunPanel({ pack }: { pack: TaskPack }) {
   return (
     <>
       <div className="pack-run" data-testid="pack-run">
-        <button
-          className="action primary"
-          data-testid="pack-run-button"
-          disabled={!runnable || !sessionId || mine?.phase === "running"}
-          title={
+        <Tooltip
+          content={
             !runnable
               ? "이 팩은 켜져 있지 않습니다. 켜는 것은 enabled.yaml 에 적는 설치 시점의 일이고, 앱에서 할 수 있는 일이 아닙니다."
               : !sessionId
                 ? "검사할 문서를 먼저 여십시오."
                 : "이 팩의 검사기를 지금 열려 있는 문서에 대해 돌립니다. 문서는 바뀌지 않습니다."
           }
-          onClick={() => void runModuleCheck(pack.name)}
         >
-          {mine?.phase === "running" ? "검사 중…" : "실행"}
-        </button>
+          <Button
+            variant="primary"
+            data-testid="pack-run-button"
+            disabled={!runnable || !sessionId || mine?.phase === "running"}
+            onClick={() => void runModuleCheck(pack.name)}
+          >
+            {mine?.phase === "running" ? "검사 중…" : "실행"}
+          </Button>
+        </Tooltip>
         <span className="tiny dim">
           {!runnable
             ? "꺼져 있는 팩은 아무도 돌릴 수 없습니다"
@@ -335,9 +344,9 @@ function PackDetail({ pack }: { pack: TaskPack }) {
         팩 설정(<span className="mono">--pack</span>, <span className="mono">--vocabulary</span>)을
         고르는 방법도 아직 없어, 검사기는 각자의 기본값으로 돕니다.
       </p>
-      <button className="action" data-testid="pack-close" onClick={() => openPack(null)}>
+      <Button variant="secondary" data-testid="pack-close" onClick={() => openPack(null)}>
         닫기
-      </button>
+      </Button>
     </div>
   );
 }
@@ -364,8 +373,9 @@ export function TaskPacks() {
       ) : (
         <div className="rows">
           {packs.packs.map((pack) => (
-            <button
+            <Button
               key={pack.name}
+              variant="ghost"
               className="row"
               aria-selected={pack.name === open}
               data-testid={`pack-${pack.name}`}
@@ -376,7 +386,7 @@ export function TaskPacks() {
                 {pack.enabled ? null : <span className="secondary"> · 꺼짐</span>}
               </span>
               <span className="secondary">{labelOf(pack.blurb, pack.name)}</span>
-            </button>
+            </Button>
           ))}
         </div>
       )}

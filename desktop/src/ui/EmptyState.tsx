@@ -19,7 +19,7 @@ export function EmptyState({
   className?: string;
 }) {
   return (
-    <div className={cn("ui-empty", className)} data-testid={testId}>
+    <div className={cn(className, "ui-empty")} data-testid={testId}>
       {icon ? (
         <div className="ui-empty-icon" aria-hidden="true">
           {icon}

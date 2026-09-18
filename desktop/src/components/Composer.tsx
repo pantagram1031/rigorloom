@@ -20,6 +20,9 @@ import { sendInstruction } from "../actions";
 import { labelOf } from "../label";
 import { activeStoreKey, composerBlocker, getState, setState, useWorkspace } from "../store";
 import { submitComposerDraft } from "../workspace/composerDraft";
+import { Button } from "../ui/Button";
+import { Textarea } from "../ui/Textarea";
+import { Tooltip } from "../ui/Tooltip";
 
 /** One sentence and one way out, per reason. Never a bare disabled control. */
 function Blocked({ reason }: { reason: string }) {
@@ -27,9 +30,9 @@ function Blocked({ reason }: { reason: string }) {
   const host = useWorkspace((s) => s.agentHost);
   const key = activeStoreKey(provider);
   const settings = (
-    <button className="linkish" data-testid="composer-open-settings" onClick={() => setState({ settingsOpen: true })}>
+    <Button variant="link" className="linkish" data-testid="composer-open-settings" onClick={() => setState({ settingsOpen: true })}>
       설정 열기
-    </button>
+    </Button>
   );
 
   switch (reason) {
@@ -89,7 +92,7 @@ export function Composer() {
 
   return (
     <div className={`composer${blocker ? " is-blocked" : ""}`} data-testid="composer">
-      <textarea
+      <Textarea
         data-testid="composer-input"
         value={text}
         disabled={blocker === "no_document" || blocker === "no_host"}
@@ -126,15 +129,16 @@ export function Composer() {
           </span>
         ) : null}
         <span className="spacer" />
-        <button
-          className="action primary"
-          data-testid="composer-send"
-          disabled={!canSend}
-          title="Ctrl+Enter"
-          onClick={() => void send()}
-        >
-          {activeTurn ? "보내는 중…" : "보내기"}
-        </button>
+        <Tooltip content="Ctrl+Enter">
+          <Button
+            variant="primary"
+            data-testid="composer-send"
+            disabled={!canSend}
+            onClick={() => void send()}
+          >
+            {activeTurn ? "보내는 중…" : "보내기"}
+          </Button>
+        </Tooltip>
       </div>
       {blocker ? (
         <p className="note" id="composer-note" data-testid="composer-note">

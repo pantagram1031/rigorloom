@@ -8,6 +8,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
@@ -52,7 +53,9 @@ const emptyState = loadCompiled("../src/components/EmptyState.tsx", "EmptyState.
   if (id === "react") return nodeRequire(id);
   if (id === "../label") return label;
   if (id === "./Icon") return { Icon };
-  throw new Error(`unexpected import: ${id}`);
+        const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
 });
 
 function renderPipeline(state, { refreshCalls } = { refreshCalls: [] }) {
@@ -96,7 +99,9 @@ function renderPipeline(state, { refreshCalls } = { refreshCalls: [] }) {
         Tag: ({ children }) => React.createElement("span", { className: "tag" }, children),
       };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return {
     strip: renderToStaticMarkup(React.createElement(exports.PipelineStrip)),
@@ -119,7 +124,7 @@ test("the strip renders slug, N/M 단계 and next gate from the AURALAB mock", (
   assert.match(strip, />완료</);
   assert.doesNotMatch(strip, />없음</);
   assert.match(strip, /data-testid="pipeline-refresh"/);
-  assert.match(strip, /title="다시 읽기"/);
+  assert.match(strip, /data-tip="다시 읽기"/);
   assert.doesNotMatch(strip, />다시 읽기</);
 });
 

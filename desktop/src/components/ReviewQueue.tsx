@@ -62,6 +62,17 @@ import { hasActiveApprovalBinding } from "../workspace/reviewSummary";
 import { EmptyIconInbox, EmptyState } from "./EmptyState";
 import { HunkCard } from "./HunkCard";
 import { Tag } from "./Tag";
+import { Alert } from "../ui/Alert";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/DropdownMenu";
+import { Tooltip } from "../ui/Tooltip";
 
 /** Findings that name one op, keyed the way `validate_plan` writes `at`. */
 function findingsFor(op: QueuedOp, rows: PlanFinding[]): PlanFinding[] {
@@ -157,7 +168,6 @@ export function ApproveAllButton() {
   const recovery = useWorkspace((s) => s.recovery);
   const approvalBound = useWorkspace(hasActiveApprovalBinding);
   const approvable = useWorkspace(canRequestApproval);
-  const [menuOpen, setMenuOpen] = useState(false);
   const locked =
     approvalPhase === "requesting" ||
     approvalPhase === "resolving" ||
@@ -179,64 +189,59 @@ export function ApproveAllButton() {
   const canApproveOnly = canRun && approval?.state !== "approved";
   const count = draft.ops.length;
   const label = primaryBusyLabel(approvalPhase, applyPhase);
+  const tip = approveAllTitle(composing, canRun, recoveryBlocksApply);
   return (
     <div className="approve-split approve-all">
-      <button
-        type="button"
-        className="action point"
-        data-testid="approve-and-apply"
-        disabled={!canRun}
-        title={approveAllTitle(composing, canRun, recoveryBlocksApply)}
-        aria-label="승인하고 적용"
-        onClick={() => {
-          if (getState().isComposing) return;
-          setMenuOpen(false);
-          void approveAndApply();
-        }}
-      >
-        {label}
-        {count > 0 ? (
-          <span className="tab-badge" data-testid="approve-all-count">
-            {count}
-          </span>
-        ) : null}
-      </button>
-      <button
-        type="button"
-        className="action point split-caret"
-        data-testid="approve-only-menu"
-        disabled={!canApproveOnly}
-        title="승인만"
-        aria-label="승인만"
-        aria-expanded={menuOpen}
-        onClick={() => setMenuOpen((open) => !open)}
-      >
-        ▾
-      </button>
-      {menuOpen ? (
-        <button
-          type="button"
-          className="action approve-only-item"
-          data-testid="approve-only"
-          disabled={!canApproveOnly}
-          title="화면에 보이는 계획에 승인을 기록합니다. 적용은 하지 않습니다."
+      <Tooltip content={tip}>
+        <Button
+          variant="primary"
+          className="point"
+          data-testid="approve-and-apply"
+          disabled={!canRun}
+          aria-label="승인하고 적용"
           onClick={() => {
             if (getState().isComposing) return;
-            setMenuOpen(false);
-            void approveOnly();
+            void approveAndApply();
           }}
         >
-          승인만
-        </button>
-      ) : null}
+          {label}
+          {count > 0 ? (
+            <Badge variant="secondary" className="tab-badge" data-testid="approve-all-count">
+              {count}
+            </Badge>
+          ) : null}
+        </Button>
+      </Tooltip>
+      <DropdownMenu>
+        <Tooltip content="승인만">
+          <DropdownMenuTrigger
+            className="action point split-caret"
+            data-testid="approve-only-menu"
+            disabled={!canApproveOnly}
+            aria-label="승인만"
+          >
+            ▾
+          </DropdownMenuTrigger>
+        </Tooltip>
+        <DropdownMenuContent align="end">
+          <Tooltip content="화면에 보이는 계획에 승인을 기록합니다. 적용은 하지 않습니다.">
+            <DropdownMenuItem
+              data-testid="approve-only"
+              disabled={!canApproveOnly}
+              onClick={() => {
+                if (getState().isComposing) return;
+                void approveOnly();
+              }}
+            >
+              승인만
+            </DropdownMenuItem>
+          </Tooltip>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {applyPhase === "starting" ? (
-        <button
-          className="ghost dark-safe"
-          data-testid="cancel-apply"
-          onClick={() => void cancelApply()}
-        >
+        <Button variant="ghost" data-testid="cancel-apply" onClick={() => void cancelApply()}>
           멈추기
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -338,17 +343,19 @@ export function ReviewQueue() {
   }, [focused, draft.ops, composing]);
 
   /** Put the last removed row back — the same target, the same value. */
-  const redo =
+      const redo =
     redoCount > 0 ? (
-      <button
-        className="ghost dark-safe"
-        data-testid="queue-redo"
-        disabled={locked}
-        title="방금 대기열에서 뺀 작업을 그대로 다시 넣습니다"
-        onClick={() => void redoQueuedOp()}
-      >
-        다시 넣기 {redoCount}
-      </button>
+      <Tooltip content="방금 대기열에서 뺀 작업을 그대로 다시 넣습니다">
+        <Button
+          variant="ghost"
+          className="dark-safe"
+          data-testid="queue-redo"
+          disabled={locked}
+          onClick={() => void redoQueuedOp()}
+        >
+          다시 넣기 {redoCount}
+        </Button>
+      </Tooltip>
     ) : null;
 
   if (draft.ops.length === 0) {
@@ -357,7 +364,7 @@ export function ReviewQueue() {
         <div className="section" data-testid="review-queue-error">
           <EmptyState
             icon={<EmptyIconInbox />}
-            title="검토할 수 없습니다"
+            title={"검토할 수 없습니다"}
             body={draft.error.message}
           />
           {redo ? <div className="gate-actions">{redo}</div> : null}
@@ -368,7 +375,7 @@ export function ReviewQueue() {
       <div className="section" data-testid="review-queue-empty">
         <EmptyState
           icon={<EmptyIconInbox />}
-          title="검토할 것이 없습니다"
+          title={"검토할 것이 없습니다"}
           body="문서에서 입력 칸을 누르면 값이 여기에 쌓입니다."
         />
         {redo ? <div className="gate-actions">{redo}</div> : null}
@@ -391,10 +398,10 @@ export function ReviewQueue() {
       </h3>
 
       {refusalMessage ? (
-        <div className="refusal" data-testid="queue-refusal">
+        <Alert variant="destructive" className="refusal" data-testid="queue-refusal">
           <Tag tone="bad">거절됨</Tag>
           <p className="prose">{refusalMessage}</p>
-        </div>
+        </Alert>
       ) : null}
 
       {/* TIER TWO UNDO, in the queue where every other proposal lives. An
@@ -406,10 +413,12 @@ export function ReviewQueue() {
           <Tag tone="warn">되돌리기 제안</Tag>
           <p className="prose">되돌리는 계획입니다. 그 후보본은 지워지지 않습니다.</p>
           {draft.baseRunId ? (
-            <details className="disclosure">
-              <summary>기술 정보</summary>
-              <p className="mono tiny">이어 붙일 후보본 {draft.baseRunId.slice(0, 12)}</p>
-            </details>
+            <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny">이어 붙일 후보본 {draft.baseRunId.slice(0, 12)}</p>
+      </CollapsibleContent>
+      </Collapsible>
           ) : null}
         </div>
       ) : draft.baseRunId ? (
@@ -434,20 +443,22 @@ export function ReviewQueue() {
               ? "이 대기열은 다른 문서에 묶여 있어 승인할 수 없습니다."
               : "계획을 낸 뒤 원본이 바뀌었습니다."}
           </p>
-          <details className="disclosure">
-            <summary>기술 정보</summary>
-            <p className="mono tiny">
+          <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny">
               묶인 해시 {staleness.boundSha256.slice(0, 16)} · 지금{" "}
               {staleness.currentSha256?.slice(0, 16) ?? "알 수 없음"}
             </p>
-          </details>
-          <button
-            className="action primary"
+      </CollapsibleContent>
+      </Collapsible>
+          <Button
+            variant="primary"
             data-testid="queue-repropose"
             onClick={() => void reproposeDraft()}
           >
             지금 문서로 다시 제안
-          </button>
+          </Button>
         </div>
       ) : null}
 
@@ -497,7 +508,7 @@ export function ReviewQueue() {
         <div className="queue-verdict" data-testid="queue-verdict">
           <div className="queue-verdict-head">
             {validation.ok ? (
-              <Tag tone="ok" title="쓰기 전 확인 통과">
+              <Tag tone="ok" title={"쓰기 전 확인 통과"}>
                 검사 통과
               </Tag>
             ) : (
@@ -507,9 +518,10 @@ export function ReviewQueue() {
               <Tag tone="warn">주의 {validation.counts.warn}</Tag>
             ) : null}
             {draft.plan?.planHash ? (
-              <details className="disclosure">
-                <summary>기술 정보</summary>
-                <p className="mono tiny">{draft.plan.planHash}</p>
+              <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny">{draft.plan.planHash}</p>
                 {approval ? (
                   <dl className="kv">
                     <dt>요청자</dt>
@@ -522,7 +534,8 @@ export function ReviewQueue() {
                     <dd className="mono">{approval.planHash}</dd>
                   </dl>
                 ) : null}
-              </details>
+      </CollapsibleContent>
+      </Collapsible>
             ) : null}
           </div>
           {/* Findings that name the plan rather than an op — plan_stale is the
@@ -535,9 +548,10 @@ export function ReviewQueue() {
                 <span>{row.msg}</span>
               </p>
             ))}
-          <details className="disclosure">
-            <summary>검사가 보지 않는 것</summary>
-            <p className="prose">{validation.preflight.note}</p>
+          <Collapsible className="disclosure">
+        <CollapsibleTrigger>검사가 보지 않는 것</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="prose">{validation.preflight.note}</p>
             <ul className="deferred">
               {validation.preflight.deferred.map((code) => (
                 <li key={code} className="mono">
@@ -546,11 +560,14 @@ export function ReviewQueue() {
               ))}
             </ul>
             <p className="prose tiny">근거: {validation.preflight.source}</p>
-          </details>
-          <details className="disclosure">
-            <summary>계획 원본</summary>
-            <pre>{JSON.stringify(draft.plan, null, 2)}</pre>
-          </details>
+      </CollapsibleContent>
+      </Collapsible>
+          <Collapsible className="disclosure">
+        <CollapsibleTrigger>계획 원본</CollapsibleTrigger>
+        <CollapsibleContent>
+<pre>{JSON.stringify(draft.plan, null, 2)}</pre>
+      </CollapsibleContent>
+      </Collapsible>
         </div>
       ) : draft.phase === "starting" ? (
         <p className="empty">계획을 확인하는 중입니다.</p>
@@ -558,29 +575,32 @@ export function ReviewQueue() {
 
       <div className="gate-actions">
         {approval?.state === "pending" ? (
-          <button
-            className="action"
-            data-testid="reject"
-            disabled={!canDecide}
-            title={
+          <Tooltip
+            content={
               composing
                 ? "입력 조합이 끝나기 전에는 거절하지 않습니다"
                 : approvalBound
                   ? "이 승인 요청을 거절합니다"
                   : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
             }
-            onClick={() => {
-              if (getState().isComposing) return;
-              rejectDisplayedPlan();
-            }}
           >
-            거절
-          </button>
+            <Button
+              variant="secondary"
+              data-testid="reject"
+              disabled={!canDecide}
+              onClick={() => {
+                if (getState().isComposing) return;
+                rejectDisplayedPlan();
+              }}
+            >
+              거절
+            </Button>
+          </Tooltip>
         ) : null}
         {redo}
-        <button className="ghost dark-safe" disabled={locked} onClick={() => void clearQueue()}>
+        <Button variant="ghost" className="dark-safe" disabled={locked} onClick={() => void clearQueue()}>
           대기열 비우기
-        </button>
+        </Button>
       </div>
 
       {approvalError ? (
@@ -589,9 +609,9 @@ export function ReviewQueue() {
           <p className="prose">{approvalError.message}</p>
           <p className="mono tiny">{approvalError.code}</p>
           {approvalError.code === "plan_stale" ? (
-            <button className="action" onClick={() => void reproposeDraft()}>
+            <Button variant="secondary" onClick={() => void reproposeDraft()}>
               지금 문서로 다시 제안
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
@@ -604,10 +624,12 @@ export function ReviewQueue() {
           {/* preedit's own refusal payload, verbatim. §3.7: the caller must
               never have to open section.xml to interpret a refusal. */}
           {applyError.data ? (
-            <details className="disclosure">
-              <summary>엔진이 보낸 그대로</summary>
-              <pre>{JSON.stringify(applyError.data, null, 2)}</pre>
-            </details>
+            <Collapsible className="disclosure">
+        <CollapsibleTrigger>엔진이 보낸 그대로</CollapsibleTrigger>
+        <CollapsibleContent>
+<pre>{JSON.stringify(applyError.data, null, 2)}</pre>
+      </CollapsibleContent>
+      </Collapsible>
           ) : null}
         </div>
       ) : null}
@@ -622,21 +644,23 @@ export function ReviewQueue() {
                 ? "확인했습니다. 후보본은 만들어졌고 영수증도 남아 있습니다."
                 : "확인했습니다. 후보본은 만들어지지 않았습니다. 문서는 그대로입니다."}
           </p>
-          <details className="disclosure">
-            <summary>기술 정보</summary>
-            <p className="mono tiny">
+          <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="mono tiny">
               {recovery.atUtc} · plan {recovery.planId.slice(0, 12)}
               {recovery.runId ? ` · run ${recovery.runId.slice(0, 12)}` : ""}
             </p>
-          </details>
+      </CollapsibleContent>
+      </Collapsible>
           {recovery.outcome === "unknown" ? (
-            <button
-              className="action primary"
+            <Button
+              variant="primary"
               data-testid="recovery-check"
               onClick={() => void resolveRecovery()}
             >
               후보본이 생겼는지 확인
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}

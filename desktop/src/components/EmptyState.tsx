@@ -5,6 +5,7 @@
 import type { ReactNode } from "react";
 
 import { labelOf } from "../label";
+import { EmptyState as KitEmpty } from "../ui/EmptyState";
 import { Icon } from "./Icon";
 
 export function EmptyState({
@@ -21,20 +22,18 @@ export function EmptyState({
   testId?: string;
 }) {
   return (
-    <div className="empty-state" data-testid={testId}>
-      {icon ? (
-        <div className="empty-state-icon" aria-hidden="true">
-          {icon}
-        </div>
-      ) : null}
-      <p className="empty-state-title">{labelOf(title)}</p>
-      <p className="empty-state-body">{labelOf(body)}</p>
-      {action ? (
-        <button type="button" className="action" onClick={action.onClick}>
-          {labelOf(action.label)}
-        </button>
-      ) : null}
-    </div>
+    <KitEmpty
+      className="empty-state"
+      icon={icon}
+      title={labelOf(title)}
+      body={labelOf(body)}
+      action={
+        action
+          ? { label: labelOf(action.label), onClick: action.onClick }
+          : undefined
+      }
+      testId={testId}
+    />
   );
 }
 

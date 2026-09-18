@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
@@ -121,7 +122,9 @@ function renderDocumentView(state) {
     if (id === "../components/VerifyResults") {
       return { VerifyPanel: () => null };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.DocumentView));
 }
@@ -183,7 +186,9 @@ function renderHistory(state) {
       return { Timeline: () => React.createElement("div", { "data-testid": "timeline" }) };
     }
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.History));
 }
@@ -219,6 +224,8 @@ function renderVerificationBar(state, props) {
       if (id === "../verifyReport") {
         return { worstVerifyVerdict: () => null, verifyTargetLabel: () => "원본" };
       }
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   );
@@ -365,7 +372,9 @@ function renderHome(state) {
       return { Logo: () => React.createElement("svg", { "data-testid": "logo" }) };
     }
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.Home));
 }
@@ -402,7 +411,9 @@ function renderSettings(state) {
         Tag: ({ children }) => React.createElement("span", null, children),
       };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.Settings));
 }
@@ -475,7 +486,9 @@ function renderSeatPane() {
       };
     }
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.ContextPanel, { inspect }));
 }
@@ -559,9 +572,9 @@ test("settings sections 일반 and 에이전트 render", () => {
   const status = innerOfTestId(html, "agent-host-status") ?? "";
   assert.match(status, /연결됨 · 내장/);
   assert.doesNotMatch(status, /[\\/]|py\.exe|\.py\b/);
-  assert.match(html, /title="네트워크도 시계도 없는 결정론 제공자\."/);
-  assert.match(html, /title="OpenAI 호환 엔드포인트\."/);
-  assert.match(html, /title="공식 Messages API\."/);
+  assert.match(html, /data-tip="네트워크도 시계도 없는 결정론 제공자\."/);
+  assert.match(html, /data-tip="OpenAI 호환 엔드포인트\."/);
+  assert.match(html, /data-tip="공식 Messages API\."/);
   assert.match(html, /같은 문서면 같은 요청을 냅니다/);
   const closeRule = css.match(/\.settings-close\s*\{[^}]+\}/)?.[0] ?? "";
   assert.match(closeRule, /color:\s*var\(--fg\)/);
@@ -618,7 +631,7 @@ test("기록 compare is a compact popover and receipt is a labelled action", () 
     compareResult: null,
     receipts: { "run-demo0000": { backend: "preedit", checks: { acceptance: true }, steps: [] } },
   });
-  assert.match(html, /class="compare-popover"/);
+  assert.match(html, /compare-popover/);
   assert.match(html, /이 후보본을 원본과 비교/);
   assert.match(html, /다른 후보본과/);
   assert.match(html, /선택한 자리만/);

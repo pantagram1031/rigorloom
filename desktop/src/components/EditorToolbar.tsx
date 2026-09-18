@@ -1,40 +1,11 @@
 /**
  * The editor strip above the document. Hangul-editor-shaped, and our own.
  *
- * WHAT IT IS FOR. Until Phase 5 the centre had a two-button mode switch and a
- * caveat line, and the window read as a web page with a document in it. A
- * Hangul editor has a dense functional band between the chrome and the paper —
- * what the caret is standing in, how big the page is drawn, what state the
- * document is in — and that band is most of why the genre feels like an editor.
- * This is that band: dense, keyboard-first, no icon cloning, no Hancom
- * anything. The hanji surface and the one teal accent are unchanged.
- *
- * EVERY FIELD IS READ-ONLY, and every field is real.
- *
- * 글꼴, AND THE TWO ABSENCES IT KEEPS APART. Runtime gap 16 is closed: §14 puts
- * the declared face on the wire, joined out of the header's own `fontface`
- * tables, so the strip shows 돋움체 where it used to show `charPr 11`. Three
- * rules it is written to, because a font control is the easiest place in this
- * application to fabricate:
- *
- * - **Nothing is defaulted.** A dropdown reading 맑은 고딕 because that is what
- *   a toolbar usually says would be a fabrication. Where the document declares
- *   no resolvable face, the id stands alone and the tooltip says the document
- *   did not name one.
- * - **Two absences stay apart.** `face: null` means THIS document names no face
- *   for that charPr; `summary.typefaces.state === "unavailable"` means nothing
- *   looked — a profile from an older scan, for instance. Collapsing them would
- *   tell a user their document names no fonts when the truth is we did not read.
- * - **한글 first, and the others on hover.** §14 carries a face PER LANGUAGE
- *   because Hangul's own font dialog does; the strip has room for one, so it
- *   shows the 한글 face and the tooltip carries every language declared. It
- *   does not merge them into one name, which would be a guess about which of
- *   two declared truths the reader meant.
- *
- * The T30 mismatch reads in names now rather than integers: a seat inheriting
- * charPr 11 (돋움체) where the preflight suggests charPr 23 (한양중고딕) is a
- * fact a person can act on; "11 vs 23" was not.
+ * EVERY FIELD IS READ-ONLY, and every field is real. See the previous
+ * comments in this file's history for the 글꼴 / charPr / size honesty rules.
  */
+import type { ReactNode } from "react";
+
 import {
   applyUiZoom,
   bindFormAndOpen,
@@ -59,24 +30,23 @@ import {
   type Selection,
 } from "../store";
 import type { InspectResult, RegionText, TypefaceByLang } from "../types";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "../ui/DropdownMenu";
+import { Kbd } from "../ui/Kbd";
+import { ToggleGroup, ToggleGroupItem } from "../ui/ToggleGroup";
+import { Tooltip } from "../ui/Tooltip";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
 
-/**
- * A menu in the band: a disclosure, not a popup.
- *
- * The five actions above earn their place in the strip because people reach for
- * them constantly. Everything else — the font the document declares, the shape
- * id, the size, the app zoom — is something a person LOOKS UP, once, when they
- * have a question. Those used to be six always-on fields competing with the
- * actions for the same 40 pixels, which is most of why the band read as a
- * dashboard rather than as a toolbar.
- *
- * `<details>` rather than a floating panel on purpose: its content stays in the
- * DOM when closed, so nothing here becomes unreachable to a screen reader or to
- * the evidence harness, and there is no z-index, no outside-click handler and
- * no portal to keep in step with the window.
- */
 function ToolMenu({
   id,
   label,
@@ -88,56 +58,35 @@ function ToolMenu({
   id?: Exclude<ChromeMenu, null>;
   label: string;
   testId: string;
-  /** What the closed menu shows, so a glance still answers the question. */
-  summary?: React.ReactNode;
+  summary?: ReactNode;
   ariaLabel?: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   const open = useWorkspace((s) => (id ? s.chromeMenu === id : false));
   return (
-    <details
-      className="toolmenu"
-      data-testid={testId}
+    <DropdownMenu
       open={id ? open : undefined}
-      onToggle={
+      onOpenChange={
         id
-          ? (e) => {
-              const next = (e.currentTarget as HTMLDetailsElement).open;
-              if (next && getState().chromeMenu !== id) setChromeMenu(id);
-              else if (!next && getState().chromeMenu === id) setChromeMenu(null);
+          ? (next) => {
+              if (next) setChromeMenu(id);
+              else if (getState().chromeMenu === id) setChromeMenu(null);
             }
           : undefined
       }
     >
-      <summary aria-label={ariaLabel} aria-haspopup="menu" aria-expanded={id ? open : undefined}>
+      <DropdownMenuTrigger data-testid={testId} aria-label={ariaLabel ?? label}>
         <span className="tool-label">{label}</span>
         {summary ? <span className="tool-value">{summary}</span> : null}
         <Icon name="chevron-down" />
-      </summary>
-      <div className="toolmenu-body" role="menu">
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="toolmenu-body">
         {children}
-      </div>
-    </details>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-/**
- * charPr id -> the face the DOCUMENT declares for it, joined from the two
- * places `document/inspect` already publishes one.
- *
- * Built rather than looked up in one field because the two publishers cover
- * different ids: `summary.baselineCharPr` / `summary.blackCharPr` carry the
- * document-level shapes, and `regions[].charPrFace` /
- * `regions[].charPrSuggestedFace` carry every fill seat's own and the one its
- * preflight suggests. The toolbar's selection can be a graph cell that is not a
- * fill seat, and the graph does not carry faces — so a selection whose charPr
- * appears in neither publisher gets NO name, which is correct: nothing on the
- * wire said what it is.
- *
- * Every pair here is one the runtime stated. Nothing is inferred from another
- * id, nothing is inherited from the baseline, and an id absent from the map is
- * absent from the toolbar.
- */
 function faceIndex(inspect: InspectResult | null): Map<string, TypefaceByLang> {
   const index = new Map<string, TypefaceByLang>();
   if (!inspect) return index;
@@ -154,16 +103,6 @@ function faceIndex(inspect: InspectResult | null): Map<string, TypefaceByLang> {
   return index;
 }
 
-/**
- * The same map, plus the faces the RUN inventory carries (§14, fourth field).
- *
- * A caret stands in a paragraph run, and a run's charPr appears in neither
- * publisher `faceIndex` reads — so until `runs[].charpr_face` reached the wire
- * this strip could print nothing but the integer above a caret. Read out of
- * `texts` rather than through a new call: `beginParagraphEdit` files the
- * region it asked for there precisely so the toolbar does not ask the runtime
- * a second time to name what it has already been told.
- */
 function faceIndexWithRuns(
   inspect: InspectResult | null,
   texts: RegionText[],
@@ -179,12 +118,10 @@ function faceIndexWithRuns(
   return index;
 }
 
-/** The 한글 face, which is the one a Korean form is set in. */
 function primaryFace(face: TypefaceByLang | undefined): string | null {
   return face?.hangul ?? null;
 }
 
-/** Every language the header resolved, for the tooltip. Never merged. */
 function allFaces(face: TypefaceByLang | undefined): string {
   if (!face) return "";
   const LANG: Record<string, string> = {
@@ -202,16 +139,6 @@ function allFaces(face: TypefaceByLang | undefined): string {
     .join(" · ");
 }
 
-/**
- * The charPr the selected node carries, from the graph the runtime returned.
- *
- * NOT A SELECTOR, and the distinction is load-bearing. `useSyncExternalStore`
- * compares snapshots with `Object.is`, so a selector returning a fresh object
- * makes React conclude the store is changing forever and takes the whole root
- * down — the failure that cost a cycle in the design slice and another in Phase
- * 4. This is a plain function over values already pulled through stable
- * selectors, called during render.
- */
 function seatCharPr(
   selection: Selection,
   inspect: InspectResult | null,
@@ -231,9 +158,6 @@ function seatCharPr(
     };
   }
   if (selection.kind === "paragraph") {
-    // Paragraph runs carry their own charPr, from document/readRegion. With a
-    // caret open this is the run the caret is standing IN, which is the whole
-    // reason the strip can name a face here at all.
     const region = texts.find((row) => row.at_para === selection.atPara);
     const run = caretRun !== null ? region?.runs?.find((r) => r.index === caretRun) : region?.runs?.[0];
     return { id: run?.charpr ?? null, suggested: null, where: `p:${selection.atPara}` };
@@ -270,34 +194,35 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
   const suggestedFace = charPr.suggested ? faces.get(charPr.suggested) : undefined;
   const name = primaryFace(face);
   const suggestedName = primaryFace(suggestedFace);
-  // "this document names none" vs "nothing looked" — the whole reason §14 has
-  // two fields. The toolbar prints a different dash for each.
   const faceUnknown =
     !typefaces || typefaces.state !== "read"
       ? (typefaces?.reason ?? "이 빌드는 글꼴 이름을 읽지 못했습니다")
       : null;
 
+  const typefaceTip = name
+    ? `이 문서가 선언한 글꼴입니다 — ${allFaces(face)}`
+    : faceUnknown
+      ? `글꼴 이름을 읽을 수 없었습니다 — ${faceUnknown}`
+      : charPr.id
+        ? "이 문서는 이 글자 모양에 쓸 글꼴 이름을 선언하지 않았습니다."
+        : "선택한 곳이 없습니다.";
+  const sizeTip = caret?.sizePt
+    ? "커서가 선 줄을 렌더러가 그린 크기입니다. 문서가 선언한 값이 아니라 지면에서 잰 값입니다."
+    : "이 문서가 본문 글자 모양에 선언한 크기입니다.";
+  const mismatchTip =
+    suggestedName && name
+      ? `이 자리는 ${name}(charPr ${charPr.id}) 을 물려받는데, 서식 검사가 권하는 본문 모양은 ${suggestedName}(charPr ${charPr.suggested}) 입니다`
+      : `이 문서의 본문 모양은 charPr ${charPr.suggested} 입니다`;
+
   const formatBody = (
     <>
-      {/* 글꼴. The face the DOCUMENT declares, never a default (§14). */}
       <div className="tool-group" data-testid="tool-typeface">
         <span className="tool-label">글꼴</span>
-        <span
-          className="tool-value"
-          data-testid="typeface-name"
-          data-face={name ?? ""}
-          title={
-            name
-              ? `이 문서가 선언한 글꼴입니다 — ${allFaces(face)}`
-              : faceUnknown
-                ? `글꼴 이름을 읽을 수 없었습니다 — ${faceUnknown}`
-                : charPr.id
-                  ? "이 문서는 이 글자 모양에 쓸 글꼴 이름을 선언하지 않았습니다."
-                  : "선택한 곳이 없습니다."
-          }
-        >
-          {name ?? "—"}
-        </span>
+        <Tooltip content={typefaceTip}>
+          <span className="tool-value" data-testid="typeface-name" data-face={name ?? ""}>
+            {name ?? "—"}
+          </span>
+        </Tooltip>
         {!name && charPr.id ? (
           <span className="tool-note tiny" data-testid="typeface-absent">
             {faceUnknown ? "읽지 못함" : "문서가 이름을 안 밝힘"}
@@ -305,22 +230,13 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         ) : null}
       </div>
 
-      {/* 글자 모양. The id stays: it is what a plan op carries, and it is what
-          the T30 preflight names. The mismatch tag reads in NAMES now. */}
       <div className="tool-group" data-testid="tool-charpr">
         <span className="tool-label">글자 모양</span>
-        <span className="tool-value mono" title={charPr.where || "선택한 곳이 없습니다"}>
-          {charPr.id ?? "—"}
-        </span>
+        <Tooltip content={charPr.where || "선택한 곳이 없습니다"}>
+          <span className="tool-value mono">{charPr.id ?? "—"}</span>
+        </Tooltip>
         {anomalous ? (
-          <Tag
-            tone="warn"
-            title={
-              suggestedName && name
-                ? `이 자리는 ${name}(charPr ${charPr.id}) 을 물려받는데, 서식 검사가 권하는 본문 모양은 ${suggestedName}(charPr ${charPr.suggested}) 입니다`
-                : `이 문서의 본문 모양은 charPr ${charPr.suggested} 입니다`
-            }
-          >
+          <Tag tone="warn" title={mismatchTip}>
             {suggestedName && name && suggestedName !== name
               ? `본문은 ${suggestedName}`
               : "본문과 다름"}
@@ -328,134 +244,130 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         ) : null}
       </div>
 
-      {/* 크기, AND WHOSE SIZE IT IS.
-          Two different facts share this control and they are never merged.
-          `baselineCharPr.height_pt` is what the document's HEADER declares for
-          the body shape. `span.sizePt` is what the RENDERER drew the caret's
-          line at, read out of the PDF. */}
       <div className="tool-group" data-testid="tool-size">
         <span className="tool-label">크기</span>
-        <span
-          className="tool-value mono"
-          data-testid="size-value"
-          data-source={caret?.sizePt ? "render" : "baseline"}
-          title={
-            caret?.sizePt
-              ? "커서가 선 줄을 렌더러가 그린 크기입니다. 문서가 선언한 값이 아니라 지면에서 잰 값입니다."
-              : "이 문서가 본문 글자 모양에 선언한 크기입니다."
-          }
-        >
-          {caret?.sizePt ? `${caret.sizePt}pt` : baseline ? `${baseline.height_pt}pt` : "—"}
-        </span>
+        <Tooltip content={sizeTip}>
+          <span
+            className="tool-value mono"
+            data-testid="size-value"
+            data-source={caret?.sizePt ? "render" : "baseline"}
+          >
+            {caret?.sizePt ? `${caret.sizePt}pt` : baseline ? `${baseline.height_pt}pt` : "—"}
+          </span>
+        </Tooltip>
         <span className="tool-note tiny">{caret?.sizePt ? "지면에서 잰 값" : "본문 기준"}</span>
       </div>
     </>
   );
 
+  const exportTip = applied
+    ? "후보본과 영수증을 함께 저장합니다 (Ctrl+S)"
+    : "아직 내보낼 후보본이 없습니다. 편집을 승인해 적용하면 생깁니다.";
+  const pageTip = canRender
+    ? "실제 페이지 그림"
+    : "이 런타임에는 문서를 그림으로 그리는 방법이 아직 없습니다";
+  const checkTip =
+    hard > 0
+      ? `오프라인 검사 · 막힘 ${hard}`
+      : findings.length > 0
+        ? `오프라인 검사 · ${findings.length}건`
+        : "오프라인 검사를 돌립니다";
+  const approveTip =
+    approvalPhase === "pending"
+      ? "오른쪽에서 승인하고 적용합니다"
+      : canApprove
+        ? "검토 탭에서 승인하고 적용합니다"
+        : "입력 칸에 값을 넣으면 승인을 요청할 수 있습니다";
+  const railTip = railCollapsed ? "구조 레일 펼치기 (Ctrl+B)" : "구조 레일 접기 (Ctrl+B)";
+
   return (
     <div className="toolbar" data-testid="editor-toolbar" role="toolbar" aria-label="편집 도구">
       <div className="tool-cluster tool-left" data-testid="tool-actions">
-        <button
-          className="action btn-icon tool-rail"
-          data-testid="toggle-left-rail"
-          title={railCollapsed ? "구조 레일 펼치기 (Ctrl+B)" : "구조 레일 접기 (Ctrl+B)"}
-          aria-pressed={railCollapsed}
-          aria-label={railCollapsed ? "구조 펼치기" : "구조 접기"}
-          onClick={() => toggleLeftRail()}
-        >
-          <Icon name={railCollapsed ? "chevron-right" : "chevron-left"} />
-        </button>
-        <button
-          className="action btn-icon"
-          data-testid="act-open"
-          title="문서를 엽니다 (Ctrl+O)"
-          onClick={() => void openViaDialog()}
-        >
-          <Icon name="open" />
-          <span className="tool-action-label">열기</span>
-        </button>
+        <Tooltip content={railTip}>
+          <Button
+            variant="ghost"
+            className="btn-icon tool-rail"
+            data-testid="toggle-left-rail"
+            aria-pressed={railCollapsed}
+            aria-label={railCollapsed ? "구조 펼치기" : "구조 접기"}
+            onClick={() => toggleLeftRail()}
+          >
+            <Icon name={railCollapsed ? "chevron-right" : "chevron-left"} />
+          </Button>
+        </Tooltip>
+        <Tooltip content="문서를 엽니다 (Ctrl+O)">
+          <Button variant="ghost" className="btn-icon" data-testid="act-open" onClick={() => void openViaDialog()}>
+            <Icon name="open" />
+            <span className="tool-action-label">열기</span>
+          </Button>
+        </Tooltip>
         <ToolMenu id="overflow" label="···" testId="tool-overflow" ariaLabel="더 보기">
-          <button
-            type="button"
-            className="menu-item"
-            role="menuitem"
-            data-testid="act-export"
-            disabled={!applied || exportPhase === "starting"}
-            title={
-              applied
-                ? "후보본과 영수증을 함께 저장합니다 (Ctrl+S)"
-                : "아직 내보낼 후보본이 없습니다. 편집을 승인해 적용하면 생깁니다."
-            }
-            onClick={() => {
-              setChromeMenu(null);
-              void exportApplied();
-            }}
-          >
-            <Icon name="save" />
-            {exportPhase === "starting" ? "내보내는 중…" : "저장/내보내기"}
-          </button>
-          <button
-            type="button"
-            className="menu-item"
-            role="menuitem"
-            data-testid="act-undo"
-            title="되돌리기와 후보본 계보를 봅니다"
-            onClick={() => {
-              setChromeMenu(null);
-              selectInspectorTab("history");
-            }}
-          >
-            <Icon name="undo" />
-            되돌리기
-          </button>
-          <button
-            type="button"
-            className="menu-item"
-            role="menuitem"
-            data-testid="act-bind-form"
-            title="빈 양식이나 form_profile.json을 연결해 엽니다"
-            onClick={() => {
-              setChromeMenu(null);
-              void bindFormAndOpen();
-            }}
-          >
-            <Icon name="link" />
-            양식 연결
-          </button>
-          <ToolMenu
-            label="서식"
-            testId="tool-format"
-            summary={name ?? (charPr.id !== null ? `charPr ${charPr.id}` : "—")}
-          >
-            {formatBody}
-          </ToolMenu>
+          <Tooltip content={exportTip}>
+            <DropdownMenuItem
+              data-testid="act-export"
+              disabled={!applied || exportPhase === "starting"}
+              onClick={() => {
+                setChromeMenu(null);
+                void exportApplied();
+              }}
+            >
+              <Icon name="save" />
+              {exportPhase === "starting" ? "내보내는 중…" : "저장/내보내기"}
+              <DropdownMenuShortcut>
+                <Kbd>Ctrl+S</Kbd>
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </Tooltip>
+          <Tooltip content="되돌리기와 후보본 계보를 봅니다">
+            <DropdownMenuItem
+              data-testid="act-undo"
+              onClick={() => {
+                setChromeMenu(null);
+                selectInspectorTab("history");
+              }}
+            >
+              <Icon name="undo" />
+              되돌리기
+            </DropdownMenuItem>
+          </Tooltip>
+          <Tooltip content="빈 양식이나 form_profile.json을 연결해 엽니다">
+            <DropdownMenuItem
+              data-testid="act-bind-form"
+              onClick={() => {
+                setChromeMenu(null);
+                void bindFormAndOpen();
+              }}
+            >
+              <Icon name="link" />
+              양식 연결
+            </DropdownMenuItem>
+          </Tooltip>
+          <DropdownMenuSeparator />
+          <Collapsible className="disclosure" data-testid="tool-format">
+            <CollapsibleTrigger>서식</CollapsibleTrigger>
+            <CollapsibleContent>{formatBody}</CollapsibleContent>
+          </Collapsible>
         </ToolMenu>
       </div>
 
       <div className="tool-cluster tool-center">
-        <div className="modeswitch" role="group" aria-label="가운데 화면 모드">
-          <button
-            aria-pressed={mode === "text"}
-            data-testid="mode-text"
-            title="문서의 글과 표를 읽기 순서로"
-            onClick={() => setCenterMode("text")}
-          >
-            본문
-          </button>
-          <button
-            aria-pressed={mode === "page"}
-            data-testid="mode-page"
-            disabled={!canRender}
-            title={
-              canRender
-                ? "실제 페이지 그림"
-                : "이 런타임에는 문서를 그림으로 그리는 방법이 아직 없습니다"
-            }
-            onClick={() => setCenterMode("page")}
-          >
-            페이지
-          </button>
-        </div>
+        <ToggleGroup
+          className="modeswitch"
+          value={mode}
+          onValueChange={(v) => setCenterMode(v as "text" | "page")}
+          aria-label="가운데 화면 모드"
+        >
+          <Tooltip content="문서의 글과 표를 읽기 순서로">
+            <ToggleGroupItem value="text" data-testid="mode-text">
+              본문
+            </ToggleGroupItem>
+          </Tooltip>
+          <Tooltip content={pageTip}>
+            <ToggleGroupItem value="page" data-testid="mode-page" disabled={!canRender}>
+              페이지
+            </ToggleGroupItem>
+          </Tooltip>
+        </ToggleGroup>
         <ToolMenu
           id="zoom"
           label="배율"
@@ -465,116 +377,106 @@ export function EditorToolbar({ inspect }: { inspect: InspectResult | null }) {
         >
           <div className="tool-group zoomer">
             <span className="tool-label">문서</span>
-            <button
-              className="ghost"
-              aria-label="문서 축소"
-              disabled={zoom <= 0.5}
-              onClick={() => setZoom(zoom - 0.1)}
-            >
+            <Button variant="ghost" size="sm" aria-label="문서 축소" disabled={zoom <= 0.5} onClick={() => setZoom(zoom - 0.1)}>
               −
-            </button>
-            <button
-              className="tool-value mono"
-              data-testid="zoom-value"
-              title="100% 로 되돌립니다"
-              onClick={() => setZoom(1)}
-            >
-              {Math.round(zoom * 100)}%
-            </button>
-            <button
-              className="ghost"
-              aria-label="문서 확대"
-              disabled={zoom >= 4}
-              onClick={() => setZoom(zoom + 0.1)}
-            >
+            </Button>
+            <Tooltip content="100% 로 되돌립니다">
+              <Button variant="ghost" size="sm" className="tool-value mono" data-testid="zoom-value" onClick={() => setZoom(1)}>
+                {Math.round(zoom * 100)}%
+              </Button>
+            </Tooltip>
+            <Button variant="ghost" size="sm" aria-label="문서 확대" disabled={zoom >= 4} onClick={() => setZoom(zoom + 0.1)}>
               +
-            </button>
+            </Button>
           </div>
           <div className="tool-group zoomer" data-testid="tool-uizoom">
             <span className="tool-label">화면</span>
-            <button
-              className="ghost"
-              aria-label="화면 축소"
-              title="Ctrl+−"
-              disabled={uiZoom <= 0.5}
-              onClick={() => stepUiZoom(-1)}
-            >
-              −
-            </button>
-            <button
-              className="tool-value mono"
-              data-testid="uizoom-value"
-              title="Ctrl+0 으로 되돌립니다"
-              disabled={uiZoom === 1}
-              onClick={() => void applyUiZoom(1)}
-            >
-              {Math.round(uiZoom * 100)}%
-            </button>
-            <button
-              className="ghost"
-              aria-label="화면 확대"
-              title="Ctrl+="
-              disabled={uiZoom >= 2}
-              onClick={() => stepUiZoom(1)}
-            >
-              +
-            </button>
+            <Tooltip content="Ctrl+−">
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="화면 축소"
+                disabled={uiZoom <= 0.5}
+                onClick={() => stepUiZoom(-1)}
+              >
+                −
+                <DropdownMenuShortcut>
+                  <Kbd>Ctrl+−</Kbd>
+                </DropdownMenuShortcut>
+              </Button>
+            </Tooltip>
+            <Tooltip content="Ctrl+0 으로 되돌립니다">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="tool-value mono"
+                data-testid="uizoom-value"
+                disabled={uiZoom === 1}
+                onClick={() => void applyUiZoom(1)}
+              >
+                {Math.round(uiZoom * 100)}%
+              </Button>
+            </Tooltip>
+            <Tooltip content="Ctrl+=">
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="화면 확대"
+                disabled={uiZoom >= 2}
+                onClick={() => stepUiZoom(1)}
+              >
+                +
+                <DropdownMenuShortcut>
+                  <Kbd>Ctrl+=</Kbd>
+                </DropdownMenuShortcut>
+              </Button>
+            </Tooltip>
           </div>
         </ToolMenu>
       </div>
 
       <div className="tool-cluster tool-right">
-        <button
-          className="action btn-icon"
-          data-testid="toolbar-check"
-          disabled={!inspect || checkPhase === "starting"}
-          title={
-            hard > 0
-              ? `오프라인 검사 · 막힘 ${hard}`
-              : findings.length > 0
-                ? `오프라인 검사 · ${findings.length}건`
-                : "오프라인 검사를 돌립니다"
-          }
-          onClick={() => void runCheck()}
-        >
-          <Icon name="search" />
-          <span className="tool-action-label">{checkPhase === "starting" ? "검사 중" : "검사"}</span>
-        </button>
-        <button
-          className={
-            approvalPhase === "pending" ? "action primary point btn-icon" : "action primary btn-icon"
-          }
-          data-testid="act-approve"
-          disabled={approvalPhase !== "pending" && !canApprove}
-          title={
-            approvalPhase === "pending"
-              ? "오른쪽에서 승인하고 적용합니다"
-              : canApprove
-                ? "검토 탭에서 승인하고 적용합니다"
-                : "입력 칸에 값을 넣으면 승인을 요청할 수 있습니다"
-          }
-          onClick={() => {
-            selectInspectorTab("review");
-            window.requestAnimationFrame(() => {
-              document
-                .querySelector('[data-testid="approve-and-apply"]')
-                ?.scrollIntoView({ block: "center" });
-            });
-          }}
-        >
-          <Icon name="check" />
-          <span className="tool-action-label">
-            {approvalPhase === "pending" ? "승인 대기" : "승인"}
-          </span>
-          <span
-            className="tool-badge"
-            data-testid="tool-state"
-            hidden={queued === 0}
-            title={queued > 0 ? "아직 문서는 바뀌지 않았습니다" : undefined}
+        <Tooltip content={checkTip}>
+          <Button
+            variant="secondary"
+            className="btn-icon"
+            data-testid="toolbar-check"
+            disabled={!inspect || checkPhase === "starting"}
+            onClick={() => void runCheck()}
           >
-            {queued}
-          </span>
-        </button>
+            <Icon name="search" />
+            <span className="tool-action-label">{checkPhase === "starting" ? "검사 중" : "검사"}</span>
+          </Button>
+        </Tooltip>
+        <Tooltip content={approveTip}>
+          <Button
+            variant="secondary"
+            className={approvalPhase === "pending" ? "btn-icon point" : "btn-icon"}
+            data-testid="act-approve"
+            disabled={approvalPhase !== "pending" && !canApprove}
+            onClick={() => {
+              selectInspectorTab("review");
+              window.requestAnimationFrame(() => {
+                document
+                  .querySelector('[data-testid="approve-and-apply"]')
+                  ?.scrollIntoView({ block: "center" });
+              });
+            }}
+          >
+            <Icon name="check" />
+            <span className="tool-action-label">
+              {approvalPhase === "pending" ? "승인 대기" : "승인"}
+            </span>
+            <Badge
+              variant="secondary"
+              className="tool-badge"
+              data-testid="tool-state"
+              hidden={queued === 0}
+            >
+              {queued}
+            </Badge>
+          </Button>
+        </Tooltip>
       </div>
     </div>
   );

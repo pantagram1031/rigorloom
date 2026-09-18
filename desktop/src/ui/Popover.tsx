@@ -75,6 +75,7 @@ export const PopoverTrigger = forwardRef<HTMLButtonElement, HTMLAttributes<HTMLB
         aria-controls={ctx.contentId}
         data-state={ctx.open ? "open" : "closed"}
         onClick={(e) => {
+          e.stopPropagation();
           onClick?.(e);
           ctx.setOpen(!ctx.open);
         }}
@@ -89,6 +90,7 @@ export const PopoverTrigger = forwardRef<HTMLButtonElement, HTMLAttributes<HTMLB
 export type PopoverContentProps = HTMLAttributes<HTMLDivElement> & {
   side?: LayerSide;
   align?: LayerAlign;
+  forceMount?: boolean;
 };
 
 export function PopoverContent({
@@ -96,6 +98,7 @@ export function PopoverContent({
   align = "center",
   className,
   children,
+  forceMount,
   ...rest
 }: PopoverContentProps) {
   const ctx = usePopover();
@@ -119,7 +122,7 @@ export function PopoverContent({
     setCoords(placed);
   }, [ctx.open, ctx.disablePortal, ctx.triggerRef, ctx.contentRef, side, align]);
 
-  if (!ctx.open) return null;
+  if (!ctx.open && !forceMount) return null;
 
   const style: CSSProperties | undefined = ctx.disablePortal
     ? undefined
@@ -134,9 +137,10 @@ export function PopoverContent({
         id={ctx.contentId}
         role="dialog"
         tabIndex={-1}
-        data-state="open"
+        hidden={!ctx.open || undefined}
+        data-state={ctx.open ? "open" : "closed"}
         data-side={coords.side}
-        className={cn("ui-popover-content", className)}
+        className={cn(className, "ui-popover-content")}
         style={style}
         {...rest}
       >

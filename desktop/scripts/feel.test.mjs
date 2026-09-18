@@ -7,6 +7,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 const treeSource = readFileSync(new URL("../src/components/StructureTree.tsx", import.meta.url), "utf8");
@@ -108,7 +109,9 @@ function renderTree() {
     if (id === "../actions") return { selectStructureNode: () => {} };
     if (id === "../types") return {};
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
 }
 
@@ -136,7 +139,9 @@ function renderPaper() {
     }
     if (id === "./SeatEditor") return { SeatEditor: () => null };
     if (id === "../types") return {};
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
 }
 
@@ -201,6 +206,8 @@ test("palette lists toolbar actions and switches the 검토 tab", () => {
             selector({ paletteOpen: true, recents: [{ path: "C:\\a.hwpx", name: "양식.hwpx" }] }),
         };
       }
+            const ui = uiFromImport(id);
+      if (ui) return ui;
       throw new Error(`unexpected import: ${id}`);
     },
   );
@@ -284,7 +291,9 @@ test("first-run hint shows once and dismisses through prefs", () => {
     if (id === "../types") return {};
     if (id === "./Logo") return { Logo: () => React.createElement("svg") };
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   const shown = renderToStaticMarkup(React.createElement(welcome.Home));
   assert.match(shown, /data-testid="first-run-hint"/);
@@ -306,7 +315,9 @@ test("first-run hint shows once and dismisses through prefs", () => {
     if (id === "../types") return {};
     if (id === "./Logo") return { Logo: () => React.createElement("svg") };
     if (id === "./Icon") return { Icon };
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   const gone = renderToStaticMarkup(React.createElement(hidden.Home));
   assert.doesNotMatch(gone, /data-testid="first-run-hint"/);

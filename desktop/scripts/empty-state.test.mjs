@@ -35,6 +35,7 @@ function loadCompiled(relPath, fileName, requireImpl) {
 }
 
 import { Icon } from "./icon-stub.mjs";
+import { uiFromImport } from "./kit-load.mjs";
 
 const label = loadCompiled("../src/label.ts", "label.ts", () => {
   throw new Error("label.ts has no imports");
@@ -45,7 +46,9 @@ const emptyState = loadCompiled("../src/components/EmptyState.tsx", "EmptyState.
   if (id === "react") return nodeRequire(id);
   if (id === "../label") return label;
   if (id === "./Icon") return { Icon };
-  throw new Error(`unexpected import: ${id}`);
+        const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
 });
 
 function jsxRequire(id) {
@@ -54,6 +57,8 @@ function jsxRequire(id) {
   if (id === "./EmptyState") return emptyState;
   if (id === "./Icon") return { Icon };
   if (id === "../label") return label;
+  const ui = uiFromImport(id);
+  if (ui) return ui;
   return null;
 }
 
@@ -90,7 +95,9 @@ function renderTaskPacks(state) {
         Tag: ({ children }) => React.createElement("span", null, children),
       };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   return renderToStaticMarkup(React.createElement(exports.TaskPacks));
 }
@@ -229,11 +236,13 @@ test("ReviewQueue empty state keeps review-queue-empty and is not a prose wall",
     if (id === "./Tag") {
       return { Tag: ({ children }) => React.createElement("span", null, children) };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   const html = renderToStaticMarkup(React.createElement(exports.ReviewQueue));
   assert.match(html, /data-testid="review-queue-empty"/);
-  assert.match(html, /class="empty-state"/);
+  assert.match(html, /class="empty-state/);
   assert.match(html, /검토할 것이 없습니다/);
   assert.doesNotMatch(html, /비어 있습니다\. 문서 화면에서/);
 });
@@ -278,11 +287,13 @@ test("History empty state keeps history-empty and uses EmptyState", () => {
     if (id === "./Timeline") {
       return { Timeline: () => React.createElement("div", { "data-testid": "timeline" }) };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   const html = renderToStaticMarkup(React.createElement(exports.History));
   assert.match(html, /data-testid="history-empty"/);
-  assert.match(html, /class="empty-state"/);
+  assert.match(html, /class="empty-state/);
   assert.match(html, /아직 후보본이 없습니다/);
   assert.doesNotMatch(html, /아직 만들어진 후보본이 없습니다/);
 });
@@ -320,11 +331,13 @@ test("Conversation empty keeps conversation-empty and names the disconnected hos
     if (id === "./Tag") {
       return { Tag: ({ children }) => React.createElement("span", null, children) };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   const html = renderToStaticMarkup(React.createElement(exports.Conversation));
   assert.match(html, /data-testid="conversation-empty"/);
-  assert.match(html, /class="empty-state"/);
+  assert.match(html, /class="empty-state/);
   assert.match(html, /에이전트가 연결되어 있지 않습니다/);
   assert.match(html, /설정 열기/);
   assertNoObjectObject(html);
@@ -358,7 +371,9 @@ test("ready conversation empty relocates composer-note onto the honesty line", (
     if (id === "./Tag") {
       return { Tag: ({ children }) => React.createElement("span", null, children) };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   const html = renderToStaticMarkup(React.createElement(exports.Conversation));
   assert.match(html, /data-testid="composer-note"/);
@@ -390,13 +405,15 @@ test("SessionList empty uses EmptyState and keeps session-list", () => {
     if (id === "./TaskPacks") {
       return { TaskPacks: () => React.createElement("div", { "data-testid": "task-packs" }) };
     }
-    throw new Error(`unexpected import: ${id}`);
+          const ui = uiFromImport(id);
+      if (ui) return ui;
+      throw new Error(`unexpected import: ${id}`);
   });
   const html = renderToStaticMarkup(
     React.createElement(exports.SessionList, { onSelect: () => {}, onOpen: () => {} }),
   );
   assert.match(html, /data-testid="session-list"/);
-  assert.match(html, /class="empty-state"/);
+  assert.match(html, /class="empty-state/);
   assert.match(html, /연 문서가 없습니다/);
   assert.doesNotMatch(html, /아직 연 문서가 없습니다/);
 });

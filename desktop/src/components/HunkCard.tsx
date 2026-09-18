@@ -22,6 +22,11 @@ import { setState, type QueuedOp } from "../store";
 import type { PlanFinding, RegionText } from "../types";
 import { Tag } from "./Tag";
 import { Icon } from "./Icon";
+import { Button } from "../ui/Button";
+import { Card, CardContent } from "../ui/Card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Input } from "../ui/Input";
+import { Tooltip } from "../ui/Tooltip";
 
 function copyPlanHash(hash: string, showToast: (msg: string, ms: number) => void): void {
   const clip = navigator.clipboard;
@@ -106,19 +111,20 @@ export function HunkCard({
       data-focused={focused ? "true" : "false"}
       tabIndex={focused ? 0 : -1}
     >
+      <Card>
+      <CardContent>
       <div className="queue-op-head hunk-head">
-        <button
-          className="hunk-title"
-          disabled={!locatable}
-          title={
+        <Tooltip
+          content={
             locatable
               ? "문서에서 이 자리를 찾습니다"
               : "이 작업은 다른 문서의 대기열에 있어 현재 문서에서는 찾을 수 없습니다"
           }
-          onClick={onLocate}
         >
-          {hunkTitle(op)}
-        </button>
+          <button className="hunk-title" disabled={!locatable} onClick={onLocate}>
+            {hunkTitle(op)}
+          </button>
+        </Tooltip>
         <Tag tone={HUNK_STATE_TONE[stateId]} title={HUNK_STATE_LABEL[stateId]}>
           <span data-testid={`hunk-state-${slug}`}>{HUNK_STATE_LABEL[stateId]}</span>
         </Tag>
@@ -134,15 +140,17 @@ export function HunkCard({
             글자 모양 지정됨
           </Tag>
         ) : null}
-        <button
-          className="ghost dark-safe"
-          data-testid={`queue-remove-${slug}`}
-          disabled={locked}
-          title="이 작업을 대기열에서 뺍니다."
-          onClick={() => void undoQueuedOp(op.opId)}
-        >
-          대기열에서 제거
-        </button>
+        <Tooltip content="이 작업을 대기열에서 뺍니다.">
+          <Button
+            variant="ghost"
+            className="dark-safe"
+            data-testid={`queue-remove-${slug}`}
+            disabled={locked}
+            onClick={() => void undoQueuedOp(op.opId)}
+          >
+            대기열에서 제거
+          </Button>
+        </Tooltip>
       </div>
 
       <div className="hunk-diff">
@@ -175,7 +183,7 @@ export function HunkCard({
                 <span key={`ae-${i}`}>{mark.text}</span>
               ),
             )}
-          <input
+          <Input
             className="queue-value"
             data-testid={`queue-value-${op.opId}`}
             value={text}
@@ -204,41 +212,43 @@ export function HunkCard({
       </div>
 
       <div className="hunk-foot">
-        <button
-          type="button"
-          className="action point btn-icon"
-          data-testid={`hunk-approve-${slug}`}
-          disabled={!canDecide}
-          title="이 항목을 계획에 넣습니다"
-          aria-label="이 항목 포함"
-          aria-pressed="true"
-          onClick={onApprove}
-        >
-          <Icon name="check" />
-          포함
-        </button>
-        <button
-          type="button"
-          className="action btn-icon"
-          data-testid={`hunk-reject-${slug}`}
-          disabled={!canDecide}
-          title="이 항목을 계획에서 뺍니다"
-          aria-label="이 항목 제외"
-          onClick={onReject}
-        >
-          <Icon name="x" />
-          제외
-        </button>
-        <details
+        <Tooltip content="이 항목을 계획에 넣습니다">
+          <Button
+            variant="primary"
+            className="point btn-icon"
+            data-testid={`hunk-approve-${slug}`}
+            disabled={!canDecide}
+            aria-label="이 항목 포함"
+            aria-pressed="true"
+            onClick={onApprove}
+          >
+            <Icon name="check" />
+            포함
+          </Button>
+        </Tooltip>
+        <Tooltip content="이 항목을 계획에서 뺍니다">
+          <Button
+            variant="secondary"
+            className="btn-icon"
+            data-testid={`hunk-reject-${slug}`}
+            disabled={!canDecide}
+            aria-label="이 항목 제외"
+            onClick={onReject}
+          >
+            <Icon name="x" />
+            제외
+          </Button>
+        </Tooltip>
+        <Collapsible
           className="disclosure hunk-provenance"
           data-testid={`queue-provenance-${slug}`}
           open={provenanceOpen}
-          onToggle={(e) => {
-            const next = (e.target as HTMLDetailsElement).open;
+          onOpenChange={(next) => {
             if (next !== provenanceOpen) onToggleProvenance();
           }}
         >
-          <summary>기술 정보</summary>
+          <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+          <CollapsibleContent>
           <dl className="kv">
             <dt>세션</dt>
             <dd data-testid={`queue-prov-session-${slug}`}>{provenance.sessionId ?? "—"}</dd>
@@ -248,15 +258,16 @@ export function HunkCard({
             <dd data-testid={`queue-prov-hash-${slug}`}>
               {provenance.planHash ?? "—"}
               {provenance.planHash ? (
-                <button
-                  type="button"
-                  className="linkish"
-                  data-testid={`queue-prov-copy-hash-${slug}`}
-                  title="계획 전체 복사"
-                  onClick={() => copyPlanHash(provenance.planHash as string, showToast)}
-                >
-                  복사
-                </button>
+                <Tooltip content="계획 전체 복사">
+                  <Button
+                    variant="link"
+                    className="linkish"
+                    data-testid={`queue-prov-copy-hash-${slug}`}
+                    onClick={() => copyPlanHash(provenance.planHash as string, showToast)}
+                  >
+                    복사
+                  </Button>
+                </Tooltip>
               ) : null}
             </dd>
             <dt>종류</dt>
@@ -286,7 +297,8 @@ export function HunkCard({
               </>
             ) : null}
           </dl>
-        </details>
+      </CollapsibleContent>
+      </Collapsible>
       </div>
 
       {hard.map((row) => (
@@ -303,16 +315,19 @@ export function HunkCard({
       ))}
 
       {anomaly && !op.charPr ? (
-        <button
-          className="action"
-          data-testid={`queue-fix-charpr-${op.opId}`}
-          disabled={locked}
-          title={anomaly.charPrSuggested ? `charPr ${String(anomaly.charPrSuggested)}` : undefined}
-          onClick={() => void declareSuggestedCharPr(op.opId)}
-        >
-          권장 글자 모양 쓰기
-        </button>
+        <Tooltip content={anomaly.charPrSuggested ? `charPr ${String(anomaly.charPrSuggested)}` : "권장 글자 모양 쓰기"}>
+          <Button
+            variant="secondary"
+            data-testid={`queue-fix-charpr-${op.opId}`}
+            disabled={locked}
+            onClick={() => void declareSuggestedCharPr(op.opId)}
+          >
+            권장 글자 모양 쓰기
+          </Button>
+        </Tooltip>
       ) : null}
+      </CardContent>
+      </Card>
     </li>
   );
 }

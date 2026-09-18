@@ -11,6 +11,11 @@ import type { HostEvent, Turn } from "../types";
 import { EmptyIconChat, EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
 import { Tag } from "./Tag";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Alert } from "../ui/Alert";
+import { Button } from "../ui/Button";
+import { Card, CardContent, CardFooter } from "../ui/Card";
+import { Tooltip } from "../ui/Tooltip";
 
 /** Korean product language for each Agent Host event kind. Closed set. */
 const SAID: Record<string, (d: Record<string, unknown>) => string> = {
@@ -79,14 +84,18 @@ function PlanArrivalCard({
 }) {
   return (
     <div className="plan-arrival-wrap">
-      <button
-        type="button"
-        className="plan-arrival"
-        data-testid={testId}
-        onClick={() => selectInspectorTab("review")}
-      >
-        계획 {count}건 · 검토에서 보기
-      </button>
+      <Card className="plan-arrival-card">
+        <CardFooter>
+          <Button
+            variant="primary"
+            className="plan-arrival"
+            data-testid={testId}
+            onClick={() => selectInspectorTab("review")}
+          >
+            계획 {count}건 · 검토에서 보기
+          </Button>
+        </CardFooter>
+      </Card>
       {planHash ? (
         <span className="mono tiny" hidden data-testid="plan-arrival-hash">
           {planHash}
@@ -110,9 +119,11 @@ function TurnCard({ turn }: { turn: Turn }) {
   return (
     <article className="turn" data-testid={`turn-${turn.id}`}>
       <div className="bubble-row is-user">
-        <div className="bubble bubble-user" data-testid="turn-instruction">
-          <p>{turn.instruction}</p>
-        </div>
+        <Card className="bubble bubble-user" data-testid="turn-instruction">
+          <CardContent>
+            <p>{turn.instruction}</p>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="bubble-row is-agent">
@@ -139,35 +150,39 @@ function TurnCard({ turn }: { turn: Turn }) {
           ) : null}
 
           {system.length > 0 ? (
-            <details className="disclosure turn-steps" data-testid={`turn-steps-${turn.id}`}>
-              <summary>{system.length}단계 작업</summary>
-              {system.map((event) => (
+            <Collapsible className="disclosure turn-steps" data-testid={`turn-steps-${turn.id}`}>
+        <CollapsibleTrigger>{system.length}단계 작업</CollapsibleTrigger>
+        <CollapsibleContent>
+{system.map((event) => (
                 <p key={event.seq} className="system-row" data-testid={`system-row-${event.seq}`}>
                   <ToolIcon />
                   <span>{describe(event)}</span>
                 </p>
               ))}
-            </details>
+      </CollapsibleContent>
+      </Collapsible>
           ) : null}
 
           {said ? (
-            <div className="bubble bubble-agent" data-testid="turn-said">
-              <p>{said}</p>
-            </div>
+            <Card className="bubble bubble-agent" data-testid="turn-said">
+              <CardContent>
+                <p>{said}</p>
+              </CardContent>
+            </Card>
           ) : null}
 
           {fault ? (
-            <div className="refusal" data-testid="turn-fault">
+            <Alert variant="destructive" className="refusal" data-testid="turn-fault">
               <p className="prose">{String(fault.message ?? "")}</p>
               <p className="tiny">문서에 대한 판정이 아닙니다.</p>
-            </div>
+            </Alert>
           ) : null}
 
           {turn.error ? (
-            <div className="refusal" data-testid="turn-error">
+            <Alert variant="destructive" className="refusal" data-testid="turn-error">
               <p className="prose">{turn.error.message}</p>
               <p className="mono tiny">{turn.error.code}</p>
-            </div>
+            </Alert>
           ) : null}
 
           {refused.length > 0 ? (
@@ -196,9 +211,10 @@ function TurnCard({ turn }: { turn: Turn }) {
             </p>
           ) : null}
 
-          <details className="disclosure">
-            <summary>기술 정보</summary>
-            <p className="tiny">
+          <Collapsible className="disclosure">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+<p className="tiny">
               {turn.provider}
               {payload?.provider?.model ? ` · ${payload.provider.model}` : ""}
               {payload ? ` · ${payload.turns}턴` : ""}
@@ -206,7 +222,8 @@ function TurnCard({ turn }: { turn: Turn }) {
             </p>
             <p className="tiny">단계 {compiled.length}건 · 기록 {turn.events.length}</p>
             <pre>{JSON.stringify(turn.payload ?? turn.events, null, 2)}</pre>
-          </details>
+      </CollapsibleContent>
+      </Collapsible>
         </div>
       </div>
     </article>
@@ -232,7 +249,7 @@ export function Conversation() {
             <EmptyState
               testId="conversation-empty"
               icon={<EmptyIconChat />}
-              title="아직 시킨 일이 없습니다"
+              title={"아직 시킨 일이 없습니다"}
               body="에이전트는 계획만 냅니다. 승인은 사람이 합니다."
             />
           </div>
@@ -240,7 +257,7 @@ export function Conversation() {
           <EmptyState
             testId="conversation-empty"
             icon={<EmptyIconChat />}
-            title="에이전트가 연결되어 있지 않습니다"
+            title={"에이전트가 연결되어 있지 않습니다"}
             body="설정에서 에이전트 호스트를 연결하면 지시를 보낼 수 있습니다."
             action={{ label: "설정 열기", onClick: () => setState({ settingsOpen: true }) }}
           />
@@ -250,22 +267,23 @@ export function Conversation() {
       )}
 
       {activeTurn ? (
-        <button className="action" data-testid="stop-turn" onClick={() => void stopInstruction()}>
+        <Button variant="secondary" data-testid="stop-turn" onClick={() => void stopInstruction()}>
           멈추기
-        </button>
+        </Button>
       ) : null}
 
       {agentTool?.available && sessionId ? (
         <div className="agent-door" data-testid="agent-door">
-          <button
-            className="action"
-            data-testid="run-agent"
-            disabled={agentPhase === "starting"}
-            title={agentTool.script ?? undefined}
-            onClick={() => void runAgentProposal()}
-          >
-            {agentPhase === "starting" ? "에이전트가 문서를 보는 중…" : "에이전트 제안 받기"}
-          </button>
+          <Tooltip content={agentTool.script ?? "에이전트 제안 받기"}>
+            <Button
+              variant="secondary"
+              data-testid="run-agent"
+              disabled={agentPhase === "starting"}
+              onClick={() => void runAgentProposal()}
+            >
+              {agentPhase === "starting" ? "에이전트가 문서를 보는 중…" : "에이전트 제안 받기"}
+            </Button>
+          </Tooltip>
         </div>
       ) : null}
 

@@ -184,6 +184,7 @@ test("the current receipt failure remains visible and preserves rebase behavior"
 
 import { createRequire } from "node:module";
 import ts from "typescript";
+import { uiFromImport } from "./kit-load.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -198,7 +199,12 @@ function loadComponentModule(path, stubs) {
     },
   });
   const exports = {};
-  const load = (name) => (name in stubs ? stubs[name] : nodeRequire(name));
+  const load = (name) => {
+    if (name in stubs) return stubs[name];
+    const ui = uiFromImport(name);
+    if (ui) return ui;
+    return nodeRequire(name);
+  };
   vm.runInThisContext(`(function (exports, require) {\n${outputText}\n})`)(exports, load);
   return exports;
 }

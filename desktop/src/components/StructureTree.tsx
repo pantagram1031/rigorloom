@@ -16,6 +16,8 @@ import {
 } from "../store";
 import type { Capabilities, EditableRegion, ForbiddenInventory, InspectResult } from "../types";
 import { Icon } from "./Icon";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/Collapsible";
+import { Tooltip } from "../ui/Tooltip";
 
 type SeatState = "empty" | "filled" | "anomaly";
 
@@ -71,7 +73,7 @@ function Row({
 }) {
   const current = useWorkspace((s) => selectionId(s.selection));
   const selected = selection ? selectionId(selection) === current : false;
-  return (
+  const row = (
     <button
       className={`node depth-${depth}`}
       role="treeitem"
@@ -80,7 +82,6 @@ function Row({
       data-node-id={id}
       data-testid={testId}
       data-editable={editable === undefined ? undefined : editable ? "true" : "false"}
-      title={title}
       onClick={() => {
         if (expandable) toggleExpanded(id);
         if (selection !== undefined) selectStructureNode(selection);
@@ -98,10 +99,14 @@ function Row({
         ) : null}
       </span>
       {state ? (
-        <span className={`state-dot is-${state.kind}`} title={state.label} />
+        <Tooltip content={state.label}>
+          <span className={`state-dot is-${state.kind}`} />
+        </Tooltip>
       ) : null}
     </button>
   );
+  if (!title) return row;
+  return <Tooltip content={title}>{row}</Tooltip>;
 }
 
 function forbiddenSelection(
@@ -332,21 +337,13 @@ export function StructureTree({
         );
       })}
 
-      <button
-        type="button"
-        className="group-head"
-        data-testid="seats-group"
-        aria-expanded={seatsOpen}
-        onClick={() => toggleExpanded("seats")}
-      >
-        <span className="twisty">
-          <Icon name={seatsOpen ? "chevron-down" : "chevron-right"} />
-        </span>
-        <span className="group-label">입력 칸</span>
-        <span className="count">{seats.length}</span>
-      </button>
-      {seatsOpen &&
-        seats.map((region, i) => {
+      <Collapsible open={seatsOpen} onOpenChange={() => toggleExpanded("seats")}>
+        <CollapsibleTrigger className="group-head" data-testid="seats-group">
+          <span className="group-label">입력 칸</span>
+          <span className="count">{seats.length}</span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+        {seats.map((region, i) => {
           const key =
             region.kind === "cell" && region.table !== undefined
               ? humanCellAddress(region.table, region.row ?? 0, region.col ?? 0)
@@ -379,6 +376,8 @@ export function StructureTree({
             />
           );
         })}
+        </CollapsibleContent>
+      </Collapsible>
 
       {guides.length > 0 && (
         <>
@@ -400,9 +399,10 @@ export function StructureTree({
         </>
       )}
 
-      <details className="disclosure tree-tech" data-testid="tree-tech">
-        <summary>기술 정보</summary>
-        {inspect.forbidden && forbiddenCount > 0 ? (
+      <Collapsible className="disclosure tree-tech" data-testid="tree-tech">
+        <CollapsibleTrigger>기술 정보</CollapsibleTrigger>
+        <CollapsibleContent>
+{inspect.forbidden && forbiddenCount > 0 ? (
           <ForbiddenRows forbidden={inspect.forbidden} />
         ) : (
           <p className="empty" data-testid="forbidden-protocol-gap">
@@ -424,7 +424,8 @@ export function StructureTree({
           ))
         )}
         <p className="empty">해석하지 못한 구조를 따로 알려 주지 않습니다.</p>
-      </details>
+      </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
