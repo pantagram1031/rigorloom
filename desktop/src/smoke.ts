@@ -28,6 +28,7 @@ import {
   loadGeometry,
   openPath,
   openReceipt,
+  approveAndApply,
   preparePages,
   redoQueuedOp,
   removeOp,
@@ -783,12 +784,18 @@ async function phaseEdit(config: SmokeConfig) {
   check("the approval binds this exact plan hash",
     approval?.planHash === getState().draft.plan?.planHash,
     `${approval?.planHash?.slice(0, 12)} vs ${getState().draft.plan?.planHash.slice(0, 12)}`);
+  const planApproved = getState().draft.plan?.planId;
+  await showInspectorTab("review");
   checkDom("the approval gate is on screen",
-    !!document.querySelector('[data-testid="approval-gate"]'));
+    !!document.querySelector('[data-testid="approve-and-apply"]') &&
+      (getState().approval?.state === "pending" ||
+        !!document.querySelector('[data-testid="queue-requested"]')),
+    document.querySelector('[data-testid="approve-and-apply"]')
+      ? `state=${getState().approval?.state ?? "none"}`
+      : "approve-and-apply missing");
   check("nothing has been applied yet", getState().applied === null,
     JSON.stringify(getState().applied));
 
-  const planApproved = getState().draft.plan?.planId;
   await resolveApprovalDecision("approved", "smoke-operator");
   await applyApprovedPlan();
   check("approval/resolve + plan/apply produced a candidate",
@@ -988,6 +995,7 @@ async function phaseUndo(config: SmokeConfig) {
   const queuedBefore = getState().draft.ops[0]?.before;
   const planBefore = getState().draft.plan?.opsHash;
 
+  await showInspectorTab("review");
   checkDom("the queue's undo control says 대기열에서 제거, not 되돌리기",
     domText('[data-testid="review-queue"]').includes("대기열에서 제거") &&
       !domText('[data-testid="review-queue"]').includes("문서 되돌리기"),
@@ -1046,6 +1054,7 @@ async function phaseUndo(config: SmokeConfig) {
     getState().draft.plan?.boundSha256 === getState().applied?.candidate.sha256,
     `${getState().draft.plan?.boundSha256?.slice(0, 12)} vs ` +
       `${getState().applied?.candidate.sha256.slice(0, 12)}`);
+  await showInspectorTab("review");
   checkDom("the queue says which candidate it is chaining onto",
     domText('[data-testid="queue-base"]').includes(editRun.slice(0, 12)),
     domText('[data-testid="queue-base"]').slice(0, 160));
@@ -2711,10 +2720,14 @@ async function caretChecks(spans: GeometrySpan[]) {
 
   // The review queue shows it whichever surface it came from. This is the
   // "one queue" claim, read off the DOM rather than off the store.
+  await showInspectorTab("review");
   checkDom("the review queue draws the paragraph op in the run's own vocabulary",
     !!document.querySelector('[data-testid="queue-op-p' + runOp?.atPara + '-r' + runOp?.run + '"]') &&
-      domText('.queue-op[data-kind="set_run"]').includes("문단"),
-    domText('.queue-op[data-kind="set_run"]').slice(0, 120) || "no set_run row in the queue");
+      (domText('.queue-op[data-kind="set_run"]').includes("문단") ||
+        domText(`[data-testid="queue-op-p${runOp?.atPara}-r${runOp?.run}"]`).includes("문단")),
+    domText('.queue-op[data-kind="set_run"]').slice(0, 120) ||
+      domText('[data-testid="review-queue"]').slice(0, 120) ||
+      "no set_run row in the queue");
 
   // AND THE TREE — where it can. 본문 보기 renders a paragraph as a node of its
   // own ONLY when its text appears in no table cell (README gap 9: `at_para`
@@ -3163,7 +3176,7 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     });
     setView("agent");
     await settled(300);
-    await sendInstruction("첫 채움 자리에 접수 번호를 넣고 승인을 요청하십시오.");
+    await sendInstruction("첫 채움 자리에 접수 번호를 넣고 승인을 요청합니다.");
     await settled(500);
     await ready(`shot-${stop}`);
     return;
@@ -3181,6 +3194,56 @@ async function phaseShot(config: SmokeConfig, stop: string) {
     setView("agent");
     setState({ settingsOpen: true });
     await settled(400);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
+  if (stop === "product-settings") {
+    const { refreshAgentHost } = await import("./actions");
+    await refreshAgentHost();
+    setState({ settingsOpen: true, homeOpen: true });
+    await settled(400);
+    await ready(`shot-${stop}`);
+    return;
+  }
+
+  if (stop === "review-one" || stop === "applied-receipt") {
+    if (config.corpus) {
+      await openPath(config.corpus);
+      await settled(400);
+    }
+    const shotInspect = activeInspect(getState()) ?? inspect;
+    const shotClean = shotInspect.regions.regions.filter(
+      (r): r is EditableRegion & { table: number; row: number; col: number } =>
+        r.kind === "cell" &&
+        r.table !== undefined &&
+        r.row !== undefined &&
+        r.col !== undefined &&
+        r.scriptAnomaly !== true &&
+        r.colorAnomaly !== true,
+    );
+    const first = shotClean[0];
+    if (!first) {
+      await ready(`shot-${stop}`);
+      return;
+    }
+    beginEdit(first.table, first.row, first.col);
+    await commitEdit("정보공개 청구서 검토본");
+    await settled(200);
+    await showInspectorTab("review");
+    if (stop === "review-one") {
+      await ready(`shot-${stop}`);
+      return;
+    }
+    await approveAndApply();
+    for (let i = 0; i < 120 && getState().applyPhase === "starting"; i += 1) {
+      await settled(500);
+    }
+    const applied = getState().applied;
+    if (applied) {
+      openReceipt(applied.runId);
+      await settled(400);
+    }
     await ready(`shot-${stop}`);
     return;
   }
@@ -4053,15 +4116,15 @@ function liveEditInstruction(inspect: InspectResult): {
   const replacement = "Agent 스모크";
   const inserted = "이 문장은 에이전트가 제안했다.";
   const text = [
-    `문서에서 보이는 「${titleish}」 문자열을 replace_all 로 「${replacement}」 로 바꾸십시오.`,
-    `그 다음 goto_text 로 「${anchor}」 를 찾은 뒤 바로 뒤에 insert_text 로 「${inserted}」 를 넣으십시오.`,
-    "backend 은 xml 입니다. 다른 연산은 쓰지 마십시오. 끝나면 승인을 요청하십시오.",
+    `문서에서 보이는 「${titleish}」 문자열을 replace_all 로 「${replacement}」 로 바꿉니다.`,
+    `그 다음 goto_text 로 「${anchor}」 를 찾은 뒤 바로 뒤에 insert_text 로 「${inserted}」 를 넣습니다.`,
+    "backend 은 xml 입니다. 다른 연산은 쓰지 않습니다. 끝나면 승인을 요청합니다.",
   ].join(" ");
   const tight = [
-    "xml backend 로 아래 두 연산만 제안하십시오.",
+    "xml backend 로 아래 두 연산만 제안합니다.",
     `1) replace_all find=${JSON.stringify(titleish)} replace=${JSON.stringify(replacement)}`,
     `2) goto_text text=${JSON.stringify(anchor)} 다음에 insert_text text=${JSON.stringify(inserted)}`,
-    "끝나면 approval_request 하십시오. 다른 kind 는 쓰지 마십시오.",
+    "끝나면 approval_request 합니다. 다른 kind 는 쓰지 않습니다.",
   ].join(" ");
   return { text, find: titleish, anchor, inserted, replacement, tight };
 }
@@ -4548,7 +4611,7 @@ async function phaseComposer(config: SmokeConfig) {
     const turns = getState().turns;
     return turns.length > 0 ? turns[turns.length - 1] : null;
   };
-  const ok = await sendInstruction("첫 채움 자리에 스모크 표시를 넣고 승인을 요청하십시오.");
+  const ok = await sendInstruction("첫 채움 자리에 스모크 표시를 넣고 승인을 요청합니다.");
   check("the instruction ran to completion", ok, JSON.stringify(newest()?.error));
 
   const turn = newest();

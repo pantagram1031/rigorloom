@@ -300,39 +300,38 @@ async function captureGif(cdp) {
   await waitFor(cdp, `!!document.querySelector('[data-testid="paper"], [data-testid="text-view"]')`);
   await shotFrame(cdp, frames, "open");
 
-  await click(cdp, '[data-testid="inspector-tab-agent"]');
-  await waitFor(cdp, `document.querySelector('[data-testid="inspector-panel"]')?.dataset.tab === "agent"`);
-  await waitFor(cdp, `!!document.querySelector('[data-testid="composer-input"]')`);
-  await typeInto(
-    cdp,
-    '[data-testid="composer-input"]',
-    "첫 채움 자리에 행정안전부를 넣고 승인을 요청하십시오.",
-  );
-  await click(cdp, '[data-testid="composer-send"]');
+  await waitFor(cdp, `!!document.querySelector('[data-testid="doc-cell-0-0-14"]')`);
+  await click(cdp, '[data-testid="doc-cell-0-0-14"]');
+  await waitFor(cdp, `!!document.querySelector('[data-testid="seat-input"]')`);
+  await cdp.eval(`{
+    const input = document.querySelector('[data-testid="seat-input"]');
+    const last = input.value;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(input, "행정안전부");
+    const tracker = input._valueTracker;
+    if (tracker) tracker.setValue(last);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    true;
+  }`);
+  await shotFrame(cdp, frames, "seat");
+  await cdp.eval(`{
+    const input = document.querySelector('[data-testid="seat-input"]');
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    input.blur();
+    true;
+  }`);
   await waitFor(
     cdp,
-    `!!document.querySelector('[data-testid^="plan-arrival-"]')`,
-    20000,
+    `!!document.querySelector('[data-testid="queued-0-0-14"], [data-testid="badge-review"], [data-testid="queue-op-0-0-14"]')`,
   );
-  const refused = await cdp.eval(
-    `!!document.querySelector('[data-testid="turn-refused"], [data-testid="turn-fault"], [data-testid="turn-error"]')`,
-  );
-  if (refused) {
-    console.log("mock refusal card is on screen; capturing it honestly");
-  }
-  await shotFrame(cdp, frames, "agent-plan");
-
-  await click(cdp, '[data-testid^="plan-arrival-"]');
+  await click(cdp, '[data-testid="inspector-tab-review"]');
+  await waitFor(cdp, `!!document.querySelector('[data-testid="approve-and-apply"]')`);
   await waitFor(
     cdp,
-    `document.querySelectorAll('[data-testid^="queue-op-"], .hunk-card').length > 0`,
+    `document.querySelector('[data-testid="approve-and-apply"]').disabled === false`,
   );
   await shotFrame(cdp, frames, "review");
 
-  await waitFor(
-    cdp,
-    `!!document.querySelector('[data-testid="approve-and-apply"]') && document.querySelector('[data-testid="approve-and-apply"]').disabled === false`,
-  );
   await click(cdp, '[data-testid="approve-and-apply"]');
   await waitFor(
     cdp,

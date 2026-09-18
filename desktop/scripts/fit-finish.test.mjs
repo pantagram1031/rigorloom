@@ -534,7 +534,7 @@ test("settings sections 일반 and 에이전트 render", () => {
     probePhase: "idle",
     probeError: null,
     credential: null,
-    agentHost: { available: true, mode: "mock", script: "x" },
+    agentHost: { available: true, mode: "mock", script: "x", program: "py" },
     colorTheme: "auto",
     root: "C:\\dev-fixture\\runtime-root",
     recents: [{ path: "a.hwpx" }],
@@ -549,6 +549,40 @@ test("settings sections 일반 and 에이전트 render", () => {
   assert.match(html, /data-testid="theme-dark"/);
   assert.match(html, /기본 작업 폴더/);
   assert.match(html, /최근 문서 지우기/);
+  const general = innerOfTestId(html, "settings-general") ?? "";
+  assert.match(general, /theme-switch/);
+  assert.doesNotMatch(general, /class="radios"/);
+  assert.match(html, /data-testid="agent-host-status"[^>]*>\s*연결됨 · 내장\s*</);
+  assert.match(html, /data-testid="agent-host-tech"/);
+  assert.match(html, />기술 정보</);
+  assert.doesNotMatch(html, />찾음</);
+  const status = innerOfTestId(html, "agent-host-status") ?? "";
+  assert.match(status, /연결됨 · 내장/);
+  assert.doesNotMatch(status, /[\\/]|py\.exe|\.py\b/);
+  assert.match(html, /title="네트워크도 시계도 없는 결정론 제공자\."/);
+  assert.match(html, /title="OpenAI 호환 엔드포인트\."/);
+  assert.match(html, /title="공식 Messages API\."/);
+  assert.match(html, /같은 문서면 같은 요청을 냅니다/);
+  const closeRule = css.match(/\.settings-close\s*\{[^}]+\}/)?.[0] ?? "";
+  assert.match(closeRule, /color:\s*var\(--fg\)/);
+});
+
+test("settings agent-host missing state is 찾을 수 없음", () => {
+  const html = renderSettings({
+    settingsOpen: true,
+    provider: { provider: "mock", scenario: "propose-one", router: {}, anthropic: {} },
+    providerProfile: null,
+    probePhase: "idle",
+    probeError: null,
+    credential: null,
+    agentHost: { available: false, mode: null, script: null, program: null, reason: "not bundled" },
+    colorTheme: "auto",
+    root: "C:\\dev-fixture\\runtime-root",
+    recents: [],
+  });
+  assert.match(html, /data-testid="agent-host-status"[^>]*>\s*찾을 수 없음\s*</);
+  const tech = innerOfTestId(html, "agent-host-tech") ?? "";
+  assert.match(tech, /not bundled/);
 });
 
 test("기록 compare is a compact popover and receipt is a labelled action", () => {

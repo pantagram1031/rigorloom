@@ -24,7 +24,7 @@ npx vite --port 5184 --strictPort
 node docs/demo/desktop/capture.mjs
 ```
 
-Demo GIF (home → recent → agent plan → review → approve → apply → receipt), 1280×800, assembled with Pillow:
+Demo GIF (home → open → seat → 승인하고 적용 → receipt), 1280×800, ≤ 12 frames, assembled with Pillow:
 
 ```bash
 npx vite --port 5184 --strictPort

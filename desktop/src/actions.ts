@@ -2351,7 +2351,7 @@ export async function exportApplied(
         exportError: {
           code: "export_hash_mismatch",
           message:
-            "내보낸 파일의 해시가 후보본과 다릅니다. 이 파일을 제출하지 마십시오.",
+            "내보낸 파일의 해시가 후보본과 다릅니다. 이 파일을 제출하지 않습니다.",
           data: { expected: applied.candidate.sha256, actual: result.sha256 },
         },
       });

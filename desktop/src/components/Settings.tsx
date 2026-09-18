@@ -35,21 +35,24 @@ import { activeStoreKey, setColorTheme, setState, useWorkspace } from "../store"
 import type { ProviderId, ProviderSettings } from "../types";
 import { Tag } from "./Tag";
 
-const PROVIDERS: Array<{ id: ProviderId; label: string; blurb: string }> = [
+const PROVIDERS: Array<{ id: ProviderId; label: string; blurb: string; note: string }> = [
   {
     id: "mock",
     label: "내장 목",
-    blurb: "네트워크도 시계도 없는 결정론 제공자. 같은 문서면 같은 요청을 냅니다.",
+    blurb: "같은 문서면 같은 요청을 냅니다.",
+    note: "네트워크도 시계도 없는 결정론 제공자.",
   },
   {
     id: "router",
     label: "커스텀 라우터",
-    blurb: "OpenAI 호환 엔드포인트. 주소와 모델 이름을 직접 넣습니다.",
+    blurb: "주소와 모델 이름을 직접 넣습니다.",
+    note: "OpenAI 호환 엔드포인트.",
   },
   {
     id: "anthropic",
     label: "Anthropic",
-    blurb: "공식 Messages API. 실제 호출은 열쇠를 넣고 지시를 보낼 때만 일어납니다.",
+    blurb: "열쇠를 넣고 지시를 보낼 때만 호출합니다.",
+    note: "공식 Messages API.",
   },
 ];
 
@@ -158,7 +161,11 @@ export function Settings() {
       <div className="sheet-head">
         <h2>설정</h2>
         <span className="spacer" />
-        <button className="ghost" data-testid="settings-close" onClick={() => setState({ settingsOpen: false })}>
+        <button
+          className="settings-close"
+          data-testid="settings-close"
+          onClick={() => setState({ settingsOpen: false })}
+        >
           닫기 (Esc)
         </button>
       </div>
@@ -167,7 +174,7 @@ export function Settings() {
         <section className="section" data-testid="settings-general">
           <h3>일반</h3>
           <p className="prose tiny">테마</p>
-          <div className="radios" role="radiogroup" aria-label="테마">
+          <div className="modeswitch theme-switch" role="radiogroup" aria-label="테마">
             {(
               [
                 ["auto", "자동"],
@@ -177,13 +184,14 @@ export function Settings() {
             ).map(([id, label]) => (
               <button
                 key={id}
-                className="radio"
+                type="button"
                 role="radio"
                 aria-checked={colorTheme === id}
+                aria-pressed={colorTheme === id}
                 data-testid={`theme-${id}`}
                 onClick={() => setColorTheme(id)}
               >
-                <span className="primary">{label}</span>
+                {label}
               </button>
             ))}
           </div>
@@ -222,21 +230,32 @@ export function Settings() {
         <h3>에이전트</h3>
         <section className="section">
           <h3>에이전트 호스트</h3>
-          {host?.available ? (
-            <p className="prose tiny">
-              <Tag tone="ok">찾음</Tag> <span className="mono">{host.mode}</span> ·{" "}
-              <span className="mono" style={{ overflowWrap: "anywhere" }}>
-                {host.script}
-              </span>
-            </p>
-          ) : (
-            <p className="prose tiny">
-              <Tag tone="bad">없음</Tag> {host?.reason ?? "확인하지 못했습니다."}
-            </p>
-          )}
+          <p className="prose tiny" data-testid="agent-host-status">
+            {host?.available ? "연결됨 · 내장" : "찾을 수 없음"}
+          </p>
+          <details className="disclosure" data-testid="agent-host-tech">
+            <summary>기술 정보</summary>
+            <dl className="kv">
+              <dt>방식</dt>
+              <dd className="mono">{host?.mode ?? "—"}</dd>
+              <dt>경로</dt>
+              <dd className="mono" style={{ overflowWrap: "anywhere" }}>
+                {host?.script ?? "—"}
+              </dd>
+              <dt>인터프리터</dt>
+              <dd className="mono" style={{ overflowWrap: "anywhere" }}>
+                {host?.program ?? "—"}
+              </dd>
+              {host?.reason ? (
+                <>
+                  <dt>이유</dt>
+                  <dd>{host.reason}</dd>
+                </>
+              ) : null}
+            </dl>
+          </details>
           <p className="empty" style={{ padding: "var(--s2) 0 0" }}>
-            제공자와 이야기하는 것은 이 별도 프로세스뿐입니다. 문서를 뜯어보는 쪽은 네트워크를
-            모릅니다.
+            제공자와 이야기하는 것은 이 프로세스뿐입니다.
           </p>
         </section>
 
@@ -250,6 +269,7 @@ export function Settings() {
                 role="radio"
                 aria-checked={draft.provider === row.id}
                 data-testid={`provider-${row.id}`}
+                title={row.note}
                 onClick={() => void apply({ ...draft, provider: row.id })}
               >
                 <span className="primary">{row.label}</span>

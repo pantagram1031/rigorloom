@@ -19,7 +19,9 @@ param(
     # exactly, which puts the verification bar behind the taskbar. Fitting the
     # window to the work area first is what makes the bottom bar appear in the
     # evidence at all.
-    [switch]$FitToWorkArea
+    [switch]$FitToWorkArea,
+    [int]$Width = 0,
+    [int]$Height = 0
 )
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
@@ -100,7 +102,12 @@ while ((Get-Date) -lt $deadline) {
 }
 if ($hwnd -eq [IntPtr]::Zero) { throw "no window for process '$ProcessName'" }
 
-if ($FitToWorkArea) {
+if ($Width -gt 0 -and $Height -gt 0) {
+    $work = New-Object W+R
+    [void][W]::SystemParametersInfo(0x0030, 0, [ref]$work, 0)
+    [void][W]::MoveWindow($hwnd, $work.L, $work.T, $Width, $Height, $true)
+    Start-Sleep -Milliseconds 800
+} elseif ($FitToWorkArea) {
     # SPI_GETWORKAREA = 0x0030 - the desktop minus the taskbar, in device px
     # now that this process is per-monitor DPI aware.
     $work = New-Object W+R

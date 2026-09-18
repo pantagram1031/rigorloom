@@ -479,7 +479,7 @@ function GeometryLegend({ geometry }: { geometry: GeometryResult }) {
       {editableSeats + editableSpans === 0 ? (
         <span className="dim">
           이 쪽에서 런타임이 값을 넣을 자리를 잡아 주지 못했습니다. 그런 자리는 본문 보기에서
-          편집하십시오 — 여기에 상자를 그리려면 위치를 지어내야 하고, 그러면 글자가 없는 곳에
+          편집합니다 — 여기에 상자를 그리려면 위치를 지어내야 하고, 그러면 글자가 없는 곳에
           커서를 놓게 됩니다.
         </span>
       ) : null}

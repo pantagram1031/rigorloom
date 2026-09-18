@@ -3558,6 +3558,24 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   font-weight: var(--weight-head);
 }
 
+.settings-close {
+  padding: 4px var(--s3);
+  min-height: var(--ctl-h);
+  border-radius: var(--radius);
+  font-size: var(--text-base);
+  font-weight: var(--weight-emph);
+  color: var(--fg);
+}
+
+.settings-close:hover {
+  background: var(--bg-hover);
+}
+
+.sheet.settings .theme-switch {
+  width: fit-content;
+  margin-bottom: var(--s2);
+}
+
 .sheet .sheet-body h4 {
   margin: var(--s3) 0 var(--s1);
   font-size: var(--text-sm);

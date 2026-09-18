@@ -10,6 +10,7 @@
   and not a live scale change while running.
 
     powershell -ExecutionPolicy Bypass -File desktop/scripts/screenshots.ps1
+    powershell -ExecutionPolicy Bypass -File desktop/scripts/screenshots.ps1 -DemoNative
 
   Exit codes: 0 all four captured - 2 could not run - 3 a capture failed.
 #>
@@ -25,7 +26,11 @@ param(
     # its own process against its own arranged state — and a window that came
     # back from a restore mid-capture has produced a title-bar sliver more than
     # once. Retaking one shot beats retaking twenty.
-    [string[]]$Only = @()
+    [string[]]$Only = @(),
+    [string]$OutDir = "",
+    [int]$Width = 0,
+    [int]$Height = 0,
+    [switch]$DemoNative
 )
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
@@ -33,10 +38,20 @@ Set-StrictMode -Version Latest
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DesktopDir = Split-Path -Parent $ScriptDir
 $RepoRoot   = Split-Path -Parent $DesktopDir
-$OutDir     = Join-Path $DesktopDir 'screenshots'
+if (-not $OutDir) { $OutDir = Join-Path $DesktopDir 'screenshots' }
 $RunDir     = Join-Path $ScriptDir '_run'
 $AppData    = Join-Path $RunDir 'shot-appdata'
-$Exe        = Join-Path $DesktopDir 'src-tauri\target\release\rigorloom-desktop.exe'
+$localExe   = Join-Path $DesktopDir 'src-tauri\target\release\rigorloom-desktop.exe'
+$fromCargo  = if ($env:CARGO_TARGET_DIR) {
+    Join-Path $env:CARGO_TARGET_DIR 'release\rigorloom-desktop.exe'
+} else { '' }
+$Exe        = if ($fromCargo -and (Test-Path -LiteralPath $fromCargo)) {
+    (Resolve-Path -LiteralPath $fromCargo).Path
+} elseif (Test-Path -LiteralPath $localExe) {
+    (Resolve-Path -LiteralPath $localExe).Path
+} else {
+    $localExe
+}
 
 if (-not $Corpus) {
     $Corpus = Join-Path $RepoRoot 'tests\corpus\forms\converted\gianmun-byeolji-1ho.hwpx'
@@ -198,6 +213,19 @@ try {
         $shots += @{ phase = 'hold-agent'; name = "agent-view-${pct}pct";    scale = $scale }
     }
 
+    if ($DemoNative) {
+        $OutDir = Join-Path $RepoRoot 'docs\demo\desktop'
+        if ($Width -le 0) { $Width = 1280 }
+        if ($Height -le 0) { $Height = 800 }
+        $shots = @(
+            @{ phase = 'hold';                      name = 'native-workspace'; scale = 1.0 },
+            @{ phase = 'hold-welcome';              name = 'native-home';      scale = 1.0 },
+            @{ phase = 'hold-shot-review-one';      name = 'native-review';    scale = 1.0 },
+            @{ phase = 'hold-shot-applied-receipt'; name = 'native-receipt';   scale = 1.0 },
+            @{ phase = 'hold-shot-settings';        name = 'native-settings';  scale = 1.0 }
+        )
+    }
+
     if ($Only.Count -gt 0) { $shots = $shots | Where-Object { $Only -contains $_.name } }
 
     # ONE RETRY PER SHOT, and only because the failure it covers is a relaunch
@@ -249,8 +277,18 @@ try {
                 'hold-shot-approval'     { 2200 }
                 default                  { 1500 }
             }
+            $shotArgs = @{
+                Out = $out
+                SettleMs = $settle
+            }
+            if ($Width -gt 0 -and $Height -gt 0) {
+                $shotArgs.Width = $Width
+                $shotArgs.Height = $Height
+            } else {
+                $shotArgs.FitToWorkArea = $true
+            }
             & powershell -ExecutionPolicy Bypass -NoProfile `
-                -File (Join-Path $ScriptDir 'shot.ps1') -Out $out -SettleMs $settle -FitToWorkArea
+                -File (Join-Path $ScriptDir 'shot.ps1') @shotArgs
             if ($LASTEXITCODE -ne 0) { throw "shot.ps1 exit $LASTEXITCODE" }
             $captured += $out
             Write-Host ("captured {0}" -f $name)
