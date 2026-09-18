@@ -229,6 +229,10 @@ function renderHistory(statePatch) {
   const { History } = loadComponentModule("../src/components/History.tsx", {
     "../actions": actions,
     "../store": store,
+    "../label": {
+      relativeWhen: () => "방금",
+      stampWhen: (iso) => String(iso ?? ""),
+    },
     "./Tag": tag,
     "./EmptyState": {
       EmptyState: ({ title, body, testId }) =>

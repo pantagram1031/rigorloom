@@ -56,6 +56,7 @@ const diff = loadCompiled("../src/diff.ts", "diff.ts", () => {
 
 const reviewHunk = loadCompiled("../src/reviewHunk.ts", "reviewHunk.ts", (id) => {
   if (id === "./diff") return diff;
+  if (id === "./label") return label;
   if (id === "./store" || id === "./types") return {};
   throw new Error(`unexpected import: ${id}`);
 });
@@ -65,6 +66,7 @@ const {
   hunkBeforeText,
   hunkKindLabel,
   hunkAddress,
+  hunkTitle,
   planOpsJson,
   queueRefusalMessage,
   reviewQueueHotkey,
@@ -162,6 +164,7 @@ function renderQueue(state, actions = {}) {
     const known = nodeRequireReact(id);
     if (known) return known;
     if (id === "../reviewHunk") return reviewHunk;
+    if (id === "../label") return label;
     if (id === "../actions") return { declareSuggestedCharPr: () => {}, editOpValue: () => {}, undoQueuedOp: () => {} };
     if (id === "../store") return store;
     if (id === "../types") return {};
@@ -244,8 +247,37 @@ test("kind labels and addresses match the review chrome", () => {
   assert.equal(hunkKindLabel(fillOp({ before: "" })), "값 넣기");
   assert.equal(hunkKindLabel(fillOp()), "바꾸기");
   assert.equal(hunkKindLabel({ kind: "set_run", atPara: 12, run: 0, before: "x" }), "바꾸기");
-  assert.equal(hunkAddress(fillOp()), "표 0 R0C14");
+  assert.equal(hunkAddress(fillOp()), "표 1 · 1행 15열");
   assert.equal(hunkAddress({ kind: "set_run", atPara: 12, run: 1, opId: "r", text: "", before: "", origin: "user" }), "문단 12");
+});
+
+test("hunk titles name the three op kinds in plain Korean", () => {
+  assert.equal(
+    hunkTitle(fillOp({ before: "", overwrite: false, text: "값" })),
+    "표 1 · 1행 15열에 값 넣기",
+  );
+  assert.equal(
+    hunkTitle({
+      kind: "replace_all",
+      opId: "r1",
+      text: "Agent 스모크",
+      before: "제목",
+      origin: "agent",
+      params: { find: "제목", replace: "Agent 스모크" },
+    }),
+    "「제목」을 「Agent 스모크」로 바꾸기",
+  );
+  assert.equal(
+    hunkTitle({
+      kind: "insert_text",
+      opId: "i1",
+      text: "한 문장",
+      before: "수신",
+      origin: "agent",
+      params: { after: "수신" },
+    }),
+    "「수신」 뒤에 한 문장 넣기",
+  );
 });
 
 test("j/k/a/r/Enter and Shift+A map to hunk motion and the shared approve path", () => {
@@ -267,7 +299,7 @@ test("hunk card renders before/after and LCS marks; missing before is 원문 없
   const present = renderQueue(baseState()).html;
   assert.match(present, /data-testid="queue-op-0-0-14"/);
   assert.match(present, /바꾸기/);
-  assert.match(present, /표 0 R0C14/);
+  assert.match(present, /표 1 · 1행 15열/);
   assert.match(present, /대기/);
   assert.match(present, /data-testid="queue-before-op-1"/);
   assert.match(present, /data-testid="queue-after-op-1"/);
@@ -284,11 +316,13 @@ test("hunk card renders before/after and LCS marks; missing before is 원문 없
   assert.match(missing, /hunk-missing/);
 });
 
-test("모두 승인 shows count and short hash and is gated like the existing approve", () => {
+test("모두 승인 shows count badge and no hash and is gated like the existing approve", () => {
   const { allHtml } = renderQueue(baseState());
   assert.match(allHtml, /data-testid="approve-all"/);
-  assert.match(allHtml, /모두 승인 · 1 · a1b2c3/);
-  assert.match(allHtml, /aria-label="모두 승인 · 1 · a1b2c3"/);
+  assert.match(allHtml, />모두 승인</);
+  assert.match(allHtml, /data-testid="approve-all-count"/);
+  assert.doesNotMatch(allHtml, /모두 승인 · 1 · a1b2c3/);
+  assert.match(allHtml, /aria-label="모두 승인"/);
 
   const composing = renderQueue(baseState({ isComposing: true })).allHtml;
   assert.match(composing, /입력 조합이 끝나기 전에는 승인하지 않습니다/);
@@ -380,13 +414,13 @@ test("error empty uses EmptyState; acceptance false / exit 3 is a refusal card",
   assert.doesNotMatch(refusalBlock, /data-tone="ok"|tag ok/);
 });
 
-test("per-hunk 승인/거부 keep screen-reader names and existing queue testids", () => {
+test("per-hunk 승인/거절 keep screen-reader names and existing queue testids", () => {
   const html = renderQueue(baseState()).html;
   assert.match(html, /aria-label="이 항목 승인"/);
-  assert.match(html, /aria-label="이 항목 거부"/);
+  assert.match(html, /aria-label="이 항목 거절"/);
   assert.match(html, /data-testid="hunk-approve-0-0-14"/);
   assert.match(html, /data-testid="hunk-reject-0-0-14"/);
   assert.match(html, /data-testid="queue-value-op-1"/);
   assert.match(html, /data-testid="queue-provenance-0-0-14"/);
-  assert.match(html, />출처</);
+  assert.match(html, />기술 정보</);
 });

@@ -69,6 +69,15 @@ function render(inspect, expanded = ["t:0"]) {
           selectionId: (s) => (s ? JSON.stringify(s) : "none"),
         };
       }
+      if (id === "../label") {
+        return {
+          humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+          trimLabel: (text, max = 34) => {
+            const flat = String(text).replace(/\s+/g, " ").trim();
+            return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+          },
+        };
+      }
       if (id === "../actions") {
         return { selectStructureNode: () => {} };
       }
@@ -153,4 +162,39 @@ test("forbidden inventory rows use a distinct testid and are never editable", ()
   );
   const ids = editableIds(html);
   assert.ok(ids.every((id) => id === "seat-0" || id === "cell-0-0-0"));
+});
+
+test("tree rows use 1-based human addresses and keep charPr off the row text", () => {
+  const html = render(
+    inspectFixture({
+      graph: {
+        documentHash: "abc",
+        sessionId: "s",
+        paragraphs: [{ section: "본문", at_para: 0, para_idx: 0, text: "hello" }],
+        tables: [
+          {
+            index: 0,
+            cells: [
+              {
+                addr: { row: 4, col: 1 },
+                classification: "fill_target",
+                textPreview: "값",
+                charPr: "11",
+                charPrSuggested: "23",
+              },
+            ],
+          },
+        ],
+      },
+      regions: {
+        documentHash: "abc",
+        sessionId: "s",
+        regions: [{ kind: "cell", table: 0, row: 4, col: 1, charPr: "11" }],
+      },
+    }),
+  );
+  assert.match(html, /표 1 · 5행 2열/);
+  assert.match(html, /title="charPr 11 → 23"/);
+  const withoutTitles = html.replace(/\stitle="[^"]*"/g, "");
+  assert.doesNotMatch(withoutTitles, /charPr/);
 });

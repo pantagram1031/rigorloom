@@ -8,6 +8,7 @@
 import { useEffect } from "react";
 
 import { beginEdit, bindFormToActiveDocument, needsBoundFormHint } from "../actions";
+import { humanCellAddress } from "../label";
 import {
   inspectorAgentUnread,
   inspectorHistoryBadge,
@@ -44,9 +45,9 @@ function formatRegionAddress(address: {
   col?: number;
   atPara?: number;
 }): string {
-  if (address.atPara !== undefined) return `at_para ${address.atPara}`;
+  if (address.atPara !== undefined) return `문단 ${address.atPara}`;
   if (address.row !== undefined && address.col !== undefined) {
-    return `표 ${address.table ?? 0} R${address.row}C${address.col}`;
+    return humanCellAddress(address.table ?? 0, address.row, address.col);
   }
   return "";
 }
@@ -94,7 +95,9 @@ function RegionSourceSection() {
         <Fact
           k="주소"
           v={
-            <span className="mono" data-testid="region-source-address">
+            <span className="mono" data-testid="region-source-address" title={
+              source.address.atPara !== undefined ? `at_para ${source.address.atPara}` : undefined
+            }>
               {formatRegionAddress(source.address)}
             </span>
           }
@@ -122,7 +125,10 @@ function RegionSourceSection() {
             {text || "(빈 자리)"}
           </p>
           {source.region.runs && source.region.runs.length > 0 ? (
-            <RegionRuns runs={source.region.runs} />
+            <details className="disclosure">
+              <summary>기술 정보</summary>
+              <RegionRuns runs={source.region.runs} />
+            </details>
           ) : null}
         </div>
       ) : (
@@ -131,7 +137,10 @@ function RegionSourceSection() {
             {text || "(빈 자리)"}
           </p>
           {source.region.runs && source.region.runs.length > 0 ? (
-            <RegionRuns runs={source.region.runs} />
+            <details className="disclosure">
+              <summary>기술 정보</summary>
+              <RegionRuns runs={source.region.runs} />
+            </details>
           ) : null}
         </div>
       )}
@@ -151,7 +160,7 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
   return (
     <>
       <div className="section">
-        <h3>칸 {`표 ${sel.table} R${sel.row}C${sel.col}`}</h3>
+        <h3>칸 {humanCellAddress(sel.table, sel.row, sel.col)}</h3>
         <dl className="kv">
           <Fact
             k="분류"
@@ -162,9 +171,16 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
             }
           />
           {cell.spacerPattern ? <Fact k="여백 형태" v={cell.spacerPattern} /> : null}
-          {cell.charPr ? <Fact k="charPr" v={cell.charPr} /> : null}
-          {cell.charPrSuggested ? <Fact k="권장 charPr" v={cell.charPrSuggested} /> : null}
         </dl>
+        {cell.charPr || cell.charPrSuggested ? (
+          <details className="disclosure">
+            <summary>기술 정보</summary>
+            <dl className="kv">
+              {cell.charPr ? <Fact k="글자 모양" v={cell.charPr} /> : null}
+              {cell.charPrSuggested ? <Fact k="권장 글자 모양" v={cell.charPrSuggested} /> : null}
+            </dl>
+          </details>
+        ) : null}
       </div>
 
       {cell.textPreview ? (
@@ -175,7 +191,7 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
           </p>
           {cell.truncated ? (
             <p className="empty tight">
-              전체 글자는 요청해야 옵니다. 구조만 보내는 것이 기본값입니다.
+              전체 글자는 요청해야 옵니다.
             </p>
           ) : null}
         </div>
@@ -212,7 +228,7 @@ function CellDetail({ inspect, sel }: { inspect: InspectResult; sel: Extract<Sel
           </dl>
         ) : (
           <p className="prose">
-            이 칸은 값을 넣는 자리가 아닙니다. 쓰기 전 확인은 채움 자리에만 붙습니다.
+            이 칸은 값을 넣는 자리가 아닙니다.
           </p>
         )}
         {seat?.colorAnomaly ? (
@@ -241,12 +257,17 @@ function ParagraphDetail({ inspect, atPara }: { inspect: InspectResult; atPara: 
   return (
     <>
       <div className="section">
-        <h3>문단 at_para {para.at_para}</h3>
+        <h3>문단 {para.at_para}</h3>
         <dl className="kv">
           <Fact k="구역" v={para.section} />
-          <Fact k="para_idx" v={String(para.para_idx)} />
           {removal ? <Fact k="삭제 후보" v={`확신도 ${removal.confidence}`} /> : null}
         </dl>
+        <details className="disclosure">
+          <summary>기술 정보</summary>
+          <dl className="kv">
+            <Fact k="문단 번호" v={String(para.para_idx)} />
+          </dl>
+        </details>
       </div>
       <div className="section">
         <h3>본문</h3>
@@ -319,6 +340,7 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
     typeof inspectorAgentUnread === "function" ? inspectorAgentUnread(s) : 0,
   );
   const turnCount = useWorkspace((s) => s.turns?.length ?? 0);
+  const providerId = useWorkspace((s) => s.provider?.provider ?? null);
   const candidateCount = useWorkspace((s) =>
     s.activeSessionId ? (s.candidates?.[s.activeSessionId] ?? []).length : 0,
   );
@@ -359,11 +381,11 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
   }
 
   return (
-    <aside className="panel inspector" aria-label="검사기" data-testid="context-panel">
+    <aside className="panel inspector" aria-label="패널" data-testid="context-panel">
       <div
         className="inspector-tabs"
         role="tablist"
-        aria-label="검사기"
+        aria-label="패널"
         data-testid="inspector-tabs"
         onKeyDown={onTabListKey}
       >
@@ -437,6 +459,11 @@ export function ContextPanel({ inspect }: { inspect: InspectResult | null }) {
           </span>
         ) : null}
         {tab === "review" ? <ApproveAllButton /> : null}
+        {tab === "agent" && providerId ? (
+          <span className="tiny dim" data-testid="composer-provider">
+            {providerId}
+          </span>
+        ) : null}
       </div>
       {tab === "review" && needsBoundFormHint(inspect) ? (
         <div className="form-bind-hint" data-testid="form-bind-hint">

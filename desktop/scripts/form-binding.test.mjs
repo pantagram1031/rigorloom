@@ -193,7 +193,16 @@ function renderReceipt(receipt) {
       if (id === "react/jsx-runtime") return nodeRequire(id);
       if (id === "react") return nodeRequire(id);
       if (id === "../actions") return { openReceipt: () => {} };
-      if (id === "../store") return { useWorkspace: (selector) => selector(state) };
+      if (id === "../store") return { useWorkspace: (selector) => selector(state), showToast: () => {} };
+      if (id === "../label") {
+        return {
+          formatBytes: (n) => `${n} B`,
+          humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+          quoteKo: (s) => `「${s}」`,
+          shortHash: (v, n = 12) => String(v ?? "").slice(0, n),
+          stampWhen: (iso) => (iso ? String(iso).replace("T", " ").slice(0, 16) : ""),
+        };
+      }
       if (id === "../types") return {};
       if (id === "./Tag") {
         return {
@@ -276,6 +285,11 @@ function renderReview(inspect) {
         };
       }
       if (id === "../types") return {};
+      if (id === "../label") {
+        return {
+          humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+        };
+      }
       if (id === "./History") return { History: () => null };
       if (id === "./ReviewQueue") {
         return { ReviewQueue: () => null, ApproveAllButton: () => null };

@@ -40,7 +40,6 @@ import {
   hunkReviewState,
   queueRefusalMessage,
   reviewQueueHotkey,
-  shortPlanHash,
   type HunkProvenance,
 } from "../reviewHunk";
 import {
@@ -55,6 +54,7 @@ import {
   type Draft,
   type QueuedOp,
 } from "../store";
+import { relativeWhen } from "../label";
 import type { PlanFinding } from "../types";
 import { hasActiveApprovalBinding } from "../workspace/reviewSummary";
 import { EmptyIconInbox, EmptyState } from "./EmptyState";
@@ -131,7 +131,7 @@ function decideTitle(composing: boolean, approvalBound: boolean): string {
   return composing
     ? "입력 조합이 끝나기 전에는 승인하지 않습니다"
     : approvalBound
-      ? "화면에 보이는 계획 지문에 승인을 기록합니다"
+      ? "화면에 보이는 계획에 승인을 기록합니다"
       : "현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다";
 }
 
@@ -143,7 +143,7 @@ function approveAllTitle(
   if (composing) return "입력 조합이 끝나기 전에는 승인하지 않습니다";
   if (recoveryBlocksApply) return "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다";
   if (!approvalBound) return "현재 문서와 정확히 일치하는 승인만 기록할 수 있습니다";
-  return "화면에 보이는 계획 지문에 승인을 기록합니다";
+  return "화면에 보이는 계획에 승인을 기록합니다";
 }
 
 /** 모두 승인 in the 검토 tab header. Binds the displayed plan hash. */
@@ -163,9 +163,8 @@ export function ApproveAllButton() {
     recovery.approvalId === approval?.approvalId;
   const canDecide = approvalBound && !locked && !composing;
   const disabled = !canDecide || recoveryBlocksApply;
-  const hash = shortPlanHash(draft.plan?.planHash ?? approval?.planHash ?? null);
   const count = draft.ops.length;
-  const label = hash ? `모두 승인 · ${count} · ${hash}` : `모두 승인 · ${count}`;
+  const label = "모두 승인";
   return (
     <button
       type="button"
@@ -180,6 +179,11 @@ export function ApproveAllButton() {
       }}
     >
       {label}
+      {count > 0 ? (
+        <span className="tab-badge" data-testid="approve-all-count">
+          {count}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -333,17 +337,12 @@ export function ReviewQueue() {
       {draft.reverses ? (
         <div className="refusal" data-testid="queue-reversal">
           <Tag tone="warn">되돌리기 제안</Tag>
-          <p className="prose">
-            후보본 <span className="mono">{draft.reverses.slice(0, 12)}</span> 이(가) 한 일을
-            되돌리는 계획입니다. 그 후보본은 지워지지 않습니다 — 승인하면 되돌린
-            결과가 담긴 후보본이 하나 더 생기고, 영수증에 무엇을 되돌렸는지가
-            적힙니다. 적용한 뒤에는 런타임이 값이 실제로 되돌아갔는지 다시 읽어
-            확인합니다.
-          </p>
+          <p className="prose">되돌리는 계획입니다. 그 후보본은 지워지지 않습니다.</p>
           {draft.baseRunId ? (
-            <p className="mono tiny">
-              이어 붙일 후보본 {draft.baseRunId.slice(0, 12)}
-            </p>
+            <details className="disclosure">
+              <summary>기술 정보</summary>
+              <p className="mono tiny">이어 붙일 후보본 {draft.baseRunId.slice(0, 12)}</p>
+            </details>
           ) : null}
         </div>
       ) : draft.baseRunId ? (
@@ -356,8 +355,7 @@ export function ReviewQueue() {
 
       {draft.rewrittenFromAgent ? (
         <p className="prose note-rewrite">
-          에이전트가 낸 계획을 고쳤습니다. 그래서 이 계획은 이제 <strong>이 셸이 낸 것</strong>이고,
-          에이전트가 받아 둔 승인은 더 이상 쓰이지 않습니다. 승인은 지금 보이는 계획에만 묶입니다.
+          에이전트가 낸 계획을 고쳤습니다. 승인은 지금 보이는 계획에만 묶입니다.
         </p>
       ) : null}
 
@@ -366,13 +364,16 @@ export function ReviewQueue() {
           <Tag tone="bad">계획이 낡음</Tag>
           <p className="prose">
             {staleness.kind === "other_session"
-              ? "이 대기열은 지금 열려 있는 문서가 아니라 다른 문서의 바이트에 묶여 있습니다. 그대로 승인할 수 없습니다."
-              : "계획을 낸 뒤 원본이 바뀌었습니다. 런타임이 승인을 거절합니다."}
+              ? "이 대기열은 다른 문서에 묶여 있어 승인할 수 없습니다."
+              : "계획을 낸 뒤 원본이 바뀌었습니다."}
           </p>
-          <p className="mono tiny">
-            묶인 해시 {staleness.boundSha256.slice(0, 16)} · 지금{" "}
-            {staleness.currentSha256?.slice(0, 16) ?? "알 수 없음"}
-          </p>
+          <details className="disclosure">
+            <summary>기술 정보</summary>
+            <p className="mono tiny">
+              묶인 해시 {staleness.boundSha256.slice(0, 16)} · 지금{" "}
+              {staleness.currentSha256?.slice(0, 16) ?? "알 수 없음"}
+            </p>
+          </details>
           <button
             className="action primary"
             data-testid="queue-repropose"
@@ -435,9 +436,12 @@ export function ReviewQueue() {
             {validation.counts.warn > 0 ? (
               <Tag tone="warn">주의 {validation.counts.warn}</Tag>
             ) : null}
-            <span className="count mono" title="이 계획의 지문">
-              {draft.plan?.planHash.slice(0, 12)}
-            </span>
+            {draft.plan?.planHash ? (
+              <details className="disclosure">
+                <summary>기술 정보</summary>
+                <p className="mono tiny">{draft.plan.planHash}</p>
+              </details>
+            ) : null}
           </div>
           {/* Findings that name the plan rather than an op — plan_stale is the
               one that matters, and it must not disappear into a row. */}
@@ -478,10 +482,7 @@ export function ReviewQueue() {
             <span className="gate-dot" aria-hidden="true" />
             <strong>승인됨</strong>
           </div>
-          <p className="prose">
-            런타임에 승인 결정이 기록되었습니다. 현재 문서와 계획의 묶임을 다시 확인한 뒤
-            적용할 수 있습니다.
-          </p>
+          <p className="prose">승인 결정이 기록되었습니다. 적용할 수 있습니다.</p>
           <div className="gate-actions">
             <button
               className="action point"
@@ -518,22 +519,11 @@ export function ReviewQueue() {
         <div className="approval-gate" data-testid="approval-gate">
           <div className="gate-head">
             <span className="gate-dot" aria-hidden="true" />
-            <strong>승인을 기다리는 중</strong>
+            <strong>승인을 기다립니다</strong>
+            <Tag tone="none">{approval.requestedBy}</Tag>
+            <span className="dim">{relativeWhen(approval.requestedUtc)}</span>
           </div>
-          <p className="prose">
-            승인하면 이 계획 지문에 대한 결정만 런타임에 기록됩니다. 문서는 아직 바뀌지
-            않습니다. 적용은 승인이 기록된 뒤의 다음 단계입니다. 승인 기록은{" "}
-            <span className="mono">{approval.planHash.slice(0, 12)}</span> 이 계획 하나에만
-            묶입니다.
-          </p>
-          <dl className="kv">
-            <dt>요청자</dt>
-            <dd>{approval.requestedBy}</dd>
-            <dt>요청 시각</dt>
-            <dd className="mono">{approval.requestedUtc}</dd>
-            <dt>작업 수</dt>
-            <dd>{draft.ops.length}</dd>
-          </dl>
+          <p className="prose">승인해도 문서는 아직 바뀌지 않습니다.</p>
           <div className="gate-actions">
             <button
               className="action point"
@@ -566,6 +556,21 @@ export function ReviewQueue() {
               거절
             </button>
           </div>
+          <details className="disclosure">
+            <summary>기술 정보</summary>
+            <dl className="kv">
+              <dt>요청자</dt>
+              <dd>{approval.requestedBy}</dd>
+              <dt>요청 시각</dt>
+              <dd className="mono">{approval.requestedUtc}</dd>
+              <dt>작업 수</dt>
+              <dd>{draft.ops.length}</dd>
+              <dt>계획</dt>
+              <dd className="mono">{approval.planId}</dd>
+              <dt>해시</dt>
+              <dd className="mono">{approval.planHash}</dd>
+            </dl>
+          </details>
         </div>
       ) : (
         <div className="gate-actions">
@@ -611,7 +616,7 @@ export function ReviewQueue() {
               never have to open section.xml to interpret a refusal. */}
           {applyError.data ? (
             <details className="disclosure">
-              <summary>런타임이 보낸 그대로</summary>
+              <summary>엔진이 보낸 그대로</summary>
               <pre>{JSON.stringify(applyError.data, null, 2)}</pre>
             </details>
           ) : null}
@@ -620,18 +625,21 @@ export function ReviewQueue() {
 
       {recovery ? (
         <div className="refusal" data-testid="apply-recovery">
-          <Tag tone="bad">적용 중에 런타임이 멈췄습니다</Tag>
+          <Tag tone="bad">적용 중에 엔진이 멈췄습니다</Tag>
           <p className="prose">
             {recovery.outcome === "unknown"
-              ? "적용이 끝나기 전에 연결이 끊겼습니다. 후보본이 만들어졌는지는 목록을 다시 읽어야 알 수 있습니다 — 짐작하지 않습니다."
+              ? "적용이 끝나기 전에 연결이 끊겼습니다. 후보본이 생겼는지는 목록을 다시 읽습니다."
               : recovery.outcome === "applied"
                 ? "확인했습니다. 후보본은 만들어졌고 영수증도 남아 있습니다."
                 : "확인했습니다. 후보본은 만들어지지 않았습니다. 문서는 그대로입니다."}
           </p>
-          <p className="mono tiny">
-            {recovery.atUtc} · plan {recovery.planId.slice(0, 12)}
-            {recovery.runId ? ` · run ${recovery.runId.slice(0, 12)}` : ""}
-          </p>
+          <details className="disclosure">
+            <summary>기술 정보</summary>
+            <p className="mono tiny">
+              {recovery.atUtc} · plan {recovery.planId.slice(0, 12)}
+              {recovery.runId ? ` · run ${recovery.runId.slice(0, 12)}` : ""}
+            </p>
+          </details>
           {recovery.outcome === "unknown" ? (
             <button
               className="action primary"

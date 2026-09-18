@@ -1,37 +1,63 @@
 /**
- * 영수증 보기 — what the receipt says, in Korean, with the JSON behind it.
- *
- * A receipt is the only artefact in this system that answers "why should I
- * believe this document is what you say it is", so rendering it as a JSON blob
- * would be handing the question back to the reader. It is rendered as four
- * bindings a person can check:
- *
- *   원본 → 후보본   the two digests, and the statement that the source is
- *                   untouched — `plan/apply` reads the session copy and writes
- *                   somewhere else, always;
- *   계획            which operations ran, in order, with their exit codes;
- *   승인            who approved it and which plan hash they were bound to;
- *   검사            what actually ran, and — the part that matters —
- *                   what did NOT.
- *
- * `acceptance` is never shown as a bare tick. It is true only when every
- * required check RAN and was clean, and when it is false the reason is printed
- * beside it, because "nothing failed" and "everything passed" are different
- * claims and this program's whole reason to exist is not confusing them.
- *
- * Reading a receipt is itself a proof step: `receipt/read` re-hashes the
- * artifact against its binding before returning, so an open panel means the
- * bytes on disk still match. When they do not, the refusal is what is shown.
+ * 영수증 보기 — a human summary first, then what changed, who approved, files,
+ * and the full JSON under 기술 정보.
  */
 import { openReceipt } from "../actions";
-import { useWorkspace } from "../store";
+import { formatBytes, humanCellAddress, quoteKo, shortHash, stampWhen } from "../label";
+import { showToast, useWorkspace } from "../store";
 import type { Receipt } from "../types";
 import { Tag } from "./Tag";
 
-function Hash({ value }: { value: string }) {
+function stepTitle(step: { kind: string; result?: unknown; subcommand?: string }): string {
+  const result =
+    step.result && typeof step.result === "object"
+      ? (step.result as Record<string, unknown>)
+      : {};
+  if (step.kind === "fill_cell") {
+    if (typeof result.table === "number" && typeof result.row === "number" && typeof result.col === "number") {
+      return `${humanCellAddress(result.table, result.row, result.col)}에 값 넣기`;
+    }
+    return "칸에 값 넣기";
+  }
+  if (step.kind === "replace_all") {
+    const find = String(result.find ?? "");
+    const next = String(result.replace ?? "");
+    if (find || next) return `${quoteKo(find)}을 ${quoteKo(next)}로 바꾸기`;
+    return "글 바꾸기";
+  }
+  if (step.kind === "insert_text") return "한 문장 넣기";
+  if (step.kind === "goto_text") return "자리로 이동";
+  if (step.kind === "set_run") return "문단 바꾸기";
+  return step.subcommand || step.kind;
+}
+
+function copyValue(value: string): void {
+  const clip = navigator.clipboard;
+  if (!clip) {
+    showToast("복사하지 못했습니다", 1400);
+    return;
+  }
+  void clip.writeText(value).then(
+    () => showToast("복사했습니다", 1400),
+    () => showToast("복사하지 못했습니다", 1400),
+  );
+}
+
+function CopyHash({ value, testId }: { value: string; testId?: string }) {
   return (
-    <span className="mono hash" title={value}>
-      {value.slice(0, 16)}…
+    <span className="hash-copy">
+      <span className="mono hash" title={value}>
+        {shortHash(value)}
+      </span>
+      <button
+        type="button"
+        className="linkish"
+        data-testid={testId}
+        title="복사"
+        onClick={() => copyValue(value)}
+      >
+        복사
+      </button>
     </span>
   );
 }
@@ -95,14 +121,16 @@ function Checks({ receipt }: { receipt: Receipt }) {
           </li>
         ))}
       </ul>
-      <p className="prose tiny">{report.note}</p>
-      <p className="prose tiny">
-        이 판정은 후보본을 만들 때 런타임이 실제로 돌린 오프라인 검사 결과입니다. 지금 다시
-        돌린 것이 아닙니다 — <span className="mono">verify/*</span> 는 아직 프로토콜에
-        없습니다.
-      </p>
     </div>
   );
+}
+
+function summaryLine(receipt: Receipt): string {
+  const when = stampWhen(receipt.approval.resolvedUtc ?? receipt.createdUtc);
+  const who = receipt.approval.approver ?? receipt.approval.requestedBy;
+  const decision = receipt.approval.state === "approved" ? "승인" : receipt.approval.state;
+  const xmlish = receipt.backend === "xml" ? "xml 편집" : `${receipt.backend} 편집`;
+  return `${when} · ${who} ${decision} · ${xmlish} ${receipt.steps.length}건 · 후보본 ${formatBytes(receipt.candidate.bytes)}`;
 }
 
 export function ReceiptPanel() {
@@ -116,7 +144,6 @@ export function ReceiptPanel() {
     <section className="sheet receipt" data-testid="receipt-panel" aria-label="영수증">
       <header className="sheet-head">
         <h3>영수증</h3>
-        <span className="count mono">{runId.slice(0, 12)}</span>
         <button
           className="ghost"
           style={{ color: "var(--fg-muted)" }}
@@ -133,52 +160,30 @@ export function ReceiptPanel() {
             <Tag tone="bad">영수증을 읽지 못했습니다</Tag>
             <p className="prose">{error.message}</p>
             <p className="mono tiny">{error.code}</p>
-            <p className="prose tiny">
-              영수증은 자기가 묶어 둔 바이트가 그대로일 때만 내용을 내놓습니다. 읽히지 않는다는
-              것은 그 자체로 답입니다.
-            </p>
+            <p className="prose tiny">영수증은 묶어 둔 바이트가 그대로일 때만 내용을 내놓습니다.</p>
           </div>
         ) : !receipt ? (
           <p className="empty">영수증을 읽는 중입니다.</p>
         ) : (
           <>
-            <div className="receipt-block">
-              <h4>바이트</h4>
-              <dl className="kv">
-                <dt>원본</dt>
-                <dd>
-                  {receipt.source.name} · <Hash value={receipt.source.sha256} /> ·{" "}
-                  {receipt.source.bytes.toLocaleString()} B
-                </dd>
-                <dt>후보본</dt>
-                <dd>
-                  {receipt.candidate.path} · <Hash value={receipt.candidate.sha256} /> ·{" "}
-                  {receipt.candidate.bytes.toLocaleString()} B
-                </dd>
-                <dt>역할</dt>
-                <dd className="mono">{receipt.candidate.role}</dd>
-              </dl>
-              <p className="prose tiny">
-                원본은 입력이었을 뿐 결과가 아닙니다. 모든 단계는 파일 하나를 읽고 다른 파일을
-                씁니다.
-              </p>
+            <div className="receipt-summary" data-testid="receipt-summary">
+              {summaryLine(receipt)}
             </div>
+            <p className="prose tiny" data-testid="receipt-honesty">
+              이 영수증은 바이트와 오프라인 검사만 증명합니다. 페이지 그림은 증거가 아닙니다.
+            </p>
 
             <div className="receipt-block">
-              <h4>계획</h4>
-              <p className="mono tiny">
-                {receipt.backend} · plan <Hash value={receipt.planHash} />
-              </p>
+              <h4>무엇이 바뀌었나</h4>
               <ol className="receipt-steps">
                 {receipt.steps.map((step) => (
                   <li key={step.opId}>
-                    <span className="mono">{step.subcommand}</span>
-                    <span className="dim">{step.kind}</span>
+                    <span>{stepTitle(step)}</span>
                     {step.exitCode === 3 ? (
                       <Tag tone="bad">거절 exit 3</Tag>
                     ) : (
                       <Tag tone={step.exitCode === 0 ? "ok" : "bad"}>
-                        exit {step.exitCode}
+                        {step.exitCode === 0 ? "됨" : `exit ${step.exitCode}`}
                       </Tag>
                     )}
                   </li>
@@ -193,7 +198,7 @@ export function ReceiptPanel() {
             </div>
 
             <div className="receipt-block">
-              <h4>승인</h4>
+              <h4>누가·언제</h4>
               <dl className="kv">
                 <dt>결정</dt>
                 <dd>
@@ -206,25 +211,35 @@ export function ReceiptPanel() {
                 <dt>요청한 쪽</dt>
                 <dd>{receipt.approval.requestedBy}</dd>
                 <dt>결정 시각</dt>
-                <dd className="mono">{receipt.approval.resolvedUtc ?? "—"}</dd>
-                <dt>묶인 계획</dt>
+                <dd>{stampWhen(receipt.approval.resolvedUtc) || "—"}</dd>
+              </dl>
+            </div>
+
+            <div className="receipt-block">
+              <h4>파일</h4>
+              <dl className="kv">
+                <dt>원본</dt>
                 <dd>
-                  <Hash value={receipt.approval.planHash} />
+                  {receipt.source.name} · <CopyHash value={receipt.source.sha256} /> ·{" "}
+                  {formatBytes(receipt.source.bytes)}
+                </dd>
+                <dt>후보본</dt>
+                <dd>
+                  {receipt.candidate.path} · <CopyHash value={receipt.candidate.sha256} /> ·{" "}
+                  {formatBytes(receipt.candidate.bytes)}
                 </dd>
               </dl>
             </div>
 
             <Checks receipt={receipt} />
 
-            <div className="receipt-block">
-              <h4>증거 등급</h4>
-              <p className="prose">
+            <details className="disclosure" data-testid="receipt-raw">
+              <summary>기술 정보</summary>
+              <p className="mono tiny">{runId}</p>
+              <p className="mono tiny">{receipt.backend} · {receipt.planHash}</p>
+              <p className="prose tiny">
                 <Tag tone="none">{receipt.evidence.class}</Tag> {receipt.evidence.note}
               </p>
-            </div>
-
-            <details className="disclosure" data-testid="receipt-raw">
-              <summary>자세히</summary>
               <pre>{JSON.stringify(receipt, null, 2)}</pre>
             </details>
           </>

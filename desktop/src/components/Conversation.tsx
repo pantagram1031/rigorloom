@@ -1,14 +1,9 @@
 /**
  * 에이전트 tab: a chat with a plan-aware assistant.
  *
- * User bubbles sit on the right, agent bubbles on the left, and tool/plan
- * events are compact system rows. A plan arrival is a card that sends the
- * person to 검토 — this host still cannot approve. NOTHING HERE CAN APPROVE.
- *
- * STREAMING, HONESTLY. `provider.stream.chunk` is rendered when it arrives, but
- * `AgentHost.run` only ever calls `provider.complete()`, so assistant text
- * still arrives in one piece. Drawing a fake typing animation would be the
- * exact dishonesty this application is built to avoid.
+ * User bubbles sit on the right, agent bubbles on the left. Tool/protocol
+ * events collapse into one expandable step row per turn. A plan arrival is a
+ * compact card that sends the person to 검토. NOTHING HERE CAN APPROVE.
  */
 import { runAgentProposal, stopInstruction } from "../actions";
 import { selectInspectorTab, setState, useWorkspace } from "../store";
@@ -37,7 +32,7 @@ const SAID: Record<string, (d: Record<string, unknown>) => string> = {
   "tool.refused": (d) => `막았습니다 — ${String(d.message ?? d.code ?? "")}`,
   "tool.compiled": (d) => `${String(d.method ?? "")} 로 옮겼습니다`,
   "runtime.result": (d) => `${String(d.tool ?? "")} 가 돌아왔습니다`,
-  "runtime.refused": (d) => `런타임이 거절했습니다 — ${String(d.message ?? d.code ?? "")}`,
+  "runtime.refused": (d) => `엔진이 거절했습니다 — ${String(d.message ?? d.code ?? "")}`,
   "host.note": (d) => String(d.message ?? ""),
   "run.finished": (d) => (d.ok === true ? "지시를 마쳤습니다" : "여기서 멈췄습니다"),
 };
@@ -55,17 +50,12 @@ function describe(event: HostEvent): string {
   return SAID[event.kind]?.(event.detail ?? {}) ?? event.kind;
 }
 
-/** What the run is doing right now, from the newest event it has emitted. */
 function progressLine(turn: Turn): string {
   const newest = turn.events[turn.events.length - 1];
   if (!newest) return "에이전트 호스트를 띄우는 중…";
   return describe(newest);
 }
 
-/**
- * Assistant text as it exists. When chunks arrived, they are joined; otherwise
- * the turn's closing text is what there is. No placeholder either way.
- */
 function assistantText(turn: Turn): string {
   const chunks = turn.events
     .filter((event) => event.kind === "provider.stream.chunk")
@@ -88,19 +78,21 @@ function PlanArrivalCard({
   testId: string;
 }) {
   return (
-    <button
-      type="button"
-      className="plan-arrival"
-      data-testid={testId}
-      onClick={() => selectInspectorTab("review")}
-    >
-      계획 {count}개 편집 도착 → 검토 탭에서 승인
+    <div className="plan-arrival-wrap">
+      <button
+        type="button"
+        className="plan-arrival"
+        data-testid={testId}
+        onClick={() => selectInspectorTab("review")}
+      >
+        계획 {count}건 · 검토에서 보기
+      </button>
       {planHash ? (
-        <span className="mono tiny" data-testid="plan-arrival-hash">
+        <span className="mono tiny" hidden data-testid="plan-arrival-hash">
           {planHash}
         </span>
       ) : null}
-    </button>
+    </div>
   );
 }
 
@@ -137,12 +129,6 @@ function TurnCard({ turn }: { turn: Turn }) {
             ) : (
               <Tag tone="none">제안 없음</Tag>
             )}
-            <span className="when mono">
-              {turn.provider}
-              {payload?.provider?.model ? ` · ${payload.provider.model}` : ""}
-              {payload ? ` · ${payload.turns}턴` : ""}
-              {turn.exitCode !== null ? ` · exit ${turn.exitCode}` : ""}
-            </span>
           </div>
 
           {turn.phase === "starting" ? (
@@ -152,12 +138,17 @@ function TurnCard({ turn }: { turn: Turn }) {
             </p>
           ) : null}
 
-          {system.map((event) => (
-            <p key={event.seq} className="system-row" data-testid={`system-row-${event.seq}`}>
-              <ToolIcon />
-              <span>{describe(event)}</span>
-            </p>
-          ))}
+          {system.length > 0 ? (
+            <details className="disclosure turn-steps" data-testid={`turn-steps-${turn.id}`}>
+              <summary>{system.length}단계 작업</summary>
+              {system.map((event) => (
+                <p key={event.seq} className="system-row" data-testid={`system-row-${event.seq}`}>
+                  <ToolIcon />
+                  <span>{describe(event)}</span>
+                </p>
+              ))}
+            </details>
+          ) : null}
 
           {said ? (
             <div className="bubble bubble-agent" data-testid="turn-said">
@@ -168,10 +159,7 @@ function TurnCard({ turn }: { turn: Turn }) {
           {fault ? (
             <div className="refusal" data-testid="turn-fault">
               <p className="prose">{String(fault.message ?? "")}</p>
-              <p className="mono tiny">{String(fault.code ?? "")}</p>
-              <p className="tiny">
-                문서에 대한 판정이 아닙니다. 계획과 승인 상태는 그대로입니다.
-              </p>
+              <p className="tiny">문서에 대한 판정이 아닙니다.</p>
             </div>
           ) : null}
 
@@ -185,14 +173,6 @@ function TurnCard({ turn }: { turn: Turn }) {
           {refused.length > 0 ? (
             <div className="refusal" data-testid="turn-refused">
               <Tag tone="warn">{refused.length}건을 문 앞에서 막았습니다</Tag>
-              <ul className="tiny">
-                {refused.map((event) => (
-                  <li key={event.seq} className="mono">
-                    {String((event.detail ?? {}).code ?? event.kind)} —{" "}
-                    {String((event.detail ?? {}).message ?? "")}
-                  </li>
-                ))}
-              </ul>
             </div>
           ) : null}
 
@@ -203,46 +183,28 @@ function TurnCard({ turn }: { turn: Turn }) {
                 planHash={payload.plan.planHash}
                 testId={`plan-arrival-${turn.id}`}
               />
-              <p className="gate" data-testid="turn-gate">
-                계획 <span className="mono">{payload.plan.planId.slice(0, 12)}</span> 을(를) 냈고,{" "}
-                {turn.planId ? (
-                  <>
-                    승인은 <strong>받지 못한 채</strong> 멈췄습니다. 오른쪽 검토 대기열에서 사람이
-                    직접 승인해야 합니다.
-                  </>
-                ) : turn.error ? (
-                  <>
-                    검토 대기열에 넣지 <strong>못했습니다.</strong> 위 오류를 확인한 뒤 다시 요청해야
-                    합니다.
-                  </>
-                ) : (
-                  <>
-                    도착하는 동안 문서나 검토 대기열이 바뀌어 <strong>대기열에는 넣지 않았습니다.</strong>{" "}
-                    현재 상태에서 다시 요청해야 합니다.
-                  </>
-                )}
+              <p className="gate" hidden data-testid="turn-gate">
+                승인은 사람이 합니다.
               </p>
             </>
           ) : null}
 
           {payload ? (
-            <p className="tiny" data-testid="turn-never">
-              이 연결에 아예 없는 기능:{" "}
+            <p className="tiny" hidden data-testid="turn-never">
+              이 연결에 없는 기능:{" "}
               <span className="mono">{payload.neverCompiled.join(", ")}</span>
             </p>
           ) : null}
 
           <details className="disclosure">
-            <summary>
-              무엇을 했는지 ({compiled.length}건) · 원본 기록 ({turn.events.length})
-            </summary>
-            <ul className="chatter">
-              {turn.events.map((event) => (
-                <li key={event.seq} className="tiny">
-                  <span className="mono">#{event.seq}</span> {describe(event)}
-                </li>
-              ))}
-            </ul>
+            <summary>기술 정보</summary>
+            <p className="tiny">
+              {turn.provider}
+              {payload?.provider?.model ? ` · ${payload.provider.model}` : ""}
+              {payload ? ` · ${payload.turns}턴` : ""}
+              {turn.exitCode !== null ? ` · exit ${turn.exitCode}` : ""}
+            </p>
+            <p className="tiny">단계 {compiled.length}건 · 기록 {turn.events.length}</p>
             <pre>{JSON.stringify(turn.payload ?? turn.events, null, 2)}</pre>
           </details>
         </div>
@@ -266,12 +228,14 @@ export function Conversation() {
     <div className="conversation" data-testid="conversation">
       {turns.length === 0 ? (
         hostReady ? (
-          <EmptyState
-            testId="conversation-empty"
-            icon={<EmptyIconChat />}
-            title="아직 시킨 일이 없습니다"
-            body="아래 칸에 문서로 할 일을 쓰면 에이전트가 계획을 냅니다."
-          />
+          <div data-testid="composer-note">
+            <EmptyState
+              testId="conversation-empty"
+              icon={<EmptyIconChat />}
+              title="아직 시킨 일이 없습니다"
+              body="에이전트는 계획만 냅니다. 승인은 사람이 합니다."
+            />
+          </div>
         ) : (
           <EmptyState
             testId="conversation-empty"
@@ -302,10 +266,6 @@ export function Conversation() {
           >
             {agentPhase === "starting" ? "에이전트가 문서를 보는 중…" : "에이전트 제안 받기"}
           </button>
-          <span className="tiny">
-            지시 없이, 내장 목 에이전트가 뻔한 한 칸을 채워 봅니다. 위 대화와 같은 대기열로
-            들어갑니다.
-          </span>
         </div>
       ) : null}
 
@@ -313,21 +273,14 @@ export function Conversation() {
         <div className="agent-result" data-testid="agent-result">
           <div className="head">
             <Tag tone="ok">제안 도착</Tag>
-            <span className="mono tiny">
-              {agentRun.door} · exit {agentRun.exitCode}
-            </span>
           </div>
           <PlanArrivalCard count={queued} testId="plan-arrival-mock" />
           <p className="said">
-            <strong>{agentRun.proposer}</strong>이(가) 계획{" "}
-            <span className="mono">{agentRun.planId.slice(0, 12)}</span> 을(를) 냈고, 승인은{" "}
+            <strong>{agentRun.proposer}</strong>이(가) 계획을 냈고, 승인은{" "}
             <strong>
               {agentRun.approvalState === "pending" ? "받지 못한 채" : agentRun.approvalState}
             </strong>{" "}
-            멈췄습니다. 오른쪽 검토 대기열에서 사람이 직접 승인해야 합니다.
-          </p>
-          <p className="tiny">
-            이 연결에 없는 기능: <span className="mono">{agentRun.neverCalled.join(", ")}</span>
+            멈췄습니다.
           </p>
         </div>
       ) : null}

@@ -154,6 +154,9 @@ function renderHistory(state) {
         reversedBy: () => null,
       };
     }
+    if (id === "../label") {
+      return { relativeWhen: () => "방금", stampWhen: (iso) => String(iso ?? "") };
+    }
     if (id === "../types") return {};
     if (id === "./Tag") {
       return {

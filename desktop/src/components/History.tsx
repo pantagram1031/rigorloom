@@ -21,6 +21,7 @@ import {
   setCompareUseSelection,
   setHead,
 } from "../actions";
+import { relativeWhen } from "../label";
 import {
   activeCandidates,
   headCandidate,
@@ -86,8 +87,7 @@ function Row({
         aria-current={isHead ? "true" : undefined}
         onClick={() => selectHistory(selected ? null : runId)}
       >
-        <span className="mono">{runId.slice(0, 12)}</span>
-        <span className="mono tiny">{clock(row.createdUtc)}</span>
+        <span>{relativeWhen(row.createdUtc) || clock(row.createdUtc) || "후보본"}</span>
         {backend ? <Tag tone="none">{backend}</Tag> : null}
         {isHead ? (
           <Tag tone="ok" title="지금 이 후보본을 문서의 현재 상태로 보고 있습니다">
@@ -111,56 +111,59 @@ function Row({
         ) : (
           <Tag tone="none">검사 결과 없음</Tag>
         )}
-        <Tag tone={receiptPresent ? "ok" : "none"}>
-          {receiptPresent ? "영수증 있음" : "영수증 없음"}
-        </Tag>
+        <span
+          className={`receipt-dot${receiptPresent ? " is-on" : ""}`}
+          title={receiptPresent ? "영수증 있음" : "영수증 없음"}
+          data-testid={`history-receipt-dot-${runId}`}
+        />
       </button>
 
-      <p className="mono tiny history-facts" data-testid={`history-facts-${runId}`}>
-        {opSummary(row)}
-        {" · "}
-        {row.base
-          ? `이전 ${row.base.runId.slice(0, 12)} 위에`
-          : "원본에서 바로"}
-        {" · "}
-        {(row.sha256 ?? "").slice(0, 12)}
-      </p>
-      <p className="mono tiny" data-testid={`history-provenance-${runId}`}>
-        run {runId.slice(0, 12)}
-        {" · "}
-        parent {row.base?.runId ? row.base.runId.slice(0, 12) : "source"}
-        {" · "}
-        backend {backend ?? "—"}
-        {" · "}
-        {receiptPresent ? "영수증 있음" : "영수증 없음"}
-      </p>
+      <details className="disclosure" data-testid={`history-facts-${runId}`}>
+        <summary>기술 정보</summary>
+        <p className="mono tiny">
+          {opSummary(row)}
+          {" · "}
+          {row.base ? `이전 ${row.base.runId.slice(0, 12)} 위에` : "원본에서 바로"}
+        </p>
+        <p className="mono tiny" data-testid={`history-provenance-${runId}`}>
+          run {runId.slice(0, 12)}
+          {" · "}
+          parent {row.base?.runId ? row.base.runId.slice(0, 12) : "source"}
+          {" · "}
+          backend {backend ?? "—"}
+          {" · "}
+          {receiptPresent ? "영수증 있음" : "영수증 없음"}
+        </p>
+      </details>
 
       <div className="checkpoint-actions">
         <button
           className="ghost dark-safe btn-icon"
           data-testid={`history-receipt-${runId}`}
+          title="영수증"
+          aria-label="자세히"
           onClick={() => void loadReceipt(runId)}
         >
           <Icon name="receipt" />
-          자세히
         </button>
         <button
           className="action btn-icon"
           data-testid={`history-restore-${runId}`}
           disabled={undoPhase === "starting"}
-          title="이 후보본을 되돌리는 계획을 제안합니다. 승인하고 적용해야 후보본이 하나 더 생깁니다. 원본은 바꾸지 않습니다."
+          title="되돌리는 계획을 제안합니다. 원본은 바뀌지 않습니다."
+          aria-label="여기로 되돌리기"
           onClick={() => void restoreRun(runId)}
         >
           <Icon name="undo" />
-          여기로 되돌리기
         </button>
         <button
           className="ghost dark-safe btn-icon"
           data-testid={`history-compare-${runId}`}
+          title="비교"
+          aria-label="비교"
           onClick={() => setCompareLeft(runId)}
         >
           <Icon name="compare" />
-          비교
         </button>
       </div>
 
@@ -170,10 +173,6 @@ function Row({
           id={`history-detail-${runId}`}
           data-testid={`history-detail-${runId}`}
         >
-          <p className="prose tiny">
-            이 목록의 해시는 영수증에 적힌 값을 읽어 온 것입니다. 바이트를 다시
-            확인하는 것은 영수증 읽기 쪽이고, 어긋나면 그쪽이 거절합니다.
-          </p>
           <div className="gate-actions">
             <button
               className="ghost dark-safe"
@@ -222,10 +221,12 @@ function CompareInspect({ rows }: { rows: Candidate[] }) {
   return (
     <div className="receipt-block" data-testid="compare-inspect">
       <h4>비교</h4>
-      <p className="prose tiny">
-        런타임의 <span className="mono">candidate/compare</span> 만 씁니다.{" "}
-        <span className="mono">verify/*</span> 는 프로토콜에 없습니다.
-      </p>
+      <details className="disclosure">
+        <summary>기술 정보</summary>
+        <p className="prose tiny">
+          candidate/compare 만 씁니다. verify/* 는 프로토콜에 없습니다.
+        </p>
+      </details>
       <p className="prose tiny">왼쪽 후보본</p>
       <div className="gate-actions">
         {rows.map((row) => (
@@ -321,12 +322,12 @@ function ComparePayload({ compare }: { compare: CandidateCompare }) {
           <Tag tone="none">자리를 비교하지 않음</Tag>
         )}
       </div>
-      <p className="mono tiny" data-testid="compare-artifact-equal">
-        파일 전체 해시 일치: {String(compare.artifactEqual)} · 비교 기준 {compare.normalizer}
-      </p>
       <p className="prose tiny">{compare.note}</p>
       <details className="disclosure" data-testid="compare-raw">
-        <summary>비교 응답</summary>
+        <summary>기술 정보</summary>
+        <p className="mono tiny" data-testid="compare-artifact-equal">
+          파일 전체 해시 일치: {String(compare.artifactEqual)} · 비교 기준 {compare.normalizer}
+        </p>
         <pre>{JSON.stringify(compare, null, 2)}</pre>
       </details>
     </div>
@@ -374,10 +375,6 @@ export function History() {
   return (
     <div className="section history" data-testid="history">
       <h3 data-testid="history-heading">기록</h3>
-      <p className="prose tiny">
-        원본과 후보본을 시간순으로 봅니다. 되돌리기는 원본을 고치는 일이 아니라,
-        되돌리는 계획을 제안한 뒤 승인하고 적용하는 일입니다.
-      </p>
 
       <ul className="history-rows checkpoint-list">
         {sourceHash ? (
@@ -387,8 +384,13 @@ export function History() {
             </span>
             <p className="history-head">
               <span>원본</span>
-              <span className="mono">{sourceHash.slice(0, 12)}</span>
             </p>
+            <details className="disclosure">
+              <summary>기술 정보</summary>
+              <p className="mono tiny" title={sourceHash}>
+                {sourceHash.slice(0, 12)}
+              </p>
+            </details>
           </li>
         ) : null}
         {ordered.map((row) => (
@@ -437,21 +439,18 @@ export function History() {
           </div>
           <p className="prose">
             {proof.compare.regionsEqual === true
-              ? `런타임이 ${proof.compare.regionsCompared}개 자리를 다시 읽어 되돌리기 이전 값과 같음을 확인했습니다.`
+              ? `엔진이 ${proof.compare.regionsCompared}개 자리를 다시 읽어 되돌리기 이전 값과 같음을 확인했습니다.`
               : proof.compare.regionsEqual === false
-                ? "다시 읽은 값이 되돌리기 이전 값과 다릅니다. 이 후보본은 되돌리기가 아닙니다."
-                : "비교할 수 있는 자리가 없었습니다. 이것은 통과가 아닙니다."}
-          </p>
-          <p className="mono tiny" data-testid="inverse-proof-bytes">
-            파일 전체 해시 일치: {String(proof.compare.artifactEqual)} · 비교 기준{" "}
-            {proof.compare.normalizer}
-          </p>
-          <p className="prose tiny">
-            글자는 되돌아가도 파일 바이트까지 같아지지는 않습니다. 편집기가 XML을
-            다시 쓰고 다시 압축하기 때문이고, 되돌리기가 실패했다는 뜻이 아닙니다.
+                ? "다시 읽은 값이 되돌리기 이전 값과 다릅니다."
+                : "비교할 수 있는 자리가 없었습니다."}
           </p>
           <details className="disclosure">
-            <summary>런타임이 비교한 자리</summary>
+            <summary>기술 정보</summary>
+            <p className="mono tiny" data-testid="inverse-proof-bytes">
+              파일 전체 해시 일치: {String(proof.compare.artifactEqual)} · 비교 기준{" "}
+              {proof.compare.normalizer}
+            </p>
+            <p className="prose tiny">글자는 되돌아가도 파일 바이트까지 같아지지는 않습니다.</p>
             <ul className="deferred">
               {proof.compare.regions.map((region) => (
                 <li key={region.address} className="mono tiny">

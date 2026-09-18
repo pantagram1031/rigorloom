@@ -1966,7 +1966,7 @@ export async function applyApproved(): Promise<void> {
   if (!ownsPresentation || getState().activeSessionId !== sessionId || getState().head !== applied.runId) return;
   if (reversed) await verifyReversal(applied.runId, reversed);
   if (getState().activeSessionId === sessionId && getState().head === applied.runId) {
-    showToast(`후보본을 만들었습니다 · ${applied.candidate.sha256.slice(0, 12)}`, 2200);
+    showToast("후보본을 만들었습니다", 2200);
   }
 }
 

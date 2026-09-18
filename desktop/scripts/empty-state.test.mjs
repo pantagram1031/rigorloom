@@ -327,6 +327,42 @@ test("Conversation empty keeps conversation-empty and names the disconnected hos
   assertNoObjectObject(html);
 });
 
+test("ready conversation empty relocates composer-note onto the honesty line", () => {
+  const state = {
+    turns: [],
+    activeTurn: null,
+    agentTool: { available: false, script: null, reason: null },
+    agentPhase: "idle",
+    agentError: null,
+    agentRun: null,
+    activeSessionId: "s",
+    agentHost: { available: true, mode: "mock", script: null, program: null, reason: null },
+  };
+  const exports = loadCompiled("../src/components/Conversation.tsx", "Conversation.tsx", (id) => {
+    const known = jsxRequire(id);
+    if (known) return known;
+    if (id === "../actions") {
+      return { runAgentProposal: () => {}, stopInstruction: () => {} };
+    }
+    if (id === "../store") {
+      return {
+        useWorkspace: (selector) => selector(state),
+        setState: () => {},
+        selectInspectorTab: () => {},
+      };
+    }
+    if (id === "../types") return {};
+    if (id === "./Tag") {
+      return { Tag: ({ children }) => React.createElement("span", null, children) };
+    }
+    throw new Error(`unexpected import: ${id}`);
+  });
+  const html = renderToStaticMarkup(React.createElement(exports.Conversation));
+  assert.match(html, /data-testid="composer-note"/);
+  assert.match(html, /data-testid="conversation-empty"/);
+  assert.match(html, /승인은 사람이 합니다/);
+});
+
 test("SessionList empty uses EmptyState and keeps session-list", () => {
   const state = {
     sessions: [],

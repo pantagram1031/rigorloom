@@ -269,6 +269,11 @@ function renderContext(overrides = {}) {
       if (id === "react/jsx-runtime") return require(id);
       if (id === "react") return require(id);
       if (id === "../actions") return { beginEdit: () => {}, bindFormToActiveDocument: () => {}, needsBoundFormHint: () => false };
+      if (id === "../label") {
+        return {
+          humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+        };
+      }
       if (id === "../store") {
         return {
           useWorkspace: (selector) => selector(state),

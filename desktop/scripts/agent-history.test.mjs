@@ -156,6 +156,12 @@ function renderHistory(state) {
       };
     }
     if (id === "../store") return historyStore(state);
+    if (id === "../label") {
+      return {
+        relativeWhen: () => "방금",
+        stampWhen: (iso) => String(iso ?? ""),
+      };
+    }
     if (id === "../types") return {};
     if (id === "./Tag") {
       return {
@@ -192,6 +198,7 @@ test("plan-arrival card names the queued edits, switches to 검토, and the revi
         payload: {
           plan: {
             planId: "plan-arrival-1",
+            planHash: "aaaa15planhash",
             ops: [fillOp("op-1", 0), fillOp("op-2", 1), fillOp("op-3", 2)],
           },
           neverCompiled: ["approval/resolve", "plan/apply"],
@@ -213,9 +220,14 @@ test("plan-arrival card names the queued edits, switches to 검토, and the revi
     draft: { ops: [fillOp("op-1", 0), fillOp("op-2", 1), fillOp("op-3", 2)] },
   });
   assert.match(html, /data-testid="plan-arrival-turn-1"/);
-  assert.match(html, /계획 3개 편집 도착 → 검토 탭에서 승인/);
+  assert.match(html, /계획 3건 · 검토에서 보기/);
   assert.match(html, /class="bubble bubble-user"/);
   assert.match(html, /class="system-row"/);
+  assert.match(html, /1단계 작업/);
+  assert.match(html, /data-testid="turn-steps-turn-1"/);
+  assert.match(html, /data-testid="plan-arrival-hash"/);
+  assert.match(html, /data-testid="turn-gate"/);
+  assert.match(html, /data-testid="turn-never"/);
   assert.match(conversationSource, /selectInspectorTab\("review"\)/);
 
   const before = getState();
@@ -244,6 +256,52 @@ test("plan-arrival card names the queued edits, switches to 검토, and the revi
   }
 });
 
+test("agent thread collapses tool rows into one expandable step row", () => {
+  const html = renderConversation({
+    turns: [
+      {
+        id: "turn-2",
+        instruction: "표를 채워 주세요",
+        at: "2026-09-17T00:00:00Z",
+        phase: "ready",
+        provider: "mock",
+        events: [
+          { seq: 1, kind: "tool.requested", detail: { name: "inspect" } },
+          { seq: 2, kind: "tool.compiled", detail: { method: "plan/propose" } },
+          { seq: 3, kind: "runtime.result", detail: { tool: "inspect" } },
+        ],
+        payload: {
+          plan: { planId: "plan-2", ops: [fillOp("op-1", 0)] },
+          neverCompiled: ["approval/resolve", "plan/apply"],
+          provider: { model: "mock" },
+          turns: 1,
+        },
+        exitCode: 0,
+        error: null,
+        planId: "plan-2",
+      },
+    ],
+    activeTurn: null,
+    agentTool: { available: false },
+    agentPhase: "idle",
+    agentError: null,
+    agentRun: null,
+    activeSessionId: "s",
+    agentHost: { available: true },
+    draft: { ops: [fillOp("op-1", 0)] },
+  });
+  assert.match(html, /data-testid="turn-steps-turn-2"/);
+  assert.match(html, /3단계 작업/);
+  assert.match(html, /data-testid="system-row-1"/);
+  assert.match(html, /data-testid="system-row-2"/);
+  assert.match(html, /data-testid="system-row-3"/);
+  const details = html.match(
+    /<details class="disclosure turn-steps" data-testid="turn-steps-turn-2">[\s\S]*?<\/details>/,
+  )?.[0];
+  assert.ok(details);
+  assert.match(details, /data-testid="system-row-1"/);
+});
+
 test("composer send is inert while composing and shows 입력 중", () => {
   const composing = renderComposer({
     blocker: null,
@@ -265,6 +323,7 @@ test("composer send is inert while composing and shows 입력 중", () => {
   });
   assert.doesNotMatch(idle, /data-testid="composer-ime"/);
   assert.doesNotMatch(idle, /data-testid="composer-send"[^>]*disabled/);
+  assert.match(idle, /placeholder="문서에 시킬 일을 씁니다"/);
 
   const disconnected = renderComposer({
     blocker: "no_host",
@@ -330,8 +389,8 @@ test("checkpoint timeline lists 원본 then candidates with the head marked", ()
   assert.match(html, /class="[^"]*is-head[^"]*" data-testid="history-run-B"/);
   assert.match(html, /영수증 있음/);
   assert.match(html, /preedit/);
-  assert.match(html, />여기로 되돌리기</);
-  assert.match(html, />자세히</);
+  assert.match(html, /aria-label="여기로 되돌리기"/);
+  assert.match(html, /aria-label="자세히"/);
   assert.match(html, /data-testid="history-compare-run-B"/);
 });
 

@@ -40,7 +40,7 @@ function Blocked({ reason }: { reason: string }) {
         <>
           이 설치본에서 에이전트 호스트를 찾지 못했습니다. {labelOf(host?.reason)} 저장소
           체크아웃에서 실행하거나 <span className="mono">RIGORLOOM_AGENT_HOST</span> 를
-          지정하십시오.
+          지정합니다.
         </>
       );
     case "busy":
@@ -63,7 +63,6 @@ function Blocked({ reason }: { reason: string }) {
 
 export function Composer() {
   const blocker = useWorkspace(composerBlocker);
-  const provider = useWorkspace((s) => s.provider.provider);
   const activeTurn = useWorkspace((s) => s.activeTurn);
   const text = useWorkspace((s) => s.composerDraft.text);
   const composingFlag = useWorkspace((s) => s.isComposing);
@@ -94,12 +93,8 @@ export function Composer() {
         data-testid="composer-input"
         value={text}
         disabled={blocker === "no_document" || blocker === "no_host"}
-        placeholder={
-          blocker === null
-            ? "문서에 시킬 일을 여기에 씁니다. Ctrl+Enter 로 보냅니다."
-            : "문서에 시킬 일을 여기에 씁니다."
-        }
-        aria-describedby="composer-note"
+        placeholder="문서에 시킬 일을 씁니다"
+        aria-describedby={blocker ? "composer-note" : undefined}
         onChange={(e) => setState({ composerDraft: { text: e.target.value } })}
         onCompositionStart={() => {
           composing.current = true;
@@ -125,9 +120,6 @@ export function Composer() {
         }}
       />
       <div className="composer-actions">
-        <span className="tiny mono" data-testid="composer-provider">
-          {provider}
-        </span>
         {composingFlag ? (
           <span className="composer-ime" data-testid="composer-ime">
             입력 중 …
@@ -144,16 +136,11 @@ export function Composer() {
           {activeTurn ? "보내는 중…" : "보내기"}
         </button>
       </div>
-      <p className="note" id="composer-note" data-testid="composer-note">
-        {blocker === null ? (
-          <>
-            에이전트는 계획만 냅니다. 승인과 적용은 에이전트 연결에 아예 없는 기능이라,
-            사람이 대기열에서 직접 승인해야 문서에 닿습니다.
-          </>
-        ) : (
+      {blocker ? (
+        <p className="note" id="composer-note" data-testid="composer-note">
           <Blocked reason={blocker} />
-        )}
-      </p>
+        </p>
+      ) : null}
     </div>
   );
 }

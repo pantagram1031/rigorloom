@@ -4,6 +4,7 @@
  */
 import type { DiffMark } from "./diff";
 import { diffText } from "./diff";
+import { humanCellAddress, quoteKo } from "./label";
 import type { QueuedOp } from "./store";
 import type { RegionText, RuntimeError, VerificationReport } from "./types";
 
@@ -27,7 +28,7 @@ export type HunkStateId = "queued" | "approved" | "rejected" | "applied" | "stal
 export const HUNK_STATE_LABEL: Record<HunkStateId, string> = {
   queued: "대기",
   approved: "승인됨",
-  rejected: "거부됨",
+  rejected: "거절됨",
   applied: "적용됨",
   stale: "오래됨",
 };
@@ -59,11 +60,66 @@ export function hunkKindLabel(op: Pick<QueuedOp, "kind"> & Partial<QueuedOp>): s
 }
 
 export function hunkAddress(op: QueuedOp): string {
-  if (op.kind === "fill_cell") return `표 ${op.table} R${op.row}C${op.col}`;
+  if (op.kind === "fill_cell") return humanCellAddress(op.table, op.row, op.col);
   if (op.kind === "set_run") return `문단 ${op.atPara}`;
-  if (op.kind === "replace_all") return `「${String(op.params.find ?? op.before)}」`;
-  if (op.kind === "goto_text") return `「${String(op.params.text ?? op.text)}」`;
+  if (op.kind === "replace_all") return quoteKo(String(op.params.find ?? op.before));
+  if (op.kind === "goto_text") return quoteKo(String(op.params.text ?? op.text));
   return "삽입";
+}
+
+/** Plain-language title for a queued op. Display only. */
+export function hunkTitle(op: Pick<QueuedOp, "kind"> & Partial<QueuedOp>): string {
+  if (op.kind === "fill_cell") {
+    const addr = humanCellAddress(op.table ?? 0, op.row ?? 0, op.col ?? 0);
+    const before = typeof op.before === "string" ? op.before : "";
+    if (op.overwrite || before.length > 0) return `${addr}의 값 바꾸기`;
+    return `${addr}에 값 넣기`;
+  }
+  if (op.kind === "replace_all") {
+    const params = op.params ?? {};
+    const find = String(params.find ?? op.before ?? "");
+    const next = String(params.replace ?? op.text ?? "");
+    return `${quoteKo(find)}을 ${quoteKo(next)}로 바꾸기`;
+  }
+  if (op.kind === "insert_text") {
+    const params = op.params ?? {};
+    const at = String(params.after ?? params.at ?? op.before ?? "").trim();
+    if (at) return `${quoteKo(at)} 뒤에 한 문장 넣기`;
+    return `${quoteKo(String(op.text ?? ""))} 넣기`;
+  }
+  if (op.kind === "goto_text") {
+    const params = op.params ?? {};
+    return `${quoteKo(String(params.text ?? op.text ?? ""))}로 이동`;
+  }
+  if (op.kind === "set_run") return `문단 ${op.atPara ?? 0} 바꾸기`;
+  return hunkKindLabel(op);
+}
+
+export function stepTitle(step: {
+  kind: string;
+  result?: unknown;
+  subcommand?: string;
+}): string {
+  const result =
+    step.result && typeof step.result === "object"
+      ? (step.result as Record<string, unknown>)
+      : {};
+  if (step.kind === "fill_cell") {
+    if (typeof result.table === "number" && typeof result.row === "number" && typeof result.col === "number") {
+      return `${humanCellAddress(result.table, result.row, result.col)}에 값 넣기`;
+    }
+    return "칸에 값 넣기";
+  }
+  if (step.kind === "replace_all") {
+    const find = String(result.find ?? "");
+    const next = String(result.replace ?? "");
+    if (find || next) return `${quoteKo(find)}을 ${quoteKo(next)}로 바꾸기`;
+    return "글 바꾸기";
+  }
+  if (step.kind === "insert_text") return "한 문장 넣기";
+  if (step.kind === "goto_text") return "자리로 이동";
+  if (step.kind === "set_run") return "문단 바꾸기";
+  return step.subcommand || step.kind;
 }
 
 export function hunkReviewState(input: {

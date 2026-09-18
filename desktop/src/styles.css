@@ -677,9 +677,52 @@ button.docchip[aria-current="page"] {
   white-space: nowrap;
 }
 
-.node .label .dim {
+.node .label .dim.is-empty {
   color: var(--fg-faint);
-  font-weight: var(--weight-body);
+}
+
+.state-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+}
+
+.state-dot.is-empty { background: var(--fg-faint); }
+.state-dot.is-filled { background: var(--ok); }
+.state-dot.is-anomaly { background: var(--warn); }
+
+button.group-head {
+  width: 100%;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+button.group-head .twisty {
+  color: var(--fg-faint);
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
+
+.tree-tech {
+  margin: var(--s3) var(--s3) 0;
+}
+
+.receipt-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  flex: none;
+}
+
+.receipt-dot.is-on {
+  background: var(--ok);
 }
 
 .node .tag {
@@ -1917,10 +1960,63 @@ button.recent:active {
   align-items: center;
 }
 
-.hunk-kind {
+.hunk-title {
+  flex: 1 1 12em;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
   font-size: var(--text-sm);
   font-weight: var(--weight-emph);
   color: var(--fg);
+  cursor: pointer;
+}
+
+.hunk-title:disabled {
+  cursor: default;
+  color: var(--fg);
+}
+
+.receipt-summary {
+  margin: 0 0 var(--s3);
+  padding: var(--s3);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+
+.hash-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.turn-steps {
+  margin: var(--s2) 0;
+}
+
+.turn-steps summary {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.plan-arrival-wrap {
+  margin: var(--s2) 0 0;
+}
+
+.inspector-head .tiny.dim {
+  margin-left: auto;
+  color: var(--fg-faint);
+}
+
+.approve-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
 }
 
 .hunk-diff {

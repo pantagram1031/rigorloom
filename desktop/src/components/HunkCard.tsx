@@ -1,6 +1,6 @@
 /**
- * One queued op as a review hunk: kind + address + state, before/after
- * with LCS marks, per-hunk 승인/거부, provenance folded into 출처.
+ * One queued op as a review hunk: a plain-language title, before/after
+ * with LCS marks, 승인/거절, and 기술 정보 for ids and hashes.
  *
  * Render is display-only. Op params are never written here.
  */
@@ -11,8 +11,7 @@ import {
   hunkAddress,
   hunkBeforeText,
   hunkDiffMarks,
-  hunkKindLabel,
-  hunkSlug,
+  hunkTitle,
   isReplaceOp,
   type HunkProvenance,
   type HunkStateId,
@@ -31,7 +30,7 @@ function copyPlanHash(hash: string, showToast: (msg: string, ms: number) => void
     return;
   }
   void clip.writeText(hash).then(
-    () => showToast("계획 지문을 복사했습니다", 1400),
+    () => showToast("계획을 복사했습니다", 1400),
     () => showToast("복사하지 못했습니다", 1400),
   );
 }
@@ -87,7 +86,11 @@ export function HunkCard({
     };
   }, []);
 
-  const slug = hunkSlug(op);
+  const slug = op.kind === "fill_cell"
+    ? `${op.table}-${op.row}-${op.col}`
+    : op.kind === "set_run"
+      ? `p${op.atPara}-r${op.run}`
+      : op.opId;
   const before = hunkBeforeText(op, regions);
   const replace = isReplaceOp(op, before);
   const marks = hunkDiffMarks(before, op.text, replace);
@@ -106,9 +109,8 @@ export function HunkCard({
       tabIndex={focused ? 0 : -1}
     >
       <div className="queue-op-head hunk-head">
-        <span className="hunk-kind">{hunkKindLabel(op)}</span>
         <button
-          className="addr mono"
+          className="hunk-title"
           disabled={!locatable}
           title={
             locatable
@@ -117,28 +119,28 @@ export function HunkCard({
           }
           onClick={onLocate}
         >
-          {hunkAddress(op)}
+          {hunkTitle(op)}
         </button>
         <Tag tone={HUNK_STATE_TONE[stateId]} title={HUNK_STATE_LABEL[stateId]}>
           <span data-testid={`hunk-state-${slug}`}>{HUNK_STATE_LABEL[stateId]}</span>
         </Tag>
         {op.origin === "agent" ? (
           <Tag tone="none" title={`제안: ${op.proposer ?? "에이전트"}`}>
-            에이전트 제안
+            에이전트
           </Tag>
         ) : (
           <Tag tone="fill">내가 입력</Tag>
         )}
         {op.charPr ? (
-          <Tag tone="ok" title="이 자리에 쓸 글자 속성을 지정했습니다">
-            charPr {op.charPr}
+          <Tag tone="ok" title={`charPr ${op.charPr}`}>
+            글자 모양 지정됨
           </Tag>
         ) : null}
         <button
           className="ghost dark-safe"
           data-testid={`queue-remove-${slug}`}
           disabled={locked}
-          title="이 작업을 대기열에서 뺍니다. 문서는 아직 아무것도 바뀌지 않았습니다."
+          title="이 작업을 대기열에서 뺍니다."
           onClick={() => void undoQueuedOp(op.opId)}
         >
           대기열에서 제거
@@ -222,11 +224,11 @@ export function HunkCard({
           data-testid={`hunk-reject-${slug}`}
           disabled={!canDecide}
           title={decideTitle}
-          aria-label="이 항목 거부"
+          aria-label="이 항목 거절"
           onClick={onReject}
         >
           <Icon name="x" />
-          거부
+          거절
         </button>
         <details
           className="disclosure hunk-provenance"
@@ -237,13 +239,13 @@ export function HunkCard({
             if (next !== provenanceOpen) onToggleProvenance();
           }}
         >
-          <summary>출처</summary>
+          <summary>기술 정보</summary>
           <dl className="kv">
             <dt>세션</dt>
             <dd data-testid={`queue-prov-session-${slug}`}>{provenance.sessionId ?? "—"}</dd>
             <dt>계획</dt>
             <dd data-testid={`queue-prov-plan-${slug}`}>{provenance.planId ?? "—"}</dd>
-            <dt>지문</dt>
+            <dt>해시</dt>
             <dd data-testid={`queue-prov-hash-${slug}`}>
               {provenance.planHash ?? "—"}
               {provenance.planHash ? (
@@ -251,13 +253,17 @@ export function HunkCard({
                   type="button"
                   className="linkish"
                   data-testid={`queue-prov-copy-hash-${slug}`}
-                  title="계획 지문 전체 복사"
+                  title="계획 전체 복사"
                   onClick={() => copyPlanHash(provenance.planHash as string, showToast)}
                 >
                   복사
                 </button>
               ) : null}
             </dd>
+            <dt>종류</dt>
+            <dd>{op.kind}</dd>
+            <dt>주소</dt>
+            <dd>{hunkAddress(op)}</dd>
             <dt>제안자</dt>
             <dd data-testid={`queue-prov-proposer-${slug}`}>{provenance.proposer}</dd>
             <dt>백엔드</dt>
@@ -268,6 +274,12 @@ export function HunkCard({
             <dd data-testid={`queue-prov-receipt-${slug}`}>
               {provenance.receiptExists ? "있음" : "없음"}
             </dd>
+            {anomaly?.charPrSuggested ? (
+              <>
+                <dt>권장 글자 모양</dt>
+                <dd>charPr {String(anomaly.charPrSuggested)}</dd>
+              </>
+            ) : null}
           </dl>
         </details>
       </div>
@@ -276,14 +288,12 @@ export function HunkCard({
         <p className="queue-finding hard" key={`${row.code}-${row.at}`}>
           <Tag tone="bad">막힘</Tag>
           <span>{row.msg}</span>
-          <code className="mono">{row.code}</code>
         </p>
       ))}
       {warn.map((row) => (
         <p className="queue-finding warn" key={`${row.code}-${row.at}`}>
           <Tag tone="warn">주의</Tag>
           <span>{row.msg}</span>
-          <code className="mono">{row.code}</code>
         </p>
       ))}
 
@@ -292,9 +302,10 @@ export function HunkCard({
           className="action"
           data-testid={`queue-fix-charpr-${op.opId}`}
           disabled={locked}
+          title={anomaly.charPrSuggested ? `charPr ${String(anomaly.charPrSuggested)}` : undefined}
           onClick={() => void declareSuggestedCharPr(op.opId)}
         >
-          권장 charPr {String(anomaly.charPrSuggested ?? "")} 지정
+          권장 글자 모양 쓰기
         </button>
       ) : null}
     </li>

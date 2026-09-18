@@ -337,8 +337,8 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
                         aria-selected={currentId === id}
                         title={
                           seat
-                            ? `R${cell.addr.row}C${cell.addr.col} · 채움 자리 — 눌러서 값을 넣습니다`
-                            : `R${cell.addr.row}C${cell.addr.col} · ${cell.classification}`
+                            ? `${cell.addr.row + 1}행 ${cell.addr.col + 1}열 · 입력 칸`
+                            : `${cell.addr.row + 1}행 ${cell.addr.col + 1}열 · ${cell.classification}`
                         }
                         onClick={() => {
                           const selection = {

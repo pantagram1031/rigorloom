@@ -217,6 +217,9 @@ function renderHistory(overrides = {}) {
           previewIsStale: () => false,
         };
       }
+      if (id === "../label") {
+        return { relativeWhen: () => "방금", stampWhen: (iso) => String(iso ?? "") };
+      }
       if (id === "../types") return {};
       if (id === "./Tag") {
         return {
@@ -276,7 +279,16 @@ function renderReceipt(receipt) {
       if (id === "react") return require(id);
       if (id === "../actions") return { openReceipt: () => {} };
       if (id === "../store") {
-        return { useWorkspace: (selector) => selector(state) };
+        return { useWorkspace: (selector) => selector(state), showToast: () => {} };
+      }
+      if (id === "../label") {
+        return {
+          formatBytes: (n) => `${n} B`,
+          humanCellAddress: (t, r, c) => `표 ${t + 1} · ${r + 1}행 ${c + 1}열`,
+          quoteKo: (s) => `「${s}」`,
+          shortHash: (v, n = 12) => String(v ?? "").slice(0, n),
+          stampWhen: (iso) => (iso ? String(iso).replace("T", " ").slice(0, 16) : ""),
+        };
       }
       if (id === "../types") return {};
       if (id === "./Tag") {
@@ -323,4 +335,50 @@ test("receipt panel never paints acceptance false or exit 3 as success", () => {
   const exit3 = html.match(/data-testid="receipt-exit3-refusal"[^>]*>[\s\S]*?<\/div>/)[0];
   assert.doesNotMatch(acceptance, /data-tone="ok"/);
   assert.doesNotMatch(exit3, /data-tone="ok"/);
+});
+
+test("receipt summary is first and the full JSON lives under 기술 정보", () => {
+  const receipt = {
+    source: { name: "a.hwpx", sha256: "aa".repeat(32), bytes: 10 },
+    candidate: { path: "c.hwpx", sha256: "bb".repeat(32), bytes: 30720, role: "candidate" },
+    backend: "xml",
+    planHash: "cc".repeat(32),
+    steps: [
+      {
+        opId: "op-1",
+        kind: "fill_cell",
+        subcommand: "fill-cell",
+        exitCode: 0,
+        result: { table: 0, row: 0, col: 0 },
+      },
+    ],
+    approval: {
+      state: "approved",
+      approver: "host-operator",
+      requestedBy: "desktop",
+      resolvedUtc: "2026-09-17T10:30:00Z",
+      planHash: "cc".repeat(32),
+    },
+    checks: {
+      acceptance: true,
+      ranAll: true,
+      reason: null,
+      checks: [{ checker: "check_residue", state: "ran", ok: true }],
+      note: "offline",
+    },
+    evidence: { class: "structural_only", note: "no render" },
+    createdUtc: "2026-09-17T10:30:00Z",
+  };
+  const html = renderReceipt(receipt);
+  assert.match(html, /data-testid="receipt-summary"/);
+  const summaryAt = html.indexOf('data-testid="receipt-summary"');
+  const rawAt = html.indexOf('data-testid="receipt-raw"');
+  assert.ok(summaryAt >= 0 && rawAt > summaryAt);
+  assert.match(html, /host-operator 승인/);
+  assert.match(html, /xml 편집 1건/);
+  const raw = html.match(/data-testid="receipt-raw"[\s\S]*?<\/details>/)[0];
+  assert.match(raw, />기술 정보</);
+  assert.match(raw, /<pre>/);
+  assert.match(raw, /&quot;planHash&quot;/);
+  assert.match(raw, /&quot;structural_only&quot;/);
 });
