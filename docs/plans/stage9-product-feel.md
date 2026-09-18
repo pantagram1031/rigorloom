@@ -29,10 +29,10 @@ human, receipts stay complete), but honesty moves to the details layer instead o
 - Measured: cold start to Home and to an opened form in the built app, with numbers in the ledger.
 
 ## Slices (Cursor lanes; Fable reviews captures for each; nothing ships on tests alone)
-- [ ] F0 Copy audit note (read-only): every user-visible string with location, class and a proposed rewrite in
+- [x] F0 Copy audit note (grok-xhigh, 19 min): 1090 strings; KEEP 873 / SHORTEN 141 / RENAME 31 / MOVE-TO-DETAILS 26 / DROP 16 / tooltip 3; glossary + register rules (commit 94dd9dc). (read-only): every user-visible string with location, class and a proposed rewrite in
       short 합니다체; prose walls cut to one line or moved to tooltips or first-run. Fable edits the proposals
       before they are applied.
-- [ ] F1 Chrome: one toolbar row (열기 · 검사 · 승인 primary right; view toggle segmented; zoom in a menu); pipeline
+- [x] F1 Chrome (grok-high, 24 min; tests 225 → 229; captures reviewed): one toolbar row (열기 · 검사 · 승인 primary right; view toggle segmented; zoom in a menu); pipeline
       strip merged into a slim line; status bar = document · state pill · engine; duplicate zoom controls removed.
 - [ ] F2 Structure tree as an outline: 입력 칸 collapsed with count; human addresses (표 1 · 5행 2열); charPr and tag
       spam to hover or details; empty groups hidden; forbidden only in a details layer.
@@ -50,3 +50,4 @@ human, receipts stay complete), but honesty moves to the details layer instead o
 | When | What | Result |
 |---|---|---|
 | 2026-09-18 06:40 | Audit from fresh captures | eight findings above; F0 and F1 launched |
+| 2026-09-18 19:10 | F0 and F1 landed | F2–F4 launched as one lane on grok-xhigh using the audit as the copy source |
