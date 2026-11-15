@@ -152,18 +152,26 @@ def call(fn: str, args: dict | None = None, *, env: dict | None = None,
                         "The engine's answer exceeded the adapter's size limit.")
     result = _parse_last_json(proc.stdout)
     if result is None:
+        # The engine's own diagnostics can name private paths or document
+        # text, so they go to this process's stderr for the person at the
+        # terminal and never into a result that may be stored or shared.
         tail = proc.stderr.decode("utf-8", errors="replace").strip()[-400:]
+        if tail:
+            print(f"rigorloom engine ({fn}): {tail}", file=sys.stderr)
         return _refusal(fn, "engine_contract_violation",
-                        "The engine did not print a JSON result.",
-                        exit_code=proc.returncode, stderr_tail=tail)
+                        "The engine did not print a JSON result; its "
+                        "diagnostics were written to stderr.",
+                        exit_code=proc.returncode)
     if result.get("api") != ENGINE_API or not isinstance(result.get("ok"), bool):
         return _refusal(fn, "engine_contract_violation",
                         f"The engine answered outside api {ENGINE_API}.",
                         exit_code=proc.returncode)
     if not result["ok"]:
-        return _refusal(fn, "engine_refused",
-                        "The engine refused this call.",
-                        engine=result.get("error"), exit_code=proc.returncode)
+        err = result.get("error") if isinstance(result.get("error"), dict) else {}
+        # Only the code is kept: an engine message may quote paths or text.
+        return _refusal(fn, "engine_refused", "The engine refused this call.",
+                        engine={"code": str(err.get("code", "unknown"))[:64]},
+                        exit_code=proc.returncode)
     result.setdefault("schema", ADAPTER_SCHEMA)
     return result
 

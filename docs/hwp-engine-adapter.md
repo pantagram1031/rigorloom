@@ -42,9 +42,11 @@ The reasons say what the built-in path cannot do:
 | `check_form`, `save`, `features` | `engine_form_check_unavailable`, `engine_save_unavailable`, `engine_features_unavailable` | the built-in rules and writer are used |
 
 Other reasons come from a present engine: `engine_path_missing`,
-`engine_timeout`, `engine_not_runnable`, `engine_contract_violation` (with the
-last lines of the engine's stderr), `engine_result_too_large`, and
-`engine_refused` (the engine's own error is kept under `error.engine`).
+`engine_timeout`, `engine_not_runnable`, `engine_contract_violation`,
+`engine_result_too_large`, and `engine_refused`. For a refusal from the engine
+only its error code is kept (`error.engine.code`). Engine messages and stderr
+can quote file paths or document text, so they are printed to your terminal's
+stderr and never put into a result that might be stored or shared.
 
 ## What never goes into this repository
 

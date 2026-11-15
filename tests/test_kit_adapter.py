@@ -95,12 +95,24 @@ def test_engine_refusal_keeps_the_engine_error(engine):
     out = rt_kit.call("pages", {}, env=engine)
     assert out["ok"] is False
     assert out["error"]["reason"] == "engine_refused"
-    assert out["error"]["engine"] == {"code": "bad_input", "message": "no such file"}
+    # Only the code crosses the boundary; engine messages may quote paths.
+    assert out["error"]["engine"] == {"code": "bad_input"}
 
 
 def test_non_json_and_wrong_api_are_contract_violations(engine):
     assert rt_kit.call("edit", {}, env=engine)["error"]["reason"] == "engine_contract_violation"
     assert rt_kit.call("build", {}, env=engine)["error"]["reason"] == "engine_contract_violation"
+
+
+def test_engine_diagnostics_stay_out_of_results(engine, tmp_path, capsys):
+    root = Path(engine[rt_kit.ENGINE_ENV])
+    (root / "kit_api.py").write_text(
+        "import sys\nsys.stderr.write('/home/someone/private/form.hwpx: 비밀\\n')\nsys.exit(1)\n",
+        encoding="utf-8")
+    out = rt_kit.call("fill", {}, env=engine)
+    assert out["error"]["reason"] == "engine_contract_violation"
+    assert "/home/someone" not in json.dumps(out, ensure_ascii=False)
+    assert "/home/someone" in capsys.readouterr().err
 
 
 def test_timeout_is_a_refusal(engine):
