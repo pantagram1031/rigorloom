@@ -329,6 +329,7 @@ python studio/main.py
 | [docs/extensions.md](docs/extensions.md) | Data-only local knowledge packs |
 | [docs/korean-style-rules.md](docs/korean-style-rules.md) | `rigorloom style check` and its Korean phrasing rules |
 | [docs/hwp-engine-adapter.md](docs/hwp-engine-adapter.md) | Optional adapter for a separately installed HWP engine |
+| [docs/demo-gongmun.md](docs/demo-gongmun.md) | `rigorloom demo gongmun`: fill and verify a 기안문 end to end |
 | [docs/web-ui.md](docs/web-ui.md) | `rigorloom ui`: the local browser workspace, its token model and approval binding |
 | [evals/README.md](evals/README.md) | Clean-room validation harness |
 | [AGENTS.md](AGENTS.md) | Agent operating instructions |
