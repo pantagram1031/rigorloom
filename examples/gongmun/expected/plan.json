@@ -1,0 +1,352 @@
+{
+  "backend": "preedit",
+  "base": null,
+  "boundSha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+  "createdUtc": "2026-11-15T00:00:00Z",
+  "declares": {
+    "fillMap": {
+      "검토자  직위(직급) 서명": "사무관 박도윤",
+      "결재권자  직위(직급) 서명": "원장 윤지현",
+      "공개 구분": "대외공개",
+      "공무원의 전자우편주소": {
+        "other_occurrences": "seats",
+        "text": "gongmun@example.com"
+      },
+      "기안자  직위(직급) 서명": "주무관 한서진",
+      "도로명주소": "세종특별자치시 가름로 200",
+      "발신명의": "가온공공기록원장",
+      "수신": "수신 협조기관장(기록관리과장)",
+      "전화번호(   )": "전화번호(044-555-0142)",
+      "제목": "제목 2026년 전자기록물 장기보존 체계 공동 점검 협조 요청",
+      "처리과명-연도별 일련번호(시행일)": {
+        "other_occurrences": "seats",
+        "text": "기록정책과-104(2026. 11. 15.)"
+      },
+      "팩스번호(   )": "팩스번호(044-555-0143)",
+      "행 정 기 관 명": "가온공공기록원",
+      "홈페이지 주소": "https://archive.example.com"
+    },
+    "keep": [
+      "(경유)",
+      "직인",
+      "협조자",
+      "시행",
+      "접수",
+      "우",
+      "/",
+      "210㎜×297㎜(백상지 80g/㎡)"
+    ]
+  },
+  "implVersion": "0.1.0",
+  "ops": [
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-1",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 0,
+        "run": 0,
+        "table": 0,
+        "text": ""
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-2",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 0,
+        "run": 1,
+        "table": 0,
+        "text": ""
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-3",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 0,
+        "run": 2,
+        "table": 0,
+        "text": ""
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-4",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 0,
+        "run": 3,
+        "table": 0,
+        "text": ""
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-5",
+      "params": {
+        "charPr": "12",
+        "col": 0,
+        "mode": "replace",
+        "row": 1,
+        "run": 0,
+        "table": 0,
+        "text": "가온공공기록원"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-6",
+      "params": {
+        "charPr": "14",
+        "col": 0,
+        "mode": "replace",
+        "row": 1,
+        "run": 1,
+        "table": 0,
+        "text": "수신 협조기관장(기록관리과장)"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-7",
+      "params": {
+        "charPr": "14",
+        "col": 0,
+        "mode": "replace",
+        "row": 1,
+        "run": 3,
+        "table": 0,
+        "text": "제목 2026년 전자기록물 장기보존 체계 공동 점검 협조 요청"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-8",
+      "params": {
+        "charPr": "8",
+        "col": 0,
+        "mode": "replace",
+        "row": 0,
+        "run": 0,
+        "table": 2,
+        "text": "가온공공기록원장"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-9",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 4,
+        "run": 0,
+        "table": 0,
+        "text": "주무관 한서진"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-10",
+      "params": {
+        "col": 3,
+        "mode": "replace",
+        "row": 4,
+        "run": 0,
+        "table": 0,
+        "text": "사무관 박도윤"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-11",
+      "params": {
+        "col": 9,
+        "mode": "replace",
+        "row": 4,
+        "run": 0,
+        "table": 0,
+        "text": "원장 윤지현"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-12",
+      "params": {
+        "col": 1,
+        "mode": "replace",
+        "row": 6,
+        "run": 0,
+        "table": 0,
+        "text": "기록정책과-104(2026. 11. 15.)"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-13",
+      "params": {
+        "col": 8,
+        "mode": "replace",
+        "row": 6,
+        "run": 0,
+        "table": 0,
+        "text": ""
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-14",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 7,
+        "run": 0,
+        "table": 0,
+        "text": "우 30112"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-15",
+      "params": {
+        "col": 1,
+        "mode": "replace",
+        "row": 7,
+        "run": 0,
+        "table": 0,
+        "text": "세종특별자치시 가름로 200"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-16",
+      "params": {
+        "col": 7,
+        "mode": "replace",
+        "row": 7,
+        "run": 0,
+        "table": 0,
+        "text": "https://archive.example.com"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-17",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 8,
+        "run": 0,
+        "table": 0,
+        "text": "전화번호(044-555-0142)"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-18",
+      "params": {
+        "col": 2,
+        "mode": "replace",
+        "row": 8,
+        "run": 0,
+        "table": 0,
+        "text": "팩스번호(044-555-0143)"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-19",
+      "params": {
+        "col": 7,
+        "mode": "replace",
+        "row": 8,
+        "run": 0,
+        "table": 0,
+        "text": "gongmun@example.com"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-20",
+      "params": {
+        "col": 12,
+        "mode": "replace",
+        "row": 8,
+        "run": 0,
+        "table": 0,
+        "text": "대외공개"
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-21",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 10,
+        "run": 0,
+        "table": 0,
+        "text": ""
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-22",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 10,
+        "run": 1,
+        "table": 0,
+        "text": ""
+      }
+    },
+    {
+      "kind": "replace_at_cell",
+      "opId": "op-23",
+      "params": {
+        "col": 0,
+        "mode": "replace",
+        "row": 10,
+        "run": 2,
+        "table": 0,
+        "text": ""
+      }
+    },
+    {
+      "kind": "fill_cell",
+      "opId": "op-24",
+      "params": {
+        "charPr": "14",
+        "col": 0,
+        "lines": [
+          "1. 관련: 기록정책과-88(2026. 10. 30.)",
+          "2. 우리 원은 2026년도 생산 전자기록물의 보존 포맷 호환성을 점검합니다. 귀 기관은 아래 일정에 따라 소관 기록물을 점검하고 결과를 회신하여 주시기 바랍니다.",
+          "  가. 점검 기간: 2026. 11. 18.(수) ~ 2026. 11. 27.(금)",
+          "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성",
+          "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지",
+          "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송",
+          "",
+          "붙임  전자기록물 보존 체계 공동 점검표 1부.  끝."
+        ],
+        "paraPr": "18",
+        "row": 2,
+        "table": 0
+      }
+    }
+  ],
+  "opsHash": "a0c0c4ee734922726bd1d7816c587b84adc843a4fabb3050056588c87151bea4",
+  "planHash": "15057d3ff983851411b46e215198240e285d134a38ede45f6d9bcf01dfb2c65f",
+  "planId": "1e4cdd8cc0f04bad9b3207a5b6ac7372",
+  "proposer": "demo-builder",
+  "reverses": null,
+  "schema": "rigorloom/runtime-plan/v0",
+  "sessionId": "e3af394e8dfd4107aceff71b193e01bb",
+  "state": "applied"
+}

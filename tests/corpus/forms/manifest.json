@@ -477,6 +477,18 @@
       "notes": "Derived from examples/guard/before.hwpx with the three text edits listed in examples/guard/README.md; no other content added.",
       "provenance": "derived from examples/guard/before.hwpx, three edits listed in examples/guard/README.md",
       "license": "고용노동부 자료실 publication; 공공누리(KOGL) marking not present on the retrieved page — verify before redistribution"
+    },
+    {
+      "slug": "gongmun-demo-expected",
+      "family": "gongmun-demo",
+      "path": "../../../examples/gongmun/expected/filled.hwpx",
+      "format": "hwpx",
+      "bytes": 28114,
+      "sha256": "4b2972801f79843464ce0d30adf9c8ea7f433c3f6e687bc545d0bb828e33ac1d",
+      "kind": "demo_expected_output",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Deterministic example output produced by `rigorloom demo gongmun --deterministic` from converted/gianmun-byeolji-1ho.hwpx and examples/gongmun/brief.json; contains synthetic fictional institution data only."
     }
   ],
   "skipped": [

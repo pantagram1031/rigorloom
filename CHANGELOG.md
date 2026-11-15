@@ -30,6 +30,15 @@ the kernel's contract shape.
 
 ### Added
 
+- **T167:** `rigorloom demo gongmun --out DIR` fills the blank 기안문 form
+  (`gianmun-byeolji-1ho.hwpx`) from `examples/gongmun/brief.json` without
+  Hancom Office or the HWP engine, checks it with `check_residue` and
+  `check_gongmun`, and writes `filled.hwpx`, `plan.json`, `verdict.json` and
+  `approval.json` only when every check passes (exit 3 otherwise, with
+  nothing published). `--deterministic` reproduces the committed
+  `examples/gongmun/expected/` files byte for byte. See
+  [docs/demo-gongmun.md](docs/demo-gongmun.md).
+
 - **T166:** `rigorloom ui` serves the desktop review workspace in a browser
   from `127.0.0.1`, with no Node.js needed at runtime (the bundle ships in
   `runtime/scripts/ui_dist/`, and CI checks it rebuilds byte for byte from
