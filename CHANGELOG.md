@@ -10,6 +10,15 @@ the kernel's contract shape.
 
 ### Added
 
+- **T162:** the prose fidelity check now protects direction words (증가/감소,
+  늘었다/줄었다, rose/fell and similar), treats short numbered lines such as
+  `3. 실험 방법` as headings, and counts tokens as words instead of substrings
+  ("Really" no longer counts as "all", 계약 no longer counts as 약). This changes
+  verdicts on real documents: flipping 감소 to 증가 next to an unchanged number
+  now reverts, and some edits that passed before now revert too (see
+  `humanization_contract.md`). English negation adds cannot, n't, nothing, none,
+  neither, nor and without.
+
 - **T126:** a cross-lane reproduction of the private-capture custody claims from
   PRs #134-#137, written from this side against the shipped code rather than
   derived from the PR text. Reproduced: a clean one-link file is captured with an

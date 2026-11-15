@@ -316,3 +316,23 @@ def test_hedges_bounds_and_english_negation_still_caught():
     assert _kinds("It didn’t hold.", "It did hold.") == ["qualifiers"]
     assert _kinds("Nothing changed.", "Something changed.") == ["qualifiers"]
     assert _kinds("No change was seen.", "A change was seen.") == ["qualifiers"]
+
+
+def test_known_strictness_is_deliberate():
+    """These reverts are on purpose: the checker would rather look twice than miss a flip.
+
+    Change one of them only together with humanization_contract.md, not as a "bug fix".
+    """
+    # Direction nouns match as substrings, so 방향상 counts as 향상.
+    assert _kinds("설계 방향상 문제가 있다.", "설계 측면에서 문제가 있다.") == ["direction_words"]
+    # Everyday comparatives are protected too: 많은 -> 여러, "what is more" -> "also".
+    assert _kinds("많은 사람이 왔다.", "여러 사람이 왔다.") == ["direction_words"]
+    assert _kinds("What is more, it held.", "Also, it held.") == ["direction_words"]
+    # A short numbered line without end punctuation is a heading, list items included.
+    assert _kinds("1. 시료를 준비", "1. 시료 준비하기") == ["headings"]
+
+
+def test_bound_after_spaced_unit_is_a_known_gap():
+    """이상/이하 count only when the unit is attached: '30명 이상', not '30 명 이상'."""
+    assert _kinds("참가자는 30명 이상이다.", "참가자는 30명이다.") == ["qualifiers"]
+    assert _kinds("참가자는 30 명 이상이다.", "참가자는 30 명이다.") == []

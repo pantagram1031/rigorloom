@@ -109,6 +109,14 @@ without.
 Counting words is not reading meaning. A swap of two values, or a direction
 expressed with a word outside the list, still passes this layer.
 
+Some of this is stricter than meaning on purpose, and the tests pin it
+(`test_known_strictness_is_deliberate`): Korean direction nouns match inside
+longer words (방향상 counts as 향상, 개선안 as 개선); everyday comparatives such
+as 많은, 빠른, more and less are protected, so 많은 사람 -> 여러 사람 reverts; and
+any short numbered line without end punctuation is a heading, list items
+included. A bound after a spaced unit (30 명 이상) is not counted. Because the
+counting changed, an edit that passed before this version can now revert.
+
 The independent fidelity reviewer additionally checks claim direction,
 agent preservation, causal direction, meaningful sequence, and information
 omission/addition. Those semantic checks cannot be replaced reliably by a
