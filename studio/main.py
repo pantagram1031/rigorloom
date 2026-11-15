@@ -13,6 +13,62 @@ import time
 
 app = FastAPI(title="Rigorloom Studio", version="0.7")
 
+# Studio binds to 127.0.0.1, but a page on the operator's machine can still
+# reach it through DNS rebinding: a hostile domain that later resolves to
+# 127.0.0.1 shares an origin with this server, so the browser lets it read
+# every GET response, including the action token embedded in "/". Binding to
+# loopback does not stop that; checking the Host header does. Only exact
+# loopback names are accepted ("localhost.attacker.example" is not localhost).
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _host_name(value) -> str | None:
+    """Hostname part of a Host header or URL authority, lower-cased, without
+    the port. None when it cannot be parsed."""
+    if not isinstance(value, str) or not value:
+        return None
+    value = value.strip().lower()
+    if value.startswith("["):
+        end = value.find("]")
+        if end == -1:
+            return None
+        rest = value[end + 1:]
+        if rest and not (rest.startswith(":") and rest[1:].isdigit()):
+            return None
+        return value[1:end]
+    name, sep, port = value.rpartition(":")
+    if not sep:
+        return value
+    if not port.isdigit() or ":" in name:
+        return None
+    return name
+
+
+def _is_loopback_host(value) -> bool:
+    return _host_name(value) in _LOOPBACK_HOSTS
+
+
+def _origin_is_loopback(origin) -> bool:
+    """An Origin header is fine when absent (non-browser client) or when it
+    names a loopback host."""
+    if origin is None:
+        return True
+    if not isinstance(origin, str):
+        return False
+    scheme, sep, rest = origin.partition("://")
+    if not sep or scheme not in ("http", "https"):
+        return False
+    return _is_loopback_host(rest.split("/", 1)[0])
+
+
+@app.middleware("http")
+async def _loopback_only(request, call_next):
+    if not _is_loopback_host(request.headers.get("host")):
+        return Response("untrusted Host header", status_code=403, media_type="text/plain")
+    if not _origin_is_loopback(request.headers.get("origin")):
+        return Response("untrusted Origin header", status_code=403, media_type="text/plain")
+    return await call_next(request)
+
 REPO_ROOT = Path(__file__).parent.parent
 _CORE_SCRIPTS = REPO_ROOT / "pipeline" / "scripts"
 
@@ -996,9 +1052,9 @@ def _require_action_auth(token_header, host_header) -> None:
     request headers, or plain str/None from a direct call (unit tests)."""
     token = token_header if isinstance(token_header, str) else None
     host = host_header if isinstance(host_header, str) else None
-    if not token or token != _ACTION_TOKEN:
+    if not token or not _ACTION_TOKEN or not secrets.compare_digest(token, _ACTION_TOKEN):
         raise HTTPException(status_code=403, detail="missing or invalid X-Studio-Token")
-    if not host or not (host.startswith("127.0.0.1") or host.startswith("localhost")):
+    if not _is_loopback_host(host):
         raise HTTPException(status_code=403, detail="untrusted Host header")
 
 
@@ -1182,8 +1238,13 @@ def deliverable_preview(slug: str):
     preview = (base / "output" / "deliverable" / "preview.html").resolve()
     if base.resolve() not in preview.parents or not preview.is_file():
         return Response(status_code=404)
+    # The preview is built from workspace content. The dashboard frames it in
+    # a sandboxed iframe; the CSP sandbox keeps it in an opaque origin even
+    # when the URL is opened directly, so its scripts can never read Studio
+    # responses or the action token.
     return FileResponse(preview, media_type="text/html",
-                        headers={"Cache-Control": "no-cache"})
+                        headers={"Cache-Control": "no-cache",
+                                 "Content-Security-Policy": "sandbox"})
 
 
 def _output_tail(value, limit: int = 4000) -> str:
@@ -1370,6 +1431,15 @@ def figure(slug: str, name: str):
     for sub in ("figures", "bundle/figures"):
         p = base / sub / name
         if p.exists():
+            # A workspace is written by agents; a figure that is a symlink
+            # (or sits under one) could point anywhere on disk. Serve only
+            # regular files that really live inside this workspace.
+            if p.is_symlink() or not p.is_file():
+                return Response(status_code=404)
+            try:
+                p.resolve().relative_to(base)
+            except ValueError:
+                return Response(status_code=404)
             return FileResponse(str(p), headers={"Cache-Control": "no-cache"})
     return Response(status_code=404)
 

@@ -773,3 +773,104 @@ def test_verdict_absent_when_no_canonical_file(tmp_path: Path, monkeypatch):
 
     assert verdict["available"] is False
     assert verdict["proof_grade"] == "none"
+
+
+# DNS rebinding: a hostile domain that resolves to 127.0.0.1 shares an origin
+# with Studio, so every response must refuse a Host that is not loopback, and
+# the action guard must not accept names that merely start with "localhost".
+REBIND_HOSTS = [
+    "localhost.attacker.example:8000",
+    "127.0.0.1.attacker.example",
+    "attacker.example",
+    "localhost:8000@attacker.example",
+    "[::1].attacker.example",
+    "",
+]
+
+
+@pytest.mark.parametrize("host", REBIND_HOSTS)
+def test_action_auth_rejects_lookalike_hosts(monkeypatch, host):
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+    with pytest.raises(HTTPException) as exc:
+        studio._require_action_auth("test-token", host)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.1:8000", "localhost", "LOCALHOST:8000", "[::1]:8000", "[::1]"])
+def test_action_auth_accepts_loopback_hosts(monkeypatch, host):
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "test-token")
+    studio._require_action_auth("test-token", host)
+
+
+def test_action_auth_refuses_when_actions_disabled(monkeypatch):
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", None)
+    with pytest.raises(HTTPException):
+        studio._require_action_auth("anything", "127.0.0.1")
+
+
+def _asgi_get(path: str, headers: dict) -> tuple[int, str]:
+    """Drive the ASGI app directly, so the test needs no HTTP client package."""
+    import asyncio
+
+    raw = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers.items()]
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET",
+             "scheme": "http", "path": path, "raw_path": path.encode(), "root_path": "",
+             "query_string": b"", "headers": raw, "client": ("127.0.0.1", 50000),
+             "server": ("127.0.0.1", 8000)}
+    out = {"status": None, "body": b""}
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            out["status"] = message["status"]
+        elif message["type"] == "http.response.body":
+            out["body"] += message.get("body", b"")
+
+    asyncio.run(studio.app(scope, receive, send))
+    return out["status"], out["body"].decode("utf-8", "replace")
+
+
+@pytest.mark.parametrize("host", [h for h in REBIND_HOSTS if h])
+def test_every_route_refuses_rebinding_host(tmp_path: Path, monkeypatch, host):
+    root = tmp_path / "workspaces"
+    (root / "report-demo").mkdir(parents=True)
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    monkeypatch.setattr(studio, "_ACTION_TOKEN", "secret-token-xyz")
+    for path in ("/", "/workspaces", "/dashboard", "/workspace/report-demo/state"):
+        status, body = _asgi_get(path, {"Host": host})
+        assert status == 403, (path, host)
+        assert "secret-token-xyz" not in body
+
+
+def test_loopback_host_still_served_and_hostile_origin_refused(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    root.mkdir()
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    assert _asgi_get("/workspaces", {"Host": "127.0.0.1:8000"})[0] == 200
+    assert _asgi_get("/workspaces", {"Host": "localhost:8000", "Origin": "http://localhost:8000"})[0] == 200
+    assert _asgi_get("/workspaces", {"Host": "127.0.0.1:8000", "Origin": "http://attacker.example"})[0] == 403
+
+
+def test_figure_refuses_symlink_out_of_workspace(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    figs = root / "report-demo" / "figures"
+    figs.mkdir(parents=True)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("private", encoding="utf-8")
+    (figs / "leak.png").symlink_to(secret)
+    (figs / "ok.png").write_bytes(b"\x89PNG")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    assert studio.figure("report-demo", "leak.png").status_code == 404
+    assert studio.figure("report-demo", "ok.png").status_code == 200
+
+
+def test_deliverable_preview_is_served_sandboxed(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    out = root / "report-demo" / "output" / "deliverable"
+    out.mkdir(parents=True)
+    (out / "preview.html").write_text("<script>fetch('/')</script>", encoding="utf-8")
+    monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
+    r = studio.deliverable_preview("report-demo")
+    assert r.headers["content-security-policy"] == "sandbox"

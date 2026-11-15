@@ -8,6 +8,26 @@ the kernel's contract shape.
 
 ## Unreleased
 
+### Security
+
+- **Studio: DNS rebinding could read workspaces and the action token.** Studio
+  binds to `127.0.0.1`, but a web page open on the operator's machine could
+  point a domain it controls at `127.0.0.1` and then read every GET response as
+  same-origin: workspace state, drafts, personalization data, and the action
+  token embedded in `/`. The action guard compared the Host header with
+  `startswith("localhost")` / `startswith("127.0.0.1")`, so a name like
+  `localhost.attacker.example` also passed it, which made action POSTs
+  reachable once `STUDIO_ALLOW_ACTIONS=1` was set. Every request now has to
+  carry an exact loopback Host (`127.0.0.1`, `localhost`, `[::1]`, any port)
+  and, when a browser sends one, a loopback Origin; anything else gets 403
+  before a route runs. The token comparison is constant-time.
+- **Studio: figures are served only when they are regular files inside the
+  workspace.** A figure that was a symlink could expose any file the Studio
+  process could read.
+- **Studio: the deliverable preview is served with `Content-Security-Policy:
+  sandbox`,** so its scripts stay in an opaque origin even when the URL is
+  opened directly rather than through the dashboard's sandboxed iframe.
+
 ### Added
 
 - **T163:** an optional adapter for a separately installed HWP engine

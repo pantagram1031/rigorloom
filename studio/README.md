@@ -11,7 +11,10 @@ python studio/main.py
 ```
 
 The default contract is read-only. The server binds only to `127.0.0.1` and
-does not call model providers or external services. Optional actions are hidden
+does not call model providers or external services. Every request must carry
+an exact loopback `Host` (`127.0.0.1`, `localhost` or `[::1]`) and, when a
+browser sends one, a loopback `Origin`; anything else is refused with 403, so a
+page that rebinds its own domain to `127.0.0.1` cannot read the dashboard. Optional actions are hidden
 and every action POST returns HTTP 403 unless `STUDIO_ALLOW_ACTIONS=1` is set.
 Action mode can append an operator approval and invoke repository pipeline
 commands, including the bundle and COM-free HWPX document backends, so enable
