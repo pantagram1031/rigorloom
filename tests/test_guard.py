@@ -71,7 +71,7 @@ def test_hwpx_paragraphs_are_compared_without_hancom(tmp_path):
     moved = _edit_hwpx(moved, tmp_path / "moved2.hwpx", "1. 근로계약기간", "2. 근로계약기간")
     proc = _guard(FORM, moved, "--format", "text")
     assert proc.returncode == 3
-    assert "numbers" in proc.stdout and "REVERT" in proc.stdout
+    assert "number/unit" in proc.stdout and "CHANGED" in proc.stdout
 
 
 def test_inputs_that_cannot_be_compared_are_usage_errors(tmp_path):
@@ -112,3 +112,25 @@ def test_readme_quick_start_output_is_real(tmp_path):
     proc = _guard(tmp_path / "before.txt", tmp_path / "after.txt", "--format", "text")
     assert proc.returncode == 3
     assert proc.stdout == out
+
+
+def test_reflow_that_starts_a_line_with_a_number_is_a_heading_change(tmp_path):
+    """Deliberate strictness, as in test_known_strictness_is_deliberate: a hard
+    wrap that puts "3. ..." at a line start makes a short numbered line, which
+    counts as a heading, so the paragraph is reported."""
+    b = _write(tmp_path / "b.md", "조건은 세 가지다. 3. 반복 측정은 하지 않았다")
+    a = _write(tmp_path / "a.md", "조건은 세 가지다.\n3. 반복 측정은 하지 않았다")
+    proc = _guard(b, a)
+    assert proc.returncode == 3
+    assert json.loads(proc.stdout)["result"]["changed"][0]["kinds"] == ["headings"]
+
+
+def test_paths_are_reported_as_names_and_zip_bombs_are_refused(tmp_path):
+    b = _write(tmp_path / "b.txt", "x")
+    proc = _guard(b.resolve(), b.resolve())
+    assert json.loads(proc.stdout)["result"]["before"] == "b.txt"
+    bomb = tmp_path / "bomb.hwpx"
+    with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Contents/section0.xml", b"<a>" + b" " * (20 * 1024 * 1024) + b"</a>")
+    proc = _guard(bomb, bomb)
+    assert proc.returncode == 2 and "compression ratio" in proc.stdout

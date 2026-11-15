@@ -6,6 +6,17 @@ elements for .hwpx. Each aligned pair goes through the same deterministic
 checker as the report pipeline (``rt_fidelity`` is a byte-for-byte copy of
 ``modules/style/scripts/prose_fidelity.py``; a test keeps them equal).
 
+guard REPORTS; it never edits or reverts a file. In the report pipeline the
+same verdict restores the paragraph; here it only names it.
+
+The output is not privacy-safe the way ``inspect`` is: it quotes the full text
+of each changed paragraph (that is the point). File names are reported as
+names, never as the paths given.
+
+Inputs are bounded like the Runtime's ingress (``rt_codes``): file size, zip
+member count, total uncompressed size and compression ratio; XML with a
+DOCTYPE is refused, so entity expansion never runs.
+
 A paragraph passes when every protected expression (numbers, dates, quotations,
 negation, bounds, quantifiers, direction words, headings, ...) appears the same
 number of times before and after. That is counting, not reading meaning.
@@ -19,8 +30,12 @@ from pathlib import Path
 
 try:
     from . import rt_fidelity as fidelity
+    from .rt_codes import (MAX_SOURCE_BYTES, MAX_ZIP_COMPRESSION_RATIO,
+                           MAX_ZIP_MEMBERS, MAX_ZIP_TOTAL_UNCOMPRESSED)
 except ImportError:  # run from the checkout as runtime/scripts/cli.py
     import rt_fidelity as fidelity
+    from rt_codes import (MAX_SOURCE_BYTES, MAX_ZIP_COMPRESSION_RATIO,
+                          MAX_ZIP_MEMBERS, MAX_ZIP_TOTAL_UNCOMPRESSED)
 
 GUARD_SCHEMA = "rigorloom/guard-v1"
 TEXT_SUFFIXES = {".txt", ".md", ".markdown"}
@@ -35,16 +50,33 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def _zip_bounds(zf: zipfile.ZipFile, path: Path) -> None:
+    infos = zf.infolist()
+    if len(infos) > MAX_ZIP_MEMBERS:
+        raise GuardInputError(f"{path.name}: too many zip members ({len(infos)} > {MAX_ZIP_MEMBERS})")
+    total = sum(i.file_size for i in infos)
+    packed = sum(i.compress_size for i in infos)
+    if total > MAX_ZIP_TOTAL_UNCOMPRESSED:
+        raise GuardInputError(f"{path.name}: uncompressed size {total} exceeds {MAX_ZIP_TOTAL_UNCOMPRESSED}")
+    if packed and total / packed > MAX_ZIP_COMPRESSION_RATIO:
+        raise GuardInputError(f"{path.name}: compression ratio {total / packed:.0f} exceeds "
+                              f"{MAX_ZIP_COMPRESSION_RATIO}")
+
+
 def _hwpx_paragraphs(path: Path) -> list[str]:
     try:
         with zipfile.ZipFile(path) as zf:
+            _zip_bounds(zf, path)
             sections = sorted((int(m.group(1)), name) for name in zf.namelist()
                               if (m := _SECTION.match(name)))
             if not sections:
                 raise GuardInputError(f"{path.name}: no Contents/section*.xml, not an HWPX body")
             out: list[str] = []
             for _, name in sections:
-                _walk(ET.fromstring(zf.read(name)), None, out)
+                data = zf.read(name)
+                if b"<!DOCTYPE" in data[:4096].upper():
+                    raise GuardInputError(f"{path.name}: {name} declares a DOCTYPE; refused")
+                _walk(ET.fromstring(data), None, out)
             return out
     except zipfile.BadZipFile as exc:
         raise GuardInputError(f"{path.name}: not a zip, so not HWPX") from exc
@@ -80,7 +112,9 @@ def _text_paragraphs(path: Path) -> list[str]:
 
 def read_paragraphs(path: Path) -> list[str]:
     if not path.is_file():
-        raise GuardInputError(f"{path}: no such file")
+        raise GuardInputError(f"{path.name}: no such file")
+    if path.stat().st_size > MAX_SOURCE_BYTES:
+        raise GuardInputError(f"{path.name}: larger than {MAX_SOURCE_BYTES} bytes")
     suffix = path.suffix.lower()
     if suffix == ".hwpx":
         return _hwpx_paragraphs(path)
@@ -94,7 +128,7 @@ def guard(before: Path, after: Path) -> dict:
     if Path(before).suffix.lower() != Path(after).suffix.lower():
         raise GuardInputError("BEFORE and AFTER must be the same kind of file")
     a, b = read_paragraphs(before), read_paragraphs(after)
-    result: dict = {"schema": GUARD_SCHEMA, "before": str(before), "after": str(after),
+    result: dict = {"schema": GUARD_SCHEMA, "before": Path(before).name, "after": Path(after).name,
                     "paragraphs": {"before": len(a), "after": len(b)}}
     if len(a) != len(b):
         # Paragraphs were added or removed: alignment would be a guess, and a
@@ -119,10 +153,20 @@ def _finish(result: dict) -> dict:
     return result
 
 
+LABELS = {
+    "numbers": "number/unit", "dates": "date", "source_ids": "source id",
+    "citations": "citation", "tags": "document tag", "inline_math": "formula",
+    "direct_quotes": "quotation", "urls": "URL", "markdown_links": "link",
+    "headings": "heading", "qualifiers": "negation/hedge/bound",
+    "quantifiers": "quantifier", "causal_markers": "cause/effect",
+    "direction_words": "direction", "protected_spans": "protected span",
+}
+
+
 def _short(v) -> str:
     if isinstance(v, dict):
-        return ", ".join(f"{k}×{n}" if n > 1 else str(k) for k, n in v.items()) or "-"
-    return ", ".join(map(str, v)) or "-"
+        return ", ".join(f"{k}×{n}" if n > 1 else str(k) for k, n in v.items()) or "(gone)"
+    return ", ".join(map(str, v)) or "(gone)"
 
 
 def format_table(result: dict) -> str:
@@ -136,7 +180,8 @@ def format_table(result: dict) -> str:
     for c in result["changed"]:
         lines.append(f"\n¶{c['paragraph']}")
         for ch in c["changes"]:
-            lines.append(f"  {ch['kind']:<16} {_short(ch['before'])}  ->  {_short(ch['after'])}")
+            label = LABELS.get(ch["kind"], ch["kind"])
+            lines.append(f"  {label:<21} {_short(ch['before'])}  ->  {_short(ch['after'])}")
     lines.append("\nOK: every protected fact is unchanged." if result["pass"]
-                 else "\nREVERT the paragraphs above.")
+                 else "\nCHANGED: restore or review the paragraphs above.")
     return "\n".join(lines) + "\n"

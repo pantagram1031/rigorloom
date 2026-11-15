@@ -1,9 +1,10 @@
 # Rigorloom
 
-When an AI edits a document, Rigorloom checks every paragraph it touched. If a
-number, a date, a quotation, a negation or a direction word ("increased",
-"감소") changed, that paragraph goes back to the original. The check is plain
-code: the same two files always get the same verdict.
+When an AI edits a document, Rigorloom checks every paragraph it touched and
+names each one where a number, a date, a quotation, a negation or a direction
+word ("increased", "감소") changed. In the report pipeline those paragraphs are
+restored to the original; `rigorloom guard` only reports them. The check is
+plain code: the same two files always get the same verdict.
 
 [![CI](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml/badge.svg)](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -26,15 +27,17 @@ rigorloom guard before.txt after.txt --format text
 paragraphs: 1, edited: 1, changed a protected fact: 1
 
 ¶1
-  numbers          18.6%  ->  19%
-  qualifiers       없  ->  -
+  number/unit           18.6%  ->  19%
+  negation/hedge/bound  없  ->  (gone)
 
-REVERT the paragraphs above.
+CHANGED: restore or review the paragraphs above.
 ```
 
-Exit code 0 means every protected fact is unchanged; 3 means at least one
-paragraph changed one (or paragraphs were added or removed, which guard refuses
-to guess about); 2 means the files cannot be compared. Without `--format text`
+Exit codes follow the Runtime CLI: 0 means every protected fact is unchanged;
+3 means at least one paragraph changed one, or paragraphs were added or removed
+(guard refuses to guess an alignment; `result.reason` says which); 2 means the
+files cannot be compared. The lower-level `prose_fidelity.py` compares two whole
+texts and uses 0/1 instead. Without `--format text`
 the result is one JSON document. It counts expressions; it does not read
 meaning, so a swap of two values or a reversal said in other words still
 passes. [examples/guard/](examples/guard/) has an HWPX pair with its committed

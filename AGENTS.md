@@ -1,5 +1,11 @@
 # Agent instructions
 
+To check an edit you made to a document, run
+`rigorloom guard BEFORE AFTER` (`.hwpx`, `.txt` or `.md`; or
+`python runtime/scripts/cli.py guard BEFORE AFTER` from a checkout). Exit 3
+names the paragraphs where a number, date, quotation, negation or direction
+word changed; restore those paragraphs instead of arguing with the verdict.
+
 Before product planning or orchestration, read
 `docs/plans/rigorloom-master-execution-plan.md`. Its current status is authoritative for
 whether execution is active; the plan itself does not grant an assignment or resume a pause.
