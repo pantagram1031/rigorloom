@@ -24,19 +24,28 @@
  *    cannot be approved at all, and the panel offers the one thing that fixes
  *    it: propose again against what is open now.
  */
+import { useState } from "react";
 import {
-  applyApproved,
+  addQueueOp,
+  cancelApply,
+  clearQueue,
   declareSuggestedCharPr,
   editOpValue,
+  openApprovalDialog,
   redoQueuedOp,
   reproposeDraft,
   requestApprovalForDraft,
-  resolveApprovalDecision,
-  cancelApply,
-  clearQueue,
   resolveRecovery,
+  revalidateActiveDraft,
+  revalidateAndResolveApproval,
   undoQueuedOp,
+  verifyAndApplyApproved,
 } from "../actions";
+import {
+  formatProjectedAddress,
+  projectedAfterText,
+  projectionInverseSupport,
+} from "../agent/planProjection";
 import {
   canRequestApproval,
   draftStaleness,
@@ -66,15 +75,32 @@ export function locateQueuedOp(op: QueuedOp): boolean {
   ) {
     return false;
   }
+  if (op.kind === "delete_guides") return false;
   setView("document");
   setCenterMode("text");
   locateSelection(
-    op.kind === "fill_cell"
+    op.kind === "fill_cell" || op.kind === "replace_at_cell"
       ? { kind: "cell", table: op.table, row: op.row, col: op.col }
       : { kind: "paragraph", atPara: op.atPara },
   );
   return true;
 }
+
+function opSlug(op: QueuedOp): string {
+  if (op.kind === "fill_cell") return `${op.table}-${op.row}-${op.col}`;
+  if (op.kind === "replace_at_cell") {
+    return `rac-${op.table}-${op.row}-${op.col}${op.run !== undefined ? `-r${op.run}` : ""}`;
+  }
+  if (op.kind === "set_run") return `p${op.atPara}-r${op.run}`;
+  return `dg-${op.opId}`;
+}
+
+const OP_KIND_BADGE: Record<QueuedOp["kind"], string> = {
+  fill_cell: "채움 · fill_cell",
+  replace_at_cell: "치환 · replace_at_cell",
+  set_run: "문단 런 · set_run",
+  delete_guides: "안내문 삭제 · delete_guides",
+};
 
 function OpRow({
   op,
@@ -91,28 +117,46 @@ function OpRow({
 }) {
   const anomaly = hard.find((f) => f.code === "fill_charpr_script_anomaly");
   // A row names its target in the vocabulary of the address the OPERATION
-  // carries, never in one shape flattened onto both: a cell is 표 N RxCy, a
-  // paragraph run is 문단 N · 덩어리 R. A run drawn as a cell with blank
-  // coordinates would be a review queue that cannot be reviewed.
-  const slug =
-    op.kind === "fill_cell" ? `${op.table}-${op.row}-${op.col}` : `p${op.atPara}-r${op.run}`;
+  // carries, never flattening unrelated targets into fake cell coordinates.
+  const slug = opSlug(op);
+  const inverseInfo = projectionInverseSupport(op);
+  const inputValue =
+    op.kind === "fill_cell" && op.lines !== undefined ? op.lines.join("\n") : op.text;
+  const afterPreview = projectedAfterText(op);
+
   return (
     <li className="queue-op" data-testid={`queue-op-${slug}`} data-kind={op.kind}>
       <div className="queue-op-head">
-        <button
-          className="addr mono"
-          disabled={!locatable}
-          title={
-            locatable
-              ? "문서에서 이 자리를 찾습니다"
-              : "이 작업은 다른 문서의 대기열에 있어 현재 문서에서는 찾을 수 없습니다"
-          }
-          onClick={() => locateQueuedOp(op)}
-        >
-          {op.kind === "fill_cell"
-            ? `표 ${op.table} R${op.row}C${op.col}`
-            : `문단 ${op.atPara} · 덩어리 ${op.run}`}
-        </button>
+        {op.kind === "delete_guides" ? (
+          <span
+            className="addr addr--static mono"
+            title="문서 전체 안내문 제거 작업으로 특정 셀 주소가 없습니다"
+          >
+            안내문 삭제 · Delete guides
+          </span>
+        ) : (
+          <button
+            className="addr mono"
+            disabled={!locatable}
+            title={
+              locatable
+                ? "문서에서 이 자리를 찾습니다"
+                : "이 작업은 다른 문서의 대기열에 있어 현재 문서에서는 찾을 수 없습니다"
+            }
+            onClick={() => locateQueuedOp(op)}
+          >
+            {op.kind === "fill_cell"
+              ? `표 ${op.table} R${op.row}C${op.col}`
+              : op.kind === "set_run"
+                ? `문단 ${op.atPara} · 덩어리 ${op.run}`
+                : formatProjectedAddress(op)}
+          </button>
+        )}
+        <Tag tone={op.kind === "delete_guides" ? "warn" : "fill"}>
+          {op.kind === "replace_at_cell" && op.mode === "append"
+            ? "셀 추가 · append"
+            : OP_KIND_BADGE[op.kind]}
+        </Tag>
         {op.origin === "agent" ? (
           <Tag tone="none" title={`제안: ${op.proposer ?? "에이전트"}`}>
             에이전트 제안
@@ -120,7 +164,7 @@ function OpRow({
         ) : (
           <Tag tone="fill">내가 입력</Tag>
         )}
-        {op.charPr ? (
+        {"charPr" in op && op.charPr ? (
           <Tag tone="ok" title="이 자리에 쓸 글자 속성을 지정했습니다">
             charPr {op.charPr}
           </Tag>
@@ -147,15 +191,30 @@ function OpRow({
         <span className="arrow" aria-hidden="true">
           →
         </span>
-        <input
-          className="queue-value"
-          data-testid={`queue-value-${op.opId}`}
-          value={op.text}
-          disabled={locked}
-          aria-label="넣을 값"
-          onChange={(e) => void editOpValue(op.opId, e.target.value)}
-        />
+        {op.kind === "delete_guides" ? (
+          <span className="queue-value-static" data-testid={`queue-value-${op.opId}`}>
+            {afterPreview}
+          </span>
+        ) : (
+          <input
+            className="queue-value"
+            data-testid={`queue-value-${op.opId}`}
+            value={inputValue}
+            disabled={locked}
+            aria-label="넣을 값"
+            onChange={(e) => void editOpValue(op.opId, e.target.value)}
+          />
+        )}
       </div>
+
+      {op.kind === "replace_at_cell" && op.mode === "append" ? (
+        <p className="prose tiny">결과 미리보기: {afterPreview}</p>
+      ) : null}
+      {!inverseInfo.invertible && inverseInfo.reason ? (
+        <p className="prose tiny" data-testid={`queue-noninvertible-${op.opId}`}>
+          {inverseInfo.reason}
+        </p>
+      ) : null}
 
       {hard.map((row) => (
         <p className="queue-finding hard" key={`${row.code}-${row.at}`}>
@@ -172,7 +231,7 @@ function OpRow({
         </p>
       ))}
 
-      {anomaly && !op.charPr ? (
+      {anomaly && op.kind === "fill_cell" && !op.charPr ? (
         <button
           className="action"
           data-testid={`queue-fix-charpr-${op.opId}`}
@@ -183,6 +242,148 @@ function OpRow({
         </button>
       ) : null}
     </li>
+  );
+}
+
+function QueueOpComposer({ disabled }: { disabled: boolean }) {
+  const activeSessionId = useWorkspace((s) => s.activeSessionId);
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<QueuedOp["kind"]>("fill_cell");
+  const [table, setTable] = useState("0");
+  const [row, setRow] = useState("0");
+  const [col, setCol] = useState("1");
+  const [atPara, setAtPara] = useState("0");
+  const [run, setRun] = useState("0");
+  const [cellRun, setCellRun] = useState("");
+  const [mode, setMode] = useState<"replace" | "append">("replace");
+  const [text, setText] = useState("");
+  const [color, setColor] = useState("");
+
+  if (!activeSessionId) return null;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const id = `${kind}-${Date.now().toString(36)}`;
+    if (kind === "fill_cell") {
+      await addQueueOp({
+        opId: id,
+        kind: "fill_cell",
+        table: Number(table) || 0,
+        row: Number(row) || 0,
+        col: Number(col) || 0,
+        text,
+        before: "",
+        origin: "user",
+      });
+    } else if (kind === "replace_at_cell") {
+      const parsedRun = cellRun.trim() === "" ? undefined : Number(cellRun);
+      await addQueueOp({
+        opId: id,
+        kind: "replace_at_cell",
+        table: Number(table) || 0,
+        row: Number(row) || 0,
+        col: Number(col) || 0,
+        ...(parsedRun !== undefined && Number.isFinite(parsedRun) ? { run: parsedRun } : {}),
+        text,
+        mode,
+        before: "",
+        origin: "user",
+      });
+    } else if (kind === "set_run") {
+      await addQueueOp({
+        opId: id,
+        kind: "set_run",
+        atPara: Number(atPara) || 0,
+        run: Number(run) || 0,
+        text,
+        before: "",
+        origin: "user",
+      });
+    } else {
+      await addQueueOp({
+        opId: id,
+        kind: "delete_guides",
+        ...(color.trim() ? { color: color.trim() } : {}),
+        text: "(안내문 삭제됨)",
+        before: "대상 문서 내 안내문(해당 시 제거)",
+        origin: "user",
+      });
+    }
+    setText("");
+  }
+
+  return (
+    <div className="queue-composer">
+      <button
+        type="button"
+        className="ghost"
+        data-testid="queue-add-op-toggle"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "작업 추가 닫기" : "+ 작업 추가 · Add op"}
+      </button>
+      {open && (
+        <form className="queue-add-form" data-testid="queue-add-op-form" onSubmit={(e) => void submit(e)}>
+          <select
+            value={kind}
+            data-testid="add-op-kind"
+            onChange={(e) => setKind(e.target.value as QueuedOp["kind"])}
+          >
+            <option value="fill_cell">채움 (fill_cell)</option>
+            <option value="replace_at_cell">셀 치환 (replace_at_cell)</option>
+            <option value="set_run">문단 런 (set_run)</option>
+            <option value="delete_guides">안내문 삭제 (delete_guides)</option>
+          </select>
+
+          {(kind === "fill_cell" || kind === "replace_at_cell") && (
+            <div className="add-op-coords">
+              <input type="number" min={0} value={table} onChange={(e) => setTable(e.target.value)} aria-label="표" placeholder="표" />
+              <input type="number" min={0} value={row} onChange={(e) => setRow(e.target.value)} aria-label="행" placeholder="행" />
+              <input type="number" min={0} value={col} onChange={(e) => setCol(e.target.value)} aria-label="열" placeholder="열" />
+              {kind === "replace_at_cell" && (
+                <>
+                  <input type="text" value={cellRun} onChange={(e) => setCellRun(e.target.value)} aria-label="런(선택)" placeholder="런(선택)" />
+                  <select value={mode} onChange={(e) => setMode(e.target.value as "replace" | "append")}>
+                    <option value="replace">replace</option>
+                    <option value="append">append</option>
+                  </select>
+                </>
+              )}
+            </div>
+          )}
+
+          {kind === "set_run" && (
+            <div className="add-op-coords">
+              <input type="number" min={0} value={atPara} onChange={(e) => setAtPara(e.target.value)} aria-label="문단" placeholder="atPara" />
+              <input type="number" min={0} value={run} onChange={(e) => setRun(e.target.value)} aria-label="런" placeholder="run" />
+            </div>
+          )}
+
+          {kind === "delete_guides" ? (
+            <input
+              type="text"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+              placeholder="안내문 색 필터 (선택, 예: #0000FF)"
+            />
+          ) : (
+            <input
+              type="text"
+              data-testid="add-op-text"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="적용할 값"
+              required
+            />
+          )}
+
+          <button type="submit" className="action primary" data-testid="add-op-submit" disabled={disabled}>
+            대기열에 추가 · Add
+          </button>
+        </form>
+      )}
+    </div>
   );
 }
 
@@ -199,6 +400,7 @@ export function ReviewQueue() {
   const recovery = useWorkspace((s) => s.recovery);
   const redoCount = useWorkspace((s) => s.redoStack.length);
   const activeSessionId = useWorkspace((s) => s.activeSessionId);
+  const reapprovalPrompt = useWorkspace((s) => s.reapprovalPrompt);
   const approvalBound = useWorkspace(hasActiveApprovalBinding);
 
   const locked = approvalPhase === "resolving" || applyPhase === "starting";
@@ -230,6 +432,7 @@ export function ReviewQueue() {
           쌓입니다. 승인하기 전까지 문서는 아무것도 바뀌지 않습니다.
         </p>
         {redo ? <div className="gate-actions">{redo}</div> : null}
+        <QueueOpComposer disabled={locked} />
       </div>
     );
   }
@@ -278,6 +481,20 @@ export function ReviewQueue() {
         </p>
       ) : null}
 
+      {reapprovalPrompt ? (
+        <div className="refusal" data-testid="queue-reapproval-banner">
+          <Tag tone="bad">재승인 필요</Tag>
+          <p className="prose">{reapprovalPrompt}</p>
+          <button
+            className="action primary"
+            data-testid="queue-repropose-reapproval"
+            onClick={() => void reproposeDraft()}
+          >
+            지금 문서로 다시 제안
+          </button>
+        </div>
+      ) : null}
+
       {staleness ? (
         <div className="refusal" data-testid="queue-stale">
           <Tag tone="bad">계획이 낡음</Tag>
@@ -320,6 +537,8 @@ export function ReviewQueue() {
           />
         ))}
       </ul>
+
+      <QueueOpComposer disabled={locked} />
 
       {validation ? (
         <div className="queue-verdict" data-testid="queue-verdict">
@@ -383,7 +602,11 @@ export function ReviewQueue() {
             <button
               className="action point"
               data-testid="apply-approved"
-              disabled={!approvalBound || applyPhase === "starting" || recoveryBlocksApply}
+              disabled={
+                (!approvalBound && staleness?.kind !== "source_changed") ||
+                applyPhase === "starting" ||
+                recoveryBlocksApply
+              }
               title={
                 recoveryBlocksApply
                   ? "결과가 불명확하거나 이미 완료된 적용은 반복하지 않습니다"
@@ -391,9 +614,17 @@ export function ReviewQueue() {
                   ? "승인된 이 계획을 적용합니다"
                   : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
               }
-              onClick={() => void applyApproved()}
+              onClick={() => void verifyAndApplyApproved()}
             >
               {applyPhase === "starting" ? "적용하는 중…" : "승인된 계획 적용"}
+            </button>
+            <button
+              type="button"
+              className="ghost dark-safe"
+              data-testid="open-approval-dialog"
+              onClick={() => openApprovalDialog()}
+            >
+              승인 검토 · Review
             </button>
             {applyPhase === "starting" ? (
               <button
@@ -435,7 +666,7 @@ export function ReviewQueue() {
                   ? "이 승인에 묶인 계획을 적용합니다"
                   : "현재 문서와 정확히 일치하는 승인만 적용할 수 있습니다"
               }
-              onClick={() => void resolveApprovalDecision("approved")}
+              onClick={() => void revalidateAndResolveApproval("approved")}
             >
               {locked ? "적용하는 중…" : "승인하고 적용"}
             </button>
@@ -448,9 +679,17 @@ export function ReviewQueue() {
                   ? "이 승인 요청을 거절합니다"
                   : "현재 문서와 정확히 일치하는 승인만 거절할 수 있습니다"
               }
-              onClick={() => void resolveApprovalDecision("rejected")}
+              onClick={() => void revalidateAndResolveApproval("rejected")}
             >
               거절
+            </button>
+            <button
+              type="button"
+              className="ghost dark-safe"
+              data-testid="open-approval-dialog"
+              onClick={() => openApprovalDialog()}
+            >
+              승인 검토 · Review
             </button>
             {applyPhase === "starting" ? (
               <button className="ghost dark-safe" data-testid="cancel-apply" onClick={() => void cancelApply()}>
@@ -473,6 +712,25 @@ export function ReviewQueue() {
             onClick={() => void requestApprovalForDraft()}
           >
             {approvalPhase === "requesting" ? "요청하는 중…" : "승인 요청"}
+          </button>
+          {draft.plan ? (
+            <button
+              type="button"
+              className="ghost dark-safe"
+              data-testid="open-approval-dialog"
+              onClick={() => openApprovalDialog()}
+            >
+              승인 검토 · Review
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="ghost dark-safe"
+            data-testid="revalidate-draft"
+            disabled={!draft.plan || locked}
+            onClick={() => void revalidateActiveDraft()}
+          >
+            다시 확인
           </button>
           {redo}
           <button className="ghost dark-safe" disabled={locked} onClick={() => void clearQueue()}>

@@ -21,6 +21,7 @@ import { Composer } from "../components/Composer";
 import { Conversation } from "../components/Conversation";
 import { DocumentContext } from "../components/DocumentContext";
 import { Findings } from "../components/Findings";
+import { GuardDiffPanel } from "../components/GuardDiffPanel";
 import { ReceiptPanel } from "../components/ReceiptPanel";
 import { SessionList } from "../components/SessionList";
 import { Timeline } from "../components/Timeline";
@@ -29,6 +30,7 @@ import {
   activeCandidates,
   activeInspect,
   activeSession,
+  setMobilePane,
   setState,
   useWorkspace,
 } from "../store";
@@ -55,6 +57,14 @@ function CentreTabs() {
       >
         문서 기록 <span className="count">{events}</span>
       </button>
+      <button
+        role="tab"
+        aria-selected={tab === "guard_diff"}
+        data-testid="tab-guard-diff"
+        onClick={() => setState({ agentTab: "guard_diff" })}
+      >
+        보호 비교
+      </button>
     </div>
   );
 }
@@ -70,15 +80,68 @@ export function AgentView({
   const session = useWorkspace(activeSession);
   const candidates = useWorkspace(activeCandidates);
   const tab = useWorkspace((s) => s.agentTab);
+  const mobilePane = useWorkspace((s) => s.mobilePane);
+  const effectivePane = mobilePane === "guard_diff" ? "document" : mobilePane;
 
   return (
-    <div className="view view-agent" data-testid="view-agent">
+    <div
+      className="view view-agent"
+      data-testid="view-agent"
+      data-mobile-pane={effectivePane}
+    >
+      <div className="mobile-tabs" role="tablist" aria-label="모바일 영역 전환">
+        <button
+          type="button"
+          className={mobilePane === "sessions" ? "is-active" : ""}
+          data-testid="mobile-tab-sessions"
+          onClick={() => setMobilePane("sessions")}
+        >
+          세션
+        </button>
+        <button
+          type="button"
+          className={mobilePane === "document" && tab !== "guard_diff" ? "is-active" : ""}
+          data-testid="mobile-tab-document"
+          onClick={() => {
+            if (tab === "guard_diff") setState({ agentTab: "conversation" });
+            setMobilePane("document");
+          }}
+        >
+          문서/대화
+        </button>
+        <button
+          type="button"
+          className={mobilePane === "plan" ? "is-active" : ""}
+          data-testid="mobile-tab-queue"
+          onClick={() => setMobilePane("plan")}
+        >
+          계획
+        </button>
+        <button
+          type="button"
+          className={mobilePane === "guard_diff" || tab === "guard_diff" ? "is-active" : ""}
+          data-testid="mobile-tab-guard"
+          onClick={() => {
+            setState({ agentTab: "guard_diff" });
+            setMobilePane("guard_diff");
+          }}
+        >
+          보호 비교
+        </button>
+      </div>
+
       <div className="columns stagger">
         <SessionList onSelect={onSelectSession} onOpen={onOpen} />
 
         <main className="panel center" aria-label="작업">
           <CentreTabs />
-          {tab === "conversation" ? <Conversation /> : <Timeline />}
+          {tab === "conversation" ? (
+            <Conversation />
+          ) : tab === "guard_diff" ? (
+            <GuardDiffPanel />
+          ) : (
+            <Timeline />
+          )}
           <Composer />
         </main>
 

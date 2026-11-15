@@ -37,6 +37,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { beginEdit, cancelEdit, commitEdit } from "../actions";
+import { projectedAfterText } from "../agent/planProjection";
 import { SeatEditor } from "./SeatEditor";
 import {
   activeText,
@@ -57,13 +58,22 @@ import type { GraphCell, InspectResult, RegionText, TextRun } from "../types";
  * an edit that were visible in only the surface it was made on would be two
  * queues wearing one name.
  */
+function queuedSlug(op: QueuedOp): string {
+  if (op.kind === "fill_cell") return `${op.table}-${op.row}-${op.col}`;
+  if (op.kind === "replace_at_cell") {
+    return `rac-${op.table}-${op.row}-${op.col}${op.run !== undefined ? `-r${op.run}` : ""}`;
+  }
+  if (op.kind === "set_run") return `p${op.atPara}-r${op.run}`;
+  return `dg-${op.opId}`;
+}
+
 function QueuedValue({ op }: { op: QueuedOp }) {
   // The cell spelling is UNCHANGED — `queued-0-1-2`, the shape the harness has
   // asserted against since Phase 4. A run gets its own, in the same convention
   // the review queue uses. Renaming the existing one to make room would have
   // been churn dressed as consistency, and it broke a check the first time.
-  const slug =
-    op.kind === "fill_cell" ? `${op.table}-${op.row}-${op.col}` : `p${op.atPara}-r${op.run}`;
+  const slug = queuedSlug(op);
+  const after = projectedAfterText(op);
   return (
     <span className="queued" data-testid={`queued-${slug}`} data-kind={op.kind}>
       {op.before.trim().length > 0 ? (
@@ -74,7 +84,7 @@ function QueuedValue({ op }: { op: QueuedOp }) {
           </span>
         </>
       ) : null}
-      <span className="will">{op.text}</span>
+      <span className="will">{after}</span>
     </span>
   );
 }
@@ -148,10 +158,11 @@ export function TextView({ inspect }: { inspect: InspectResult }) {
   const queuedByNode = useMemo(() => {
     const map = new Map<string, QueuedOp>();
     for (const op of queuedOps) {
-      map.set(
-        op.kind === "fill_cell" ? cellKey(op.table, op.row, op.col) : `p:${op.atPara}`,
-        op,
-      );
+      if (op.kind === "fill_cell" || op.kind === "replace_at_cell") {
+        map.set(cellKey(op.table, op.row, op.col), op);
+      } else if (op.kind === "set_run") {
+        map.set(`p:${op.atPara}`, op);
+      }
     }
     return map;
   }, [queuedOps]);

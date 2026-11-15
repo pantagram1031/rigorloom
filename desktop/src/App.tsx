@@ -5,14 +5,19 @@ import {
   boot,
   closeTopmostOverlay,
   copySelection,
+  effectiveTheme,
   openDropped,
+  openDroppedFiles,
   openViaDialog,
   resetUiZoom,
   restartRuntime,
   selectSession,
   stepUiZoom,
   toggleFullscreen,
+  toggleTheme,
 } from "./actions";
+import { ApprovalDialog } from "./components/ApprovalDialog";
+import { BrowserOpenDialog } from "./components/BrowserOpenDialog";
 import { Logo } from "./components/Logo";
 import { Settings } from "./components/Settings";
 import { Splash } from "./components/Splash";
@@ -92,6 +97,9 @@ export default function App() {
   const entranceDone = useWorkspace((s) => s.entranceDone);
   const holdEntrance = useWorkspace((s) => s.holdEntrance);
   const dragOver = useWorkspace((s) => s.dragOver);
+  const lastCommit = useWorkspace((s) => s.lastCommit);
+  const theme = useWorkspace((s) => s.theme);
+  const activeTheme = effectiveTheme(theme);
   const session = useWorkspace(
     (s) => s.sessions.find((x) => x.sessionId === s.activeSessionId) ?? null,
   );
@@ -122,22 +130,49 @@ export default function App() {
       // A Rust panic must be visible, not a silent disappearance.
       if (!(await subscriptions.add(rt.onPanic((p) => setState({ panic: p }))))) return;
 
-      // Files dropped on the window. The webview owns the event; the runtime
-      // owns everything that happens to the bytes afterwards.
-      try {
-        if (
-          !(await subscriptions.add(
-            getCurrentWebview().onDragDropEvent((event) => {
-              if (event.payload.type === "over") setState({ dragOver: true });
-              else if (event.payload.type === "drop") void openDropped(event.payload.paths);
-              else setState({ dragOver: false });
-            }),
-          ))
-        ) {
-          return;
+      // Files dropped on the window. Native webview in Tauri, HTML5 drop in browser mode.
+      if (rt.isTauri()) {
+        try {
+          if (
+            !(await subscriptions.add(
+              getCurrentWebview().onDragDropEvent((event) => {
+                if (event.payload.type === "over") setState({ dragOver: true });
+                else if (event.payload.type === "drop") void openDropped(event.payload.paths);
+                else setState({ dragOver: false });
+              }),
+            ))
+          ) {
+            return;
+          }
+        } catch {
+          // Drag-drop is an affordance, not a dependency: the dialog still works.
         }
-      } catch {
-        // Drag-drop is an affordance, not a dependency: the dialog still works.
+      } else if (typeof window !== "undefined") {
+        const onDragOver = (e: DragEvent) => {
+          if (e.dataTransfer?.types?.includes("Files")) {
+            e.preventDefault();
+            if (!getState().dragOver) setState({ dragOver: true });
+          }
+        };
+        const onDragLeave = (e: DragEvent) => {
+          if (e.relatedTarget === null) setState({ dragOver: false });
+        };
+        const onDrop = (e: DragEvent) => {
+          e.preventDefault();
+          const files = Array.from(e.dataTransfer?.files ?? []);
+          if (files.length > 0) void openDroppedFiles(files);
+          else setState({ dragOver: false });
+        };
+        window.addEventListener("dragover", onDragOver);
+        window.addEventListener("dragleave", onDragLeave);
+        window.addEventListener("drop", onDrop);
+        subscriptions.add(
+          Promise.resolve(() => {
+            window.removeEventListener("dragover", onDragOver);
+            window.removeEventListener("dragleave", onDragLeave);
+            window.removeEventListener("drop", onDrop);
+          }),
+        ).catch(() => {});
       }
 
       // Read the launcher's intent before boot: the entrance screenshot needs
@@ -256,7 +291,11 @@ export default function App() {
   const sidecarDown = status !== null && !status.running;
 
   return (
-    <div className="shell">
+    <div
+      className="shell"
+      data-last-composed={lastCommit ? String(lastCommit.composed) : ""}
+      data-last-commit={lastCommit?.value ?? ""}
+    >
       {showSplash ? (
         <Splash note={phaseNote} onDone={() => setState({ entranceDone: true })} />
       ) : null}
@@ -314,6 +353,15 @@ export default function App() {
           </>
         ) : null}
 
+        <button
+          type="button"
+          className="ghost theme-toggle"
+          data-testid="theme-toggle"
+          title="라이트/다크 테마 전환"
+          onClick={() => void toggleTheme()}
+        >
+          {activeTheme === "dark" ? "라이트 · Light" : "다크 · Dark"}
+        </button>
         <button className="ghost" title="Ctrl+O" onClick={() => void openViaDialog()}>
           문서 열기
         </button>
@@ -344,6 +392,8 @@ export default function App() {
           part of either room, and reopening it after Ctrl+2 must not lose what
           the probe found. */}
       <Settings />
+      <BrowserOpenDialog />
+      <ApprovalDialog />
 
       {dragOver ? (
         <div className="dropveil" data-testid="dropveil">

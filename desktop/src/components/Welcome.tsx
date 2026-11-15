@@ -37,8 +37,12 @@ export function Welcome() {
       </div>
 
       <div className={`drop${dragOver ? " over" : ""}`}>
-        <button className="action primary big" onClick={() => void openViaDialog()}>
-          문서 열기
+        <button
+          className="action primary big"
+          data-testid="welcome-open-form"
+          onClick={() => void openViaDialog()}
+        >
+          양식 열기 · Open form
         </button>
         <p className="hint">
           .hwpx 파일을 창에 끌어다 놓아도 됩니다 · Ctrl+O

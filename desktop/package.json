@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:web": "tsc --noEmit && vite build --config vite.web.config.ts",
     "test": "node --experimental-strip-types --test",
     "test:draft-freshness": "node --experimental-strip-types --test scripts/set-queue-freshness.test.mjs",
     "test:head-freshness": "node --experimental-strip-types --test scripts/set-head-freshness.test.mjs",

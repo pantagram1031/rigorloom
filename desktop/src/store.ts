@@ -26,15 +26,18 @@ import type {
   Candidate,
   CandidateCompare,
   Capabilities,
+  CorpusFileEntry,
   CredentialStatus,
   EventDelivery,
   Finding,
   GeometryResult,
+  GuardDiffResult,
   HostEvent,
   InspectResult,
   ModuleCheckReport,
   OperationPlan,
   OverlayPick,
+  PipelineGatesResult,
   PlanValidation,
   ProviderProfile,
   ProviderSettings,
@@ -112,6 +115,9 @@ export interface QueuedFillOp extends QueuedOpBase {
   table: number;
   row: number;
   col: number;
+  /** Multi-line paragraphs when `lines` is used instead of a single `text`. */
+  lines?: string[];
+  paraPr?: string;
   /**
    * Write into a cell that is not empty (`preedit --overwrite`).
    *
@@ -122,6 +128,17 @@ export interface QueuedFillOp extends QueuedOpBase {
    * reversed — the one case where overwriting is precisely the intent.
    */
   overwrite?: boolean;
+}
+
+/** Cell-scoped replace or append operation (`replace`, via `plan/propose`). */
+export interface QueuedReplaceAtCellOp extends QueuedOpBase {
+  kind: "replace_at_cell";
+  table: number;
+  row: number;
+  col: number;
+  run?: number;
+  mode?: "replace" | "append";
+  expect?: string;
 }
 
 /**
@@ -141,13 +158,29 @@ export interface QueuedRunOp extends QueuedOpBase {
   run: number;
 }
 
-export type QueuedOp = QueuedFillOp | QueuedRunOp;
+/** Remove guide text/paragraphs (`delete-guides`, non-invertible). */
+export interface QueuedDeleteGuidesOp extends QueuedOpBase {
+  kind: "delete_guides";
+  color?: string;
+  charPrIds?: string[];
+}
 
-/** Where a queued op points, as one string. Cells and runs both have one. */
+export type QueuedOp =
+  | QueuedFillOp
+  | QueuedReplaceAtCellOp
+  | QueuedRunOp
+  | QueuedDeleteGuidesOp;
+
+/** Where a queued op points, as one string. */
 export function opTargetId(op: QueuedOp): string {
-  return op.kind === "fill_cell"
-    ? cellKey(op.table, op.row, op.col)
-    : `p:${op.atPara}#${op.run}`;
+  if (op.kind === "fill_cell") return cellKey(op.table, op.row, op.col);
+  if (op.kind === "replace_at_cell") {
+    return op.run !== undefined
+      ? `${cellKey(op.table, op.row, op.col)}#${op.run}`
+      : cellKey(op.table, op.row, op.col);
+  }
+  if (op.kind === "set_run") return `p:${op.atPara}#${op.run}`;
+  return `guides:${op.opId}`;
 }
 
 /**
@@ -557,7 +590,22 @@ export interface WorkspaceState {
    * `centerMode` rather than in the component — a view switch must not lose it,
    * and the property is structural rather than a discipline.
    */
-  agentTab: "conversation" | "history";
+  agentTab: "conversation" | "history" | "guard_diff";
+  documentTab: "editor" | "guard_diff";
+  mobilePane: "sessions" | "document" | "plan" | "guard_diff";
+  theme: "auto" | "light" | "dark";
+  openDialogOpen: boolean;
+  corpusFiles: CorpusFileEntry[];
+  corpusFilesPhase: Phase;
+  approvalDialogOpen: boolean;
+  reapprovalPrompt: string | null;
+  guardDiff: GuardDiffResult | null;
+  guardDiffPhase: Phase;
+  guardDiffError: RuntimeError | null;
+  pipelineWorkspace: string;
+  pipelineGatesResult: PipelineGatesResult | null;
+  pipelineGatesPhase: Phase;
+  pipelineGatesError: RuntimeError | null;
 
   // --- 작업 팩 ---------------------------------------------------------------
   taskPacks: TaskPackList | null;
@@ -750,6 +798,25 @@ const initial: WorkspaceState = {
   activeTurn: null,
   settingsOpen: false,
   agentTab: "conversation",
+  documentTab: "editor",
+  mobilePane: "document",
+  theme: "auto",
+
+  openDialogOpen: false,
+  corpusFiles: [],
+  corpusFilesPhase: "idle",
+
+  approvalDialogOpen: false,
+  reapprovalPrompt: null,
+
+  guardDiff: null,
+  guardDiffPhase: "idle",
+  guardDiffError: null,
+
+  pipelineWorkspace: "",
+  pipelineGatesResult: null,
+  pipelineGatesPhase: "idle",
+  pipelineGatesError: null,
 
   taskPacks: null,
   packOpen: null,
@@ -837,6 +904,15 @@ export const setView = (view: View) =>
   setState({ view, editIntentGeneration: state.editIntentGeneration + 1 });
 
 export const setCenterMode = (centerMode: CenterMode) => setState({ centerMode });
+
+export const setDocumentTab = (documentTab: "editor" | "guard_diff") =>
+  setState({ documentTab });
+
+export const setMobilePane = (mobilePane: "sessions" | "document" | "plan" | "guard_diff") =>
+  setState({ mobilePane });
+
+export const setAgentTab = (agentTab: "conversation" | "history" | "guard_diff") =>
+  setState({ agentTab });
 
 export const setSelection = (selection: Selection) => setState({ selection });
 
@@ -1154,11 +1230,16 @@ function computeStaleness(s: WorkspaceState): Staleness {
       currentSha256: activeInspect(s)?.documentHash ?? null,
     };
   }
-  if (draft.validation?.stale) {
+  if (
+    draft.validation?.stale ||
+    (typeof draft.validation?.currentSha256 === "string" &&
+      draft.validation.currentSha256 !== draft.boundSha256) ||
+    (draft.plan && draft.plan.boundSha256 !== draft.boundSha256)
+  ) {
     return {
       kind: "source_changed",
-      boundSha256: draft.validation.boundSha256,
-      currentSha256: draft.validation.currentSha256,
+      boundSha256: draft.validation?.boundSha256 ?? draft.boundSha256,
+      currentSha256: draft.validation?.currentSha256 ?? draft.plan?.boundSha256 ?? null,
     };
   }
   return null;

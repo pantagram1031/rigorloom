@@ -17,13 +17,63 @@ import { TaskPacks } from "./TaskPacks";
 export function SessionList({
   onSelect,
   onOpen,
+  embedded = false,
 }: {
   onSelect: (sessionId: string) => void;
   onOpen: () => void;
+  embedded?: boolean;
 }) {
   const sessions = useWorkspace((s) => s.sessions);
   const active = useWorkspace((s) => s.activeSessionId);
   const root = useWorkspace((s) => s.root);
+
+  const listContent = (
+    <>
+      <div className="rows" data-testid="session-list">
+        {sessions.length === 0 ? (
+          <p className="empty">아직 연 문서가 없습니다.</p>
+        ) : (
+          sessions.map((s: Session) => (
+            <button
+              key={s.sessionId}
+              className="row"
+              aria-selected={s.sessionId === active}
+              data-testid={`session-${s.sessionId}`}
+              onClick={() => onSelect(s.sessionId)}
+            >
+              <span className="primary">{s.source.name}</span>
+              <span className="secondary">
+                {s.source.sha256.slice(0, 12)} · {(s.source.bytes / 1024).toFixed(1)} KiB
+              </span>
+              <span className="secondary">{s.openedUtc}</span>
+            </button>
+          ))
+        )}
+      </div>
+      <div className="section">
+        <button
+          className="action primary"
+          data-testid="open-form-btn"
+          onClick={onOpen}
+          style={{ width: "100%" }}
+        >
+          양식 열기 · Open form
+        </button>
+      </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="embedded-sessions" aria-label="세션 목록">
+        <div className="embedded-sessions-head">
+          <span className="section-label">열린 문서 · Sessions</span>
+          <span className="count">{sessions.length}</span>
+        </div>
+        {listContent}
+      </div>
+    );
+  }
 
   return (
     <nav className="panel" aria-label="문서 목록">
@@ -32,32 +82,7 @@ export function SessionList({
         <span className="count">{sessions.length}</span>
       </div>
       <div className="panel-body">
-        <div className="rows" data-testid="session-list">
-          {sessions.length === 0 ? (
-            <p className="empty">아직 연 문서가 없습니다.</p>
-          ) : (
-            sessions.map((s: Session) => (
-              <button
-                key={s.sessionId}
-                className="row"
-                aria-selected={s.sessionId === active}
-                data-testid={`session-${s.sessionId}`}
-                onClick={() => onSelect(s.sessionId)}
-              >
-                <span className="primary">{s.source.name}</span>
-                <span className="secondary">
-                  {s.source.sha256.slice(0, 12)} · {(s.source.bytes / 1024).toFixed(1)} KiB
-                </span>
-                <span className="secondary">{s.openedUtc}</span>
-              </button>
-            ))
-          )}
-        </div>
-        <div className="section">
-          <button className="action primary" onClick={onOpen} style={{ width: "100%" }}>
-            문서 열기
-          </button>
-        </div>
+        {listContent}
         <TaskPacks />
         <div className="section">
           <h3>작업 폴더</h3>
