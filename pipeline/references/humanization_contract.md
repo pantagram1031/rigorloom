@@ -94,8 +94,28 @@ document scope. It protects:
 
 - numbers, units, dates, percentages, and source ids;
 - citations, direct quotations, URLs, links, document tags, and inline math;
-- headings and declared protected spans;
-- negation, uncertainty, bounds, quantifiers, and causal markers.
+- headings (Markdown `#` lines and short numbered lines such as `3. 실험 방법`)
+  and declared protected spans;
+- negation, uncertainty, bounds, quantifiers, and causal markers;
+- direction words (증가/감소, 높은/낮은, rose/fell and similar), counted, so
+  flipping 감소 to 증가 next to an unchanged number is a deterministic failure.
+
+Tokens are counted as words, not substrings: English tokens need letter
+boundaries ("Really" is not "all"), 약 counts only before a number (계약 and 요약
+do not), and 이상/이하/미만/초과 count only after a number and unit (이상하다 does
+not). English negation includes cannot, n't, nothing, none, neither, nor and
+without.
+
+Counting words is not reading meaning. A swap of two values, or a direction
+expressed with a word outside the list, still passes this layer.
+
+Some of this is stricter than meaning on purpose, and the tests pin it
+(`test_known_strictness_is_deliberate`): Korean direction nouns match inside
+longer words (방향상 counts as 향상, 개선안 as 개선); everyday comparatives such
+as 많은, 빠른, more and less are protected, so 많은 사람 -> 여러 사람 reverts; and
+any short numbered line without end punctuation is a heading, list items
+included. A bound after a spaced unit (30 명 이상) is not counted. Because the
+counting changed, an edit that passed before this version can now revert.
 
 The independent fidelity reviewer additionally checks claim direction,
 agent preservation, causal direction, meaningful sequence, and information

@@ -278,3 +278,61 @@ def test_local_worker_is_default_humanizer_and_v2_schema_is_valid_json():
         .read_text(encoding="utf-8")
     )
     assert schema["$id"] == "report-pipeline/humanization-changes-v2"
+
+
+def _kinds(before: str, after: str) -> list[str]:
+    return [change["kind"] for change in fidelity.audit_text(before, after)["changes"]]
+
+
+def test_direction_flip_with_same_numbers_is_caught():
+    assert _kinds("반응 시간이 약 18.6% 감소했다.", "반응 시간이 약 18.6% 증가했다.") == ["direction_words"]
+    assert _kinds("값이 더 높은 편이다.", "값이 더 낮은 편이다.") == ["direction_words"]
+    assert _kinds("The score rose by 3%.", "The score fell by 3%.") == ["direction_words"]
+
+
+def test_direction_stems_ignore_words_that_only_contain_them():
+    # 목적은 contains 적은 and 오늘 contains 늘; neither is a direction word.
+    assert _kinds("연구의 목적은 분명하다.", "연구의 목적이 분명하다.") == []
+    assert _kinds("오늘 측정했다.", "금일 측정했다.") == []
+    assert _kinds("Furthermore, it held.", "Moreover, it held.") == []
+
+
+def test_numbered_heading_rename_is_caught_but_list_sentences_are_not():
+    assert _kinds("3. 실험 방법", "3. 연구 설계") == ["headings"]
+    assert _kinds("1. 먼저 시료를 준비했다.", "1. 우선 시료를 준비했다.") == []
+
+
+def test_tokens_no_longer_match_inside_other_words():
+    # "Really" contains "all", 계약서 contains 약, 이상하다 contains 이상.
+    assert _kinds("People miss most.", "People miss most. Really.") == []
+    assert _kinds("계약서를 정리했다.", "계약서를 요약했다.") == []
+    assert _kinds("결과가 이상하다.", "결과가 특이하다.") == []
+
+
+def test_hedges_bounds_and_english_negation_still_caught():
+    assert _kinds("약 30명이 참여했다.", "30명이 참여했다.") == ["qualifiers"]
+    assert _kinds("30명 이상이 참여했다.", "30명이 참여했다.") == ["qualifiers"]
+    assert _kinds("What it cannot do reliably.", "What it can do reliably.") == ["qualifiers"]
+    assert _kinds("It didn’t hold.", "It did hold.") == ["qualifiers"]
+    assert _kinds("Nothing changed.", "Something changed.") == ["qualifiers"]
+    assert _kinds("No change was seen.", "A change was seen.") == ["qualifiers"]
+
+
+def test_known_strictness_is_deliberate():
+    """These reverts are on purpose: the checker would rather look twice than miss a flip.
+
+    Change one of them only together with humanization_contract.md, not as a "bug fix".
+    """
+    # Direction nouns match as substrings, so 방향상 counts as 향상.
+    assert _kinds("설계 방향상 문제가 있다.", "설계 측면에서 문제가 있다.") == ["direction_words"]
+    # Everyday comparatives are protected too: 많은 -> 여러, "what is more" -> "also".
+    assert _kinds("많은 사람이 왔다.", "여러 사람이 왔다.") == ["direction_words"]
+    assert _kinds("What is more, it held.", "Also, it held.") == ["direction_words"]
+    # A short numbered line without end punctuation is a heading, list items included.
+    assert _kinds("1. 시료를 준비", "1. 시료 준비하기") == ["headings"]
+
+
+def test_bound_after_spaced_unit_is_a_known_gap():
+    """이상/이하 count only when the unit is attached: '30명 이상', not '30 명 이상'."""
+    assert _kinds("참가자는 30명 이상이다.", "참가자는 30명이다.") == ["qualifiers"]
+    assert _kinds("참가자는 30 명 이상이다.", "참가자는 30 명이다.") == []
