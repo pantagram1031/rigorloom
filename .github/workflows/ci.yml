@@ -156,7 +156,7 @@ jobs:
                       f"{sorted(mandatory - set(applied_payload['stages']))}")
           PY
       # Prove clone-and-go on both operating systems (COM-free by design).
-      - run: python scripts/bootstrap.py --profile-root .ci-profile --workspace-root .ci-ws
+      - run: python scripts/bootstrap.py --profile-root "${{ runner.temp }}/ci-profile" --workspace-root "${{ runner.temp }}/ci-ws"
 
   render-smoke:
     runs-on: ubuntu-latest
