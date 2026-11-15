@@ -130,7 +130,9 @@ export function hasLiveUnappliedPlanInEvents(
     const payload = eventPayload(ev);
     const planId = typeof payload.planId === "string" ? payload.planId : null;
     if (!planId) continue;
+    const evSessionId = ev.sessionId ?? sessionId ?? null;
     if (ev.kind === "plan.proposed") {
+      if (evSessionId && isExternalPlanDismissed(evSessionId, planId)) continue;
       live.add(planId);
     } else if (ev.kind === "plan.applied") {
       live.delete(planId);

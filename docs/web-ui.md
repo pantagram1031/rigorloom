@@ -21,15 +21,18 @@ The default root is `$XDG_DATA_HOME/rigorloom/runtime-root` (or
 
 What you can do there:
 
-- open a form from the bundled corpus or upload your own `.hwpx`;
-- queue edits (`fill_cell`, `replace_at_cell`, `set_run`, `delete_guides`),
-  by hand or from an agent plan, and see each one's address and before/after
-  text;
-- read the guard diff: each edited paragraph with the protected expressions
-  that were kept, removed or added (the same check as
-  [`guard --mode block-diff`](guard-block-diff.md));
-- approve a plan in the approval dialog and export the result as `.hwpx`;
-- resolve human pipeline gates, which writes `APPROVALS.md` (see below).
+- open a form in the Open workspace from the bundled corpus or upload your own `.hwpx`;
+- review and queue edits (`fill_cell`, `replace_at_cell`, `set_run`, `delete_guides`),
+  by hand or from an agent plan, in the Review workspace with each edit's
+  address and before/after text;
+- fill empty cells in the Fill workspace and read the guard diff for each
+  edited paragraph with the protected expressions that were kept, removed or
+  added (the same check as [`guard --mode block-diff`](guard-block-diff.md));
+- approve a plan in the approval dialog, inspect revisions or undo history
+  in the History workspace, and export the result as `.hwpx`;
+- configure provider, model, and verification preferences in the Settings
+  workspace and resolve human pipeline gates, which writes `APPROVALS.md`
+  (see below).
 
 ## Security model
 

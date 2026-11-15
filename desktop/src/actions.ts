@@ -45,7 +45,10 @@ import {
   type QueuedOp,
   type WorkspaceState,
 } from "./store";
-import { hasLiveUnappliedPlanInEvents } from "./workspace/externalPlan";
+import {
+  hasLiveUnappliedPlanInEvents,
+  markExternalPlanDismissed,
+} from "./workspace/externalPlan";
 import {
   activeApprovalBinding,
   approvalBindingIsCurrent,
@@ -974,6 +977,10 @@ function didRewriteAgent(opId: string): boolean {
 }
 
 export async function clearQueue(): Promise<void> {
+  const prev = getState().draft;
+  if (typeof markExternalPlanDismissed === "function" && prev.sessionId && prev.plan?.planId) {
+    markExternalPlanDismissed(prev.sessionId, prev.plan.planId);
+  }
   bumpPlanGeneration();
   setState({
     draft: EMPTY_DRAFT,
@@ -1004,6 +1011,13 @@ async function setQueue(
 ): Promise<void> {
   const state = getState();
   const sessionId = state.activeSessionId;
+  if (
+    typeof markExternalPlanDismissed === "function" &&
+    state.draft.sessionId &&
+    state.draft.plan?.planId
+  ) {
+    markExternalPlanDismissed(state.draft.sessionId, state.draft.plan.planId);
+  }
   // Empty replacements and document-close replacements must invalidate async
   // adopters/apply attempts too, even though they propose no next plan.
   const gen = bumpPlanGeneration();
@@ -1112,6 +1126,9 @@ async function setQueue(
       ),
       { baseRunId, reverses },
     );
+    if (typeof markExternalPlanDismissed === "function") {
+      markExternalPlanDismissed(sessionId, plan.planId);
+    }
     if (currentPlanGeneration() !== gen) return;
     if (!ownsDraft(owner)) return;
     const validation = await rt.validatePlan(plan.planId);

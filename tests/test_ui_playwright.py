@@ -22,7 +22,7 @@ Covers:
 7. External byte-drift `plan_stale` defense: runtime `/rpc` `plan/apply` refusal on
    an approved stale plan and UI `approval-stale-banner` -> `approval-repropose-btn`
    -> new 64-hex `approval-plan-hash` -> re-ack -> apply -> verified `.hwpx` export.
-8. Viewport/theme screenshots (`{open,review-plan,review-guard,approval-dialog}-{1440,390}-{light,dark}.png`)
+8. Viewport/theme screenshots (`{open,review,fill,history,settings}-{1440,390}-{light,dark}.png`)
    saved only under `tmp_path` (`scrollWidth <= innerWidth`), leaving `docs/ui/` untouched.
 """
 
@@ -49,7 +49,7 @@ CORPUS_FORM_FILENAME = "gianmun-byeolji-1ho.hwpx"
 
 EXPECTED_TEMP_SCREENSHOTS = [
     f"{screen}-{width}-{theme}.png"
-    for screen in ("open", "review-plan", "review-guard", "approval-dialog")
+    for screen in ("open", "review", "fill", "history", "settings")
     for width in (1440, 390)
     for theme in ("light", "dark")
 ]
@@ -299,6 +299,16 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
             assert len(sessions_res["result"]["sessions"]) == 1, sessions_res
             session_id = sessions_res["result"]["sessions"][0]["sessionId"]
 
+            # Capture Fill screen temp variants and return to Review before IME check
+            page.click('[data-testid="nav-fill"]')
+            page.wait_for_selector('[data-testid="fill-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="page-cell-0-5-1"]', timeout=10000)
+            _save_screen_variants(page, "fill", shots_dir)
+            _set_viewport_and_theme(page, 1440, 900, "light")
+            page.click('[data-testid="nav-review"]')
+            page.wait_for_selector('[data-testid="review-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="page-cell-0-5-1"]', timeout=10000)
+
             # 3) Korean IME safety + Ruling H shortcut guard on SeatEditor & composer
             page.click('[data-testid="page-cell-0-5-1"]')
             page.wait_for_selector('[data-testid="seat-input"]', timeout=5000)
@@ -433,14 +443,6 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
                 page.locator(f'[data-testid="change-added-numbers-{row_by_op["op-replace"]}"]').count() == 1
             )
 
-            _save_screen_variants(
-                page,
-                "review-plan",
-                shots_dir,
-                mobile_tab="mobile-tab-list",
-            )
-            _set_viewport_and_theme(page, 1440, 900, "light")
-
             # Expand row 1 and verify change-detail-1 contains op details
             page.click('[data-testid="change-summary-1"]')
             page.wait_for_selector('[data-testid="change-detail-1"]', timeout=5000)
@@ -449,12 +451,22 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
 
             _save_screen_variants(
                 page,
-                "review-guard",
+                "review",
                 shots_dir,
                 mobile_tab="review-mobile-tab-list",
                 scroll_into_view_selector='[data-testid="change-detail-1"]',
             )
             _set_viewport_and_theme(page, 1440, 900, "light")
+
+            # Capture Settings screen temp variants while 4-op plan is live, then return to Review
+            page.click('[data-testid="open-settings"]')
+            page.wait_for_selector('[data-testid="settings-view"]', timeout=10000)
+            assert page.locator('[data-testid="settings-folder-change"]').is_disabled()
+            _save_screen_variants(page, "settings", shots_dir)
+            _set_viewport_and_theme(page, 1440, 900, "light")
+            page.click('[data-testid="nav-review"]')
+            page.wait_for_selector('[data-testid="review-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="change-row-4"]', timeout=10000)
 
             # 5 & 6) ApprovalDialog: full 64-hex hashes and changed-fact ack gating
             page.click('[data-testid="review-approve-btn"]')
@@ -470,9 +482,6 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
             ack_box.wait_for(state="visible", timeout=10000)
             assert not ack_box.is_checked()
             assert confirm_btn.is_disabled()
-
-            _save_screen_variants(page, "approval-dialog", shots_dir)
-            _set_viewport_and_theme(page, 1440, 900, "light")
 
             # 7) External byte-drift plan_stale defense (runtime /rpc refusal + UI re-propose)
             stale_copy = tmp_path / "stale-competing.hwpx"
@@ -578,6 +587,12 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
             download.save_as(str(exported_path))
             assert exported_path.is_file() and exported_path.stat().st_size > 1000
             assert zipfile.is_zipfile(exported_path)
+
+            # Capture History screen temp variants after apply & export
+            page.click('[data-testid="nav-history"]')
+            page.wait_for_selector('[data-testid="history-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="history-node-1"]', timeout=10000)
+            _save_screen_variants(page, "history", shots_dir)
 
             assert not page_errors, f"Uncaught page errors: {page_errors}"
             assert not server_errors, f"HTTP 5xx responses: {server_errors}"

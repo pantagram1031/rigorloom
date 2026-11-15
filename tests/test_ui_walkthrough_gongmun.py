@@ -35,12 +35,16 @@ Covers:
    기안문 header paragraphs, dashed empty blanks without vertical Hangul syllable wrap,
    and 390 px mobile layout (`page-sheet` within 120 px of top, left edge >= 0,
    `scrollWidth <= innerWidth`).
-5. Capturing the 8 canonical PNGs in `docs/ui/`:
-   `{open,review}-{1440,390}-{light,dark}.png`.
+5. Capturing all 20 canonical PNGs in `docs/ui/`:
+   `{open,review,fill,history,settings}-{1440,390}-{light,dark}.png`.
 6. Automated surface-leak checks & live DOM WCAG 2.1 contrast audit (>= 4.5:1) across
-   Open & Review in light and dark themes.
-7. Approving and exporting `.hwpx` ZIP (comparing against `examples/gongmun/expected/filled.hwpx`),
-   then verifying on-disk persistence under `approvals/<approvalId>.json`,
+   all five screens (Open, Fill, Review, Settings, History) in light and dark themes.
+7. Fill-in-place blank entry, Enter commit, Esc exit to sheet anchor -> Tab into
+   right pane, Ruling J empty-value removal + undo, and round-trip into Review.
+8. Approving and exporting `.hwpx` ZIP (`수정본 1 내보내기`, matching
+   `examples/gongmun/expected/filled.hwpx`), then checking Settings folder lock and
+   History revision node (`승인 시각`, `적용 시각`, `승인 방식: 직접 승인`,
+   `수정본 1 내보내기`) plus on-disk persistence under `approvals/<approvalId>.json`,
    `sessions/<sessionId>/events.jsonl`, and `sessions/<sessionId>/candidates/<runId>/receipt.json`.
 """
 
@@ -72,7 +76,7 @@ WALKTHROUGH_METRICS_ENV = "RIGORLOOM_WALKTHROUGH_METRICS_OUT"
 
 CANONICAL_SCREENSHOTS = [
     f"{screen}-{width}-{theme}.png"
-    for screen in ("open", "review")
+    for screen in ("open", "review", "fill", "history", "settings")
     for width in (1440, 390)
     for theme in ("light", "dark")
 ]
@@ -419,11 +423,29 @@ def _audit_live_dom_contrast(page, screen: str, theme: str) -> dict:
     )
 
 
-def _save_canonical_variants(page, screen: str) -> None:
+def _save_canonical_variants(
+    page,
+    screen: str,
+    overflow_390: list[dict] | None = None,
+) -> None:
     DOCS_UI_DIR.mkdir(parents=True, exist_ok=True)
     for width, height in ((1440, 900), (390, 844)):
         for theme in ("light", "dark"):
             _set_viewport_and_theme(page, width, height, theme)
+            if width == 390:
+                _assert_surface_clean(page, f"{screen}-390-{theme}")
+                scroll_w = page.evaluate("document.documentElement.scrollWidth")
+                inner_w = page.evaluate("window.innerWidth")
+                assert scroll_w <= inner_w, (screen, theme, scroll_w, inner_w)
+                if overflow_390 is not None:
+                    overflow_390.append(
+                        {
+                            "screen": screen,
+                            "theme": theme,
+                            "scrollWidth": scroll_w,
+                            "innerWidth": inner_w,
+                        }
+                    )
             fname = f"{screen}-{width}-{theme}.png"
             out = DOCS_UI_DIR / fname
             page.screenshot(path=str(out))
@@ -447,6 +469,7 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
     guard_diff_requests: list[dict] = []
     guard_diff_responses: list[int] = []
     contrast_reports: list[dict] = []
+    overflow_390: list[dict] = []
     metrics_snapshot: dict = {}
 
     def _on_request(req) -> None:
@@ -517,7 +540,7 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 )
                 assert report["minRatio"] is not None and report["minRatio"] >= 4.5, report
 
-            _save_canonical_variants(page, "open")
+            _save_canonical_variants(page, "open", overflow_390)
             _set_viewport_and_theme(page, 1440, 900, "light")
 
             # 2) Open gianmun-byeolji-1ho.hwpx, check Item 12 title & Item 14 export gating,
@@ -544,6 +567,85 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 "() => !document.querySelector('[data-testid=\"palette-cmd-export\"]')",
                 timeout=5000,
             )
+
+            # 2b) Fill screen: click blank in place, commit Korean with Enter, Esc -> Tab,
+            #     capture Fill PNGs & contrast, round-trip to Review, test Ruling J empty-clear undo
+            page.click('[data-testid="nav-fill"]')
+            page.wait_for_selector('[data-testid="fill-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="fill-counter"]', timeout=10000)
+
+            page.click('[data-testid="page-cell-0-5-1"]')
+            page.wait_for_selector('[data-testid="page-cell-0-5-1"] [data-testid="seat-input"]', timeout=5000)
+            page.locator('[data-testid="seat-input"]').fill("기획조정실")
+            page.keyboard.press("Enter")
+            page.wait_for_function(
+                """() => {
+                    const c = document.querySelector('[data-testid="fill-counter"]')?.textContent || '';
+                    return c.includes('1개 입력')
+                        && !document.querySelector('[data-testid="page-cell-0-5-1"] [data-testid="seat-input"]')
+                        && document.activeElement?.getAttribute('data-testid') === 'seat-input';
+                }""",
+                timeout=10000,
+            )
+
+            page.keyboard.press("Escape")
+            page.wait_for_function(
+                """() => !document.querySelector('[data-testid="seat-input"]')
+                    && document.activeElement?.getAttribute('data-testid') === 'fill-sheet-anchor'""",
+                timeout=5000,
+            )
+            page.evaluate(
+                "() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+            )
+            page.keyboard.press("Tab")
+            tab_target = page.evaluate(
+                """() => ({
+                    ok: Boolean(document.activeElement?.closest('[data-testid="fill-right-pane"]')),
+                    tag: document.activeElement?.tagName || null,
+                    testId: document.activeElement?.getAttribute?.('data-testid') || null,
+                    cls: document.activeElement?.className || null,
+                })"""
+            )
+            assert tab_target["ok"], tab_target
+
+            for theme in ("light", "dark"):
+                _set_viewport_and_theme(page, 1440, 900, theme)
+                _assert_surface_clean(page, f"fill-1440-{theme}")
+                report = _audit_live_dom_contrast(page, "fill", theme)
+                contrast_reports.append(report)
+                assert report["failureCount"] == 0, json.dumps(
+                    report["failures"], ensure_ascii=False
+                )
+                assert report["minRatio"] is not None and report["minRatio"] >= 4.5, report
+
+            _save_canonical_variants(page, "fill", overflow_390)
+            _set_viewport_and_theme(page, 1440, 900, "light")
+
+            page.click('[data-testid="fill-to-review"]')
+            page.wait_for_selector('[data-testid="review-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="change-row-1"]', timeout=10000)
+            assert "기획조정실" in page.locator('[data-testid="change-row-1"]').inner_text()
+
+            page.click('[data-testid="nav-fill"]')
+            page.wait_for_selector('[data-testid="fill-view"]', timeout=10000)
+            page.click('[data-testid="page-cell-0-5-1"]')
+            page.wait_for_selector('[data-testid="seat-input"]', timeout=5000)
+            page.locator('[data-testid="seat-input"]').fill("")
+            page.keyboard.press("Enter")
+            page.wait_for_selector('[data-testid="fill-undo-banner"]', timeout=10000)
+            page.click('[data-testid="fill-undo-restore"]')
+            page.wait_for_selector('[data-testid^="fill-entry-row-"]', timeout=10000)
+            page.locator('[data-testid^="fill-remove-entry-"]').first.click()
+            page.wait_for_selector('[data-testid="fill-entries-empty"]', timeout=10000)
+
+            page.click('[data-testid="nav-review"]')
+            page.wait_for_selector('[data-testid="review-view"]', timeout=10000)
+            page.wait_for_function(
+                "() => document.querySelectorAll('[data-testid^=\"change-row-\"]').length === 0",
+                timeout=10000,
+            )
+            guard_diff_requests.clear()
+            guard_diff_responses.clear()
 
             bootstrap = page.evaluate("() => window.__RIGORLOOM_UI__")
             token = bootstrap["token"]
@@ -762,29 +864,61 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 )
                 assert report["minRatio"] is not None and report["minRatio"] >= 4.5, report
 
-            # Verify 390px mobile layout (Item 11/14) & both sheet/list tabs with zero overflow
+            # Verify 390px mobile layout: Review opens on 변경, 문서 tab shows 100% + stepper + sheet box
             mobile_sheet_box = None
             for theme in ("light", "dark"):
                 _set_viewport_and_theme(page, 390, 844, theme)
                 assert not page.locator(".page-sheet-zoom").is_visible()
                 assert page.locator('[data-testid="topbar-menu-btn"]').is_visible()
                 assert page.locator('[data-testid="review-mobile-stepper"]').is_visible()
-                sheet_box = page.locator('[data-testid="page-sheet"]').bounding_box()
-                assert sheet_box is not None and sheet_box["x"] >= 0 and sheet_box["y"] <= 120, sheet_box
-                mobile_sheet_box = sheet_box
-                page.click('[data-testid="review-mobile-tab-list"]')
-                page.wait_for_timeout(100)
+                assert (
+                    page.locator('[data-testid="review-mobile-tab-list"]').get_attribute("aria-selected")
+                    == "true"
+                )
+                assert (
+                    page.locator('[data-testid="review-view"]').get_attribute("data-mobile-pane")
+                    == "list"
+                )
                 scroll_w = page.evaluate("document.documentElement.scrollWidth")
                 inner_w = page.evaluate("window.innerWidth")
                 assert scroll_w <= inner_w, (scroll_w, inner_w)
+
                 page.click('[data-testid="review-mobile-tab-sheet"]')
-                page.wait_for_timeout(100)
+                page.wait_for_timeout(150)
+                sheet_box = page.locator('[data-testid="page-sheet"]').bounding_box()
+                assert sheet_box is not None and sheet_box["x"] >= 0 and sheet_box["y"] <= 120, sheet_box
+                mobile_sheet_box = sheet_box
                 scroll_w2 = page.evaluate("document.documentElement.scrollWidth")
                 inner_w2 = page.evaluate("window.innerWidth")
                 assert scroll_w2 <= inner_w2, (scroll_w2, inner_w2)
 
-            _save_canonical_variants(page, "review")
+                page.click('[data-testid="review-mobile-tab-list"]')
+                page.wait_for_timeout(100)
+
+            _save_canonical_variants(page, "review", overflow_390)
             _set_viewport_and_theme(page, 1440, 900, "light")
+
+            # 5b) Settings screen while 24-op plan is live: folder change disabled with reason
+            page.click('[data-testid="open-settings"]')
+            page.wait_for_selector('[data-testid="settings-view"]', timeout=10000)
+            assert page.locator('[data-testid="settings-folder-change"]').is_disabled()
+            assert page.locator('[data-testid="settings-folder-locked-reason"]').is_visible()
+
+            for theme in ("light", "dark"):
+                _set_viewport_and_theme(page, 1440, 900, theme)
+                _assert_surface_clean(page, f"settings-1440-{theme}")
+                report = _audit_live_dom_contrast(page, "settings", theme)
+                contrast_reports.append(report)
+                assert report["failureCount"] == 0, json.dumps(
+                    report["failures"], ensure_ascii=False
+                )
+                assert report["minRatio"] is not None and report["minRatio"] >= 4.5, report
+
+            _save_canonical_variants(page, "settings", overflow_390)
+            _set_viewport_and_theme(page, 1440, 900, "light")
+            page.click('[data-testid="nav-review"]')
+            page.wait_for_selector('[data-testid="review-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="change-row-24"]', timeout=10000)
 
             # 6) Approve via ApprovalDialog (zero changed-facts ack needed) and export verified .hwpx ZIP
             page.click('[data-testid="review-approve-btn"]')
@@ -808,6 +942,8 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             page.wait_for_selector('[data-testid="topbar-export"]', timeout=10000)
             topbar_export_cls = page.locator('[data-testid="topbar-export"]').get_attribute("class") or ""
             assert "topbar-btn--primary" in topbar_export_cls, topbar_export_cls
+            assert page.locator('[data-testid="review-export-btn"]').inner_text().strip() == "수정본 1 내보내기"
+            assert page.locator('[data-testid="topbar-export"]').inner_text().strip() == "수정본 1 내보내기"
 
             with page.expect_download(timeout=15000) as dl_info:
                 page.click('[data-testid="review-export-btn"]')
@@ -829,6 +965,47 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 ]
                 assert not mismatched_entries, mismatched_entries
 
+            # 6b) History screen: applied 수정본 1, separate 승인/적용 시각, 직접 승인, 내보내기
+            page.click('[data-testid="nav-history"]')
+            page.wait_for_selector('[data-testid="history-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="history-node-1"]', timeout=10000)
+            page.wait_for_function(
+                """() => {
+                    const el = document.querySelector('[data-testid="history-approved-at-1"]');
+                    const txt = el ? (el.textContent || '').trim() : '';
+                    return txt.length > 0 && !txt.includes('아직 불러오지');
+                }""",
+                timeout=15000,
+            )
+            assert page.locator('[data-testid="history-approved-at-1"]').is_visible()
+            assert page.locator('[data-testid="history-applied-at-1"]').is_visible()
+            assert (
+                page.locator('[data-testid="history-approval-method-1"]').inner_text().strip()
+                == "승인 방식: 직접 승인"
+            )
+            assert (
+                page.locator('[data-testid="history-export-1"]').inner_text().strip()
+                == "수정본 1 내보내기"
+            )
+            assert page.locator('[data-testid="history-undo-scope-1"]').is_visible()
+            assert page.locator('[data-testid="history-propose-undo-1"]').is_visible()
+
+            for theme in ("light", "dark"):
+                _set_viewport_and_theme(page, 1440, 900, theme)
+                _assert_surface_clean(page, f"history-1440-{theme}")
+                report = _audit_live_dom_contrast(page, "history", theme)
+                contrast_reports.append(report)
+                assert report["failureCount"] == 0, json.dumps(
+                    report["failures"], ensure_ascii=False
+                )
+                assert report["minRatio"] is not None and report["minRatio"] >= 4.5, report
+
+            _save_canonical_variants(page, "history", overflow_390)
+            _set_viewport_and_theme(page, 1440, 900, "light")
+            page.click('[data-testid="open-settings"]')
+            page.wait_for_selector('[data-testid="settings-view"]', timeout=10000)
+            assert not page.locator('[data-testid="settings-folder-change"]').is_disabled()
+
             metrics_snapshot = {
                 "docTitle": doc_title,
                 "guardDiffRequestCount": len(guard_diff_requests),
@@ -839,6 +1016,7 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 "guardHeaderText": guard_header_text,
                 "headerParas": sheet_audit["headerParas"],
                 "mobileSheetBox": mobile_sheet_box,
+                "overflow390": overflow_390,
                 "exportedHwpxSha256": exported_hwpx_sha256,
                 "expectedFilledHwpxSha256": expected_filled_sha256,
                 "containerSha256Match": exported_hwpx_sha256 == expected_filled_sha256,
