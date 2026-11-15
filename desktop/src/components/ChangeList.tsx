@@ -12,6 +12,7 @@ import {
   openApprovalDialog,
   reproposeDraft,
   resolveRecovery,
+  revisionNumberFor,
   setReturnPopoverOpen,
 } from "../actions";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
@@ -87,6 +88,9 @@ export function ChangeList({
   const activeApplied = sessionOutcome?.applied ?? (applied?.sessionId === sessionId ? applied : null);
   const activeRecovery = sessionOutcome?.recovery ?? (draft.sessionId === sessionId ? recovery : null);
   const activeApplyError = sessionOutcome?.error ?? (draft.sessionId === sessionId ? applyError : null);
+  const workspaceState = useWorkspace((s) => s);
+  const exportRunId = activeApplied?.runId ?? head?.runId ?? null;
+  const exportRevNum = revisionNumberFor(workspaceState, sessionId, exportRunId) ?? 1;
 
   const isStale = Boolean(
     reapprovalPrompt ||
@@ -220,9 +224,9 @@ export function ChangeList({
               type="button"
               className="review-btn review-btn--primary"
               data-testid="review-export-btn"
-              onClick={() => void exportApplied()}
+              onClick={() => void exportApplied(undefined, exportRunId ?? undefined)}
             >
-              {t("action_export", language)}
+              {t("action_export_revision", language, [exportRevNum])}
             </button>
           ) : (
             <>

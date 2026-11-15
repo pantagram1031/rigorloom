@@ -116,6 +116,36 @@ export function findAdoptableExternalPlan(
 }
 
 /**
+ * True when session events record a `plan.proposed` that has not yet been
+ * resolved as `rejected` or applied via `plan.applied`.
+ */
+export function hasLiveUnappliedPlanInEvents(
+  events: readonly RuntimeEvent[] | undefined,
+  sessionId?: string | null,
+): boolean {
+  if (!events || events.length === 0) return false;
+  const live = new Set<string>();
+  for (const ev of events) {
+    if (sessionId && ev.sessionId && ev.sessionId !== sessionId) continue;
+    const payload = eventPayload(ev);
+    const planId = typeof payload.planId === "string" ? payload.planId : null;
+    if (!planId) continue;
+    if (ev.kind === "plan.proposed") {
+      live.add(planId);
+    } else if (ev.kind === "plan.applied") {
+      live.delete(planId);
+    } else if (ev.kind === "approval.resolved") {
+      const state = typeof payload.state === "string" ? payload.state : null;
+      const decision = typeof payload.decision === "string" ? payload.decision : null;
+      if (state === "rejected" || decision === "rejected") {
+        live.delete(planId);
+      }
+    }
+  }
+  return live.size > 0;
+}
+
+/**
  * Convert the flat `RegionText[]` array held in store.ts into the keyed lookup
  * map expected by `deriveOpFieldLabel`.
  */

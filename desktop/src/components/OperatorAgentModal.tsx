@@ -3,13 +3,14 @@ import { closeOperatorModal, openViaDialog, selectSession } from "../actions";
 import { t } from "../i18n/vocabulary";
 import { activeSession, useWorkspace } from "../store";
 import { AgentView } from "../views/AgentView";
+import { Settings } from "./Settings";
 import { Timeline } from "./Timeline";
 
 export function OperatorAgentModal() {
   const open = useWorkspace((s) => s.operatorModalOpen);
   const language = useWorkspace((s) => s.language);
   const session = useWorkspace(activeSession);
-  const [tab, setTab] = useState<"agent" | "events">("agent");
+  const [tab, setTab] = useState<"agent" | "events" | "credentials">("agent");
 
   if (!open) return null;
 
@@ -52,6 +53,16 @@ export function OperatorAgentModal() {
               >
                 {t("operator_tab_events", language)}
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "credentials"}
+                className={`operator-tab${tab === "credentials" ? " is-active" : ""}`}
+                data-testid="operator-tab-credentials"
+                onClick={() => setTab("credentials")}
+              >
+                {t("operator_tab_credentials", language)}
+              </button>
             </div>
           </div>
 
@@ -77,6 +88,8 @@ export function OperatorAgentModal() {
                 void selectSession(id);
               }}
             />
+          ) : tab === "credentials" ? (
+            <Settings embedded />
           ) : session ? (
             <Timeline />
           ) : (

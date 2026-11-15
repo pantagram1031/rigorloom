@@ -43,7 +43,9 @@ import {
   currentPlanGeneration,
   type Draft,
   type QueuedOp,
+  type WorkspaceState,
 } from "./store";
+import { hasLiveUnappliedPlanInEvents } from "./workspace/externalPlan";
 import {
   activeApprovalBinding,
   approvalBindingIsCurrent,
@@ -214,7 +216,7 @@ export async function loadText(sessionId: string, force = false): Promise<boolea
   return true;
 }
 
-async function loadCandidates(sessionId: string) {
+export async function loadCandidates(sessionId: string) {
   try {
     const list = await rt.candidates(sessionId);
     setState({ candidates: { ...getState().candidates, [sessionId]: list } });
@@ -4007,16 +4009,153 @@ export function navigateScreen(screen: ScreenId): void {
     setState({ screen: "open" });
     return;
   }
-  if (screen === "settings") {
-    setState({ settingsOpen: true });
-    return;
-  }
   setState({
     screen,
     ...(screen === "review" || screen === "fill" || screen === "history"
       ? { view: "document" as const }
       : {}),
   });
+}
+
+/** 1-based chronological revision number for an applied candidate run in a session. */
+export function revisionNumberFor(
+  state: WorkspaceState,
+  sessionId: string | null | undefined,
+  runId: string | null | undefined,
+): number | null {
+  if (!sessionId || !runId) return null;
+  const rows = (state.candidates[sessionId] ?? [])
+    .filter((c) => Boolean(c.runId))
+    .slice()
+    .sort((a, b) => (a.createdUtc ?? "").localeCompare(b.createdUtc ?? ""));
+  const idx = rows.findIndex((c) => c.runId === runId);
+  if (idx >= 0) return idx + 1;
+  if (state.applied?.sessionId === sessionId && state.applied.runId === runId) {
+    return rows.length + 1;
+  }
+  return rows.length > 0 ? rows.length : 1;
+}
+
+/** True while any session has an uncommitted draft, active plan in review, or apply in flight. */
+export function isWorkspaceFolderLocked(state: WorkspaceState): boolean {
+  if (state.inlineEdit !== null) return true;
+  if (state.draft.ops.length > 0 || state.draft.plan !== null) return true;
+  if (state.draft.phase === "starting") return true;
+  if (
+    state.approval !== null ||
+    state.approvalPhase === "requesting" ||
+    state.approvalPhase === "pending" ||
+    state.approvalPhase === "resolving"
+  ) {
+    return true;
+  }
+  if (state.applyPhase === "starting") return true;
+  if (state.activeTurn !== null) return true;
+  if (hasLiveUnappliedPlanInEvents(state.events)) return true;
+  return Object.values(state.applyOutcomes).some(
+    (outcome) => outcome?.recovery?.outcome === "unknown",
+  );
+}
+
+/**
+ * Switch the active runtime workspace root atomically (`rt.start(nextRoot)` first).
+ * If starting fails or folder lock holds, rolls back / retains the previous root.
+ */
+export async function switchWorkspaceRoot(
+  nextRoot: string,
+): Promise<{ ok: boolean; error: RuntimeError | null }> {
+  const trimmed = nextRoot.trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      error: { code: "invalid_root", message: "작업 폴더 경로를 입력하세요." },
+    };
+  }
+  const state = getState();
+  if (isWorkspaceFolderLocked(state)) {
+    return {
+      ok: false,
+      error: {
+        code: "workspace_locked",
+        message: t("settings_folder_locked", state.language),
+      },
+    };
+  }
+  const prevRoot = state.root;
+  if (prevRoot && trimmed === prevRoot) {
+    return { ok: true, error: null };
+  }
+  try {
+    const { status } = await rt.start(trimmed);
+    if (!status?.running) {
+      if (prevRoot) {
+        await rt.start(prevRoot).catch(() => {});
+      }
+      return {
+        ok: false,
+        error: {
+          code: "runtime_start_failed",
+          message: status?.failure ?? "새 작업 폴더로 작업 공간을 시작하지 못했습니다.",
+        },
+      };
+    }
+    const resolvedRoot = status.root ?? trimmed;
+    stopDocumentEvents();
+    bumpPlanGeneration();
+    await rt.savePrefs({ root: resolvedRoot, lastSessionId: null }).catch(() => {});
+    setState({
+      status,
+      root: resolvedRoot,
+      activeSessionId: null,
+      sessions: [],
+      inspects: {},
+      texts: {},
+      candidates: {},
+      receipts: {},
+      applied: null,
+      applyPhase: "idle",
+      applyError: null,
+      applyOutcomes: {},
+      approval: null,
+      approvalPhase: "idle",
+      approvalError: null,
+      draft: EMPTY_DRAFT,
+      redoStack: [],
+      inlineEdit: null,
+      selection: null,
+      selectedChangeId: null,
+      expandedChangeId: null,
+      returnPopoverOpen: false,
+      events: [],
+      eventSubscription: null,
+      head: null,
+      historySelected: null,
+      inverseProof: null,
+      candidateVerdict: null,
+      guardDiff: null,
+      guardDiffError: null,
+      guardDiffPhase: "idle",
+      render: null,
+      renderPhase: "idle",
+      renderError: null,
+      geometry: null,
+    });
+    const [caps] = await Promise.all([
+      rt.capabilities().catch(() => null),
+      refreshSessions(),
+    ]);
+    if (caps) setState({ capabilities: caps });
+    showToast(t("settings_folder_changed", getState().language), 2200);
+    return { ok: true, error: null };
+  } catch (e) {
+    if (prevRoot) {
+      const rollback = await rt.start(prevRoot).catch(() => null);
+      if (rollback?.status) {
+        setState({ status: rollback.status, root: prevRoot });
+      }
+    }
+    return { ok: false, error: rt.asRuntimeError(e) };
+  }
 }
 
 export async function loadInitialPrefs(): Promise<void> {

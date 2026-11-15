@@ -4148,6 +4148,7 @@ body,
 
 .operator-tabs {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-top: 8px;
   padding: 2px;
@@ -4171,6 +4172,10 @@ body,
 
 .operator-modal-body {
   min-height: 360px;
+}
+
+.settings-embedded {
+  width: 100%;
 }
 
 @media (max-width: 780px) {

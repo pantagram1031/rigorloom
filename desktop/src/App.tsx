@@ -39,8 +39,10 @@ import {
 } from "./store";
 import { runSmoke, smokeIntent } from "./smoke";
 import { FillView } from "./views/FillView";
+import { HistoryView } from "./views/HistoryView";
 import { OpenView } from "./views/OpenView";
 import { ReviewView } from "./views/ReviewView";
+import { SettingsView } from "./views/SettingsView";
 
 const REVIEW_KEY_CODES = new Set([
   "KeyJ",
@@ -236,9 +238,21 @@ export default function App() {
               navigateScreen("review");
             }
             return;
+          case "Digit2":
+            if (getState().activeSessionId) {
+              e.preventDefault();
+              navigateScreen("fill");
+            }
+            return;
+          case "Digit3":
+            if (getState().activeSessionId) {
+              e.preventDefault();
+              navigateScreen("history");
+            }
+            return;
           case "Comma":
             e.preventDefault();
-            setState({ settingsOpen: true });
+            navigateScreen("settings");
             return;
           case "KeyE":
             if (getState().activeSessionId) {
@@ -313,11 +327,15 @@ export default function App() {
   }
 
   const activeScreen =
-    screen === "review" && session
-      ? "review"
-      : screen === "fill" && session
-        ? "fill"
-        : "open";
+    screen === "settings"
+      ? "settings"
+      : screen === "history" && session
+        ? "history"
+        : screen === "fill" && session
+          ? "fill"
+          : screen === "review" && session
+            ? "review"
+            : "open";
 
   return (
     <div
@@ -329,7 +347,11 @@ export default function App() {
       <TopBar />
 
       <div className="viewport">
-        {activeScreen === "review" ? (
+        {activeScreen === "settings" ? (
+          <SettingsView />
+        ) : activeScreen === "history" ? (
+          <HistoryView />
+        ) : activeScreen === "review" ? (
           <ReviewView />
         ) : activeScreen === "fill" ? (
           <FillView />

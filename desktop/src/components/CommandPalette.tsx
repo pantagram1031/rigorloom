@@ -7,6 +7,7 @@ import {
   openApprovalDialog,
   openOperatorModal,
   openViaDialog,
+  revisionNumberFor,
   setReturnPopoverOpen,
   toggleLanguage,
   togglePrintView,
@@ -25,6 +26,7 @@ import {
 interface PaletteItem {
   id: string;
   labelKey: VocabularyKey;
+  labelText?: string;
   shortcut?: string;
   keywords: string;
   run: () => void;
@@ -38,6 +40,10 @@ export function CommandPalette() {
   const draft = useWorkspace((s) => s.draft);
   const applied = useWorkspace((s) => s.applied);
   const head = useWorkspace(headCandidate);
+  const exportRunId = applied?.runId ?? head?.runId ?? null;
+  const exportRevNum = useWorkspace((s) =>
+    revisionNumberFor(s, session?.sessionId, exportRunId),
+  );
 
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -81,6 +87,20 @@ export function CommandPalette() {
         run: () => navigateScreen("review"),
       });
       items.push({
+        id: "go-fill",
+        labelKey: "cmd_go_fill",
+        shortcut: "Ctrl+2",
+        keywords: "채우기 빈칸 양식 입력 fill",
+        run: () => navigateScreen("fill"),
+      });
+      items.push({
+        id: "go-history",
+        labelKey: "cmd_go_history",
+        shortcut: "Ctrl+3",
+        keywords: "기록 수정본 이력 비교 history revisions",
+        run: () => navigateScreen("history"),
+      });
+      items.push({
         id: "toggle-print-view",
         labelKey: "cmd_toggle_print_view",
         keywords: "인쇄 화면 문서 보기 print view",
@@ -115,8 +135,12 @@ export function CommandPalette() {
       items.push({
         id: "export",
         labelKey: "cmd_export",
+        labelText:
+          exportRevNum !== null
+            ? t("action_export_revision", language, [exportRevNum])
+            : undefined,
         shortcut: "Ctrl+E",
-        keywords: "내보내기 저장 export",
+        keywords: "내보내기 저장 수정본 export revision",
         run: () => {
           if (!canExport) {
             showToast(t("export_no_revision_toast", language), 2600);
@@ -148,8 +172,8 @@ export function CommandPalette() {
         id: "open-settings",
         labelKey: "cmd_open_settings",
         shortcut: "Ctrl+,",
-        keywords: "설정 settings",
-        run: () => setState({ settingsOpen: true }),
+        keywords: "설정 언어 화면 테마 작업 폴더 settings language theme workspace folder",
+        run: () => navigateScreen("settings"),
       },
       {
         id: "open-by-path",
@@ -163,19 +187,19 @@ export function CommandPalette() {
       {
         id: "operator-agent",
         labelKey: "cmd_operator_agent_details",
-        keywords: "에이전트 연결 작업 기록 자세히 agent log details",
+        keywords: "에이전트 연결 작업 기록 인증 공급자 자세히 agent log credentials provider details",
         run: () => openOperatorModal(),
       },
     );
 
     return items;
-  }, [session, hasPlan, canApprove, canExport, theme, language]);
+  }, [session, hasPlan, canApprove, canExport, exportRevNum, theme, language]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return commands;
     return commands.filter((item) => {
-      const label = t(item.labelKey, language).toLowerCase();
+      const label = (item.labelText ?? t(item.labelKey, language)).toLowerCase();
       return label.includes(q) || item.keywords.toLowerCase().includes(q);
     });
   }, [commands, query, language]);
@@ -265,7 +289,9 @@ export function CommandPalette() {
                 onMouseEnter={() => setSelectedIndex(idx)}
                 onClick={() => runItem(item)}
               >
-                <span className="palette-row-label">{t(item.labelKey, language)}</span>
+                <span className="palette-row-label">
+                  {item.labelText ?? t(item.labelKey, language)}
+                </span>
                 {item.shortcut ? (
                   <kbd className="palette-row-shortcut">{item.shortcut}</kbd>
                 ) : null}

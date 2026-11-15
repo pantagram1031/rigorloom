@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  exportApplied,
   loadGeometry,
   navigateScreen,
   openCommandPalette,
   renderCurrentPage,
   restartRuntime,
-  exportApplied,
+  revisionNumberFor,
   togglePrintView,
 } from "../actions";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
@@ -13,7 +14,6 @@ import {
   activeSession,
   headCandidate,
   setPageFit,
-  setState,
   setZoom,
   useWorkspace,
 } from "../store";
@@ -36,6 +36,7 @@ export function TopBar() {
   const printViewEnabled = useWorkspace((s) => s.printViewEnabled);
   const capabilities = useWorkspace((s) => s.capabilities);
   const render = useWorkspace((s) => s.render);
+  const workspaceState = useWorkspace((s) => s);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -61,7 +62,17 @@ export function TopBar() {
   }, [menuOpen]);
 
   const sidecarDown = status !== null && !status.running;
-  const canExport = Boolean(session && (applied?.runId ?? head?.runId));
+  const exportRunId =
+    session && applied?.sessionId === session.sessionId
+      ? applied.runId
+      : session
+        ? (head?.runId ?? null)
+        : null;
+  const canExport = Boolean(session && exportRunId);
+  const exportRevNum = revisionNumberFor(workspaceState, session?.sessionId, exportRunId);
+  const exportLabel = exportRevNum
+    ? t("action_export_revision", language, [exportRevNum])
+    : t("action_export", language);
   const showSheetMenuControls = Boolean(session && (screen === "review" || screen === "fill"));
   const canTryPrintView = Boolean(
     capabilities?.render?.rasterizer?.state === "yes" || render?.available,
@@ -122,9 +133,10 @@ export function TopBar() {
           <button
             type="button"
             className="topbar-tab"
+            aria-current={screen === "history" ? "page" : undefined}
             data-testid="nav-history"
-            disabled
-            aria-disabled="true"
+            disabled={!session}
+            onClick={() => navigateScreen("history")}
           >
             {t("nav_history", language)}
           </button>
@@ -150,9 +162,9 @@ export function TopBar() {
               type="button"
               className="topbar-btn topbar-btn--primary"
               data-testid="topbar-export"
-              onClick={() => void exportApplied()}
+              onClick={() => void exportApplied(undefined, exportRunId ?? undefined)}
             >
-              {t("action_export", language)}
+              {exportLabel}
             </button>
           ) : null}
 
@@ -169,8 +181,9 @@ export function TopBar() {
           <button
             type="button"
             className="topbar-btn topbar-btn--subtle"
+            aria-current={screen === "settings" ? "page" : undefined}
             data-testid="open-settings"
-            onClick={() => setState({ settingsOpen: true })}
+            onClick={() => navigateScreen("settings")}
           >
             {t("nav_settings", language)}
           </button>
@@ -194,6 +207,35 @@ export function TopBar() {
               role="menu"
               data-testid="topbar-menu-popover"
             >
+              {session ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="topbar-menu-item"
+                    data-testid="topbar-menu-fill"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigateScreen("fill");
+                    }}
+                  >
+                    {t("nav_fill", language)}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="topbar-menu-item"
+                    data-testid="topbar-menu-history"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigateScreen("history");
+                    }}
+                  >
+                    {t("nav_history", language)}
+                  </button>
+                  <div className="topbar-menu-divider" role="separator" />
+                </>
+              ) : null}
               {showSheetMenuControls ? (
                 <>
                   <button
@@ -273,10 +315,10 @@ export function TopBar() {
                   data-testid="topbar-menu-export"
                   onClick={() => {
                     setMenuOpen(false);
-                    void exportApplied();
+                    void exportApplied(undefined, exportRunId ?? undefined);
                   }}
                 >
-                  {t("action_export", language)}
+                  {exportLabel}
                 </button>
               ) : null}
               <button
@@ -298,7 +340,7 @@ export function TopBar() {
                 data-testid="topbar-menu-settings"
                 onClick={() => {
                   setMenuOpen(false);
-                  setState({ settingsOpen: true });
+                  navigateScreen("settings");
                 }}
               >
                 {t("nav_settings", language)}
