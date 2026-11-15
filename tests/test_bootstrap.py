@@ -108,3 +108,14 @@ def test_render_probe_failure_is_informational(monkeypatch, capsys):
     bootstrap._print_render_capabilities()
 
     assert "Render capability matrix: unavailable (probe failed)" in capsys.readouterr().out
+
+
+def test_bootstrap_default_roots_stay_outside_checkout():
+    # new_report refuses a workspace or profile root inside the engine, so a
+    # default under the checkout made the README's first command fail on a
+    # fresh clone while the temp-dir tests above stayed green.
+    args = bootstrap.parse_args([])
+    repo = REPO_ROOT.resolve()
+    for root in (args.profile_root, args.workspace_root):
+        resolved = root.expanduser().resolve()
+        assert resolved != repo and repo not in resolved.parents, resolved

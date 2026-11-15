@@ -362,7 +362,8 @@ python3 scripts/bootstrap.py
 ```
 
 `scripts/bootstrap.py` verifies the interpreter, creates a private
-personalization profile under the Git-ignored `.local/`, registers the
+personalization profile under `~/.rigorloom/personalization` (outside the
+checkout, the same default `scripts/new_report.py` uses), registers the
 default preference packs, and runs an end-to-end smoke test (`new_report` →
 `resume` → a passing script gate) against a synthetic form fixture. It is
 idempotent. This step alone proves the kernel is wired correctly; it does not
@@ -399,7 +400,7 @@ walkthrough; script gates are never auto-approved — they always run their
 bound checker. This prints the workspace path and the next command:
 
 ```sh
-python modules/report/scripts/pipeline_ctl.py resume ./workspaces/report-demo
+python modules/report/scripts/pipeline_ctl.py resume ~/.rigorloom/workspaces/report-demo
 ```
 
 ## 3. Walk the stage graph
