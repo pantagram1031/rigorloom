@@ -125,6 +125,8 @@ sha256: 4b2972801f79843464ce0d30adf9c8ea7f433c3f6e687bc545d0bb828e33ac1d
 artifacts: filled.hwpx, plan.json, verdict.json, approval.json
 ```
 
+The `warn=1` finding is `dumun_seat_unfilled` on the optional `(경유)` seat in 두문, which keeps its label with no value.
+
 Outputs (`filled.hwpx`, `plan.json`, `verdict.json`, `approval.json`) match
 [`examples/gongmun/expected/`](examples/gongmun/expected/) byte-for-byte. Pass
 `--polished FILE` to also enforce Policy (ii) (`draft -> polished`) fidelity;
