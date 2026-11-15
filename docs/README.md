@@ -53,6 +53,8 @@
 
 ## Releases
 
+- [release-v0.18.0.md](release-v0.18.0.md) — v0.18.0 release record:
+  bundle hashes, CI counts on the release commit, known limits.
 - [release-v0.17.0.md](release-v0.17.0.md) — v0.17.0 evidence record:
   bundle hashes, validation ledger, honest limits.
 - [release-v0.16.0.md](release-v0.16.0.md) — v0.16.0 release record:

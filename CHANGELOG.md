@@ -8,6 +8,32 @@ the kernel's contract shape.
 
 ## Unreleased
 
+## v0.18.0 — 2026-11-15
+
+An agent or a person proposes an edit to a Korean official document. A person reviews exactly what will change and approves it before the HWPX file is modified. `RuntimeCore` owns the edit path, with the few remaining exceptions listed in [docs/architecture.md](docs/architecture.md).
+
+Three commands support this workflow:
+
+- `rigorloom ui` opens a review workspace in a browser on your own machine, with the plan, diff and approval in one place.
+- `rigorloom guard` reports when an edit changes a number, a date, a quotation, a negation or a direction word such as 증가 or 감소.
+- `rigorloom style check` flags Korean phrasing for a person to review. It asks questions rather than grading the text.
+
+The 공문 demo runs the full workflow on a blank 기안문 form without Hancom Office. Run it from a clone with `python runtime/scripts/cli.py demo gongmun --out DIR`; tests check its output byte for byte.
+
+This release also includes an optional adapter for a separately installed HWP engine, stricter receipts and evidence files, a fail-closed HWP5 reader and a paragraph-level story editor. The old read-only Studio dashboard has been removed. Bundle hashes and the CI counts for the release commit are in [docs/release-v0.18.0.md](docs/release-v0.18.0.md).
+
+### Known limits
+
+- The HWP engine adapter is optional. The engine itself is private and not part of this repository; without it, Rigorloom uses its own minimal HWPX path.
+- No claim is made about how natural or human-like any rewritten Korean is. A measured study is being designed; until it reports, the product says nothing on that point.
+- `style check` rules are notices for a person to read. They have false alarms on careful human writing, and they do not cover every document type equally.
+- 14 tests fail on the machine this release was prepared on, and pass or skip in CI: 3 call Node with `--experimental-strip-types`, which that machine's Node 20 does not have; 10 compare text layout against values measured with the fonts the forms declare, which are licensed and not distributed; 1 is a .docx render test that stops on an image read error (`docx.image` `UnexpectedEndOfFileError`) and has not been diagnosed further.
+- The native desktop shell under `desktop/src-tauri/` is still pre-alpha. The browser UI is the supported way to review edits.
+
+### Release
+
+- **T171:** version 0.18.0. Two documentation fixes from the release review: `docs/pipeline-master-v0.6.md` now points at the live `modules/report/references/workspace_layout.json`, and the "Report workspace files" section of `docs/architecture.md` is three plain sentences. `tests/test_release_docs.py` now reads the release record named by the README's current-release line and checks it against the `pyproject.toml` version, instead of pinning v0.17.0.
+
 ### Security
 
 - **Studio: DNS rebinding could read workspaces and the action token.** Studio

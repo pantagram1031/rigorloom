@@ -103,7 +103,7 @@ Then:
 2. Satisfy its entry conditions.
 3. Use the work area named in `NEXT_TASK.md` for drafts and temporary files.
 4. Publish only outputs declared in
-   `pipeline/references/workspace_layout.json` to canonical paths.
+   `modules/report/references/workspace_layout.json` to canonical paths.
 5. Resolve its gate, if any.
 6. Advance with `pipeline_ctl.py`.
 7. Read the regenerated `NEXT_TASK.md` before doing more work.
@@ -386,7 +386,7 @@ required, and no provider may bypass a gate.
 invalidation, trouble reports, and stage advances. On completed or blocked
 stages it also archives safe transient files.
 
-The declarative layout is `pipeline/references/workspace_layout.json`. For each
+The declarative layout is `modules/report/references/workspace_layout.json`. For each
 stage it lists required inputs and expected outputs. The organizer uses that
 single map to create directories, inventory artifacts, report missing files,
 and prepare the next stage's work area.

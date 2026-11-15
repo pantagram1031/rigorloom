@@ -66,7 +66,7 @@ every stage. 공문 also has a Hancom-free end-to-end demo
 through `RuntimeCore` with `check_residue` and `check_gongmun`. For 지원서,
 민원 and 인사 서류, form checkers and cell filling are available through the
 Runtime CLI; end-to-end paths for these types are being built next.
-Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
+Current release: **v0.18.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 The core workflow does not require Hancom Office. Linux and Windows
 are practiced; macOS is unproven. Any coding-capable AI agent or a
@@ -274,7 +274,7 @@ Known limits stated honestly:
 - School and corporate form families have no corpus.
 
 For the full evidence record see
-[docs/release-v0.17.0.md](docs/release-v0.17.0.md).
+[docs/release-v0.18.0.md](docs/release-v0.18.0.md).
 
 ## Architecture
 
