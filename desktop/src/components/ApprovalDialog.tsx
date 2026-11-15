@@ -1,35 +1,43 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
 import {
   approveAndApplyFromDialog,
-  clearQueue,
   closeApprovalDialog,
   loadPipelineGates,
   reproposeDraft,
   resolvePipelineGateAction,
-  revalidateActiveDraft,
-  revalidateAndResolveApproval,
+  resolveRecovery,
 } from "../actions";
+import { errorCodeMessage, opKindLabel, t } from "../i18n/vocabulary";
 import {
-  formatProjectedAddress,
-  projectedAfterText,
-  projectionInverseSupport,
-} from "../agent/planProjection";
-import { draftStaleness, useWorkspace } from "../store";
-
-const OP_KIND_LABEL: Record<string, string> = {
-  fill_cell: "채움 · fill_cell",
-  replace_at_cell: "치환 · replace_at_cell",
-  set_run: "문단 덩어리 고치기 · set_run",
-  delete_guides: "안내문 삭제 · delete_guides",
-};
+  activeInspect,
+  activeText,
+  draftStaleness,
+  useWorkspace,
+} from "../store";
+import { buildRegionTextMap } from "../workspace/externalPlan";
+import {
+  buildIndexedChanges,
+  runAuthoritativeGuardDiff,
+  setReviewGuardSummary,
+  useReviewGuardSummary,
+} from "../workspace/guardHelper";
+import { DetailDisclosure } from "./DetailDisclosure";
 
 export function ApprovalDialog() {
   const open = useWorkspace((s) => s.approvalDialogOpen);
+  const language = useWorkspace((s) => s.language);
+  const activeSessionId = useWorkspace((s) => s.activeSessionId);
+  const inspect = useWorkspace(activeInspect);
+  const texts = useWorkspace(activeText);
   const draft = useWorkspace((s) => s.draft);
   const approval = useWorkspace((s) => s.approval);
   const approvalPhase = useWorkspace((s) => s.approvalPhase);
   const approvalError = useWorkspace((s) => s.approvalError);
   const applyPhase = useWorkspace((s) => s.applyPhase);
+  const applyError = useWorkspace((s) => s.applyError);
+  const recovery = useWorkspace((s) => s.recovery);
+  const applyOutcomes = useWorkspace((s) => s.applyOutcomes);
   const staleness = useWorkspace(draftStaleness);
   const reapprovalPrompt = useWorkspace((s) => s.reapprovalPrompt);
 
@@ -38,268 +46,443 @@ export function ApprovalDialog() {
   const pipelineGatesPhase = useWorkspace((s) => s.pipelineGatesPhase);
   const pipelineGatesError = useWorkspace((s) => s.pipelineGatesError);
 
-  const [wsInput, setWsInput] = useState(pipelineWorkspace);
-  const [approver, setApprover] = useState("host-operator");
+  const guardSummary = useReviewGuardSummary();
 
-  if (!open) return null;
+  const [ackChecked, setAckChecked] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [wsInput, setWsInput] = useState(pipelineWorkspace);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
+  const changes = useMemo(
+    () => buildIndexedChanges(draft, inspect, textMap, language),
+    [draft, inspect, textMap, language],
+  );
 
   const plan = draft.plan;
   const validation = draft.validation;
+  const sessionId = activeSessionId ?? draft.sessionId ?? "";
+
+  useEffect(() => {
+    setWsInput(pipelineWorkspace);
+  }, [pipelineWorkspace]);
+
+  // Move focus into the modal on open without activating confirm prematurely.
+  useEffect(() => {
+    if (!open) {
+      setSubmitting(false);
+      setAckChecked(false);
+      return;
+    }
+    setAckChecked(false);
+    setSubmitting(false);
+    const id = window.setTimeout(() => dialogRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [open, plan?.planId, plan?.planHash]);
+
+  // If ApprovalDialog opened via command palette before ReviewView audited this plan,
+  // run the authoritative Python guard diff so changed-fact gating is always active.
+  useEffect(() => {
+    if (!open || !sessionId || !plan || validation?.ok !== true) return;
+    if (
+      guardSummary.planId === plan.planId &&
+      (guardSummary.state === "ready" || guardSummary.state === "unavailable")
+    ) {
+      return;
+    }
+    let cancelled = false;
+    void runAuthoritativeGuardDiff(sessionId, draft, changes).then((res) => {
+      if (!cancelled) {
+        setReviewGuardSummary(res);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sessionId, plan, validation?.ok, draft, changes, guardSummary.planId, guardSummary.state]);
+
+  const kindCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const ch of changes) {
+      const key = ch.opKindText;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()];
+  }, [changes]);
+
+  if (!open) return null;
+
+  const sessionOutcome = sessionId ? applyOutcomes?.[sessionId] : undefined;
+  const activeRecovery =
+    sessionOutcome?.recovery ??
+    (recovery && (!sessionId || draft.sessionId === sessionId) ? recovery : null);
+  const activeApplyError =
+    sessionOutcome?.error ??
+    (recovery && sessionId && draft.sessionId !== sessionId ? null : applyError);
+
   const isStale = Boolean(
     reapprovalPrompt ||
       staleness !== null ||
       validation?.stale ||
       (plan && draft.boundSha256 && plan.boundSha256 !== draft.boundSha256),
   );
+
+  const guardMatchesPlan = Boolean(plan && guardSummary.planId === plan.planId);
+  const guardChecking = Boolean(
+    plan &&
+      validation?.ok === true &&
+      (!guardMatchesPlan || guardSummary.state === "running"),
+  );
+  const guardUnavailable =
+    guardMatchesPlan && guardSummary.state === "unavailable";
+
+  const changedFactItems = guardMatchesPlan
+    ? changes.filter((ch) => guardSummary.changedFactOpIds.includes(ch.opId))
+    : [];
+  const changedFactCount =
+    changedFactItems.length > 0
+      ? changedFactItems.length
+      : guardMatchesPlan &&
+          guardSummary.state === "ready" &&
+          guardSummary.documentDiff &&
+          !guardSummary.documentDiff.pass
+        ? Math.max(1, guardSummary.documentDiff.changed.filter((r) => !r.pass).length)
+        : 0;
+
+  const requiresChangedFactAck = changedFactCount > 0;
+
   const busy =
+    submitting ||
+    draft.phase === "starting" ||
     approvalPhase === "requesting" ||
     approvalPhase === "resolving" ||
     applyPhase === "starting";
-  const canApplyFromDialog =
+
+  // Ruling B, C, F: valid plan required, not stale, guard resolved (ready or unavailable),
+  // and changed-fact acknowledgement checked whenever changedFactCount > 0.
+  const canConfirm =
     Boolean(plan) &&
     validation?.ok === true &&
+    changes.length > 0 &&
     !isStale &&
     !busy &&
-    approval?.state !== "rejected";
+    !guardChecking &&
+    approval?.state !== "rejected" &&
+    (!requiresChangedFactAck || ackChecked);
+
+  const handleConfirm = async () => {
+    if (!canConfirm) return;
+    setSubmitting(true);
+    try {
+      await approveAndApplyFromDialog("host-operator");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div
-      className="dialog-backdrop"
+      className="dialog-backdrop approval-backdrop"
       role="presentation"
       onClick={(e) => {
-        if (e.target === e.currentTarget) closeApprovalDialog();
+        if (e.target === e.currentTarget && !busy) {
+          closeApprovalDialog();
+        }
       }}
     >
       <div
-        className="dialog dialog--approval"
+        ref={dialogRef}
+        tabIndex={-1}
+        className="dialog dialog--approval approval-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="approval-dialog-title"
         data-testid="approval-dialog"
       >
-        <div className="dialog-head">
-          <div>
-            <h2 id="approval-dialog-title">승인 검토 · Approval review</h2>
-            <p className="hint">
-              계획 해시, 계획이 묶인 문서의 해시, 모든 작업 내역을 확인한 뒤 승인하고 적용하십시오.
-            </p>
-          </div>
+        <div className="dialog-head approval-dialog-head">
+          <h2 id="approval-dialog-title">
+            {t("review_approve_dialog_title", language, [changes.length])}
+          </h2>
           <button
             type="button"
-            className="ghost"
-            data-testid="dialog-close"
+            className="review-btn review-btn--ghost"
+            data-testid="approval-close-btn"
+            disabled={busy}
             onClick={() => closeApprovalDialog()}
           >
-            닫기 · Close
+            {t("review_cancel", language)}
           </button>
         </div>
 
-        <div className="dialog-body">
-          {(reapprovalPrompt || isStale) && (
-            <div className="reapproval-banner" data-testid="reapproval-prompt">
-              <strong>재승인 필요 · Re-approval required</strong>
-              <p>
-                {reapprovalPrompt ??
-                  "문서 또는 후보본이 변경되어 기존 승인이 무효화되었습니다. 다시 계획을 확인하고 승인해 주세요."}
+        <div className="dialog-body approval-dialog-body">
+          {isStale ? (
+            <div
+              className="approval-banner approval-banner--warn"
+              data-testid="approval-stale-banner"
+            >
+              <p className="approval-banner-text">
+                {errorCodeMessage("plan_stale", language)}
               </p>
               <button
                 type="button"
-                onClick={() => void reproposeDraft()}
+                className="review-btn review-btn--secondary"
+                data-testid="approval-repropose-btn"
                 disabled={draft.ops.length === 0 || busy}
+                onClick={() => void reproposeDraft()}
               >
-                계획 다시 제안 · Re-propose
+                {language === "en" ? "Re-propose" : "다시 제안하기"}
               </button>
             </div>
-          )}
+          ) : null}
 
-          {approvalError && (
-            <div className="error-box">
-              <strong>{approvalError.code}</strong>
-              <span>{approvalError.message}</span>
+          {activeRecovery ? (
+            <div
+              className="approval-banner approval-banner--warn"
+              data-testid="approval-recovery-banner"
+            >
+              <p className="approval-banner-text">
+                {activeRecovery.outcome === "unknown"
+                  ? errorCodeMessage("apply_outcome_unknown", language)
+                  : activeRecovery.outcome === "applied"
+                    ? t("review_applied_ok", language)
+                    : t("review_empty_changes", language)}
+              </p>
+              {activeRecovery.outcome === "unknown" ? (
+                <button
+                  type="button"
+                  className="review-btn review-btn--primary"
+                  data-testid="approval-recovery-check-btn"
+                  onClick={() => void resolveRecovery()}
+                >
+                  {language === "en" ? "Check revision status" : "적용 여부 확인"}
+                </button>
+              ) : null}
             </div>
-          )}
+          ) : null}
 
-          <section className="dialog-bindings">
-            <div className="binding-row">
-              <span className="binding-k">계획 ID · planId</span>
-              <span className="binding-v mono" data-testid="dialog-plan-id">
-                {plan?.planId ?? "—"}
-              </span>
+          {approvalError || activeApplyError ? (
+            <div
+              className="approval-banner approval-banner--danger"
+              data-testid="approval-error-banner"
+            >
+              <p className="approval-banner-text">
+                {errorCodeMessage(
+                  (approvalError ?? activeApplyError)!.code,
+                  language,
+                )}
+              </p>
             </div>
-            <div className="binding-row">
-              <span className="binding-k">계획 해시 · planHash</span>
-              <span className="binding-v mono" data-testid="dialog-plan-hash">
-                {plan?.planHash ?? "—"}
-              </span>
-            </div>
-            <div className="binding-row">
-              <span className="binding-k">계획이 묶인 문서 해시 · boundSha256</span>
-              <span className="binding-v mono" data-testid="dialog-bound-sha">
-                {plan?.boundSha256 ?? draft.boundSha256 ?? "—"}
-              </span>
-            </div>
-            <div className="binding-row">
-              <span className="binding-k">승인 상태 · State</span>
-              <span className="binding-v">
-                {approval ? `${approval.state} (${approval.approvalId})` : "미요청 · not requested"}
-              </span>
-            </div>
-          </section>
+          ) : null}
 
-          <section className="dialog-ops">
-            <h3>작업 내역 · Queued operations ({draft.ops.length})</h3>
-            <ul className="dialog-op-list">
-              {draft.ops.map((op) => {
-                const inv = projectionInverseSupport(op);
-                return (
-                  <li key={op.opId} className="dialog-op-row">
-                    <div className="dialog-op-head">
-                      <span className="op-kind-tag">{OP_KIND_LABEL[op.kind] ?? op.kind}</span>
-                      <span className="mono">{formatProjectedAddress(op)}</span>
-                      {!inv.invertible && (
-                        <span className="pill-warn">되돌리기 불가</span>
-                      )}
-                    </div>
-                    <div className="diff">
-                      <div className="diff-before">
-                        <span className="diff-tag">전</span>
-                        <span className="diff-text">{op.before || "(비어 있음)"}</span>
-                      </div>
-                      <div className="diff-after">
-                        <span className="diff-tag">후</span>
-                        <span className="diff-text">{projectedAfterText(op)}</span>
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
+          <section className="approval-summary-box" data-testid="approval-breakdown">
+            <ul className="approval-kind-list">
+              {kindCounts.map(([label, count]) => (
+                <li key={label} className="approval-kind-item">
+                  <span>{label}</span>
+                  <strong>
+                    {language === "en" ? `${count}` : `${count}건`}
+                  </strong>
+                </li>
+              ))}
             </ul>
-          </section>
 
-          <section className="dialog-gates" data-testid="pipeline-gates-section">
-            <h3>보고서 파이프라인 게이트 · Pipeline gates</h3>
-            <div className="gate-lookup-row">
-              <input
-                type="text"
-                value={wsInput}
-                onChange={(e) => setWsInput(e.target.value)}
-                placeholder="/abs/path/to/report-workspace"
-                data-testid="pipeline-workspace-input"
-              />
-              <button
-                type="button"
-                className="ghost"
-                data-testid="pipeline-load-gates"
-                disabled={pipelineGatesPhase === "starting"}
-                onClick={() => void loadPipelineGates(wsInput)}
+            {guardChecking ? (
+              <p className="approval-guard-note">
+                {language === "en"
+                  ? "Checking protected facts..."
+                  : "사실 변경 여부를 점검하고 있습니다."}
+              </p>
+            ) : guardUnavailable ? (
+              <p
+                className="approval-guard-note approval-guard-note--warn"
+                data-testid="approval-guard-skipped"
               >
-                {pipelineGatesPhase === "starting" ? "조회 중…" : "게이트 조회 · Load"}
-              </button>
-            </div>
-            {pipelineGatesError && (
-              <div className="error-box">
-                <strong>{pipelineGatesError.code}</strong>
-                <span>{pipelineGatesError.message}</span>
+                {t("approve_dialog_guard_skipped", language)}
+              </p>
+            ) : changedFactCount > 0 ? (
+              <div
+                className="approval-changed-facts-box"
+                data-testid="approval-changed-facts"
+              >
+                <p className="approval-changed-facts-title">
+                  {t("review_changed_facts_header", language, [changedFactCount])}
+                </p>
+                {changedFactItems.length > 0 ? (
+                  <ul className="approval-changed-facts-list">
+                    {changedFactItems.map((item) => (
+                      <li key={item.opId}>
+                        <span>{`[${item.ordinal}] ${item.fieldLabel}`}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
-            )}
-            {pipelineGatesResult && (
-              <div className="gate-list">
-                <div className="hint mono">
-                  nextStage: {pipelineGatesResult.nextStage} · mode: {pipelineGatesResult.mode}
-                </div>
-                {pipelineGatesResult.gates.map((g) => (
-                  <div key={`${g.stage}-${g.gate}`} className="gate-row">
-                    <div>
-                      <strong className="mono">{g.gate}</strong>
-                      <span className="hint">
-                        {" "}
-                        · {g.stage} ({g.state})
-                      </span>
-                    </div>
-                    {g.resolvable && g.state !== "approved" && (
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void resolvePipelineGateAction(
-                              pipelineGatesResult.workspace,
-                              g.gate,
-                              "approved",
-                            )
-                          }
-                        >
-                          게이트 승인 · Approve
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() =>
-                            void resolvePipelineGateAction(
-                              pipelineGatesResult.workspace,
-                              g.gate,
-                              "rejected",
-                            )
-                          }
-                        >
-                          게이트 거절 · Reject
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            ) : null}
+
+            <p className="approval-effect-note" data-testid="approval-effect-note">
+              {t("approve_dialog_effect", language, [changes.length])}
+            </p>
           </section>
 
-          <label className="approver-row">
-            <span className="section-label">승인자 · Approver</span>
-            <input
-              type="text"
-              value={approver}
-              onChange={(e) => setApprover(e.target.value)}
-              data-testid="dialog-approver-input"
-            />
-          </label>
+          <section className="approval-hashes" aria-label={t("review_plan_hash_label", language)}>
+            <div className="approval-hash-row">
+              <span className="approval-hash-label">
+                {t("review_plan_hash_label", language)}
+              </span>
+              <code
+                className="approval-hash"
+                data-testid="approval-plan-hash"
+              >
+                {plan?.planHash ?? "—"}
+              </code>
+            </div>
+            <div className="approval-hash-row">
+              <span className="approval-hash-label">
+                {t("review_doc_hash_label", language)}
+              </span>
+              <code
+                className="approval-hash"
+                data-testid="approval-bound-hash"
+              >
+                {plan?.boundSha256 ?? draft.boundSha256 ?? "—"}
+              </code>
+            </div>
+          </section>
+
+          {requiresChangedFactAck ? (
+            <label className="approval-ack-row">
+              <input
+                type="checkbox"
+                data-testid="approval-changed-facts-ack"
+                checked={ackChecked}
+                disabled={busy}
+                onChange={(e) => setAckChecked(e.target.checked)}
+              />
+              <span>{t("review_confirm_changed_fact", language)}</span>
+            </label>
+          ) : null}
+
+          <DetailDisclosure testId="approval-details">
+            <div className="approval-tech-details">
+              <div>{`planId: ${plan?.planId ?? "none"}`}</div>
+              <div>
+                {`approval: ${
+                  approval ? `${approval.approvalId} (${approval.state})` : "none"
+                }`}
+              </div>
+              <div>{`guardState: ${guardSummary.state}${guardSummary.errorCode ? ` (${guardSummary.errorCode})` : ""}`}</div>
+              {approvalError ? (
+                <div>{`approvalError: ${approvalError.code} — ${approvalError.message}`}</div>
+              ) : null}
+              {activeApplyError ? (
+                <div>{`applyError: ${activeApplyError.code} — ${activeApplyError.message}`}</div>
+              ) : null}
+              {changes.map((ch) => (
+                <div key={ch.opId}>
+                  {`[${ch.ordinal}] ${ch.opId} (${opKindLabel(ch.op.kind, language)})`}
+                </div>
+              ))}
+
+              <div className="approval-gates-subpanel" data-testid="pipeline-gates-section">
+                <div className="approval-gates-row">
+                  <input
+                    type="text"
+                    value={wsInput}
+                    onChange={(e) => setWsInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (!e.nativeEvent.isComposing && e.keyCode !== 229) {
+                        e.stopPropagation();
+                      }
+                    }}
+                    placeholder="/abs/path/to/workspace"
+                    data-testid="pipeline-workspace-input"
+                  />
+                  <button
+                    type="button"
+                    className="review-btn review-btn--secondary"
+                    data-testid="pipeline-load-gates"
+                    disabled={pipelineGatesPhase === "starting"}
+                    onClick={() => void loadPipelineGates(wsInput)}
+                  >
+                    {pipelineGatesPhase === "starting"
+                      ? language === "en"
+                        ? "Checking..."
+                        : "조회 중..."
+                      : language === "en"
+                        ? "Load gates"
+                        : "게이트 조회"}
+                  </button>
+                </div>
+                {pipelineGatesError ? (
+                  <div>{`${pipelineGatesError.code}: ${pipelineGatesError.message}`}</div>
+                ) : null}
+                {pipelineGatesResult ? (
+                  <div>
+                    <div>{`nextStage: ${pipelineGatesResult.nextStage} · mode: ${pipelineGatesResult.mode}`}</div>
+                    {pipelineGatesResult.gates.map((g) => (
+                      <div key={`${g.stage}-${g.gate}`} className="approval-gate-item">
+                        <span>{`${g.gate} · ${g.stage} (${g.state})`}</span>
+                        {g.resolvable && g.state !== "approved" ? (
+                          <span className="approval-gate-btns">
+                            <button
+                              type="button"
+                              className="review-btn review-btn--secondary"
+                              onClick={() =>
+                                void resolvePipelineGateAction(
+                                  pipelineGatesResult.workspace,
+                                  g.gate,
+                                  "approved",
+                                )
+                              }
+                            >
+                              {t("review_approve", language)}
+                            </button>
+                            <button
+                              type="button"
+                              className="review-btn review-btn--secondary"
+                              onClick={() =>
+                                void resolvePipelineGateAction(
+                                  pipelineGatesResult.workspace,
+                                  g.gate,
+                                  "rejected",
+                                )
+                              }
+                            >
+                              {t("review_return", language)}
+                            </button>
+                          </span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </DetailDisclosure>
         </div>
 
-        <div className="dialog-foot">
+        <div className="dialog-foot approval-dialog-foot">
           <button
             type="button"
-            className="ghost"
-            data-testid="dialog-revalidate"
-            disabled={!plan || busy}
-            onClick={() => void revalidateActiveDraft()}
-          >
-            다시 검증 · Revalidate
-          </button>
-          <button
-            type="button"
-            className="ghost"
-            data-testid="dialog-discard"
+            className="review-btn review-btn--secondary"
+            data-testid="approval-cancel-btn"
             disabled={busy}
-            onClick={() => void clearQueue()}
+            onClick={() => closeApprovalDialog()}
           >
-            대기열 비우기 · Discard
+            {t("review_cancel", language)}
           </button>
-          {approval?.state === "pending" && (
-            <button
-              type="button"
-              className="ghost"
-              data-testid="dialog-reject"
-              disabled={busy}
-              onClick={() => void revalidateAndResolveApproval("rejected", approver)}
-            >
-              거절 · Reject
-            </button>
-          )}
           <button
             type="button"
-            className="vermilion"
-            data-testid="dialog-approve-apply"
-            disabled={!canApplyFromDialog}
-            onClick={() => void approveAndApplyFromDialog(approver.trim() || "host-operator")}
+            className="review-btn review-btn--primary"
+            data-testid="approval-confirm-btn"
+            disabled={!canConfirm}
+            onClick={() => void handleConfirm()}
           >
-            {applyPhase === "starting" ? "적용 중…" : "승인하고 적용 · Approve & apply"}
+            {busy
+              ? language === "en"
+                ? "Applying..."
+                : "적용 중..."
+              : t("review_approve", language)}
           </button>
         </div>
       </div>

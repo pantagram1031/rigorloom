@@ -3995,3 +3995,12 @@ export function togglePrintView(explicit?: boolean): void {
 export function setMobileReviewPane(pane: "sheet" | "list"): void {
   setState({ mobileReviewPane: pane });
 }
+
+export async function adoptExternalPlan(
+  sessionId: string,
+  planId: string,
+  approvalId?: string | null,
+): Promise<{ plan: OperationPlan; validation: PlanValidation } | null> {
+  return adoptAgentPlan(sessionId, planId, approvalId ?? null);
+}
+
