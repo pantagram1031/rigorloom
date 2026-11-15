@@ -7,7 +7,7 @@ names the paragraphs where a number, date, quotation, negation or direction
 word changed; restore those paragraphs instead of arguing with the verdict.
 
 Before product planning or orchestration, read
-`docs/plans/rigorloom-master-execution-plan.md`. Its current status is authoritative for
+`docs/archive/plans/rigorloom-master-execution-plan.md`. Its current status is authoritative for
 whether execution is active; the plan itself does not grant an assignment or resume a pause.
 
 Read `docs/pipeline-master-v0.6.md` before operating a workspace.

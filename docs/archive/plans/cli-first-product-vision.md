@@ -1,6 +1,6 @@
 # Rigorloom product execution plan
 
-Status: active plan, not a completion claim. Owner: Astra (product planning and acceptance). Execution lead: separate Codex Sol High task. Updated 2026-09-10.
+Status: active plan, not a completion claim. Owner: Copy reviewer (product planning and acceptance). Execution lead: separate Codex Sol High task. Updated 2026-09-10.
 
 ## 1. Product outcome
 
@@ -16,14 +16,14 @@ Planning worktree: `<worktree-root>/rigorloom-cli-product-plan`, branch `codex/c
 
 | Responsibility | Location / owner | Rule |
 |---|---|---|
-| Product plan and acceptance changes | this branch / Astra | Major tradeoffs and milestone acceptance; brief reviews |
+| Product plan and acceptance changes | this branch / copy reviewer | Major tradeoffs and milestone acceptance; brief reviews |
 | Routine orchestration | separate Sol task `01a08756-2564-7aa1-bcc9-d6e853f372b8` | Own queue, usage routing, review and local integration |
 | Current report integration candidate | `<worktree-root>/rigorloom-cli-report-essentials`, `codex/cli-report-essentials` | Clean `8e1a1ea` at planning baseline; recheck before each integration |
 | Gate integrity card | `<worktree-root>/rigorloom-cli-gate-integrity` | Existing Cursor owner; no concurrent edits to its two files |
 | Historical unified preview | `<worktree-root>/rigorloom-unified-working`, `ea02604` | Preserve; do not describe as finished CLI product |
 | Historical report checkpoints | `<private-root>/agenthwpx/reports/` | Originals immutable; sanitize new fixtures; no personal identifiers in repository |
 | Native report workspaces | `<user-profile>/RigorloomQA/` | NTFS for link-sensitive operations; one COM writer at a time |
-| Evidence / live coordination | `F:/RigorloomQA/cli-first-success-20260909/codex-review/` | Logs, routing ledger, Herdr board and handoffs; not product source |
+| Evidence / live coordination | `work/qa/cli-first-success-20260909/codex-review/` | Logs, routing ledger, terminal session board and handoffs; not product source |
 
 Each implementation card gets one owner and an isolated `codex/` worktree. Before integration: verify exact source SHA, clean target, ownership, patch scope and dependencies; review full diff and targeted tests; locally integrate only accepted commits. Preserve dirty or unrelated work. No remote push, release, main merge, credential change or paid overage is implied by this plan.
 
@@ -130,11 +130,11 @@ Native acceptance: open a copy, inspect repair prompts with an actual visible su
 
 Install acceptance: clean user profile/VM, documented licensed prerequisites, no local worktree aliases/private profile required, offline error behavior and uninstall preservation. Do not redistribute Hancom, proprietary fonts or private report inputs without rights. Portable mode must declare its feature/proof limits; whether Hancom-free perfect rendering is attainable remains a separate measured engineering question.
 
-## 10. Agent roster and Herdr coordination
+## 10. Agent roster and terminal session coordination
 
-Astra owns this plan and strategic reviews. Separate Codex Sol High owns routine orchestration, card assignment, integration and acceptance preparation. Claude Code is reserved for high-value difficult implementation/review and native workflow reasoning, in fresh bounded sessions after a durable handoff. Cursor Grok handles scoped implementation/recovery; other Cursor models are selected by verified capabilities. SuperGrok Build handles useful independent research/review/implementation once its tool loop is verified. Antigravity CLI adds Google-backed advisory research, catalog extraction and independent reviews through supported sandbox mode.
+A copy reviewer owns this plan and strategic reviews. Separate Codex Sol High owns routine orchestration, card assignment, integration and acceptance preparation. Claude Code is reserved for high-value difficult implementation/review and native workflow reasoning, in fresh bounded sessions after a durable handoff. Cursor Grok handles scoped implementation/recovery; other Cursor models are selected by verified capabilities. SuperGrok Build handles useful independent research/review/implementation once its tool loop is verified. Antigravity CLI adds Google-backed advisory research, catalog extraction and independent reviews through supported sandbox mode.
 
-Herdr named session `rigorloom` is the only authorized coordination surface. CLI workers should run in actual managed panes, with model/account label, assigned card and tool-access acknowledgement. Existing external jobs are mirrored until they finish safely. Sol and Astra app tasks use honestly labelled bridge panes unless an actual supported native session attachment is established. A dashboard/process existing is not proof of user-visible UI or working tool calls.
+A terminal session manager named session `rigorloom` is the only authorized coordination surface. CLI workers should run in actual managed panes, with model/account label, assigned card and tool-access acknowledgement. Existing external jobs are mirrored until they finish safely. Sol and copy reviewer app tasks use honestly labelled bridge panes unless an actual supported native session attachment is established. A dashboard/process existing is not proof of user-visible UI or working tool calls.
 
 Every worker receives bounded context, owned paths, input artifacts, expected deliverable, acceptance commands and stop condition. Read shared coordination files before writes. Separate native COM execution from parallel source work: one COM owner at a time. External text saying done is not accepted without artifacts/tests. Do not restart on a mere observation timeout. Investigate terminal/cancelled/progress-only results before reusing a failing route.
 
@@ -144,7 +144,7 @@ Use actual quota snapshots with service, redacted account label, window, directi
 
 Default reserve:25% Codex and Claude. Prefer verified available Cursor/Antigravity/SuperGrok for routine work; spend reserved Claude on difficult bounded tasks. User authorizes using an expiring SuperGrok reset, but first verify the specific service/credit/expiry/need; never substitute Codex reset credits. Ordinary authorized account switching to user's other Cursor Google account may be used when appropriate through supported login; do not extract cookies/tokens, bypass limits or enable paid overages.
 
-Sample locally every15minutes if safely supported; inspect provider quotas before expensive dispatch and after milestones. Let Sol perform a bounded operational check about every30–60minutes; notify Astra/user for meaningful milestones, blockers or anomalous burn. Avoid waking Astra on every log change. At >5 quota percentage points/15minutes or >2x sustainable pace until reset, checkpoint the suspected worker and inspect model, context growth, retries, subagent multiplication, cache counts and overlapping work. These thresholds are planning defaults, not provider rules.
+Sample locally every15minutes if safely supported; inspect provider quotas before expensive dispatch and after milestones. Let Sol perform a bounded operational check about every30–60minutes; notify a copy reviewer/user for meaningful milestones, blockers or anomalous burn. Avoid waking a copy reviewer on every log change. At >5 quota percentage points/15minutes or >2x sustainable pace until reset, checkpoint the suspected worker and inspect model, context growth, retries, subagent multiplication, cache counts and overlapping work. These thresholds are planning defaults, not provider rules.
 
 Prefer compact handoffs and fresh purpose-specific sessions. Do not ask every model to review everything. Cheap deterministic local checks precede model reviews. A few high-quality independent reviews are more valuable than unbounded parallel agents. Runtime control boundaries and auth/tool availability are verified per provider before assigning production work.
 
@@ -158,10 +158,10 @@ Immediate next review: accept or reject the gate-integrity patch; assign scoped 
 
 - Existing `docs/architecture.md`, generated `docs/capability-matrix.md`, workspace/branch inventory and current source/hand-offs.
 - Local `cursor-windpath-benchmark.txt`, `cursor-grok-controller-review.txt`, `cursor-gemini-cli-audit.txt`: advisory audits, not independent release certification.
-- Native/first and second report evidence under `F:/RigorloomQA/` and `<user-profile>/RigorloomQA/`.
+- Native/first and second report evidence under `work/qa/` and `<user-profile>/RigorloomQA/`.
 - Claude context/cost guidance: https://code.claude.com/docs/en/costs and https://code.claude.com/docs/en/sub-agents . Use bounded contexts and account for subagent overhead.
 - Cursor model/agent references: https://cursor.com/docs/agent/overview and https://prod.cursor.com/help/models-and-usage/available-models . Runtime account model listings remain authoritative for availability.
-- Herdr automation: https://herdr.dev/docs/agent-automation/ . Native Windows Herdr is already installed; tmux is optional and not a prerequisite.
+- Terminal session automation: native Windows terminal session manager is already installed; tmux is optional and not a prerequisite.
 
 ## Acceptance clarifications after independent Antigravity review
 

@@ -264,7 +264,7 @@ def test_gaps_are_explicit_and_distinguish_source_vs_plan(catalog):
 
     for pg in plan_gaps:
         assert pg["planning_source"] is not None
-        assert pg["planning_source"]["path"] == "docs/plans/rigorloom-master-execution-plan.md"
+        assert pg["planning_source"]["path"] == "docs/archive/plans/rigorloom-master-execution-plan.md"
         assert pg["source_reference"] is None
         assert pg["status"] == "promised_absent"
         assert len(pg["minimum_closure_evidence"]) >= 1

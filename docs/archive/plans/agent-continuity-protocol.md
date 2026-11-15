@@ -1,11 +1,11 @@
 # Agent authority, continuity and quota handover protocol
 
-Owner: Astra. Execution owner: separate Sol High task. User authorized autonomous delegation, bounded agent creation, quota-aware replacement and return after reset. This is a product-development operations protocol, not a permission to widen provider/account access or edit unrelated work.
+Owner: Copy reviewer. Execution owner: separate Sol High task. User authorized autonomous delegation, bounded agent creation, quota-aware replacement and return after reset. This is a product-development operations protocol, not a permission to widen provider/account access or edit unrelated work.
 
 ## Authority and communication
 
 1. User decides product priorities, protected boundaries, purchases/publishing and major changes.
-2. Astra owns product planning and acceptance disputes. It is normally reserved, not a routine polling target.
+2. A copy reviewer owns product planning and acceptance disputes. It is normally reserved, not a routine polling target.
 3. Sol is operational coordinator: task queue, leases, provider routing, worker creation, verification, local integration and usage checks. One active coordinator lease exists.
 4. A designated deputy can acquire an expired/relinquished coordinator lease after verifying the prior process/task is terminal or a signed handoff explicitly releases it. Quota unavailability alone is not proof that the prior worker stopped.
 5. Implementers own named files/worktrees and tasks; reviewers remain read-only. Workers may request dependencies, ask peers factual questions, and propose a subtask. Coordinator authorizes bounded spawning from the allowed provider/model registry and available budget. No recursive unlimited spawning or self-granted authority.
@@ -14,9 +14,9 @@ All peers use the task board/inbox/outbox in the project coordination directory.
 
 ## Required durable state
 
-Keep source/specs in Git and operational state outside tracked source. The existing evidence coordination directory is the initial state root; register it explicitly in every managed Herdr worker.
+Keep source/specs in Git and operational state outside tracked source. The existing evidence coordination directory is the initial state root; register it explicitly in every managed terminal session worker.
 
-- workers.json: worker_id, provider/model/account alias (no auth data), Herdr IDs or honest app bridge ID, capabilities, mode, heartbeat, availability, quota_snapshot_id.
+- workers.json: worker_id, provider/model/account alias (no auth data), terminal session IDs or honest app bridge ID, capabilities, mode, heartbeat, availability, quota_snapshot_id.
 - tasks.json: card ID, dependencies, allowed paths, input/base hashes, acceptance commands, assignee, status, revision, last receipt and handoff pointer.
 - leases.json: unique task/COM/coordinator lease, holder, epoch/fencing token, revision and expiry. Use atomic compare-and-swap under a local lock, not blind JSON overwrites.
 - events.jsonl: append-only task, lease, quota and routing decisions with redacted reasons.
@@ -43,7 +43,7 @@ Reserve is not silence. Questions have a bounded escalation budget; ask the oper
 2. Send checkpoint request. Let an in-flight irreversible/native operation reach a known boundary. If observation times out, inspect the same handle; do not start a duplicate.
 3. Record dirty paths, exact base/HEAD, operation receipt, current pipeline state, pending tests and next commands. Preserve original report files.
 4. Explicitly relinquish lease or establish terminal process evidence. Unknown completion means recovery-required, not replay.
-5. Coordinator selects a capability-equivalent eligible provider, preferring available included capacity; creates a bounded fresh session under Herdr if required; passes only relevant context.
+5. Coordinator selects a capability-equivalent eligible provider, preferring available included capacity; creates a bounded fresh session under a terminal session manager if required; passes only relevant context.
 6. Replacement validates workspace/receipt hashes and ownership, then acquires a new fenced lease. Mismatches trigger reconciliation, never overwrite.
 7. Independent review checks the resulting patch/artifact. Coordinator integrates accepted results and updates canonical state once.
 8. After reset, require a fresh successful availability/quota check. Mark original agent available; let the replacement finish its current card. Return future preferred work or perform the same explicit checkpoint protocol. Do not preempt active edits just to restore a preferred model.
@@ -54,7 +54,7 @@ No background watcher may kill another user session, switch arbitrary accounts, 
 
 Start at at most three active model workers plus the coordinator; at most one Claude heavy worker and one native COM worker. Increase only for independent cards with measured benefit and available quotas. Avoid multiple heavyweight reviewers of the same patch by default.
 
-Cheap local quota sampling can run every15minutes. Coordinator checks before expensive dispatch, on quota errors and after a milestone. Reset times schedule a read-only recheck, not an automatic task replay. Astra receives important decisions and milestone summaries; routine telemetry stays on the board.
+Cheap local quota sampling can run every15minutes. Coordinator checks before expensive dispatch, on quota errors and after a milestone. Reset times schedule a read-only recheck, not an automatic task replay. A copy reviewer receives important decisions and milestone summaries; routine telemetry stays on the board.
 
 Investigate >5 quota percentage points consumed in15minutes or >2x sustainable pace to reset. Check which account/window changed, parallel calls, context growth, retries, tool loops, output volume and cached-token accounting. API-equivalent cost is not subscription remaining quota. Stop wasteful loops safely and route to eligible alternatives. Unknown quota means a bounded probe/task, never assume unlimited.
 
@@ -75,4 +75,4 @@ Use fake workers/clocks/quota snapshots; never deliberately exhaust real subscri
 - A peer asks for outside-scope writes/credential access or unrestricted spawning; coordinator refuses and records it.
 - Process restart recovers tasks/events without duplicate integration.
 
-Implement a minimal tested state/lease layer first, then connect real Herdr adapters with read-only probes and a disposable task. Dashboard displays real mode, task, last acknowledgement, last quota capture, owner and pending question. An attached pane or printed label alone is not evidence of working tools.
+Implement a minimal tested state/lease layer first, then connect real terminal session manager adapters with read-only probes and a disposable task. Dashboard displays real mode, task, last acknowledgement, last quota capture, owner and pending question. An attached pane or printed label alone is not evidence of working tools.

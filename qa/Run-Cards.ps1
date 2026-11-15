@@ -5,7 +5,7 @@
 .DESCRIPTION
     Lightweight, read-only preflight and card execution script designed for unattended
     test runners and local Windows environments.
-    Conforms to the Astra Pro FIRST_72H QA contract:
+    Conforms to the FIRST_72H QA contract:
     - Records environment preflight JSON (OS, disk free, tools present).
     - Runs card test paths (c1 export safety, c2 revision coherence, c3 run-scoped edit).
     - Skips interactive Windows GUI/IME/Installer tests with deterministic NOT_RUN status.

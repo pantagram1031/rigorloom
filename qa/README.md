@@ -40,7 +40,7 @@ index: [`cards/README.md`](cards/README.md).
 
 # QA Unattended Evidence Collection Contract (`job.json`)
 
-This directory implements the thin unattended QA contract for **Astra Pro FIRST_72H** evidence collection across completion cards.
+This directory implements the thin unattended QA contract for **FIRST_72H** evidence collection across completion cards.
 
 The harness executes unattended verification runs against a specific commit SHA without running an administrative daemon, without inventing mock web servers, and without falsely claiming desktop/GUI verification.
 

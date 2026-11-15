@@ -63,8 +63,8 @@ markers = [
 ]
 
 # --- wheel surface ------------------------------------------------------------
-# An ALLOWLIST, not a sweep. This repository is a flat layout with eleven
-# importable top-level directories (qa, evals, skill, engine, archive,
+# An ALLOWLIST, not a sweep. This repository is a flat layout with ten
+# importable top-level directories (qa, evals, skill, engine,
 # desktop, modules, runtime, adapters, pipeline, agenthost). Automatic discovery
 # refuses to guess among them -- "Multiple top-level packages discovered in a
 # flat-layout" -- and any fix that merely silences that refusal would ship

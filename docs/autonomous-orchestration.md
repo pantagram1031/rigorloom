@@ -151,7 +151,7 @@ Concretely:
 > **Enforcement note.** These checks are currently orchestrator-run, so they remain
 > skippable by an orchestrator that routes around them. The fail-closed design (an
 > acceptance-side release verifier, a single build entrypoint, a claim-token
-> lifecycle, hash-bound manifests) is specced in `plans/v0.7-hardening.md`. The
+> lifecycle, hash-bound manifests) is specced in `archive/plans/v0.7-hardening.md`. The
 > content verifier and the backend precheck are its first delivered checkers.
 
 ### Subagent rules

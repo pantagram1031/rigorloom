@@ -1,7 +1,8 @@
 # Archive policy
 
-`archive/` at repository level contains superseded, sanitized public contracts.
-It is never loaded by the current kernel.
+`docs/archive/` at repository level contains historical plans and superseded,
+sanitized public contracts (under `docs/archive/legacy/`). It is never loaded
+by the current kernel.
 
 Each report workspace also has an `archive/` directory. Automatic organization
 moves only:

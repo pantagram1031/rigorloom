@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rigorloom.dev/schemas/qa/job.schema.json",
   "title": "QAJobContract",
-  "description": "Unattended QA job contract for Astra Pro FIRST_72H evidence collection",
+  "description": "Unattended QA job contract for FIRST_72H evidence collection",
   "type": "object",
   "required": [
     "candidate_id",

@@ -2,8 +2,8 @@
 
 Status: **ACTIVE BY USER — coordinator resume and live-state reconciliation authorized**
 Updated: 2026-09-13 KST
-Planning owner: Astra
-Routine execution coordinator: existing Herdr agent `rigorloom-sol-coordinator` in named
+Planning owner: Copy reviewer
+Routine execution coordinator: existing terminal session agent `rigorloom-sol-coordinator` in named
 session `rigorloom`; do not create a replacement session while it remains usable.
 
 This is the top-level plan for the whole Rigorloom product, not only its CLI.
@@ -16,7 +16,7 @@ The user explicitly resumed coordinator work on 2026-09-13. Resume begins with t
 read-only discrepancy reconciliation in section 8; it does not automatically reactivate
 stale cards or grant file, COM, integration, push, release, or publication authority.
 Role-specific session goals and prompt contracts are in
-`docs/plans/rigorloom-herdr-session-prompts.md`.
+`docs/archive/plans/rigorloom-herdr-session-prompts.md`.
 
 ## 1. Required reading order
 
@@ -24,13 +24,13 @@ Before planning or changing Rigorloom, read:
 
 1. This file.
 2. The nearest `AGENTS.md` for the worktree being used.
-3. `docs/plans/cli-first-product-vision.md` for detailed product requirements.
-4. `docs/plans/v0.16-unified-core-and-modules.md` and
-   `docs/plans/v0.16-prep-variant-audit.md` for convergence and module architecture.
-5. `docs/plans/agent-continuity-protocol.md` for ownership, leases, quota handoff, and
+3. `docs/archive/plans/cli-first-product-vision.md` for detailed product requirements.
+4. `docs/archive/plans/v0.16-unified-core-and-modules.md` and
+   `docs/archive/plans/v0.16-prep-variant-audit.md` for convergence and module architecture.
+5. `docs/archive/plans/agent-continuity-protocol.md` for ownership, leases, quota handoff, and
    non-duplication rules.
 6. The latest live status under
-   `F:/RigorloomQA/cli-first-success-20260909/codex-review/`, especially
+   `work/qa/cli-first-success-20260909/codex-review/`, especially
    `ACTING-LEAD-STATUS.md`, review receipts, and coordination outboxes.
 
 Historical plans remain useful evidence, but this file is the routing overview. When a live
@@ -296,7 +296,7 @@ consider this order. This is a queue proposal, not an active assignment:
 While this plan is paused, agents may read it but must not infer an assignment from it.
 After explicit resume:
 
-- Reuse the existing named Herdr `rigorloom` sessions when suitable. Do not create several
+- Reuse the existing named terminal `rigorloom` sessions when suitable. Do not create several
   provider sessions merely to display parallelism.
 - Read the current topic head, dirty worktrees, receipts, and ownership before prompting a
   worker. A pane label or old status is not proof that a worker is available.
@@ -309,7 +309,7 @@ After explicit resume:
   unrun checks, uncertainties, and next safe action. External prose saying “done” is not
   acceptance.
 - The coordinator verifies scope and tests, obtains independent review proportional to risk,
-  and integrates once. Strategic acceptance disputes return to Astra; routine telemetry does
+  and integrates once. Strategic acceptance disputes return to a copy reviewer; routine telemetry does
   not.
 - Use fresh provider quota snapshots with account alias, window, used/remaining direction,
   capture time, and reset time. Preserve reserves and avoid busy polling or repeated long
@@ -333,13 +333,13 @@ Agents must state the strongest category actually proven:
 
 ## 11. Canonical locations
 
-- Master plan: `<worktree-root>/rigorloom-cli-product-plan/docs/plans/rigorloom-master-execution-plan.md`
-- Detailed product vision: `.../docs/plans/cli-first-product-vision.md`
-- Architecture convergence: `.../docs/plans/v0.16-unified-core-and-modules.md`
-- Continuity protocol: `.../docs/plans/agent-continuity-protocol.md`
+- Master plan: `<worktree-root>/rigorloom-cli-product-plan/docs/archive/plans/rigorloom-master-execution-plan.md`
+- Detailed product vision: `.../docs/archive/plans/cli-first-product-vision.md`
+- Architecture convergence: `.../docs/archive/plans/v0.16-unified-core-and-modules.md`
+- Continuity protocol: `.../docs/archive/plans/agent-continuity-protocol.md`
 - Current integrated topic: `<worktree-root>/rigorloom-cli-report-essentials`
-- Evidence and coordination: `F:/RigorloomQA/cli-first-success-20260909/codex-review/`
-- Second-case native evidence: `F:/RigorloomQA/cli-second-case-20260910/`
+- Evidence and coordination: `work/qa/cli-first-success-20260909/codex-review/`
+- Second-case native evidence: `work/qa/cli-second-case-20260910/`
 - Private/native working copies: `<user-profile>/RigorloomQA/`
 
 Generated reports, private forms, credentials, personal profiles, and native workspaces do

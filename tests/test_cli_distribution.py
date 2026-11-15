@@ -11,8 +11,8 @@ the boundary between them:
     console command, ``rigorloom``.
 
 The wheel surface is an ALLOWLIST, not a sweep. A flat-layout repository with
-twelve importable top-level directories will, left to setuptools' automatic
-discovery, either refuse to build or ship all twelve; both are wrong, and
+ten importable top-level directories will, left to setuptools' automatic
+discovery, either refuse to build or ship all ten; both are wrong, and
 ``test_wheel_inventory_is_narrow`` is what keeps the third answer honest.
 
 ``rigorloom`` is not a second CLI. The console entry point resolves to the same

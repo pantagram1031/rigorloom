@@ -1,4 +1,4 @@
-# Rigorloom Herdr session goals and prompt contract
+# Rigorloom terminal session goals and prompt contract
 
 Status: **ACTIVE PROMPT CONTRACT — 2026-09-13 KST**
 
@@ -9,7 +9,7 @@ matches an existing session.
 
 ## Shared preamble
 
-Read `docs/plans/rigorloom-master-execution-plan.md`, the nearest `AGENTS.md`, current
+Read `docs/archive/plans/rigorloom-master-execution-plan.md`, the nearest `AGENTS.md`, current
 `ACTING-LEAD-STATUS.md`, and your own latest inbox/outbox before acting. Treat old cards and
 status prose as evidence, not current authority. First report your model, cwd, branch/HEAD,
 dirty paths, current assignment, owned paths, active leases, and blockers. Do not edit,
@@ -34,10 +34,10 @@ must not be left for the user.
 First prompt addendum: Perform only the read-only discrepancy reconciliation: canonical
 plan status; exact topic HEAD and cleanliness; every existing session's current model/cwd/
 state; open cards, owners, and leases; stale instructions; and remaining M0-M6 evidence
-gaps. Publish one coordinator snapshot before dispatching any work. Ask Astra only about a
+gaps. Publish one coordinator snapshot before dispatching any work. Ask a copy reviewer only about a
 real strategic conflict. Do not resume stale cards by inference.
 
-### Astra strategy owner
+### Copy reviewer strategy owner
 
 Goal: Keep product architecture, milestone order, evidence boundaries, and unfreeze or
 release decisions coherent while leaving routine dispatch and implementation to Sol.
@@ -88,7 +88,7 @@ First prompt addendum: A review card remains read-only by contract even when the
 session has unattended permissions. A write card still requires exact ownership and one
 receipt path. Do not infer broader scope from tool access.
 
-Windows Herdr interactive exception: AGY 1.2.2 soft-denies even a harmless `run_command`
+Windows terminal session manager interactive exception: AGY 1.2.2 soft-denies even a harmless `run_command`
 as `escalate_admin` when launched with `--sandbox`. The verified interactive policy in
 `~/.gemini/antigravity-cli/settings.json` therefore uses the current
 `toolPermission=always-proceed` and `artifactReviewPolicy=always-proceed` keys, retains
@@ -99,17 +99,17 @@ This exception is for existing interactive AGY sessions; the maintained external
 runner stays sandboxed and must not run commands that need escalation.
 
 When Sol must relaunch the existing AGY pane to apply this unattended policy, it reuses the
-same Herdr session and AGY conversation with `--continue`, selects
+same terminal session and AGY conversation with `--continue`, selects
 `gemini-3.8-flash-high`, keeps `--mode accept-edits`, and may add
 `--dangerously-skip-permissions` because the user explicitly authorized unattended work.
 The flag removes prompts; it does not expand the card, path ownership, or prohibited-action
-boundaries below. Do not create a replacement Herdr session merely to apply it.
+boundaries below. Do not create a replacement terminal session merely to apply it.
 
 ## Autonomous permissions and usage management
 
 The user explicitly authorized unattended local execution for this Rigorloom goal because
 they cannot supervise approval prompts. Existing sessions must therefore auto-allow bounded
-workspace reads/writes, test and build commands, local dependency inspection, Herdr status
+workspace reads/writes, test and build commands, local dependency inspection, terminal session status
 and dispatch, and receipt creation. Codex sessions use the `rigorloom-autonomous` profile
 (`approval_policy=never`, `sandbox_mode=danger-full-access`); Cursor uses Run Everything;
 interactive AGY uses `accept-edits` plus `command(*)`. Scope rules and ownership remain
@@ -122,7 +122,7 @@ on-demand remains OFF. Treat the current Cursor included-usage period end, 2026-
 as the stop boundary for deliberate quota consumption unless a later live account check
 changes it.
 
-Sol maintains `F:\RigorloomQA\cli-first-success-20260909\codex-review\usage-ledger.tsv`
+Sol maintains `work/qa/cli-first-success-20260909/codex-review/usage-ledger.tsv`
 with one row per card and `provider-usage-snapshots.tsv` with one row per live quota capture.
 The card ledger records provider, exact model ID, task class, start and end time,
 tool-reported token/context usage when available, receipt path, verdict, and whether the run
@@ -199,7 +199,7 @@ Cursor or AGY included capacity for independent cards before spending the Sol re
 
 Goal: Perform high-volume deterministic inventories, test-log classification, hashes, and
 receipt checks under a bounded card, leaving architecture and acceptance decisions to Sol
-and Astra.
+and a copy reviewer.
 
 First prompt addendum: Accept only mechanical tasks with explicit inputs, outputs, and
 pass/fail rules. Do not edit source, infer product decisions, or claim native/visual/release
@@ -208,7 +208,7 @@ acceptance from mechanical evidence.
 ## Dispatch order
 
 1. Sol performs and publishes the read-only discrepancy snapshot.
-2. Astra resolves only material strategy or authorization conflicts found in that snapshot.
+2. A copy reviewer resolves only material strategy or authorization conflicts found in that snapshot.
 3. Sol retires or reissues stale cards and records one owner per active task and lease.
 4. Sol dispatches independent read-only verification in parallel where it cannot race a
    writer; writing cards remain path-isolated.

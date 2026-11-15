@@ -8,7 +8,7 @@ operator after reviewing this record.
 
 ## What this release is
 
-The complete v0.16 program (`docs/plans/v0.16-unified-core-and-modules.md`):
+The complete v0.16 program (`docs/archive/plans/v0.16-unified-core-and-modules.md`):
 one general HWP/HWPX core (engine, form recognition, render proof ladder,
 privacy scan, module registry, base studio) plus capability shipped as
 distribution modules behind one contract. Per-PR breakdown: CHANGELOG.md
