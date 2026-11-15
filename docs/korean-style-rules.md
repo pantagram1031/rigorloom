@@ -92,3 +92,78 @@ was home), so it stays quiet rather than guess.
 - Longer-range checks (an ending paragraph that repeats the body, the share of
   sentences with concrete numbers or sources) need the document's structure
   and belong in the report module, not this command.
+
+## Document-type rule packs
+
+Pass `--pack <name>` to apply a document-type pack under `runtime/style_packs/` on
+top of `ko-style/1`. Unless `--doc-type` is given explicitly, `--pack` selects the
+`ko-style/1` rules for the pack's `baseDocType` (`gongmun` for `hr`, and the pack's
+own name for `gongmun`, `minwon`, and `grant`), so the combined ruleset header reads
+`ko-style/1+<pack>/1`. Without `--pack`, no pack rule runs.
+
+A `notice` is a question for a person to review and decide, never a verdict on who
+wrote the text or on legal validity; only `error` rules fail the exit code when a
+mandatory written norm cannot match correct text. These packs are narrow,
+pattern-based checks and make no claim about how much of any document type they
+cover. Rules marked `house` reflect internal drafting conventions rather than an
+external official guide, as noted in the `minwon`, `hr`, and `grant` packs.
+
+### gongmun
+
+`version`: `gongmun/1` | `baseDocType`: `gongmun`
+
+| Rule ID | Severity | Flags | Positive | Negative | Source |
+| --- | --- | --- | --- | --- | --- |
+| `gongmun.date-zero-pad` | `notice` | 월·일 한 자릿수 앞 불필요한 `0` 표기 | `제출 마감일은 2026. 03. 05.까지입니다.` | `제출 마감일은 2026. 3. 5.까지입니다.` | 행정업무운영 편람 (2025), 제2장 제1절 4. 가. 2) 날짜 (영 제7조제5항) 및 부록, pp. 49, 308 |
+| `gongmun.time-12h` | `notice` | 오전·오후 12시간제 시각 표기 | `사전 점검 회의는 2026. 4. 8. 오후 3시 20분에 시작합니다.` | `사전 점검 회의는 2026. 4. 8. 15:20에 시작합니다.` | 행정업무운영 편람 (2025), 제2장 제1절 4. 가. 3) 시간 (영 제7조제5항) 및 부록, pp. 49, 308 |
+| `gongmun.currency-no-korean` | `notice` | `금 ○○○원` 뒤 한글 금액 괄호 병기 누락 | `집행 금액은 금240,000원으로 확정하였습니다.` | `집행 금액은 금240,000원(금이십사만원)으로 확정하였습니다.` | 행정업무운영 편람 (2025), 제2장 제1절 4. 가. 4) 금액 (규칙 제2조제2항) 및 부록, pp. 49, 308 |
+| `gongmun.amount-unit-awkward` | `notice` | 다섯 자릿수 이상 금액의 천 원·백만 원 단위 표기 | `내년도 사업 소요 예산은 1,200천 원으로 산정하였습니다.` | `내년도 사업 소요 예산은 120만 원으로 산정하였습니다.` | 행정업무운영 편람 (2025), 제2장 제1절 3. 다. 공공언어 바로 쓰기 1. 가. 3), p. 37 |
+| `gongmun.authoritative-ending` | `notice` | `~바람`, `~할 것` 명사형 명령 종결 | `변경된 계획서는 2026. 4. 10.까지 기한 내 제출할 것.` | `변경된 계획서는 2026. 4. 10.까지 제출해 주시기 바랍니다.` | 행정업무운영 편람 (2025), 제2장 제1절 3. 다. <공공언어 바로 쓰기 참고사항> 3. 가. 1) 및 6. 나. 2) 다) (3), pp. 47-48, 68 |
+| `gongmun.attachment-label` | `notice` | 비표준 첨부물 표제어 `유첨`, `별첨` | `유첨  보안 점검 자체 체크리스트 1부.  끝.` | `붙임  보안 점검 자체 체크리스트 1부.  끝.` | 행정업무운영 편람 (2025), 제2장 제1절 5. 다. 3) 첨부물의 표시 (규칙 제4조제4항) 및 부록, pp. 59-60, 310 |
+| `gongmun.archaic-admin-words` | `notice` | `금번`, `금회`, `익일`, `상기의`, `적의 조치` 등 낡은 한자 행정어 | `금번 회의 안건은 익일까지 각 부서에 공유해 주시기 바랍니다.` | `이번 회의 안건은 다음 날까지 각 부서에 공유해 주시기 바랍니다.` | 행정업무운영 편람 (2025), 제2장 제1절 3. 다. 공공언어 바로 쓰기 4. 한자어보다 쉽게 다듬은 말, pp. 39-41 |
+| `gongmun.yeondo-spelling` | `notice` | 복합어 내 두음 법칙 위반 `년도` 표기 (`전년도` 제외) | `차기 회계년도 예산 집행 지침을 별도로 통보합니다.` | `차기 회계연도 예산 집행 지침을 별도로 통보합니다.` | 알기 쉬운 법령 정비기준 (제10판 수정증보판 (2025)), 제2장 제2절 7. 어문 규정 나., p. 111 |
+| `gongmun.saishiot-orthography` | `error` | `갯수`, `최소값`, `하교길`, `수도물`, `칫과` 등 사이시옷 맞춤법 오류 | `제출 서류 갯수와 항목별 최소값을 표에 적어 주시기 바랍니다.` | `제출 서류 개수와 항목별 최솟값을 표에 적어 주시기 바랍니다.` | 행정업무운영 편람 (2025), 제2장 제1절 3. 문서 작성 및 처리의 일반원칙 (영 제7조제1항) 및 2. 가. 어문 규범, pp. 33, 42 |
+| `gongmun.submit-receive-confusion` | `notice` | 제출 주체가 서류를 `접수`한다고 적은 호응 오류 | `신청자가 구비 서류를 기한 내에 온라인으로 접수하여야 합니다.` | `신청자가 구비 서류를 기한 내에 온라인으로 제출하여야 합니다.` | 행정업무운영 편람 (2025), 제2장 제1절 3. 다. <공공언어 바로 쓰기 참고사항> 2. 다. 3), p. 46 |
+| `gongmun.e-uigeo` | `notice` | 번역투·한자어 결합 표현 `~에 의거하여` | `관련 규정에 의거하여 점검 결과를 회신해 주시기 바랍니다.` | `관련 규정에 따라 점검 결과를 회신해 주시기 바랍니다.` | 한눈에 알아보는 공공언어 바로 쓰기 (2022 개정판), 둘째 마당 4. 안내문, pp. 99, 117 |
+
+### minwon
+
+`version`: `minwon/1` | `baseDocType`: `minwon` (includes `house` / 자체 rules)
+
+| Rule ID | Severity | Flags | Positive | Negative | Source |
+| --- | --- | --- | --- | --- | --- |
+| `minwon.recipient-address-missing` | `notice` | 민원 회신문 수신란에 우편번호·도로명주소 누락 | `수신 ○○○ 귀하` | `수신 ○○○ (우00000 가상의시 가상의로 12)` | 행정업무운영 편람 (2025), 제2장 제1절 5. 나. 두문 (규칙 제4조제2항) — 2) 라) 민원회신문서, pp. 57-58 |
+| `minwon.authoritative-tone` | `notice` | 민원인 대상 `명심하기`, `요망됨` 등 권위적 어휘 | `기한 이후에는 추가 서류 제출이 불가함을 명심하여 주시기 바랍니다.` | `기한 이후에는 추가 서류를 제출하시기 어려우니 일정에 유의해 주시기 바랍니다.` | 한눈에 알아보는 공공언어 바로 쓰기 (2022 개정판), 둘째 마당 1. 기안문, pp. 23, 39 |
+| `minwon.stiff-legal-jargon` | `notice` | `사료됨`, `득하여`, `필히`, `조속히` 등 어려운 한자어 | `신청 요건을 충족하지 못하여 지원 대상에 해당하지 않는 것으로 사료됩니다.` | `신청 요건을 충족하지 못하여 지원 대상에 해당하지 않는다고 생각합니다.` | 한눈에 알아보는 공공언어 바로 쓰기 (2022 개정판), 둘째 마당 1. 기안문 및 4. 안내문, pp. 21, 37, 47, 107 |
+| `minwon.internal-rule-refusal` | `notice` | 법령 조항 없이 `내부 지침상`, `관례상`으로만 거절 | `요청하신 감면 혜택은 내부 지침상 적용하기 어렵습니다.` | `요청하신 감면 혜택은 관련 조례 제5조제1항에 따라 적용 대상에 해당하지 않습니다.` | `house` |
+| `minwon.vague-followup` | `notice` | 처리 일정 없이 `추후 별도 안내`로만 회신 | `제출하신 현장 확인 요청은 담당 부서 검토 후 추후 별도 안내드리겠습니다.` | `제출하신 현장 확인 요청은 담당 부서 확인을 거쳐 2026. 5. 15.까지 결과를 안내드리겠습니다.` | `house` |
+| `minwon.blunt-closure` | `notice` | 설명 없이 `수용 불가`, `민원 종결` 등 단정적 종결 | `제출하신 이의 신청 건은 관련 요건 미충족으로 수용 불가합니다.` | `제출하신 이의 신청 건은 필수 증빙 서류가 빠진 상태여서 현재 기준으로는 인용하기 어렵습니다.` | `house` |
+
+### hr
+
+`version`: `hr/1` | `baseDocType`: `gongmun` (includes `house` / 자체 rules)
+
+| Rule ID | Severity | Flags | Positive | Negative | Source |
+| --- | --- | --- | --- | --- | --- |
+| `hr.danghae-jargon` | `notice` | 인사 문서의 관행적 한자어 `당해` | `당해 기관 인사위원회의 심의를 거쳐 전보를 발령한다.` | `해당 기관 인사위원회의 심의를 거쳐 전보를 발령한다.` | 행정업무운영 편람 (2025), 제2장 제1절 3.다.2) 국민이 이해하기 쉬운 용어 사용 (영 제7조제2항) · 4. 한자어보다 쉽게 다듬은 말, pp. 33, 40 |
+| `hr.sidal-authoritative` | `notice` | 하달식 권위적 용어 `시달` | `인사 발령 통지서를 각 소속 부서에 즉시 시달하였다.` | `인사 발령 통지서를 각 소속 부서에 즉시 통보하였다.` | 알기 쉬운 법령 정비기준 (제10판 수정증보판 (2025)), 제2장 제2절 5.나. 권위적 용어의 정비 ('시달'), p. 70 |
+| `hr.jinggu-authoritative` | `notice` | 강제 어감의 권위적 용어 `징구` | `신규 임용 대상자로부터 경력 증명서와 서약서를 징구한다.` | `신규 임용 대상자로부터 경력 증명서와 서약서를 제출받는다.` | 알기 쉬운 법령 정비기준 (제10판 수정증보판 (2025)), 제2장 제2절 5.나. 권위적 용어의 정비 ('징구하다'), p. 71 |
+| `hr.ikwol-iknyeon` | `notice` | 시점 한자어 `익월`, `익년` | `보직 변경에 따른 수당 조정분은 익월 급여 지급일부터 반영한다.` | `보직 변경에 따른 수당 조정분은 다음 달 급여 지급일부터 반영한다.` | 행정업무운영 편람 (2025), 제2장 제1절 3.다.2) 국민이 이해하기 쉬운 용어 사용 (영 제7조제2항) · 4. 한자어보다 쉽게 다듬은 말, pp. 33, 40 |
+| `hr.effective-date-vague` | `notice` | 파견·직무대리 종료일 없는 `별도 발령 시까지` | `파견 근무 기간은 2026. 4. 1.부터 별도 발령 시까지로 한다.` | `파견 근무 기간은 2026. 4. 1.부터 2026. 9. 30.까지로 한다.` | `house` |
+| `hr.rank-step-vague` | `notice` | 구체적 직급·호봉 없는 `적정 호봉`, `소정의 처우` | `경력 산정 결과에 따라 적정 호봉을 획정하여 임용한다.` | `경력 산정 결과에 따라 행정주사보 7호봉을 획정하여 임용한다.` | `house` |
+
+### grant
+
+`version`: `grant/1` | `baseDocType`: `grant` (includes `house` / 자체 rules)
+
+| Rule ID | Severity | Flags | Positive | Negative | Source |
+| --- | --- | --- | --- | --- | --- |
+| `grant.bare-foreign-abbr` | `notice` | 한글 풀이 없이 단독으로 쓴 로마자 약어 (`R&D`, `MOU` 등) | `지역 대학과 산학 협력 MOU를 체결하여 R&D 과제를 공동 수행한다.` | `지역 대학과 산학 업무 협약(MOU)을 체결하여 연구 개발(R&D) 과제를 공동 수행한다.` | 행정업무운영 편람 (2025), 제2장 제1절 3.다.2) (영 제7조제2항) · 2. 전문용어, pp. 33, 36, 38 |
+| `grant.buzzword-foreign-loan` | `notice` | 제안서 내 외국어·외래어 유행어 (`거버넌스`, `니즈` 등) | `현장 수요자의 니즈를 반영한 민관 협력 거버넌스를 구축하여 시너지 효과를 낸다.` | `현장 수요자의 요구를 반영한 민관 협력 체계를 구축하여 상승효과를 낸다.` | 행정업무운영 편람 (2025), 제2장 제1절 3.다.2) (영 제7조제2항) · 3. 외국어보다 쉽게 다듬은 말, pp. 33, 39 |
+| `grant.jego-jargon` | `notice` | 어려운 행정 한자어 `제고` | `지역 중소기업의 기술 경쟁력을 제고하여 자립 기반을 마련한다.` | `지역 중소기업의 기술 경쟁력을 높여 자립 기반을 마련한다.` | 행정업무운영 편람 (2025), 제2장 제1절 3.다.2) (영 제7조제2항) · 4. 한자어보다 쉽게 다듬은 말, pp. 33, 41 |
+| `grant.archaic-grant-terms` | `notice` | 어려운 한자어 `가용한`, `차년도`, `내구 연한`, `수범 사례` | `차년도 사업비로 내구 연한이 지난 시험 장비의 교체 예산을 편성한다.` | `다음 연도 사업비로 사용 연수가 지난 시험 장비의 교체 예산을 편성한다.` | 행정업무운영 편람 (2025), 제2장 제1절 3.다.2) (영 제7조제2항) · 4. 한자어보다 쉽게 다듬은 말, pp. 33, 39-41 |
+| `grant.progressive-jung-e-itda` | `notice` | 중복 진행형 표현 `~중에 있다` | `주관 기관과 참여 기업이 공동으로 시제품을 개발 중에 있다.` | `주관 기관과 참여 기업이 공동으로 시제품을 개발하고 있다.` | 행정업무운영 편람 (2025), 제2장 제1절 3.다.2) (영 제7조제2항) · 1.가.3), pp. 33, 37 |
+| `grant.e-hanhaeo-limit` | `notice` | 일본어 투 제한 표현 `~에 한하여` | `참여 자격은 공고일 기준 국내 소재 기업에 한하여 인정한다.` | `참여 자격은 공고일 기준 국내 소재 기업에만 인정한다.` | 알기 쉬운 법령 정비기준 (제10판 수정증보판 (2025)), 제3장 제2절 4.나.2)라) 직역 투 서술어의 정비 ('~에 한하여', '~에 한한다'), pp. 190-192 |
+| `grant.rate-dueum-error` | `error` | 모음·`ㄴ` 이외 받침 뒤 비율 표기 오류 (`자부담율`, `집행율` 등) | `민간 자부담율과 국비 집행율 산정 기준을 명시한다.` | `민간 자부담률과 국비 집행률 산정 기준을 명시한다.` | 행정업무운영 편람 (2025), 제2장 제1절 3. (영 제7조제1항) · 2. 가. 어문 규범, pp. 33, 41 |
+| `grant.vague-impact-claim` | `notice` | 수치 근거 없는 과장 수식어 (`획기적`, `비약적` 등) | `이번 실증 과제를 통해 공정 효율이 비약적으로 향상되고 획기적인 성과가 나타날 것이다.` | `이번 실증 과제를 통해 공정 처리 시간이 평균 12시간에서 9시간으로 단축되고 연간 유지비가 3,000만 원 줄어든다.` | `house` |
+| `grant.deferred-plan-basis` | `notice` | 세부 예산·일정·지표를 `추후 협의/확정`으로 미룬 표현 | `핵심 성과 지표는 추후 별도 협의를 거쳐 확정한다.` | `핵심 성과 지표는 붙임 산정 기준표에 따라 1차 연도 착수 전에 확정한다.` | `house` |

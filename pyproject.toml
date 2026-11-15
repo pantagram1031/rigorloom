@@ -79,13 +79,15 @@ markers = [
 # (scripts/package_module.py, scripts/sync_local.py, evals/cleanroom.py). That
 # path ships module payloads and skill fragments; this one ships a command.
 [tool.setuptools]
-packages = ["rigorloom_runtime"]
+packages = ["rigorloom_runtime", "rigorloom_runtime.style_packs"]
 # Explicitly false: the package list is the whole allowlist, and data sweeping
 # would quietly widen it again.
 include-package-data = false
 
 [tool.setuptools.package-dir]
 rigorloom_runtime = "runtime/scripts"
+"rigorloom_runtime.style_packs" = "runtime/style_packs"
 
 [tool.setuptools.package-data]
 rigorloom_runtime = ["ui_dist/*", "ui_dist/assets/*"]
+"rigorloom_runtime.style_packs" = ["*.json"]

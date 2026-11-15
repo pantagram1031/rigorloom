@@ -10,6 +10,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T174:** `rigorloom style check` can now add a rule pack for one kind of document with `--pack gongmun`, `minwon`, `hr` or `grant`. Each rule says where it comes from (the 2025 행정업무운영 편람, the 국립국어원 public-language guide, the 법제처 plain-law standard) or that it is a house rule, and almost all of them are notices: questions for a person, not verdicts. Without `--pack` the output is exactly what it was before.
 - **T173:** the code of the old UI is gone: 23 unused screens and components were deleted, the agent operator dialog (opened from 명령창) is now a small panel with the provider settings and a raw event log, and every Korean word on screen now comes from the shared vocabulary, which a new test enforces. The web bundle is about 49 KB smaller.
 - **T172:** the local review UI has been rebuilt as five screens: Open, Review, Fill, History and Settings. Review shows the proposed form page next to a list of changes, Fill lets you type into blanks on the page itself, and History lists approved revisions and lets you compare or undo them. Approval and export work as before: you approve one plan hash and the runtime applies it; a test checks that exporting the 공문 example still gives the same file byte for byte. The old session list, plan view and structure tree screens are gone, and the screenshots in `docs/ui/` show the new screens in light and dark at desktop and phone width.
 

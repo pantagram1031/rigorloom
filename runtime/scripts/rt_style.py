@@ -20,6 +20,7 @@ each rule with a positive and a negative example.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -34,6 +35,7 @@ RULESET = "ko-style/1"  # bump on any rule change; see docs/korean-style-rules.m
 STYLE_SCHEMA = "rigorloom/style-check-v1"
 DOC_TYPES = ("report", "gongmun", "grant", "minwon", "contract", "any")
 SEVERITIES = ("error", "notice")
+PACK_NAMES = ("gongmun", "minwon", "hr", "grant")
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,142 @@ class StyleInputError(ValueError):
     """The input cannot be checked (missing, unsupported, unreadable)."""
 
 
+_PACK_ID_RE = re.compile(r"^[a-z0-9-]+\.[a-z0-9]+(?:-[a-z0-9]+)*$")
+_REQUIRED_PACK_KEYS = ("pack", "version", "baseDocType", "note", "rules")
+_REQUIRED_RULE_KEYS = (
+    "id", "pattern", "severity", "why", "suggest", "positive", "negative", "source"
+)
+_REQUIRED_SOURCE_KEYS = ("title", "edition", "section", "page")
+
+
+@dataclass(frozen=True)
+class StylePack:
+    pack: str
+    version: str
+    base_doc_type: str
+    note: str
+    rules: tuple[Rule, ...]
+    raw_rules: tuple[dict, ...]
+
+
+def _default_pack_dir() -> Path:
+    here = Path(__file__).resolve().parent
+    packaged = here / "style_packs"
+    if packaged.is_dir():
+        return packaged
+    checkout = here.parent / "style_packs"
+    if checkout.is_dir():
+        return checkout
+    return packaged
+
+
+def _pack_error(pack_name: str, detail: str) -> StyleInputError:
+    return StyleInputError(f"pack {pack_name!r}: {detail}")
+
+
+def _validate_rule_source(pack_name: str, rule_id: str, source: object, note: str) -> None:
+    if source == "house":
+        if "house" not in note.lower() and "자체" not in note:
+            raise _pack_error(
+                pack_name,
+                f"rule {rule_id!r} uses 'house' source, so pack 'note' must mention house/자체",
+            )
+        return
+    if not isinstance(source, dict):
+        raise _pack_error(pack_name, f"rule {rule_id!r} source must be an object or 'house'")
+    for key in _REQUIRED_SOURCE_KEYS:
+        val = source.get(key)
+        if not isinstance(val, str) or not val.strip():
+            raise _pack_error(pack_name, f"rule {rule_id!r} source missing non-empty {key!r}")
+
+
+def load_pack(pack_name: str, *, pack_dir: Path | None = None) -> StylePack:
+    if not isinstance(pack_name, str) or not pack_name or "/" in pack_name or "\\" in pack_name:
+        raise _pack_error(str(pack_name), "invalid pack name")
+    if pack_dir is None and pack_name not in PACK_NAMES:
+        raise _pack_error(
+            pack_name,
+            f"unknown rule pack; use one of {', '.join(PACK_NAMES)}",
+        )
+    base_dir = _default_pack_dir() if pack_dir is None else pack_dir
+    pack_path = base_dir / f"{pack_name}.json"
+    if not pack_path.is_file():
+        raise _pack_error(pack_name, f"pack file not found: {pack_path}")
+    try:
+        data = json.loads(pack_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _pack_error(pack_name, f"cannot parse pack JSON: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise _pack_error(pack_name, "top-level JSON value must be an object")
+    for key in _REQUIRED_PACK_KEYS:
+        if key not in data:
+            raise _pack_error(pack_name, f"missing top-level field {key!r}")
+    if data["pack"] != pack_name:
+        raise _pack_error(pack_name, f"top-level 'pack' mismatch: {data['pack']!r}")
+    expected_version = f"{pack_name}/1"
+    if data["version"] != expected_version:
+        raise _pack_error(pack_name, f"version must be {expected_version!r}, got {data['version']!r}")
+    base_doc_type = data["baseDocType"]
+    if not isinstance(base_doc_type, str) or base_doc_type not in DOC_TYPES or base_doc_type == "any":
+        raise _pack_error(pack_name, f"invalid baseDocType {base_doc_type!r}")
+    note = data["note"]
+    if not isinstance(note, str) or not note.strip():
+        raise _pack_error(pack_name, "top-level 'note' must be a non-empty string")
+    raw_rules = data["rules"]
+    if not isinstance(raw_rules, list) or not raw_rules:
+        raise _pack_error(pack_name, "top-level 'rules' must be a non-empty list")
+
+    loaded_rules: list[Rule] = []
+    seen_ids: set[str] = set()
+    for index, raw in enumerate(raw_rules):
+        if not isinstance(raw, dict):
+            raise _pack_error(pack_name, f"rule at index {index} must be an object")
+        for key in _REQUIRED_RULE_KEYS:
+            if key not in raw:
+                raise _pack_error(pack_name, f"rule at index {index} missing field {key!r}")
+        for key in ("id", "pattern", "severity", "why", "suggest", "positive", "negative"):
+            val = raw[key]
+            if not isinstance(val, str) or not val.strip():
+                raise _pack_error(pack_name, f"rule at index {index} field {key!r} must be a non-empty string")
+
+        rid = raw["id"]
+        if not rid.startswith(f"{pack_name}.") or not _PACK_ID_RE.match(rid):
+            raise _pack_error(pack_name, f"invalid rule id {rid!r}; expected {pack_name}.<kebab-name>")
+        if rid in _BY_ID or rid in seen_ids:
+            raise _pack_error(pack_name, f"duplicate rule id {rid!r}")
+        seen_ids.add(rid)
+
+        severity = raw["severity"]
+        if severity not in SEVERITIES:
+            raise _pack_error(pack_name, f"rule {rid!r} has invalid severity {severity!r}")
+
+        _validate_rule_source(pack_name, rid, raw["source"], note)
+
+        try:
+            compiled = re.compile(raw["pattern"])
+        except re.error as exc:
+            raise _pack_error(pack_name, f"rule {rid!r} regex failed to compile: {exc}") from exc
+
+        if compiled.search(raw["positive"]) is None:
+            raise _pack_error(pack_name, f"rule {rid!r} pattern did not match positive example")
+        if compiled.search(raw["negative"]) is not None:
+            raise _pack_error(pack_name, f"rule {rid!r} pattern matched negative example")
+
+        loaded_rules.append(
+            Rule(rid, raw["pattern"], severity, (base_doc_type,), raw["why"], raw["suggest"])
+        )
+
+    return StylePack(
+        pack=pack_name,
+        version=expected_version,
+        base_doc_type=base_doc_type,
+        note=note,
+        rules=tuple(loaded_rules),
+        raw_rules=tuple(dict(r) for r in raw_rules),
+    )
+
+
 def rules_for(doc_type: str) -> list[Rule]:
     if doc_type not in DOC_TYPES:
         raise StyleInputError(f"unknown document type {doc_type!r}; "
@@ -162,15 +300,23 @@ def check_text(units: list[str], rules: list[Rule]) -> list[dict]:
     return findings
 
 
-def check(path: Path, doc_type: str = "any") -> dict:
-    rules = rules_for(doc_type)
+def check(path: Path, doc_type: str | None = None, pack: str | None = None) -> dict:
+    if pack is not None:
+        loaded = load_pack(pack)
+        effective_doc_type = loaded.base_doc_type if doc_type is None else doc_type
+        rules = rules_for(effective_doc_type) + list(loaded.rules)
+        ruleset = f"{RULESET}+{loaded.version}"
+    else:
+        effective_doc_type = "any" if doc_type is None else doc_type
+        rules = rules_for(effective_doc_type)
+        ruleset = RULESET
     if not path.is_file():
         raise StyleInputError(f"{path.name}: no such file")
     unit, units = _units(path)
     findings = check_text(units, rules)
     errors = sum(1 for f in findings if f["severity"] == "error")
-    return {"schema": STYLE_SCHEMA, "ruleset": RULESET, "file": path.name,
-            "docType": doc_type, "unit": unit,
+    return {"schema": STYLE_SCHEMA, "ruleset": ruleset, "file": path.name,
+            "docType": effective_doc_type, "unit": unit,
             "rulesApplied": [r.id for r in rules],
             "pass": errors == 0,
             "counts": {"error": errors, "notice": len(findings) - errors},

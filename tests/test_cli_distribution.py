@@ -52,6 +52,8 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 #: without the other fails here rather than in someone's install.
 WHEEL_PACKAGE = "rigorloom_runtime"
 WHEEL_PACKAGE_DIR = "runtime/scripts"
+STYLE_PACKS_PACKAGE = "rigorloom_runtime.style_packs"
+STYLE_PACKS_DIR = "runtime/style_packs"
 
 #: Console command the wheel must expose, and the callable behind it.
 CONSOLE_SCRIPT = "rigorloom"
@@ -246,7 +248,7 @@ def test_pyproject_pins_an_explicit_package_allowlist():
     """Automatic discovery over a flat layout is the bug this replaces."""
     config = _pyproject()
     setuptools_table = config.get("tool", {}).get("setuptools", {})
-    assert setuptools_table.get("packages") == [WHEEL_PACKAGE], (
+    assert setuptools_table.get("packages") == [WHEEL_PACKAGE, STYLE_PACKS_PACKAGE], (
         "the wheel must name its packages explicitly; automatic discovery "
         "either refuses this flat layout or sweeps every top-level directory "
         "into the distribution")
@@ -254,6 +256,9 @@ def test_pyproject_pins_an_explicit_package_allowlist():
     assert package_dir.get(WHEEL_PACKAGE) == WHEEL_PACKAGE_DIR, (
         f"{WHEEL_PACKAGE} must map to {WHEEL_PACKAGE_DIR}, the Runtime layer "
         "the CLI already lives in")
+    assert package_dir.get(STYLE_PACKS_PACKAGE) == STYLE_PACKS_DIR, (
+        f"{STYLE_PACKS_PACKAGE} must map to {STYLE_PACKS_DIR}, so the "
+        "installed CLI can resolve document-type style packs")
     assert setuptools_table.get("include-package-data") is False, (
         "include-package-data must be explicitly false: the allowlist is the "
         "package list, and data sweeping would defeat it")
@@ -262,6 +267,7 @@ def test_pyproject_pins_an_explicit_package_allowlist():
 def test_package_dir_is_importable_as_a_package():
     """setuptools needs an ``__init__.py`` to treat the directory as a package."""
     assert (REPO_ROOT / WHEEL_PACKAGE_DIR / "__init__.py").is_file()
+    assert (REPO_ROOT / STYLE_PACKS_DIR / "__init__.py").is_file()
 
 
 def test_the_zip_bundle_distribution_is_still_present():
@@ -317,8 +323,37 @@ def test_wheel_carries_the_runtime_cli(built_wheel):
     with zipfile.ZipFile(built_wheel) as archive:
         names = set(archive.namelist())
     for expected in (f"{WHEEL_PACKAGE}/__init__.py", f"{WHEEL_PACKAGE}/cli.py",
-                     f"{WHEEL_PACKAGE}/rt_core.py", f"{WHEEL_PACKAGE}/rt_codes.py"):
+                     f"{WHEEL_PACKAGE}/rt_core.py", f"{WHEEL_PACKAGE}/rt_codes.py",
+                     f"{WHEEL_PACKAGE}/style_packs/__init__.py"):
         assert expected in names, f"{expected} is missing from the wheel"
+
+
+def test_wheel_carries_style_packs(built_wheel):
+    """Document-type style pack JSON files must ship inside the runtime wheel."""
+    with zipfile.ZipFile(built_wheel) as archive:
+        names = set(archive.namelist())
+        for pack_name in ("gongmun", "minwon", "hr", "grant"):
+            member = f"{WHEEL_PACKAGE}/style_packs/{pack_name}.json"
+            assert member in names, f"{member} is missing from the wheel"
+            checkout = (REPO_ROOT / STYLE_PACKS_DIR / f"{pack_name}.json").read_bytes()
+            assert archive.read(member) == checkout
+
+
+def test_installed_style_check_resolves_pack_gongmun(installed_cli, tmp_path):
+    """Installed console script resolves ``rigorloom style check --pack gongmun``."""
+    doc = tmp_path / "gongmun_sample.txt"
+    doc.write_text("제출 마감일은 2026. 03. 05.까지입니다.\n", encoding="utf-8")
+    result = _run([str(installed_cli), "style", "check", str(doc), "--pack", "gongmun"])
+    assert result.returncode == 0, (
+        f"style check --pack gongmun exited {result.returncode}:\n{result.stdout}\n{result.stderr}")
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["command"] == "style check"
+    res = payload["result"]
+    assert res["ruleset"] == "ko-style/1+gongmun/1"
+    assert res["docType"] == "gongmun"
+    assert "gongmun.date-zero-pad" in res["rulesApplied"]
+    assert any(f["rule"] == "gongmun.date-zero-pad" for f in res["findings"])
 
 
 def test_installed_cli_is_the_repository_implementation(installed_site):
