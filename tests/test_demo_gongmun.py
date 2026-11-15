@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -183,7 +184,15 @@ def test_demo_gongmun_subprocess_cli_and_module_package(tmp_path: Path):
     # 2. Wheel-style package import (`python -m rigorloom_runtime.cli`) via symlinked pkg dir
     pkg_parent = tmp_path / "pkg_root"
     pkg_parent.mkdir()
-    os.symlink(RUNTIME_SCRIPTS, pkg_parent / "rigorloom_runtime")
+    try:
+        os.symlink(RUNTIME_SCRIPTS, pkg_parent / "rigorloom_runtime", target_is_directory=True)
+    except OSError:
+        # Windows without symlink privilege: a copy exercises the same import path.
+        shutil.copytree(
+            RUNTIME_SCRIPTS,
+            pkg_parent / "rigorloom_runtime",
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
     out_pkg = tmp_path / "sub-pkg"
     env = {
         **os.environ,

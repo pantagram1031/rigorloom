@@ -112,7 +112,9 @@ def post_plan_hook_context(hook_fn: Callable[[DemoPostPlanContext], None] | None
 def _utf8_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8")
+            # newline="\n": the README block and expected fixtures are LF;
+            # Windows would otherwise print CRLF.
+            stream.reconfigure(encoding="utf-8", newline="\n")
         except (AttributeError, ValueError):
             pass
 
@@ -127,7 +129,9 @@ def _sha256_file(path: Path) -> str:
 
 def _write_json(path: Path, data: Any) -> None:
     payload = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    path.write_text(payload, encoding="utf-8")
+    # Bytes, not write_text: Windows text mode would turn \n into \r\n and
+    # break the byte-for-byte match with examples/gongmun/expected.
+    path.write_bytes(payload.encode("utf-8"))
 
 
 @contextmanager
