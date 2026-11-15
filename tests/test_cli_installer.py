@@ -287,10 +287,20 @@ def test_locked_engine_root_aborts_and_preserves(tmp_path):
         "pyproject.toml": b"[project]\nname='rigorloom'\nversion='0.17.0'\n"
     })
 
-    # Hold an exclusive open file handle in engine_root
+    # An open handle only blocks the rename on Windows. Elsewhere the rename
+    # succeeded and the run failed later for an unrelated reason, so simulate
+    # the lock directly: renaming the existing engine root raises.
+    real_rename = os.rename
+
+    def locked_rename(src, dst):
+        if Path(src) == engine_root:
+            raise PermissionError(13, "The process cannot access the file", str(src))
+        return real_rename(src, dst)
+
     with open(lock_file, "r+", encoding="utf-8") as handle:
         buf = io.StringIO()
-        with patch("sys.stdout", buf):
+        with patch("sys.stdout", buf), \
+                patch.object(install.os, "rename", locked_rename):
             code = cli.main(["install", "--engine-root", str(engine_root), "--bundles-dir", str(bundles_dir),
                              "--modules", "", "--replace"])
         assert code == 3

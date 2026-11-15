@@ -1096,7 +1096,12 @@ def containment_report(sandbox: Sandbox, *,
     findings: list[dict] = []
     roots = sandbox.forbidden
 
-    findings.extend(scan_for_source_references(sandbox.root, roots))
+    # install_report.json is this harness's own record: it lists the forbidden
+    # roots on purpose, so finding them in it is not a leak from the install.
+    # Only the report at the sandbox root is exempt ("file" is relative to the
+    # root); a file of that name anywhere else is still scanned. Keep it that way.
+    findings.extend(f for f in scan_for_source_references(sandbox.root, roots)
+                    if f.get("file") != "install_report.json")
     findings.extend(scan_for_escaping_links(sandbox.root))
 
     for label, value in reported_paths:
