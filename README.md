@@ -104,6 +104,32 @@ The pipeline drives entirely through CLIs. Stage playbooks under
 [docs/golden-path.md](docs/golden-path.md) for the full
 clone-to-graded-artifact walkthrough.
 
+### Try it: 공문
+
+Fill and verify the blank statutory 기안문 template
+([`gianmun-byeolji-1ho.hwpx`](tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx))
+from [`examples/gongmun/brief.json`](examples/gongmun/brief.json) without Hancom
+Office and without modifying `modules/enabled.yaml`:
+
+```sh
+python runtime/scripts/cli.py demo gongmun --out /tmp/gongmun-demo --deterministic
+```
+
+```text
+rigorloom demo gongmun: PASS
+form: gianmun-byeolji-1ho.hwpx
+brief: brief.json
+checks: residue hard=0 (acceptance=true, ranAll=true); gongmun hard=0 warn=1 (acceptance=true, ranAll=true)
+policies: form->filled PASS; draft->polished skipped
+sha256: 4b2972801f79843464ce0d30adf9c8ea7f433c3f6e687bc545d0bb828e33ac1d
+artifacts: filled.hwpx, plan.json, verdict.json, approval.json
+```
+
+Outputs (`filled.hwpx`, `plan.json`, `verdict.json`, `approval.json`) match
+[`examples/gongmun/expected/`](examples/gongmun/expected/) byte-for-byte. Pass
+`--polished FILE` to also enforce Policy (ii) (`draft -> polished`) fidelity;
+see [docs/demo-gongmun.md](docs/demo-gongmun.md).
+
 ### Installing the `rigorloom` command (optional)
 
 The clone above is the whole pipeline and needs no install. If you want the

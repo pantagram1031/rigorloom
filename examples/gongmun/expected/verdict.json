@@ -1,0 +1,396 @@
+{
+  "acceptance": true,
+  "baseline": {
+    "kind": "session_source",
+    "reason": null,
+    "sha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+    "supplied": true
+  },
+  "bounds": {
+    "containment": "not_established",
+    "perCheckerSeconds": 120.0,
+    "worstCaseSeconds": 120.0
+  },
+  "checks": [
+    {
+      "checker": "check_gongmun",
+      "counts": {
+        "guide_terms": 13,
+        "hard": 0,
+        "seats": 16,
+        "skipped": 2,
+        "warn": 1
+      },
+      "durationMs": 0,
+      "exitCode": 0,
+      "findings": [
+        {
+          "address": {
+            "col": 0,
+            "row": 1,
+            "table": 0
+          },
+          "code": "dumun_seat_unfilled",
+          "location": {
+            "addr": [
+              1,
+              0
+            ],
+            "para": 3,
+            "table": 0
+          },
+          "message": "두문 seat carries its label and no value",
+          "severity": "warn"
+        },
+        {
+          "address": null,
+          "code": "gyeoljae",
+          "location": null,
+          "message": "seat_absent",
+          "severity": "skipped"
+        },
+        {
+          "address": null,
+          "code": "issuing_organization_pack",
+          "location": null,
+          "message": "no_pack",
+          "severity": "skipped"
+        }
+      ],
+      "module": "gongmun",
+      "ok": true,
+      "outputTruncated": false,
+      "partial": false,
+      "reason": null,
+      "state": "ran",
+      "subject": "document",
+      "timedOut": false,
+      "verdict": "pass",
+      "wants": [
+        "baseline"
+      ],
+      "wantsUnsatisfied": []
+    }
+  ],
+  "counts": {
+    "hard": 0,
+    "partial": 0,
+    "ran": 1,
+    "selected": 1,
+    "skipped": 0,
+    "unavailable": 0,
+    "warn": 1
+  },
+  "enabledFile": "enabled.yaml",
+  "evidence": {
+    "class": "structural_only",
+    "note": "checker verdicts over a scratch copy of the document; no renderer ran and nothing here is a render proof"
+  },
+  "guard": {
+    "ok": true,
+    "paragraphDiff": [
+      {
+        "after": "",
+        "before": "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙 [별지 제1호서식] <개정 2016. 7. 11.>",
+        "paraIndex": 1
+      },
+      {
+        "after": "가온공공기록원",
+        "before": "행 정 기 관 명",
+        "paraIndex": 3
+      },
+      {
+        "after": "수신 협조기관장(기록관리과장)",
+        "before": "수신",
+        "paraIndex": 5
+      },
+      {
+        "after": "제목 2026년 전자기록물 장기보존 체계 공동 점검 협조 요청",
+        "before": "제목 ",
+        "paraIndex": 7
+      },
+      {
+        "after": "1. 관련: 기록정책과-88(2026. 10. 30.)",
+        "before": "",
+        "paraIndex": 8
+      },
+      {
+        "after": "2. 우리 원은 2026년도 생산 전자기록물의 보존 포맷 호환성을 점검합니다. 귀 기관은 아래 일정에 따라 소관 기록물을 점검하고 결과를 회신하여 주시기 바랍니다.",
+        "before": "",
+        "paraIndex": 9
+      },
+      {
+        "after": "  가. 점검 기간: 2026. 11. 18.(수) ~ 2026. 11. 27.(금)",
+        "before": "",
+        "paraIndex": 10
+      },
+      {
+        "after": "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성",
+        "before": "",
+        "paraIndex": 11
+      },
+      {
+        "after": "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지",
+        "before": "",
+        "paraIndex": 12
+      },
+      {
+        "after": "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송",
+        "before": "",
+        "paraIndex": 13
+      },
+      {
+        "after": "붙임  전자기록물 보존 체계 공동 점검표 1부.  끝.",
+        "before": "",
+        "paraIndex": 15
+      },
+      {
+        "after": "",
+        "before": " ",
+        "paraIndex": 27
+      },
+      {
+        "after": "가온공공기록원장",
+        "before": "발신명의",
+        "paraIndex": 31
+      },
+      {
+        "after": "주무관 한서진",
+        "before": "기안자  직위(직급) 서명",
+        "paraIndex": 36
+      },
+      {
+        "after": "사무관 박도윤",
+        "before": " 검토자  직위(직급) 서명",
+        "paraIndex": 37
+      },
+      {
+        "after": "원장 윤지현",
+        "before": " 결재권자  직위(직급) 서명",
+        "paraIndex": 38
+      },
+      {
+        "after": "기록정책과-104(2026. 11. 15.)",
+        "before": " 처리과명-연도별 일련번호(시행일)",
+        "paraIndex": 48
+      },
+      {
+        "after": "",
+        "before": "    처리과명-연도별 일련번호(접수일)",
+        "paraIndex": 50
+      },
+      {
+        "after": "우 30112",
+        "before": "우",
+        "paraIndex": 51
+      },
+      {
+        "after": "세종특별자치시 가름로 200",
+        "before": "도로명주소",
+        "paraIndex": 52
+      },
+      {
+        "after": "https://archive.example.com",
+        "before": "홈페이지 주소",
+        "paraIndex": 54
+      },
+      {
+        "after": "전화번호(044-555-0142)",
+        "before": "전화번호(   )",
+        "paraIndex": 55
+      },
+      {
+        "after": "팩스번호(044-555-0143)",
+        "before": "팩스번호(   )",
+        "paraIndex": 56
+      },
+      {
+        "after": "gongmun@example.com",
+        "before": "공무원의 전자우편주소",
+        "paraIndex": 58
+      },
+      {
+        "after": "대외공개",
+        "before": "공개 구분",
+        "paraIndex": 60
+      },
+      {
+        "after": "",
+        "before": "비고(이 난은 서식에 포함하지 아니한다)",
+        "paraIndex": 62
+      },
+      {
+        "after": "",
+        "before": " - 문서를 작성할 때 \"행정기관명\", \"발신명\", \"기안자\", \"검토자\", \"결재권자\", \"직위(직급) 서명\", \"처리과명-연도별 일련번호(시행일)\", \"도로명주소\", \"홈페이지 주소\", \"공무원의 전자우편주소\", \"공개 구분\"의 용어는 표시하지 아니하고 그 내용을 적는다.",
+        "paraIndex": 63
+      }
+    ],
+    "policy_i": {
+      "allBriefValuesVerbatim": true,
+      "briefValuesChecked": 23,
+      "ok": true,
+      "paragraphDiff": [
+        {
+          "after": "",
+          "before": "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙 [별지 제1호서식] <개정 2016. 7. 11.>",
+          "paraIndex": 1
+        },
+        {
+          "after": "가온공공기록원",
+          "before": "행 정 기 관 명",
+          "paraIndex": 3
+        },
+        {
+          "after": "수신 협조기관장(기록관리과장)",
+          "before": "수신",
+          "paraIndex": 5
+        },
+        {
+          "after": "제목 2026년 전자기록물 장기보존 체계 공동 점검 협조 요청",
+          "before": "제목 ",
+          "paraIndex": 7
+        },
+        {
+          "after": "1. 관련: 기록정책과-88(2026. 10. 30.)",
+          "before": "",
+          "paraIndex": 8
+        },
+        {
+          "after": "2. 우리 원은 2026년도 생산 전자기록물의 보존 포맷 호환성을 점검합니다. 귀 기관은 아래 일정에 따라 소관 기록물을 점검하고 결과를 회신하여 주시기 바랍니다.",
+          "before": "",
+          "paraIndex": 9
+        },
+        {
+          "after": "  가. 점검 기간: 2026. 11. 18.(수) ~ 2026. 11. 27.(금)",
+          "before": "",
+          "paraIndex": 10
+        },
+        {
+          "after": "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성",
+          "before": "",
+          "paraIndex": 11
+        },
+        {
+          "after": "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지",
+          "before": "",
+          "paraIndex": 12
+        },
+        {
+          "after": "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송",
+          "before": "",
+          "paraIndex": 13
+        },
+        {
+          "after": "붙임  전자기록물 보존 체계 공동 점검표 1부.  끝.",
+          "before": "",
+          "paraIndex": 15
+        },
+        {
+          "after": "",
+          "before": " ",
+          "paraIndex": 27
+        },
+        {
+          "after": "가온공공기록원장",
+          "before": "발신명의",
+          "paraIndex": 31
+        },
+        {
+          "after": "주무관 한서진",
+          "before": "기안자  직위(직급) 서명",
+          "paraIndex": 36
+        },
+        {
+          "after": "사무관 박도윤",
+          "before": " 검토자  직위(직급) 서명",
+          "paraIndex": 37
+        },
+        {
+          "after": "원장 윤지현",
+          "before": " 결재권자  직위(직급) 서명",
+          "paraIndex": 38
+        },
+        {
+          "after": "기록정책과-104(2026. 11. 15.)",
+          "before": " 처리과명-연도별 일련번호(시행일)",
+          "paraIndex": 48
+        },
+        {
+          "after": "",
+          "before": "    처리과명-연도별 일련번호(접수일)",
+          "paraIndex": 50
+        },
+        {
+          "after": "우 30112",
+          "before": "우",
+          "paraIndex": 51
+        },
+        {
+          "after": "세종특별자치시 가름로 200",
+          "before": "도로명주소",
+          "paraIndex": 52
+        },
+        {
+          "after": "https://archive.example.com",
+          "before": "홈페이지 주소",
+          "paraIndex": 54
+        },
+        {
+          "after": "전화번호(044-555-0142)",
+          "before": "전화번호(   )",
+          "paraIndex": 55
+        },
+        {
+          "after": "팩스번호(044-555-0143)",
+          "before": "팩스번호(   )",
+          "paraIndex": 56
+        },
+        {
+          "after": "gongmun@example.com",
+          "before": "공무원의 전자우편주소",
+          "paraIndex": 58
+        },
+        {
+          "after": "대외공개",
+          "before": "공개 구분",
+          "paraIndex": 60
+        },
+        {
+          "after": "",
+          "before": "비고(이 난은 서식에 포함하지 아니한다)",
+          "paraIndex": 62
+        },
+        {
+          "after": "",
+          "before": " - 문서를 작성할 때 \"행정기관명\", \"발신명\", \"기안자\", \"검토자\", \"결재권자\", \"직위(직급) 서명\", \"처리과명-연도별 일련번호(시행일)\", \"도로명주소\", \"홈페이지 주소\", \"공무원의 전자우편주소\", \"공개 구분\"의 용어는 표시하지 아니하고 그 내용을 적는다.",
+          "paraIndex": 63
+        }
+      ],
+      "policy": "form->filled",
+      "touchedLeafParagraphs": 28,
+      "untouchedBytesIdentical": true,
+      "untouchedLeafParagraphs": 36
+    },
+    "policy_ii": {
+      "ok": true,
+      "policy": "draft->polished",
+      "status": "skipped"
+    }
+  },
+  "module": "gongmun",
+  "modulesRoot": "modules",
+  "note": "acceptance asserts that every selected checker RAN, reported clean, and had every input it declares it needs; a checker that could not run is reported with a reason and is never counted as a pass",
+  "ranAll": true,
+  "reason": null,
+  "selected": [
+    "check_gongmun"
+  ],
+  "sessionId": "e3af394e8dfd4107aceff71b193e01bb",
+  "subject": {
+    "bytes": 28114,
+    "kind": "candidate",
+    "name": "artifact.hwpx",
+    "runId": "c7717d7dd88f42b09fd5700db2365886",
+    "sha256": "4b2972801f79843464ce0d30adf9c8ea7f433c3f6e687bc545d0bb828e33ac1d"
+  }
+}

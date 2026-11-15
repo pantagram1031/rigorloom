@@ -223,6 +223,27 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "engine",
         help="is the separately installed HWP engine available (optional)")
+
+    p_demo = sub.add_parser("demo", help="run self-contained end-to-end demonstrations")
+    demo_sub = p_demo.add_subparsers(dest="demo_target", required=True)
+    p_demo_gongmun = demo_sub.add_parser(
+        "gongmun", help="fill and verify a blank statutory gongmun form (no Hancom required)")
+    p_demo_gongmun.add_argument(
+        "--out", required=True,
+        help="output directory for filled.hwpx, plan.json, verdict.json, and approval.json")
+    p_demo_gongmun.add_argument(
+        "--brief", default=None,
+        help="path to brief JSON (default: <engine-root>/examples/gongmun/brief.json)")
+    p_demo_gongmun.add_argument(
+        "--form", default=None,
+        help="path to blank form HWPX (default: <engine-root>/tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx)")
+    p_demo_gongmun.add_argument(
+        "--polished", default=None,
+        help="optional polished body draft file for Policy (ii) fidelity audit")
+    p_demo_gongmun.add_argument(
+        "--deterministic", action="store_true",
+        help="pin timestamps, UUIDs, and volatile metadata (or set RIGORLOOM_DETERMINISTIC=1)")
+
     sub.add_parser("capabilities", help="what this build can do")
     sub.add_parser("sessions", help="list sessions under the root")
 
@@ -627,6 +648,13 @@ def main(argv: list[str] | None = None) -> int:
             no_open=args.no_open,
             explicit_root=chosen_root is not None,
         )
+
+    if command == "demo":
+        try:
+            from .rt_demo_gongmun import run_demo_cli
+        except ImportError:
+            from rt_demo_gongmun import run_demo_cli
+        return run_demo_cli(args)
 
     if not args.root:
         parser.error("the following arguments are required: --root")
