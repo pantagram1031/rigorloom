@@ -441,3 +441,176 @@ def test_a_cancel_frame_with_extra_members_is_refused(tmp_path):
         client.initialize()
         client.send_frame({"kind": "cancel", "id": "x", "reason": "because"})
         assert client.recv()["error"]["code"] == "unknown_field"
+
+
+def _scrub_generated_receipt_fields(value, id_map: dict[str, str]):
+    """Normalize generated IDs, timestamps, and temp paths for receipt comparison."""
+    from pathlib import Path
+
+    time_keys = {"createdUtc", "requestedUtc", "resolvedUtc", "appliedUtc",
+                 "startedUtc", "finishedUtc", "appliedAt", "resolvedAt",
+                 "createdAt", "requestedAt", "at", "timestamp", "durationMs",
+                 "elapsedMs"}
+    id_keys = {"runId", "sessionId", "planId", "approvalId", "opId",
+               "rootRunId", "planHash", "bodySha256"}
+    path_keys = {"path", "input", "output"}
+    if isinstance(value, dict):
+        out = {}
+        for k, v in sorted(value.items()):
+            if k in time_keys:
+                out[k] = "<TIME>"
+            elif k in id_keys and isinstance(v, str):
+                out[k] = id_map.setdefault(v, f"<{k}>")
+            elif k in path_keys and isinstance(v, str):
+                out[k] = f"<{k}:{Path(v).name}>"
+            elif k == "parentRunId" and isinstance(v, str):
+                out[k] = id_map.setdefault(v, "<parentRunId>")
+            else:
+                out[k] = _scrub_generated_receipt_fields(v, id_map)
+        return out
+    if isinstance(value, list):
+        return [_scrub_generated_receipt_fields(item, id_map) for item in value]
+    if isinstance(value, str) and value in id_map:
+        return id_map[value]
+    return value
+
+
+def test_execute_preedit_steps_matches_apply_plan_bytes_and_receipt(tmp_path):
+    from pathlib import Path
+
+    runtime_scripts_on_path()
+    import rt_core
+    import rt_engine
+
+    (tmp_path / "src_a").mkdir(parents=True)
+    (tmp_path / "src_b").mkdir(parents=True)
+    source_a = _source(tmp_path / "src_a", "form.hwpx")
+    source_b = _source(tmp_path / "src_b", "form.hwpx")
+
+    with RuntimeClient(tmp_path / "root_a") as client_a:
+        s_a, plan_a, app_a = drive(client_a, source_a, OPS_THREE)
+        res_a = client_a.ok("plan/apply", {
+            "planId": plan_a["planId"],
+            "approvalId": app_a["approvalId"],
+        })
+        run_a = res_a["candidate"]["runId"]
+        receipt_a = client_a.ok("receipt/read", {"sessionId": s_a, "runId": run_a})["receipt"]
+        art_a = (tmp_path / "root_a" / "sessions" / s_a / "candidates"
+                 / run_a / "artifact.hwpx")
+
+    with RuntimeClient(tmp_path / "root_b") as client_b:
+        s_b, plan_b, app_b = drive(client_b, source_b, OPS_THREE)
+        res_b = client_b.ok("plan/apply", {
+            "planId": plan_b["planId"],
+            "approvalId": app_b["approvalId"],
+        })
+        run_b = res_b["candidate"]["runId"]
+        receipt_b = client_b.ok("receipt/read", {"sessionId": s_b, "runId": run_b})["receipt"]
+        art_b = (tmp_path / "root_b" / "sessions" / s_b / "candidates"
+                 / run_b / "artifact.hwpx")
+
+    # Byte-identical candidate artifact and candidate metadata across apply_plan runs
+    assert art_a.read_bytes() == art_b.read_bytes()
+    assert receipt_a["candidate"] == receipt_b["candidate"]
+
+    # Identical receipt payload once generated IDs, paths, and timestamps are normalized
+    norm_a = _scrub_generated_receipt_fields(receipt_a, {})
+    norm_b = _scrub_generated_receipt_fields(receipt_b, {})
+    assert norm_a == norm_b
+
+    # Direct _execute_preedit_steps produces identical bytes, steps, and checkpoint tick count
+    engine_root = Path(__file__).resolve().parents[1]
+    tools = rt_engine.EngineTools(engine_root)
+    work_dir = tmp_path / "direct_work"
+    work_dir.mkdir(parents=True)
+    ticks = 0
+
+    def record_tick():
+        nonlocal ticks
+        ticks += 1
+
+    final_path, direct_steps = rt_apply._execute_preedit_steps(
+        tools, plan_a["ops"], source_a, work_dir, ".hwpx", checkpoint=record_tick,
+    )
+    assert final_path.read_bytes() == art_a.read_bytes()
+    assert _scrub_generated_receipt_fields(direct_steps, {}) == _scrub_generated_receipt_fields(receipt_a["steps"], {})
+    assert ticks == len(plan_a["ops"]) + 1
+    _ = rt_core  # ensure rt_core remains compatible with extracted helper
+
+
+def test_execute_preedit_steps_refusal_and_cancellation_parity(tmp_path):
+    from pathlib import Path
+
+    runtime_scripts_on_path()
+    import rt_codes
+    import rt_core
+    import rt_engine
+
+    engine_root = Path(__file__).resolve().parents[1]
+    source = _source(tmp_path, "refusal_form.hwpx")
+    bad_ops = [{"kind": "replace_at_cell", "table": 0, "row": 5, "col": 1,
+                "expect": "NONEXISTENT_EXPECT_VALUE", "text": "한빛"}]
+
+    # 1. Refusal parity (backend_refused verbatim between apply_plan and _execute_preedit_steps)
+    core = rt_core.RuntimeCore(tmp_path / "refusal_root", engine_root=engine_root)
+    opened = core.open_path(str(source))
+    s_id = (opened.get("session") or opened)["sessionId"]
+    plan = core.plan_propose(s_id, "preedit", bad_ops, proposer="test-builder")["plan"]
+    core.plan_validate(plan["planId"])
+    app = core.approval_request(plan["planId"], requested_by="test-builder")["approval"]
+    core.approval_resolve(app["approvalId"], plan["planId"], plan["planHash"],
+                          "approved", "test-operator")
+
+    with pytest.raises(rt_codes.RpcError) as apply_exc:
+        core.plan_apply(plan["planId"], app["approvalId"])
+    assert apply_exc.value.code == "backend_refused"
+    assert core.candidate_list(s_id)["candidates"] == []
+
+    direct_work = tmp_path / "direct_refusal_work"
+    direct_work.mkdir(parents=True)
+    session_source = core.store.get(s_id).source
+    with pytest.raises(rt_codes.RpcError) as direct_exc:
+        rt_apply._execute_preedit_steps(
+            core.tools, plan["ops"], session_source, direct_work, ".hwpx",
+        )
+    assert direct_exc.value.code == apply_exc.value.code
+    assert direct_exc.value.message == apply_exc.value.message
+    assert direct_exc.value.data == apply_exc.value.data
+
+    # 2. Cancellation parity (mid-chain checkpoint stops both apply_plan and _execute_preedit_steps)
+    core_c = rt_core.RuntimeCore(tmp_path / "cancel_root", engine_root=engine_root)
+    opened_c = core_c.open_path(str(source))
+    s_c = (opened_c.get("session") or opened_c)["sessionId"]
+    plan_c = core_c.plan_propose(s_c, "preedit", OPS_THREE, proposer="test-builder")["plan"]
+    core_c.plan_validate(plan_c["planId"])
+    app_c = core_c.approval_request(plan_c["planId"], requested_by="test-builder")["approval"]
+    core_c.approval_resolve(app_c["approvalId"], plan_c["planId"], plan_c["planHash"],
+                            "approved", "test-operator")
+
+    def cancel_after_first_step():
+        state = {"n": 0}
+
+        def _tick():
+            state["n"] += 1
+            if state["n"] == 2:
+                raise rt_codes.RpcError("cancelled", "cancelled mid-plan")
+
+        return _tick
+
+    with pytest.raises(rt_codes.RpcError) as cancel_apply_exc:
+        core_c.plan_apply(plan_c["planId"], app_c["approvalId"],
+                          checkpoint=cancel_after_first_step())
+    assert cancel_apply_exc.value.code == "cancelled"
+    assert core_c.candidate_list(s_c)["candidates"] == []
+
+    cancel_work = tmp_path / "direct_cancel_work"
+    cancel_work.mkdir(parents=True)
+    with pytest.raises(rt_codes.RpcError) as cancel_direct_exc:
+        rt_apply._execute_preedit_steps(
+            rt_engine.EngineTools(engine_root), plan_c["ops"], source,
+            cancel_work, ".hwpx", checkpoint=cancel_after_first_step(),
+        )
+    assert cancel_direct_exc.value.code == cancel_apply_exc.value.code
+    assert cancel_direct_exc.value.message == cancel_apply_exc.value.message
+    assert (cancel_work / "step1.hwpx").is_file()
+    assert not (cancel_work / "step2.hwpx").exists()

@@ -195,6 +195,47 @@ def candidate_artifact(session, run_id: str) -> tuple[Path, dict]:
     return path, receipt
 
 
+def _execute_preedit_steps(
+    tools,
+    ops: list[dict],
+    origin: Path,
+    work_dir: Path,
+    suffix: str,
+    *,
+    checkpoint=None,
+) -> tuple[Path, list[dict]]:
+    """Run validated preedit steps sequentially in `work_dir`."""
+    def tick():
+        if checkpoint is not None:
+            checkpoint()
+
+    steps: list[dict] = []
+    current = origin
+    for index, op in enumerate(ops):
+        tick()
+        target = work_dir / f"step{index + 1}{suffix}"
+        argv = _argv_for(op["kind"], op["params"], current, target)
+        code, parsed, raw = tools.preedit_run(argv)
+        step = {"opId": op["opId"], "kind": op["kind"],
+                "subcommand": argv[0], "exitCode": code}
+        if code != 0:
+            # Pass the engine's refusal through VERBATIM. It already carries
+            # the escape hatch (engine/scripts/preedit.py:2694-2717); a
+            # flattened message is what makes a caller open section.xml.
+            raise RpcError(
+                "backend_refused",
+                (parsed or {}).get("error")
+                or f"preedit {argv[0]} refused this op (exit {code})",
+                opId=op["opId"], kind=op["kind"], exitCode=code,
+                backend="preedit", refusal=parsed,
+                raw=None if parsed else raw[:4000])
+        step["result"] = parsed
+        steps.append(step)
+        current = target
+    tick()
+    return current, steps
+
+
 def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) -> dict:
     """Run the plan, publish the candidate, return the CandidateArtifact.
 
@@ -216,10 +257,6 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
         # may happen long after the proposal, and the check costs one hash.
         origin, _ = candidate_artifact(session, str(base["runId"]))
 
-    def tick():
-        if checkpoint is not None:
-            checkpoint()
-
     try:
         work_dir.mkdir(parents=True, exist_ok=False)
         run_dir.mkdir(parents=True, exist_ok=False)
@@ -228,30 +265,9 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
                        detail=str(exc)) from exc
 
     steps: list[dict] = []
-    current = origin
     try:
-        for index, op in enumerate(ops):
-            tick()
-            target = work_dir / f"step{index + 1}{suffix}"
-            argv = _argv_for(op["kind"], op["params"], current, target)
-            code, parsed, raw = tools.preedit_run(argv)
-            step = {"opId": op["opId"], "kind": op["kind"],
-                    "subcommand": argv[0], "exitCode": code}
-            if code != 0:
-                # Pass the engine's refusal through VERBATIM. It already carries
-                # the escape hatch (engine/scripts/preedit.py:2694-2717); a
-                # flattened message is what makes a caller open section.xml.
-                raise RpcError(
-                    "backend_refused",
-                    (parsed or {}).get("error")
-                    or f"preedit {argv[0]} refused this op (exit {code})",
-                    opId=op["opId"], kind=op["kind"], exitCode=code,
-                    backend="preedit", refusal=parsed,
-                    raw=None if parsed else raw[:4000])
-            step["result"] = parsed
-            steps.append(step)
-            current = target
-        tick()
+        current, steps = _execute_preedit_steps(
+            tools, ops, origin, work_dir, suffix, checkpoint=checkpoint)
 
         artifact = run_dir / f"artifact{suffix}"
         _atomic_move(current, artifact)
