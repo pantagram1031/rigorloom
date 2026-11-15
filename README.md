@@ -66,7 +66,7 @@ every stage. 공문 also has a Hancom-free end-to-end demo
 through `RuntimeCore` with `check_residue` and `check_gongmun`. For 지원서,
 민원 and 인사 서류, form checkers and cell filling are available through the
 Runtime CLI; end-to-end paths for these types are being built next.
-Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
+Current release: **v0.18.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 The core workflow does not require Hancom Office. Linux and Windows
 are practiced; macOS is unproven. Any coding-capable AI agent or a
@@ -144,7 +144,7 @@ a checkout:
 
 ```sh
 python -m pip wheel --no-deps --wheel-dir dist .
-python -m pip install --no-deps dist/rigorloom-0.17.0-py3-none-any.whl
+python -m pip install --no-deps dist/rigorloom-0.18.0-py3-none-any.whl
 
 rigorloom --root ./rigorloom-root capabilities
 ```
@@ -176,9 +176,9 @@ python scripts/package_module.py --module report --out dist
 # 2. install them into an INSTALL ROOT of your choosing
 mkdir -p ~/rigorloom-install
 cd ~/rigorloom-install
-unzip /path/to/dist/rigorloom-core-0.17.0.zip
-unzip /path/to/dist/rigorloom-style-0.17.0.zip  'modules/*'
-unzip /path/to/dist/rigorloom-report-0.17.0.zip 'modules/*'
+unzip /path/to/dist/rigorloom-core-0.18.0.zip
+unzip /path/to/dist/rigorloom-style-0.18.0.zip  'modules/*'
+unzip /path/to/dist/rigorloom-report-0.18.0.zip 'modules/*'
 python pipeline/scripts/module_registry.py write-enabled --all
 
 # 3. drive the install root with the installed command
@@ -274,7 +274,7 @@ Known limits stated honestly:
 - School and corporate form families have no corpus.
 
 For the full evidence record see
-[docs/release-v0.17.0.md](docs/release-v0.17.0.md).
+[docs/release-v0.18.0.md](docs/release-v0.18.0.md).
 
 ## Architecture
 
