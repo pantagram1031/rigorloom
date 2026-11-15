@@ -41,12 +41,9 @@ CLI_PATH = REPO_ROOT / "runtime" / "scripts" / "cli.py"
 DOCS_UI_DIR = REPO_ROOT / "docs" / "ui"
 GONGMUN_PLAN_PATH = REPO_ROOT / "examples" / "gongmun" / "expected" / "plan.json"
 CORPUS_FORM_FILENAME = "gianmun-byeolji-1ho.hwpx"
-LIVE_CONTRAST_OUTPUT = Path(
-    os.environ.get(
-        "RIGORLOOM_LIVE_CONTRAST_OUT",
-        "/home/ubuntu/.gemini/antigravity-cli/brain/6c4670bc-d333-4cdf-a615-d794a28c7218/scratch/live_contrast.json",
-    )
-)
+# The live contrast audit is written only when this variable names a file;
+# otherwise it goes to the test's temporary directory.
+LIVE_CONTRAST_ENV = "RIGORLOOM_LIVE_CONTRAST_OUT"
 
 CANONICAL_SCREENSHOTS = [
     f"{screen}-{width}-{theme}.png"
@@ -613,7 +610,8 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
         _stop_ui_server(proc)
 
     # 7) Save live DOM WCAG contrast audit summary
-    LIVE_CONTRAST_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    live_contrast_output = Path(os.environ.get(LIVE_CONTRAST_ENV) or tmp_path / "live_contrast.json")
+    live_contrast_output.parent.mkdir(parents=True, exist_ok=True)
     contrast_summary = {
         "schema": "rigorloom/live-contrast-audit-v1",
         "thresholdNormal": 4.5,
@@ -623,7 +621,7 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
         "totalFailures": sum(r["failureCount"] for r in contrast_reports),
         "surfaces": contrast_reports,
     }
-    LIVE_CONTRAST_OUTPUT.write_text(
+    live_contrast_output.write_text(
         json.dumps(contrast_summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
