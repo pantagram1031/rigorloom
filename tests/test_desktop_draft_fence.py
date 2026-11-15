@@ -373,6 +373,8 @@ def test_draft_freshness_node_tests():
 
 def test_head_freshness_node_tests():
     """Out-of-order head receipts cannot publish stale verdicts or queue bases."""
+    if not TSC.is_dir():
+        pytest.skip("desktop TypeScript is not installed")
     completed = subprocess.run(
         [shutil.which("node") or "node", "--experimental-strip-types", "--test", str(HEAD_FRESHNESS)],
         cwd=str(REPO / "desktop"),

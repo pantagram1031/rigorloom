@@ -1211,7 +1211,13 @@ def test_golden_ops_json_for_small_table_cols_pt_content(tmp_path):
     warnings = []
     ops = br.build_ops(meta, secs, tmp_path, warnings=warnings)
 
-    assert ops == pytest.approx(_GOLDEN_EXPECTED_OPS)  # col_ratios float 비교 허용
+    # pytest 8+ approx()는 중첩 구조를 받지 않으므로 col_ratios만 따로 근사 비교한다.
+    assert len(ops) == len(_GOLDEN_EXPECTED_OPS)
+    for got, want in zip(ops, _GOLDEN_EXPECTED_OPS):
+        if "col_ratios" in want:
+            got, want = dict(got), dict(want)
+            assert got.pop("col_ratios") == pytest.approx(want.pop("col_ratios"))
+        assert got == want
     # 인라인으로 뒤집힌 수식 1건 → 경고 1건.
     assert len(warnings) == 1
 
