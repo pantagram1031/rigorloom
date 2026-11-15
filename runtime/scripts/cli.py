@@ -203,6 +203,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_guard.add_argument("--format", choices=("json", "text"), default="json",
                          help="json (default, one document on stdout) or a readable table")
 
+    p_style = sub.add_parser(
+        "style", help="Korean phrasing worth a second look (.hwpx, .txt, .md; no root needed)")
+    style_sub = p_style.add_subparsers(dest="style_command", required=True)
+    p_style_check = style_sub.add_parser(
+        "check", help="list matches as file:line:col rule-id; exit 3 only on an error rule")
+    p_style_check.add_argument("file", help="the document to check")
+    p_style_check.add_argument(
+        "--doc-type", default="any",
+        choices=("report", "gongmun", "grant", "minwon", "contract", "any"),
+        help="apply only the rules for this document type (default: all rules)")
+    p_style_check.add_argument(
+        "--format", choices=("json", "text"), default="json",
+        help="json (default, one document on stdout) or one line per match")
+
     sub.add_parser("capabilities", help="what this build can do")
     sub.add_parser("sessions", help="list sessions under the root")
 
@@ -541,6 +555,26 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(rt_guard.format_table(result))
             return code
         return emit({"ok": code == EXIT_OK, "command": command, "result": result}, code)
+
+    if command == "style":
+        # Read-only and rootless, like guard. Exit 0 = no error-level rule
+        # matched (notices may exist), 3 = at least one did, 2 = unreadable.
+        try:
+            from . import rt_style
+        except ImportError:
+            import rt_style
+        try:
+            result = rt_style.check(Path(args.file), args.doc_type)
+        except (rt_style.StyleInputError, OSError, UnicodeDecodeError) as exc:
+            return emit({"ok": False, "command": "style check",
+                         "error": {"code": "invalid_params", "message": str(exc)}},
+                        EXIT_USAGE)
+        code = EXIT_OK if result["pass"] else EXIT_REFUSED
+        if args.format == "text":
+            sys.stdout.write(rt_style.format_lines(result, args.file))
+            return code
+        return emit({"ok": code == EXIT_OK, "command": "style check",
+                     "result": result}, code)
 
     if command == "install":
         try:

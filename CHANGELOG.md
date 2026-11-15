@@ -10,6 +10,14 @@ the kernel's contract shape.
 
 ### Added
 
+- **T164:** `rigorloom style check FILE` lists Korean phrasing worth a second
+  look in `.txt`, `.md` and `.hwpx` files, as `file:line:col rule-id`. The
+  rule set is versioned (`ko-style/1`, twelve rules). Only the double passive
+  (되어지다) is an error and exits 3; the rest are notices, filtered by
+  `--doc-type` so report habits are not flagged in 공문 or contracts. Each rule
+  has a sentence it must flag and one it must leave alone, in
+  [docs/korean-style-rules.md](docs/korean-style-rules.md) and the tests.
+
 - **T162:** the prose fidelity check now protects direction words (증가/감소,
   늘었다/줄었다, rose/fell and similar), treats short numbered lines such as
   `3. 실험 방법` as headings, and counts tokens as words instead of substrings
