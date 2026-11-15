@@ -251,6 +251,10 @@ export interface InlineCellEdit extends InlineEditBase {
   table: number;
   row: number;
   col: number;
+  /** True when explicitly replacing a static cell's existing content (`replace_at_cell`). */
+  replaceExisting?: boolean;
+  /** True when the inline editor is opened or promoted to multi-line (`<textarea>`). */
+  multiline?: boolean;
 }
 
 /**
@@ -1403,6 +1407,24 @@ export function queuedOpAt(
     s.draft.ops.find(
       (op): op is QueuedFillOp =>
         op.kind === "fill_cell" && op.table === table && op.row === row && op.col === col,
+    ) ?? null
+  );
+}
+
+/** Any queued cell op (`fill_cell` or `replace_at_cell`) at a cell coordinate. */
+export function queuedCellOpAt(
+  s: WorkspaceState,
+  table: number,
+  row: number,
+  col: number,
+): QueuedFillOp | QueuedReplaceAtCellOp | null {
+  return (
+    s.draft.ops.find(
+      (op): op is QueuedFillOp | QueuedReplaceAtCellOp =>
+        (op.kind === "fill_cell" || op.kind === "replace_at_cell") &&
+        op.table === table &&
+        op.row === row &&
+        op.col === col,
     ) ?? null
   );
 }

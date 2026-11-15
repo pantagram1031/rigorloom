@@ -112,9 +112,10 @@ export function TopBar() {
           <button
             type="button"
             className="topbar-tab"
+            aria-current={screen === "fill" ? "page" : undefined}
             data-testid="nav-fill"
-            disabled
-            aria-disabled="true"
+            disabled={!session}
+            onClick={() => navigateScreen("fill")}
           >
             {t("nav_fill", language)}
           </button>

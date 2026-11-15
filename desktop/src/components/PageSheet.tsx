@@ -5,16 +5,19 @@ import {
   useRef,
   useState,
   type MouseEvent,
+  type MutableRefObject,
   type TouchEvent,
   type WheelEvent,
 } from "react";
 
 import {
   beginEdit,
+  beginStaticCellEdit,
   cancelEdit,
   commitEdit,
   loadGeometry,
   renderCurrentPage,
+  setInlineEditMultiline,
   togglePrintView,
 } from "../actions";
 import {
@@ -235,6 +238,35 @@ interface PageSheetProps {
   selectedChangeId: string | null;
   language: UiLanguage;
   onSelectChange: (opId: string) => void;
+  /** Optional mode selector ("review" default, or "fill" for blank form entry). */
+  mode?: "review" | "fill";
+  /** Fill mode: ref attached to `.page-sheet-viewport` (`data-testid="fill-sheet-anchor"`). */
+  sheetAnchorRef?: MutableRefObject<HTMLDivElement | null>;
+  /** Fill mode: currently highlighted cell key (`t{table}r{row}c{col}`). */
+  selectedCellKey?: string | null;
+  /** Fill mode: localized label map by cell key for blank slot hints. */
+  blankFieldLabels?: Record<string, string>;
+  /** Fill mode: blank cell click handler. */
+  onSelectBlankCell?: (table: number, row: number, col: number) => void;
+  /** Fill mode: non-blank static cell click handler (shows static notice + escape hatch). */
+  onSelectStaticCell?: (cell: GraphCell, tableIdx: number) => void;
+  /** Fill mode: Tab / Shift+Tab cycling between blanks. */
+  onCycleBlank?: (
+    table: number,
+    row: number,
+    col: number,
+    direction: 1 | -1,
+    currentValue: string,
+  ) => void;
+  /** Fill mode: Esc handler to return focus to `.page-sheet-viewport` (`fill-sheet-anchor`). */
+  onEscapeBlank?: () => void;
+  /** Fill mode: Enter commit handler that advances to next blank cleanly. */
+  onAdvanceBlankAfterEnter?: (
+    table: number,
+    row: number,
+    col: number,
+    committedValue: string,
+  ) => void;
 }
 
 export function PageSheet({
@@ -247,7 +279,17 @@ export function PageSheet({
   selectedChangeId,
   language,
   onSelectChange,
+  mode = "review",
+  sheetAnchorRef,
+  selectedCellKey = null,
+  blankFieldLabels,
+  onSelectBlankCell,
+  onSelectStaticCell,
+  onCycleBlank,
+  onEscapeBlank,
+  onAdvanceBlankAfterEnter,
 }: PageSheetProps) {
+  const isFillMode = mode === "fill";
   const zoom = useWorkspace((s) => s.zoom);
   const pageFit = useWorkspace((s) => s.pageFit);
   const mobileReviewPane = useWorkspace((s) => s.mobileReviewPane);
@@ -415,6 +457,16 @@ export function PageSheet({
     }
     targetEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   }, [selectedChangeId, printViewEnabled, mobileReviewPane, isCompactMobile, effectiveZoom]);
+
+  // Fill mode: keep keyboard-cycled blank cells visible inside the scrollable sheet viewport.
+  useEffect(() => {
+    if (!isFillMode || !selectedCellKey) return;
+    const container = viewportRef.current;
+    if (!container || container.clientWidth === 0) return;
+    const targetEl = container.querySelector<HTMLElement>('[data-selected-anchor="true"]');
+    if (!targetEl) return;
+    targetEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+  }, [isFillMode, selectedCellKey, effectiveZoom]);
 
   const handleTouchStart = (e: TouchEvent<HTMLDivElement>) => {
     if (e.touches.length === 2) {
@@ -606,14 +658,41 @@ export function PageSheet({
     cellChanges: readonly IndexedChange[],
     region: RegionText | undefined,
   ) => {
-    const isEditing = editingCellKey === key && inlineEdit !== null;
-    if (isEditing && inlineEdit) {
+    const isEditing = editingCellKey === key && inlineEdit?.kind === "cell";
+    if (isEditing && inlineEdit && inlineEdit.kind === "cell") {
       const currentOpText =
         cellChanges.length === 1 ? cellChanges[0].afterText : undefined;
       return (
         <SeatEditor
+          key={key}
           value={currentOpText ?? inlineEdit.before}
-          onCommit={(next) => void commitEdit(next)}
+          multiline={inlineEdit.multiline}
+          allowMultiline={isFillMode}
+          placeholder={
+            isFillMode
+              ? (blankFieldLabels?.[key] ?? cellClassLabel("fill_target", language))
+              : undefined
+          }
+          onMultilineChange={(multi) => setInlineEditMultiline(multi)}
+          onCycleBlank={
+            isFillMode && onCycleBlank
+              ? (dir, cur) =>
+                  onCycleBlank(inlineEdit.table, inlineEdit.row, inlineEdit.col, dir, cur)
+              : undefined
+          }
+          onEscapeExit={isFillMode ? onEscapeBlank : undefined}
+          onCommit={(next, reason) => {
+            if (isFillMode && reason === "enter" && onAdvanceBlankAfterEnter) {
+              onAdvanceBlankAfterEnter(
+                inlineEdit.table,
+                inlineEdit.row,
+                inlineEdit.col,
+                next,
+              );
+            } else {
+              void commitEdit(next);
+            }
+          }}
           onCancel={cancelEdit}
         />
       );
@@ -683,21 +762,34 @@ export function PageSheet({
           .filter(Boolean)
       : null;
 
+    const blankHintLabel = isFillMode
+      ? (blankFieldLabels?.[key] ?? cellClassLabel("fill_target", language))
+      : cellClassLabel("fill_target", language);
+
     return (
       <div className="page-cell-inner">
-        {renderGroupMarker(
-          cellChanges,
-          rowAudits,
-          selectedChangeId,
-          handleMarkerClick,
-        )}
+        {!isFillMode
+          ? renderGroupMarker(
+              cellChanges,
+              rowAudits,
+              selectedChangeId,
+              handleMarkerClick,
+            )
+          : null}
 
         {wholeCellChange ? (
           <div className="page-cell-text page-cell-text--proposed">
             {wholeCellChange.afterText}
           </div>
         ) : isEmptyBlank ? (
-          <EmptyBlankSlot label={cellClassLabel("fill_target", language)} />
+          <EmptyBlankSlot label={blankHintLabel} />
+        ) : isFillMode && cell.classification === "fill_target" ? (
+          <div className="page-empty-blank page-empty-blank--guided">
+            <span className="page-cell-text">
+              {region?.text ?? cell.textPreview ?? ""}
+              {cell.truncated && !region ? "…" : ""}
+            </span>
+          </div>
         ) : visibleParas ? (
           visibleParas.length > 0 ? (
             <div className="page-cell-text">{visibleParas}</div>
@@ -791,7 +883,7 @@ export function PageSheet({
     <section className="page-sheet-pane" aria-label={t("review_mobile_sheet_tab", language)}>
       <div className="page-sheet-subbar">
         <p className="page-sheet-disclaimer" data-testid="page-sheet-disclaimer">
-          {t("page_label_review", language)}
+          {t(isFillMode ? "page_label_fill" : "page_label_review", language)}
         </p>
 
         <div className="page-sheet-controls">
@@ -906,7 +998,14 @@ export function PageSheet({
 
       <div
         className="page-sheet-viewport"
-        ref={viewportRef}
+        ref={(el) => {
+          viewportRef.current = el;
+          if (sheetAnchorRef) {
+            sheetAnchorRef.current = el;
+          }
+        }}
+        tabIndex={isFillMode ? -1 : undefined}
+        data-testid={isFillMode ? "fill-sheet-anchor" : undefined}
         data-zoom-pct={String(Math.round(effectiveZoom * 100))}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -966,9 +1065,10 @@ export function PageSheet({
                           const cellChanges = changesByCell.get(key) ?? [];
                           const isEditing = editingCellKey === key;
                           const isFillTarget = cell.classification === "fill_target";
-                          const isSelected = cellChanges.some(
-                            (ch) => ch.opId === selectedChangeId,
-                          );
+                          const isSelected = isFillMode
+                            ? selectedCellKey === key || isEditing
+                            : cellChanges.some((ch) => ch.opId === selectedChangeId);
+                          const isSpacerCell = cell.classification === "spacer";
                           const hasChangedFact = cellChanges.some(
                             (ch) => rowAudits[ch.opId]?.status === "changed",
                           );
@@ -1003,7 +1103,9 @@ export function PageSheet({
                           const cls = [
                             "page-cell",
                             `page-cell--class-${cell.classification}`,
-                            isFillTarget ? "page-cell--fill-seat" : "",
+                            isFillTarget && !isSpacerCell ? "page-cell--fill-seat" : "",
+                            isFillMode && isSpacerCell ? "page-cell--spacer-inert" : "",
+                            isFillMode && !isFillTarget && !isSpacerCell ? "page-cell--static-inspectable" : "",
                             isSingleShortLabel ? "page-cell--nowrap-label" : "",
                             colSpan >= 8 ? "page-cell--wide" : "",
                             cellChanges.length > 0 ? "page-cell--changed" : "",
@@ -1035,6 +1137,24 @@ export function PageSheet({
                                   : undefined
                               }
                               onClick={() => {
+                                if (isFillMode) {
+                                  if (isSpacerCell || isEditing) return;
+                                  if (isFillTarget) {
+                                    if (onSelectBlankCell) {
+                                      onSelectBlankCell(table.index, cell.addr.row, cell.addr.col);
+                                    } else {
+                                      beginEdit(table.index, cell.addr.row, cell.addr.col);
+                                    }
+                                    return;
+                                  }
+                                  if (cellChanges.some((ch) => ch.op.kind === "replace_at_cell")) {
+                                    onSelectStaticCell?.(cell, table.index);
+                                    beginStaticCellEdit(table.index, cell.addr.row, cell.addr.col);
+                                    return;
+                                  }
+                                  onSelectStaticCell?.(cell, table.index);
+                                  return;
+                                }
                                 if (isFillTarget && !isEditing) {
                                   if (cellChanges.length > 0) {
                                     selectFromSheet(cellChanges[0].opId);
@@ -1057,7 +1177,7 @@ export function PageSheet({
 
               {looseParagraphs.map((para) => renderLoosePara(para.at_para, para.text))}
 
-              {deleteGuideChanges.length > 0 ? (
+              {!isFillMode && deleteGuideChanges.length > 0 ? (
                 <div
                   className="page-delete-guides-box"
                   data-testid="page-delete-guides-banner"

@@ -38,6 +38,7 @@ import {
   useWorkspace,
 } from "./store";
 import { runSmoke, smokeIntent } from "./smoke";
+import { FillView } from "./views/FillView";
 import { OpenView } from "./views/OpenView";
 import { ReviewView } from "./views/ReviewView";
 
@@ -311,7 +312,12 @@ export default function App() {
     );
   }
 
-  const activeScreen = screen === "review" && session ? "review" : "open";
+  const activeScreen =
+    screen === "review" && session
+      ? "review"
+      : screen === "fill" && session
+        ? "fill"
+        : "open";
 
   return (
     <div
@@ -323,7 +329,13 @@ export default function App() {
       <TopBar />
 
       <div className="viewport">
-        {activeScreen === "review" ? <ReviewView /> : <OpenView />}
+        {activeScreen === "review" ? (
+          <ReviewView />
+        ) : activeScreen === "fill" ? (
+          <FillView />
+        ) : (
+          <OpenView />
+        )}
       </div>
 
       <Settings />

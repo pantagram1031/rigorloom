@@ -35,6 +35,7 @@ import {
   setSelection,
   setView,
   showToast,
+  queuedCellOpAt,
   queuedOpAt,
   queuedRunOpAt,
   bumpEditIntent,
@@ -520,7 +521,12 @@ export function seatAt(
  * syllable rather than deleting it. The spike measured that with real scan
  * codes (M13/M14); this build now has a field to send them to.
  */
-export function beginEdit(table: number, row: number, col: number): boolean {
+export function beginEdit(
+  table: number,
+  row: number,
+  col: number,
+  options?: { multiline?: boolean },
+): boolean {
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return false;
@@ -531,6 +537,10 @@ export function beginEdit(table: number, row: number, col: number): boolean {
     return false;
   }
   const queued = queuedOpAt(state, table, row, col);
+  const multiline =
+    Boolean(options?.multiline) ||
+    queued?.lines !== undefined ||
+    Boolean(queued?.text.includes("\n"));
   setState({
     selection: { kind: "cell", table, row, col },
     inlineEdit: {
@@ -541,9 +551,53 @@ export function beginEdit(table: number, row: number, col: number): boolean {
       before: queued?.before ?? seatText(inspect, state.texts[sessionId] ?? [], table, row, col),
       charPr: queued?.charPr,
       opId: queued?.opId ?? null,
+      multiline,
     },
   });
   return true;
+}
+
+/**
+ * Explicit escape hatch for static cells not marked as blank seats (`design.md` §2.3):
+ * opens an inline editor backed by `replace_at_cell`.
+ */
+export function beginStaticCellEdit(
+  table: number,
+  row: number,
+  col: number,
+  options?: { multiline?: boolean },
+): boolean {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  if (!sessionId) return false;
+  const inspect = state.inspects[sessionId] ?? null;
+  const seat = seatAt(inspect, table, row, col);
+  if (seat && queuedCellOpAt(state, table, row, col)?.kind !== "replace_at_cell") {
+    return beginEdit(table, row, col, options);
+  }
+  const queued = queuedCellOpAt(state, table, row, col);
+  const before = queued?.before ?? seatText(inspect, state.texts[sessionId] ?? [], table, row, col);
+  setState({
+    selection: { kind: "cell", table, row, col },
+    inlineEdit: {
+      kind: "cell",
+      table,
+      row,
+      col,
+      before,
+      charPr: queued?.charPr,
+      opId: queued?.opId ?? null,
+      replaceExisting: true,
+      multiline: Boolean(options?.multiline) || Boolean(queued?.text.includes("\n")) || before.includes("\n"),
+    },
+  });
+  return true;
+}
+
+export function setInlineEditMultiline(multiline: boolean): void {
+  const edit = getState().inlineEdit;
+  if (!edit || edit.kind !== "cell") return;
+  setState({ inlineEdit: { ...edit, multiline } });
 }
 
 /**
@@ -734,10 +788,10 @@ export async function commitEdit(value: string): Promise<void> {
   const unchanged = edit.kind === "run"
     ? runText === (queuedRun?.before ?? edit.before)
     : trimmed === edit.before;
-  if (unchanged) {
-    // Nothing changed. Proposing a no-op plan would put a row in the queue
-    // that says "A → A", which is noise the reviewer has to read past.
-    if (edit.opId) await removeOp(edit.opId);
+  if (unchanged || (edit.kind === "cell" && trimmed === "")) {
+    // Nothing changed, or Ruling J cleared an already-filled blank: remove with undo
+    // rather than leaving a no-op or empty `""` entry in the queue.
+    if (edit.opId) await undoQueuedOp(edit.opId);
     return;
   }
   const ops = getState().draft.ops.filter((op) => op.opId !== edit.opId);
@@ -749,17 +803,32 @@ export async function commitEdit(value: string): Promise<void> {
   // caret a new surface rather than a second mutation route.
   const next: QueuedOp =
     edit.kind === "cell"
-      ? {
-          opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
-          kind: "fill_cell",
-          table: edit.table,
-          row: edit.row,
-          col: edit.col,
-          text: trimmed,
-          charPr: edit.charPr,
-          before: edit.before,
-          origin: "user",
-        }
+      ? edit.replaceExisting
+        ? {
+            opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
+            kind: "replace_at_cell",
+            table: edit.table,
+            row: edit.row,
+            col: edit.col,
+            text: trimmed,
+            mode: "replace",
+            ...(edit.before ? { expect: edit.before } : {}),
+            charPr: edit.charPr,
+            before: edit.before,
+            origin: "user",
+          }
+        : {
+            opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
+            kind: "fill_cell",
+            table: edit.table,
+            row: edit.row,
+            col: edit.col,
+            text: trimmed,
+            ...(trimmed.includes("\n") ? { lines: trimmed.split(/\r?\n/) } : {}),
+            charPr: edit.charPr,
+            before: edit.before,
+            origin: "user",
+          }
       : {
           opId: edit.opId ?? `op-p${edit.atPara}r${edit.run}`,
           kind: "set_run",
@@ -771,7 +840,11 @@ export async function commitEdit(value: string): Promise<void> {
         };
   await setQueue(
     [...ops, next],
-    edit.kind === "run" ? { baseRunId: edit.runId ?? null } : {},
+    edit.kind === "run"
+      ? { baseRunId: edit.runId ?? null }
+      : edit.opId
+        ? { rewritten: didRewriteAgent(edit.opId) }
+        : {},
   );
 }
 

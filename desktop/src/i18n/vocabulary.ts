@@ -745,6 +745,183 @@ export const VOCABULARY = {
     en: "No revision to export yet. Approve and apply changes first.",
   },
   field_body_fallback: { ko: "본문", en: "Body" },
+
+  // Fill screen (§2.3, Rulings H & J)
+  fill_title: { ko: "양식 채우기", en: "Fill form" },
+  fill_empty_fields: {
+    ko: "입력할 빈칸이 없습니다.",
+    en: "No blank fields found in this document.",
+  },
+  fill_select_prompt: {
+    ko: "왼쪽 문서에서 빈칸을 클릭하거나 아래에서 항목을 고르면 바로 입력할 수 있습니다.",
+    en: "Click any dashed blank on the page or pick a field below to fill it in.",
+  },
+  fill_field_placeholder: { ko: "내용 입력", en: "Enter text" },
+  fill_multiline_enable: { ko: "여러 줄 입력", en: "Multi-line input" },
+  fill_multiline_disable: { ko: "한 줄 입력", en: "Single-line input" },
+  fill_multiline_hint: {
+    ko: "엔터로 줄바꿈, 입력을 마치려면 적용 버튼을 누르세요.",
+    en: "Enter for new line, Ctrl/Cmd+Enter to save.",
+  },
+  fill_singleline_hint: {
+    ko: "엔터로 저장 후 다음 빈칸으로 이동, 여러 줄로 입력하려면 여러 줄 입력 버튼을 누르세요.",
+    en: "Enter saves and moves next, Shift+Enter switches to multi-line.",
+  },
+  fill_escape_hint: {
+    ko: "빈칸 선택에서 빠져나오려면 취소 키를 누르세요.",
+    en: "Press Esc to leave blank cycling.",
+  },
+  fill_static_notice: {
+    ko: "이 칸은 이미 채워져 있는 칸입니다.",
+    en: "This cell already has existing text.",
+  },
+  fill_static_replace: { ko: "기존 문구 바꾸기", en: "Replace existing text" },
+  fill_static_current_label: {
+    ko: "현재 들어 있는 문구",
+    en: "Current text in cell",
+  },
+  fill_filled_list_header: { ko: "채운 항목", en: "Filled entries" },
+  fill_filled_list_empty: {
+    ko: "아직 채운 항목이 없습니다.",
+    en: "No filled entries yet.",
+  },
+  fill_previous_form_text: {
+    ko: "기존 양식 문구: {0}",
+    en: "Previous form text: {0}",
+  },
+  fill_previous_blank: { ko: "(비어 있음)", en: "(empty)" },
+  fill_to_review: { ko: "검토로 이동", en: "Review" },
+  fill_reproposing: {
+    ko: "검토 화면을 준비하고 있습니다...",
+    en: "Preparing review...",
+  },
+  fill_delete_guides_btn: { ko: "안내문 지우기 추가", en: "Add guide deletion" },
+  fill_delete_guides_done: {
+    ko: "안내문 지우기 {0}건을 추가했습니다.",
+    en: "Queued {0} guide deletions.",
+  },
+  fill_delete_guides_queued: {
+    ko: "안내문 지우기 포함됨 ({0}건)",
+    en: "Guide deletion queued ({0})",
+  },
+  fill_undo_removed: {
+    ko: "'{0}' 항목을 뺐습니다.",
+    en: "Removed entry for '{0}'.",
+  },
+  fill_undo_restore: { ko: "방금 뺀 항목 되살리기", en: "Undo remove" },
+  fill_undo_empty: {
+    ko: "비운 '{0}' 입력을 대기열에서 뺐습니다.",
+    en: "Cleared empty entry for '{0}'.",
+  },
+  fill_ambiguous_warning: {
+    ko: "'{0}' 이름의 빈칸이 {1}개 있습니다. 선택한 위치가 맞는지 확인하세요.",
+    en: "There are {1} blanks named '{0}'. Confirm the selected slot below.",
+  },
+  fill_ambiguous_slot_option: {
+    ko: "{0}번째 빈칸 · {1}",
+    en: "Blank #{0} · {1}",
+  },
+  fill_clear_value: { ko: "입력 지우기", en: "Clear entry" },
+  fill_save_entry: { ko: "입력 적용", en: "Save entry" },
+  fill_edit_entry: { ko: "고치기", en: "Edit" },
+  fill_guide_caption: { ko: "양식 안내: {0}", en: "Form guide: {0}" },
+
+  // Revision export (Ruling K & §2.4)
+  action_export_revision: { ko: "수정본 {0} 내보내기", en: "Export revision {0}" },
+  export_done_toast: { ko: "수정본 파일을 저장했습니다.", en: "Exported revision file." },
+
+  // History screen (§2.4, Ruling K)
+  history_title: { ko: "수정 기록", en: "Revision history" },
+  history_empty: {
+    ko: "아직 적용한 수정본이 없습니다.",
+    en: "No applied revisions yet.",
+  },
+  history_revision_label: { ko: "수정본 {0}", en: "Revision {0}" },
+  history_revision_current: { ko: "현재 수정본", en: "Current" },
+  history_changes_count: { ko: "변경 {0}건", en: "{0} changes" },
+  history_approved_at_label: { ko: "승인 시각", en: "Approved at" },
+  history_applied_at_label: { ko: "적용 시각", en: "Applied at" },
+  history_unknown_time: { ko: "기록 없음", en: "Not recorded" },
+  history_propose_undo: { ko: "되돌리기 제안", en: "Propose undo" },
+  history_proposing_undo: {
+    ko: "되돌리기 제안을 만들고 있습니다...",
+    en: "Preparing undo proposal...",
+  },
+  history_undo_noninvertible: {
+    ko: "안내문 지우기({0}건)가 들어 있어 자동으로 되돌리기 제안을 만들 수 없습니다.",
+    en: "Contains form instruction removal ({0}) and cannot be undone automatically.",
+  },
+  history_export_prev_revision: {
+    ko: "이전 수정본 {0} 내보내기",
+    en: "Export previous revision {0}",
+  },
+  history_export_original: {
+    ko: "이전 원본 내보내기",
+    en: "Export previous original",
+  },
+  history_compare_title: { ko: "두 수정본 비교", en: "Compare two revisions" },
+  history_compare_base: { ko: "기준 수정본", en: "Base revision" },
+  history_compare_target: { ko: "비교 수정본", en: "Target revision" },
+  history_compare_original: { ko: "원본 문서", en: "Original document" },
+  history_compare_changed_count: {
+    ko: "바뀐 문단 {0}개",
+    en: "{0} paragraphs changed",
+  },
+  history_compare_same: {
+    ko: "두 수정본의 내용이 같습니다.",
+    en: "No differences between these revisions.",
+  },
+  history_compare_loading: {
+    ko: "두 수정본을 비교하고 있습니다...",
+    en: "Comparing revisions...",
+  },
+  history_compare_need_two: {
+    ko: "비교할 수정본이 부족합니다.",
+    en: "Open two revisions to compare.",
+  },
+  history_approval_method_auto: {
+    ko: "승인 방식: 자동 정책 승인",
+    en: "Approval method: Policy approval",
+  },
+  history_receipt_unavailable: {
+    ko: "승인 기록을 아직 불러오지 못했습니다.",
+    en: "Approval record is not available yet.",
+  },
+  history_snapshot_diff_note: {
+    ko: "비교 대상 두 수정본 사이에서 바뀐 문단입니다.",
+    en: "Paragraphs that differ between the selected revisions.",
+  },
+
+  // Settings screen (§2.5, Ruling M) & Operator modal tab
+  settings_title: { ko: "설정", en: "Settings" },
+  settings_section_language: { ko: "언어", en: "Language" },
+  settings_section_theme: { ko: "화면 테마", en: "Appearance" },
+  settings_section_folder: { ko: "작업 폴더", en: "Workspace folder" },
+  settings_folder_change: { ko: "폴더 바꾸기", en: "Change folder" },
+  settings_folder_changing: {
+    ko: "작업 폴더를 바꾸고 있습니다...",
+    en: "Switching workspace folder...",
+  },
+  settings_folder_changed: {
+    ko: "작업 폴더를 바꿨습니다.",
+    en: "Workspace folder updated.",
+  },
+  settings_folder_prompt: {
+    ko: "새 작업 폴더 경로 입력",
+    en: "Enter new workspace folder path",
+  },
+  settings_folder_apply: { ko: "적용", en: "Apply" },
+  settings_folder_reset_default: { ko: "기본 폴더 사용", en: "Use default folder" },
+  settings_folder_current_label: { ko: "현재 작업 폴더", en: "Current folder" },
+  operator_tab_credentials: {
+    ko: "에이전트 인증 및 공급자",
+    en: "Credentials & provider",
+  },
+  cmd_export_revision: { ko: "현재 수정본 내보내기", en: "Export current revision" },
+  cmd_open_workspace_settings: {
+    ko: "화면 및 작업 폴더 설정",
+    en: "Language, theme & workspace settings",
+  },
 } as const satisfies Record<string, VocabEntry>;
 
 export type VocabularyKey = keyof typeof VOCABULARY;
