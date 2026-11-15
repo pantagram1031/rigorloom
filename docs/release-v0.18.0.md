@@ -37,15 +37,15 @@ section of [CHANGELOG.md](../CHANGELOG.md).
 Built by `scripts/package_module.py` and re-verified with `--verify` (all
 seven `ok: true`), on Linux with Python 3.12.
 
-| bundle | files | zip sha256 |
-|---|---:|---|
-| `rigorloom-core-0.18.0.zip` | 155 | `cfc52223c1044bf39e3d05d1160cf4060400a99b91e10a1bab599c91eeb23a08` |
-| `rigorloom-report-0.18.0.zip` | 88 | `30d839be4fbaaebbdb23182c277c2d029e0172cc5770412901fd8f7c21784248` |
-| `rigorloom-style-0.18.0.zip` | 14 | `4bc4a46a5281b0fa3f6e9b42754208f8b7aa468fc9f69105cbc6efaf536e9ea4` |
-| `rigorloom-gongmun-0.18.0.zip` | 14 | `59f4d363bf186cd7384711a6677257c0d62472d94ce8b14b06fbcea000416890` |
-| `rigorloom-minwon-0.18.0.zip` | 12 | `2ca09a1eb2698239433f3ba9f3cee4dae4fd751fb08c6925a8857afa8aa1cc49` |
-| `rigorloom-hr-0.18.0.zip` | 12 | `d6c8785241409342a9ba688cf3b77b321e90706e9bea2e674d8aa4953e32c31c` |
-| `rigorloom-grant-0.18.0.zip` | 12 | `4bb22fae8ac05397e9a76e31b959f8559b57a425018ccce0b5c29e1ca998ed1c` |
+| bundle | files | bytes | zip sha256 |
+|---|---:|---:|---|
+| `rigorloom-core-0.18.0.zip` | 155 | 6,954,946 | `cfc52223c1044bf39e3d05d1160cf4060400a99b91e10a1bab599c91eeb23a08` |
+| `rigorloom-report-0.18.0.zip` | 88 | 252,773 | `30d839be4fbaaebbdb23182c277c2d029e0172cc5770412901fd8f7c21784248` |
+| `rigorloom-style-0.18.0.zip` | 14 | 36,252 | `4bc4a46a5281b0fa3f6e9b42754208f8b7aa468fc9f69105cbc6efaf536e9ea4` |
+| `rigorloom-gongmun-0.18.0.zip` | 14 | 46,036 | `59f4d363bf186cd7384711a6677257c0d62472d94ce8b14b06fbcea000416890` |
+| `rigorloom-minwon-0.18.0.zip` | 12 | 54,543 | `2ca09a1eb2698239433f3ba9f3cee4dae4fd751fb08c6925a8857afa8aa1cc49` |
+| `rigorloom-hr-0.18.0.zip` | 12 | 64,137 | `d6c8785241409342a9ba688cf3b77b321e90706e9bea2e674d8aa4953e32c31c` |
+| `rigorloom-grant-0.18.0.zip` | 12 | 76,054 | `4bb22fae8ac05397e9a76e31b959f8559b57a425018ccce0b5c29e1ca998ed1c` |
 
 The bundles were built twice, before and after the documentation edits in the
 release commit, with identical hashes. To check a row yourself from a checkout
@@ -60,7 +60,12 @@ Core went from 98 files at v0.17.0 to 155: 61 added (32 under
 `engine/references`, 15 under `pipeline/scripts`, 6 under `engine/scripts`, 4
 under `pipeline/references`, 3 under `pipeline/adapters_impl`, 1 under
 `skill/references`) and 4 removed (the `studio/` files). `report` gained one
-file; the other module bundles have the same counts as v0.17.0.
+file; the other module bundles have the same counts as v0.17.0. The core zip
+includes the six Nanum OFL font files under
+`engine/references/fonts/family-map/` (with `OFL.txt`), which are most of its
+size. They are new to a release: they were added on `main` on 2026-09-09
+(687e9a5), after the v0.17.0 tag (2026-08-09), and are part of the 32 files
+added under `engine/references`.
 
 One finding, stated as found: rebuilding the v0.17.0 core bundle from the
 v0.17.0 tag on this Linux machine gives `0b71131f…`, not the `f61b5bca…` in
