@@ -1,0 +1,203 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      text { font-family: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; fill: #181817; }
+      .muted { fill: #8A8984; font-size: 12px; font-weight: 400; }
+      .sec { fill: #575653; font-size: 13px; font-weight: 400; }
+      .body { fill: #181817; font-size: 13px; font-weight: 400; }
+      .semi { fill: #181817; font-size: 13px; font-weight: 600; }
+      .lg { fill: #181817; font-size: 15px; font-weight: 600; }
+      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12px; fill: #575653; }
+    </style>
+  </defs>
+
+  <!-- Desk Canvas Left (60% = 864px) & Surface Right (40% = 576px) -->
+  <rect x="0" y="0" width="864" height="900" fill="#F0F0EE"/>
+  <rect x="864" y="0" width="576" height="900" fill="#FFFFFF"/>
+  <line x1="864" y1="48" x2="864" y2="900" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Top Bar (48px) -->
+  <rect x="0" y="0" width="1440" height="48" fill="#FFFFFF"/>
+  <line x1="0" y1="48" x2="1440" y2="48" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Top Bar Left: Open + Doc Title + Plan State Badge -->
+  <text x="24" y="29" class="sec">열기</text>
+  <line x1="64" y1="16" x2="64" y2="32" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="80" y="29" class="lg">표준근로계약서_2026_신규입사.hwpx</text>
+  <rect x="336" y="13" width="56" height="22" rx="4" fill="#EBF1FD"/>
+  <text x="364" y="28" text-anchor="middle" font-size="12" font-weight="600" fill="#1A56DB">검토 중</text>
+
+  <!-- Top Bar Center-Left: Screen Tabs -->
+  <text x="432" y="29" class="semi" fill="#1A56DB">검토 4</text>
+  <rect x="428" y="46" width="44" height="2" fill="#1A56DB"/>
+  <text x="496" y="29" class="sec">채우기</text>
+  <text x="556" y="29" class="sec">기록</text>
+
+  <!-- Top Bar Right: Return + Primary Approve + Settings -->
+  <rect x="1148" y="8" width="96" height="32" rx="6" fill="#F0F0EE"/>
+  <text x="1196" y="29" text-anchor="middle" class="semi">돌려보내기</text>
+
+  <rect x="1252" y="8" width="88" height="32" rx="6" fill="#1A56DB"/>
+  <text x="1296" y="29" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">승인</text>
+
+  <text x="1364" y="29" class="sec">설정</text>
+
+  <!-- Left 60% Sub-bar (Quiet Page Controls, 32px) -->
+  <text x="32" y="72" class="muted">1 / 1쪽</text>
+  <text x="96" y="72" class="muted">배율 100% · 폭 맞춤</text>
+  <text x="832" y="72" text-anchor="end" class="muted">양식 쪽 화면 · 인쇄 화면 전환</text>
+
+  <!-- Printed Form Paper Sheet (A4 ratio inside 864px canvas: 680 x 780) -->
+  <rect x="92" y="88" width="680" height="784" fill="#FFFFFF" stroke="#D8D7D2" stroke-width="1"/>
+
+  <!-- Paper Content (Real margins: 56px sides, 48px top) -->
+  <text x="432" y="148" text-anchor="middle" font-size="20" font-weight="600">표 준 근 로 계 약 서</text>
+  <text x="148" y="188" class="body">(주)리걸룸(이하 "사업주"라 함)과 홍길동(이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.</text>
+
+  <!-- Form Table Printed Grid -->
+  <rect x="148" y="208" width="568" height="288" fill="#FFFFFF" stroke="#181817" stroke-width="1"/>
+  <line x1="280" y1="208" x2="280" y2="496" stroke="#181817" stroke-width="1"/>
+  <line x1="148" y1="256" x2="716" y2="256" stroke="#181817" stroke-width="1"/>
+  <line x1="148" y1="304" x2="716" y2="304" stroke="#181817" stroke-width="1"/>
+  <line x1="148" y1="368" x2="716" y2="368" stroke="#181817" stroke-width="1"/>
+  <line x1="148" y1="432" x2="716" y2="432" stroke="#181817" stroke-width="1"/>
+
+  <!-- Row 1: Change #1 (Filled Blank, Kept) -->
+  <rect x="149" y="209" width="130" height="46" fill="#F7F7F5"/>
+  <text x="164" y="237" class="semi">성명 (근로자)</text>
+  <rect x="281" y="209" width="434" height="46" fill="#F2F6FE"/>
+  <rect x="281" y="209" width="3" height="46" fill="#1A56DB"/>
+  <rect x="292" y="222" width="18" height="18" rx="4" fill="#1A56DB"/>
+  <text x="301" y="235" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">1</text>
+  <text x="318" y="237" class="semi">홍길동</text>
+
+  <!-- Row 2: Change #2 (Filled Blank, Selected) -->
+  <rect x="149" y="257" width="130" height="46" fill="#F7F7F5"/>
+  <text x="164" y="285" class="semi">근무 장소</text>
+  <rect x="281" y="257" width="434" height="46" fill="#EBF1FD" stroke="#1A56DB" stroke-width="1.5"/>
+  <rect x="281" y="257" width="3" height="46" fill="#1A56DB"/>
+  <rect x="292" y="270" width="18" height="18" rx="4" fill="#1A56DB"/>
+  <text x="301" y="283" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">2</text>
+  <text x="318" y="285" class="semi">서울특별시 종로구 세종대로 110 본사 4층</text>
+
+  <!-- Row 3: Change #3 (Changed Fact! Date altered in existing text) -->
+  <rect x="149" y="305" width="130" height="62" fill="#F7F7F5"/>
+  <text x="164" y="340" class="semi">근로계약기간</text>
+  <rect x="281" y="305" width="434" height="62" fill="#FDF2F2"/>
+  <rect x="281" y="305" width="3" height="62" fill="#DC2626"/>
+  <rect x="292" y="318" width="18" height="18" rx="4" fill="#B91C1C"/>
+  <text x="301" y="331" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">3</text>
+  <text x="318" y="331" class="semi" fill="#B91C1C">2026년 4월 1일부터 기한의 정함이 없음</text>
+  <!-- Hover/Selected inline before->after callout -->
+  <rect x="318" y="341" width="268" height="20" rx="4" fill="#FFFFFF" stroke="#F3C5C5" stroke-width="1"/>
+  <text x="326" y="355" class="muted">이전: 2026년 3월 1일부터 → 바뀐 날짜 확인</text>
+
+  <!-- Row 4: Unchanged Static Row -->
+  <rect x="149" y="369" width="130" height="62" fill="#F7F7F5"/>
+  <text x="164" y="404" class="semi">소정근로시간</text>
+  <text x="296" y="404" class="body">09시 00분부터 18시 00분까지 (휴게시간 12:00~13:00)</text>
+
+  <!-- Row 5: Unchanged Row -->
+  <rect x="149" y="433" width="130" height="62" fill="#F7F7F5"/>
+  <text x="164" y="468" class="semi">임금 지급일</text>
+  <text x="296" y="468" class="body">매월 25일 근로자 명의 예금통장에 직접 지급</text>
+
+  <!-- Guide Removal Marker #4 below table -->
+  <rect x="148" y="520" width="568" height="44" rx="4" fill="#F7F7F5"/>
+  <rect x="148" y="520" width="3" height="44" fill="#8A8984"/>
+  <rect x="160" y="533" width="18" height="18" rx="4" fill="#575653"/>
+  <text x="169" y="546" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">4</text>
+  <text x="188" y="546" class="muted" text-decoration="line-through">작성 요령: 파란색 안내 문구는 인쇄 전에 모두 지우고 제출하십시오.</text>
+  <text x="648" y="546" class="muted">안내문 지움</text>
+
+  <!-- Approval Dialog Preview (Bottom-Left callout inset on canvas, showing small bound hashes) -->
+  <rect x="148" y="616" width="440" height="216" rx="8" fill="#FFFFFF" stroke="#C8C7C1" stroke-width="1"/>
+  <text x="172" y="648" class="lg">변경 4건을 문서 사본에 적용할까요?</text>
+  <text x="172" y="674" class="sec">원본은 건드리지 않고 새 수정본을 만듭니다.</text>
+  <rect x="172" y="688" width="392" height="32" rx="4" fill="#FDF2F2"/>
+  <text x="184" y="709" font-size="12" font-weight="600" fill="#B91C1C">확인: 3번 항목에서 날짜(2026년 3월 1일 → 4월 1일)가 바뀌었습니다.</text>
+  <text x="172" y="742" class="muted">계획 해시</text>
+  <text x="236" y="742" class="mono">7404d02874ab…9f12</text>
+  <text x="172" y="762" class="muted">문서 해시</text>
+  <text x="236" y="762" class="mono">52232388ac76…3c08</text>
+  <rect x="412" y="784" width="68" height="32" rx="6" fill="#F0F0EE"/>
+  <text x="446" y="805" text-anchor="middle" class="semi">취소</text>
+  <rect x="488" y="784" width="76" height="32" rx="6" fill="#1A56DB"/>
+  <text x="526" y="805" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">승인</text>
+
+  <!-- Right 40% Pane: PR-Style Change List (x=864..1440) -->
+  <!-- Summary Header (40px) -->
+  <rect x="865" y="49" width="575" height="40" fill="#FFFFFF"/>
+  <text x="888" y="74" class="semi">변경 4건</text>
+  <text x="948" y="74" class="muted">에이전트 제안</text>
+  <rect x="1284" y="58" width="132" height="22" rx="4" fill="#FDF2F2"/>
+  <text x="1350" y="73" text-anchor="middle" font-size="12" font-weight="600" fill="#B91C1C">바뀐 사실 1건 확인</text>
+  <line x1="864" y1="89" x2="1440" y2="89" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Change Row 1 (Compact/Normal) -->
+  <rect x="865" y="90" width="575" height="72" fill="#FFFFFF"/>
+  <rect x="888" y="104" width="18" height="18" rx="4" fill="#1A56DB"/>
+  <text x="897" y="117" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">1</text>
+  <text x="914" y="118" class="semi">빈칸 채움</text>
+  <text x="978" y="118" class="sec">성명 (근로자)</text>
+  <rect x="1364" y="102" width="52" height="22" rx="4" fill="#E8F5ED"/>
+  <text x="1390" y="117" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">유지됨</text>
+  <text x="914" y="144" class="muted">(빈칸)</text>
+  <text x="958" y="144" class="muted">→</text>
+  <text x="976" y="144" class="semi">홍길동</text>
+  <line x1="864" y1="162" x2="1440" y2="162" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Change Row 2 (Selected with keyboard focus & 자세히 expanded) -->
+  <rect x="865" y="163" width="575" height="156" fill="#F7F9FE"/>
+  <rect x="865" y="163" width="3" height="156" fill="#1A56DB"/>
+  <rect x="888" y="177" width="18" height="18" rx="4" fill="#1A56DB"/>
+  <text x="897" y="190" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">2</text>
+  <text x="914" y="191" class="semi">빈칸 채움</text>
+  <text x="978" y="191" class="sec">근무 장소</text>
+  <rect x="1364" y="175" width="52" height="22" rx="4" fill="#E8F5ED"/>
+  <text x="1390" y="190" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">유지됨</text>
+  <text x="914" y="217" class="muted">(빈칸)</text>
+  <text x="958" y="217" class="muted">→</text>
+  <text x="976" y="217" class="semi">서울특별시 종로구 세종대로 110 본사 4층</text>
+  <text x="914" y="244" font-size="12" font-weight="600" fill="#1A56DB">직접 고치기</text>
+  <text x="990" y="244" class="muted">이 항목 빼기</text>
+  <text x="1074" y="244" class="muted">자세히 접기</text>
+  <!-- 자세히 monospace box -->
+  <rect x="914" y="256" width="502" height="48" rx="4" fill="#F0F0EE"/>
+  <text x="926" y="275" class="mono">op-2 · fill_cell · table 0, row 1, col 1 · charPr 11 -&gt; 23</text>
+  <text x="926" y="294" class="mono">guard paragraph 6 · pass: true · added numbers: 110, 4</text>
+  <line x1="864" y1="319" x2="1440" y2="319" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Change Row 3 (Changed Fact Warning Row!) -->
+  <rect x="865" y="320" width="575" height="104" fill="#FFFFFF"/>
+  <rect x="865" y="320" width="3" height="104" fill="#DC2626"/>
+  <rect x="888" y="334" width="18" height="18" rx="4" fill="#B91C1C"/>
+  <text x="897" y="347" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">3</text>
+  <text x="914" y="348" class="semi">칸 문구 바꿈</text>
+  <text x="996" y="348" class="sec">근로계약기간</text>
+  <rect x="1340" y="332" width="76" height="22" rx="4" fill="#FDF2F2"/>
+  <text x="1378" y="347" text-anchor="middle" font-size="12" font-weight="600" fill="#B91C1C">바뀐 사실</text>
+  <text x="914" y="374" class="sec" text-decoration="line-through">2026년 3월 1일부터</text>
+  <text x="1038" y="374" class="muted">→</text>
+  <text x="1056" y="374" class="semi">2026년 4월 1일부터</text>
+  <text x="914" y="400" font-size="12" font-weight="600" fill="#B91C1C">바뀐 날짜: 2026년 3월 1일 → 2026년 4월 1일</text>
+  <text x="1378" y="400" class="muted">자세히</text>
+  <line x1="864" y1="424" x2="1440" y2="424" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Change Row 4 (Guide Removal) -->
+  <rect x="865" y="425" width="575" height="76" fill="#FFFFFF"/>
+  <rect x="888" y="439" width="18" height="18" rx="4" fill="#575653"/>
+  <text x="897" y="452" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">4</text>
+  <text x="914" y="453" class="semi">안내문 지움</text>
+  <text x="992" y="453" class="sec">하단 작성 요령 문단</text>
+  <rect x="1364" y="437" width="52" height="22" rx="4" fill="#E8F5ED"/>
+  <text x="1390" y="452" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">유지됨</text>
+  <text x="914" y="479" class="muted" text-decoration="line-through">작성 요령: 파란색 안내 문구는 인쇄 전에 모두 지우고 제출하십시오.</text>
+  <line x1="864" y1="501" x2="1440" y2="501" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Quiet Bottom Bar in Right Pane: Keyboard hint + Collapsible Agent Instruction -->
+  <line x1="864" y1="844" x2="1440" y2="844" stroke="#E4E4E0" stroke-width="1"/>
+  <rect x="880" y="854" width="544" height="34" rx="6" fill="#F7F7F5"/>
+  <text x="896" y="875" class="muted">추가로 시킬 일이 있으면 여기에 적으세요 (Ctrl+Enter)</text>
+  <text x="1408" y="875" text-anchor="end" class="muted">j/k 이동 · a 승인 · r 돌려보내기</text>
+</svg>

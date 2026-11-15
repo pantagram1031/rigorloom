@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      text { font-family: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; fill: #181817; }
+      .muted { fill: #8A8984; font-size: 12px; font-weight: 400; }
+      .sec { fill: #575653; font-size: 13px; font-weight: 400; }
+      .body { fill: #181817; font-size: 13px; font-weight: 400; }
+      .semi { fill: #181817; font-size: 13px; font-weight: 600; }
+      .lg { fill: #181817; font-size: 15px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="576" height="900" fill="#F7F7F5"/>
+  <rect x="576" y="0" width="864" height="900" fill="#FFFFFF"/>
+  <line x1="576" y1="48" x2="576" y2="900" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Top Bar -->
+  <rect x="0" y="0" width="1440" height="48" fill="#FFFFFF"/>
+  <line x1="0" y1="48" x2="1440" y2="48" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="24" y="29" class="sec">열기</text>
+  <line x1="64" y1="16" x2="64" y2="32" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="80" y="29" class="lg">표준근로계약서_2026_신규입사.hwpx</text>
+  <rect x="336" y="13" width="56" height="22" rx="4" fill="#E8F5ED"/>
+  <text x="364" y="28" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">적용됨</text>
+
+  <text x="432" y="29" class="sec">검토</text>
+  <text x="480" y="29" class="sec">채우기</text>
+  <text x="540" y="29" class="semi" fill="#1A56DB">기록</text>
+  <rect x="536" y="46" width="32" height="2" fill="#1A56DB"/>
+
+  <rect x="1228" y="8" width="112" height="32" rx="6" fill="#1A56DB"/>
+  <text x="1284" y="29" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">파일 내보내기</text>
+  <text x="1364" y="29" class="sec">설정</text>
+
+  <!-- Left 40% (576px): Vertical Candidate Timeline -->
+  <text x="32" y="84" class="lg">문서 수정 기록</text>
+  <text x="32" y="106" class="muted">어느 두 시점이든 골라 바뀐 곳을 비교하고 이전 상태로 되돌릴 수 있습니다.</text>
+
+  <!-- Compare Selector Bar -->
+  <rect x="32" y="124" width="512" height="36" rx="6" fill="#FFFFFF" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="48" y="147" class="sec">비교 기준: 수정본 1</text>
+  <text x="232" y="147" class="muted">→</text>
+  <text x="256" y="147" class="semi">비교 대상: 수정본 2 (현재 기준)</text>
+
+  <!-- Timeline Vertical Rail -->
+  <line x1="48" y1="196" x2="48" y2="420" stroke="#C8C7C1" stroke-width="2"/>
+
+  <!-- Node 3 (Newest / Head, Selected) -->
+  <rect x="68" y="180" width="476" height="72" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.5"/>
+  <circle cx="48" cy="204" r="6" fill="#1A56DB"/>
+  <text x="84" y="205" class="semi">수정본 2 · 칸 문구 바꿈 1건</text>
+  <rect x="460" y="190" width="68" height="20" rx="4" fill="#EBF1FD"/>
+  <text x="494" y="204" text-anchor="middle" font-size="12" font-weight="600" fill="#1A56DB">현재 기준</text>
+  <text x="84" y="229" class="muted">승인: 직접 승인 · 오늘 14:32 · 제출 전 점검 통과</text>
+
+  <!-- Node 2 -->
+  <rect x="68" y="268" width="476" height="72" rx="6" fill="#FFFFFF" stroke="#E4E4E0" stroke-width="1"/>
+  <circle cx="48" cy="292" r="5" fill="#FFFFFF" stroke="#575653" stroke-width="2"/>
+  <text x="84" y="293" class="semi">수정본 1 · 빈칸 채움 3건</text>
+  <rect x="460" y="278" width="68" height="20" rx="4" fill="#F0F0EE"/>
+  <text x="494" y="292" text-anchor="middle" class="muted">비교 기준</text>
+  <text x="84" y="317" class="muted">승인: 직접 승인 · 오늘 14:10 · 제출 전 점검 통과</text>
+
+  <!-- Node 1 (Original Source) -->
+  <rect x="68" y="356" width="476" height="64" rx="6" fill="#FFFFFF" stroke="#E4E4E0" stroke-width="1"/>
+  <circle cx="48" cy="380" r="5" fill="#8A8984"/>
+  <text x="84" y="381" class="semi">원본 문서</text>
+  <text x="84" y="405" class="muted">처음 연 시각: 오늘 13:58 · 원본은 수정되지 않음</text>
+
+  <!-- Right 60% (864px): Comparison & Restore Detail -->
+  <text x="608" y="84" class="lg">수정본 1 → 수정본 2 비교 결과</text>
+  <text x="608" y="108" class="sec">승인 시각: 오늘 14:32 · 승인한 사람: 직접 승인</text>
+
+  <!-- Action Buttons on Right Detail Header -->
+  <rect x="1148" y="68" width="156" height="32" rx="6" fill="#F0F0EE"/>
+  <text x="1226" y="89" text-anchor="middle" class="semi">이 변경 되돌리기 제안</text>
+  <rect x="1312" y="68" width="104" height="32" rx="6" fill="#FFFFFF" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="1364" y="89" text-anchor="middle" class="sec">이 버전 저장</text>
+
+  <line x1="608" y1="124" x2="1416" y2="124" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Honest Note about Reverse Proposal -->
+  <rect x="608" y="140" width="808" height="40" rx="6" fill="#F7F7F5"/>
+  <text x="624" y="165" class="sec">되돌리기 제안을 누르면 이전 값을 복원하는 새 변경안이 만들어지며, 검토 화면에서 승인해야 적용됩니다.</text>
+
+  <!-- Compared Changed Rows -->
+  <text x="608" y="212" class="semi">달라진 항목 1건</text>
+  <line x1="608" y1="224" x2="1416" y2="224" stroke="#E4E4E0" stroke-width="1"/>
+
+  <rect x="608" y="225" width="808" height="88" fill="#FFFFFF"/>
+  <text x="624" y="252" class="semi">근무 장소</text>
+  <rect x="1340" y="236" width="60" height="22" rx="4" fill="#E8F5ED"/>
+  <text x="1370" y="251" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">유지됨</text>
+  <text x="624" y="278" class="muted">수정본 1: 서울특별시 종로구 세종대로 110</text>
+  <text x="624" y="300" class="semi">수정본 2: 서울특별시 종로구 세종대로 110 본사 4층</text>
+  <line x1="608" y1="313" x2="1416" y2="313" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- 자세히 Disclosure collapsed at bottom -->
+  <text x="608" y="348" class="muted">자세히 (영수증 검증 · 파일 해시 · 원본 기록 보기)</text>
+</svg>

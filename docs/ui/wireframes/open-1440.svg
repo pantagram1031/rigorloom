@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      text { font-family: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; fill: #181817; }
+      .muted { fill: #8A8984; font-size: 12px; font-weight: 400; }
+      .sec { fill: #575653; font-size: 13px; font-weight: 400; }
+      .body { fill: #181817; font-size: 13px; font-weight: 400; }
+      .semi { fill: #181817; font-size: 13px; font-weight: 600; }
+      .lg { fill: #181817; font-size: 15px; font-weight: 600; }
+      .disp { fill: #181817; font-size: 20px; font-weight: 600; }
+      .call { fill: #1A56DB; font-size: 12px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1440" height="900" fill="#F7F7F5"/>
+
+  <!-- Top Bar (48px) -->
+  <rect x="0" y="0" width="1440" height="48" fill="#FFFFFF"/>
+  <line x1="0" y1="48" x2="1440" y2="48" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="24" y="29" class="lg">Rigorloom</text>
+  <text x="128" y="29" class="semi" fill="#1A56DB">열기</text>
+  <rect x="124" y="46" width="32" height="2" fill="#1A56DB"/>
+  <text x="180" y="29" class="sec">검토 4</text>
+  <text x="244" y="29" class="sec">채우기</text>
+  <text x="304" y="29" class="sec">기록</text>
+
+  <!-- Right controls -->
+  <rect x="1264" y="10" width="84" height="28" rx="6" fill="#F0F0EE"/>
+  <text x="1306" y="29" text-anchor="middle" class="muted">명령 Ctrl+K</text>
+  <text x="1376" y="29" class="sec">설정</text>
+
+  <!-- Centered Open Column (720px wide, x=360..1080) -->
+  <text x="360" y="124" class="disp">문서 열기</text>
+  <text x="360" y="148" class="sec">원본 파일은 그대로 두고 안전한 작업 사본을 만들어 엽니다.</text>
+
+  <!-- Drop Zone (720 x 176) -->
+  <rect x="360" y="172" width="720" height="176" rx="8" fill="#FFFFFF" stroke="#C8C7C1" stroke-width="1" stroke-dasharray="6 4"/>
+  <text x="720" y="226" text-anchor="middle" class="lg">한글 문서(.hwpx)를 여기에 놓으세요</text>
+  <text x="720" y="250" text-anchor="middle" class="muted">또는 컴퓨터에 있는 양식이나 기본 양식에서 고를 수 있습니다</text>
+
+  <!-- Drop Zone Buttons -->
+  <rect x="564" y="274" width="144" height="36" rx="6" fill="#1A56DB"/>
+  <text x="636" y="297" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">파일에서 고르기</text>
+
+  <rect x="724" y="274" width="152" height="36" rx="6" fill="#F0F0EE"/>
+  <text x="800" y="297" text-anchor="middle" class="semi">기본 양식에서 열기</text>
+
+  <!-- Recent Sessions Section -->
+  <text x="360" y="396" class="lg">최근 연 문서</text>
+  <text x="1080" y="396" text-anchor="end" class="muted">항목을 누르면 마지막 작업 상태로 이어서 엽니다</text>
+  <line x1="360" y1="412" x2="1080" y2="412" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 1 (36px, active pending changes) -->
+  <rect x="360" y="413" width="720" height="36" fill="#FFFFFF"/>
+  <text x="376" y="436" class="semi">표준근로계약서_2026_신규입사.hwpx</text>
+  <text x="820" y="436" class="muted">방금 전</text>
+  <rect x="968" y="420" width="96" height="22" rx="4" fill="#EBF1FD"/>
+  <text x="1016" y="435" text-anchor="middle" font-size="12" font-weight="600" fill="#1A56DB">변경 4건 대기</text>
+  <line x1="360" y1="449" x2="1080" y2="449" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 2 (36px) -->
+  <rect x="360" y="450" width="720" height="36" fill="#FFFFFF"/>
+  <text x="376" y="473" class="body">정보공개청구서_총무팀.hwpx</text>
+  <text x="820" y="473" class="muted">오늘 11:20</text>
+  <rect x="968" y="457" width="96" height="22" rx="4" fill="#EBF1FD"/>
+  <text x="1016" y="472" text-anchor="middle" font-size="12" font-weight="600" fill="#1A56DB">변경 2건 대기</text>
+  <line x1="360" y1="486" x2="1080" y2="486" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 3 (36px, applied) -->
+  <rect x="360" y="487" width="720" height="36" fill="#FFFFFF"/>
+  <text x="376" y="510" class="body">물품구매표준계약서_조달청.hwpx</text>
+  <text x="820" y="510" class="muted">어제 17:45</text>
+  <rect x="996" y="494" width="68" height="22" rx="4" fill="#E8F5ED"/>
+  <text x="1030" y="509" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">적용됨</text>
+  <line x1="360" y1="523" x2="1080" y2="523" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 4 (36px, no pending changes) -->
+  <rect x="360" y="524" width="720" height="36" fill="#FFFFFF"/>
+  <text x="376" y="547" class="body">개인정보수집이용동의서.hwpx</text>
+  <text x="820" y="547" class="muted">2026-11-12</text>
+  <text x="1064" y="546" text-anchor="end" class="muted">변경 없음</text>
+  <line x1="360" y1="560" x2="1080" y2="560" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Bundled Forms Expandable Drawer Preview -->
+  <text x="360" y="612" class="lg">기본 제공 양식</text>
+  <line x1="360" y1="628" x2="1080" y2="628" stroke="#E4E4E0" stroke-width="1"/>
+  <rect x="360" y="629" width="720" height="36" fill="#FFFFFF"/>
+  <text x="376" y="652" class="body">고용노동부 표준근로계약서</text>
+  <text x="1064" y="652" text-anchor="end" font-size="12" font-weight="600" fill="#1A56DB">열기</text>
+  <line x1="360" y1="665" x2="1080" y2="665" stroke="#E4E4E0" stroke-width="1"/>
+  <rect x="360" y="666" width="720" height="36" fill="#FFFFFF"/>
+  <text x="376" y="689" class="body">행정안전부 정보공개 청구서</text>
+  <text x="1064" y="689" text-anchor="end" font-size="12" font-weight="600" fill="#1A56DB">열기</text>
+  <line x1="360" y1="702" x2="1080" y2="702" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Annotations -->
+  <text x="40" y="204" class="call">[1] 단일 열 드롭 영역 (720px)</text>
+  <text x="40" y="224" class="muted">XML 구조 트리·해시·바이트 노출 없음</text>
+  <text x="40" y="436" class="call">[2] 36px 고밀도 최근 문서 행</text>
+  <text x="40" y="456" class="muted">문서 이름 · 연 시각 · 대기 건수만 표시</text>
+</svg>

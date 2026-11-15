@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      text { font-family: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; fill: #181817; }
+      .muted { fill: #8A8984; font-size: 12px; font-weight: 400; }
+      .sec { fill: #575653; font-size: 13px; font-weight: 400; }
+      .body { fill: #181817; font-size: 13px; font-weight: 400; }
+      .semi { fill: #181817; font-size: 13px; font-weight: 600; }
+      .lg { fill: #181817; font-size: 15px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <!-- Split Workspace: 60% Left Paper, 40% Right Inspector & Entered List -->
+  <rect x="0" y="0" width="864" height="900" fill="#F0F0EE"/>
+  <rect x="864" y="0" width="576" height="900" fill="#FFFFFF"/>
+  <line x1="864" y1="48" x2="864" y2="900" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Top Bar -->
+  <rect x="0" y="0" width="1440" height="48" fill="#FFFFFF"/>
+  <line x1="0" y1="48" x2="1440" y2="48" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="24" y="29" class="sec">열기</text>
+  <line x1="64" y1="16" x2="64" y2="32" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="80" y="29" class="lg">표준근로계약서_2026_신규입사.hwpx</text>
+  <rect x="336" y="13" width="56" height="22" rx="4" fill="#F0F0EE"/>
+  <text x="364" y="28" text-anchor="middle" font-size="12" font-weight="600" fill="#575653">제안됨</text>
+
+  <text x="432" y="29" class="sec">검토 2</text>
+  <text x="496" y="29" class="semi" fill="#1A56DB">채우기</text>
+  <rect x="492" y="46" width="44" height="2" fill="#1A56DB"/>
+  <text x="556" y="29" class="sec">기록</text>
+
+  <rect x="1220" y="8" width="120" height="32" rx="6" fill="#1A56DB"/>
+  <text x="1280" y="29" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">검토하러 가기</text>
+  <text x="1364" y="29" class="sec">설정</text>
+
+  <!-- Left Page Controls -->
+  <text x="32" y="72" class="muted">1 / 1쪽 · 빈칸 9개 중 2개 채움</text>
+  <text x="832" y="72" text-anchor="end" class="muted">빈칸을 눌러 값을 적고 Enter를 누르세요 (Tab 다음 빈칸)</text>
+
+  <!-- Printed Paper Sheet -->
+  <rect x="92" y="88" width="680" height="784" fill="#FFFFFF" stroke="#D8D7D2" stroke-width="1"/>
+  <text x="432" y="148" text-anchor="middle" font-size="20" font-weight="600">표 준 근 로 계 약 서</text>
+
+  <!-- Table Grid -->
+  <rect x="148" y="188" width="568" height="260" fill="#FFFFFF" stroke="#181817" stroke-width="1"/>
+  <line x1="280" y1="188" x2="280" y2="448" stroke="#181817" stroke-width="1"/>
+  <line x1="148" y1="240" x2="716" y2="240" stroke="#181817" stroke-width="1"/>
+  <line x1="148" y1="292" x2="716" y2="292" stroke="#181817" stroke-width="1"/>
+  <line x1="148" y1="356" x2="716" y2="356" stroke="#181817" stroke-width="1"/>
+
+  <!-- Row 1: Already filled blank -->
+  <rect x="149" y="189" width="130" height="50" fill="#F7F7F5"/>
+  <text x="164" y="219" class="semi">성명 (근로자)</text>
+  <rect x="281" y="189" width="434" height="50" fill="#F2F6FE"/>
+  <rect x="281" y="189" width="3" height="50" fill="#1A56DB"/>
+  <text x="296" y="219" class="semi">홍길동</text>
+
+  <!-- Row 2: Active Inline Input (<input> IME-safe SeatEditor) -->
+  <rect x="149" y="241" width="130" height="50" fill="#F7F7F5"/>
+  <text x="164" y="271" class="semi">근무 장소</text>
+  <rect x="284" y="244" width="428" height="44" rx="4" fill="#FFFFFF" stroke="#1A56DB" stroke-width="2"/>
+  <text x="296" y="271" class="body">서울특별시 종로구 세종대로 110|</text>
+  <text x="696" y="271" text-anchor="end" class="muted">Enter 완료</text>
+
+  <!-- Row 3: Empty Fill Target Affordance -->
+  <rect x="149" y="293" width="130" height="62" fill="#F7F7F5"/>
+  <text x="164" y="328" class="semi">업무의 내용</text>
+  <rect x="288" y="302" width="420" height="44" rx="4" fill="#FAF9F5" stroke="#D8D7D2" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="300" y="328" class="muted">여기를 눌러 입력하세요</text>
+
+  <!-- Row 4: Clicked Static Non-Fill Cell -> Plain-Language Inline Notice -->
+  <rect x="149" y="357" width="130" height="90" fill="#FEF9EC" stroke="#D97706" stroke-width="1.5"/>
+  <text x="164" y="406" class="semi">소정근로시간</text>
+  <text x="296" y="406" class="body">09시 00분부터 18시 00분까지</text>
+
+  <!-- Plain Korean Popover for non-recognised cell (NO cell_not_fill_target code!) -->
+  <rect x="148" y="458" width="436" height="64" rx="6" fill="#FFFFFF" stroke="#E4E4E0" stroke-width="1"/>
+  <rect x="148" y="458" width="3" height="64" fill="#D97706"/>
+  <text x="164" y="484" class="semi">이 칸은 양식이 채우는 자리로 보지 않습니다</text>
+  <text x="164" y="506" class="muted">양식의 고정 항목 이름입니다. 꼭 고쳐야 하면</text>
+  <text x="414" y="506" font-size="12" font-weight="600" fill="#1A56DB">기존 문구 바꾸기</text>
+  <text x="506" y="506" class="muted">를 쓰세요.</text>
+
+  <!-- Right 40% Pane: Figma-style Selected Field Inspector + Entered Changes -->
+  <text x="888" y="80" class="lg">선택한 빈칸</text>
+  <text x="888" y="106" class="semi">근무 장소</text>
+  <text x="888" y="128" class="muted">본문 글자 크기에 맞춰 자동으로 채웁니다.</text>
+  <rect x="888" y="142" width="528" height="36" rx="6" fill="#F7F7F5" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="900" y="165" class="body">서울특별시 종로구 세종대로 110</text>
+  <text x="888" y="198" font-size="12" font-weight="600" fill="#1A56DB">여러 줄로 입력하기</text>
+  <text x="1416" y="198" text-anchor="end" class="muted">자세히</text>
+  <line x1="864" y1="216" x2="1440" y2="216" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Entered List -->
+  <text x="888" y="248" class="semi">채운 항목 2건</text>
+  <text x="1416" y="248" text-anchor="end" font-size="12" font-weight="600" fill="#1A56DB">작성 안내문 지우기 추가</text>
+  <line x1="864" y1="264" x2="1440" y2="264" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 1 -->
+  <rect x="865" y="265" width="575" height="44" fill="#FFFFFF"/>
+  <text x="888" y="292" class="sec">성명 (근로자)</text>
+  <text x="1032" y="292" class="semi">홍길동</text>
+  <text x="1416" y="292" text-anchor="end" class="muted">빼기</text>
+  <line x1="864" y1="309" x2="1440" y2="309" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 2 -->
+  <rect x="865" y="310" width="575" height="44" fill="#F7F9FE"/>
+  <text x="888" y="337" class="sec">근무 장소</text>
+  <text x="1032" y="337" class="semi">서울특별시 종로구 세종대로 110</text>
+  <text x="1416" y="337" text-anchor="end" class="muted">입력 중</text>
+  <line x1="864" y1="354" x2="1440" y2="354" stroke="#E4E4E0" stroke-width="1"/>
+</svg>
