@@ -70,7 +70,22 @@ depend on it. The v0.18.0 hashes above are for Linux and CPython 3.12.
 
 ## CI on the release commit
 
-Counts from the CI run on this pull request are added here before merge.
+GitHub Actions run 43731757870 on commit `4ca7d86` (the release commit before
+this CI record was added). All five jobs passed.
+
+| Job | pytest |
+|---|---|
+| core-only, Ubuntu | 4200 passed, 1224 skipped, 0 failed |
+| all modules, Ubuntu | 5272 passed, 152 skipped, 0 failed |
+| core-only, Windows | 4152 passed, 1272 skipped, 0 failed |
+| all modules, Windows | 5224 passed, 200 skipped, 0 failed |
+| render smoke | passed |
+
+Each test job also runs `qa/tests` (26 passed in both Windows logs), the
+`py_compile` sweep (143 files, 0 failures) and the bootstrap smoke.
+
+Skips are tests that need licensed fonts, Hancom, a renderer or real user
+fixtures, none of which the CI runners have.
 
 ## Privacy status
 
