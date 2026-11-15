@@ -13,7 +13,14 @@ import {
   toggleTheme,
 } from "../actions";
 import { t, type VocabularyKey } from "../i18n/vocabulary";
-import { activeSession, headCandidate, setState, useWorkspace } from "../store";
+import {
+  activeSession,
+  getState,
+  headCandidate,
+  setState,
+  showToast,
+  useWorkspace,
+} from "../store";
 
 interface PaletteItem {
   id: string;
@@ -54,10 +61,12 @@ export function CommandPalette() {
       {
         id: "open-builtin",
         labelKey: "cmd_open_builtin",
-        keywords: "기본 양식 예시 open form",
+        keywords: "예시 양식 열기 기본 open form example",
         run: () => {
           navigateScreen("open");
-          setState({ openDialogOpen: true });
+          setState({
+            openSamplesRevealNonce: getState().openSamplesRevealNonce + 1,
+          });
           void loadCorpusFiles();
         },
       },
@@ -102,13 +111,19 @@ export function CommandPalette() {
       });
     }
 
-    if (canExport) {
+    if (session) {
       items.push({
         id: "export",
         labelKey: "cmd_export",
         shortcut: "Ctrl+E",
         keywords: "내보내기 저장 export",
-        run: () => void exportApplied(),
+        run: () => {
+          if (!canExport) {
+            showToast(t("export_no_revision_toast", language), 2600);
+            return;
+          }
+          void exportApplied();
+        },
       });
     }
 
@@ -154,7 +169,7 @@ export function CommandPalette() {
     );
 
     return items;
-  }, [session, hasPlan, canApprove, canExport, theme]);
+  }, [session, hasPlan, canApprove, canExport, theme, language]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

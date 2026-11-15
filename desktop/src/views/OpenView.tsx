@@ -54,6 +54,7 @@ export function OpenView() {
   const capabilities = useWorkspace((s) => s.capabilities);
   const corpusFiles = useWorkspace((s) => s.corpusFiles);
   const corpusFilesPhase = useWorkspace((s) => s.corpusFilesPhase);
+  const openSamplesRevealNonce = useWorkspace((s) => s.openSamplesRevealNonce);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const samplesSectionRef = useRef<HTMLElement | null>(null);
@@ -72,6 +73,18 @@ export function OpenView() {
     void loadCorpusFiles();
     void refreshSessions();
   }, []);
+
+  useEffect(() => {
+    if (openSamplesRevealNonce === 0) return;
+    setSamplesOpenOverride(true);
+    const frameId = window.requestAnimationFrame(() => {
+      samplesSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [openSamplesRevealNonce]);
 
   const hwpAvailable = useMemo(
     () => isHwpBackendAvailable(capabilities),
@@ -499,27 +512,6 @@ export function OpenView() {
               )}
             </div>
           )}
-
-          <div className="open-dropzone-disclosure">
-            <DetailDisclosure
-              label={t("browser_open_title", language)}
-              testId="open-by-path-disclosure"
-            >
-              <div className="open-by-path-body">
-                <p className="open-by-path-hint">
-                  {t("open_path_disclosure_hint", language)}
-                </p>
-                <button
-                  type="button"
-                  className="open-btn-quiet"
-                  data-testid="open-by-path-button"
-                  onClick={() => setState({ openDialogOpen: true })}
-                >
-                  {t("browser_open_title", language)}
-                </button>
-              </div>
-            </DetailDisclosure>
-          </div>
         </section>
 
         <section className="open-recents" aria-label={t("open_recent_title", language)}>

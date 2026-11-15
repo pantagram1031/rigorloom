@@ -262,31 +262,6 @@
   overflow-wrap: anywhere;
 }
 
-.open-dropzone-disclosure {
-  margin-top: var(--space-2);
-  padding-top: var(--space-1);
-  width: 100%;
-  border-top: var(--divider) solid var(--border-subtle);
-  text-align: left;
-}
-
-.open-by-path-body {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.open-by-path-hint {
-  margin: 0;
-  font-size: var(--text-sm);
-  line-height: var(--leading-ui);
-  color: var(--fg-secondary);
-  flex: 1 1 220px;
-  min-width: 0;
-}
-
 /* Recent documents & bundled sample forms shared section headers */
 .open-recents,
 .open-samples {

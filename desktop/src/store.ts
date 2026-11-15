@@ -645,6 +645,8 @@ export interface WorkspaceState {
   commandPaletteOpen: boolean;
   operatorModalOpen: boolean;
   returnPopoverOpen: boolean;
+  /** Bumped when CommandPalette asks OpenView to expand and scroll to the samples list. */
+  openSamplesRevealNonce: number;
 }
 
 /**
@@ -727,7 +729,7 @@ const initial: WorkspaceState = {
   expanded: [],
   page: 1,
   zoom: 1,
-  pageFit: "free",
+  pageFit: "width",
   centerMode: "text",
   locateNonce: 0,
 
@@ -848,6 +850,7 @@ const initial: WorkspaceState = {
   commandPaletteOpen: false,
   operatorModalOpen: false,
   returnPopoverOpen: false,
+  openSamplesRevealNonce: 0,
 };
 
 let state: WorkspaceState = initial;
