@@ -91,3 +91,24 @@ def test_runtime_copy_of_the_checker_matches_the_module():
     runtime = REPO / "runtime" / "scripts" / "rt_fidelity.py"
     assert runtime.read_bytes() == module.read_bytes(), (
         "copy modules/style/scripts/prose_fidelity.py to runtime/scripts/rt_fidelity.py")
+
+
+def test_committed_example_verdict_is_reproduced_byte_for_byte():
+    example = REPO / "examples" / "guard"
+    proc = subprocess.run([sys.executable, str(CLI), "guard", "before.hwpx", "after.hwpx"],
+                          cwd=example, capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 3
+    assert proc.stdout == (example / "verdict.json").read_text(encoding="utf-8")
+
+
+def test_readme_quick_start_output_is_real(tmp_path):
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    block = readme.split("## Try it in one minute", 1)[1]
+    sh, out = block.split("```sh\n", 1)[1].split("```", 1)[0], block.split("```text\n", 1)[1].split("```", 1)[0]
+    texts = [line.split("'")[1].replace("%%", "%").replace("\\n", "\n")
+             for line in sh.splitlines() if line.startswith("printf")]
+    (tmp_path / "before.txt").write_text(texts[0], encoding="utf-8")
+    (tmp_path / "after.txt").write_text(texts[1], encoding="utf-8")
+    proc = _guard(tmp_path / "before.txt", tmp_path / "after.txt", "--format", "text")
+    assert proc.returncode == 3
+    assert proc.stdout == out

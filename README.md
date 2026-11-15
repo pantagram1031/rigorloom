@@ -1,6 +1,9 @@
 # Rigorloom
 
-A report-automation pipeline for Korean HWP/HWPX government forms.
+When an AI edits a document, Rigorloom checks every paragraph it touched. If a
+number, a date, a quotation, a negation or a direction word ("increased",
+"감소") changed, that paragraph goes back to the original. The check is plain
+code: the same two files always get the same verdict.
 
 [![CI](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml/badge.svg)](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -8,11 +11,41 @@ A report-automation pipeline for Korean HWP/HWPX government forms.
 
 ---
 
+## Try it in one minute
+
+No Hancom, no session root, no network. Works on `.hwpx`, `.txt` and `.md`.
+
+```sh
+pip install git+https://github.com/pantagram1031/rigorloom
+printf '응답률은 18.6%%였고, 표본이 작아 일반화할 수 없다.\n' > before.txt
+printf '응답률은 19%%였고, 표본이 작지만 일반화할 수 있다.\n' > after.txt
+rigorloom guard before.txt after.txt --format text
+```
+
+```text
+paragraphs: 1, edited: 1, changed a protected fact: 1
+
+¶1
+  numbers          18.6%  ->  19%
+  qualifiers       없  ->  -
+
+REVERT the paragraphs above.
+```
+
+Exit code 0 means every protected fact is unchanged; 3 means at least one
+paragraph changed one (or paragraphs were added or removed, which guard refuses
+to guess about); 2 means the files cannot be compared. Without `--format text`
+the result is one JSON document. It counts expressions; it does not read
+meaning, so a swap of two values or a reversal said in other words still
+passes. [examples/guard/](examples/guard/) has an HWPX pair with its committed
+verdict, and the rules are in
+[pipeline/references/humanization_contract.md](pipeline/references/humanization_contract.md).
+
 ## What this is
 
-Rigorloom is a **report-automation pipeline** that turns a research brief and
-a blank Korean government form (.hwp/.hwpx) into a filled, verified,
-typeset document — with deterministic gates at every stage.
+Around that check, Rigorloom is a **report-automation pipeline** that turns a
+research brief and a blank Korean government form (.hwp/.hwpx) into a filled,
+verified, typeset document, with deterministic gates at every stage.
 Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 The core workflow does not require Hancom Office. Linux and Windows
