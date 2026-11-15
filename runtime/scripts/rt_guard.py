@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import zipfile
+from collections import Counter
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -188,3 +189,51 @@ def format_table(result: dict) -> str:
     lines.append("\nOK: every protected fact is unchanged." if result["pass"]
                  else "\nCHANGED: restore or review the paragraphs above.")
     return "\n".join(lines) + "\n"
+
+
+def _counts(v) -> Counter:
+    if isinstance(v, dict):
+        return Counter({str(k): int(n) for k, n in v.items()})
+    return Counter(str(x) for x in (v or []))
+
+
+def _delta(c: Counter) -> str:
+    return ", ".join(f"{k}×{n}" if n > 1 else k for k, n in c.items())
+
+
+def _one_line(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\n", "⏎")
+
+
+def block_diff(before: Path, after: Path) -> tuple[str, bool]:
+    """``--mode block-diff`` text, defined in docs/guard-block-diff.md.
+
+    Returns (text, pass). Every edited paragraph gets a block, kept or not.
+    """
+    result = guard(before, after)
+    if result.get("reason") == "paragraph_count_changed":
+        return format_table(result), False
+    table = format_table(result).splitlines()
+    header, closing = table[0], table[-1]
+    changed = {c["paragraph"]: c for c in result["changed"]}
+    a, b = read_paragraphs(before), read_paragraphs(after)
+    blocks = []
+    for i, (x, y) in enumerate(zip(a, b), 1):
+        if x == y:
+            continue
+        c = changed.get(i)
+        if c is None:
+            lines = [f"¶{i} kept"]
+        else:
+            labels = ", ".join(dict.fromkeys(LABELS.get(k, k) for k in c["kinds"]))
+            lines = [f"¶{i} CHANGED: {labels}"]
+        lines += [f"- {_one_line(x)}", f"+ {_one_line(y)}"]
+        for ch in (c["changes"] if c else []):
+            label = LABELS.get(ch["kind"], ch["kind"])
+            old, new = _counts(ch["before"]), _counts(ch["after"])
+            if old - new:
+                lines.append(f"  lost   {label}  {_delta(old - new)}")
+            if new - old:
+                lines.append(f"  added  {label}  {_delta(new - old)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join([header, *blocks, closing]) + "\n", result["pass"]

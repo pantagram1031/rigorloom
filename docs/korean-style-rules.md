@@ -50,6 +50,7 @@ leave alone, both listed below and both checked by `tests/test_style_check.py`.
 | `ko.gajigo-itda` | notice | report, grant | 이 재료는 높은 강도를 가지고 있다. | 그는 우산을 가지고 나갔다. | 강도가 높다 |
 | `ko.geot-i-pilyohada` | notice | report, grant | 측정값을 다시 확인하는 것이 필요하다. | 측정값을 다시 확인해야 한다. | 동사로 바로 |
 | `ko.para-opener-summary` | notice | report | 결론적으로 두 방법의 차이는 작았다. | 두 방법의 차이는 결론에서 다시 다룬다. | 되풀이 문단이면 줄이기 |
+| `ko.filler-opener` | notice | report, grant | 또한 응답자의 절반은 같은 답을 골랐다. | 응답자의 절반은 또한 같은 답을 골랐다. | 접속어 없이 새 내용으로 |
 | `ko.contrast-frame` | notice | report | 문제는 비용이 아니라 시간이다. | 비용은 문제가 되지 않았다. | B를 바로 주장 |
 | `ko.md-bold` | notice | report, 공문, 민원, 계약 | 이 단계는 **반드시** 지켜야 한다. | 이 단계는 반드시 지켜야 한다. | 문장으로 강조 |
 | `ko.exclamation` | notice | report, 공문, 민원, 계약, grant | 결과가 기대보다 좋았다! | 결과가 기대보다 좋았다. | 마침표 |
@@ -60,20 +61,32 @@ was home), so it stays quiet rather than guess.
 
 ## Where the rules came from
 
-The double passive and the carried-over phrasings (`~에 있어서`, `~에 다름
-아니다`, `~지 않으면 안 된다`, `~로 하여금`) are standard examples in
-국립국어원's guidance on 번역 투. The report rules come from notes on what
-makes student and research reports read as filled-in templates: paragraphs
-that open by summarising what came before, a repeated "not A but B" frame,
-bold text and exclamation marks in the body. Those notes also warn that
-word lists drawn from one genre misfire in another, which is why every rule
-here names the document types it applies to and most rules only ask.
+- The double passive and the carried-over phrasings (`~에 있어서`, `~에 다름
+  아니다`, `~지 않으면 안 된다`, `~로 하여금`) are standard examples in
+  국립국어원's guidance on 번역 투.
+- The report rules (`ko.para-opener-summary`, `ko.filler-opener`,
+  `ko.contrast-frame`, `ko.md-bold`, `ko.exclamation`) come from research notes
+  on student and research reports kept outside this repository. Those notes
+  compared paragraph openers, sentence length and hedges in human and generated
+  reports, and drew on public writing guides. Only their conclusions are used
+  here, not their measurements.
+- The same notes found that these signals point in opposite directions across
+  genres. Fiction writers use more connectives than generated text does, and
+  academic text the reverse. So every rule names the document types it applies
+  to, and the result is a list of places to look, never a score for the whole
+  document.
 
 ## Not in this version
 
-Sentence-length variation, connective density and word-frequency balance are
-left out on purpose. They depend on how text is split into sentences, they
-flip direction between genres, and fixing them on the surface tends to make
-prose worse. Longer-range checks (an ending paragraph that repeats the body,
-the share of sentences with concrete numbers or sources) need the document's
-structure and are planned for the report module, not this command.
+- **Sentence and clause length.** Human reports vary in length too, and the
+  numbers change a lot with how text is split into sentences. A later version
+  may add a notice for very long sentences, never a target length.
+- **`~수 있다` as a hedge.** Most uses mean ability or possibility, not
+  hedging, so a pattern cannot tell them apart.
+- **Inanimate subjects.** There is no measured evidence yet on how often they
+  misfire in 공문 and contracts, where they are normal ("본 계약은 ...").
+- **Connective density, word-frequency balance.** These flip direction between
+  genres, and fixing them on the surface tends to make prose worse.
+- Longer-range checks (an ending paragraph that repeats the body, the share of
+  sentences with concrete numbers or sources) need the document's structure
+  and belong in the report module, not this command.

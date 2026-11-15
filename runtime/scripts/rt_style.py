@@ -12,10 +12,11 @@ The rules are versioned (``RULESET``). Changing a pattern, its severity or the
 document types it applies to means a new version, so a stored result always
 says which rules produced it.
 
-Sources the rules were chosen from: 국립국어원's guidance on double passives
-and translated phrasing, and Rigorloom's own notes on report and official
-document style (docs/korean-style-rules.md lists each rule with a positive and
-a negative example).
+Sources: 국립국어원's guidance on double passives and translated phrasing, and
+research notes kept outside this repository on report style (paragraph
+openers, sentence length, hedges) and on where such rules misfire across
+genres. docs/korean-style-rules.md says which rule came from which, and lists
+each rule with a positive and a negative example.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ try:
 except ImportError:  # run from the checkout as runtime/scripts/cli.py
     from rt_guard import GuardInputError, read_paragraphs
 
-RULESET = "ko-style/1"
+RULESET = "ko-style/1"  # bump on any rule change; see docs/korean-style-rules.md
 STYLE_SCHEMA = "rigorloom/style-check-v1"
 DOC_TYPES = ("report", "gongmun", "grant", "minwon", "contract", "any")
 SEVERITIES = ("error", "notice")
@@ -93,11 +94,15 @@ RULES: tuple[Rule, ...] = (
          "notice", ("report",),
          "문단을 정리 문구로 여는 형태입니다. 앞 내용을 되풀이하는 문단이 아닌지 확인하십시오.",
          "되풀이라면 문단을 줄이거나 새 근거로 시작"),
+    Rule("ko.filler-opener", r"^\s*(?:또한|아울러|더불어|나아가)[,\s]",
+         "notice", ("report", "grant"),
+         "문단을 덧붙임 접속어로 여는 형태입니다. 앞 문단과 이어지는 내용이면 접속어 없이도 읽힙니다.",
+         "접속어를 빼고 새 내용으로 바로 시작"),
     Rule("ko.contrast-frame", r"(?:이|가)\s?아니라\s?\S+(?:이다|입니다)[.]",
          "notice", ("report",),
          "'A가 아니라 B이다' 대조 틀입니다. 한 보고서에 여러 번 나오면 틀이 눈에 띕니다.",
          "B를 바로 주장하고 근거를 붙임"),
-    Rule("ko.md-bold", r"\*\*[^*\n]+\*\*",
+    Rule("ko.md-bold", r"\*\*[^*\n]*[가-힣][^*\n]*\*\*",
          "notice", ("report", "gongmun", "contract", "minwon"),
          "본문 굵게 표시입니다. 한글 양식 문서에서는 대개 서식으로 강조하지 않습니다.",
          "강조가 필요하면 문장으로"),

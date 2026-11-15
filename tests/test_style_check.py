@@ -42,6 +42,8 @@ EXAMPLES = {
                             "측정값을 다시 확인해야 한다."),
     "ko.para-opener-summary": ("결론적으로 두 방법의 차이는 작았다.",
                                "두 방법의 차이는 결론에서 다시 다룬다."),
+    "ko.filler-opener": ("또한 응답자의 절반은 같은 답을 골랐다.",
+                         "응답자의 절반은 또한 같은 답을 골랐다."),
     "ko.contrast-frame": ("문제는 비용이 아니라 시간이다.",
                           "비용은 문제가 되지 않았다."),
     "ko.md-bold": ("이 단계는 **반드시** 지켜야 한다.",
@@ -167,3 +169,8 @@ def test_results_name_the_file_not_its_path(tmp_path):
     f.parent.mkdir()
     f.write_text("사용되어진다.\n", encoding="utf-8")
     assert "private" not in json.dumps(rt_style.check(f), ensure_ascii=False)
+
+
+def test_rules_are_for_korean_text_only():
+    english = ["**Agent bootstrap:** run the setup once!", "It is used **only** here."]
+    assert rt_style.check_text(english, list(rt_style.RULES)) == []

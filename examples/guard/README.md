@@ -16,6 +16,14 @@ cd examples/guard
 rigorloom guard before.hwpx after.hwpx > verdict.json   # exit 3
 ```
 
-`verdict.json` is committed. `tests/test_guard.py` runs the same command and
-checks that the output is byte-for-byte the committed file, so this example
+`block-diff.txt` is the same comparison printed with `--mode block-diff`
+(each edited paragraph's old and new text side by side, defined in
+[docs/guard-block-diff.md](../../docs/guard-block-diff.md)):
+
+```sh
+rigorloom guard before.hwpx after.hwpx --mode block-diff > block-diff.txt
+```
+
+`verdict.json` and `block-diff.txt` are committed. `tests/test_guard.py` runs the same command and
+checks that each output is byte-for-byte the committed file, so this example
 can't drift from the code.

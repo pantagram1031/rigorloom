@@ -202,6 +202,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_guard.add_argument("after", help="the edited file, same type")
     p_guard.add_argument("--format", choices=("json", "text"), default="json",
                          help="json (default, one document on stdout) or a readable table")
+    p_guard.add_argument("--mode", choices=("verdict", "block-diff"), default="verdict",
+                         help="block-diff prints each edited paragraph's old and new text "
+                              "(always text; see docs/guard-block-diff.md)")
 
     p_style = sub.add_parser(
         "style", help="Korean phrasing worth a second look (.hwpx, .txt, .md; no root needed)")
@@ -545,6 +548,10 @@ def main(argv: list[str] | None = None) -> int:
         except ImportError:
             import rt_guard
         try:
+            if args.mode == "block-diff":
+                text, passed = rt_guard.block_diff(Path(args.before), Path(args.after))
+                sys.stdout.write(text)
+                return EXIT_OK if passed else EXIT_REFUSED
             result = rt_guard.guard(Path(args.before), Path(args.after))
         except (rt_guard.GuardInputError, OSError, UnicodeDecodeError) as exc:
             return emit({"ok": False, "command": command,
