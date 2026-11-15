@@ -7,7 +7,7 @@ in place rather than regenerated: parts of the package that were not edited
 stay byte-identical.
 
 Two checks can run on any edit. `rigorloom guard` names each paragraph where a
-number, date, quotation or negation changed. `rigorloom style check` points to
+number, date, quotation, negation or direction word changed. `rigorloom style check` points to
 Korean phrasing worth a second look, such as 번역 투 and template-like report
 habits; most of its findings are notices, not errors. Both checks are
 deterministic.
@@ -61,9 +61,11 @@ verdict, and the rules are in
 
 Support differs by document type. Reports have a full pipeline from a research
 brief and a blank form to a filled, checked, typeset document, with a gate at
-every stage. For 공문, 지원서, 민원 and 인사 서류, form checkers and cell filling
-are available through the Runtime CLI; end-to-end paths for these types are
-being built next.
+every stage. 공문 also has a Hancom-free end-to-end demo
+(`rigorloom demo gongmun`; see [docs/demo-gongmun.md](docs/demo-gongmun.md))
+through `RuntimeCore` with `check_residue` and `check_gongmun`. For 지원서,
+민원 and 인사 서류, form checkers and cell filling are available through the
+Runtime CLI; end-to-end paths for these types are being built next.
 Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 The core workflow does not require Hancom Office. Linux and Windows
@@ -72,8 +74,10 @@ human operator can run it.
 
 **What it is not.** It is not a general-purpose word processor, a
 cloud service, or a finished desktop application. The pipeline on `main`
-is usable for report automation. A desktop Tauri editor exists on
-unmerged branches and is **pre-alpha** — do not rely on it.
+is usable for report automation. The React workspace under `desktop/` is
+on `main` powering the local browser UI (`rigorloom ui`), while the native
+Tauri desktop shell under `desktop/src-tauri/` remains **pre-alpha** — do
+not rely on it as shipped software.
 
 ## Quick start
 
@@ -252,9 +256,10 @@ but `ADVISORY_PROOF_RELEASE_ENABLED` is false and prevents promotion.
 > deterministic gates, tested across form families, validated by a
 > clean-room harness. Not yet beta.
 >
-> **Desktop editor: pre-alpha** — a Tauri-based agent-native editor lives
-> on unmerged branches (#330 → #340). It is not part of the `main` product
-> and should not be evaluated as shipped software.
+> **Desktop editor: pre-alpha** — the React workspace under `desktop/` is
+> on `main` powering `rigorloom ui` (see [Local Web UI](#local-web-ui)),
+> while the native Tauri desktop shell under `desktop/src-tauri/` remains
+> pre-alpha and should not be evaluated as shipped software.
 
 Exercised capabilities are tracked per-row with evidence
 pointers in [`docs/support-matrix.md`](docs/support-matrix.md). The
@@ -276,6 +281,9 @@ For the full evidence record see
 ```
 engine/      HWP/HWPX document engine (COM + XML backends, form inspect)
 pipeline/    core contracts, checkers, registry, render proof
+runtime/     Runtime Protocol v0 JSONL/CLI/MCP server and local web UI bridge
+agenthost/   network-facing provider boundary compiling to agent-safe calls
+desktop/     React workspace (`rigorloom ui`) and pre-alpha Tauri shell (`src-tauri/`)
 modules/     distribution modules: report, style, gongmun, minwon, hr, grant
 evals/       clean-room validation harness (installs from dist zips only)
 skill/       router skill surface + references (forms, fill-recipe, rubric)

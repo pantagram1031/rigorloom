@@ -36,6 +36,8 @@
 
 - [korean-style-rules.md](korean-style-rules.md) — `rigorloom style check`,
   its versioned Korean phrasing rules, and what a notice means.
+- [guard-block-diff.md](guard-block-diff.md) — `rigorloom guard --mode block-diff`,
+  the side-by-side edited-paragraph diff format, rules, and exit codes.
 - [extensions.md](extensions.md) — receipt-backed, data-only local
   knowledge packs and their resolution precedence.
 - [hwp-engine-adapter.md](hwp-engine-adapter.md) — the optional adapter for a
@@ -72,9 +74,11 @@ plans, not living documentation:
 - [research/xc1-conversion-bench.md](research/xc1-conversion-bench.md) —
   HWP→HWPX conversion bench (10/10 on official corpus).
 
-## Plans
+## Archive
 
-[archive/plans/](archive/plans/) holds the design history behind each release wave — one
-doc per hardening or feature wave (see [archive/README.md](archive/README.md) for the index). These are point-in-time design records,
-not living documentation; for current behavior, prefer the operating docs
-above and [CHANGELOG.md](../CHANGELOG.md).
+[archive/](archive/) holds retired plans ([archive/plans/](archive/plans/), one
+doc per hardening or feature wave) and legacy design docs
+([archive/legacy/](archive/legacy/)); see [archive/README.md](archive/README.md)
+for the index. These are point-in-time records, not living documentation; for
+current behavior, prefer the operating docs above and
+[CHANGELOG.md](../CHANGELOG.md).
