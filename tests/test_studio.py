@@ -808,33 +808,49 @@ def test_action_auth_refuses_when_actions_disabled(monkeypatch):
         studio._require_action_auth("anything", "127.0.0.1")
 
 
+def _asgi_get(path: str, headers: dict) -> tuple[int, str]:
+    """Drive the ASGI app directly, so the test needs no HTTP client package."""
+    import asyncio
+
+    raw = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in headers.items()]
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET",
+             "scheme": "http", "path": path, "raw_path": path.encode(), "root_path": "",
+             "query_string": b"", "headers": raw, "client": ("127.0.0.1", 50000),
+             "server": ("127.0.0.1", 8000)}
+    out = {"status": None, "body": b""}
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            out["status"] = message["status"]
+        elif message["type"] == "http.response.body":
+            out["body"] += message.get("body", b"")
+
+    asyncio.run(studio.app(scope, receive, send))
+    return out["status"], out["body"].decode("utf-8", "replace")
+
+
 @pytest.mark.parametrize("host", [h for h in REBIND_HOSTS if h])
 def test_every_route_refuses_rebinding_host(tmp_path: Path, monkeypatch, host):
-    from fastapi.testclient import TestClient
-
     root = tmp_path / "workspaces"
     (root / "report-demo").mkdir(parents=True)
     monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
     monkeypatch.setattr(studio, "_ACTION_TOKEN", "secret-token-xyz")
-    client = TestClient(studio.app)
     for path in ("/", "/workspaces", "/dashboard", "/workspace/report-demo/state"):
-        r = client.get(path, headers={"Host": host})
-        assert r.status_code == 403, (path, host)
-        assert "secret-token-xyz" not in r.text
+        status, body = _asgi_get(path, {"Host": host})
+        assert status == 403, (path, host)
+        assert "secret-token-xyz" not in body
 
 
 def test_loopback_host_still_served_and_hostile_origin_refused(tmp_path: Path, monkeypatch):
-    from fastapi.testclient import TestClient
-
     root = tmp_path / "workspaces"
     root.mkdir()
     monkeypatch.setattr(studio, "WORKSPACE_ROOT", root)
-    client = TestClient(studio.app)
-    assert client.get("/workspaces", headers={"Host": "127.0.0.1:8000"}).status_code == 200
-    assert client.get("/workspaces", headers={"Host": "localhost:8000",
-                                              "Origin": "http://localhost:8000"}).status_code == 200
-    r = client.get("/workspaces", headers={"Host": "127.0.0.1:8000", "Origin": "http://attacker.example"})
-    assert r.status_code == 403
+    assert _asgi_get("/workspaces", {"Host": "127.0.0.1:8000"})[0] == 200
+    assert _asgi_get("/workspaces", {"Host": "localhost:8000", "Origin": "http://localhost:8000"})[0] == 200
+    assert _asgi_get("/workspaces", {"Host": "127.0.0.1:8000", "Origin": "http://attacker.example"})[0] == 403
 
 
 def test_figure_refuses_symlink_out_of_workspace(tmp_path: Path, monkeypatch):
