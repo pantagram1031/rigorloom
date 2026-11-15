@@ -42,6 +42,18 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T170:** polished post-phase-2 docs and example fixtures: aligned
+  [docs/architecture.md](docs/architecture.md) (`guard` wording and
+  `.pipeline/handoff.json` / `modules/report/references/workspace_layout.json`),
+  streamlined [docs/demo-gongmun.md](docs/demo-gongmun.md) and documented
+  `warn=1` (`dumun_seat_unfilled` on `(경유)`), replaced the Sejong address in
+  `examples/gongmun/brief.json` with a fictional placeholder (`우 00000`,
+  `가상시 예시구 예시로 0`) and regenerated the deterministic fixtures,
+  documented the `Blob` export flow and `?token=` controls in
+  [docs/web-ui.md](docs/web-ui.md), and refreshed [README.md](README.md) and
+  [docs/README.md](docs/README.md) (`direction word`, `desktop/` on `main` vs.
+  pre-alpha `desktop/src-tauri/`, `runtime/`/`agenthost/`/`desktop/` tree,
+  [docs/guard-block-diff.md](docs/guard-block-diff.md), and `archive/`).
 - **T169:** every document edit now has one owner, `RuntimeCore`
   (propose, validate, request approval, resolve, apply), and the paths that
   are still outside it are named in [docs/architecture.md](docs/architecture.md).

@@ -180,12 +180,12 @@
         "paraIndex": 50
       },
       {
-        "after": "우 30112",
+        "after": "우 00000",
         "before": "우",
         "paraIndex": 51
       },
       {
-        "after": "세종특별자치시 가름로 200",
+        "after": "가상시 예시구 예시로 0",
         "before": "도로명주소",
         "paraIndex": 52
       },
@@ -321,12 +321,12 @@
           "paraIndex": 50
         },
         {
-          "after": "우 30112",
+          "after": "우 00000",
           "before": "우",
           "paraIndex": 51
         },
         {
-          "after": "세종특별자치시 가름로 200",
+          "after": "가상시 예시구 예시로 0",
           "before": "도로명주소",
           "paraIndex": 52
         },
@@ -387,10 +387,10 @@
   ],
   "sessionId": "e3af394e8dfd4107aceff71b193e01bb",
   "subject": {
-    "bytes": 28114,
+    "bytes": 28104,
     "kind": "candidate",
     "name": "artifact.hwpx",
     "runId": "c7717d7dd88f42b09fd5700db2365886",
-    "sha256": "4b2972801f79843464ce0d30adf9c8ea7f433c3f6e687bc545d0bb828e33ac1d"
+    "sha256": "f6159cbb779a6467c7e844b117c18f3dbcac490d1fc71521faf2ea20d2dee0de"
   }
 }

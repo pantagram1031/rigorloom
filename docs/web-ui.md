@@ -44,13 +44,40 @@ The bridge is meant for one person on their own computer.
   read the token**, just as it could read your files. Web pages from other
   origins cannot: the bridge sends no CORS headers, so a browser will not
   hand them the response.
-- The event stream (`/events`) and the export download
-  (`/api/export-download`) take the token as a `?token=` query parameter,
-  because `EventSource` and plain links cannot send headers. That puts the
-  token in browser history and in any local proxy log for the life of the
-  server process. It changes every time you start `rigorloom ui`.
+- The event stream (`/events`) and staged export download
+  (`/api/export-download`) accept the per-launch token via `?token=`.
+  `EventSource` cannot send custom headers, so `/events` requires `?token=`.
+  For export download, `export_candidate` returns a tokenized `downloadUrl`,
+  and `desktop/src/actions.ts` fetches it via `fetch()` into an in-memory
+  `Blob`, checks the bytes' SHA-256 against the applied candidate, and triggers
+  a download from a `blob:` URL rather than navigating a plain `<a href>` link.
+  Because `?token=` can appear in local proxy or request logs for the life of
+  the server process, `rigorloom ui` rotates the token on every launch.
 - An agent runs as a separate Runtime process (`--entry agent`) and cannot
   call host-only methods such as approval or apply.
+
+### Why export download uses a query token
+
+Keeping `GET /api/export-download?token=...` is acceptable for this local
+bridge because four independent controls limit exposure:
+
+- **Loopback bind**: `create_bridge_server` (`runtime/scripts/rt_ui.py`) binds
+  exclusively to `127.0.0.1`, never a public or LAN interface.
+- **Host allowlist and cross-site refusal**: `_check_origin_guards` runs on
+  every `GET` and `POST`, rejecting any `Host` outside `ALLOWED_HOSTS`
+  (`127.0.0.1` or `localhost`, blocking DNS rebinding) and refusing requests
+  with `Sec-Fetch-Site: cross-site`.
+- **Per-launch token and directory confinement**: `_require_query_token`
+  compares `?token=` against the per-launch random token with
+  `hmac.compare_digest`, and `resolve_export_download` validates the filename
+  against `VALID_UPLOAD_NAME_RE` (`^[A-Za-z0-9._-]+$`, no `..`) and
+  `is_relative_to(<root>/exports/)` so only staged `.hwpx` exports can be read.
+- **No `Referer` leak to other origins**: the UI downloads via `fetch()` into
+  an in-memory `Blob` rather than navigating a tab to `/api/export-download`,
+  and the endpoint responds with `application/octet-stream`,
+  `Content-Disposition: attachment`, and `Cache-Control: no-store` — never an
+  HTML document that could render outbound links or subresources carrying a
+  `Referer` header.
 
 ## Approval is bound to the plan you saw
 
