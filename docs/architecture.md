@@ -1,6 +1,6 @@
 # Rigorloom Architecture
 
-Rigorloom fills in and edits Korean official documents (HWPX, and HWP through a converter) on your own machine. An agent or a person proposes an edit, a person approves it, and only then is the document changed. Two checks sit on top of every edit: `rigorloom guard` reports any number, date, quotation, negation or direction word that an edit changed, and `rigorloom style check` points at Korean phrasing worth a second look. This page says which code owns an edit and which paths do not go through it yet.
+Rigorloom fills in and edits Korean official documents in HWPX on your own machine. An agent or a person proposes an edit, a person approves it, and only then is the document changed. Two checks sit on top of every edit: `rigorloom guard` reports any number, date, quotation, negation or direction word that an edit changed, and `rigorloom style check` points at Korean phrasing worth a second look. This page says which code owns an edit and which paths do not go through it yet.
 
 ## Runtime Edit Transaction
 
