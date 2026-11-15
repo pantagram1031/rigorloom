@@ -47,6 +47,7 @@ function fixture() {
     rememberRecent: () => {}, startEvents: async () => {},
     verifyReversal: async () => { calls.reversal++; },
     showToast: () => { calls.toast++; },
+    t: (key) => key,
   });
   vm.runInContext(stripTypeScriptTypes(`${candidateLoader}\n${implementation}\n${selection}\nglobalThis.apply = applyApproved; globalThis.presentation = applyPresentation; globalThis.select = selectSession;`), ctx);
   const applied = { sessionId: "A", runId: "runA", candidate: { sha256: "shaA" }, checks: { acceptance: true } };
