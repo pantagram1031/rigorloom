@@ -36,6 +36,8 @@
 
 - [extensions.md](extensions.md) — receipt-backed, data-only local
   knowledge packs and their resolution precedence.
+- [hwp-engine-adapter.md](hwp-engine-adapter.md) — the optional adapter for a
+  separately installed HWP engine, and what is refused without it.
 - [skills-install.md](skills-install.md) — installing this pipeline as a
   Claude-style skill directory via `sync_local`.
 - [archive-policy.md](archive-policy.md) — what gets archived vs. kept

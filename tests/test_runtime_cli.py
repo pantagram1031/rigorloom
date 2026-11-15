@@ -75,6 +75,8 @@ def test_capabilities_reports_the_whole_method_roster(root):
     assert result.code == 0
     methods = result.result["methods"]
     assert "plan/apply" in methods and "plan/propose" in methods
+    engine = result.result["hwpEngine"]
+    assert set(engine) == {"available", "reason", "env"}
 
 
 def test_inspect_and_read_region_work_from_the_command_line(root, source):
