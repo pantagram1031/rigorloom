@@ -9,7 +9,10 @@ async function start() {
   // Design work in a plain browser, replaying a recorded real session. The
   // guard is a literal after Vite's replacement, so both this branch and
   // src/devMock.ts (and its fixture) are absent from a production bundle.
-  if (import.meta.env.DEV) {
+  const hasInjectedToken =
+    (typeof window !== "undefined" && "__RIGORLOOM_UI__" in window) ||
+    new URLSearchParams(window.location.search).has("token");
+  if (import.meta.env.DEV && !hasInjectedToken) {
     const { installDevMock } = await import("./devMock");
     installDevMock();
   }

@@ -30,6 +30,15 @@ the kernel's contract shape.
 
 ### Added
 
+- **T166:** `rigorloom ui` serves the desktop review workspace in a browser
+  from `127.0.0.1`, with no Node.js needed at runtime (the bundle ships in
+  `runtime/scripts/ui_dist/`, and CI checks it rebuilds byte for byte from
+  `desktop/src`). It opens corpus forms or an uploaded `.hwpx`, queues the
+  four preedit edit kinds, shows the guard diff, binds approval to the plan
+  hash shown, and resolves human pipeline gates; earlier `APPROVALS.md` lines
+  for a gate are kept as `# superseded` comments. The token model and its
+  limits are in [docs/web-ui.md](docs/web-ui.md).
+
 - **T164:** `rigorloom style check FILE` lists Korean phrasing worth a second
   look in `.txt`, `.md` and `.hwpx` files, as `file:line:col rule-id`. The
   rule set is versioned (`ko-style/1`, thirteen rules). Only the double passive

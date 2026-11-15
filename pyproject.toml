@@ -87,3 +87,6 @@ include-package-data = false
 
 [tool.setuptools.package-dir]
 rigorloom_runtime = "runtime/scripts"
+
+[tool.setuptools.package-data]
+rigorloom_runtime = ["ui_dist/*", "ui_dist/assets/*"]

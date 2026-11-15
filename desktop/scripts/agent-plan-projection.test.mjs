@@ -100,11 +100,11 @@ ${stripTypeScriptTypes(adoptImplementation)}\nglobalThis.adoptForTest = adoptAge
 
 test("unsupported authoritative operation is refused by name", () => {
   assert.throws(
-    () => project([{ opId: "delete-1", kind: "delete_guides", params: { color: "#0000FF" } }]),
+    () => project([{ opId: "goto-1", kind: "goto_text", params: { text: "x" } }]),
     (error) => {
       assert.equal(error.code, "agent_plan_projection_unsupported");
-      assert.equal(error.data.opId, "delete-1");
-      assert.equal(error.data.kind, "delete_guides");
+      assert.equal(error.data.opId, "goto-1");
+      assert.equal(error.data.kind, "goto_text");
       return true;
     },
   );
@@ -115,7 +115,7 @@ test("mixed plan is refused atomically instead of projecting its supported prefi
   assert.throws(
     () =>
       project(
-        [fill(), { opId: "run-1", kind: "set_run", params: { atPara: 4, run: 1, text: "x" } }],
+        [fill(), { opId: "run-1", kind: "normalize_clones", params: {} }],
         () => {
           beforeReads += 1;
           return "old";
@@ -231,7 +231,7 @@ test("unsupported adoption refuses before reading candidate or replacing review 
     boundSha256: "candidate-sha",
     base: { runId: "run-parent", sha256: "candidate-sha" },
     reverses: null,
-    ops: [{ opId: "delete-1", kind: "delete_guides", params: { color: "#0000FF" } }],
+    ops: [{ opId: "goto-1", kind: "goto_text", params: { text: "x" } }],
   };
   const fixture = adoptFixture(authoritative);
   const originalDraft = fixture.read().draft;
@@ -240,7 +240,7 @@ test("unsupported adoption refuses before reading candidate or replacing review 
   await assert.rejects(
     fixture.adopt(),
     (error) =>
-      error.code === "agent_plan_projection_unsupported" && error.data.kind === "delete_guides",
+      error.code === "agent_plan_projection_unsupported" && error.data.kind === "goto_text",
   );
 
   assert.equal(fixture.read().draft, originalDraft);
@@ -267,8 +267,11 @@ test("valid false overwrite is retained and table defaults exactly once", () => 
   ]);
 });
 
-test("valid Runtime fields without a queue representation are refused, never dropped", () => {
-  for (const params of [{ lines: ["a", "b"], text: undefined }, { paraPr: "8" }]) {
+test("fields outside an op kind's queue shape are refused, never dropped", () => {
+  // `lines` and `paraPr` became representable for fill_cell in WP3. `mode` and
+  // `expect` are Runtime fields of replace_at_cell with no fill_cell queue
+  // field, so a fill_cell carrying them must be refused rather than dropped.
+  for (const params of [{ mode: "append" }, { expect: "old" }]) {
     assert.throws(
       () => project([fill("lossy", params)]),
       (error) => {

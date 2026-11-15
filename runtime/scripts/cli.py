@@ -373,6 +373,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--session", required=True)
     p.add_argument("--run", required=True)
 
+    p = sub.add_parser("ui", help="launch the local web UI bridge server")
+    p.add_argument("--root", dest="ui_root", default=None,
+                   help="runtime root directory (default: $XDG_DATA_HOME/"
+                        "rigorloom/runtime-root or "
+                        "~/.local/share/rigorloom/runtime-root)")
+    p.add_argument("--port", type=int, default=8765,
+                   help="TCP port on 127.0.0.1 (0 picks an ephemeral port)")
+    p.add_argument("--no-open", action="store_true",
+                   help="do not open a browser automatically")
+
     return parser
 
 
@@ -602,6 +612,21 @@ def main(argv: list[str] | None = None) -> int:
         except ImportError:
             from install import run_install
         return run_install(args)
+
+    if command == "ui":
+        try:
+            from .rt_ui import run_ui
+        except ImportError:
+            from rt_ui import run_ui
+        chosen_root = args.ui_root if args.ui_root is not None else args.root
+        engine_root = Path(args.engine_root).expanduser() if args.engine_root else None
+        return run_ui(
+            root=Path(chosen_root).expanduser() if chosen_root is not None else None,
+            engine_root=engine_root,
+            port=args.port,
+            no_open=args.no_open,
+            explicit_root=chosen_root is not None,
+        )
 
     if not args.root:
         parser.error("the following arguments are required: --root")

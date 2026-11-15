@@ -36,6 +36,7 @@ function fixture() {
     activeApprovalBinding: (s) => s.activeSessionId === s.draft.sessionId ? { approvalId: s.approval?.approvalId } : null,
     approvalBindingStillExists: (s, binding) => s.approval?.approvalId === binding.approvalId,
     EMPTY_DRAFT: { ops: [] },
+    draftStaleness: () => null,
     rt: {
       applyPlan: () => { calls.apply++; return pending.promise; },
       candidates: (id) => { calls.lists.push(id); return list(); },

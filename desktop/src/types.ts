@@ -1174,3 +1174,89 @@ export interface ModuleCapability {
   containment?: string;
   limits?: Record<string, number>;
 }
+
+// --- WP3 Web UI / HTTP-SSE bridge / Guard Diff / Pipeline Gates ------------
+
+export interface CorpusFileEntry {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface OpenUploadResult {
+  sessionId: string;
+  openedUtc: string;
+  source: SourceRef;
+}
+
+export interface ExportResult {
+  path: string;
+  sha256: string;
+  bytes: number;
+  receiptPath: string;
+  downloadUrl?: string;
+}
+
+export type GuardTokenStatus = "kept" | "removed" | "added" | string;
+
+export interface GuardProtectedToken {
+  start: number;
+  end: number;
+  kind: string;
+  text: string;
+  status: GuardTokenStatus;
+}
+
+export interface GuardDiffParagraph {
+  paragraph: number;
+  pass: boolean;
+  kinds: string[];
+  changes: string[];
+  before: string;
+  after: string;
+  beforeProtected: GuardProtectedToken[];
+  afterProtected: GuardProtectedToken[];
+}
+
+export interface GuardDiffResult {
+  schema: string;
+  before: string;
+  after: string;
+  paragraphs: number;
+  pass: boolean;
+  reason: string | null;
+  edited: boolean;
+  changed: GuardDiffParagraph[];
+  allParagraphs: GuardDiffParagraph[];
+}
+
+export interface PipelineGateRow {
+  stage: string;
+  stageStatus: string;
+  gate: string;
+  type: string;
+  state: string;
+  by?: string | null;
+  at?: string | null;
+  resolvable?: boolean;
+}
+
+export interface PipelineGatesResult {
+  workspace: string;
+  mode: string;
+  graph?: unknown;
+  nextStage?: string | null;
+  gates: PipelineGateRow[];
+}
+
+export interface PipelineGateResolveResult {
+  ok: boolean;
+  workspace: string;
+  gate: string;
+  decision: "approved" | "rejected" | string;
+  state: string;
+  at?: string | null;
+  approvalsLine?: string | null;
+  gateResult?: unknown;
+}
+

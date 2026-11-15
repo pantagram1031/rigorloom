@@ -14,13 +14,17 @@ import {
   startDocumentEvents,
   stopDocumentEvents,
 } from "./documentEvents";
-import { agentPlanCellAddresses, projectAgentPlan } from "./agent/planProjection";
+import {
+  agentPlanCellAddresses,
+  projectAgentPlan,
+} from "./agent/planProjection";
 import {
   DEFAULT_PROVIDER,
   EMPTY_DRAFT,
   activeStoreKey,
   canRequestApproval,
   composerBlocker,
+  draftStaleness,
   getState,
   headCandidate,
   locateSelection,
@@ -62,6 +66,9 @@ import type {
   GeometrySpan,
   InspectResult,
   OperationPlan,
+  CorpusFileEntry,
+  GuardDiffResult,
+  PipelineGatesResult,
   PlanOp,
   PlanValidation,
   ProviderSettings,
@@ -260,6 +267,10 @@ export async function selectSession(sessionId: string) {
           // a document switch would put another file's verdict under this
           // file's heading, which is the same class of lie as a stale geometry.
           packRun: null,
+          approvalDialogOpen: false,
+          guardDiff: null,
+          guardDiffPhase: "idle" as const,
+          guardDiffError: null,
           events: [],
           eventSubscription: null,
           eventPhase: "starting" as const,
@@ -342,8 +353,13 @@ export async function openPath(path: string): Promise<string | null> {
   }
 }
 
-/** The native file dialog. No web upload, no localhost. */
+/** Open form picker: native file dialog in Tauri, or workspace/upload modal in browser mode. */
 export async function openViaDialog(): Promise<string | null> {
+  if (!rt.isTauri()) {
+    setState({ openDialogOpen: true });
+    void loadCorpusFiles();
+    return null;
+  }
   const chosen = await openFileDialog({
     multiple: false,
     directory: false,
@@ -352,6 +368,55 @@ export async function openViaDialog(): Promise<string | null> {
   });
   if (typeof chosen !== "string") return null;
   return openPath(chosen);
+}
+
+export function closeOpenDialog(): void {
+  setState({ openDialogOpen: false });
+}
+
+export async function loadCorpusFiles(): Promise<CorpusFileEntry[]> {
+  setState({ corpusFilesPhase: "starting" });
+  try {
+    const files = await rt.corpusFiles();
+    setState({ corpusFiles: files, corpusFilesPhase: "ready" });
+    return files;
+  } catch {
+    setState({ corpusFilesPhase: "failed" });
+    return [];
+  }
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const chunkSize = 0x8000;
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
+  }
+  return btoa(parts.join(""));
+}
+
+export async function openUploadedFile(file: File): Promise<string | null> {
+  if (!SUPPORTED.test(file.name)) {
+    showToast("한글 문서(.hwpx, .hwp)만 열 수 있습니다", 2400);
+    return null;
+  }
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const contentBase64 = uint8ArrayToBase64(buf);
+    const opened = await rt.openUpload(file.name, contentBase64);
+    const openedPaths = {
+      ...getState().openedPaths,
+      [opened.sessionId]: opened.source?.name ?? file.name,
+    };
+    setState({ openedPaths, openDialogOpen: false });
+    await rt.savePrefs({ openedPaths });
+    await refreshSessions();
+    await selectSession(opened.sessionId);
+    return opened.sessionId;
+  } catch (e) {
+    setState({ inspectPhase: "failed", inspectError: rt.asRuntimeError(e) });
+    return null;
+  }
 }
 
 const SUPPORTED = /\.(hwpx|hwp)$/i;
@@ -367,6 +432,20 @@ export async function openDropped(paths: string[]): Promise<void> {
   for (const path of usable.slice(0, 1)) {
     await openPath(path);
   }
+  if (usable.length > 1) {
+    showToast(`${usable.length}개 중 첫 문서만 열었습니다`, 2000);
+  }
+}
+
+/** Browser HTML5 file drop handler. */
+export async function openDroppedFiles(files: File[]): Promise<void> {
+  setState({ dragOver: false });
+  const usable = files.filter((f) => SUPPORTED.test(f.name));
+  if (usable.length === 0) {
+    showToast("한글 문서(.hwpx, .hwp)만 열 수 있습니다", 2000);
+    return;
+  }
+  await openUploadedFile(usable[0]);
   if (usable.length > 1) {
     showToast(`${usable.length}개 중 첫 문서만 열었습니다`, 2000);
   }
@@ -691,12 +770,48 @@ function cellSlug(table: number, row: number, col: number): string {
 
 /** Change a queued op's value without reopening the cell. */
 export async function editOpValue(opId: string, text: string): Promise<void> {
-  const ops = getState().draft.ops.map((op) =>
-    op.opId === opId
-      ? { ...op, text, origin: "user" as const, proposer: undefined }
-      : op,
-  );
+  const ops = getState().draft.ops.map((op) => {
+    if (op.opId !== opId || op.kind === "delete_guides") return op;
+    if (op.kind === "fill_cell" && op.lines !== undefined) {
+      return {
+        ...op,
+        text,
+        lines: text.split(/\r?\n/),
+        origin: "user" as const,
+        proposer: undefined,
+      };
+    }
+    return { ...op, text, origin: "user" as const, proposer: undefined };
+  });
   await setQueue(ops, { rewritten: didRewriteAgent(opId) });
+}
+
+/** Add an op to the review queue, resolving current seat/run baseline when missing. */
+export async function addQueueOp(op: QueuedOp): Promise<void> {
+  const state = getState();
+  const existingIds = new Set(state.draft.ops.map((item) => item.opId));
+  let opId = op.opId || `${op.kind}-${Date.now().toString(36)}`;
+  let suffix = 1;
+  while (existingIds.has(opId)) {
+    suffix += 1;
+    opId = `${op.opId || op.kind}-${suffix}`;
+  }
+  const sessionId = state.activeSessionId;
+  const inspect = sessionId ? (state.inspects[sessionId] ?? null) : null;
+  const texts = sessionId ? (state.texts[sessionId] ?? []) : [];
+  let normalized: QueuedOp = { ...op, opId } as QueuedOp;
+  if (normalized.kind === "fill_cell" && normalized.before === "") {
+    normalized = {
+      ...normalized,
+      before: seatText(inspect, texts, normalized.table, normalized.row, normalized.col),
+    };
+  } else if (normalized.kind === "replace_at_cell" && normalized.before === "") {
+    normalized = {
+      ...normalized,
+      before: seatText(inspect, texts, normalized.table, normalized.row, normalized.col),
+    };
+  }
+  await setQueue([...state.draft.ops, normalized]);
 }
 
 /** Declare the charPr the engine itself suggested for this seat (T30). */
@@ -780,6 +895,8 @@ export async function clearQueue(): Promise<void> {
     approval: null,
     approvalPhase: "idle",
     approvalError: null,
+    approvalDialogOpen: false,
+    reapprovalPrompt: null,
     applyPhase: "idle",
     applyError: null,
   });
@@ -821,6 +938,7 @@ async function setQueue(
     approval: null,
     approvalPhase: "idle",
     approvalError: null,
+    reapprovalPrompt: null,
     applyPhase: "idle",
     applyError: null,
   });
@@ -873,17 +991,38 @@ async function setQueue(
               table: op.table,
               row: op.row,
               col: op.col,
-              text: op.text,
+              ...(op.lines !== undefined ? { lines: op.lines } : { text: op.text }),
               ...(op.charPr ? { charPr: op.charPr } : {}),
+              ...(op.paraPr ? { paraPr: op.paraPr } : {}),
               ...(op.overwrite ? { overwrite: true } : {}),
             }
-          : {
-              opId: op.opId,
-              kind: op.kind,
-              atPara: op.atPara,
-              run: op.run,
-              text: op.text,
-            },
+          : op.kind === "replace_at_cell"
+            ? {
+                opId: op.opId,
+                kind: op.kind,
+                table: op.table,
+                row: op.row,
+                col: op.col,
+                text: op.text,
+                ...(op.run !== undefined ? { run: op.run } : {}),
+                ...(op.mode !== undefined ? { mode: op.mode } : {}),
+                ...(op.expect !== undefined ? { expect: op.expect } : {}),
+                ...(op.charPr ? { charPr: op.charPr } : {}),
+              }
+            : op.kind === "delete_guides"
+              ? {
+                  opId: op.opId,
+                  kind: op.kind,
+                  ...(op.color ? { color: op.color } : {}),
+                  ...(op.charPrIds !== undefined ? { charPrIds: op.charPrIds } : {}),
+                }
+              : {
+                  opId: op.opId,
+                  kind: op.kind,
+                  atPara: op.atPara,
+                  run: op.run,
+                  text: op.text,
+                },
       ),
       { baseRunId, reverses },
     );
@@ -893,6 +1032,7 @@ async function setQueue(
     if (currentPlanGeneration() !== gen) return;
     if (!ownsDraft(owner)) return;
     setState({
+      reapprovalPrompt: null,
       draft: {
         ops,
         plan,
@@ -959,12 +1099,12 @@ export async function reproposeDraft(): Promise<void> {
 //    writes.
 
 /** Op kinds this shell can build an inverse for, and why only these. */
-const INVERTIBLE_KINDS = new Set(["fill_cell", "set_run"]);
+const INVERTIBLE_KINDS = new Set(["fill_cell", "replace_at_cell", "set_run"]);
 
 /** The address an op targets, in the shape `readRegion` takes. */
 function opAddress(op: PlanOp): Record<string, number> | null {
   const p = op.params;
-  if (op.kind === "fill_cell") {
+  if (op.kind === "fill_cell" || op.kind === "replace_at_cell") {
     return {
       table: Number(p.table ?? 0),
       row: Number(p.row),
@@ -1000,9 +1140,10 @@ export async function proposeUndoOf(runId: string): Promise<number> {
         undoError: {
           code: "not_invertible",
           message:
-            `이 후보본에는 되돌릴 방법이 없는 작업이 있습니다: ` +
+            `이 후보본에는 되돌릴 수 없는 작업이 있습니다: ` +
             `${uninvertible.map((op) => op.kind).join(", ")}. ` +
-            `되돌리기는 이전 값을 읽어올 수 있는 작업(fill_cell, set_run)에만 만들 수 있습니다.`,
+            `안내문 삭제(delete_guides)는 지운 안내문을 원래 서식과 위치로 되살릴 수 없으며, ` +
+            `fill_cell, replace_at_cell, set_run 작업만 되돌릴 수 있습니다.`,
           data: { kinds: uninvertible.map((op) => op.kind) },
         },
       });
@@ -1037,7 +1178,8 @@ export async function proposeUndoOf(runId: string): Promise<number> {
 
     const ops: QueuedOp[] = [];
     for (const { op, address } of addresses) {
-      const previous = regionTextAt(answer.regions, address);
+      const regionMatch = regionMatchAt(answer.regions, address);
+      const previous = regionMatch?.text ?? null;
       if (previous === null) {
         // The runtime did not return this address in the parent. That is not
         // an empty string and it must not be filled in as one: the inverse
@@ -1054,33 +1196,57 @@ export async function proposeUndoOf(runId: string): Promise<number> {
         });
         return 0;
       }
-      ops.push(
-        op.kind === "fill_cell"
-          ? {
-              opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
-              kind: "fill_cell",
-              table: Number(op.params.table ?? 0),
-              row: Number(op.params.row),
-              col: Number(op.params.col),
-              text: previous,
-              // The seat is not empty any more — the edit filled it — so the
-              // inverse has to say so. Without this preedit refuses to write
-              // into an occupied cell, which is the correct default and the
-              // wrong one here.
-              overwrite: true,
-              before: String(op.params.text ?? ""),
-              origin: "user",
-            }
-          : {
-              opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
-              kind: "set_run",
-              atPara: Number(op.params.atPara),
-              run: Number(op.params.run),
-              text: previous,
-              before: String(op.params.text ?? ""),
-              origin: "user",
-            },
-      );
+      if (op.kind === "fill_cell") {
+        const afterVal = Array.isArray(op.params.lines)
+          ? op.params.lines.map(String).join("\n")
+          : String(op.params.text ?? "");
+        ops.push({
+          opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
+          kind: "fill_cell",
+          table: Number(op.params.table ?? 0),
+          row: Number(op.params.row),
+          col: Number(op.params.col),
+          text: previous,
+          // The seat is not empty any more — the edit filled it — so the
+          // inverse has to say so. Without this preedit refuses to write
+          // into an occupied cell, which is the correct default and the
+          // wrong one here.
+          overwrite: true,
+          before: afterVal,
+          origin: "user",
+        });
+      } else if (op.kind === "replace_at_cell") {
+        const hasRun = op.params.run !== undefined && op.params.run !== null;
+        const runIdx = hasRun ? Number(op.params.run) : undefined;
+        const prevForTarget =
+          runIdx !== undefined
+            ? (regionMatch?.runs?.find((r) => r.index === runIdx)?.text ?? previous)
+            : previous;
+        ops.push({
+          opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
+          kind: "replace_at_cell",
+          table: Number(op.params.table ?? 0),
+          row: Number(op.params.row),
+          col: Number(op.params.col),
+          ...(runIdx !== undefined ? { run: runIdx } : {}),
+          text: prevForTarget,
+          mode: "replace",
+          before: String(op.params.text ?? ""),
+          origin: "user",
+        });
+      } else {
+        const runIdx = Number(op.params.run);
+        const runPrev = regionMatch?.runs?.find((r) => r.index === runIdx)?.text ?? previous;
+        ops.push({
+          opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
+          kind: "set_run",
+          atPara: Number(op.params.atPara),
+          run: runIdx,
+          text: runPrev,
+          before: String(op.params.text ?? ""),
+          origin: "user",
+        });
+      }
     }
 
     // Chained onto the HEAD, not onto the candidate being reversed: undoing an
@@ -1101,21 +1267,27 @@ export async function proposeUndoOf(runId: string): Promise<number> {
   }
 }
 
+/** The region record the runtime returned for one address, if any. */
+function regionMatchAt(
+  regions: RegionText[],
+  address: Record<string, number>,
+): RegionText | undefined {
+  return address.atPara !== undefined
+    ? regions.find((r) => r.at_para === address.atPara)
+    : regions.find(
+        (r) =>
+          (r.table ?? 0) === address.table &&
+          r.addr?.row === address.row &&
+          r.addr?.col === address.col,
+      );
+}
+
 /** The text the runtime returned for one address, or null if it returned none. */
 function regionTextAt(
   regions: RegionText[],
   address: Record<string, number>,
 ): string | null {
-  const match =
-    address.atPara !== undefined
-      ? regions.find((r) => r.at_para === address.atPara)
-      : regions.find(
-          (r) =>
-            (r.table ?? 0) === address.table &&
-            r.addr?.row === address.row &&
-            r.addr?.col === address.col,
-        );
-  return match?.text ?? null;
+  return regionMatchAt(regions, address)?.text ?? null;
 }
 
 /**
@@ -1344,11 +1516,40 @@ export async function applyApproved(): Promise<void> {
   const plan = state.draft.plan;
   const approval = state.approval;
   const sessionId = state.activeSessionId;
+  if (!plan || !approval || approval.state !== "approved" || !sessionId || state.applyPhase === "starting" || applyInFlight) return;
+  const draft = state.draft;
+  const driftMsg =
+    "문서 또는 후보본이 변경되어 기존 승인이 무효화되었습니다. 다시 계획을 확인하고 승인해 주세요.";
+  const sameDraftApproval =
+    draft.sessionId === sessionId &&
+    plan.sessionId === sessionId &&
+    approval.planId === plan.planId &&
+    approval.planHash === plan.planHash;
+  const staleness = draftStaleness(state);
+  const headMovedOnSession =
+    !!state.head &&
+    (state.candidates?.[sessionId] ?? []).some((row) => row.runId === state.head) &&
+    (plan.base?.runId ?? null) !== state.head;
+  if (
+    sameDraftApproval &&
+    (draft.validation?.stale ||
+      staleness?.kind === "source_changed" ||
+      (draft.boundSha256 && plan.boundSha256 !== draft.boundSha256) ||
+      headMovedOnSession)
+  ) {
+    setState({
+      approval: null,
+      approvalPhase: "idle",
+      approvalError: { code: "plan_stale", message: driftMsg },
+      reapprovalPrompt: driftMsg,
+    });
+    showToast(driftMsg, 3200);
+    return;
+  }
   const binding = activeApprovalBinding(state);
-  if (!plan || !approval || approval.state !== "approved" || !sessionId || !binding || state.applyPhase === "starting" || applyInFlight) return;
+  if (!binding) return;
   const priorRecovery = state.applyOutcomes?.[sessionId]?.recovery ?? state.recovery;
   if (priorRecovery && priorRecovery.outcome !== "not_applied" && priorRecovery.planId === plan.planId && priorRecovery.approvalId === approval.approvalId) return;
-  const draft = state.draft;
   const reversed = state.draft.reverses;
   setState({ applyPhase: "starting", applyError: null, recovery: null });
   let applied: AppliedCandidate;
@@ -1377,6 +1578,17 @@ export async function applyApproved(): Promise<void> {
       [sessionId]: { applied: null, error, recovery },
     } });
     const current = getState();
+    const staleReject =
+      error.code === "plan_stale" || error.code === "approval_binding_mismatch";
+    if (staleReject && current.draft === draft && approvalBindingStillExists(current, binding)) {
+      setState({
+        approval: null,
+        approvalPhase: "idle",
+        approvalError: error,
+        reapprovalPrompt: driftMsg,
+      });
+      showToast(driftMsg, 3200);
+    }
     if (current.activeSessionId === sessionId && current.draft === draft && current.head === state.head) {
       setState(applyPresentation(sessionId));
     } else if (current.applyPhase === "starting") {
@@ -1405,7 +1617,16 @@ export async function applyApproved(): Promise<void> {
           ? applyPresentation(current.activeSessionId)
           : { applyPhase: "idle" as const }
         : {}),
-    ...(ownsQueue ? { draft: EMPTY_DRAFT, redoStack: [], approvalPhase: "idle" as const, approval: null } : {}),
+    ...(ownsQueue
+      ? {
+          draft: EMPTY_DRAFT,
+          redoStack: [],
+          approvalPhase: "idle" as const,
+          approval: null,
+          approvalDialogOpen: false,
+          reapprovalPrompt: null,
+        }
+      : {}),
     ...(ownsPresentation ? {
       candidateVerdict: { runId: applied.runId, report: applied.checks },
       head: applied.runId,
@@ -1425,6 +1646,279 @@ export async function applyApproved(): Promise<void> {
 export async function cancelApply(): Promise<void> {
   await rt.cancel(APPLY_TAG);
   showToast("적용을 멈추라고 알렸습니다. 진행 중인 한 단계는 끝납니다.", 2400);
+}
+
+export const REAPPROVAL_PROMPT =
+  "문서 또는 후보본이 변경되어 기존 승인이 무효화되었습니다. 다시 계획을 확인하고 승인해 주세요.";
+
+/**
+ * Re-validate the active draft plan against current source/candidate bytes.
+ * Clears any stale approval immediately if the bound SHA-256 or candidate drifted.
+ */
+export async function revalidateActiveDraft(): Promise<{ ok: boolean; stale: boolean }> {
+  const state = getState();
+  const draft = state.draft;
+  const plan = draft.plan;
+  if (!plan) return { ok: false, stale: false };
+
+  if (draftStaleness(state) !== null) {
+    setState({
+      approval: null,
+      approvalPhase: "idle",
+      approvalError: { code: "plan_stale", message: REAPPROVAL_PROMPT },
+      reapprovalPrompt: REAPPROVAL_PROMPT,
+    });
+    showToast(REAPPROVAL_PROMPT, 3400);
+    return { ok: false, stale: true };
+  }
+
+  try {
+    const validation = await rt.validatePlan(plan.planId);
+    const current = getState();
+    if (current.draft !== draft || current.draft.plan?.planId !== plan.planId) {
+      return { ok: false, stale: false };
+    }
+    const currentSha =
+      typeof validation.currentSha256 === "string" ? validation.currentSha256 : null;
+    const staleHard = validation.hard.some((h) => h.code === "plan_stale");
+    const drifted =
+      Boolean(validation.stale) ||
+      staleHard ||
+      validation.boundSha256 !== plan.boundSha256 ||
+      (currentSha !== null && currentSha !== plan.boundSha256) ||
+      draftStaleness(current) !== null;
+
+    if (drifted) {
+      const hadApproval = current.approval !== null || current.approvalPhase !== "idle";
+      setState({
+        draft: { ...current.draft, validation },
+        approval: null,
+        approvalPhase: "idle",
+        approvalError: { code: "plan_stale", message: REAPPROVAL_PROMPT },
+        reapprovalPrompt: REAPPROVAL_PROMPT,
+      });
+      if (hadApproval || validation.stale) {
+        showToast(REAPPROVAL_PROMPT, 3600);
+      }
+      return { ok: false, stale: true };
+    }
+
+    setState({
+      draft: { ...current.draft, validation },
+      reapprovalPrompt: null,
+    });
+    return { ok: true, stale: false };
+  } catch (e) {
+    const error = rt.asRuntimeError(e);
+    if (error.code === "plan_stale" || error.code === "approval_binding_mismatch") {
+      if (getState().draft === draft) {
+        setState({
+          approval: null,
+          approvalPhase: "idle",
+          approvalError: error,
+          reapprovalPrompt: REAPPROVAL_PROMPT,
+        });
+        showToast(REAPPROVAL_PROMPT, 3600);
+      }
+      return { ok: false, stale: true };
+    }
+    return { ok: false, stale: false };
+  }
+}
+
+export async function verifyAndApplyApproved(): Promise<void> {
+  const check = await revalidateActiveDraft();
+  if (check.stale) return;
+  await applyApproved();
+}
+
+export async function revalidateAndResolveApproval(
+  decision: "approved" | "rejected",
+  approver = "host-operator",
+): Promise<void> {
+  if (decision === "approved") {
+    const check = await revalidateActiveDraft();
+    if (check.stale) return;
+  }
+  await resolveApprovalDecision(decision, approver);
+}
+
+export async function approveAndApplyFromDialog(
+  approver = "host-operator",
+): Promise<void> {
+  const check = await revalidateActiveDraft();
+  if (check.stale) return;
+  const current = getState();
+  if (!current.approval) {
+    await requestApprovalForDraft();
+  }
+  const afterReq = getState();
+  if (afterReq.approval?.state === "pending") {
+    await revalidateAndResolveApproval("approved", approver);
+    return;
+  }
+  if (afterReq.approval?.state === "approved") {
+    await verifyAndApplyApproved();
+  }
+}
+
+export function openApprovalDialog(): void {
+  setState({ approvalDialogOpen: true });
+  void revalidateActiveDraft();
+}
+
+export function closeApprovalDialog(): void {
+  setState({ approvalDialogOpen: false });
+}
+
+const THEME_STORAGE_KEY = "rigorloom.theme";
+
+export function effectiveTheme(theme = getState().theme): "light" | "dark" {
+  if (theme === "light" || theme === "dark") return theme;
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+  return "light";
+}
+
+function applyThemeToDom(theme: "auto" | "light" | "dark"): void {
+  if (typeof document === "undefined") return;
+  if (theme === "auto") {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.setAttribute("data-theme", theme);
+  }
+}
+
+export function applyStoredTheme(): void {
+  let theme: "auto" | "light" | "dark" = "auto";
+  try {
+    const saved = window.localStorage?.getItem(THEME_STORAGE_KEY);
+    if (saved === "light" || saved === "dark" || saved === "auto") {
+      theme = saved;
+    }
+  } catch {
+    // ignore storage errors in restricted contexts
+  }
+  setState({ theme });
+  applyThemeToDom(theme);
+}
+
+export async function toggleTheme(explicit?: "auto" | "light" | "dark"): Promise<void> {
+  const current = getState().theme;
+  const next: "auto" | "light" | "dark" =
+    explicit ?? (effectiveTheme(current) === "dark" ? "light" : "dark");
+  setState({ theme: next });
+  applyThemeToDom(next);
+  try {
+    window.localStorage?.setItem(THEME_STORAGE_KEY, next);
+  } catch {
+    // ignore storage errors
+  }
+  await rt.savePrefs({ theme: next }).catch(() => {});
+}
+
+export async function refreshGuardDiff(overrides?: {
+  sessionId?: string | null;
+  runId?: string | null;
+  againstRunId?: string | null;
+  planId?: string | null;
+  beforeText?: string | null;
+  afterText?: string | null;
+}): Promise<GuardDiffResult | null> {
+  const state = getState();
+  const useDirect =
+    overrides?.beforeText !== undefined && overrides?.afterText !== undefined;
+  const sessionId = overrides?.sessionId !== undefined ? overrides.sessionId : state.activeSessionId;
+  const planId =
+    overrides?.planId !== undefined
+      ? overrides.planId
+      : (state.draft.sessionId === sessionId ? state.draft.plan?.planId ?? null : null);
+  const runId =
+    overrides?.runId !== undefined
+      ? overrides.runId
+      : (state.historySelected ?? headCandidate(state)?.runId ?? null);
+
+  if (!useDirect && !sessionId) {
+    setState({ guardDiff: null, guardDiffPhase: "idle", guardDiffError: null });
+    return null;
+  }
+
+  setState({ guardDiffPhase: "starting", guardDiffError: null });
+  try {
+    const payload = useDirect
+      ? { beforeText: overrides?.beforeText ?? "", afterText: overrides?.afterText ?? "" }
+      : {
+          sessionId: sessionId ?? undefined,
+          ...(planId ? { planId } : {}),
+          ...(runId ? { runId } : {}),
+          ...(overrides?.againstRunId ? { againstRunId: overrides.againstRunId } : {}),
+        };
+    const result = await rt.guardDiff(payload);
+    setState({ guardDiff: result, guardDiffPhase: "ready", guardDiffError: null });
+    return result;
+  } catch (e) {
+    setState({
+      guardDiffPhase: "failed",
+      guardDiffError: rt.asRuntimeError(e),
+    });
+    return null;
+  }
+}
+
+export async function loadPipelineGates(workspace?: string): Promise<PipelineGatesResult | null> {
+  const ws = (workspace ?? getState().pipelineWorkspace).trim();
+  if (!ws) {
+    setState({
+      pipelineGatesPhase: "failed",
+      pipelineGatesError: { code: "workspace_missing", message: "워크스페이스 경로를 입력해 주세요." },
+    });
+    return null;
+  }
+  setState({ pipelineWorkspace: ws, pipelineGatesPhase: "starting", pipelineGatesError: null });
+  try {
+    const res = await rt.pipelineGates(ws);
+    setState({
+      pipelineWorkspace: res.workspace || ws,
+      pipelineGatesResult: res,
+      pipelineGatesPhase: "ready",
+      pipelineGatesError: null,
+    });
+    return res;
+  } catch (e) {
+    setState({
+      pipelineGatesPhase: "failed",
+      pipelineGatesError: rt.asRuntimeError(e),
+    });
+    return null;
+  }
+}
+
+export async function resolvePipelineGateAction(
+  workspace: string,
+  gate: string,
+  decision: "approved" | "rejected",
+  reason?: string,
+): Promise<boolean> {
+  setState({ pipelineGatesPhase: "starting", pipelineGatesError: null });
+  try {
+    const res = await rt.resolvePipelineGate({
+      workspace,
+      gate,
+      decision,
+      approver: "host-operator",
+      reason,
+    });
+    showToast(`${res.gate} 게이트를 ${decision === "approved" ? "승인" : "거절"}했습니다`, 2400);
+    await loadPipelineGates(workspace);
+    return true;
+  } catch (e) {
+    setState({
+      pipelineGatesPhase: "failed",
+      pipelineGatesError: rt.asRuntimeError(e),
+    });
+    return false;
+  }
 }
 
 /**
@@ -1621,6 +2115,14 @@ async function candidateRefFor(
  * with no account of where it came from, which is the thing this program
  * exists not to produce.
  */
+async function sha256Hex(bytes: ArrayBuffer): Promise<string | null> {
+  if (typeof globalThis.crypto?.subtle?.digest !== "function") return null;
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export async function exportApplied(
   destination?: string,
   runId?: string,
@@ -1643,18 +2145,20 @@ export async function exportApplied(
       : await candidateRefFor(sessionId, chosen);
   if (!applied) return false;
 
-  let target = destination;
-  if (!target) {
-    const suggested = state.sessions
+  const suggested =
+    state.sessions
       .find((s) => s.sessionId === sessionId)
-      ?.source.name.replace(/(\.hwpx?)$/i, "-candidate$1");
-    const chosen = await saveFileDialog({
+      ?.source.name.replace(/(\.hwpx?)$/i, "-candidate$1") ?? "candidate.hwpx";
+
+  let target: string | null = destination ?? null;
+  if (!target && rt.isTauri()) {
+    const picked = await saveFileDialog({
       title: "후보본 내보내기",
-      defaultPath: suggested ?? "candidate.hwpx",
+      defaultPath: suggested,
       filters: [{ name: "한글 문서", extensions: ["hwpx", "hwp"] }],
     });
-    if (typeof chosen !== "string") return false;
-    target = chosen;
+    if (typeof picked !== "string") return false;
+    target = picked;
   }
 
   setState({ exportPhase: "starting", exportError: null });
@@ -1665,8 +2169,8 @@ export async function exportApplied(
       applied.candidate.path,
       target,
     );
-    // The bytes that left must be the bytes the receipt bound. Rust hashes the
-    // copy it wrote; this is the comparison, and it is a refusal, not a log.
+    // The bytes that left must be the bytes the receipt bound. We verify the
+    // digest before declaring success or handing off a download.
     if (result.sha256 !== applied.candidate.sha256) {
       setState({
         exportPhase: "failed",
@@ -1679,8 +2183,43 @@ export async function exportApplied(
       });
       return false;
     }
+
+    if (!rt.isTauri() && result.downloadUrl && typeof document !== "undefined") {
+      const resp = await fetch(rt.appendTokenQuery(result.downloadUrl), {
+        headers: rt.tokenHeaders(),
+      });
+      if (!resp.ok) {
+        throw {
+          code: "export_download_failed",
+          message: `후보본 다운로드에 실패했습니다 (HTTP ${resp.status}).`,
+        };
+      }
+      const bytes = await resp.arrayBuffer();
+      const digest = await sha256Hex(bytes);
+      if (digest && digest !== applied.candidate.sha256) {
+        setState({
+          exportPhase: "failed",
+          exportError: {
+            code: "export_hash_mismatch",
+            message:
+              "내려받은 파일의 해시가 후보본의 해시와 다릅니다. 이 파일을 제출하지 마십시오.",
+            data: { expected: applied.candidate.sha256, actual: digest },
+          },
+        });
+        return false;
+      }
+      const blobUrl = URL.createObjectURL(new Blob([bytes]));
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = suggested;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    }
+
     setState({ exportPhase: "ready", exportResult: result });
-    showToast("후보본과 영수증을 내보냈습니다", 2000);
+    showToast(`후보본과 영수증을 내보냈습니다 · ${result.sha256.slice(0, 12)}`, 2400);
     return true;
   } catch (e) {
     setState({ exportPhase: "failed", exportError: rt.asRuntimeError(e) });
@@ -2645,7 +3184,11 @@ export async function applyUiZoom(factor: number, announce = true): Promise<void
   const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, factor));
   setState({ uiZoom: clamped });
   try {
-    await getCurrentWebview().setZoom(clamped);
+    if (rt.isTauri()) {
+      await getCurrentWebview().setZoom(clamped);
+    } else if (typeof document !== "undefined") {
+      document.documentElement.style.zoom = clamped === 1 ? "" : String(clamped);
+    }
   } catch {
     // A webview that refuses zoom must not break the app; the store still
     // holds the value and the next launch will try again.
@@ -2675,8 +3218,13 @@ export const resetUiZoom = () => void applyUiZoom(1);
  */
 export async function boot(): Promise<void> {
   setState({ phase: "starting", phaseNote: "런타임을 시작하는 중", fatal: null });
+  applyStoredTheme();
   try {
     const prefs = await rt.loadPrefs();
+    if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "auto") {
+      setState({ theme: prefs.theme });
+      applyThemeToDom(prefs.theme);
+    }
     const root = (prefs.root as string | undefined) ?? (await rt.defaultRoot());
 
     // Restore chrome before the window is shown, so nothing visibly resizes.
@@ -2939,12 +3487,14 @@ async function adoptAgentPlan(
   const addresses = agentPlanCellAddresses(authoritative);
   let beforeCell = (table: number, row: number, col: number) =>
     seatText(inspect, texts, table, row, col);
+  let baseCellRegions: RegionText[] = texts;
 
   // A chained plan is bound to candidate bytes, not the session source cached
   // in `inspect`/`texts`. Read the exact parent so an overwrite review does not
   // show stale source text as the value it will replace.
   if (authoritative.base) {
     const answer = await rt.readRegion(sessionId, addresses, authoritative.base.runId);
+    baseCellRegions = answer.regions;
     beforeCell = (table, row, col) => {
       const before = regionTextAt(answer.regions, { table, row, col });
       if (before === null) {
@@ -2959,7 +3509,66 @@ async function adoptAgentPlan(
       return before;
     };
   }
-  const ops: QueuedOp[] = projectAgentPlan(authoritative, beforeCell);
+  const hasMultiOpContext = authoritative.ops.some(
+    (op) =>
+      op.kind === "set_run" ||
+      op.kind === "replace_at_cell" ||
+      op.kind === "delete_guides",
+  );
+  let ops: QueuedOp[];
+  if (hasMultiOpContext) {
+    const paraAddresses = authoritative.ops
+      .filter((op) => op.kind === "set_run" && Number.isFinite(Number(op.params?.atPara)))
+      .map((op) => ({ atPara: Number(op.params.atPara) }));
+    const paraAnswer =
+      paraAddresses.length > 0
+        ? await rt
+            .readRegion(sessionId, paraAddresses, authoritative.base?.runId ?? null)
+            .catch(() => ({ regions: [] as RegionText[] }))
+        : { regions: [] as RegionText[] };
+    const beforeParaRun = (atPara: number, run: number): string => {
+      const match =
+        paraAnswer.regions.find((r) => r.at_para === atPara) ??
+        texts.find((r) => r.at_para === atPara);
+      const runMatch = match?.runs?.find((r) => r.index === run);
+      return runMatch?.text ?? match?.text ?? "";
+    };
+    const beforeCellRun = (table: number, row: number, col: number, run?: number): string => {
+      const match = baseCellRegions.find(
+        (r) =>
+          (r.table ?? 0) === table &&
+          r.addr?.row === row &&
+          r.addr?.col === col,
+      );
+      if (run !== undefined && match?.runs) {
+        const hit = match.runs.find((r) => r.index === run);
+        if (hit) return hit.text;
+      }
+      return match?.text ?? beforeCell(table, row, col);
+    };
+    const guideSummary = (): string => {
+      const guideCells =
+        inspect?.graph.tables.flatMap((t) =>
+          t.cells.filter((c) => c.classification === "guide"),
+        ) ?? [];
+      if (guideCells.length === 0) return "문서에 있는 삭제 대상 안내문";
+      const preview = guideCells
+        .map((c) => c.textPreview?.trim())
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(" / ");
+      return preview
+        ? `안내문 ${guideCells.length}건 (${preview})`
+        : `안내문 ${guideCells.length}건`;
+    };
+    ops = projectAgentPlan(authoritative, beforeCell, {
+      beforeParaRun,
+      beforeCellRun,
+      guideSummary,
+    }) as QueuedOp[];
+  } else {
+    ops = projectAgentPlan(authoritative, beforeCell) as QueuedOp[];
+  }
   const draft: Draft = {
     ops,
     plan: authoritative,
@@ -3218,6 +3827,14 @@ export function closeTopmostOverlay(): boolean {
   const state = getState();
   if (state.inlineEdit) {
     cancelEdit();
+    return true;
+  }
+  if (state.approvalDialogOpen) {
+    setState({ approvalDialogOpen: false });
+    return true;
+  }
+  if (state.openDialogOpen) {
+    setState({ openDialogOpen: false });
     return true;
   }
   if (state.receiptOpen) {
