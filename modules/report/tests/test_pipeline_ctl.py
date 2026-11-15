@@ -3,6 +3,7 @@ or `pytest test_pipeline_ctl.py`. Uses tmp dirs only; no network.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -2248,3 +2249,146 @@ class TestAmendmentReceiptUnit(unittest.TestCase):
         ok, why = ctl.verify_amendment_receipt(receipt, key=self.KEY)
         self.assertFalse(ok)
         self.assertIn("schema", why)
+
+
+class TestApprovalsMdCodec(PipelineCtlTestCase):
+    """Golden codec and zero-runtime-import checks for APPROVALS.md."""
+
+    def test_pipeline_ctl_has_zero_runtime_imports(self):
+        src_path = Path(ctl.__file__).resolve()
+        src = src_path.read_text(encoding="utf-8")
+        tree = ast.parse(src, filename=str(src_path))
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+        forbidden = [
+            name for name in imported
+            if "runtime" in name.split(".") or name.startswith("rt_") or name == "rigorloom_runtime"
+        ]
+        self.assertEqual(forbidden, [])
+
+    def test_parse_gate_approvals_precedence_and_timestamps(self):
+        self.assertEqual(
+            ctl.parse_gate_approvals("", "design")["state"],
+            "pending",
+        )
+        superseded_only = (
+            "# superseded design: approved by alice via ui at=2026-07-06T09:10:00Z\n"
+            "# superseded design: rejected stale at=2026-07-06T09:11:00Z\n"
+        )
+        self.assertEqual(
+            ctl.parse_gate_approvals(superseded_only, "design")["state"],
+            "pending",
+        )
+
+        # Both documented `at=<ISO>` and legacy `at <ISO>` timestamps parse cleanly.
+        eq_parsed = ctl.parse_gate_approvals(
+            "design: approved by=alice at=2026-07-06T09:10:00+09:00\n",
+            "design",
+        )
+        self.assertEqual(eq_parsed["state"], "approved")
+        self.assertEqual(eq_parsed["approver"], "alice")
+        self.assertEqual(eq_parsed["at"], "2026-07-06T09:10:00+09:00")
+
+        space_parsed = ctl.parse_gate_approvals(
+            "design: approved by bob at 2026-07-07T10:20:30Z\n",
+            "design",
+        )
+        self.assertEqual(space_parsed["state"], "approved")
+        self.assertEqual(space_parsed["approver"], "bob")
+        self.assertEqual(space_parsed["at"], "2026-07-07T10:20:30Z")
+
+        # Rejection wins regardless of line order relative to an approval for the same gate.
+        rej_before_app = (
+            "design: rejected missing citation at=2026-07-08T01:02:03Z\n"
+            "design: approved by carol at=2026-07-08T02:00:00Z\n"
+        )
+        parsed_rba = ctl.parse_gate_approvals(rej_before_app, "design")
+        self.assertEqual(parsed_rba["state"], "rejected")
+        self.assertEqual(parsed_rba["reason"], "missing citation")
+        self.assertEqual(parsed_rba["at"], "2026-07-08T01:02:03Z")
+
+        app_before_rej = (
+            "design: approved by carol at=2026-07-08T01:00:00Z\n"
+            "design: rejected wrong table at step 3\n"
+            "draft: approved by dave at=2026-07-08T03:00:00Z\n"
+        )
+        parsed_abr = ctl.parse_gate_approvals(app_before_rej, "design")
+        self.assertEqual(parsed_abr["state"], "rejected")
+        self.assertEqual(parsed_abr["reason"], "wrong table at step 3")
+        parsed_draft = ctl.parse_gate_approvals(app_before_rej, "draft")
+        self.assertEqual(parsed_draft["state"], "approved")
+        self.assertEqual(parsed_draft["at"], "2026-07-08T03:00:00Z")
+
+        space_rej = ctl.parse_gate_approvals(
+            "design: rejected stale chart at 2026-07-09T04:05:06Z\n",
+            "design",
+        )
+        self.assertEqual(space_rej["state"], "rejected")
+        self.assertEqual(space_rej["reason"], "stale chart")
+        self.assertEqual(space_rej["at"], "2026-07-09T04:05:06Z")
+
+    def test_format_record_write_and_cli_gate_roundtrip(self):
+        line_ui = ctl.format_gate_decision_line(
+            "topic_pick", "approved", approver="alice", via="ui", at="2026-08-01T00:00:00Z",
+        )
+        self.assertEqual(line_ui, "topic_pick: approved by alice via ui at=2026-08-01T00:00:00Z")
+        line_plain = ctl.format_gate_decision_line(
+            "topic_pick", "rejected", reason="needs citation", at="2026-08-01T01:00:00Z",
+        )
+        self.assertEqual(line_plain, "topic_pick: rejected needs citation at=2026-08-01T01:00:00Z")
+
+        with self.assertRaises(ValueError):
+            ctl.format_gate_decision_line("topic_pick", "rejected", reason="   ")
+        with self.assertRaises(ValueError):
+            ctl.format_gate_decision_line("bad gate", "approved")
+
+        initial = (
+            "draft: approved by keepme at=2026-08-01T00:00:00Z\n"
+            "# superseded topic_pick: rejected older at=2026-07-31T23:00:00Z\n"
+            "topic_pick : approved by old at=2026-08-01T00:00:00Z\n"
+        )
+        updated = ctl.record_gate_decision_text(
+            initial, "topic_pick", "rejected", reason="fix scope", via="ui", at="2026-08-02T00:00:00Z",
+        )
+        self.assertEqual(
+            updated.splitlines(),
+            [
+                "draft: approved by keepme at=2026-08-01T00:00:00Z",
+                "# superseded topic_pick: rejected older at=2026-07-31T23:00:00Z",
+                "# superseded topic_pick : approved by old at=2026-08-01T00:00:00Z",
+                "topic_pick: rejected fix scope at=2026-08-02T00:00:00Z",
+            ],
+        )
+
+        self.init_ws(mode="supervised")
+        (self.ws / "APPROVALS.md").unlink()
+        app_line = ctl.write_gate_decision(
+            self.ws / "APPROVALS.md",
+            "design",
+            "approved",
+            approver="reviewer1",
+            via="ui",
+            at="2026-08-03T11:22:33Z",
+        )
+        self.assertEqual(app_line, "design: approved by reviewer1 via ui at=2026-08-03T11:22:33Z")
+        gate_app, code_app = run("gate", str(self.ws), "design", "--mode", "supervised")
+        self.assertEqual(code_app, 0, gate_app)
+        self.assertEqual(gate_app["state"], "approved")
+        self.assertEqual(gate_app["at"], "2026-08-03T11:22:33Z")
+
+        ctl.write_gate_decision(
+            self.ws / "APPROVALS.md",
+            "design",
+            "rejected",
+            reason="table totals off",
+            via="ui",
+            at="2026-08-03T12:00:00Z",
+        )
+        gate_rej, code_rej = run("gate", str(self.ws), "design", "--mode", "supervised")
+        self.assertEqual(code_rej, 0, gate_rej)
+        self.assertEqual(gate_rej["state"], "rejected")
+        self.assertEqual(gate_rej["reason"], "table totals off")
