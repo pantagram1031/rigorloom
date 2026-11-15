@@ -2164,8 +2164,9 @@ rest stand.
    object or a shell-side grouping of sessions before the IA hardens.
 6. **No section or heading structure.** `graph.paragraphs[].section` is the XML
    member name (`Contents/section0.xml`), not a document section. There is no TOC
-   and no heading level, so the tree groups by file. Studio's `_parse_structure`
-   has a TOC reader that the Runtime does not expose.
+   and no heading level, so the tree groups by file; the Runtime does not expose
+   a separate TOC reader (the legacy viewer's retired `_parse_structure` was not
+   ported).
 7. **Last-writer-wins under `--root`.** Already recorded in `runtime/README.md`
    as the slice's largest risk, and the desktop makes it reachable: two windows
    on one root will clobber each other's session records. The shell does not

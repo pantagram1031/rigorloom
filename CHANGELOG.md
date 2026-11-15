@@ -28,6 +28,18 @@ the kernel's contract shape.
   sandbox`,** so its scripts stay in an opaque origin even when the URL is
   opened directly rather than through the dashboard's sandboxed iframe.
 
+### Removed
+
+- **T168:** removed the legacy read-only `studio/` dashboard
+  (`studio/main.py`, `studio/index.html`, `studio/README.md`,
+  `studio/requirements.txt`), `tests/test_studio.py`, and the `studio`
+  optional extra in `pyproject.toml`. Use `rigorloom ui`
+  (`runtime/scripts/rt_ui.py`, [docs/web-ui.md](docs/web-ui.md)) instead.
+  Human pipeline gate resolution in the web UI writes the exact
+  `<gate>: approved by <approver> via ui at=<timestamp>` format parsed by
+  `modules/report/scripts/pipeline_ctl.py:1150` (verified end-to-end in
+  `tests/test_ui_approval_roundtrip.py::test_pipeline_gates_list_approve_reject_and_script_gate_refusal`).
+
 ### Added
 
 - **T167:** `rigorloom demo gongmun --out DIR` fills the blank 기안문 form

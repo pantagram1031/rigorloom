@@ -15,8 +15,9 @@ python -m pytest -q
 `bootstrap.py` uses only the standard library and proves a fresh clone is
 wired correctly (interpreter check, private profile, end-to-end smoke test).
 No Hancom, no Windows, and no model account needed. Optional extras
-(`docx`, `studio`, `hwp`) are listed at the end of `bootstrap.py`'s output;
-install only what you need for the area you're changing.
+(`docx`, `engine`, `hwp`) cover optional backends (`docx` and `hwp` status are
+listed at the end of `bootstrap.py`'s output); install only what you need for
+the area you're changing.
 
 ## Where to start
 

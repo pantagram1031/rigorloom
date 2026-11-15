@@ -235,7 +235,6 @@ class TestCoreBundle:
         assert any(n.startswith("engine/scripts/") for n in names)
         assert "engine/scripts/document_evidence.py" in names
         assert any(n.startswith("pipeline/scripts/") for n in names)
-        assert "studio/main.py" in names
         assert "modules/README.md" in names
         # no distribution-module payloads, no test suites
         assert not any(n.startswith("modules/") and n != "modules/README.md"

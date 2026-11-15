@@ -10,7 +10,7 @@ per-file sha256, provides summary) and an ``INSTALL.md`` (drop into
 
 ``--module core`` emits the core bundle: ``engine/`` + the pipeline core
 (``pipeline/scripts``, ``pipeline/adapters_impl``,
- ``pipeline/references``) + ``studio/`` + the router
+ ``pipeline/references``) + the router
 skill surface (``skill/SKILL.md`` + ``skill/references/``) + the skill
 installer (``scripts/sync_local.py`` + ``scripts/sync_manifest.example.yaml``)
 + ``modules/README.md`` (the distribution-module contract; no module
@@ -133,7 +133,6 @@ _CORE_COMPONENTS = (
     # flattened install mapping handles the separate target path.
     "pipeline/adapters_impl",
     "pipeline/references",
-    "studio",
     "skill",
     "scripts/sync_local.py",
     "scripts/sync_manifest.example.yaml",
@@ -517,7 +516,7 @@ def _core_install_md(version: str) -> str:
 
 The core document engine: `engine/`, the pipeline core
 (`pipeline/scripts`, `pipeline/adapters_impl`, `pipeline/references`),
-`studio/`, the router skill
+the router skill
 surface (`skill/SKILL.md` + `skill/references/`), the skill installer
 (`scripts/sync_local.py` + `scripts/sync_manifest.example.yaml`), and the
 distribution-module contract (`modules/README.md`). No distribution-module
@@ -528,8 +527,9 @@ not failure).
 
 1. Extract this bundle into an empty directory. That directory is your
    INSTALL ROOT; every command below is run from it.
-2. Install runtime dependencies as needed (`studio/requirements.txt` for
-   the studio dashboard).
+2. Install optional Python dependencies as needed (see `pyproject.toml`
+   optional extras such as `engine` or `docx`; for the local browser UI,
+   install the `rigorloom` package and run `rigorloom ui`).
 3. Add capability bundles by installing distribution modules
    (`rigorloom-<name>-<version>.zip`) into `modules/` and enabling them via
    `python pipeline/scripts/module_registry.py write-enabled`.

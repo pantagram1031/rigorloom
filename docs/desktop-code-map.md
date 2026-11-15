@@ -95,9 +95,11 @@ disposes registrations that finish acquiring after their scope has closed.
 - Distribution module: a registered payload under `modules/<name>/module.yaml`.
 - Stage contract: a report pipeline composition unit, not a distribution module.
 
-`studio/` is a separate local FastAPI/HTML report dashboard. Its registry-driven
-`studio_panels` are not React Desktop views. Desktop task-pack catalogue data and
-Runtime execution enablement have separate readers; keep disagreements visible.
+`rigorloom ui` (`runtime/scripts/rt_ui.py`, [docs/web-ui.md](web-ui.md)) serves the
+browser web UI using the same React Desktop code (`desktop/src`), replacing the
+retired local report dashboard. Legacy module registry `studio_panels` metadata
+are not React Desktop views. Desktop task-pack catalogue data and Runtime
+execution enablement have separate readers; keep disagreements visible.
 
 ## Focused verification
 

@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a problem with the pipeline, a gate, or the Studio
+about: Report a problem with the pipeline, a gate, or the local UI
 title: "[Bug] "
 labels: bug
 ---

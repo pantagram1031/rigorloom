@@ -24,7 +24,6 @@ rigorloom = "rigorloom_runtime.cli:main"
 
 [project.optional-dependencies]
 docx = ["python-docx>=1.1"]
-studio = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "pymupdf>=1.23"]
 engine = ["pillow>=10", "pymupdf>=1.23", "pyyaml>=6"]
 test = ["pytest>=8"]
 
@@ -64,8 +63,8 @@ markers = [
 ]
 
 # --- wheel surface ------------------------------------------------------------
-# An ALLOWLIST, not a sweep. This repository is a flat layout with twelve
-# importable top-level directories (qa, evals, skill, engine, studio, archive,
+# An ALLOWLIST, not a sweep. This repository is a flat layout with eleven
+# importable top-level directories (qa, evals, skill, engine, archive,
 # desktop, modules, runtime, adapters, pipeline, agenthost). Automatic discovery
 # refuses to guess among them -- "Multiple top-level packages discovered in a
 # flat-layout" -- and any fix that merely silences that refusal would ship

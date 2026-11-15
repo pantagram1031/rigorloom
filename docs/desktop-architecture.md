@@ -40,11 +40,11 @@ child of the Runtime.
 Owns: window, file pickers, the approvals UI, provider configuration UI. Holds
 host authority because it is the only process the user is actually looking at.
 
-It must not read or write documents directly. The one existing precedent for a
-UI that operates the pipeline is Studio, and Studio already routes every
-mutating action through a subprocess call to a repository script rather than
-doing the work in-process (`studio/main.py:73`, `_ACTION_KINDS` =
-`check-gate, approve-human-gate, run-checker, build-bundle, build-hwpx`).
+It must not read or write documents directly. In the browser web UI bridge
+(`rigorloom ui`, `runtime/scripts/rt_ui.py`, `docs/web-ui.md`), host actions
+route through the Runtime sidecar (`serve.py --entry host`) and subprocess calls
+(such as `modules/report/scripts/pipeline_ctl.py` for gate resolution) rather
+than mutating documents in-process.
 
 ### 1.2 Runtime sidecar
 
@@ -114,10 +114,10 @@ workspace, configure providers, change policy, or delete a workspace
 (`docs/runtime-protocol-v0.md` §4).
 
 Authority is a property of how the connection was created, never a field in a
-payload. The existing analogue is Studio's action gate: actions are off unless
-`STUDIO_ALLOW_ACTIONS=1` was set in the environment that launched the server
-(`studio/main.py:86`), and the per-request check is a token plus a Host-header
-check, not a claim in the body (`studio/main.py:993`, `_require_action_auth`).
+payload. In `rigorloom ui` (`runtime/scripts/rt_ui.py`, `docs/web-ui.md`), the
+HTTP bridge enforces loopback `Host` and `Sec-Fetch-Site` guards plus a
+per-run `X-Rigorloom-Token` header on API calls, while Agent Host runs as a
+separate `--entry agent` process that cannot call host-only methods.
 
 ### B2 — Desktop shell → Runtime
 
@@ -227,11 +227,11 @@ handle with delete sharing disabled, plus a final identity check on return
 (`:56`). Every operation through it re-verifies identity and refuses with
 `directory_binding_changed` (`:226`).
 
-**UI-level containment — `studio/main.py:100`** (`safe_workspace`): slug regex
-then a resolved-parent check. Narrower than the two above and appropriate for
-its layer; the Runtime should lift this into a shared module rather than
-duplicating it a third time (GAP; see `docs/runtime-protocol-v0.md` §6,
-`workspace/list`).
+**UI-level containment — `runtime/scripts/rt_ui.py`** (`docs/web-ui.md`):
+validates upload filenames, gate names, session/run identifiers, and relative
+candidate paths before dispatching to the Runtime or `pipeline_ctl.py`;
+`workspace/openPath` stays host-only and browser uploads copy into the session
+copy rather than exposing arbitrary filesystem paths to agents.
 
 ### 3.2 COM serialization
 
@@ -340,7 +340,7 @@ Cited by test file; each already exists in this checkout.
 | T18/T21/T22 guard primitives (protected paragraphs, instance lock, dangling charPr) | `engine/tests/test_guards.py` |
 | cp949 `--help` safety across every shipped CLI | `tests/test_cli_cp949_help.py` |
 | Child-process bounds are above the measured loaded median | `tests/test_subprocess_bounds.py` |
-| Studio localhost surface: token, Host guard, workspace containment | `tests/test_studio.py` |
+| Local web UI bridge (`rigorloom ui`): token, Host/origin guard, approval roundtrip | `tests/test_ui_bridge.py`, `tests/test_ui_approval_roundtrip.py` |
 | Skill install: drift refusal, atomic swap, rollback, lock | `tests/test_sync_local.py` |
 | Bundle: reproducibility, privacy gate, manifest verification | `tests/test_package_module.py` |
 | Clean-room reproducibility of the shipped surface | `tests/test_cleanroom_evals.py`, `tests/test_bundled_skill_says_which_copy.py` |
@@ -361,7 +361,7 @@ about it.
 
 **`scripts/package_module.py`** — `--module core` currently stages
 `engine/`, the pipeline core (`pipeline/scripts`, `pipeline/adapters_impl`,
-`pipeline/references`), `studio/`, the router skill surface, the skill
+`pipeline/references`), the router skill surface, the skill
 installer, `modules/README.md`, `pyproject.toml` and `LICENSE`
 (`scripts/package_module.py:11-18`, `_stage_core` at `:681`). Adding a
 `runtime/` tree means:
@@ -400,12 +400,11 @@ changes what `package_module.py --module core` has to ship.
 
 ## 7. Open questions
 
-1. **Does Studio become a Runtime client, or stay a peer?** Studio is already
-   a localhost control server with an action token, a Host-header guard and
-   workspace containment (`studio/main.py:993`, `:100`). v0 says the Runtime
-   gets no localhost server. Two servers with two authority models on one
-   machine is the kind of thing that is fine until it is not. Unresolved from
-   code.
+1. **Localhost UI bridge as a Runtime client (`rigorloom ui`).** The retired
+   legacy dashboard has been replaced by `rigorloom ui`
+   (`runtime/scripts/rt_ui.py`, `docs/web-ui.md`), which runs as a loopback
+   HTTP/SSE bridge wrapping `serve.py --entry host` and `agenthost` instead of
+   keeping a separate localhost authority model.
 2. **One Runtime per Desktop window, or one per machine?** The COM mutex is
    machine-wide (`pipeline/scripts/hwp_ingress.py:1188`), so a second Runtime
    is not a correctness problem for Hancom — but it is for workspace locking,

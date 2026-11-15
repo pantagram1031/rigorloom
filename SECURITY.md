@@ -33,7 +33,7 @@ Examples that qualify:
   code (`ws_snapshot.py` and similar).
 
 Also in scope: leakage of personal data, credentials, or private form
-content through logs, generated artifacts, or the Studio.
+content through logs, generated artifacts, or `rigorloom ui`.
 
 ## What's out of scope
 
