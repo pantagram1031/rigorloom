@@ -7,9 +7,11 @@ the pipeline runs end to end on a synthetic workspace: new_report -> resume ->
 a passing script gate resolved via `check`. Standard library only; no network;
 re-runnable (idempotent). Exits 0 only when every required step succeeds.
 
-The default roots live under the repo's Git-ignored `.local/` and `workspaces/`.
-Pass --profile-root / --workspace-root to redirect everything (tests use temp
-dirs so a bootstrap run never touches real personalization or workspaces).
+The default roots are ~/.rigorloom/personalization and ~/.rigorloom/workspaces,
+the same ones scripts/new_report.py uses. They must stay outside the checkout:
+new_report refuses a workspace or profile inside the engine. Pass
+--profile-root / --workspace-root to redirect everything (tests use temp dirs so
+a bootstrap run never touches real personalization or workspaces).
 """
 from __future__ import annotations
 
@@ -30,6 +32,9 @@ if str(PIPELINE_SCRIPTS) not in sys.path:
 PERSONALIZATION_CTL = PIPELINE_SCRIPTS / "personalization_ctl.py"
 NEW_REPORT = SCRIPTS / "new_report.py"
 SETUP_PROFILE = SCRIPTS / "setup_profile.py"
+
+# Same defaults as scripts/new_report.py; both must stay outside the checkout.
+DEFAULT_HOME = Path.home() / ".rigorloom"
 
 MIN_PYTHON = (3, 10)
 SMOKE_SLUG = "bootstrap-smoke"
@@ -264,11 +269,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--profile-root", type=Path,
-                        default=REPO_ROOT / ".local" / "personalization",
-                        help="Private personalization store (default: .local/personalization)")
+                        default=DEFAULT_HOME / "personalization",
+                        help="Private personalization store (default: ~/.rigorloom/personalization)")
     parser.add_argument("--workspace-root", type=Path,
-                        default=REPO_ROOT / "workspaces",
-                        help="Where the smoke demo workspace is created (default: workspaces/)")
+                        default=DEFAULT_HOME / "workspaces",
+                        help="Where the smoke demo workspace is created (default: ~/.rigorloom/workspaces)")
     parser.add_argument("--skip-smoke", action="store_true",
                         help="Only set up the profile + packs; skip the end-to-end run")
     return parser.parse_args(argv)

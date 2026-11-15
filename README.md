@@ -44,7 +44,7 @@ python scripts/new_report.py \
   --topic "A testable question" \
   --form /path/to/form.hwpx
 
-python modules/report/scripts/pipeline_ctl.py resume ./workspaces/report-demo
+python modules/report/scripts/pipeline_ctl.py resume ~/.rigorloom/workspaces/report-demo
 ```
 
 The pipeline drives entirely through CLIs. Stage playbooks under
