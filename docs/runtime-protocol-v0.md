@@ -1,9 +1,12 @@
-# Runtime Protocol v0 — design draft
+# Runtime Protocol v0 — specification and historical design record
 
-Status: design input for Phase 1. No runtime code exists yet; nothing in this
-document is implemented. Every capability claim below cites the file and line
-in this checkout that already provides it. Anything the tree does **not**
-provide is labelled `GAP` with a one-line build note.
+Status: implemented under `runtime/` (`RuntimeCore`, `rt_server.py` JSONL stdio
+server, `cli.py`, `mcp_server.py`, `agenthost/`, and `rt_ui.py`); see §§9–15
+for implemented slices. Sections 1–8 below are kept verbatim as the historical
+Phase 1 design record (including original baseline line citations and `GAP`
+notes written before `runtime/` landed). Every engine/pipeline citation in those
+sections names files in this checkout; anything marked `GAP` in §§1–8 reflects
+what was unbuilt at the time of that initial Phase 1 design draft.
 
 Scope: the wire contract between a client (Desktop shell, CLI, MCP server,
 Agent Host) and a single Runtime process that adapts the **existing** engine
@@ -651,12 +654,15 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 
 ---
 
-## 9. Implementation status (Phase 1 slice)
+## 9. Implementation status (historical Phase 1 slice note)
 
-Implemented in `runtime/` on this branch. Everything not listed is still GAP.
-The slice serves the offline `preedit` backend only (orchestrator decision D9);
-`xml` and `com` plans, and op kinds those backends own, are refused with
-`unsupported_backend` naming the backend that would serve them.
+Historical Phase 1 snapshot recorded when the initial offline `preedit` slice
+landed in `runtime/`; subsequent slices (CLI, MCP, rendering, events, page
+geometry, module checkers, and candidate lineage) are recorded in §§10–15.
+The initial slice documented here serves the offline `preedit` backend only
+(orchestrator decision D9); `xml` and `com` plans, and op kinds those backends
+own, are refused with `unsupported_backend` naming the backend that would serve
+them.
 
 ### Methods
 
