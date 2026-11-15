@@ -35,7 +35,8 @@ cd rigorloom
 # Enable the distribution modules shipped in modules/
 python pipeline/scripts/module_registry.py write-enabled --all
 
-# Bootstrap: verifies interpreter, provisions profile, runs smoke test
+# Bootstrap: verifies interpreter, provisions profile, runs smoke test.
+# It writes outside the checkout, under ~/.rigorloom (profile and workspaces).
 python3 scripts/bootstrap.py
 
 # Create and run a report workspace
@@ -44,7 +45,7 @@ python scripts/new_report.py \
   --topic "A testable question" \
   --form /path/to/form.hwpx
 
-python modules/report/scripts/pipeline_ctl.py resume ./workspaces/report-demo
+python modules/report/scripts/pipeline_ctl.py resume ~/.rigorloom/workspaces/report-demo
 ```
 
 The pipeline drives entirely through CLIs. Stage playbooks under
