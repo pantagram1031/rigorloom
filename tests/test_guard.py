@@ -103,7 +103,7 @@ def test_committed_example_verdict_is_reproduced_byte_for_byte():
 
 def test_readme_quick_start_output_is_real(tmp_path):
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    block = readme.split("## Try it in one minute", 1)[1]
+    block = readme.split("## Try the fact check in one minute", 1)[1]
     sh, out = block.split("```sh\n", 1)[1].split("```", 1)[0], block.split("```text\n", 1)[1].split("```", 1)[0]
     texts = [line.split("'")[1].replace("%%", "%").replace("\\n", "\n")
              for line in sh.splitlines() if line.startswith("printf")]
