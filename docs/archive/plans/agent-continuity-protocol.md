@@ -1,11 +1,11 @@
 # Agent authority, continuity and quota handover protocol
 
-Owner: Copy reviewer. Execution owner: separate Sol High task. User authorized autonomous delegation, bounded agent creation, quota-aware replacement and return after reset. This is a product-development operations protocol, not a permission to widen provider/account access or edit unrelated work.
+Owner: planning owner. Execution owner: separate Sol High task. User authorized autonomous delegation, bounded agent creation, quota-aware replacement and return after reset. This is a product-development operations protocol, not a permission to widen provider/account access or edit unrelated work.
 
 ## Authority and communication
 
 1. User decides product priorities, protected boundaries, purchases/publishing and major changes.
-2. A copy reviewer owns product planning and acceptance disputes. It is normally reserved, not a routine polling target.
+2. The planning owner owns product planning and acceptance disputes. It is normally reserved, not a routine polling target.
 3. Sol is operational coordinator: task queue, leases, provider routing, worker creation, verification, local integration and usage checks. One active coordinator lease exists.
 4. A designated deputy can acquire an expired/relinquished coordinator lease after verifying the prior process/task is terminal or a signed handoff explicitly releases it. Quota unavailability alone is not proof that the prior worker stopped.
 5. Implementers own named files/worktrees and tasks; reviewers remain read-only. Workers may request dependencies, ask peers factual questions, and propose a subtask. Coordinator authorizes bounded spawning from the allowed provider/model registry and available budget. No recursive unlimited spawning or self-granted authority.
@@ -54,7 +54,7 @@ No background watcher may kill another user session, switch arbitrary accounts, 
 
 Start at at most three active model workers plus the coordinator; at most one Claude heavy worker and one native COM worker. Increase only for independent cards with measured benefit and available quotas. Avoid multiple heavyweight reviewers of the same patch by default.
 
-Cheap local quota sampling can run every15minutes. Coordinator checks before expensive dispatch, on quota errors and after a milestone. Reset times schedule a read-only recheck, not an automatic task replay. A copy reviewer receives important decisions and milestone summaries; routine telemetry stays on the board.
+Cheap local quota sampling can run every15minutes. Coordinator checks before expensive dispatch, on quota errors and after a milestone. Reset times schedule a read-only recheck, not an automatic task replay. A planning owner receives important decisions and milestone summaries; routine telemetry stays on the board.
 
 Investigate >5 quota percentage points consumed in15minutes or >2x sustainable pace to reset. Check which account/window changed, parallel calls, context growth, retries, tool loops, output volume and cached-token accounting. API-equivalent cost is not subscription remaining quota. Stop wasteful loops safely and route to eligible alternatives. Unknown quota means a bounded probe/task, never assume unlimited.
 

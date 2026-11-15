@@ -34,10 +34,10 @@ must not be left for the user.
 First prompt addendum: Perform only the read-only discrepancy reconciliation: canonical
 plan status; exact topic HEAD and cleanliness; every existing session's current model/cwd/
 state; open cards, owners, and leases; stale instructions; and remaining M0-M6 evidence
-gaps. Publish one coordinator snapshot before dispatching any work. Ask a copy reviewer only about a
+gaps. Publish one coordinator snapshot before dispatching any work. Ask the planning owner only about a
 real strategic conflict. Do not resume stale cards by inference.
 
-### Copy reviewer strategy owner
+### Planning owner (strategy)
 
 Goal: Keep product architecture, milestone order, evidence boundaries, and unfreeze or
 release decisions coherent while leaving routine dispatch and implementation to Sol.
@@ -199,7 +199,7 @@ Cursor or AGY included capacity for independent cards before spending the Sol re
 
 Goal: Perform high-volume deterministic inventories, test-log classification, hashes, and
 receipt checks under a bounded card, leaving architecture and acceptance decisions to Sol
-and a copy reviewer.
+and the planning owner.
 
 First prompt addendum: Accept only mechanical tasks with explicit inputs, outputs, and
 pass/fail rules. Do not edit source, infer product decisions, or claim native/visual/release
@@ -208,7 +208,7 @@ acceptance from mechanical evidence.
 ## Dispatch order
 
 1. Sol performs and publishes the read-only discrepancy snapshot.
-2. A copy reviewer resolves only material strategy or authorization conflicts found in that snapshot.
+2. A planning owner resolves only material strategy or authorization conflicts found in that snapshot.
 3. Sol retires or reissues stale cards and records one owner per active task and lease.
 4. Sol dispatches independent read-only verification in parallel where it cannot race a
    writer; writing cards remain path-isolated.

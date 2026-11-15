@@ -16,7 +16,7 @@ For current behaviour and architecture, see [README.md](../../README.md) and [do
 | docs/archive/plans/cli-first-product-vision.md | 2026-09-10 | CLI-first milestone and coverage plan referenced by docs/archive/plans/rigorloom-master-execution-plan.md. |
 | docs/archive/plans/p0-parity-report.md | 2026-07-15 | Linux HWPX layout parity measurement report referenced by SECURITY.md and CHANGELOG.md. |
 | docs/archive/plans/reopen-amend-design.md | v0.16 W1 (git 2026-09-14) | Design record for append-only stage reopen and off-graph amend transitions grounded in docs/research/variant-audit.md. |
-| docs/archive/plans/rigorloom-herdr-session-prompts.md | 2026-09-13 | Historical multi-agent session prompt contract referenced by docs/archive/plans/rigorloom-master-execution-plan.md. |
+| docs/archive/plans/rigorloom-session-prompts.md | 2026-09-13 | Historical multi-agent session prompt contract referenced by docs/archive/plans/rigorloom-master-execution-plan.md. |
 | docs/archive/plans/rigorloom-master-execution-plan.md | 2026-09-13 | Earlier M0 to M6 execution plan referenced by AGENTS.md and docs/hancom-operation-catalog.json. |
 | docs/archive/plans/v0.7-hardening.md | v0.7 (git 2026-09-14) | Gate-integrity hardening plan referenced by docs/autonomous-orchestration.md and superseded by shipped pipeline_ctl.py checks. |
 | docs/archive/plans/v0.8-portability.md | v0.8 (2026-07-13) | Portability wave plan for pluggable document backends and Linux support, superseded by docs/pipeline-master-v0.6.md. |

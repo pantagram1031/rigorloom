@@ -1,6 +1,6 @@
 # Rigorloom product execution plan
 
-Status: active plan, not a completion claim. Owner: Copy reviewer (product planning and acceptance). Execution lead: separate Codex Sol High task. Updated 2026-09-10.
+Status: active plan, not a completion claim. Owner: planning owner (product planning and acceptance). Execution lead: separate Codex Sol High task. Updated 2026-09-10.
 
 ## 1. Product outcome
 
@@ -16,7 +16,7 @@ Planning worktree: `<worktree-root>/rigorloom-cli-product-plan`, branch `codex/c
 
 | Responsibility | Location / owner | Rule |
 |---|---|---|
-| Product plan and acceptance changes | this branch / copy reviewer | Major tradeoffs and milestone acceptance; brief reviews |
+| Product plan and acceptance changes | this branch / planning owner | Major tradeoffs and milestone acceptance; brief reviews |
 | Routine orchestration | separate Sol task `01a08756-2564-7aa1-bcc9-d6e853f372b8` | Own queue, usage routing, review and local integration |
 | Current report integration candidate | `<worktree-root>/rigorloom-cli-report-essentials`, `codex/cli-report-essentials` | Clean `8e1a1ea` at planning baseline; recheck before each integration |
 | Gate integrity card | `<worktree-root>/rigorloom-cli-gate-integrity` | Existing Cursor owner; no concurrent edits to its two files |
@@ -132,9 +132,9 @@ Install acceptance: clean user profile/VM, documented licensed prerequisites, no
 
 ## 10. Agent roster and terminal session coordination
 
-A copy reviewer owns this plan and strategic reviews. Separate Codex Sol High owns routine orchestration, card assignment, integration and acceptance preparation. Claude Code is reserved for high-value difficult implementation/review and native workflow reasoning, in fresh bounded sessions after a durable handoff. Cursor Grok handles scoped implementation/recovery; other Cursor models are selected by verified capabilities. SuperGrok Build handles useful independent research/review/implementation once its tool loop is verified. Antigravity CLI adds Google-backed advisory research, catalog extraction and independent reviews through supported sandbox mode.
+The planning owner owns this plan and strategic reviews. Separate Codex Sol High owns routine orchestration, card assignment, integration and acceptance preparation. Claude Code is reserved for high-value difficult implementation/review and native workflow reasoning, in fresh bounded sessions after a durable handoff. Cursor Grok handles scoped implementation/recovery; other Cursor models are selected by verified capabilities. SuperGrok Build handles useful independent research/review/implementation once its tool loop is verified. Antigravity CLI adds Google-backed advisory research, catalog extraction and independent reviews through supported sandbox mode.
 
-A terminal session manager named session `rigorloom` is the only authorized coordination surface. CLI workers should run in actual managed panes, with model/account label, assigned card and tool-access acknowledgement. Existing external jobs are mirrored until they finish safely. Sol and copy reviewer app tasks use honestly labelled bridge panes unless an actual supported native session attachment is established. A dashboard/process existing is not proof of user-visible UI or working tool calls.
+A terminal session manager named session `rigorloom` is the only authorized coordination surface. CLI workers should run in actual managed panes, with model/account label, assigned card and tool-access acknowledgement. Existing external jobs are mirrored until they finish safely. Sol and planning owner app tasks use honestly labelled bridge panes unless an actual supported native session attachment is established. A dashboard/process existing is not proof of user-visible UI or working tool calls.
 
 Every worker receives bounded context, owned paths, input artifacts, expected deliverable, acceptance commands and stop condition. Read shared coordination files before writes. Separate native COM execution from parallel source work: one COM owner at a time. External text saying done is not accepted without artifacts/tests. Do not restart on a mere observation timeout. Investigate terminal/cancelled/progress-only results before reusing a failing route.
 
@@ -144,7 +144,7 @@ Use actual quota snapshots with service, redacted account label, window, directi
 
 Default reserve:25% Codex and Claude. Prefer verified available Cursor/Antigravity/SuperGrok for routine work; spend reserved Claude on difficult bounded tasks. User authorizes using an expiring SuperGrok reset, but first verify the specific service/credit/expiry/need; never substitute Codex reset credits. Ordinary authorized account switching to user's other Cursor Google account may be used when appropriate through supported login; do not extract cookies/tokens, bypass limits or enable paid overages.
 
-Sample locally every15minutes if safely supported; inspect provider quotas before expensive dispatch and after milestones. Let Sol perform a bounded operational check about every30–60minutes; notify a copy reviewer/user for meaningful milestones, blockers or anomalous burn. Avoid waking a copy reviewer on every log change. At >5 quota percentage points/15minutes or >2x sustainable pace until reset, checkpoint the suspected worker and inspect model, context growth, retries, subagent multiplication, cache counts and overlapping work. These thresholds are planning defaults, not provider rules.
+Sample locally every15minutes if safely supported; inspect provider quotas before expensive dispatch and after milestones. Let Sol perform a bounded operational check about every30–60minutes; notify the planning owner/user for meaningful milestones, blockers or anomalous burn. Avoid waking the planning owner on every log change. At >5 quota percentage points/15minutes or >2x sustainable pace until reset, checkpoint the suspected worker and inspect model, context growth, retries, subagent multiplication, cache counts and overlapping work. These thresholds are planning defaults, not provider rules.
 
 Prefer compact handoffs and fresh purpose-specific sessions. Do not ask every model to review everything. Cheap deterministic local checks precede model reviews. A few high-quality independent reviews are more valuable than unbounded parallel agents. Runtime control boundaries and auth/tool availability are verified per provider before assigning production work.
 

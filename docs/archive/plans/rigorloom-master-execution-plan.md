@@ -2,7 +2,7 @@
 
 Status: **ACTIVE BY USER — coordinator resume and live-state reconciliation authorized**
 Updated: 2026-09-13 KST
-Planning owner: Copy reviewer
+Planning owner: product planning
 Routine execution coordinator: existing terminal session agent `rigorloom-sol-coordinator` in named
 session `rigorloom`; do not create a replacement session while it remains usable.
 
@@ -16,7 +16,7 @@ The user explicitly resumed coordinator work on 2026-09-13. Resume begins with t
 read-only discrepancy reconciliation in section 8; it does not automatically reactivate
 stale cards or grant file, COM, integration, push, release, or publication authority.
 Role-specific session goals and prompt contracts are in
-`docs/archive/plans/rigorloom-herdr-session-prompts.md`.
+`docs/archive/plans/rigorloom-session-prompts.md`.
 
 ## 1. Required reading order
 
@@ -309,7 +309,7 @@ After explicit resume:
   unrun checks, uncertainties, and next safe action. External prose saying “done” is not
   acceptance.
 - The coordinator verifies scope and tests, obtains independent review proportional to risk,
-  and integrates once. Strategic acceptance disputes return to a copy reviewer; routine telemetry does
+  and integrates once. Strategic acceptance disputes return to the planning owner; routine telemetry does
   not.
 - Use fresh provider quota snapshots with account alias, window, used/remaining direction,
   capture time, and reset time. Preserve reserves and avoid busy polling or repeated long
