@@ -367,9 +367,9 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
                     "opId": "op-replace",
                     "kind": "replace_at_cell",
                     "table": 0,
-                    "row": 7,
-                    "col": 1,
-                    "text": "2026년 100만원",
+                    "row": 6,
+                    "col": 0,
+                    "text": "공고 2026년 100만원",
                 },
                 {
                     "opId": "op-set-run",

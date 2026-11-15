@@ -1,29 +1,52 @@
 """End-to-end gongmun walkthrough Playwright verification and canonical screenshot capture.
 
+Run 1b protocol & approval-persistence notes:
+- How `examples/gongmun/expected/plan.json` is loaded:
+  The browser Review screen has no JSON plan upload widget by design; external
+  agents and CLIs propose plans over `/rpc` (`plan/propose` + `approval/request`).
+  This walkthrough opens `gianmun-byeolji-1ho.hwpx` from `예시 양식`, flattens the
+  deterministic 24-op `examples/gongmun/expected/plan.json` into runtime ops, and
+  submits `plan/propose` + `approval/request` via `/rpc`, which the React Review
+  workspace automatically adopts from session events.
+- Why no `APPROVALS.md` file exists in this flow:
+  `APPROVALS.md` belongs exclusively to report-pipeline stage gates
+  (`/api/pipeline/gate-resolve`). Interactive document-editing approvals go through
+  `rt_ui.py` (`rt_ui.py:1900`, `rt_plan.py:762`) and persist to
+  `<root>/approvals/<approvalId>.json`, `<root>/sessions/<sessionId>/events.jsonl`,
+  and `<root>/sessions/<sessionId>/candidates/<runId>/receipt.json`. Compared to
+  `examples/gongmun/expected/approval.json`, the live runtime record written by the
+  Desktop ApprovalDialog uses `requestedBy="rigorloom-desktop"`, `approver="host-operator"`,
+  generated `approvalId`/`planId` UUIDs, wall-clock UTC timestamps, and the drafted
+  plan's `planHash`, while matching `state == "approved"` and `decision == "approved"`.
+  Do NOT re-add `APPROVALS.md` assertions to this walkthrough.
+
 Covers:
 1. Clean `pytest.skip` when `playwright` or headless Chromium is unavailable.
 2. Live subprocess launch (`cli.py ui --root <tmp> --port 0 --no-open`) with zero
    uncaught `pageerror`s and zero HTTP 5xx / unexpected API 4xx responses.
-3. Opening real corpus form `gianmun-byeolji-1ho.hwpx` via Open screen.
-4. Proposing the deterministic 24-op `examples/gongmun/expected/plan.json` plan +
-   external `approval/request` via `/rpc`, verifying automatic UI adoption of all
-   24 changes (`change-row-1..24`), collapsed row height <= 56 px, and bidirectional
-   marker <-> row selection synchronization.
+3. Open screen checks: hidden `파일 내보내기` when no doc is open, `경로로 문서 열기`
+   in `명령창` only, and `예시 양식 열기` vocabulary (`기본 양식 열기` absent).
+4. Opening `gianmun-byeolji-1ho.hwpx` -> top bar title `기안문 (별지 제1호서식)`
+   with raw filename only under `자세히`; proposing 24-op `expected/plan.json`,
+   verifying `/api/guard/diff` `{sessionId, planId}` contract, zero `바뀐 사실` pills
+   matching header count `0`, Op 1 `기호 지움` `[별지 제1호서식]`, guide-fill `빈칸 채움`
+   classification, grouped range marker (`1-4`) + peer row highlight, inline
+   `변경 전:` callout in selected row only (never inside `page-sheet`), separated
+   기안문 header paragraphs, dashed empty blanks without vertical Hangul syllable wrap,
+   and 390 px mobile layout (`page-sheet` within 120 px of top, left edge >= 0,
+   `scrollWidth <= innerWidth`).
 5. Capturing the 8 canonical PNGs in `docs/ui/`:
-   `{open,review}-{1440,390}-{light,dark}.png`, verifying `scrollWidth <= innerWidth`
-   at 390 px across mobile tabs.
-6. Automated surface-leak checks (no raw file paths, no raw event names, no
-   32-hex IDs outside `<details>` or `.approval-hash`, no internal schema jargon,
-   and zero forbidden strings).
-7. Live DOM WCAG 2.1 contrast audit across Open & Review light/dark (>= 4.5:1 on
-   all enabled visible text elements), writing results to `scratch/live_contrast.json`.
-8. Approving and exporting `.hwpx` ZIP, then verifying on-disk persistence under
-   `approvals/<approvalId>.json`, `sessions/<sessionId>/events.jsonl`, and
-   `sessions/<sessionId>/candidates/<runId>/receipt.json`.
+   `{open,review}-{1440,390}-{light,dark}.png`.
+6. Automated surface-leak checks & live DOM WCAG 2.1 contrast audit (>= 4.5:1) across
+   Open & Review in light and dark themes.
+7. Approving and exporting `.hwpx` ZIP (comparing against `examples/gongmun/expected/filled.hwpx`),
+   then verifying on-disk persistence under `approvals/<approvalId>.json`,
+   `sessions/<sessionId>/events.jsonl`, and `sessions/<sessionId>/candidates/<runId>/receipt.json`.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -40,10 +63,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "runtime" / "scripts" / "cli.py"
 DOCS_UI_DIR = REPO_ROOT / "docs" / "ui"
 GONGMUN_PLAN_PATH = REPO_ROOT / "examples" / "gongmun" / "expected" / "plan.json"
+GONGMUN_FILLED_HWPX_PATH = REPO_ROOT / "examples" / "gongmun" / "expected" / "filled.hwpx"
 CORPUS_FORM_FILENAME = "gianmun-byeolji-1ho.hwpx"
 # The live contrast audit is written only when this variable names a file;
 # otherwise it goes to the test's temporary directory.
 LIVE_CONTRAST_ENV = "RIGORLOOM_LIVE_CONTRAST_OUT"
+WALKTHROUGH_METRICS_ENV = "RIGORLOOM_WALKTHROUGH_METRICS_OUT"
 
 CANONICAL_SCREENSHOTS = [
     f"{screen}-{width}-{theme}.png"
@@ -419,7 +444,25 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
     page_errors: list[str] = []
     server_errors: list[tuple[int, str]] = []
     api_errors: list[tuple[int, str]] = []
+    guard_diff_requests: list[dict] = []
+    guard_diff_responses: list[int] = []
     contrast_reports: list[dict] = []
+    metrics_snapshot: dict = {}
+
+    def _on_request(req) -> None:
+        if "/api/guard/diff" in req.url and req.method == "POST":
+            try:
+                guard_diff_requests.append(json.loads(req.post_data or "{}"))
+            except json.JSONDecodeError:
+                guard_diff_requests.append({"raw": req.post_data})
+
+    def _on_response(resp) -> None:
+        if resp.status >= 500:
+            server_errors.append((resp.status, resp.url))
+        elif resp.status >= 400 and ("/api/" in resp.url or "/rpc" in resp.url):
+            api_errors.append((resp.status, resp.url))
+        elif "/api/guard/diff" in resp.url and resp.status == 200:
+            guard_diff_responses.append(resp.status)
 
     try:
         with sync_playwright() as pw:
@@ -431,20 +474,10 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             )
             page = context.new_page()
             page.on("pageerror", lambda err: page_errors.append(str(err)))
-            page.on(
-                "response",
-                lambda resp: (
-                    server_errors.append((resp.status, resp.url))
-                    if resp.status >= 500
-                    else (
-                        api_errors.append((resp.status, resp.url))
-                        if resp.status >= 400 and ("/api/" in resp.url or "/rpc" in resp.url)
-                        else None
-                    )
-                ),
-            )
+            page.on("request", _on_request)
+            page.on("response", _on_response)
 
-            # 1) Load Open view, check surface cleanliness & contrast, capture Open canonical PNGs
+            # 1) Load Open view, check Item 13/14 surface controls, cleanliness & contrast
             page.goto(url, wait_until="domcontentloaded")
             splash = page.locator('[data-testid="splash"]')
             if splash.count() > 0:
@@ -459,6 +492,21 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 timeout=15000,
             )
 
+            assert page.locator('[data-testid="topbar-export"]').count() == 0
+            assert page.locator('[data-testid="open-path-disclosure"]').count() == 0
+            page.click('[data-testid="topbar-palette"]')
+            page.wait_for_selector('[data-testid="palette-cmd-open-by-path"]', timeout=5000)
+            assert page.locator('[data-testid="palette-cmd-open-by-path"]').is_visible()
+            assert page.locator('[data-testid="palette-cmd-export"]').count() == 0
+            open_builtin_text = page.locator('[data-testid="palette-cmd-open-builtin"]').inner_text().strip()
+            assert open_builtin_text == "예시 양식 열기", open_builtin_text
+            assert "기본 양식 열기" not in page.locator("body").inner_text()
+            page.keyboard.press("Escape")
+            page.wait_for_function(
+                "() => !document.querySelector('[data-testid=\"palette-cmd-open-by-path\"]')",
+                timeout=5000,
+            )
+
             for theme in ("light", "dark"):
                 _set_viewport_and_theme(page, 1440, 900, theme)
                 _assert_surface_clean(page, f"open-1440-{theme}")
@@ -467,14 +515,35 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 assert report["failureCount"] == 0, json.dumps(
                     report["failures"], ensure_ascii=False
                 )
+                assert report["minRatio"] is not None and report["minRatio"] >= 4.5, report
 
             _save_canonical_variants(page, "open")
             _set_viewport_and_theme(page, 1440, 900, "light")
 
-            # 2) Open gianmun-byeolji-1ho.hwpx and propose 24-op gongmun plan + approval/request via /rpc
+            # 2) Open gianmun-byeolji-1ho.hwpx, check Item 12 title & Item 14 export gating,
+            #    then propose 24-op gongmun plan + approval/request via /rpc
             page.click(f'[data-testid="open-sample-item-{CORPUS_FORM_FILENAME}"]')
             page.wait_for_selector('[data-testid="review-view"]', timeout=15000)
             page.wait_for_selector('[data-testid="page-sheet"]', timeout=15000)
+
+            doc_title = page.locator('[data-testid="doc-name"]').inner_text().strip()
+            assert doc_title == "기안문 (별지 제1호서식)", doc_title
+            assert CORPUS_FORM_FILENAME not in _extract_visible_surface_text(page)
+            page.click('[data-testid="review-source-detail"] summary')
+            assert CORPUS_FORM_FILENAME in page.locator('[data-testid="review-source-detail"]').inner_text()
+            page.click('[data-testid="review-source-detail"] summary')
+            assert CORPUS_FORM_FILENAME not in _extract_visible_surface_text(page)
+
+            # Before an applied export revision exists, TopBar export stays hidden while palette exposes it
+            assert page.locator('[data-testid="topbar-export"]').count() == 0
+            page.click('[data-testid="topbar-palette"]')
+            page.wait_for_selector('[data-testid="palette-cmd-export"]', timeout=5000)
+            assert page.locator('[data-testid="palette-cmd-export"]').is_visible()
+            page.keyboard.press("Escape")
+            page.wait_for_function(
+                "() => !document.querySelector('[data-testid=\"palette-cmd-export\"]')",
+                timeout=5000,
+            )
 
             bootstrap = page.evaluate("() => window.__RIGORLOOM_UI__")
             token = bootstrap["token"]
@@ -505,13 +574,20 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             )
             assert req_res["ok"] is True, req_res
 
-            # 3) Verify auto-adoption of all 24 changes & guard readiness
+            # 3) Verify auto-adoption of all 24 changes & /api/guard/diff readiness (Items 1-4, 6-7)
             page.wait_for_selector('[data-testid="change-row-24"]', timeout=20000)
             page.wait_for_selector('[data-testid="guard-list-header"]', timeout=20000)
-            page.wait_for_function(
-                "() => document.querySelectorAll('[data-testid^=\"change-pill-\"]').length >= 23",
-                timeout=20000,
-            )
+            deadline = time.monotonic() + 20.0
+            while len(guard_diff_responses) < 1 and time.monotonic() < deadline:
+                page.wait_for_timeout(100)
+            assert len(guard_diff_responses) >= 1, guard_diff_responses
+            page.wait_for_timeout(150)
+
+            assert len(guard_diff_requests) >= 1, guard_diff_requests
+            for payload in guard_diff_requests:
+                assert set(payload.keys()) == {"sessionId", "planId"}, payload
+                assert payload["sessionId"] == session_id, payload
+                assert payload["planId"] == proposed_plan["planId"], payload
 
             rows = page.locator('[data-testid^="change-row-"]')
             assert rows.count() == 24
@@ -519,14 +595,72 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 box = rows.nth(i).bounding_box()
                 assert box is not None and box["height"] <= 56.5, (i + 1, box)
 
-            # 4) Bidirectional marker <-> row sync
+            assert page.locator('[data-testid^="change-pill-"]').count() == 0
+            assert page.locator('[data-testid="changed-facts-jumper"]').count() == 0
+            guard_header_text = page.locator('[data-testid="guard-list-header"]').inner_text().strip()
+            assert "수정한 문단의" in guard_header_text, guard_header_text
+
+            row_meta = page.evaluate(
+                r"""() => Array.from(document.querySelectorAll('[data-testid^="change-row-"]')).map((li) => {
+                    const m = (li.getAttribute('data-testid') || '').match(/^change-row-(\d+)$/);
+                    return {
+                        ordinal: m ? Number(m[1]) : 0,
+                        field: (li.querySelector('.change-row-field')?.textContent || '').trim(),
+                        kind: (li.querySelector('.change-row-kind')?.textContent || '').trim(),
+                        preview: (li.querySelector('.change-row-preview')?.textContent || '').trim(),
+                        text: (li.textContent || ''),
+                    };
+                })"""
+            )
+            assert len(row_meta) == 24
+            kind_counts: dict[str, int] = {}
+            for item in row_meta:
+                assert not re.fullmatch(r"빈칸 \d+", item["field"]), item
+                assert "행 정 기 관 명" not in item["text"], item
+                kind_counts[item["kind"]] = kind_counts.get(item["kind"], 0) + 1
+            assert kind_counts == {
+                "기호 지움": 2,
+                "안내문 지움": 6,
+                "빈칸 채움": 16,
+            }, kind_counts
+            assert row_meta[0]["ordinal"] == 1
+            assert row_meta[0]["field"] == "[별지 제1호서식]", row_meta[0]
+            assert row_meta[0]["kind"] == "기호 지움", row_meta[0]
+            assert "■" in row_meta[0]["preview"], row_meta[0]
+
+            # Verify unselected row hides inline before, expanding shows technical detail guard=paragraph,
+            # and selected+collapsed guide-fill row reveals inline "변경 전:"
+            fill_ord = next(r["ordinal"] for r in row_meta if r["kind"] == "빈칸 채움")
+            assert page.locator(f'[data-testid="change-before-inline-{fill_ord}"]').count() == 0
+            fill_summary = page.locator(f'[data-testid="change-summary-{fill_ord}"]')
+            fill_summary.scroll_into_view_if_needed()
+            fill_summary.click()
+            assert page.locator(f'[data-testid="change-row-{fill_ord}"]').get_attribute("aria-selected") == "true"
+            page.wait_for_selector(f'[data-testid="change-detail-{fill_ord}"]', timeout=5000)
+            page.click(f'[data-testid="change-details-{fill_ord}"] summary')
+            assert "guard: paragraph=" in page.locator(f'[data-testid="change-details-{fill_ord}"]').inner_text()
+            page.click(f'[data-testid="change-details-{fill_ord}"] summary')
+            fill_summary.click()
+            page.wait_for_function(
+                f"() => !document.querySelector('[data-testid=\"change-detail-{fill_ord}\"]')",
+                timeout=5000,
+            )
+            inline_before = page.locator(f'[data-testid="change-before-inline-{fill_ord}"]')
+            assert inline_before.is_visible()
+            assert "변경 전:" in inline_before.inner_text()
+
+            # 4) Bidirectional grouped marker <-> peer row sync
             marker_1 = page.locator('[data-testid="page-marker-1"]').first
             marker_1.scroll_into_view_if_needed()
+            assert marker_1.inner_text().strip() == "1-4"
             marker_1.click()
             assert (
                 page.locator('[data-testid="change-row-1"]').get_attribute("aria-selected")
                 == "true"
             )
+            for peer_ord in (2, 3, 4):
+                peer_cls = page.locator(f'[data-testid="change-row-{peer_ord}"]').get_attribute("class") or ""
+                assert "change-row--group-peer" in peer_cls, (peer_ord, peer_cls)
 
             summary_10 = page.locator('[data-testid="change-summary-10"]')
             summary_10.scroll_into_view_if_needed()
@@ -549,7 +683,75 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             page.locator('[data-testid="page-marker-1"]').first.scroll_into_view_if_needed()
             page.locator('[data-testid="page-marker-1"]').first.click()
 
-            # 5) Check live DOM contrast & surface cleanliness on Review 1440 light/dark
+            # 5) Check Item 5/8 PageSheet rendering, live DOM contrast & cleanliness on 1440 light/dark
+            sheet_audit = page.evaluate(
+                """() => {
+                    const sheet = document.querySelector('[data-testid="page-sheet"]');
+                    const sheetText = sheet ? (sheet.textContent || '') : '';
+                    const headerParas = document.querySelectorAll('[data-testid="page-cell-0-1-0"] .page-cell-para').length;
+                    const unlabeledBlanks = Array.from(
+                        document.querySelectorAll('.page-empty-blank')
+                    )
+                        .filter((el) => !el.querySelector('.page-seat-hint'))
+                        .map((el) => el.innerText.trim());
+                    const seatHintIssues = [];
+                    for (const el of document.querySelectorAll('.page-empty-blank .page-seat-hint')) {
+                        const rect = el.getBoundingClientRect();
+                        if (el.scrollWidth > el.clientWidth + 1 || rect.height > 30) {
+                            seatHintIssues.push({
+                                text: el.innerText.trim(),
+                                scrollWidth: el.scrollWidth,
+                                clientWidth: el.clientWidth,
+                                height: rect.height,
+                            });
+                        }
+                    }
+                    const verticalBreaks = [];
+                    for (const cell of document.querySelectorAll('.page-cell')) {
+                        const fontSize = parseFloat(getComputedStyle(cell).fontSize) || 13;
+                        const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+                        let node;
+                        while ((node = walker.nextNode())) {
+                            const txt = node.nodeValue || '';
+                            const re = /[가-힣]{2,}/g;
+                            let m;
+                            while ((m = re.exec(txt)) !== null) {
+                                const range = document.createRange();
+                                range.setStart(node, m.index);
+                                range.setEnd(node, m.index + m[0].length);
+                                const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
+                                const distinctTops = new Set(rects.map((r) => Math.round(r.top)));
+                                if (distinctTops.size >= m[0].length && rects.every((r) => r.width <= fontSize * 1.65)) {
+                                    verticalBreaks.push({word: m[0], lines: distinctTops.size});
+                                }
+                            }
+                        }
+                    }
+                    const sheetRect = sheet ? sheet.getBoundingClientRect() : null;
+                    const tableOverflow = [];
+                    for (const tbl of document.querySelectorAll('.page-doc-table')) {
+                        const r = tbl.getBoundingClientRect();
+                        if (sheetRect && r.right > sheetRect.right + 2) {
+                            tableOverflow.push({tableRight: r.right, sheetRight: sheetRect.right});
+                        }
+                    }
+                    return {
+                        hasBeforeTextInSheet: sheetText.includes('변경 전'),
+                        headerParas,
+                        unlabeledBlanks,
+                        seatHintIssues,
+                        verticalBreaks,
+                        tableOverflow,
+                    };
+                }"""
+            )
+            assert not sheet_audit["hasBeforeTextInSheet"], sheet_audit
+            assert sheet_audit["headerParas"] >= 4, sheet_audit
+            assert all(t == "" for t in sheet_audit["unlabeledBlanks"]), sheet_audit["unlabeledBlanks"]
+            assert not sheet_audit["seatHintIssues"], sheet_audit["seatHintIssues"]
+            assert not sheet_audit["verticalBreaks"], sheet_audit["verticalBreaks"]
+            assert not sheet_audit["tableOverflow"], sheet_audit["tableOverflow"]
+
             for theme in ("light", "dark"):
                 _set_viewport_and_theme(page, 1440, 900, theme)
                 _assert_surface_clean(page, f"review-1440-{theme}")
@@ -558,10 +760,18 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 assert report["failureCount"] == 0, json.dumps(
                     report["failures"], ensure_ascii=False
                 )
+                assert report["minRatio"] is not None and report["minRatio"] >= 4.5, report
 
-            # Also verify 390px mobile tabs (sheet and list) both render with zero overflow
+            # Verify 390px mobile layout (Item 11/14) & both sheet/list tabs with zero overflow
+            mobile_sheet_box = None
             for theme in ("light", "dark"):
                 _set_viewport_and_theme(page, 390, 844, theme)
+                assert not page.locator(".page-sheet-zoom").is_visible()
+                assert page.locator('[data-testid="topbar-menu-btn"]').is_visible()
+                assert page.locator('[data-testid="review-mobile-stepper"]').is_visible()
+                sheet_box = page.locator('[data-testid="page-sheet"]').bounding_box()
+                assert sheet_box is not None and sheet_box["x"] >= 0 and sheet_box["y"] <= 120, sheet_box
+                mobile_sheet_box = sheet_box
                 page.click('[data-testid="review-mobile-tab-list"]')
                 page.wait_for_timeout(100)
                 scroll_w = page.evaluate("document.documentElement.scrollWidth")
@@ -569,11 +779,14 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 assert scroll_w <= inner_w, (scroll_w, inner_w)
                 page.click('[data-testid="review-mobile-tab-sheet"]')
                 page.wait_for_timeout(100)
+                scroll_w2 = page.evaluate("document.documentElement.scrollWidth")
+                inner_w2 = page.evaluate("window.innerWidth")
+                assert scroll_w2 <= inner_w2, (scroll_w2, inner_w2)
 
             _save_canonical_variants(page, "review")
             _set_viewport_and_theme(page, 1440, 900, "light")
 
-            # 6) Approve via ApprovalDialog and export verified .hwpx ZIP
+            # 6) Approve via ApprovalDialog (zero changed-facts ack needed) and export verified .hwpx ZIP
             page.click('[data-testid="review-approve-btn"]')
             page.wait_for_selector('[data-testid="approval-dialog"]', timeout=10000)
 
@@ -584,9 +797,7 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 "() => !document.querySelector('.approval-guard-note:not(.approval-guard-note--warn)')",
                 timeout=15000,
             )
-            ack = page.locator('[data-testid="approval-changed-facts-ack"]')
-            if ack.count() > 0 and ack.is_visible() and not ack.is_checked():
-                ack.check()
+            assert page.locator('[data-testid="approval-changed-facts-ack"]').count() == 0
             page.wait_for_function(
                 "() => { const b = document.querySelector('[data-testid=\"approval-confirm-btn\"]'); return b && !b.disabled; }",
                 timeout=10000,
@@ -594,13 +805,46 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             page.click('[data-testid="approval-confirm-btn"]')
 
             page.wait_for_selector('[data-testid="review-export-btn"]', timeout=30000)
+            page.wait_for_selector('[data-testid="topbar-export"]', timeout=10000)
+            topbar_export_cls = page.locator('[data-testid="topbar-export"]').get_attribute("class") or ""
+            assert "topbar-btn--primary" in topbar_export_cls, topbar_export_cls
+
             with page.expect_download(timeout=15000) as dl_info:
                 page.click('[data-testid="review-export-btn"]')
             download = dl_info.value
             exported_path = tmp_path / download.suggested_filename
             download.save_as(str(exported_path))
-            assert exported_path.is_file() and exported_path.stat().st_size > 1000
+            exported_bytes = exported_path.read_bytes()
+            assert exported_path.is_file() and len(exported_bytes) > 1000
             assert zipfile.is_zipfile(exported_path)
+
+            exported_hwpx_sha256 = hashlib.sha256(exported_bytes).hexdigest()
+            expected_filled_sha256 = hashlib.sha256(GONGMUN_FILLED_HWPX_PATH.read_bytes()).hexdigest()
+            with zipfile.ZipFile(exported_path) as z_exp, zipfile.ZipFile(GONGMUN_FILLED_HWPX_PATH) as z_ref:
+                exp_names = sorted(z_exp.namelist())
+                ref_names = sorted(z_ref.namelist())
+                assert exp_names == ref_names, (exp_names, ref_names)
+                mismatched_entries = [
+                    name for name in ref_names if z_exp.read(name) != z_ref.read(name)
+                ]
+                assert not mismatched_entries, mismatched_entries
+
+            metrics_snapshot = {
+                "docTitle": doc_title,
+                "guardDiffRequestCount": len(guard_diff_requests),
+                "guardDiffResponseCount": len(guard_diff_responses),
+                "kindCounts": kind_counts,
+                "changedFactsPills": 0,
+                "changedFactsHeaderCount": 0,
+                "guardHeaderText": guard_header_text,
+                "headerParas": sheet_audit["headerParas"],
+                "mobileSheetBox": mobile_sheet_box,
+                "exportedHwpxSha256": exported_hwpx_sha256,
+                "expectedFilledHwpxSha256": expected_filled_sha256,
+                "containerSha256Match": exported_hwpx_sha256 == expected_filled_sha256,
+                "zipEntriesMatch": True,
+                "zipEntryCount": len(ref_names),
+            }
 
             assert not page_errors, f"Uncaught page errors: {page_errors}"
             assert not server_errors, f"HTTP 5xx responses: {server_errors}"
@@ -637,10 +881,15 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
     approved_records = [
         json.loads(p.read_text(encoding="utf-8")) for p in approval_files
     ]
-    assert any(
-        rec.get("state") == "approved" and rec.get("planHash") == plan_hash
-        for rec in approved_records
-    ), approved_records
+    matched_approval = next(
+        (
+            rec
+            for rec in approved_records
+            if rec.get("state") == "approved" and rec.get("planHash") == plan_hash
+        ),
+        None,
+    )
+    assert matched_approval is not None, approved_records
 
     session_dir = rt_root / "sessions" / session_id
     events_path = session_dir / "events.jsonl"
@@ -662,3 +911,14 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
     assert len(receipt_files) == 1, receipt_files
     receipt = json.loads(receipt_files[0].read_text(encoding="utf-8"))
     assert receipt.get("planId") == proposed_plan["planId"]
+
+    metrics_env = os.environ.get(WALKTHROUGH_METRICS_ENV)
+    if metrics_env:
+        metrics_out = Path(metrics_env)
+        metrics_out.parent.mkdir(parents=True, exist_ok=True)
+        metrics_snapshot["contrastSummary"] = contrast_summary
+        metrics_snapshot["approvalRecord"] = matched_approval
+        metrics_out.write_text(
+            json.dumps(metrics_snapshot, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
