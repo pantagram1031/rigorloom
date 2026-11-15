@@ -195,6 +195,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine-root", dest="doctor_engine_root", default=None,
         help="installed engine root to inspect (optional; no checkout default)")
 
+    p_guard = sub.add_parser(
+        "guard", help="did an edit change a number, quote, negation, ...? "
+                      "(.hwpx, .txt, .md; no root needed)")
+    p_guard.add_argument("before", help="the original file")
+    p_guard.add_argument("after", help="the edited file, same type")
+    p_guard.add_argument("--format", choices=("json", "text"), default="json",
+                         help="json (default, one document on stdout) or a readable table")
+
     sub.add_parser("capabilities", help="what this build can do")
     sub.add_parser("sessions", help="list sessions under the root")
 
@@ -512,6 +520,27 @@ def main(argv: list[str] | None = None) -> int:
             "command": command,
             "result": result,
         }, code)
+
+    if command == "guard":
+        # Read-only and rootless, like doctor: it opens two files and writes
+        # nothing. Exit 0 = every protected fact unchanged, 3 = at least one
+        # paragraph changed one (or paragraphs were added/removed), 2 = the
+        # inputs cannot be compared.
+        try:
+            from . import rt_guard
+        except ImportError:
+            import rt_guard
+        try:
+            result = rt_guard.guard(Path(args.before), Path(args.after))
+        except (rt_guard.GuardInputError, OSError, UnicodeDecodeError) as exc:
+            return emit({"ok": False, "command": command,
+                         "error": {"code": "invalid_params", "message": str(exc)}},
+                        EXIT_USAGE)
+        code = EXIT_OK if result["pass"] else EXIT_REFUSED
+        if args.format == "text":
+            sys.stdout.write(rt_guard.format_table(result))
+            return code
+        return emit({"ok": code == EXIT_OK, "command": command, "result": result}, code)
 
     if command == "install":
         try:
