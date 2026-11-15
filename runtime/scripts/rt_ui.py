@@ -1900,8 +1900,16 @@ class BridgeApplication:
         existing_lines: list[str] = []
         if approvals_path.is_file():
             existing_lines = approvals_path.read_text(encoding="utf-8").splitlines()
+        # pipeline_ctl lets any `rejected` line win over every `approved`
+        # line, so a new decision cannot simply be appended. APPROVALS.md is
+        # also a hand-written record, so earlier decisions for this gate are
+        # kept as `# superseded ...` comments (which pipeline_ctl ignores)
+        # instead of being deleted.
         prior_pat = re.compile(rf"^{re.escape(gate)}\s*:\s*(?:approved|rejected)\b")
-        kept = [line for line in existing_lines if not prior_pat.match(line)]
+        kept = [
+            f"# superseded {line.strip()}" if prior_pat.match(line.strip()) else line
+            for line in existing_lines
+        ]
         kept.append(new_line)
         atomic_write_bytes(approvals_path, ("\n".join(kept) + "\n").encode("utf-8"))
 

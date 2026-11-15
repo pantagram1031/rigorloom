@@ -40,6 +40,8 @@
   knowledge packs and their resolution precedence.
 - [hwp-engine-adapter.md](hwp-engine-adapter.md) — the optional adapter for a
   separately installed HWP engine, and what is refused without it.
+- [web-ui.md](web-ui.md) — `rigorloom ui`, the local browser workspace: how
+  to run it, its loopback token model, plan-bound approval and `APPROVALS.md`.
 - [skills-install.md](skills-install.md) — installing this pipeline as a
   Claude-style skill directory via `sync_local`.
 - [archive-policy.md](archive-policy.md) — what gets archived vs. kept

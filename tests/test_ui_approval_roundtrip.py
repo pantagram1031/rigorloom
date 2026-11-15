@@ -340,7 +340,8 @@ def test_pipeline_gates_list_approve_reject_and_script_gate_refusal(bridge):
     assert gates_after_approve["topic_pick"]["by"] == "operator"
     assert "approved by alice via ui" in approvals_text
 
-    # Re-resolving as rejected replaces prior topic_pick line in APPROVALS.md and blocks resume.
+    # Re-resolving as rejected keeps the earlier topic_pick line as a
+    # `# superseded` comment (APPROVALS.md is a hand-written record) and blocks resume.
     s_rej, rej_res = client.post_json(
         "/api/pipeline/gate-resolve",
         {"workspace": str(ws), "gate": "topic_pick", "decision": "rejected", "reason": "missing citation"},
@@ -348,8 +349,10 @@ def test_pipeline_gates_list_approve_reject_and_script_gate_refusal(bridge):
     assert s_rej == 200 and rej_res["ok"] is True
     assert rej_res["approvalsLine"].startswith("topic_pick: rejected missing citation at=")
     approvals_lines = [ln for ln in (ws / "APPROVALS.md").read_text(encoding="utf-8").splitlines() if ln.strip()]
-    assert len(approvals_lines) == 1
-    assert approvals_lines[0] == rej_res["approvalsLine"]
+    assert approvals_lines == [
+        f"# superseded {app_res['approvalsLine']}",
+        rej_res["approvalsLine"],
+    ]
 
     resume_proc = subprocess.run(
         [sys.executable, str(PIPELINE_CTL), "resume", str(ws)],
@@ -359,3 +362,22 @@ def test_pipeline_gates_list_approve_reject_and_script_gate_refusal(bridge):
     )
     resume_out = json.loads(resume_proc.stdout)
     assert resume_out["blocked"] is True
+
+    # Approving again supersedes the rejection; pipeline_ctl must now read
+    # the gate as approved even though the history keeps both earlier lines.
+    s_re, re_res = client.post_json(
+        "/api/pipeline/gate-resolve",
+        {"workspace": str(ws), "gate": "topic_pick", "decision": "approved", "approver": "bob"},
+    )
+    assert s_re == 200 and re_res["ok"] is True, (s_re, re_res)
+    approvals_lines = [ln for ln in (ws / "APPROVALS.md").read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert approvals_lines == [
+        f"# superseded {app_res['approvalsLine']}",
+        f"# superseded {rej_res['approvalsLine']}",
+        re_res["approvalsLine"],
+    ]
+    gates_after_reapprove = {
+        g["gate"]: g
+        for g in client.get_json(f"/api/pipeline/gates?workspace={ws}")[1]["gates"]
+    }
+    assert gates_after_reapprove["topic_pick"]["state"] == "approved"

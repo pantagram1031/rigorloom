@@ -267,9 +267,10 @@ test("valid false overwrite is retained and table defaults exactly once", () => 
   ]);
 });
 
-test("valid Runtime fields without a queue representation are refused, never dropped", () => {
-  // `lines` and `paraPr` became representable in WP3; these are valid on other
-  // preedit kinds (replace_at_cell) but have no fill_cell queue field.
+test("fields outside an op kind's queue shape are refused, never dropped", () => {
+  // `lines` and `paraPr` became representable for fill_cell in WP3. `mode` and
+  // `expect` are Runtime fields of replace_at_cell with no fill_cell queue
+  // field, so a fill_cell carrying them must be refused rather than dropped.
   for (const params of [{ mode: "append" }, { expect: "old" }]) {
     assert.throws(
       () => project([fill("lossy", params)]),

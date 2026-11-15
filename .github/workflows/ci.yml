@@ -42,6 +42,18 @@ jobs:
         run: npm ci --prefix desktop
       - name: Desktop behavioral regressions and production frontend
         run: npm --prefix desktop run test:headless && npm --prefix desktop run build
+      # The web UI ships a prebuilt bundle (runtime/scripts/ui_dist) so
+      # `rigorloom ui` needs no Node at runtime. Rebuild it from desktop/src
+      # and fail if the committed bytes differ, so the bundle is always the
+      # output of the reviewed source. Linux only: Windows checkouts may
+      # rewrite line endings in index.html.
+      - name: Web UI bundle matches desktop/src
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          npm --prefix desktop run build:web
+          git status --porcelain -- runtime/scripts/ui_dist
+          test -z "$(git status --porcelain -- runtime/scripts/ui_dist)"
       - name: Select distribution modules (${{ matrix.module-set }})
         shell: bash
         run: |
