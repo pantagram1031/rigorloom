@@ -18,7 +18,8 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 def _reexec_utf8_if_needed() -> None:
@@ -1079,6 +1080,201 @@ def cmd_resume(args) -> None:
                 "mode": mode, "blocked": False})
 
 
+ALLOWED_GATE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_APPROVAL_TS_RE = re.compile(r"\bat(?:=|\s+)(\S+)")
+_APPROVAL_BY_RE = re.compile(r"\bby(?:=|\s+)(\S+)")
+_REJECT_TRAILING_TS_RE = re.compile(r"(?:^|\s)at(?:=(\S+)|\s+(\d{4}-\d{2}-\d{2}\S*))\s*$")
+
+
+def parse_gate_approvals(
+    approvals_text: str,
+    gate_name: str,
+    *,
+    default_at: str | None = None,
+) -> dict:
+    """Parse APPROVALS.md text for one gate. Any rejected line takes precedence over approved."""
+    approved_pat = re.compile(rf"^{re.escape(gate_name)}:\s*approved\b(.*)$")
+    rejected_pat = re.compile(rf"^{re.escape(gate_name)}:\s*rejected\b(.*)$")
+    approved_line = None
+    rejected_match = None
+    for raw_line in approvals_text.splitlines():
+        stripped = raw_line.strip()
+        m_app = approved_pat.match(stripped)
+        if m_app:
+            approved_line = m_app.group(0)
+            continue
+        m_rej = rejected_pat.match(stripped)
+        if m_rej:
+            rejected_match = m_rej
+
+    if rejected_match is not None:
+        raw_tail = rejected_match.group(1)
+        ts_m = _REJECT_TRAILING_TS_RE.search(raw_tail)
+        at_val = (ts_m.group(1) or ts_m.group(2)) if ts_m else default_at
+        reason_tail = raw_tail[:ts_m.start()] if ts_m else raw_tail
+        return {
+            "gate": gate_name,
+            "state": "rejected",
+            "by": "operator",
+            "approver": None,
+            "at": at_val,
+            "reason": reason_tail.strip(" :,-"),
+            "line": rejected_match.group(0),
+            "approved_line": approved_line,
+            "rejected_line": rejected_match.group(0),
+        }
+
+    if approved_line is not None:
+        # Accept both documented `at=<ISO>` and legacy `at <ISO>` records.
+        ts_m = _APPROVAL_TS_RE.search(approved_line)
+        by_m = _APPROVAL_BY_RE.search(approved_line)
+        return {
+            "gate": gate_name,
+            "state": "approved",
+            "by": "operator",
+            "approver": by_m.group(1) if by_m else None,
+            "at": ts_m.group(1) if ts_m else default_at,
+            "reason": None,
+            "line": approved_line,
+            "approved_line": approved_line,
+            "rejected_line": None,
+        }
+
+    return {
+        "gate": gate_name,
+        "state": "pending",
+        "by": None,
+        "approver": None,
+        "at": None,
+        "reason": None,
+        "line": None,
+        "approved_line": None,
+        "rejected_line": None,
+    }
+
+
+def format_gate_decision_line(
+    gate_name: str,
+    decision: str,
+    *,
+    approver: str | None = None,
+    reason: str | None = None,
+    at: str | None = None,
+    via: str | None = None,
+) -> str:
+    """Format one canonical APPROVALS.md line for `approved` or `rejected`."""
+    if not isinstance(gate_name, str) or not ALLOWED_GATE_RE.fullmatch(gate_name):
+        raise ValueError("gate_name must match ^[A-Za-z0-9_.-]+$")
+    if decision not in ("approved", "rejected"):
+        raise ValueError("decision must be 'approved' or 'rejected'")
+
+    if at is not None and str(at).strip():
+        ts = re.sub(r"[\r\n]+", " ", str(at)).strip()
+    else:
+        ts = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+
+    if decision == "approved":
+        clean_approver = re.sub(r"[\r\n]+", " ", str(approver or "human")).strip() or "human"
+        if via is not None and str(via).strip():
+            clean_via = re.sub(r"[\r\n]+", " ", str(via)).strip()
+            return f"{gate_name}: approved by {clean_approver} via {clean_via} at={ts}"
+        return f"{gate_name}: approved by {clean_approver} at={ts}"
+
+    clean_reason = re.sub(r"[\r\n]+", " ", str(reason or "")).strip()
+    if not clean_reason:
+        raise ValueError("reason is required when decision is 'rejected'")
+    return f"{gate_name}: rejected {clean_reason} at={ts}"
+
+
+def record_gate_decision_text(
+    existing_text: str,
+    gate_name: str,
+    decision: str,
+    *,
+    approver: str | None = None,
+    reason: str | None = None,
+    at: str | None = None,
+    via: str | None = None,
+) -> str:
+    """Supersede earlier decisions for `gate_name` with `# superseded ` and append the new line.
+
+    Rejection wins over any active approval in parse_gate_approvals, so prior
+    lines for the same gate are commented out rather than silently overridden.
+    """
+    new_line = format_gate_decision_line(
+        gate_name,
+        decision,
+        approver=approver,
+        reason=reason,
+        at=at,
+        via=via,
+    )
+    existing_lines = existing_text.splitlines() if existing_text else []
+    prior_pat = re.compile(rf"^{re.escape(gate_name)}\s*:\s*(?:approved|rejected)\b")
+    kept = [
+        f"# superseded {line.strip()}" if prior_pat.match(line.strip()) else line
+        for line in existing_lines
+    ]
+    kept.append(new_line)
+    return "\n".join(kept) + "\n"
+
+
+def write_gate_decision(
+    approvals_path: Path,
+    gate_name: str,
+    decision: str,
+    *,
+    approver: str | None = None,
+    reason: str | None = None,
+    at: str | None = None,
+    via: str | None = None,
+) -> str:
+    """Atomically record a gate decision into APPROVALS.md and return the written line."""
+    path = Path(approvals_path)
+    ts = (
+        re.sub(r"[\r\n]+", " ", str(at)).strip()
+        if at is not None and str(at).strip()
+        else datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+    existing_text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    updated = record_gate_decision_text(
+        existing_text,
+        gate_name,
+        decision,
+        approver=approver,
+        reason=reason,
+        at=ts,
+        via=via,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=str(path.parent),
+            prefix=".APPROVALS.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            tmp_path = handle.name
+            handle.write(updated.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path is not None and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    return updated.splitlines()[-1]
+
+
 def cmd_gate(args) -> None:
     ws = Path(args.workspace)
     gate_name = args.gate_name
@@ -1142,27 +1338,21 @@ def cmd_gate(args) -> None:
         return
 
     approvals_path = ws / "APPROVALS.md"
-    approved_line = None
-    rejected_line = None
-    if approvals_path.exists():
-        approvals_text = approvals_path.read_text(encoding="utf-8")
-        for line in approvals_text.splitlines():
-            m = re.match(rf"^{re.escape(gate_name)}:\s*approved\b(.*)$", line.strip())
-            if m:
-                approved_line = m.group(0)
-                continue
-            m2 = re.match(rf"^{re.escape(gate_name)}:\s*rejected\b(.*)$", line.strip())
-            if m2:
-                rejected_line = m2
+    approvals_text = (
+        approvals_path.read_text(encoding="utf-8")
+        if approvals_path.exists()
+        else ""
+    )
+    parsed = parse_gate_approvals(approvals_text, gate_name, default_at=now_iso())
 
     stages_ref = hdr["stages"]
     gate_obj = stages_ref[target_num]["gate"]
 
-    if rejected_line:
-        reason = rejected_line.group(1).strip(" :,-")
+    if parsed["state"] == "rejected":
+        reason = parsed["reason"] or ""
         gate_obj["state"] = "rejected"
         gate_obj["by"] = "operator"
-        gate_obj["at"] = now_iso()
+        gate_obj["at"] = parsed["at"] or now_iso()
         save_header(ws, text, start, end, hdr)
         append_event(ws, "gate", target_num, f"gate '{gate_name}' rejected: {reason}")
         write_heartbeat(ws)
@@ -1171,10 +1361,8 @@ def cmd_gate(args) -> None:
              "stage": target_num, "reason": reason})
         return
 
-    if approved_line:
-        # Accept both documented `at=<ISO>` and legacy `at <ISO>` records.
-        ts_m = re.search(r"\bat(?:=|\s+)(\S+)", approved_line)
-        at_val = ts_m.group(1) if ts_m else now_iso()
+    if parsed["state"] == "approved":
+        at_val = parsed["at"] or now_iso()
         gate_obj["state"] = "approved"
         gate_obj["by"] = "operator"
         gate_obj["at"] = at_val

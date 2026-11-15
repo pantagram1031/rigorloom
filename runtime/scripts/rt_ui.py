@@ -1888,33 +1888,28 @@ class BridgeApplication:
             )
 
         ts = _utc_iso()
+        approver: str | None = None
+        reason: str | None = None
         if decision == "approved":
-            raw_approver = str(body.get("approver") or "human").strip() or "human"
-            approver = re.sub(r"[\r\n]+", " ", raw_approver).strip()
-            new_line = f"{gate}: approved by {approver} via ui at={ts}"
+            approver = str(body.get("approver") or "human").strip() or "human"
         else:
-            raw_reason = str(body.get("reason") or "").strip()
-            if not raw_reason:
+            reason = str(body.get("reason") or "").strip()
+            if not reason:
                 raise BridgeError("invalid_params", "reason is required when decision is 'rejected'")
-            reason = re.sub(r"[\r\n]+", " ", raw_reason).strip()
-            new_line = f"{gate}: rejected {reason} at={ts}"
 
         approvals_path = ws / "APPROVALS.md"
-        existing_lines: list[str] = []
-        if approvals_path.is_file():
-            existing_lines = approvals_path.read_text(encoding="utf-8").splitlines()
-        # pipeline_ctl lets any `rejected` line win over every `approved`
-        # line, so a new decision cannot simply be appended. APPROVALS.md is
-        # also a hand-written record, so earlier decisions for this gate are
-        # kept as `# superseded ...` comments (which pipeline_ctl ignores)
-        # instead of being deleted.
-        prior_pat = re.compile(rf"^{re.escape(gate)}\s*:\s*(?:approved|rejected)\b")
-        kept = [
-            f"# superseded {line.strip()}" if prior_pat.match(line.strip()) else line
-            for line in existing_lines
-        ]
-        kept.append(new_line)
-        atomic_write_bytes(approvals_path, ("\n".join(kept) + "\n").encode("utf-8"))
+        try:
+            new_line = pctl.write_gate_decision(
+                approvals_path,
+                gate,
+                decision,
+                approver=approver,
+                reason=reason,
+                at=ts,
+                via="ui",
+            )
+        except ValueError as exc:
+            raise BridgeError("invalid_params", str(exc)) from exc
 
         gate_result: dict[str, Any] | None = None
         if (ws / "PIPELINE.md").is_file():

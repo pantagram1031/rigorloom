@@ -381,3 +381,161 @@ def test_pipeline_gates_list_approve_reject_and_script_gate_refusal(bridge):
         for g in client.get_json(f"/api/pipeline/gates?workspace={ws}")[1]["gates"]
     }
     assert gates_after_reapprove["topic_pick"]["state"] == "approved"
+
+
+def _load_pipeline_ctl_codec():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("test_shared_pipeline_ctl", PIPELINE_CTL)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_web_gate_resolve_roundtrips_through_shared_pipeline_ctl_codec(bridge):
+    """Web endpoint writes APPROVALS.md and pipeline_ctl parses identical decisions."""
+    _, client, tmp_path = bridge
+    ws = tmp_path / "report-codec-roundtrip"
+    init_res = subprocess.run(
+        [
+            sys.executable,
+            str(PIPELINE_CTL),
+            "init",
+            str(ws),
+            "--slug",
+            "codec-roundtrip",
+            "--mode",
+            "supervised",
+            "--subject",
+            "earth-science",
+            "--topic",
+            "테스트",
+            "--form",
+            "form.hwpx",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert init_res.returncode == 0, init_res.stderr
+
+    pctl = _load_pipeline_ctl_codec()
+
+    # 1. Web endpoint approval is parsed back identically by pipeline_ctl.parse_gate_approvals.
+    s_app, app_res = client.post_json(
+        "/api/pipeline/gate-resolve",
+        {"workspace": str(ws), "gate": "topic_pick", "decision": "approved", "approver": "alice"},
+    )
+    assert s_app == 200 and app_res["ok"] is True, (s_app, app_res)
+    parsed_app = pctl.parse_gate_approvals((ws / "APPROVALS.md").read_text(encoding="utf-8"), "topic_pick")
+    assert parsed_app["state"] == "approved"
+    assert parsed_app["approver"] == "alice"
+    assert parsed_app["at"] == app_res["at"]
+
+    # 2. Legacy `at <ISO>` + conflicting lines: rejection takes precedence, web supersede cleans it.
+    (ws / "APPROVALS.md").write_text(
+        "\n".join([
+            "topic_pick: approved by legacy at 2026-07-10T09:00:00Z",
+            "topic_pick: rejected needs source check at 2026-07-10T09:05:00Z",
+            "topic_pick: approved by late at=2026-07-10T09:10:00Z",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    parsed_conflict = pctl.parse_gate_approvals((ws / "APPROVALS.md").read_text(encoding="utf-8"), "topic_pick")
+    assert parsed_conflict["state"] == "rejected"
+    assert parsed_conflict["reason"] == "needs source check"
+    assert parsed_conflict["at"] == "2026-07-10T09:05:00Z"
+
+    s_re, re_res = client.post_json(
+        "/api/pipeline/gate-resolve",
+        {"workspace": str(ws), "gate": "topic_pick", "decision": "approved", "approver": "bob"},
+    )
+    assert s_re == 200 and re_res["ok"] is True, (s_re, re_res)
+    text_after = (ws / "APPROVALS.md").read_text(encoding="utf-8")
+    parsed_after = pctl.parse_gate_approvals(text_after, "topic_pick")
+    assert parsed_after["state"] == "approved"
+    assert parsed_after["approver"] == "bob"
+    assert parsed_after["at"] == re_res["at"]
+    non_empty = [ln for ln in text_after.splitlines() if ln.strip()]
+    assert all(ln.startswith("# superseded ") for ln in non_empty[:-1])
+    assert non_empty[-1] == re_res["approvalsLine"]
+
+
+def test_runtime_approval_resolve_and_apply_refuse_approvals_md_gate_name(bridge):
+    """RuntimeCore.approval_resolve and plan_apply refuse APPROVALS.md gate names even on a shared root."""
+    srv, client, tmp_path = bridge
+    import rt_core  # noqa: E402
+    from rt_codes import RpcError  # noqa: E402
+
+    ws = tmp_path / "shared-runtime-pipeline"
+    init_res = subprocess.run(
+        [
+            sys.executable,
+            str(PIPELINE_CTL),
+            "init",
+            str(ws),
+            "--slug",
+            "shared-boundary",
+            "--mode",
+            "supervised",
+            "--subject",
+            "earth-science",
+            "--topic",
+            "경계",
+            "--form",
+            str(CORPUS_FORM),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )
+    assert init_res.returncode == 0, init_res.stderr
+
+    s_res, resolve_payload = client.post_json(
+        "/api/pipeline/gate-resolve",
+        {"workspace": str(ws), "gate": "topic_pick", "decision": "approved", "approver": "alice"},
+    )
+    assert s_res == 200 and resolve_payload["ok"] is True, (s_res, resolve_payload)
+
+    core = rt_core.RuntimeCore(ws, engine_root=REPO_ROOT)
+    opened = core.open_path(str(CORPUS_FORM))
+    session_id = (opened.get("session") or opened)["sessionId"]
+    proposed = core.plan_propose(
+        session_id,
+        "preedit",
+        [{"kind": "fill_cell", "col": 1, "row": 5, "table": 0, "text": "김철수"}],
+        proposer="test-builder",
+    )
+    plan = proposed["plan"]
+    req = core.approval_request(plan["planId"], requested_by="test-builder")
+    approval_id = req["approval"]["approvalId"]
+
+    with pytest.raises(RpcError) as res_exc:
+        core.approval_resolve("topic_pick", plan["planId"], plan["planHash"], "approved", "alice")
+    assert res_exc.value.code == "unknown_approval"
+
+    with pytest.raises(RpcError) as app_exc:
+        core.plan_apply(plan["planId"], "topic_pick")
+    assert app_exc.value.code == "unknown_approval"
+
+    with pytest.raises(RpcError) as pend_exc:
+        core.plan_apply(plan["planId"], approval_id)
+    assert pend_exc.value.code == "plan_not_approved"
+
+    assert core.approval_get(approval_id)["approval"]["state"] == "pending"
+
+    srv.bridge.sidecar.start(ws)
+    http_err = client.rpc(
+        "approval/resolve",
+        {
+            "approvalId": "topic_pick",
+            "planId": plan["planId"],
+            "planHash": plan["planHash"],
+            "decision": "approved",
+            "approver": "alice",
+        },
+    )
+    assert http_err.get("ok") is False and http_err["error"]["code"] == "unknown_approval"
