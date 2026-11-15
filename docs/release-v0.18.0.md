@@ -1,7 +1,8 @@
 # Release record — v0.18.0
 
 Prepared from `main` @ `9940f90` (#378) plus the release commit, which changes
-only the version number and documentation. This record lists what v0.18.0
+only the version number, documentation and one test
+(`tests/test_release_docs.py`). This record lists what v0.18.0
 contains, the bundle hashes, the CI result on the release commit and the known
 limits. The tag is applied after this PR is reviewed and green.
 
