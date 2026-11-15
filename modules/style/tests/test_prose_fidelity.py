@@ -300,3 +300,19 @@ def test_direction_stems_ignore_words_that_only_contain_them():
 def test_numbered_heading_rename_is_caught_but_list_sentences_are_not():
     assert _kinds("3. 실험 방법", "3. 연구 설계") == ["headings"]
     assert _kinds("1. 먼저 시료를 준비했다.", "1. 우선 시료를 준비했다.") == []
+
+
+def test_tokens_no_longer_match_inside_other_words():
+    # "Really" contains "all", 계약서 contains 약, 이상하다 contains 이상.
+    assert _kinds("People miss most.", "People miss most. Really.") == []
+    assert _kinds("계약서를 정리했다.", "계약서를 요약했다.") == []
+    assert _kinds("결과가 이상하다.", "결과가 특이하다.") == []
+
+
+def test_hedges_bounds_and_english_negation_still_caught():
+    assert _kinds("약 30명이 참여했다.", "30명이 참여했다.") == ["qualifiers"]
+    assert _kinds("30명 이상이 참여했다.", "30명이 참여했다.") == ["qualifiers"]
+    assert _kinds("What it cannot do reliably.", "What it can do reliably.") == ["qualifiers"]
+    assert _kinds("It didn’t hold.", "It did hold.") == ["qualifiers"]
+    assert _kinds("Nothing changed.", "Something changed.") == ["qualifiers"]
+    assert _kinds("No change was seen.", "A change was seen.") == ["qualifiers"]

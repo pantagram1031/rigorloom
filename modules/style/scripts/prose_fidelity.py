@@ -27,6 +27,7 @@ QUALIFIERS = (
     "약", "대략", "가능", "추정", "최소", "최대", "이상", "이하", "미만", "초과",
     "않", "아니", "없", "못", "may", "might", "approximately", "at least", "at most",
     "not", "never", "no ",
+    "cannot", "n't", "nothing", "none", "neither", "nor", "without",
 )
 
 QUANTIFIERS = (
@@ -95,14 +96,37 @@ def _direction_words(text: str) -> Counter[str]:
     return counts
 
 
-def _qualifiers(text: str) -> Counter[str]:
-    lowered = text.lower()
-    return Counter({token: lowered.count(token.lower()) for token in QUALIFIERS if token.lower() in lowered})
+# How a token is counted. Plain substring counting made "Really" contain "all",
+# "계약서" contain 약 and "이상하다" contain 이상, so style edits that kept every
+# fact were reverted. English tokens now need letter boundaries; 약 counts only
+# before a number; 이상/이하/미만/초과 count only after a number (and unit).
+_BOUND_AFTER_NUMBER = ("이상", "이하", "미만", "초과")
+
+
+def _token_pattern(token: str) -> re.Pattern[str]:
+    if token == "약":
+        return re.compile(r"(?<![가-힣])약(?=\s*[\d.])")
+    if token == "n't":
+        return re.compile(r"n['’]t(?![a-z])")
+    if token in _BOUND_AFTER_NUMBER:
+        return re.compile(r"\d[가-힣%‰℃°a-zA-Z]{0,2}\s?" + token)
+    if token.isascii():
+        return re.compile(r"(?<![a-z])" + re.escape(token.strip().lower()) + r"(?![a-z])")
+    return re.compile(re.escape(token.lower()))
 
 
 def _token_counts(text: str, tokens: tuple[str, ...]) -> Counter[str]:
     lowered = text.lower()
-    return Counter({token: lowered.count(token.lower()) for token in tokens if token.lower() in lowered})
+    counts: Counter[str] = Counter()
+    for token in tokens:
+        n = len(_token_pattern(token).findall(lowered))
+        if n:
+            counts[token] = n
+    return counts
+
+
+def _qualifiers(text: str) -> Counter[str]:
+    return _token_counts(text, QUALIFIERS)
 
 
 def extract_protected(text: str) -> dict[str, object]:

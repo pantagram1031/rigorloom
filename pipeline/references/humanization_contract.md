@@ -100,6 +100,12 @@ document scope. It protects:
 - direction words (증가/감소, 높은/낮은, rose/fell and similar), counted, so
   flipping 감소 to 증가 next to an unchanged number is a deterministic failure.
 
+Tokens are counted as words, not substrings: English tokens need letter
+boundaries ("Really" is not "all"), 약 counts only before a number (계약 and 요약
+do not), and 이상/이하/미만/초과 count only after a number and unit (이상하다 does
+not). English negation includes cannot, n't, nothing, none, neither, nor and
+without.
+
 Counting words is not reading meaning. A swap of two values, or a direction
 expressed with a word outside the list, still passes this layer.
 
