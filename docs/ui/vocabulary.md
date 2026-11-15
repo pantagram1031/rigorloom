@@ -366,34 +366,47 @@
 | `fill_field_placeholder` | 내용 입력 | Enter text |
 | `fill_multiline_enable` | 여러 줄 입력 | Multi-line input |
 | `fill_multiline_disable` | 한 줄 입력 | Single-line input |
-| `fill_multiline_hint` | 엔터로 줄바꿈, 입력을 마치려면 적용 버튼을 누르세요. | Enter for new line, Ctrl/Cmd+Enter to save. |
-| `fill_singleline_hint` | 엔터로 저장 후 다음 빈칸으로 이동, 여러 줄로 입력하려면 여러 줄 입력 버튼을 누르세요. | Enter saves and moves next, Shift+Enter switches to multi-line. |
-| `fill_escape_hint` | 빈칸 선택에서 빠져나오려면 취소 키를 누르세요. | Press Esc to leave blank cycling. |
-| `fill_static_notice` | 이 칸은 이미 채워져 있는 칸입니다. | This cell already has existing text. |
+| `fill_multiline_hint` | 여러 줄로 입력할 수 있습니다. 입력을 마치면 ‘입력 저장’을 선택합니다. | You can enter several lines. Select Save entry or press Ctrl/Cmd+Enter when finished. |
+| `fill_singleline_hint` | 엔터 키를 누르거나 ‘입력 저장’을 선택하면 저장합니다. 여러 줄로 입력하려면 ‘여러 줄 입력’을 선택합니다. | Press Enter or select Save entry to save. Select Multi-line input to enter several lines. |
+| `fill_escape_hint` | 문서 안 빈칸에서 취소 키를 누르면 빈칸 선택을 마칩니다. | In the document, press Esc to leave blank selection. |
+| `fill_static_notice` | 이 칸은 입력용 빈칸이 아닙니다. | This cell is not a fillable blank. |
 | `fill_static_replace` | 기존 문구 바꾸기 | Replace existing text |
 | `fill_static_current_label` | 현재 들어 있는 문구 | Current text in cell |
-| `fill_filled_list_header` | 채운 항목 | Filled entries |
-| `fill_filled_list_empty` | 아직 채운 항목이 없습니다. | No filled entries yet. |
+| `fill_filled_list_header` | 변경 제안 | Proposed changes |
+| `fill_filled_list_empty` | 아직 추가한 변경 제안이 없습니다 | No proposed changes yet. |
 | `fill_previous_form_text` | 기존 양식 문구: {0} | Previous form text: {0} |
 | `fill_previous_blank` | (비어 있음) | (empty) |
-| `fill_to_review` | 검토로 이동 | Review |
-| `fill_reproposing` | 검토 화면을 준비하고 있습니다... | Preparing review... |
-| `fill_delete_guides_btn` | 안내문 지우기 추가 | Add guide deletion |
-| `fill_delete_guides_done` | 안내문 지우기 {0}건을 추가했습니다. | Queued {0} guide deletions. |
-| `fill_delete_guides_queued` | 안내문 지우기 포함됨 ({0}건) | Guide deletion queued ({0}) |
-| `fill_undo_removed` | '{0}' 항목을 뺐습니다. | Removed entry for '{0}'. |
+| `fill_to_review` | 검토로 이동 | Go to review |
+| `fill_reproposing` | 검토 화면을 준비하고 있습니다 | Preparing review... |
+| `fill_delete_guides_btn` | 안내문 삭제 제안 | Propose removing form instructions |
+| `fill_delete_guides_done` | 안내문 지움 {0}건을 변경 제안에 추가했습니다 | Queued {0} guide deletions. |
+| `fill_delete_guides_queued` | 안내문 지움 {0}건을 제안에 포함했습니다 | Guide deletion queued ({0}) |
+| `fill_undo_removed` | ‘{0}’ 항목을 변경 제안에서 뺐습니다 | Removed entry for '{0}'. |
 | `fill_undo_restore` | 방금 뺀 항목 되살리기 | Undo remove |
-| `fill_undo_empty` | 비운 '{0}' 입력을 대기열에서 뺐습니다. | Cleared empty entry for '{0}'. |
-| `fill_ambiguous_warning` | '{0}' 이름의 빈칸이 {1}개 있습니다. 선택한 위치가 맞는지 확인하세요. | There are {1} blanks named '{0}'. Confirm the selected slot below. |
+| `fill_undo_empty` | ‘{0}’의 입력을 지워 변경 제안에서 뺐습니다 | Removed the proposed entry for '{0}' after clearing its input. |
+| `fill_ambiguous_warning` | 이름이 ‘{0}’인 빈칸이 {1}개 있습니다. 입력할 칸의 위치를 확인해야 합니다. | There are {1} blanks named '{0}'. Confirm the selected slot below. |
 | `fill_ambiguous_slot_option` | {0}번째 빈칸 · {1} | Blank #{0} · {1} |
 | `fill_clear_value` | 입력 지우기 | Clear entry |
-| `fill_save_entry` | 입력 적용 | Save entry |
+| `fill_save_entry` | 입력 저장 | Save entry |
 | `fill_edit_entry` | 고치기 | Edit |
-| `fill_guide_caption` | 양식 안내: {0} | Form guide: {0} |
+| `fill_guide_caption` | 작성 안내문: {0} | Form instructions: {0} |
 | `action_export_revision` | 수정본 {0} 내보내기 | Export revision {0} |
-| `export_done_toast` | 수정본 파일을 저장했습니다. | Exported revision file. |
+| `export_done_toast` | 수정본 파일을 저장했습니다 | Exported revision file. |
+| `apply_done_toast` | 수정본 {0}을 만들었습니다 | Created revision {0}. |
+| `detail_cell_address` | 표 칸 위치 | Cell location |
+| `detail_cell_class` | 표 칸 분류 | Cell classification |
+| `detail_suggested_char_style` | 권장 글자 서식 | Suggested character style |
+| `fill_row_label` | {0}행 | Row {0} |
+| `detail_run_id` | 실행 식별자 | Run ID |
+| `detail_plan_id` | 변경 제안 식별자 | Change proposal ID |
+| `detail_approver_record` | 승인 주체 기록 | Recorded approval actor |
+| `detail_base_run_id` | 기준 수정본 실행 식별자 | Base revision run ID |
+| `detail_reversed_run_id` | 되돌리기 대상 실행 식별자 | Run ID being reversed |
+| `detail_regions_equal` | 영역 일치 여부 | Regions match |
+| `detail_regions_compared` | 비교한 영역 수 | Regions compared |
+| `detail_normalizer` | 비교 전 정리 방식 | Comparison normalization method |
 | `history_title` | 수정 기록 | Revision history |
-| `history_empty` | 아직 적용한 수정본이 없습니다. | No applied revisions yet. |
+| `history_empty` | 아직 만든 수정본이 없습니다 | No revisions created yet. |
 | `history_revision_label` | 수정본 {0} | Revision {0} |
 | `history_revision_current` | 현재 수정본 | Current |
 | `history_changes_count` | 변경 {0}건 | {0} changes |
@@ -401,32 +414,32 @@
 | `history_applied_at_label` | 적용 시각 | Applied at |
 | `history_unknown_time` | 기록 없음 | Not recorded |
 | `history_propose_undo` | 되돌리기 제안 | Propose undo |
-| `history_proposing_undo` | 되돌리기 제안을 만들고 있습니다... | Preparing undo proposal... |
-| `history_undo_noninvertible` | 안내문 지우기({0}건)가 들어 있어 자동으로 되돌리기 제안을 만들 수 없습니다. | Contains form instruction removal ({0}) and cannot be undone automatically. |
+| `history_proposing_undo` | 되돌리기 제안을 만들고 있습니다 | Preparing undo proposal... |
+| `history_undo_noninvertible` | 안내문 지움 {0}건이 포함되어 있어 자동으로 되돌리는 제안을 만들 수 없습니다. | Includes {0} form instruction removals; an automatic undo proposal cannot be created. |
 | `history_export_prev_revision` | 이전 수정본 {0} 내보내기 | Export previous revision {0} |
-| `history_export_original` | 이전 원본 내보내기 | Export previous original |
-| `history_compare_title` | 두 수정본 비교 | Compare two revisions |
-| `history_compare_base` | 기준 수정본 | Base revision |
-| `history_compare_target` | 비교 수정본 | Target revision |
+| `history_export_original` | 원본 문서 내보내기 | Export original document |
+| `history_compare_title` | 문서 비교 | Compare documents |
+| `history_compare_base` | 비교 기준 | Comparison base |
+| `history_compare_target` | 비교 대상 | Comparison target |
 | `history_compare_original` | 원본 문서 | Original document |
 | `history_compare_changed_count` | 바뀐 문단 {0}개 | {0} paragraphs changed |
-| `history_compare_same` | 두 수정본의 내용이 같습니다. | No differences between these revisions. |
-| `history_compare_loading` | 두 수정본을 비교하고 있습니다... | Comparing revisions... |
-| `history_compare_need_two` | 비교할 수정본이 부족합니다. | Open two revisions to compare. |
-| `history_approval_method_auto` | 승인 방식: 자동 정책 승인 | Approval method: Policy approval |
+| `history_compare_same` | 비교한 문서의 내용이 같습니다 | The compared documents have the same content. |
+| `history_compare_loading` | 선택한 문서를 비교하고 있습니다 | Comparing selected documents... |
+| `history_compare_need_two` | 비교 기준과 비교 대상을 선택해야 합니다. | Select a comparison base and target. |
+| `history_approval_method_auto` | 승인 방식: 자동 승인 규칙 | Approval method: Automatic approval rule |
 | `history_receipt_unavailable` | 승인 기록을 아직 불러오지 못했습니다. | Approval record is not available yet. |
-| `history_snapshot_diff_note` | 비교 대상 두 수정본 사이에서 바뀐 문단입니다. | Paragraphs that differ between the selected revisions. |
+| `history_snapshot_diff_note` | 비교 기준과 비교 대상의 문단 내용을 비교한 결과입니다. | Results of comparing paragraph text between the comparison base and target. |
 | `settings_title` | 설정 | Settings |
 | `settings_section_language` | 언어 | Language |
 | `settings_section_theme` | 화면 테마 | Appearance |
 | `settings_section_folder` | 작업 폴더 | Workspace folder |
 | `settings_folder_change` | 폴더 바꾸기 | Change folder |
-| `settings_folder_changing` | 작업 폴더를 바꾸고 있습니다... | Switching workspace folder... |
-| `settings_folder_changed` | 작업 폴더를 바꿨습니다. | Workspace folder updated. |
+| `settings_folder_changing` | 작업 폴더를 바꾸고 있습니다 | Switching workspace folder... |
+| `settings_folder_changed` | 작업 폴더를 바꿨습니다 | Workspace folder updated. |
 | `settings_folder_prompt` | 새 작업 폴더 경로 입력 | Enter new workspace folder path |
-| `settings_folder_apply` | 적용 | Apply |
+| `settings_folder_apply` | 폴더 바꾸기 | Change folder |
 | `settings_folder_reset_default` | 기본 폴더 사용 | Use default folder |
 | `settings_folder_current_label` | 현재 작업 폴더 | Current folder |
-| `operator_tab_credentials` | 에이전트 인증 및 공급자 | Credentials & provider |
+| `operator_tab_credentials` | 에이전트 인증 및 서비스 제공자 | Credentials & provider |
 | `cmd_export_revision` | 현재 수정본 내보내기 | Export current revision |
-| `cmd_open_workspace_settings` | 화면 및 작업 폴더 설정 | Language, theme & workspace settings |
+| `cmd_open_workspace_settings` | 언어·화면 테마·작업 폴더 설정 | Language, theme & workspace settings |

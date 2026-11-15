@@ -195,19 +195,7 @@ sheet with dashed blanks · inline seat entry and queued field list.
 
 **Review, History, and Settings views** — paper sheet and change list ·
 guard audit and approval dialog · revision timeline and comparison · language,
-theme, and workspace folder preferences, because proof state has one home and
-must read identically wherever the user is standing.
-
-Every row in the structure tree has a producer in the `document/inspect`
-response. Nothing is inferred:
-
-| Row | Source |
-| --- | --- |
-| 구역 / 문단 | `graph.paragraphs[]` — `section`, `at_para`, `text` |
-| 표 / 칸 | `graph.tables[].cells[]` — `addr`, `classification`, `textPreview` |
-| 채움 자리 | `regions.regions[]` with their T30/T127 preflight |
-| 안내문 | cells classified `guide` |
-| 이 빌드가 보지 못하는 것 | `capabilities.backends` + `capabilities.unavailable` |
+theme, and workspace folder preferences.
 
 That last group is the honest answer to "unsupported structures". The Runtime
 does not enumerate what it failed to parse, so the panel reports what this build

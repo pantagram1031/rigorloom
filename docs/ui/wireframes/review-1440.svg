@@ -52,7 +52,7 @@
 
   <!-- Paper Content (Real margins: 56px sides, 48px top) -->
   <text x="432" y="148" text-anchor="middle" font-size="20" font-weight="600">표 준 근 로 계 약 서</text>
-  <text x="148" y="188" class="body">(주)리걸룸(이하 "사업주"라 함)과 홍길동(이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.</text>
+  <text x="148" y="188" class="body">(주)가온상사(이하 "사업주"라 함)과 홍길동(이하 "근로자"라 함)은 다음과 같이 근로계약을 체결한다.</text>
 
   <!-- Form Table Printed Grid -->
   <rect x="148" y="208" width="568" height="288" fill="#FFFFFF" stroke="#181817" stroke-width="1"/>

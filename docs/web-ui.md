@@ -30,9 +30,12 @@ What you can do there:
   added (the same check as [`guard --mode block-diff`](guard-block-diff.md));
 - approve a plan in the approval dialog, inspect revisions or undo history
   in the History workspace, and export the result as `.hwpx`;
-- configure provider, model, and verification preferences in the Settings
-  workspace and resolve human pipeline gates, which writes `APPROVALS.md`
-  (see below).
+- choose the interface language, theme and workspace folder in Settings
+  (agent provider, model and credentials live in the operator dialog, opened
+  from the command palette, 명령창, Ctrl+K);
+- resolve human pipeline gates from the 자세히 section of the approval
+  dialog, which writes `APPROVALS.md` (see below). The gate routes are
+  unchanged; none of the five screens shows them outside that section.
 
 ## Security model
 

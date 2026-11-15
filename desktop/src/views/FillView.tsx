@@ -497,7 +497,7 @@ export function FillView() {
                   label={t("detail_label", language)}
                 >
                   <dl className="change-detail-dl">
-                    <dt>셀 주소</dt>
+                    <dt>{t("detail_cell_address", language)}</dt>
                     <dd>
                       {cellKey(
                         selectedStatic.table,
@@ -505,7 +505,7 @@ export function FillView() {
                         selectedStatic.cell.addr.col,
                       )}
                     </dd>
-                    <dt>셀 분류</dt>
+                    <dt>{t("detail_cell_class", language)}</dt>
                     <dd>{selectedStatic.cell.classification}</dd>
                   </dl>
                 </DetailDisclosure>
@@ -544,12 +544,12 @@ export function FillView() {
                   label={t("detail_label", language)}
                 >
                   <dl className="change-detail-dl">
-                    <dt>셀 주소</dt>
+                    <dt>{t("detail_cell_address", language)}</dt>
                     <dd>{selectedBlank.key}</dd>
                     {seatAt(inspect, selectedBlank.table, selectedBlank.row, selectedBlank.col)
                       ?.charPrSuggested ? (
                       <>
-                        <dt>권장 글자 모양</dt>
+                        <dt>{t("detail_suggested_char_style", language)}</dt>
                         <dd>
                           {
                             seatAt(
@@ -591,7 +591,7 @@ export function FillView() {
                       >
                         {t("fill_ambiguous_slot_option", language, [
                           slotIdx + 1,
-                          language === "ko" ? `${slot.row + 1}번째 줄` : `Row ${slot.row + 1}`,
+                          t("fill_row_label", language, [slot.row + 1]),
                         ])}
                       </button>
                     ))}

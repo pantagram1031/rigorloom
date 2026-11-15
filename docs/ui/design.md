@@ -3,7 +3,7 @@
 - **Target repository (read-only reference):** this repository at `main` `9940f90`
 - **Deliverable scope:** Design specification and annotated wireframes (`Open`, `Review`, `Fill`, `History`, `Settings`) for WP10b implementation; zero runtime security changes and zero new backend RPCs.
 - **Audience priority:** (1) Document approver, (2) Manual form filler, (3) Agent operator / debugger (`자세히` disclosure only).
-- **Review outcome:** accepted with amendments. Field names in sections 2, 7, 8 and 9 were corrected against `desktop/src/types.ts` and the runtime (page metrics in HWPUNIT, `createdUtc` and `approval.resolvedUtc`, the nested receipt, `MAX_SOURCE_BYTES`, the `/api/agent-host/*` routes). Where this document and the amendments below disagree, the amendments win: one guard, in Python, with no TypeScript copy; no guard verdict on invalid plans; no guard pill on a fill into an empty blank; Review change rows at most 52px and every other row 32-36px; a required acknowledgement and full hashes in the approval dialog; a persistent "preview, may differ from print" label on the page; single-key shortcuts blocked in every editable target and during IME composition; 4.5:1 contrast for all informational text; separate approval and apply times in History; undo that inverts one revision's edits, not a whole-version restore. The vocabulary source is Astra's review, committed as `docs/ui/vocabulary.md`.
+- **Review outcome:** accepted with amendments. Field names in sections 2, 7, 8 and 9 were corrected against `desktop/src/types.ts` and the runtime (page metrics in HWPUNIT, `createdUtc` and `approval.resolvedUtc`, the nested receipt, `MAX_SOURCE_BYTES`, the `/api/agent-host/*` routes). Where this document and the amendments below disagree, the amendments win: one guard, in Python, with no TypeScript copy; no guard verdict on invalid plans; no guard pill on a fill into an empty blank; Review change rows at most 52px and every other row 32-36px; a required acknowledgement and full hashes in the approval dialog; a persistent "preview, may differ from print" label on the page; single-key shortcuts blocked in every editable target and during IME composition; 4.5:1 contrast for all informational text; separate approval and apply times in History; undo that inverts one revision's edits, not a whole-version restore. The vocabulary source is the copy review, committed as `docs/ui/vocabulary.md`.
 
 ---
 
@@ -105,7 +105,7 @@ Purpose: Let the approver inspect every proposed change marked in place on the f
 |      +---------------------------------------------+      | [1] 빈칸 채움 · 성명 (근로자) [유지됨]|
 |      |              표 준 근 로 계 약 서           |      |     (빈칸) -> 홍길동                 |
 |      |                                             |      +--------------------------------------+
-|      | (주)리걸룸과 홍길동은 다음과 같이 체결한다. |      |>|2| 빈칸 채움 · 근무 장소     [유지됨]| <-- Selected
+|      | (주)가온상사과 홍길동은 다음과 같이 체결한다. |      |>|2| 빈칸 채움 · 근무 장소     [유지됨]| <-- Selected
 |      | +------------+----------------------------+ |      | |   (빈칸) -> 서울 종로구 세종대로... |     row (j/k)
 |      | |성명(근로자)||[1] 홍길동                 | |      | |   직접 고치기 · 이 항목 빼기 · 접기 |
 |      | +------------+----------------------------+ |      | |   +------------------------------+ |
@@ -264,7 +264,7 @@ Purpose: Configure **only** Language, Theme, and Runtime root—nothing else.
 |                          --------------------------------------------------------                |
 |                          작업 폴더                                                               |
 |                          열어 둔 문서의 작업 사본과 수정 기록이 보관되는 위치입니다.             |
-|                          [/Users/minsu/Library/Application Support/Rigorloom] [바꾸기]           |
+|                          [/Users/you/Library/Application Support/Rigorloom] [바꾸기]           |
 |                          --------------------------------------------------------                |
 |                                                                                                  |
 +--------------------------------------------------------------------------------------------------+
@@ -828,9 +828,7 @@ Rigorloom has two existing ways to show a `.hwpx` page. An honest design uses ea
 
 ---
 
-## 10. GPT Sol attack
-
-## GPT Sol attack (unedited)
+## 10. Adversarial review notes (unedited)
 
 ### Open
 

@@ -54,7 +54,7 @@
   <text x="464" y="352" class="semi">작업 폴더</text>
   <text x="464" y="374" class="muted">열어 둔 문서의 작업 사본과 수정 기록이 보관되는 위치입니다.</text>
   <rect x="464" y="384" width="416" height="28" rx="4" fill="#F7F7F5" stroke="#E4E4E0" stroke-width="1"/>
-  <text x="476" y="403" class="sec">/Users/minsu/Library/Application Support/Rigorloom</text>
+  <text x="476" y="403" class="sec">/Users/you/Library/Application Support/Rigorloom</text>
   <rect x="888" y="384" width="88" height="28" rx="6" fill="#F0F0EE"/>
   <text x="932" y="403" text-anchor="middle" class="semi">폴더 바꾸기</text>
   <line x1="440" y1="423" x2="1000" y2="423" stroke="#E4E4E0" stroke-width="1"/>

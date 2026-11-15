@@ -10,7 +10,7 @@ the kernel's contract shape.
 
 ### Changed
 
-- **T172:** redesigned the Rigorloom local review UI across five live screens — Open (`OpenView`), Review (`ReviewView`, `PageSheet`, `ChangeList`, `ChangeRow`, `ApprovalDialog`), Fill (`FillView`, in-place `SeatEditor`), History (`HistoryView`, lazy receipt loading, candidate comparison with `/api/guard/diff`, and `proposeUndoOf` reversal proposals), and Settings (`SettingsView`, language/theme preferences and locked workspace switching) — backed by Warm Paper WCAG 2.1 AA light/dark tokens, centralized bilingual Korean/English vocabulary ([docs/ui/vocabulary.md](docs/ui/vocabulary.md)), authoritative Python preview-diff row guard mapping (`guardHelper.ts`), 390px responsive mobile tabs and palette navigation, the 5-screen gongmun walkthrough E2E test (`tests/test_ui_walkthrough_gongmun.py`), refreshed Playwright E2E coverage (`tests/test_ui_playwright.py`), 20 canonical screenshots under `docs/ui/`, updated web/desktop documentation (`docs/web-ui.md`, `desktop/README.md`), and the rebuilt web bundle (`runtime/scripts/ui_dist`).
+- **T172:** the local review UI has been rebuilt as five screens: Open, Review, Fill, History and Settings. Review shows the proposed form page next to a list of changes, Fill lets you type into blanks on the page itself, and History lists approved revisions and lets you compare or undo them. Approval and export work as before: you approve one plan hash and the runtime applies it; a test checks that exporting the 공문 example still gives the same file byte for byte. The old session list, plan view and structure tree screens are gone, and the screenshots in `docs/ui/` show the new screens in light and dark at desktop and phone width.
 
 ## v0.18.0 — 2026-11-15
 

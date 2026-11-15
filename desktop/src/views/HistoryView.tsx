@@ -8,7 +8,7 @@ import {
   proposeUndoOf,
 } from "../actions";
 import { DetailDisclosure } from "../components/DetailDisclosure";
-import { opKindLabel, t } from "../i18n/vocabulary";
+import { t } from "../i18n/vocabulary";
 import * as rt from "../runtime";
 import {
   activeCandidates,
@@ -65,19 +65,6 @@ function formatApprovalMethod(
     return directBase;
   }
   return `${directBase} (${approver?.trim()})`;
-}
-
-function summarizeKinds(
-  kinds: readonly string[],
-  language: UiLanguage,
-): string {
-  if (kinds.length === 0) return t("history_changes_count", language, [0]);
-  const counts = new Map<string, number>();
-  for (const kind of kinds) {
-    const label = opKindLabel(kind, language);
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  return [...counts.entries()].map(([label, n]) => `${label} ${n}`).join(" · ");
 }
 
 export function HistoryView() {
@@ -337,11 +324,11 @@ export function HistoryView() {
                       label={t("detail_label", language)}
                     >
                       <dl className="change-detail-dl">
-                        <dt>실행 번호</dt>
+                        <dt>{t("detail_run_id", language)}</dt>
                         <dd>{runId}</dd>
                         {receipt?.planId ?? candidate.planId ? (
                           <>
-                            <dt>계획 번호</dt>
+                            <dt>{t("detail_plan_id", language)}</dt>
                             <dd>{receipt?.planId ?? candidate.planId}</dd>
                           </>
                         ) : null}
@@ -359,19 +346,19 @@ export function HistoryView() {
                         ) : null}
                         {receipt?.approval?.approver ? (
                           <>
-                            <dt>승인자 기록</dt>
+                            <dt>{t("detail_approver_record", language)}</dt>
                             <dd>{receipt.approval.approver}</dd>
                           </>
                         ) : null}
                         {receipt?.base?.runId ? (
                           <>
-                            <dt>직전 실행</dt>
+                            <dt>{t("detail_base_run_id", language)}</dt>
                             <dd>{receipt.base.runId}</dd>
                           </>
                         ) : null}
                         {receipt?.reverses?.runId ? (
                           <>
-                            <dt>되돌린 실행</dt>
+                            <dt>{t("detail_reversed_run_id", language)}</dt>
                             <dd>{receipt.reverses.runId}</dd>
                           </>
                         ) : null}
@@ -381,9 +368,6 @@ export function HistoryView() {
 
                   <p className="history-summary-line" data-testid={`history-summary-${revNum}`}>
                     {t("history_changes_count", language, [stepKinds.length])}
-                    {stepKinds.length > 0
-                      ? ` (${summarizeKinds(stepKinds, language)})`
-                      : ""}
                   </p>
 
                   <dl className="history-meta-dl">
@@ -540,11 +524,11 @@ export function HistoryView() {
                     label={t("detail_label", language)}
                   >
                     <dl className="change-detail-dl">
-                      <dt>영역 일치 여부</dt>
+                      <dt>{t("detail_regions_equal", language)}</dt>
                       <dd>{String(compareResult.regionsEqual)}</dd>
-                      <dt>비교한 영역 수</dt>
+                      <dt>{t("detail_regions_compared", language)}</dt>
                       <dd>{String(compareResult.regionsCompared)}</dd>
-                      <dt>정규화</dt>
+                      <dt>{t("detail_normalizer", language)}</dt>
                       <dd>{compareResult.normalizer}</dd>
                     </dl>
                   </DetailDisclosure>

@@ -1741,7 +1741,18 @@ export async function applyApproved(): Promise<void> {
   if (!ownsPresentation || getState().activeSessionId !== sessionId || getState().head !== applied.runId) return;
   if (reversed) await verifyReversal(applied.runId, reversed);
   if (getState().activeSessionId === sessionId && getState().head === applied.runId) {
-    showToast(`후보본을 만들었습니다 · ${applied.candidate.sha256.slice(0, 12)}`, 2200);
+    const revNum =
+      (getState().candidates[sessionId] ?? [])
+        .filter((c) => Boolean(c.runId))
+        .slice()
+        .sort((x, y) => (x.createdUtc ?? "").localeCompare(y.createdUtc ?? ""))
+        .findIndex((c) => c.runId === applied.runId) + 1;
+    showToast(
+      revNum > 0
+        ? t("apply_done_toast", getState().language, [revNum])
+        : t("review_applied_ok", getState().language),
+      2200,
+    );
   }
 }
 
@@ -2322,7 +2333,7 @@ export async function exportApplied(
     }
 
     setState({ exportPhase: "ready", exportResult: result });
-    showToast(`후보본과 영수증을 내보냈습니다 · ${result.sha256.slice(0, 12)}`, 2400);
+    showToast(t("export_done_toast", getState().language), 2400);
     return true;
   } catch (e) {
     setState({ exportPhase: "failed", exportError: rt.asRuntimeError(e) });
