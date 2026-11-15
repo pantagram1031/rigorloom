@@ -1,20 +1,29 @@
-"""End-to-end Playwright verification for Rigorloom WP3 local web UI (`cli.py ui`).
+"""End-to-end Playwright verification for Rigorloom local web UI (`cli.py ui`).
 
 Covers:
 1. Clean `pytest.skip` when `playwright` or headless Chromium is unavailable.
 2. Live subprocess launch (`cli.py ui --root <tmp> --port 0 --no-open`) with zero
    uncaught `pageerror`s and zero HTTP 5xx / unexpected API errors.
-3. Opening a real corpus form (`tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx`)
-   via the browser open dialog and verifying `session-list`.
-4. Korean IME composition safety on `SeatEditor` (`compositionstart` -> `Enter`
-   blocked mid-composition -> `compositionupdate`/`compositionend` `"한글"` ->
+3. Opening a real corpus form (`gianmun-byeolji-1ho.hwpx`) via the Open screen
+   sample catalog, verifying recent-item navigation via `nav-open` reuses the
+   active session without duplicating it or leaking raw paths.
+4. Korean IME composition safety on `SeatEditor` (`compositionstart` -> `'ㅎ'` ->
+   `Enter` blocked mid-composition, plus Ruling H `j`/`k`/`a`/`r` shortcut guard
+   inside focused inputs -> `compositionupdate`/`compositionend` `'한글'` ->
    `Enter` commits with `composed === true`).
-5. Multi-op plan with 4 distinct op kinds (`fill_cell`, `replace_at_cell`, `set_run`,
-   `delete_guides`), address + before->after projection, Guard Diff protected
-   expression highlights, Approval Dialog (`planHash`), re-approval gate on byte
-   drift (both runtime `plan/apply` refusal on an approved plan and UI invalidation +
-   re-propose), final `"승인하고 적용"` apply, and verified `.hwpx` export.
-6. 16 viewport/theme screenshots in `docs/ui/` (`{session-list,plan-view,guard-diff,approval-dialog}-{1440,390}-{light,dark}.png`) with `scrollWidth <= innerWidth`.
+5. Removing the temporary edit, proposing a 4-op plan via `/rpc` `plan/propose`
+   containing all 4 distinct op kinds (`fill_cell`, `replace_at_cell`, `set_run`,
+   `delete_guides`), waiting for auto-adoption into `ChangeList` (`change-row-1..4`),
+   verifying Ruling D pills (`fill_cell` without pill, existing-text ops with guard
+   pills, `change-added-numbers-*` for newly introduced numbers), collapsed row
+   height <= 56 px, and row expansion (`change-detail-1`).
+6. `ApprovalDialog` full 64-hex `approval-plan-hash` and `approval-bound-hash`
+   and `approval-changed-facts-ack` gating before confirm.
+7. External byte-drift `plan_stale` defense: runtime `/rpc` `plan/apply` refusal on
+   an approved stale plan and UI `approval-stale-banner` -> `approval-repropose-btn`
+   -> new 64-hex `approval-plan-hash` -> re-ack -> apply -> verified `.hwpx` export.
+8. Viewport/theme screenshots (`{open,review-plan,review-guard,approval-dialog}-{1440,390}-{light,dark}.png`)
+   saved only under `tmp_path` (`scrollWidth <= innerWidth`), leaving `docs/ui/` untouched.
 """
 
 from __future__ import annotations
@@ -35,12 +44,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "runtime" / "scripts" / "cli.py"
 PREEDIT_PATH = REPO_ROOT / "engine" / "scripts" / "preedit.py"
-DOCS_UI_DIR = REPO_ROOT / "docs" / "ui"
-CORPUS_FORM_ID = "forms/converted/gianmun-byeolji-1ho.hwpx"
+CORPUS_FORM_PATH = REPO_ROOT / "tests" / "corpus" / "forms" / "converted" / "gianmun-byeolji-1ho.hwpx"
+CORPUS_FORM_FILENAME = "gianmun-byeolji-1ho.hwpx"
 
-EXPECTED_SCREENSHOTS = [
+EXPECTED_TEMP_SCREENSHOTS = [
     f"{screen}-{width}-{theme}.png"
-    for screen in ("session-list", "plan-view", "guard-diff", "approval-dialog")
+    for screen in ("open", "review-plan", "review-guard", "approval-dialog")
     for width in (1440, 390)
     for theme in ("light", "dark")
 ]
@@ -136,9 +145,9 @@ def _rpc_post(base_url: str, token: str, method: str, params: dict) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _mutate_hwpx_source(hwpx_path: Path, scratch_dir: Path) -> None:
+def _mutate_hwpx_source(hwpx_path: Path, scratch_dir: Path, name: str = "external-drift.hwpx") -> None:
     """Mutate a valid HWPX file atomically via preedit.py to simulate external byte drift."""
-    mutated = scratch_dir / "external-drift.hwpx"
+    mutated = scratch_dir / name
     res = subprocess.run(
         [
             sys.executable,
@@ -171,7 +180,7 @@ def _set_viewport_and_theme(page, width: int, height: int, theme: str) -> None:
         }""",
         theme,
     )
-    page.wait_for_timeout(120)
+    page.wait_for_timeout(250)
     if width <= 400:
         scroll_w = page.evaluate("document.documentElement.scrollWidth")
         inner_w = page.evaluate("window.innerWidth")
@@ -189,9 +198,7 @@ def _save_screen_variants(
     mobile_tab: str | None = None,
     scroll_into_view_selector: str | None = None,
 ) -> None:
-    """Capture 1440x900 and 390x844 in light and dark themes and validate PNG output."""
-    should_sync_docs = os.environ.get("RIGORLOOM_UPDATE_UI_DOCS") == "1"
-    DOCS_UI_DIR.mkdir(parents=True, exist_ok=True)
+    """Capture 1440x900 and 390x844 in light and dark themes into tmp_path only."""
     for width, height in ((1440, 900), (390, 844)):
         if width <= 400 and mobile_tab:
             page.set_viewport_size({"width": width, "height": height})
@@ -216,9 +223,6 @@ def _save_screen_variants(
             page.screenshot(path=str(out))
             raw = out.read_bytes()
             assert raw[:8] == b"\x89PNG\r\n\x1a\n" and len(raw) > 5000, fname
-            doc_out = DOCS_UI_DIR / fname
-            if should_sync_docs or not doc_out.is_file():
-                shutil.copy2(out, doc_out)
 
 
 def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> None:
@@ -253,25 +257,50 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
                 ),
             )
 
-            # 1) Load UI & dismiss splash cleanly
+            # 1) Load UI & Open screen
             page.goto(url, wait_until="domcontentloaded")
             splash = page.locator('[data-testid="splash"]')
             if splash.count() > 0:
                 splash.first.click(force=True)
-            page.wait_for_selector('[data-testid="welcome-open-form"]', timeout=15000)
+            page.wait_for_selector('[data-testid="open-view"]', timeout=15000)
 
-            # 2) Open real corpus form via browser open dialog & inspect Session List
-            page.click('[data-testid="welcome-open-form"]')
-            page.wait_for_selector('[data-testid="browser-open-dialog"]', timeout=10000)
-            page.click(f'[data-testid="corpus-file-{CORPUS_FORM_ID}"]')
-            page.wait_for_selector('[data-testid="session-list"] [data-testid^="session-"]', timeout=15000)
-            page.wait_for_selector('[data-testid="doc-cell-0-5-1"]', timeout=15000)
-            assert "gianmun-byeolji-1ho.hwpx" in page.locator('[data-testid="session-list"]').inner_text()
-            _save_screen_variants(page, "session-list", shots_dir, mobile_tab="mobile-tab-sessions")
+            sample_list = page.locator('[data-testid="open-sample-list"]')
+            if sample_list.count() == 0 or not sample_list.is_visible():
+                page.click('[data-testid="open-samples-toggle"]')
+            page.wait_for_selector(
+                f'[data-testid="open-sample-item-{CORPUS_FORM_FILENAME}"]',
+                timeout=15000,
+            )
+            _save_screen_variants(page, "open", shots_dir)
             _set_viewport_and_theme(page, 1440, 900, "light")
 
-            # 3) Korean IME check on SeatEditor
-            page.click('[data-testid="doc-cell-0-5-1"]')
+            # 2) Open real corpus form and test nav-open recent session reuse
+            page.click(f'[data-testid="open-sample-item-{CORPUS_FORM_FILENAME}"]')
+            page.wait_for_selector('[data-testid="review-view"]', timeout=15000)
+            page.wait_for_selector('[data-testid="page-cell-0-5-1"]', timeout=15000)
+
+            bootstrap = page.evaluate("() => window.__RIGORLOOM_UI__")
+            token = bootstrap["token"]
+            base_url = url.split("?", 1)[0]
+
+            page.click('[data-testid="nav-open"]')
+            page.wait_for_selector(
+                f'[data-testid="open-recent-item-{CORPUS_FORM_FILENAME}"]',
+                timeout=10000,
+            )
+            recent_text = page.locator('[data-testid="open-recent-list"]').inner_text()
+            assert "/home/" not in recent_text and "/tmp/" not in recent_text, recent_text
+            page.click(f'[data-testid="open-recent-item-{CORPUS_FORM_FILENAME}"]')
+            page.wait_for_selector('[data-testid="review-view"]', timeout=10000)
+            page.wait_for_selector('[data-testid="page-cell-0-5-1"]', timeout=10000)
+
+            sessions_res = _rpc_post(base_url, token, "session/list", {})
+            assert sessions_res["ok"] is True, sessions_res
+            assert len(sessions_res["result"]["sessions"]) == 1, sessions_res
+            session_id = sessions_res["result"]["sessions"][0]["sessionId"]
+
+            # 3) Korean IME safety + Ruling H shortcut guard on SeatEditor & composer
+            page.click('[data-testid="page-cell-0-5-1"]')
             page.wait_for_selector('[data-testid="seat-input"]', timeout=5000)
             page.evaluate(
                 """() => {
@@ -283,137 +312,204 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
                 }"""
             )
             page.keyboard.press("Enter")
-            # Mid-composition Enter must NOT commit early or close SeatEditor
             assert page.locator('[data-testid="seat-input"]').is_visible()
-            assert page.locator('[data-testid="review-queue-empty"]').is_visible()
+            assert page.locator('[data-testid^="change-row-"]').count() == 0
+
+            # Ruling H: typing shortcut letters inside SeatEditor must never trigger dialogs
+            for key in ("j", "k", "a", "r"):
+                page.keyboard.press(key)
+            assert page.locator('[data-testid="approval-dialog"]').count() == 0
+            assert page.locator('[data-testid="return-popover"]').count() == 0
+            assert page.locator('[data-testid="seat-input"]').is_visible()
 
             page.evaluate(
                 """() => {
                     const el = document.querySelector('[data-testid="seat-input"]');
                     el.dispatchEvent(new CompositionEvent('compositionupdate', { bubbles: true, data: '한글' }));
                     el.value = '한글';
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
                     el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '한글' }));
                 }"""
             )
             page.keyboard.press("Enter")
-            page.wait_for_selector('[data-testid="review-queue"]', timeout=10000)
+            page.wait_for_selector('[data-testid="change-row-1"]', timeout=10000)
             assert page.locator(".shell").get_attribute("data-last-composed") == "true"
             assert page.locator(".shell").get_attribute("data-last-commit") == "한글"
 
-            # 4) Queue 3 additional distinct op kinds (4 total: fill_cell, replace_at_cell, set_run, delete_guides)
-            page.click('[data-testid="queue-add-op-toggle"]')
-            page.wait_for_selector('[data-testid="queue-add-op-form"]', timeout=5000)
+            # Ruling H: typing shortcut letters inside prompt input must type text, not fire nav/modals
+            prompt_input = page.locator('[data-testid="review-prompt-input"]')
+            prompt_input.click()
+            prompt_input.type("jkar")
+            assert prompt_input.input_value() == "jkar"
+            assert page.locator('[data-testid="approval-dialog"]').count() == 0
+            assert page.locator('[data-testid="return-popover"]').count() == 0
+            prompt_input.fill("")
 
-            page.select_option('[data-testid="add-op-kind"]', "replace_at_cell")
-            coords = page.locator('[data-testid="queue-add-op-form"] .add-op-coords input')
-            coords.nth(0).fill("0")
-            coords.nth(1).fill("7")
-            coords.nth(2).fill("1")
-            page.fill('[data-testid="add-op-text"]', "2026년 100만원")
-            page.click('[data-testid="add-op-submit"]')
+            # 4) Remove temporary 1-op edit, propose 4-op plan via /rpc & verify Ruling D + collapse height
+            page.click('[data-testid="change-summary-1"]')
+            page.wait_for_selector('[data-testid="change-detail-1"]', timeout=5000)
+            page.locator('[data-testid="change-detail-1"] [data-testid^="change-remove-"]').click()
             page.wait_for_function(
-                "document.querySelector('[data-testid=\"queue-count\"]')?.textContent?.trim() === '2'",
+                "document.querySelectorAll('[data-testid^=\"change-row-\"]').length === 0",
                 timeout=10000,
             )
 
-            page.select_option('[data-testid="add-op-kind"]', "set_run")
-            coords = page.locator('[data-testid="queue-add-op-form"] .add-op-coords input')
-            coords.nth(0).fill("3")
-            coords.nth(1).fill("0")
-            page.fill('[data-testid="add-op-text"]', "과학기술정보통신부 2026-11-15")
-            page.click('[data-testid="add-op-submit"]')
+            four_ops = [
+                {
+                    "opId": "op-fill",
+                    "kind": "fill_cell",
+                    "table": 0,
+                    "row": 5,
+                    "col": 1,
+                    "text": "한글",
+                },
+                {
+                    "opId": "op-replace",
+                    "kind": "replace_at_cell",
+                    "table": 0,
+                    "row": 7,
+                    "col": 1,
+                    "text": "2026년 100만원",
+                },
+                {
+                    "opId": "op-set-run",
+                    "kind": "set_run",
+                    "atPara": 3,
+                    "run": 0,
+                    "text": "과학기술정보통신부 2026-11-15",
+                },
+                {
+                    "opId": "op-delete-guides",
+                    "kind": "delete_guides",
+                    "color": "#0000FF",
+                },
+            ]
+            prop_4 = _rpc_post(
+                base_url,
+                token,
+                "plan/propose",
+                {"sessionId": session_id, "backend": "preedit", "ops": four_ops},
+            )
+            assert prop_4["ok"] is True, prop_4
+
+            page.wait_for_selector('[data-testid="change-row-4"]', timeout=15000)
+            page.wait_for_selector('[data-testid="guard-list-header"]', timeout=15000)
             page.wait_for_function(
-                "document.querySelector('[data-testid=\"queue-count\"]')?.textContent?.trim() === '3'",
-                timeout=10000,
+                "() => document.querySelectorAll('[data-testid^=\"change-pill-\"]').length >= 3",
+                timeout=15000,
             )
 
-            page.select_option('[data-testid="add-op-kind"]', "delete_guides")
-            page.locator('[data-testid="queue-add-op-form"] input[placeholder*="#0000FF"]').fill("#0000FF")
-            page.click('[data-testid="add-op-submit"]')
-            page.wait_for_function(
-                "document.querySelector('[data-testid=\"queue-count\"]')?.textContent?.trim() === '4'",
-                timeout=10000,
-            )
-            page.wait_for_selector('[data-testid="queue-verdict"]', timeout=10000)
-            page.click('[data-testid="queue-add-op-toggle"]')
+            # Collapsed row height <= 56 px for all 4 rows
+            rows = page.locator('[data-testid^="change-row-"]')
+            assert rows.count() == 4
+            for i in range(rows.count()):
+                box = rows.nth(i).bounding_box()
+                assert box is not None and box["height"] <= 56.5, (i, box)
 
-            queue_text = page.locator('[data-testid="review-queue"]').inner_text()
-            for expected_addr in ("표 0 R5C1", "표 0 R7C1", "도로명주소", "문단 3 · 덩어리 0", "안내문 삭제"):
-                assert expected_addr in queue_text, f"Missing {expected_addr!r} in queue"
-
-            op_kinds = set(
-                page.evaluate(
-                    "() => Array.from(document.querySelectorAll('[data-testid=\"review-queue\"] [data-kind]')).map(el => el.getAttribute('data-kind'))"
-                )
+            # Ruling D pills: empty fill_cell gets NO pill; 3 existing-text ops get pills; new numbers show badge
+            row_by_op = page.evaluate(
+                """() => {
+                    const out = {};
+                    for (const el of document.querySelectorAll('[data-testid^="change-row-"]')) {
+                        const opId = el.getAttribute('data-op-id');
+                        const tid = el.getAttribute('data-testid') || '';
+                        const ord = tid.replace('change-row-', '');
+                        if (opId) out[opId] = ord;
+                    }
+                    return out;
+                }"""
             )
-            assert op_kinds == {"fill_cell", "replace_at_cell", "set_run", "delete_guides"}, op_kinds
+            assert set(row_by_op.keys()) == {
+                "op-fill",
+                "op-replace",
+                "op-set-run",
+                "op-delete-guides",
+            }, row_by_op
 
-            value_texts = page.evaluate(
-                "() => Array.from(document.querySelectorAll('[data-testid^=\"queue-value-\"]')).map(el => el.tagName === 'INPUT' ? el.value : el.textContent)"
+            assert page.locator(f'[data-testid="change-pill-{row_by_op["op-fill"]}"]').count() == 0
+            for audited_op in ("op-replace", "op-set-run", "op-delete-guides"):
+                assert page.locator(f'[data-testid="change-pill-{row_by_op[audited_op]}"]').count() == 1
+            assert (
+                page.locator(f'[data-testid="change-added-numbers-{row_by_op["op-replace"]}"]').count() == 1
             )
-            for expected_after in ("한글", "2026년 100만원", "과학기술정보통신부 2026-11-15", "(안내문 삭제됨)"):
-                assert expected_after in value_texts, f"Missing {expected_after!r} in {value_texts}"
 
             _save_screen_variants(
                 page,
-                "plan-view",
+                "review-plan",
                 shots_dir,
-                mobile_tab="mobile-tab-queue",
-                scroll_into_view_selector='[data-testid="review-queue"]',
+                mobile_tab="mobile-tab-list",
             )
             _set_viewport_and_theme(page, 1440, 900, "light")
 
-            # 5) Guard Diff panel with highlighted protected expressions & 1-based paragraph headings
-            page.click('[data-testid="tab-guard-diff"]')
-            page.wait_for_selector('[data-testid="guard-diff-panel"]', timeout=10000)
-            page.click('[data-testid="guard-diff-run"]')
-            page.wait_for_selector('[data-testid="guard-diff-verdict"]', timeout=10000)
-            assert page.locator("mark.guard-token.guard-token--added").count() >= 4
-            assert "문단 #3" in page.locator('[data-testid="guard-paragraph-3"]').inner_text()
-            _save_screen_variants(page, "guard-diff", shots_dir, mobile_tab="mobile-tab-guard")
+            # Expand row 1 and verify change-detail-1 contains op details
+            page.click('[data-testid="change-summary-1"]')
+            page.wait_for_selector('[data-testid="change-detail-1"]', timeout=5000)
+            detail_text = page.locator('[data-testid="change-detail-1"]').inner_text()
+            assert len(detail_text.strip()) > 0
+
+            _save_screen_variants(
+                page,
+                "review-guard",
+                shots_dir,
+                mobile_tab="review-mobile-tab-list",
+                scroll_into_view_selector='[data-testid="change-detail-1"]',
+            )
             _set_viewport_and_theme(page, 1440, 900, "light")
 
-            # 6) Approval dialog & screenshots
-            page.click('[data-testid="request-approval"]')
-            page.wait_for_selector('[data-testid="approval-gate"]', timeout=10000)
-            page.click('[data-testid="open-approval-dialog"]')
+            # 5 & 6) ApprovalDialog: full 64-hex hashes and changed-fact ack gating
+            page.click('[data-testid="review-approve-btn"]')
             page.wait_for_selector('[data-testid="approval-dialog"]', timeout=10000)
 
-            plan_id_before = page.locator('[data-testid="dialog-plan-id"]').inner_text().strip()
-            plan_hash_before = page.locator('[data-testid="dialog-plan-hash"]').inner_text().strip()
+            plan_hash_before = page.locator('[data-testid="approval-plan-hash"]').inner_text().strip()
+            bound_hash_before = page.locator('[data-testid="approval-bound-hash"]').inner_text().strip()
             assert re.fullmatch(r"[0-9a-f]{64}", plan_hash_before), plan_hash_before
-            assert page.locator(".dialog-op-row").count() == 4
-            _save_screen_variants(page, "approval-dialog", shots_dir, mobile_tab=None)
+            assert re.fullmatch(r"[0-9a-f]{64}", bound_hash_before), bound_hash_before
+
+            ack_box = page.locator('[data-testid="approval-changed-facts-ack"]')
+            confirm_btn = page.locator('[data-testid="approval-confirm-btn"]')
+            ack_box.wait_for(state="visible", timeout=10000)
+            assert not ack_box.is_checked()
+            assert confirm_btn.is_disabled()
+
+            _save_screen_variants(page, "approval-dialog", shots_dir)
             _set_viewport_and_theme(page, 1440, 900, "light")
 
-            # 7) Re-approval gate: also prove backend refuses plan/apply on an APPROVED stale plan,
-            # AND UI invalidates approval + blocks apply + requires Re-propose!
-            bootstrap = page.evaluate("() => window.__RIGORLOOM_UI__")
-            token = bootstrap["token"]
-            base_url = url.split("?", 1)[0]
-            session_files = list((rt_root / "sessions").glob("*/source/*.hwpx"))
-            assert len(session_files) == 1, session_files
-            src_hwpx = session_files[0]
+            # 7) External byte-drift plan_stale defense (runtime /rpc refusal + UI re-propose)
+            stale_copy = tmp_path / "stale-competing.hwpx"
+            shutil.copy2(CORPUS_FORM_PATH, stale_copy)
+            stale_open = _rpc_post(
+                base_url,
+                token,
+                "workspace/openPath",
+                {"path": str(stale_copy)},
+            )
+            assert stale_open["ok"] is True, stale_open
+            stale_session_id = stale_open["result"]["sessionId"]
+            stale_src_files = list((rt_root / "sessions" / stale_session_id / "source").glob("*.hwpx"))
+            assert len(stale_src_files) == 1, stale_src_files
+            stale_src_hwpx = stale_src_files[0]
 
-            # Approve a throwaway competing plan? Even cleaner: propose + resolve("approved")
-            # a plan bound to pre-drift bytes, mutate bytes, and confirm runtime refuses plan/apply!
-            session_id = src_hwpx.parents[1].name
-            prop_res = _rpc_post(
+            prop_stale = _rpc_post(
                 base_url,
                 token,
                 "plan/propose",
                 {
-                    "sessionId": session_id,
+                    "sessionId": stale_session_id,
                     "backend": "preedit",
                     "ops": [{"kind": "fill_cell", "table": 0, "row": 5, "col": 2, "text": "보조"}],
                 },
             )
-            assert prop_res["ok"] is True, prop_res
-            stale_plan = prop_res["result"]["plan"]
-            req_res = _rpc_post(base_url, token, "approval/request", {"planId": stale_plan["planId"]})
-            assert req_res["ok"] is True, req_res
-            stale_appr = req_res["result"]["approval"]
-            res_ok = _rpc_post(
+            assert prop_stale["ok"] is True, prop_stale
+            stale_plan = prop_stale["result"]["plan"]
+            req_stale = _rpc_post(
+                base_url,
+                token,
+                "approval/request",
+                {"planId": stale_plan["planId"]},
+            )
+            assert req_stale["ok"] is True, req_stale
+            stale_appr = req_stale["result"]["approval"]
+            res_stale = _rpc_post(
                 base_url,
                 token,
                 "approval/resolve",
@@ -425,12 +521,15 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
                     "approver": "playwright-verifier",
                 },
             )
-            assert res_ok["ok"] is True, res_ok
+            assert res_stale["ok"] is True, res_stale
 
-            # Mutate the session source bytes externally
-            _mutate_hwpx_source(src_hwpx, tmp_path)
+            active_src_files = list((rt_root / "sessions" / session_id / "source").glob("*.hwpx"))
+            assert len(active_src_files) == 1, active_src_files
+            active_src_hwpx = active_src_files[0]
 
-            # Old already-approved approval must be REFUSED by runtime plan/apply
+            _mutate_hwpx_source(stale_src_hwpx, tmp_path, "stale-drift.hwpx")
+            _mutate_hwpx_source(active_src_hwpx, tmp_path, "active-drift.hwpx")
+
             stale_apply = _rpc_post(
                 base_url,
                 token,
@@ -439,44 +538,41 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
             )
             assert stale_apply["ok"] is False and stale_apply["error"]["code"] == "plan_stale", stale_apply
 
-            # Now test the UI dialog re-approval gate: trying to approve/apply detects drift,
-            # invalidates the old approval, refuses apply, and displays the re-approval prompt.
-            page.click('[data-testid="dialog-approve-apply"]')
-            page.wait_for_selector('[data-testid="reapproval-prompt"]', timeout=10000)
-            assert page.locator('[data-testid="dialog-approve-apply"]').is_disabled()
-            assert "없음" in page.locator('[data-testid="verification-bar"]').inner_text()
+            # UI confirm checks validity -> catches plan_stale and renders re-propose banner
+            ack_box.check()
+            assert not confirm_btn.is_disabled()
+            confirm_btn.click()
 
-            # Re-propose against the new bytes
-            page.locator('[data-testid="reapproval-prompt"] button').click()
+            page.wait_for_selector('[data-testid="approval-stale-banner"]', timeout=10000)
+            assert confirm_btn.is_disabled()
+
+            page.click('[data-testid="approval-repropose-btn"]')
             page.wait_for_function(
                 """(prev) => {
-                    const el = document.querySelector('[data-testid="dialog-plan-hash"]');
+                    const el = document.querySelector('[data-testid="approval-plan-hash"]');
                     const txt = el ? el.textContent.trim() : '';
                     return /^[0-9a-f]{64}$/.test(txt) && txt !== prev;
                 }""",
                 arg=plan_hash_before,
                 timeout=15000,
             )
-            plan_id_after = page.locator('[data-testid="dialog-plan-id"]').inner_text().strip()
-            plan_hash_after = page.locator('[data-testid="dialog-plan-hash"]').inner_text().strip()
-            assert plan_id_after != plan_id_before
+            plan_hash_after = page.locator('[data-testid="approval-plan-hash"]').inner_text().strip()
             assert plan_hash_after != plan_hash_before
 
-            # Close dialog to verify ReviewQueue banner cleared, request approval, and click "승인하고 적용"
-            page.click('[data-testid="dialog-close"]')
-            assert page.locator('[data-testid="queue-reapproval-banner"]').count() == 0
-            page.click('[data-testid="request-approval"]')
-            page.wait_for_selector('[data-testid="approve"]', timeout=10000)
-            assert "승인하고 적용" in page.locator('[data-testid="approve"]').inner_text()
-            page.click('[data-testid="approve"]')
+            # Confirm again after re-propose & check ack for newly reproposed plan
+            ack_box.wait_for(state="visible", timeout=10000)
+            if not ack_box.is_checked():
+                ack_box.check()
+            page.wait_for_function(
+                "() => { const b = document.querySelector('[data-testid=\"approval-confirm-btn\"]'); return b && !b.disabled; }",
+                timeout=10000,
+            )
+            confirm_btn.click()
 
-            page.wait_for_selector('[data-testid="candidate-hash"]', timeout=20000)
-            cand_hash = page.locator('[data-testid="candidate-hash"]').inner_text().strip()
-            assert len(cand_hash) >= 8
-
-            # 8) Export candidate and verify valid HWPX ZIP download
+            # 8) Wait for applied state and verify valid .hwpx ZIP export
+            page.wait_for_selector('[data-testid="review-export-btn"]', timeout=25000)
             with page.expect_download(timeout=15000) as dl_info:
-                page.click('[data-testid="export-candidate"]')
+                page.click('[data-testid="review-export-btn"]')
             download = dl_info.value
             exported_path = tmp_path / download.suggested_filename
             download.save_as(str(exported_path))
@@ -490,6 +586,5 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
     finally:
         _stop_ui_server(proc)
 
-    for fname in EXPECTED_SCREENSHOTS:
+    for fname in EXPECTED_TEMP_SCREENSHOTS:
         assert (shots_dir / fname).is_file(), f"Missing temp screenshot {fname}"
-        assert (DOCS_UI_DIR / fname).is_file(), f"Missing docs/ui screenshot {fname}"

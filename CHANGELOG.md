@@ -8,6 +8,10 @@ the kernel's contract shape.
 
 ## Unreleased
 
+### Changed
+
+- **T172:** redesigned the Rigorloom local review UI around an Open workspace (`OpenView`) and a synchronized Paper-Sheet + Change-List Review workspace (`ReviewView`, `PageSheet`, `ChangeList`, `ChangeRow`, `ApprovalDialog`) backed by Warm Paper WCAG 2.1 AA light/dark tokens, centralized bilingual Korean/English vocabulary ([docs/ui/vocabulary.md](docs/ui/vocabulary.md)), authoritative Python preview-diff row guard mapping (`guardHelper.ts`), a 24-op gongmun walkthrough E2E test (`tests/test_ui_walkthrough_gongmun.py`), refreshed Playwright E2E coverage (`tests/test_ui_playwright.py`), canonical screenshots under `docs/ui/`, and the rebuilt web bundle (`runtime/scripts/ui_dist`).
+
 ## v0.18.0 — 2026-11-15
 
 An agent or a person proposes an edit to a Korean official document. A person reviews exactly what will change and approves it before the HWPX file is modified. `RuntimeCore` owns the edit path, with the few remaining exceptions listed in [docs/architecture.md](docs/architecture.md).
