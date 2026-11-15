@@ -24,7 +24,6 @@ import {
   isHwpGuidanceErrorCode,
   isMissingSourceErrorCode,
   isSupportedDocumentFilename,
-  openCopyGap,
   pathBasename,
   resolveOpenErrorMessage,
   type OpenRecentItem,
@@ -508,7 +507,7 @@ export function OpenView() {
             >
               <div className="open-by-path-body">
                 <p className="open-by-path-hint">
-                  {openCopyGap("pathDisclosureHint", language)}
+                  {t("open_path_disclosure_hint", language)}
                 </p>
                 <button
                   type="button"
@@ -613,7 +612,7 @@ export function OpenView() {
               aria-controls="open-samples-body"
               onClick={() => setSamplesOpenOverride(!samplesOpen)}
             >
-              {openCopyGap(samplesOpen ? "samplesHide" : "samplesShow", language)}
+              {t(samplesOpen ? "open_samples_hide" : "open_samples_show", language)}
             </button>
           </div>
 

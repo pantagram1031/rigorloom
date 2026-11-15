@@ -230,7 +230,7 @@ export function ApprovalDialog() {
                 disabled={draft.ops.length === 0 || busy}
                 onClick={() => void reproposeDraft()}
               >
-                {language === "en" ? "Re-propose" : "다시 제안하기"}
+                {t("review_repropose", language)}
               </button>
             </div>
           ) : null}
@@ -254,7 +254,7 @@ export function ApprovalDialog() {
                   data-testid="approval-recovery-check-btn"
                   onClick={() => void resolveRecovery()}
                 >
-                  {language === "en" ? "Check revision status" : "적용 여부 확인"}
+                  {t("review_check_status", language)}
                 </button>
               ) : null}
             </div>
@@ -288,9 +288,7 @@ export function ApprovalDialog() {
 
             {guardChecking ? (
               <p className="approval-guard-note">
-                {language === "en"
-                  ? "Checking protected facts..."
-                  : "사실 변경 여부를 점검하고 있습니다."}
+                {t("review_guard_checking", language)}
               </p>
             ) : guardUnavailable ? (
               <p
@@ -405,12 +403,8 @@ export function ApprovalDialog() {
                     onClick={() => void loadPipelineGates(wsInput)}
                   >
                     {pipelineGatesPhase === "starting"
-                      ? language === "en"
-                        ? "Checking..."
-                        : "조회 중..."
-                      : language === "en"
-                        ? "Load gates"
-                        : "게이트 조회"}
+                      ? t("pipeline_checking_gates", language)
+                      : t("pipeline_load_gates", language)}
                   </button>
                 </div>
                 {pipelineGatesError ? (
@@ -479,9 +473,7 @@ export function ApprovalDialog() {
             onClick={() => void handleConfirm()}
           >
             {busy
-              ? language === "en"
-                ? "Applying..."
-                : "적용 중..."
+              ? t("review_applying", language)
               : t("review_approve", language)}
           </button>
         </div>

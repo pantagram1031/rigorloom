@@ -376,6 +376,10 @@ export const ERROR_CODE_VOCAB = {
   agent_output_unreadable: MSG_AGENT_UNREADABLE,
   agent_plan_before_unreadable: MSG_AGENT_UNREADABLE,
   agent_plan_projection_unsupported: MSG_AGENT_UNREADABLE,
+  file_too_large: {
+    ko: "파일 크기가 너무 커서 열 수 없습니다.",
+    en: "The file is too large to open.",
+  },
 } as const satisfies Record<string, VocabEntry>;
 
 export const VOCABULARY = {
@@ -707,6 +711,32 @@ export const VOCABULARY = {
   close: { ko: "닫기", en: "Close" },
   fallback_unknown_action: { ko: "편집 작업", en: "Edit action" },
   fallback_unknown_error: MSG_INTERNAL_ERROR,
+  open_samples_show: { ko: "목록 펼치기", en: "Show forms" },
+  open_samples_hide: { ko: "목록 접기", en: "Hide forms" },
+  open_path_disclosure_hint: {
+    ko: "직접 파일 경로를 입력해 문서를 열어야 할 때 사용합니다.",
+    en: "Use this if you need to open a document directly by file path.",
+  },
+  review_suggest_body_style: {
+    ko: "권장 본문 서식 적용",
+    en: "Use suggested body style",
+  },
+  review_save_edit: { ko: "적용", en: "Save" },
+  review_repropose: { ko: "다시 제안하기", en: "Re-propose" },
+  review_check_status: { ko: "적용 여부 확인", en: "Check revision status" },
+  review_applying: { ko: "적용 중...", en: "Applying..." },
+  review_guard_checking: {
+    ko: "사실 변경 여부를 점검하고 있습니다.",
+    en: "Checking protected facts...",
+  },
+  pipeline_checking_gates: { ko: "조회 중...", en: "Checking..." },
+  pipeline_load_gates: { ko: "게이트 조회", en: "Load gates" },
+  review_zoom_out: { ko: "축소", en: "Zoom out" },
+  review_zoom_in: { ko: "확대", en: "Zoom in" },
+  delete_guides_noninvertible: {
+    ko: "안내문을 지울 때 사라진 문단 서식을 되살릴 수 없어 자동으로 되돌릴 수 없습니다.",
+    en: "Removing form instructions cannot be undone automatically because removed paragraph formatting cannot be restored.",
+  },
 } as const satisfies Record<string, VocabEntry>;
 
 export type VocabularyKey = keyof typeof VOCABULARY;

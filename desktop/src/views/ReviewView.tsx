@@ -102,7 +102,7 @@ export function ReviewView() {
     if (!sessionId || !hasTextsLoaded) return;
     const candidate = findAdoptableExternalPlan(sessionId, events, draft);
     if (!candidate) return;
-    const attemptKey = `${sessionId}:${candidate.planId}`;
+    const attemptKey = `${sessionId}:${candidate.planId}:${candidate.approvalId ?? ""}`;
     if (adoptedAttemptRef.current === attemptKey) return;
     adoptedAttemptRef.current = attemptKey;
     void adoptExternalPlan(sessionId, candidate.planId, candidate.approvalId);

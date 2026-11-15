@@ -192,6 +192,7 @@
 | `agent_output_unreadable` | 에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다. | Could not display the agent’s proposal. Request it again. |
 | `agent_plan_before_unreadable` | 에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다. | Could not display the agent’s proposal. Request it again. |
 | `agent_plan_projection_unsupported` | 에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다. | Could not display the agent’s proposal. Request it again. |
+| `file_too_large` | 파일 크기가 너무 커서 열 수 없습니다. | The file is too large to open. |
 
 ## 5. 화면 일반 문구 (`VOCABULARY`)
 
@@ -340,3 +341,17 @@
 | `close` | 닫기 | Close |
 | `fallback_unknown_action` | 편집 작업 | Edit action |
 | `fallback_unknown_error` | 작업을 처리하지 못했습니다. 자세히에서 원인을 확인할 수 있습니다. | Could not complete the task. See details for the cause. |
+| `open_samples_show` | 목록 펼치기 | Show forms |
+| `open_samples_hide` | 목록 접기 | Hide forms |
+| `open_path_disclosure_hint` | 직접 파일 경로를 입력해 문서를 열어야 할 때 사용합니다. | Use this if you need to open a document directly by file path. |
+| `review_suggest_body_style` | 권장 본문 서식 적용 | Use suggested body style |
+| `review_save_edit` | 적용 | Save |
+| `review_repropose` | 다시 제안하기 | Re-propose |
+| `review_check_status` | 적용 여부 확인 | Check revision status |
+| `review_applying` | 적용 중... | Applying... |
+| `review_guard_checking` | 사실 변경 여부를 점검하고 있습니다. | Checking protected facts... |
+| `pipeline_checking_gates` | 조회 중... | Checking... |
+| `pipeline_load_gates` | 게이트 조회 | Load gates |
+| `review_zoom_out` | 축소 | Zoom out |
+| `review_zoom_in` | 확대 | Zoom in |
+| `delete_guides_noninvertible` | 안내문을 지울 때 사라진 문단 서식을 되살릴 수 없어 자동으로 되돌릴 수 없습니다. | Removing form instructions cannot be undone automatically because removed paragraph formatting cannot be restored. |

@@ -10,41 +10,6 @@ import type {
 import type { Draft, WorkspaceState } from "../store";
 import { errorCodeMessage, planStateLabel, t } from "../i18n/vocabulary";
 
-export interface OpenCopyGapEntry {
-  ko: string;
-  en: string;
-}
-
-/**
- * Minimal UI copy gaps not yet present in `i18n/vocabulary.ts`.
- * Reported to Coordinator for consolidation into `vocabulary.ts` in Step 4.
- */
-export const OPEN_COPY_GAPS = {
-  fileTooLarge: {
-    ko: "파일 크기가 너무 커서 열 수 없습니다.",
-    en: "The file is too large to open.",
-  },
-  samplesShow: {
-    ko: "목록 펼치기",
-    en: "Show forms",
-  },
-  samplesHide: {
-    ko: "목록 접기",
-    en: "Hide forms",
-  },
-  pathDisclosureHint: {
-    ko: "직접 파일 경로를 입력해 문서를 열어야 할 때 사용합니다.",
-    en: "Use this if you need to open a document directly by file path.",
-  },
-} as const satisfies Record<string, OpenCopyGapEntry>;
-
-export function openCopyGap(
-  key: keyof typeof OPEN_COPY_GAPS,
-  language: UiLanguage,
-): string {
-  return OPEN_COPY_GAPS[key][language];
-}
-
 export interface OpenRecentBadge {
   kind: "pending" | "applied";
   label: string;
@@ -240,9 +205,6 @@ export function resolveOpenErrorMessage(
   language: UiLanguage,
 ): string {
   if (!err) return errorCodeMessage("internal_error", language);
-  if (err.code === "file_too_large") {
-    return openCopyGap("fileTooLarge", language);
-  }
   return errorCodeMessage(err.code, language);
 }
 

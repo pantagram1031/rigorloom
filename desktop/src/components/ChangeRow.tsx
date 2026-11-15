@@ -11,6 +11,7 @@ import {
   undoQueuedOp,
 } from "../actions";
 import {
+  checkStateLabel,
   errorCodeMessage,
   guardCategoryLabel,
   planStateLabel,
@@ -142,7 +143,12 @@ export function ChangeRow({
               cls: "change-pill change-pill--kept",
               text: t("guard_pill_kept", language),
             }
-          : null;
+          : audit.status === "not_checked"
+            ? {
+                cls: "change-pill change-pill--not-checked",
+                text: checkStateLabel("not_run", language),
+              }
+            : null;
 
   const rowClasses = [
     "change-row",
@@ -251,9 +257,7 @@ export function ChangeRow({
                 disabled={disabled}
                 onClick={() => void declareSuggestedCharPr(change.opId)}
               >
-                {language === "en"
-                  ? "Use suggested body style"
-                  : "권장 본문 서식 적용"}
+                {t("review_suggest_body_style", language)}
               </button>
             </div>
           ) : null}
@@ -298,7 +302,7 @@ export function ChangeRow({
                   disabled={disabled}
                   onClick={() => void commitInlineEdit()}
                 >
-                  {language === "en" ? "Save" : "적용"}
+                  {t("review_save_edit", language)}
                 </button>
                 <button
                   type="button"

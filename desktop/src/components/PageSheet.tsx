@@ -566,7 +566,7 @@ export function PageSheet({
               type="button"
               className="page-ctrl-btn"
               disabled={zoom <= 0.5}
-              aria-label={language === "en" ? "Zoom out" : "축소"}
+              aria-label={t("review_zoom_out", language)}
               onClick={() => setZoom(Math.max(0.5, Number((zoom - 0.1).toFixed(2))))}
             >
               −
@@ -585,7 +585,7 @@ export function PageSheet({
               type="button"
               className="page-ctrl-btn"
               disabled={zoom >= 2.0}
-              aria-label={language === "en" ? "Zoom in" : "확대"}
+              aria-label={t("review_zoom_in", language)}
               onClick={() => setZoom(Math.min(2.0, Number((zoom + 0.1).toFixed(2))))}
             >
               +

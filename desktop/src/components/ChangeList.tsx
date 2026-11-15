@@ -257,7 +257,7 @@ export function ChangeList({
               disabled={busy}
               onClick={() => void reproposeDraft()}
             >
-              {language === "en" ? "Re-propose" : "다시 제안하기"}
+              {t("review_repropose", language)}
             </button>
           </div>
         ) : null}
@@ -278,7 +278,7 @@ export function ChangeList({
                 data-testid="review-recovery-check-btn"
                 onClick={() => void resolveRecovery()}
               >
-                {language === "en" ? "Check revision status" : "적용 여부 확인"}
+                {t("review_check_status", language)}
               </button>
             ) : null}
           </div>
