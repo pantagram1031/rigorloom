@@ -1,25 +1,20 @@
-/**
- * The webview half of crash visibility.
- *
- * `src-tauri/src/main.rs` installs a panic hook so a Rust panic writes
- * crash.log instead of vanishing (spike obligation 5, M17). This is the same
- * obligation on the other side of the IPC boundary: an uncaught render error
- * unmounts the whole React root, and the window then shows nothing at all with
- * no indication that anything went wrong.
- *
- * That failure is not hypothetical here. The first smoke run against the built
- * app reported every store assertion passing and every DOM assertion failing,
- * because a selector returning a fresh `[]` tripped React's infinite-loop
- * detection and took the root down silently. With this boundary the same bug
- * would have named itself on screen.
- */
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { t } from "../i18n/vocabulary";
+import { getState } from "../store";
+import { DetailDisclosure } from "./DetailDisclosure";
 
 interface State {
   error: Error | null;
   stack: string | null;
 }
 
+/**
+ * Last-resort boundary around the whole shell.
+ *
+ * A single unexpected shape in one component should not turn the window into a
+ * blank square. The runtime keeps running underneath, so the user gets a
+ * plain message and the details under a collapsed disclosure.
+ */
 export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { error: null, stack: null };
 
@@ -35,33 +30,29 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
 
   render() {
     if (!this.state.error) return this.props.children;
+    const language = getState().language;
     return (
       <div className="boot">
         <div className="fatal" data-testid="render-error">
-          <h2>화면을 그리지 못했습니다</h2>
-          <p className="prose" style={{ color: "var(--fg)" }}>
-            문서와 런타임은 그대로입니다. 창을 다시 열면 이어서 작업할 수 있습니다.
-          </p>
-          <p className="prose mono" style={{ marginTop: "var(--s3)" }}>
-            {this.state.error.message}
-          </p>
-          {this.state.stack ? (
-            <details style={{ marginTop: "var(--s3)" }}>
-              <summary style={{ fontSize: "var(--text-xs)", color: "var(--fg-faint)" }}>
-                자세히
-              </summary>
-              <pre
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--text-xs)",
-                  whiteSpace: "pre-wrap",
-                  userSelect: "text",
-                }}
-              >
-                {this.state.stack}
+          <h2>{t("error_boundary_title", language)}</h2>
+          <p className="prose">{t("error_boundary_body", language)}</p>
+          <div style={{ marginTop: "var(--space-2)" }}>
+            <button
+              type="button"
+              className="action primary"
+              onClick={() => window.location.reload()}
+            >
+              {t("error_boundary_retry", language)}
+            </button>
+          </div>
+          <div style={{ marginTop: "var(--space-2)" }}>
+            <DetailDisclosure>
+              <pre style={{ whiteSpace: "pre-wrap", userSelect: "text", margin: 0 }}>
+                {this.state.error.message}
+                {this.state.stack ? `\n${this.state.stack}` : ""}
               </pre>
-            </details>
-          ) : null}
+            </DetailDisclosure>
+          </div>
         </div>
       </div>
     );

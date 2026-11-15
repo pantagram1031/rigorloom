@@ -27,7 +27,7 @@
  * a handler that committed the edit there would end the edit halfway through
  * the user's word.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { setState } from "../store";
 
@@ -38,9 +38,16 @@ export function SeatEditor({
   className = "seat-input",
   style,
   caret,
+  multiline: initialMultiline = false,
+  allowMultiline = false,
+  onMultilineChange,
+  onCycleBlank,
+  onEscapeExit,
+  ariaLabel = "이 자리에 넣을 값",
+  placeholder,
 }: {
   value: string;
-  onCommit: (next: string) => void;
+  onCommit: (next: string, reason?: "enter" | "blur") => void;
   onCancel: () => void;
   /** The page surface sizes its field from the seat's rect; the tree does not. */
   className?: string;
@@ -54,59 +61,174 @@ export function SeatEditor({
    * different fact, which is why the caller keeps them apart and says which.
    */
   caret?: number | null;
+  /** Render a `<textarea>` directly for multi-line values (`lines`). */
+  multiline?: boolean;
+  /** Allow Shift+Enter in single-line mode to switch cleanly into `<textarea>`. */
+  allowMultiline?: boolean;
+  onMultilineChange?: (multi: boolean) => void;
+  /** Optional blank cycling on Tab / Shift+Tab (Fill mode). */
+  onCycleBlank?: (direction: 1 | -1, currentValue: string) => void;
+  /** Optional Esc override to return focus to the page sheet container (Ruling H). */
+  onEscapeExit?: () => void;
+  ariaLabel?: string;
+  placeholder?: string;
 }) {
   const [text, setText] = useState(value);
-  const field = useRef<HTMLInputElement>(null);
+  const [isMultiline, setIsMultiline] = useState(
+    Boolean(initialMultiline || value.includes("\n")),
+  );
+  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
+  const skipBlurRef = useRef(false);
+  const switchingRef = useRef(false);
+  const nextCaretRef = useRef<number | null>(null);
+
+  const currentField = (): HTMLInputElement | HTMLTextAreaElement | null =>
+    isMultiline ? textareaRef.current : inputRef.current;
 
   useEffect(() => {
-    field.current?.focus();
-    if (caret === undefined) {
-      field.current?.select();
+    setIsMultiline(Boolean(initialMultiline || value.includes("\n")));
+  }, [initialMultiline, value]);
+
+  useEffect(() => {
+    const el = currentField();
+    if (!el) return;
+    el.focus();
+    if (switchingRef.current) {
+      switchingRef.current = false;
+      const pos = Math.max(0, Math.min(nextCaretRef.current ?? el.value.length, el.value.length));
+      nextCaretRef.current = null;
+      el.setSelectionRange(pos, pos);
       return;
     }
-    const at = Math.max(0, Math.min(caret ?? 0, value.length));
-    field.current?.setSelectionRange(at, at);
-    // On mount only: re-running this on every keystroke would drag the cursor
-    // back to where the click landed, mid-word.
+    if (caret === undefined) {
+      el.select();
+      return;
+    }
+    const at = Math.max(0, Math.min(caret ?? 0, el.value.length));
+    el.setSelectionRange(at, at);
+    // Focus/selection placement only runs on mount or single->multi switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isMultiline]);
+
+  const handleCompositionStart = () => {
+    composing.current = true;
+  };
+
+  const handleCompositionEnd = (
+    e: React.CompositionEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    composing.current = false;
+    // Recorded so the IME harness can tell a composed string from
+    // characters injected straight into the field: both look the same in
+    // the value, and only one of them exercised the IME.
+    setState({ sawComposition: true });
+    // The composed syllable arrives here on some IMEs without a further
+    // input event, so read it off the element rather than trusting state.
+    setText(e.currentTarget.value);
+  };
+
+  const handleKeyDown = (
+    e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    if (composing.current || e.nativeEvent.isComposing) {
+      e.stopPropagation();
+      return;
+    }
+    const cur = currentField()?.value ?? text;
+    if (e.key === "Enter") {
+      if (e.shiftKey && allowMultiline && !isMultiline) {
+        e.preventDefault();
+        const el = inputRef.current;
+        const start = el?.selectionStart ?? cur.length;
+        const end = el?.selectionEnd ?? cur.length;
+        const nextText =
+          cur.length === 0 ? cur : `${cur.slice(0, start)}\n${cur.slice(end)}`;
+        nextCaretRef.current = cur.length === 0 ? 0 : start + 1;
+        switchingRef.current = true;
+        setText(nextText);
+        setIsMultiline(true);
+        onMultilineChange?.(true);
+        e.stopPropagation();
+        return;
+      }
+      if (!isMultiline || e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        skipBlurRef.current = true;
+        onCommit(cur, "enter");
+        e.stopPropagation();
+        return;
+      }
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === "Tab" && onCycleBlank) {
+      e.preventDefault();
+      skipBlurRef.current = true;
+      onCycleBlank(e.shiftKey ? -1 : 1, cur);
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      skipBlurRef.current = true;
+      if (onEscapeExit) {
+        onEscapeExit();
+      } else {
+        onCancel();
+      }
+      e.stopPropagation();
+      return;
+    }
+    // Every other key, modifiers included, belongs to the field.
+    e.stopPropagation();
+  };
+
+  const handleBlur = () => {
+    if (switchingRef.current) return;
+    if (skipBlurRef.current) {
+      skipBlurRef.current = false;
+      return;
+    }
+    onCommit(currentField()?.value ?? text, "blur");
+  };
+
+  if (isMultiline) {
+    return (
+      <textarea
+        ref={textareaRef}
+        className={`${className} seat-input--multiline`}
+        data-testid="seat-input"
+        value={text}
+        style={style}
+        rows={Math.max(2, Math.min(6, text.split(/\r?\n/).length + 1))}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        onChange={(e) => setText(e.target.value)}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
+        onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
+  }
 
   return (
     <input
-      ref={field}
+      ref={inputRef}
       className={className}
       data-testid="seat-input"
       value={text}
       style={style}
-      aria-label="이 자리에 넣을 값"
+      placeholder={placeholder}
+      aria-label={ariaLabel}
       onChange={(e) => setText(e.target.value)}
-      onCompositionStart={() => {
-        composing.current = true;
-      }}
-      onCompositionEnd={(e) => {
-        composing.current = false;
-        // Recorded so the IME harness can tell a composed string from
-        // characters injected straight into the field: both look the same in
-        // the value, and only one of them exercised the IME.
-        setState({ sawComposition: true });
-        // The composed syllable arrives here on some IMEs without a further
-        // input event, so read it off the element rather than trusting state.
-        setText((e.target as HTMLInputElement).value);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          if (composing.current || e.nativeEvent.isComposing) return;
-          e.preventDefault();
-          onCommit(field.current?.value ?? text);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-        // Every other key, modifiers included, belongs to the field.
-        e.stopPropagation();
-      }}
-      onBlur={() => onCommit(field.current?.value ?? text)}
+      onCompositionStart={handleCompositionStart}
+      onCompositionEnd={handleCompositionEnd}
+      onKeyDown={handleKeyDown}
+      onBlur={handleBlur}
       onClick={(e) => e.stopPropagation()}
     />
   );

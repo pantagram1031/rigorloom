@@ -67,8 +67,8 @@ Protocol: `docs/runtime-protocol-v0.md`. Product shape: `docs/product-direction.
 | `src/store.ts` | **the one Workspace** both views project |
 | `src/actions.ts` | every operation, as plain functions, so the smoke drives the real path |
 | `src/runtime.ts` | thin invoke wrappers and event subscriptions |
-| `src/views/` | `DocumentView`, `AgentView` — layouts, no state |
-| `src/components/` | tree, text view, panels, verification bar, findings, timeline, composer, logo, splash, review queue, receipt panel, conversation, settings, editor toolbar, task packs, page overlay, **`SeatEditor` — the one inline `<input>`, mounted by BOTH the tree and the page** |
+| `src/views/` | `OpenView`, `ReviewView`, `FillView`, `HistoryView`, `SettingsView` — layouts, no state |
+| `src/components/` | page sheet, change list, change row, approval dialog, top bar, command palette, operator modal, splash, settings, detail disclosure, **`SeatEditor` — the one inline `<input>` mounted inside the page sheet** |
 | `src/assets/` | `logo.svg` (drawing of record) and the bundled Pretendard + `OFL.txt` |
 | `src/devMock.ts` + `src/fixtures/` | browser-mode replay of a recorded real session; `import.meta.env.DEV` only, absent from production bundles |
 | `src/smoke.ts` | the scripted checks, run inside the built app |
@@ -190,23 +190,12 @@ but navigation and user work that must survive a view switch live in the
 Workspace. `sharedStateSignature()` states that contract once in the store, and
 the smoke asserts the signature is byte-identical across a round trip.
 
-**Document view** — structure tree · page surface · selection context ·
-verification bar.
+**Open and Fill views** — corpus and file opener · recent sessions · paper
+sheet with dashed blanks · inline seat entry and queued field list.
 
-**Agent view** — open documents · timeline and composer · document context ·
-the same verification bar component with the same props, because proof state has
-one home and must read identically wherever the user is standing.
-
-Every row in the structure tree has a producer in the `document/inspect`
-response. Nothing is inferred:
-
-| Row | Source |
-| --- | --- |
-| 구역 / 문단 | `graph.paragraphs[]` — `section`, `at_para`, `text` |
-| 표 / 칸 | `graph.tables[].cells[]` — `addr`, `classification`, `textPreview` |
-| 채움 자리 | `regions.regions[]` with their T30/T127 preflight |
-| 안내문 | cells classified `guide` |
-| 이 빌드가 보지 못하는 것 | `capabilities.backends` + `capabilities.unavailable` |
+**Review, History, and Settings views** — paper sheet and change list ·
+guard audit and approval dialog · revision timeline and comparison · language,
+theme, and workspace folder preferences.
 
 That last group is the honest answer to "unsupported structures". The Runtime
 does not enumerate what it failed to parse, so the panel reports what this build

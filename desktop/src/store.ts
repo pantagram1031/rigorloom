@@ -47,10 +47,12 @@ import type {
   RenderResult,
   RuntimeError,
   RuntimeEvent,
+  ScreenId,
   Session,
   SidecarStatus,
   TaskPackList,
   Turn,
+  UiLanguage,
 } from "./types";
 
 export type View = "document" | "agent";
@@ -249,6 +251,10 @@ export interface InlineCellEdit extends InlineEditBase {
   table: number;
   row: number;
   col: number;
+  /** True when explicitly replacing a static cell's existing content (`replace_at_cell`). */
+  replaceExisting?: boolean;
+  /** True when the inline editor is opened or promoted to multi-line (`<textarea>`). */
+  multiline?: boolean;
 }
 
 /**
@@ -632,6 +638,20 @@ export interface WorkspaceState {
 
   /** Set when the app was launched by the scripted smoke. */
   smokePhase: string | null;
+
+  // --- Run 1 navigation & chrome state ------------------------------------
+  screen: ScreenId;
+  language: UiLanguage;
+  selectedChangeId: string | null;
+  expandedChangeId: string | null;
+  printViewEnabled: boolean;
+  mobileReviewPane: "sheet" | "list";
+  mobileExplicitFit: boolean;
+  commandPaletteOpen: boolean;
+  operatorModalOpen: boolean;
+  returnPopoverOpen: boolean;
+  /** Bumped when CommandPalette asks OpenView to expand and scroll to the samples list. */
+  openSamplesRevealNonce: number;
 }
 
 /**
@@ -714,7 +734,7 @@ const initial: WorkspaceState = {
   expanded: [],
   page: 1,
   zoom: 1,
-  pageFit: "free",
+  pageFit: "width",
   centerMode: "text",
   locateNonce: 0,
 
@@ -825,6 +845,18 @@ const initial: WorkspaceState = {
   fullscreen: false,
 
   smokePhase: null,
+
+  screen: "open",
+  language: "ko",
+  selectedChangeId: null,
+  expandedChangeId: null,
+  printViewEnabled: false,
+  mobileReviewPane: "list",
+  mobileExplicitFit: false,
+  commandPaletteOpen: false,
+  operatorModalOpen: false,
+  returnPopoverOpen: false,
+  openSamplesRevealNonce: 0,
 };
 
 let state: WorkspaceState = initial;
@@ -950,10 +982,15 @@ export function toggleExpanded(id: string) {
  * does not do what it says.
  */
 export const setZoom = (zoom: number) =>
-  setState({ zoom: Math.min(4, Math.max(0.5, zoom)), pageFit: "free" });
+  setState({
+    zoom: Math.min(4, Math.max(0.5, zoom)),
+    pageFit: "free",
+    mobileExplicitFit: false,
+  });
 
 /** Enter (or leave) a fit mode. The scale itself is measured by the page view. */
-export const setPageFit = (pageFit: PageFit) => setState({ pageFit });
+export const setPageFit = (pageFit: PageFit) =>
+  setState({ pageFit, mobileExplicitFit: pageFit !== "free" });
 
 /**
  * The scale a FIT arrived at. Keeps the mode, unlike `setZoom`.
@@ -1370,6 +1407,24 @@ export function queuedOpAt(
     s.draft.ops.find(
       (op): op is QueuedFillOp =>
         op.kind === "fill_cell" && op.table === table && op.row === row && op.col === col,
+    ) ?? null
+  );
+}
+
+/** Any queued cell op (`fill_cell` or `replace_at_cell`) at a cell coordinate. */
+export function queuedCellOpAt(
+  s: WorkspaceState,
+  table: number,
+  row: number,
+  col: number,
+): QueuedFillOp | QueuedReplaceAtCellOp | null {
+  return (
+    s.draft.ops.find(
+      (op): op is QueuedFillOp | QueuedReplaceAtCellOp =>
+        (op.kind === "fill_cell" || op.kind === "replace_at_cell") &&
+        op.table === table &&
+        op.row === row &&
+        op.col === col,
     ) ?? null
   );
 }

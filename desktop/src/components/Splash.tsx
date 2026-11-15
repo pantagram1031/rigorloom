@@ -13,6 +13,8 @@
  */
 import { useEffect, useState } from "react";
 
+import { t } from "../i18n/vocabulary";
+import { useWorkspace } from "../store";
 import { Logo } from "./Logo";
 
 const TOTAL_MS = 700;
@@ -28,6 +30,7 @@ export function Splash({
   onDone: () => void;
   frozen?: boolean;
 }) {
+  const language = useWorkspace((s) => s.language);
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
@@ -46,7 +49,7 @@ export function Splash({
       data-testid="splash"
       onClick={frozen ? undefined : onDone}
       role="presentation"
-      title="눌러서 건너뛰기"
+      title={t("splash_loading", language)}
     >
       <Logo size={72} draw />
       <div className="wordmark">Rigorloom</div>

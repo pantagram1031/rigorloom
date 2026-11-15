@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844">
+  <defs>
+    <style>
+      text { font-family: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; fill: #181817; }
+      .muted { fill: #8A8984; font-size: 12px; font-weight: 400; }
+      .sec { fill: #575653; font-size: 13px; font-weight: 400; }
+      .body { fill: #181817; font-size: 13px; font-weight: 400; }
+      .semi { fill: #181817; font-size: 13px; font-weight: 600; }
+      .lg { fill: #181817; font-size: 15px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect width="390" height="844" fill="#F0F0EE"/>
+
+  <!-- Mobile Top Bar (48px) -->
+  <rect x="0" y="0" width="390" height="48" fill="#FFFFFF"/>
+  <line x1="0" y1="48" x2="390" y2="48" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="16" y="29" class="sec">열기</text>
+  <text x="52" y="29" class="semi">근로계약서.hwpx</text>
+  <rect x="172" y="14" width="48" height="20" rx="4" fill="#EBF1FD"/>
+  <text x="196" y="28" text-anchor="middle" font-size="12" font-weight="600" fill="#1A56DB">검토 중</text>
+  <rect x="228" y="10" width="84" height="28" rx="6" fill="#F0F0EE"/>
+  <text x="270" y="28" text-anchor="middle" font-size="12" font-weight="600" fill="#575653">돌려보내기</text>
+  <rect x="320" y="10" width="54" height="28" rx="6" fill="#1A56DB"/>
+  <text x="347" y="28" text-anchor="middle" font-size="12" font-weight="600" fill="#FFFFFF">승인</text>
+
+  <!-- 2-Segment Switch (36px) -->
+  <rect x="0" y="49" width="390" height="36" fill="#FFFFFF"/>
+  <line x1="0" y1="85" x2="390" y2="85" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="97" y="72" text-anchor="middle" class="semi" fill="#1A56DB">문서 쪽</text>
+  <rect x="24" y="83" width="146" height="2" fill="#1A56DB"/>
+  <text x="292" y="72" text-anchor="middle" class="sec">변경 목록 4 (주의 1)</text>
+
+  <!-- Width-fitted Form Paper -->
+  <rect x="16" y="101" width="358" height="656" fill="#FFFFFF" stroke="#D8D7D2" stroke-width="1"/>
+  <text x="195" y="142" text-anchor="middle" class="lg">표 준 근 로 계 약 서</text>
+
+  <rect x="32" y="164" width="326" height="200" fill="#FFFFFF" stroke="#181817" stroke-width="1"/>
+  <line x1="124" y1="164" x2="124" y2="364" stroke="#181817" stroke-width="1"/>
+  <line x1="32" y1="212" x2="358" y2="212" stroke="#181817" stroke-width="1"/>
+  <line x1="32" y1="268" x2="358" y2="268" stroke="#181817" stroke-width="1"/>
+
+  <rect x="33" y="165" width="90" height="46" fill="#F7F7F5"/>
+  <text x="42" y="193" class="semi">성명</text>
+  <rect x="125" y="165" width="232" height="46" fill="#F2F6FE"/>
+  <rect x="125" y="165" width="3" height="46" fill="#1A56DB"/>
+  <text x="136" y="193" class="semi">1  홍길동</text>
+
+  <rect x="33" y="213" width="90" height="54" fill="#F7F7F5"/>
+  <text x="42" y="245" class="semi">근무 장소</text>
+  <rect x="125" y="213" width="232" height="54" fill="#EBF1FD" stroke="#1A56DB" stroke-width="1.5"/>
+  <rect x="125" y="213" width="3" height="54" fill="#1A56DB"/>
+  <text x="136" y="245" class="semi">2  종로구 세종대로 110</text>
+
+  <rect x="33" y="269" width="90" height="94" fill="#F7F7F5"/>
+  <text x="42" y="320" class="semi">계약기간</text>
+  <rect x="125" y="269" width="232" height="94" fill="#FDF2F2"/>
+  <rect x="125" y="269" width="3" height="94" fill="#DC2626"/>
+  <text x="136" y="302" class="semi" fill="#B91C1C">3  2026년 4월 1일부터</text>
+  <text x="136" y="328" class="muted">이전: 2026년 3월 1일</text>
+
+  <!-- Sticky Bottom Change Stepper Peek Bar (64px) -->
+  <rect x="0" y="780" width="390" height="64" fill="#FFFFFF"/>
+  <line x1="0" y1="780" x2="390" y2="780" stroke="#E4E4E0" stroke-width="1"/>
+  <rect x="16" y="796" width="52" height="32" rx="6" fill="#F0F0EE"/>
+  <text x="42" y="817" text-anchor="middle" class="sec">이전</text>
+  <text x="80" y="809" class="semi">2 / 4 · 빈칸 채움 (근무 장소)</text>
+  <text x="80" y="827" font-size="12" font-weight="600" fill="#166534">보호 사실 유지됨</text>
+  <rect x="322" y="796" width="52" height="32" rx="6" fill="#F0F0EE"/>
+  <text x="348" y="817" text-anchor="middle" class="sec">다음</text>
+</svg>

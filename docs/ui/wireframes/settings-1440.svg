@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      text { font-family: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; fill: #181817; }
+      .muted { fill: #8A8984; font-size: 12px; font-weight: 400; }
+      .sec { fill: #575653; font-size: 13px; font-weight: 400; }
+      .body { fill: #181817; font-size: 13px; font-weight: 400; }
+      .semi { fill: #181817; font-size: 13px; font-weight: 600; }
+      .lg { fill: #181817; font-size: 15px; font-weight: 600; }
+      .disp { fill: #181817; font-size: 20px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="900" fill="#F7F7F5"/>
+
+  <!-- Top Bar -->
+  <rect x="0" y="0" width="1440" height="48" fill="#FFFFFF"/>
+  <line x1="0" y1="48" x2="1440" y2="48" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="24" y="29" class="lg">Rigorloom</text>
+  <text x="128" y="29" class="sec">열기</text>
+  <text x="180" y="29" class="sec">검토 4</text>
+  <text x="244" y="29" class="sec">채우기</text>
+  <text x="304" y="29" class="sec">기록</text>
+  <text x="1376" y="29" class="semi" fill="#1A56DB">설정</text>
+  <rect x="1372" y="46" width="32" height="2" fill="#1A56DB"/>
+
+  <!-- Centered Settings Sheet (560px wide, x=440..1000) -->
+  <text x="440" y="132" class="disp">설정</text>
+  <line x1="440" y1="156" x2="1000" y2="156" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 1: Language (한국어 / English — one at a time, never both on one label) -->
+  <rect x="440" y="157" width="560" height="80" fill="#FFFFFF"/>
+  <text x="464" y="190" class="semi">언어</text>
+  <text x="464" y="212" class="muted">화면의 모든 안내와 단추를 선택한 한 가지 언어로만 표시합니다.</text>
+  <rect x="812" y="179" width="164" height="36" rx="6" fill="#F0F0EE"/>
+  <rect x="816" y="183" width="78" height="28" rx="4" fill="#FFFFFF"/>
+  <text x="855" y="202" text-anchor="middle" class="semi">한국어</text>
+  <text x="935" y="202" text-anchor="middle" class="sec">English</text>
+  <line x1="440" y1="237" x2="1000" y2="237" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 2: Theme -->
+  <rect x="440" y="238" width="560" height="80" fill="#FFFFFF"/>
+  <text x="464" y="271" class="semi">화면 테마</text>
+  <text x="464" y="293" class="muted">밝은 종이 화면이나 어두운 작업 화면을 고릅니다.</text>
+  <rect x="740" y="260" width="236" height="36" rx="6" fill="#F0F0EE"/>
+  <rect x="744" y="264" width="68" height="28" rx="4" fill="#FFFFFF"/>
+  <text x="778" y="283" text-anchor="middle" class="semi">밝게</text>
+  <text x="848" y="283" text-anchor="middle" class="sec">어둡게</text>
+  <text x="930" y="283" text-anchor="middle" class="sec">시스템 설정</text>
+  <line x1="440" y1="318" x2="1000" y2="318" stroke="#E4E4E0" stroke-width="1"/>
+
+  <!-- Row 3: Runtime Root -->
+  <rect x="440" y="319" width="560" height="104" fill="#FFFFFF"/>
+  <text x="464" y="352" class="semi">작업 폴더</text>
+  <text x="464" y="374" class="muted">열어 둔 문서의 작업 사본과 수정 기록이 보관되는 위치입니다.</text>
+  <rect x="464" y="384" width="416" height="28" rx="4" fill="#F7F7F5" stroke="#E4E4E0" stroke-width="1"/>
+  <text x="476" y="403" class="sec">/Users/you/Library/Application Support/Rigorloom</text>
+  <rect x="888" y="384" width="88" height="28" rx="6" fill="#F0F0EE"/>
+  <text x="932" y="403" text-anchor="middle" class="semi">폴더 바꾸기</text>
+  <line x1="440" y1="423" x2="1000" y2="423" stroke="#E4E4E0" stroke-width="1"/>
+</svg>

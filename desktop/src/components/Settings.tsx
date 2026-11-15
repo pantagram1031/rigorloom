@@ -101,7 +101,7 @@ const OWNERSHIP: Record<string, string> = {
   provider_managed: "제공자 쪽이 인증을 갖고 있습니다",
 };
 
-export function Settings() {
+export function Settings({ embedded = false }: { embedded?: boolean } = {}) {
   const open = useWorkspace((s) => s.settingsOpen);
   const saved = useWorkspace((s) => s.provider);
   const profile = useWorkspace((s) => s.providerProfile);
@@ -117,16 +117,16 @@ export function Settings() {
   // Re-seed from the store whenever the pane opens: it is a dialog over shared
   // state, not a second copy of it.
   useEffect(() => {
-    if (open) {
+    if (embedded || open) {
       setDraft(saved);
       setSecret("");
       void refreshCredential();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [embedded, open]);
 
   useEffect(() => {
-    if (!open || draft.provider === "mock") {
+    if ((!embedded && !open) || draft.provider === "mock") {
       setConfig(null);
       return;
     }
@@ -134,9 +134,9 @@ export function Settings() {
       .agentHostReadConfig(draft.provider)
       .then((row) => setConfig(row.exists ? { path: row.path, body: row.config } : null))
       .catch(() => setConfig(null));
-  }, [open, draft.provider, credential?.state]);
+  }, [embedded, open, draft.provider, credential?.state]);
 
-  if (!open) return null;
+  if (!embedded && !open) return null;
 
   const key = activeStoreKey(draft);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
@@ -147,14 +147,23 @@ export function Settings() {
   }
 
   return (
-    <div className="sheet settings" data-testid="settings">
-      <div className="sheet-head">
-        <h2>설정 — 에이전트 제공자</h2>
-        <span className="spacer" />
-        <button className="ghost" data-testid="settings-close" onClick={() => setState({ settingsOpen: false })}>
-          닫기 (Esc)
-        </button>
-      </div>
+    <div
+      className={embedded ? "settings settings-embedded" : "sheet settings"}
+      data-testid="settings"
+    >
+      {!embedded ? (
+        <div className="sheet-head">
+          <h2>설정 — 에이전트 제공자</h2>
+          <span className="spacer" />
+          <button
+            className="ghost"
+            data-testid="settings-close"
+            onClick={() => setState({ settingsOpen: false })}
+          >
+            닫기 (Esc)
+          </button>
+        </div>
+      ) : null}
 
       <div className="sheet-body">
         <section className="section">

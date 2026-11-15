@@ -8,6 +8,10 @@ the kernel's contract shape.
 
 ## Unreleased
 
+### Changed
+
+- **T172:** the local review UI has been rebuilt as five screens: Open, Review, Fill, History and Settings. Review shows the proposed form page next to a list of changes, Fill lets you type into blanks on the page itself, and History lists approved revisions and lets you compare or undo them. Approval and export work as before: you approve one plan hash and the runtime applies it; a test checks that exporting the 공문 example still gives the same file byte for byte. The old session list, plan view and structure tree screens are gone, and the screenshots in `docs/ui/` show the new screens in light and dark at desktop and phone width.
+
 ## v0.18.0 — 2026-11-15
 
 An agent or a person proposes an edit to a Korean official document. A person reviews exactly what will change and approves it before the HWPX file is modified. `RuntimeCore` owns the edit path, with the few remaining exceptions listed in [docs/architecture.md](docs/architecture.md).

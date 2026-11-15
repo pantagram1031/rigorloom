@@ -35,6 +35,7 @@ import {
   setSelection,
   setView,
   showToast,
+  queuedCellOpAt,
   queuedOpAt,
   queuedRunOpAt,
   bumpEditIntent,
@@ -42,7 +43,12 @@ import {
   currentPlanGeneration,
   type Draft,
   type QueuedOp,
+  type WorkspaceState,
 } from "./store";
+import {
+  hasLiveUnappliedPlanInEvents,
+  markExternalPlanDismissed,
+} from "./workspace/externalPlan";
 import {
   activeApprovalBinding,
   approvalBindingIsCurrent,
@@ -57,6 +63,7 @@ import {
   type CaretRefusal as RevisionCaretRefusal,
   type ParagraphEditEffect,
 } from "./revision";
+import { t } from "./i18n/vocabulary";
 import type {
   AppliedCandidate,
   EditableRegion,
@@ -75,7 +82,9 @@ import type {
   Recent,
   RegionText,
   RuntimeError,
+  ScreenId,
   Turn,
+  UiLanguage,
   VerificationReport,
 } from "./types";
 
@@ -210,7 +219,7 @@ export async function loadText(sessionId: string, force = false): Promise<boolea
   return true;
 }
 
-async function loadCandidates(sessionId: string) {
+export async function loadCandidates(sessionId: string) {
   try {
     const list = await rt.candidates(sessionId);
     setState({ candidates: { ...getState().candidates, [sessionId]: list } });
@@ -237,9 +246,14 @@ export async function selectSession(sessionId: string) {
   if (previous !== sessionId) stopDocumentEvents();
   setState({
     activeSessionId: sessionId,
+    screen: "review" as const,
+    mobileReviewPane: "list" as const,
     ...(previous !== sessionId
       ? {
           selection: null,
+          selectedChangeId: null,
+          expandedChangeId: null,
+          returnPopoverOpen: false,
           page: 1,
           findings: [],
           checkedAt: null,
@@ -279,6 +293,9 @@ export async function selectSession(sessionId: string) {
       : {}),
   });
   await rt.savePrefs({ lastSessionId: sessionId });
+  if (Array.isArray(getState().corpusFiles) && getState().corpusFiles.length === 0) {
+    void loadCorpusFiles();
+  }
   await loadInspect(sessionId);
   await loadText(sessionId);
   await loadCandidates(sessionId);
@@ -509,7 +526,12 @@ export function seatAt(
  * syllable rather than deleting it. The spike measured that with real scan
  * codes (M13/M14); this build now has a field to send them to.
  */
-export function beginEdit(table: number, row: number, col: number): boolean {
+export function beginEdit(
+  table: number,
+  row: number,
+  col: number,
+  options?: { multiline?: boolean },
+): boolean {
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return false;
@@ -520,6 +542,10 @@ export function beginEdit(table: number, row: number, col: number): boolean {
     return false;
   }
   const queued = queuedOpAt(state, table, row, col);
+  const multiline =
+    Boolean(options?.multiline) ||
+    queued?.lines !== undefined ||
+    Boolean(queued?.text.includes("\n"));
   setState({
     selection: { kind: "cell", table, row, col },
     inlineEdit: {
@@ -530,9 +556,53 @@ export function beginEdit(table: number, row: number, col: number): boolean {
       before: queued?.before ?? seatText(inspect, state.texts[sessionId] ?? [], table, row, col),
       charPr: queued?.charPr,
       opId: queued?.opId ?? null,
+      multiline,
     },
   });
   return true;
+}
+
+/**
+ * Explicit escape hatch for static cells not marked as blank seats (`design.md` §2.3):
+ * opens an inline editor backed by `replace_at_cell`.
+ */
+export function beginStaticCellEdit(
+  table: number,
+  row: number,
+  col: number,
+  options?: { multiline?: boolean },
+): boolean {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  if (!sessionId) return false;
+  const inspect = state.inspects[sessionId] ?? null;
+  const seat = seatAt(inspect, table, row, col);
+  if (seat && queuedCellOpAt(state, table, row, col)?.kind !== "replace_at_cell") {
+    return beginEdit(table, row, col, options);
+  }
+  const queued = queuedCellOpAt(state, table, row, col);
+  const before = queued?.before ?? seatText(inspect, state.texts[sessionId] ?? [], table, row, col);
+  setState({
+    selection: { kind: "cell", table, row, col },
+    inlineEdit: {
+      kind: "cell",
+      table,
+      row,
+      col,
+      before,
+      charPr: queued?.charPr,
+      opId: queued?.opId ?? null,
+      replaceExisting: true,
+      multiline: Boolean(options?.multiline) || Boolean(queued?.text.includes("\n")) || before.includes("\n"),
+    },
+  });
+  return true;
+}
+
+export function setInlineEditMultiline(multiline: boolean): void {
+  const edit = getState().inlineEdit;
+  if (!edit || edit.kind !== "cell") return;
+  setState({ inlineEdit: { ...edit, multiline } });
 }
 
 /**
@@ -723,10 +793,10 @@ export async function commitEdit(value: string): Promise<void> {
   const unchanged = edit.kind === "run"
     ? runText === (queuedRun?.before ?? edit.before)
     : trimmed === edit.before;
-  if (unchanged) {
-    // Nothing changed. Proposing a no-op plan would put a row in the queue
-    // that says "A → A", which is noise the reviewer has to read past.
-    if (edit.opId) await removeOp(edit.opId);
+  if (unchanged || (edit.kind === "cell" && trimmed === "")) {
+    // Nothing changed, or Ruling J cleared an already-filled blank: remove with undo
+    // rather than leaving a no-op or empty `""` entry in the queue.
+    if (edit.opId) await undoQueuedOp(edit.opId);
     return;
   }
   const ops = getState().draft.ops.filter((op) => op.opId !== edit.opId);
@@ -738,17 +808,32 @@ export async function commitEdit(value: string): Promise<void> {
   // caret a new surface rather than a second mutation route.
   const next: QueuedOp =
     edit.kind === "cell"
-      ? {
-          opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
-          kind: "fill_cell",
-          table: edit.table,
-          row: edit.row,
-          col: edit.col,
-          text: trimmed,
-          charPr: edit.charPr,
-          before: edit.before,
-          origin: "user",
-        }
+      ? edit.replaceExisting
+        ? {
+            opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
+            kind: "replace_at_cell",
+            table: edit.table,
+            row: edit.row,
+            col: edit.col,
+            text: trimmed,
+            mode: "replace",
+            ...(edit.before ? { expect: edit.before } : {}),
+            charPr: edit.charPr,
+            before: edit.before,
+            origin: "user",
+          }
+        : {
+            opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
+            kind: "fill_cell",
+            table: edit.table,
+            row: edit.row,
+            col: edit.col,
+            text: trimmed,
+            ...(trimmed.includes("\n") ? { lines: trimmed.split(/\r?\n/) } : {}),
+            charPr: edit.charPr,
+            before: edit.before,
+            origin: "user",
+          }
       : {
           opId: edit.opId ?? `op-p${edit.atPara}r${edit.run}`,
           kind: "set_run",
@@ -760,7 +845,11 @@ export async function commitEdit(value: string): Promise<void> {
         };
   await setQueue(
     [...ops, next],
-    edit.kind === "run" ? { baseRunId: edit.runId ?? null } : {},
+    edit.kind === "run"
+      ? { baseRunId: edit.runId ?? null }
+      : edit.opId
+        ? { rewritten: didRewriteAgent(edit.opId) }
+        : {},
   );
 }
 
@@ -888,6 +977,10 @@ function didRewriteAgent(opId: string): boolean {
 }
 
 export async function clearQueue(): Promise<void> {
+  const prev = getState().draft;
+  if (typeof markExternalPlanDismissed === "function" && prev.sessionId && prev.plan?.planId) {
+    markExternalPlanDismissed(prev.sessionId, prev.plan.planId);
+  }
   bumpPlanGeneration();
   setState({
     draft: EMPTY_DRAFT,
@@ -918,6 +1011,13 @@ async function setQueue(
 ): Promise<void> {
   const state = getState();
   const sessionId = state.activeSessionId;
+  if (
+    typeof markExternalPlanDismissed === "function" &&
+    state.draft.sessionId &&
+    state.draft.plan?.planId
+  ) {
+    markExternalPlanDismissed(state.draft.sessionId, state.draft.plan.planId);
+  }
   // Empty replacements and document-close replacements must invalidate async
   // adopters/apply attempts too, even though they propose no next plan.
   const gen = bumpPlanGeneration();
@@ -1026,6 +1126,9 @@ async function setQueue(
       ),
       { baseRunId, reverses },
     );
+    if (typeof markExternalPlanDismissed === "function") {
+      markExternalPlanDismissed(sessionId, plan.planId);
+    }
     if (currentPlanGeneration() !== gen) return;
     if (!ownsDraft(owner)) return;
     const validation = await rt.validatePlan(plan.planId);
@@ -1638,7 +1741,18 @@ export async function applyApproved(): Promise<void> {
   if (!ownsPresentation || getState().activeSessionId !== sessionId || getState().head !== applied.runId) return;
   if (reversed) await verifyReversal(applied.runId, reversed);
   if (getState().activeSessionId === sessionId && getState().head === applied.runId) {
-    showToast(`후보본을 만들었습니다 · ${applied.candidate.sha256.slice(0, 12)}`, 2200);
+    const revNum =
+      (getState().candidates[sessionId] ?? [])
+        .filter((c) => Boolean(c.runId))
+        .slice()
+        .sort((x, y) => (x.createdUtc ?? "").localeCompare(y.createdUtc ?? ""))
+        .findIndex((c) => c.runId === applied.runId) + 1;
+    showToast(
+      revNum > 0
+        ? t("apply_done_toast", getState().language, [revNum])
+        : t("review_applied_ok", getState().language),
+      2200,
+    );
   }
 }
 
@@ -2219,7 +2333,7 @@ export async function exportApplied(
     }
 
     setState({ exportPhase: "ready", exportResult: result });
-    showToast(`후보본과 영수증을 내보냈습니다 · ${result.sha256.slice(0, 12)}`, 2400);
+    showToast(t("export_done_toast", getState().language), 2400);
     return true;
   } catch (e) {
     setState({ exportPhase: "failed", exportError: rt.asRuntimeError(e) });
@@ -3217,13 +3331,18 @@ export const resetUiZoom = () => void applyUiZoom(1);
  * the session id and then calling `session/list`.
  */
 export async function boot(): Promise<void> {
-  setState({ phase: "starting", phaseNote: "런타임을 시작하는 중", fatal: null });
+  setState({ phase: "starting", phaseNote: t("splash_loading", getState().language), fatal: null });
   applyStoredTheme();
+  applyStoredLanguage();
   try {
     const prefs = await rt.loadPrefs();
     if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "auto") {
       setState({ theme: prefs.theme });
       applyThemeToDom(prefs.theme);
+    }
+    if (prefs.language === "ko" || prefs.language === "en") {
+      setState({ language: prefs.language });
+      applyLanguageToDom(prefs.language);
     }
     const root = (prefs.root as string | undefined) ?? (await rt.defaultRoot());
 
@@ -3251,6 +3370,9 @@ export async function boot(): Promise<void> {
     await refreshAgentHost();
     await loadProviderSettings();
     await loadTaskPacks();
+    if (getState().corpusFiles.length === 0) {
+      await loadCorpusFiles();
+    }
     setState({ phaseNote: "열린 문서를 찾는 중" });
     await refreshSessions();
 
@@ -3825,12 +3947,24 @@ export async function toggleFullscreen(): Promise<void> {
  */
 export function closeTopmostOverlay(): boolean {
   const state = getState();
+  if (state.commandPaletteOpen) {
+    setState({ commandPaletteOpen: false });
+    return true;
+  }
+  if (state.returnPopoverOpen) {
+    setState({ returnPopoverOpen: false });
+    return true;
+  }
   if (state.inlineEdit) {
     cancelEdit();
     return true;
   }
   if (state.approvalDialogOpen) {
     setState({ approvalDialogOpen: false });
+    return true;
+  }
+  if (state.operatorModalOpen) {
+    setState({ operatorModalOpen: false });
     return true;
   }
   if (state.openDialogOpen) {
@@ -3855,3 +3989,265 @@ export function closeTopmostOverlay(): boolean {
   }
   return false;
 }
+
+// --- Run 1 shell navigation, language & overlay helpers --------------------
+
+const LANGUAGE_STORAGE_KEY = "rigorloom:language";
+
+export function applyLanguageToDom(language: UiLanguage): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.lang = language;
+}
+
+export function applyStoredLanguage(): void {
+  let language: UiLanguage = "ko";
+  try {
+    const saved = window.localStorage?.getItem(LANGUAGE_STORAGE_KEY);
+    if (saved === "ko" || saved === "en") {
+      language = saved;
+    }
+  } catch {
+    // ignore storage errors in restricted contexts
+  }
+  setState({ language });
+  applyLanguageToDom(language);
+}
+
+export async function setLanguage(language: UiLanguage): Promise<void> {
+  if (language !== "ko" && language !== "en") return;
+  setState({ language });
+  applyLanguageToDom(language);
+  try {
+    window.localStorage?.setItem(LANGUAGE_STORAGE_KEY, language);
+  } catch {
+    // ignore storage errors
+  }
+  await rt.savePrefs({ language }).catch(() => {});
+  showToast(t("lang_switched_toast", language));
+}
+
+export async function toggleLanguage(): Promise<void> {
+  const next: UiLanguage = getState().language === "ko" ? "en" : "ko";
+  await setLanguage(next);
+}
+
+export function navigateScreen(screen: ScreenId): void {
+  const state = getState();
+  if ((screen === "review" || screen === "fill" || screen === "history") && !state.activeSessionId) {
+    setState({ screen: "open" });
+    return;
+  }
+  setState({
+    screen,
+    ...(screen === "review" || screen === "fill" || screen === "history"
+      ? { view: "document" as const }
+      : {}),
+  });
+}
+
+/** 1-based chronological revision number for an applied candidate run in a session. */
+export function revisionNumberFor(
+  state: WorkspaceState,
+  sessionId: string | null | undefined,
+  runId: string | null | undefined,
+): number | null {
+  if (!sessionId || !runId) return null;
+  const rows = (state.candidates[sessionId] ?? [])
+    .filter((c) => Boolean(c.runId))
+    .slice()
+    .sort((a, b) => (a.createdUtc ?? "").localeCompare(b.createdUtc ?? ""));
+  const idx = rows.findIndex((c) => c.runId === runId);
+  if (idx >= 0) return idx + 1;
+  if (state.applied?.sessionId === sessionId && state.applied.runId === runId) {
+    return rows.length + 1;
+  }
+  return rows.length > 0 ? rows.length : 1;
+}
+
+/** True while any session has an uncommitted draft, active plan in review, or apply in flight. */
+export function isWorkspaceFolderLocked(state: WorkspaceState): boolean {
+  if (state.inlineEdit !== null) return true;
+  if (state.draft.ops.length > 0 || state.draft.plan !== null) return true;
+  if (state.draft.phase === "starting") return true;
+  if (
+    state.approval !== null ||
+    state.approvalPhase === "requesting" ||
+    state.approvalPhase === "pending" ||
+    state.approvalPhase === "resolving"
+  ) {
+    return true;
+  }
+  if (state.applyPhase === "starting") return true;
+  if (state.activeTurn !== null) return true;
+  if (hasLiveUnappliedPlanInEvents(state.events)) return true;
+  return Object.values(state.applyOutcomes).some(
+    (outcome) => outcome?.recovery?.outcome === "unknown",
+  );
+}
+
+/**
+ * Switch the active runtime workspace root atomically (`rt.start(nextRoot)` first).
+ * If starting fails or folder lock holds, rolls back / retains the previous root.
+ */
+export async function switchWorkspaceRoot(
+  nextRoot: string,
+): Promise<{ ok: boolean; error: RuntimeError | null }> {
+  const trimmed = nextRoot.trim();
+  if (!trimmed) {
+    return {
+      ok: false,
+      error: { code: "invalid_root", message: "작업 폴더 경로를 입력하세요." },
+    };
+  }
+  const state = getState();
+  if (isWorkspaceFolderLocked(state)) {
+    return {
+      ok: false,
+      error: {
+        code: "workspace_locked",
+        message: t("settings_folder_locked", state.language),
+      },
+    };
+  }
+  const prevRoot = state.root;
+  if (prevRoot && trimmed === prevRoot) {
+    return { ok: true, error: null };
+  }
+  try {
+    const { status } = await rt.start(trimmed);
+    if (!status?.running) {
+      if (prevRoot) {
+        await rt.start(prevRoot).catch(() => {});
+      }
+      return {
+        ok: false,
+        error: {
+          code: "runtime_start_failed",
+          message: status?.failure ?? "새 작업 폴더로 작업 공간을 시작하지 못했습니다.",
+        },
+      };
+    }
+    const resolvedRoot = status.root ?? trimmed;
+    stopDocumentEvents();
+    bumpPlanGeneration();
+    await rt.savePrefs({ root: resolvedRoot, lastSessionId: null }).catch(() => {});
+    setState({
+      status,
+      root: resolvedRoot,
+      activeSessionId: null,
+      sessions: [],
+      inspects: {},
+      texts: {},
+      candidates: {},
+      receipts: {},
+      applied: null,
+      applyPhase: "idle",
+      applyError: null,
+      applyOutcomes: {},
+      approval: null,
+      approvalPhase: "idle",
+      approvalError: null,
+      draft: EMPTY_DRAFT,
+      redoStack: [],
+      inlineEdit: null,
+      selection: null,
+      selectedChangeId: null,
+      expandedChangeId: null,
+      returnPopoverOpen: false,
+      events: [],
+      eventSubscription: null,
+      head: null,
+      historySelected: null,
+      inverseProof: null,
+      candidateVerdict: null,
+      guardDiff: null,
+      guardDiffError: null,
+      guardDiffPhase: "idle",
+      render: null,
+      renderPhase: "idle",
+      renderError: null,
+      geometry: null,
+    });
+    const [caps] = await Promise.all([
+      rt.capabilities().catch(() => null),
+      refreshSessions(),
+    ]);
+    if (caps) setState({ capabilities: caps });
+    showToast(t("settings_folder_changed", getState().language), 2200);
+    return { ok: true, error: null };
+  } catch (e) {
+    if (prevRoot) {
+      const rollback = await rt.start(prevRoot).catch(() => null);
+      if (rollback?.status) {
+        setState({ status: rollback.status, root: prevRoot });
+      }
+    }
+    return { ok: false, error: rt.asRuntimeError(e) };
+  }
+}
+
+export async function loadInitialPrefs(): Promise<void> {
+  try {
+    const prefs = await rt.loadPrefs();
+    if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "auto") {
+      setState({ theme: prefs.theme });
+      applyThemeToDom(prefs.theme);
+    }
+    if (prefs.language === "ko" || prefs.language === "en") {
+      setState({ language: prefs.language });
+      applyLanguageToDom(prefs.language);
+    }
+  } catch {
+    // prefs load failure keeps in-memory defaults
+  }
+}
+
+export function openCommandPalette(): void {
+  setState({ commandPaletteOpen: true });
+}
+
+export function closeCommandPalette(): void {
+  setState({ commandPaletteOpen: false });
+}
+
+export function toggleCommandPalette(): void {
+  setState({ commandPaletteOpen: !getState().commandPaletteOpen });
+}
+
+export function openOperatorModal(): void {
+  setState({ operatorModalOpen: true });
+}
+
+export function closeOperatorModal(): void {
+  setState({ operatorModalOpen: false });
+}
+
+export function setReturnPopoverOpen(open: boolean): void {
+  setState({ returnPopoverOpen: open });
+}
+
+export function setSelectedChangeId(id: string | null): void {
+  setState({ selectedChangeId: id });
+}
+
+export function setExpandedChangeId(id: string | null): void {
+  setState({ expandedChangeId: id });
+}
+
+export function togglePrintView(explicit?: boolean): void {
+  const next = explicit ?? !getState().printViewEnabled;
+  setState({ printViewEnabled: next });
+}
+
+export function setMobileReviewPane(pane: "sheet" | "list"): void {
+  setState({ mobileReviewPane: pane });
+}
+
+export async function adoptExternalPlan(
+  sessionId: string,
+  planId: string,
+  approvalId?: string | null,
+): Promise<{ plan: OperationPlan; validation: PlanValidation } | null> {
+  return adoptAgentPlan(sessionId, planId, approvalId ?? null);
+}
+

@@ -1260,3 +1260,7 @@ export interface PipelineGateResolveResult {
   gateResult?: unknown;
 }
 
+export type ScreenId = "open" | "review" | "fill" | "history" | "settings";
+
+export type UiLanguage = "ko" | "en";
+

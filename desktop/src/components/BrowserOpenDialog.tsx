@@ -5,6 +5,7 @@ import {
   openPath,
   openUploadedFile,
 } from "../actions";
+import { t } from "../i18n/vocabulary";
 import { useWorkspace } from "../store";
 
 function formatBytes(bytes: number): string {
@@ -17,6 +18,7 @@ export function BrowserOpenDialog() {
   const open = useWorkspace((s) => s.openDialogOpen);
   const files = useWorkspace((s) => s.corpusFiles);
   const phase = useWorkspace((s) => s.corpusFilesPhase);
+  const language = useWorkspace((s) => s.language);
   const [manualPath, setManualPath] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -63,10 +65,8 @@ export function BrowserOpenDialog() {
       >
         <div className="dialog-head">
           <div>
-            <h2 id="browser-open-title">양식 열기 · Open form</h2>
-            <p className="hint">
-              한글 문서(.hwpx, .hwp)를 올리거나, 들어 있는 견본 문서에서 고르거나, 이 컴퓨터의 파일 경로를 넣어 엽니다.
-            </p>
+            <h2 id="browser-open-title">{t("browser_open_title", language)}</h2>
+            <p className="hint">{t("open_drop_sub", language)}</p>
           </div>
           <button
             type="button"
@@ -74,14 +74,14 @@ export function BrowserOpenDialog() {
             data-testid="open-dialog-close"
             onClick={() => closeOpenDialog()}
           >
-            닫기 · Close
+            {t("close", language)}
           </button>
         </div>
 
         <div className="dialog-body">
           <section className="open-section">
             <label className="open-upload-label">
-              <span className="section-label">파일 업로드 · Upload (.hwpx / .hwp)</span>
+              <span className="section-label">{t("open_choose_file", language)}</span>
               <input
                 type="file"
                 accept=".hwpx,.hwp"
@@ -93,7 +93,7 @@ export function BrowserOpenDialog() {
           </section>
 
           <section className="open-section">
-            <span className="section-label">이 컴퓨터의 파일 경로 · Open path on host</span>
+            <span className="section-label">{t("browser_open_path_label", language)}</span>
             <form
               className="open-path-form"
               onSubmit={(e) => {
@@ -105,7 +105,7 @@ export function BrowserOpenDialog() {
                 type="text"
                 value={manualPath}
                 onChange={(e) => setManualPath(e.target.value)}
-                placeholder="/path/to/form.hwpx"
+                placeholder={t("browser_open_path_placeholder", language)}
                 data-testid="open-path-input"
                 disabled={busy}
               />
@@ -114,29 +114,31 @@ export function BrowserOpenDialog() {
                 data-testid="open-path-submit"
                 disabled={busy || manualPath.trim() === ""}
               >
-                열기 · Open
+                {t("browser_open_submit", language)}
               </button>
             </form>
           </section>
 
           <section className="open-section">
             <div className="open-corpus-head">
-              <span className="section-label">서버 문서 목록 · Corpus files</span>
+              <span className="section-label">{t("open_sample_form_label", language)}</span>
               <button
                 type="button"
                 className="ghost"
                 onClick={() => void loadCorpusFiles()}
                 disabled={phase === "starting" || busy}
               >
-                {phase === "starting" ? "불러오는 중…" : "새로고침 · Refresh"}
+                {phase === "starting"
+                  ? t("browser_open_loading", language)
+                  : t("error_boundary_retry", language)}
               </button>
             </div>
             <div className="corpus-list" data-testid="corpus-file-list">
               {files.length === 0 ? (
                 <div className="hint">
                   {phase === "starting"
-                    ? "목록을 확인하는 중…"
-                    : "표시할 양식 파일이 없습니다."}
+                    ? t("browser_open_loading", language)
+                    : t("browser_open_empty_corpus", language)}
                 </div>
               ) : (
                 files.map((entry) => (
@@ -149,9 +151,7 @@ export function BrowserOpenDialog() {
                     onClick={() => void pickServerPath(entry.path)}
                   >
                     <span className="corpus-name">{entry.name}</span>
-                    <span className="corpus-meta mono">
-                      {entry.path} · {formatBytes(entry.size)}
-                    </span>
+                    <span className="corpus-meta">{formatBytes(entry.size)}</span>
                   </button>
                 ))
               )}
