@@ -1,52 +1,71 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import {
   boot,
   closeTopmostOverlay,
   copySelection,
-  effectiveTheme,
+  exportApplied,
+  navigateScreen,
   openDropped,
   openDroppedFiles,
   openViaDialog,
   resetUiZoom,
-  restartRuntime,
-  selectSession,
   stepUiZoom,
+  toggleCommandPalette,
   toggleFullscreen,
-  toggleTheme,
 } from "./actions";
 import { ApprovalDialog } from "./components/ApprovalDialog";
 import { BrowserOpenDialog } from "./components/BrowserOpenDialog";
+import { CommandPalette } from "./components/CommandPalette";
+import { DetailDisclosure } from "./components/DetailDisclosure";
 import { Logo } from "./components/Logo";
+import { OperatorAgentModal } from "./components/OperatorAgentModal";
 import { Settings } from "./components/Settings";
 import { Splash } from "./components/Splash";
 import { Toast } from "./components/Toast";
-import * as rt from "./runtime";
+import { TopBar } from "./components/TopBar";
 import { deliverDocumentEvents, stopDocumentEvents } from "./documentEvents";
+import { errorCodeMessage, t } from "./i18n/vocabulary";
+import * as rt from "./runtime";
 import { RuntimeSubscriptionScope } from "./runtimeSubscriptions";
 import {
+  activeSession,
   getState,
   pushActivity,
   pushHostEvents,
   setState,
-  setView,
   useWorkspace,
-  type View,
 } from "./store";
-import { AgentView } from "./views/AgentView";
-import { DocumentView } from "./views/DocumentView";
 import { runSmoke, smokeIntent } from "./smoke";
+import { OpenView } from "./views/OpenView";
+import { ReviewView } from "./views/ReviewView";
 
-/** Fallback for the window between React mounting and the entrance ending. */
+const REVIEW_KEY_CODES = new Set([
+  "KeyJ",
+  "KeyK",
+  "KeyA",
+  "KeyR",
+  "KeyD",
+  "KeyE",
+  "ArrowDown",
+  "ArrowUp",
+  "Enter",
+  "Backspace",
+  "Delete",
+  "BracketLeft",
+  "BracketRight",
+]);
+
 function Boot({ note }: { note: string }) {
+  const language = useWorkspace((s) => s.language);
   return (
     <div className="boot" data-testid="boot">
       <Logo size={48} className="mark" />
       <div className="bar">
         <i />
       </div>
-      <p className="note">{note || "여는 중"}</p>
+      <p className="note">{note || t("splash_loading", language)}</p>
     </div>
   );
 }
@@ -60,77 +79,50 @@ function Fatal({
   message: string;
   onRetry: () => void;
 }) {
+  const language = useWorkspace((s) => s.language);
   return (
     <div className="boot">
       <div className="fatal" data-testid="fatal">
-        <h2>런타임을 시작하지 못했습니다</h2>
-        <p className="prose" style={{ color: "var(--fg)" }}>
-          {message}
-        </p>
-        <p className="prose mono" style={{ marginTop: "var(--s3)" }}>
-          {code}
-        </p>
-        <button className="action primary" style={{ marginTop: "var(--s4)" }} onClick={onRetry}>
-          다시 시도
+        <h2>{t("fatal_title", language)}</h2>
+        <p className="prose">{errorCodeMessage(code, language)}</p>
+        <div style={{ marginTop: "var(--space-2)" }}>
+          <DetailDisclosure>
+            <div>
+              {code}
+              {message ? ` · ${message}` : ""}
+            </div>
+          </DetailDisclosure>
+        </div>
+        <button className="action primary" style={{ marginTop: "var(--space-2)" }} onClick={onRetry}>
+          {t("error_boundary_retry", language)}
         </button>
       </div>
     </div>
   );
 }
 
-/** Document sits left of Agent on one axis, so the slide direction has meaning. */
-const AXIS: Record<View, number> = { document: 0, agent: 1 };
-
-function switchView(next: View) {
-  if (getState().view === next) return;
-  setView(next);
-  void rt.savePrefs({ lastView: next });
-}
-
 export default function App() {
-  const view = useWorkspace((s) => s.view);
+  const screen = useWorkspace((s) => s.screen);
+  const language = useWorkspace((s) => s.language);
   const phase = useWorkspace((s) => s.phase);
   const phaseNote = useWorkspace((s) => s.phaseNote);
   const fatal = useWorkspace((s) => s.fatal);
-  const status = useWorkspace((s) => s.status);
-  const panic = useWorkspace((s) => s.panic);
   const entranceDone = useWorkspace((s) => s.entranceDone);
   const holdEntrance = useWorkspace((s) => s.holdEntrance);
   const dragOver = useWorkspace((s) => s.dragOver);
   const lastCommit = useWorkspace((s) => s.lastCommit);
-  const theme = useWorkspace((s) => s.theme);
-  const activeTheme = effectiveTheme(theme);
-  const session = useWorkspace(
-    (s) => s.sessions.find((x) => x.sessionId === s.activeSessionId) ?? null,
-  );
-
-  // Which way the incoming view travels. Held in a ref so a re-render for any
-  // other reason does not replay the transition.
-  const previousAxis = useRef(AXIS[view]);
-  const direction = AXIS[view] >= previousAxis.current ? "right" : "left";
-  useEffect(() => {
-    previousAxis.current = AXIS[view];
-  }, [view]);
+  const session = useWorkspace(activeSession);
 
   useEffect(() => {
     const subscriptions = new RuntimeSubscriptionScope();
 
     (async () => {
       if (!(await subscriptions.add(rt.onActivity(pushActivity)))) return;
-      // The document's own history. Arrives as batched `event` notifications,
-      // already split from protocol chatter in Rust; the store de-duplicates
-      // on `seq`, so a replay after a reconnect is idempotent.
       if (!(await subscriptions.add(rt.onEvents(deliverDocumentEvents)))) return;
-      // The Agent Host's own log, live while a turn runs. A third channel
-      // rather than a filter on the second: these are the provider's events,
-      // not the document's, and the store folds them into the turn that owns
-      // them by id.
       if (!(await subscriptions.add(rt.onAgentEvents(pushHostEvents)))) return;
       if (!(await subscriptions.add(rt.onStatus((s) => setState({ status: s }))))) return;
-      // A Rust panic must be visible, not a silent disappearance.
       if (!(await subscriptions.add(rt.onPanic((p) => setState({ panic: p }))))) return;
 
-      // Files dropped on the window. Native webview in Tauri, HTML5 drop in browser mode.
       if (rt.isTauri()) {
         try {
           if (
@@ -145,7 +137,7 @@ export default function App() {
             return;
           }
         } catch {
-          // Drag-drop is an affordance, not a dependency: the dialog still works.
+          // Drag-drop is an affordance; file dialog remains available.
         }
       } else if (typeof window !== "undefined") {
         const onDragOver = (e: DragEvent) => {
@@ -166,25 +158,23 @@ export default function App() {
         window.addEventListener("dragover", onDragOver);
         window.addEventListener("dragleave", onDragLeave);
         window.addEventListener("drop", onDrop);
-        subscriptions.add(
-          Promise.resolve(() => {
-            window.removeEventListener("dragover", onDragOver);
-            window.removeEventListener("dragleave", onDragLeave);
-            window.removeEventListener("drop", onDrop);
-          }),
-        ).catch(() => {});
+        subscriptions
+          .add(
+            Promise.resolve(() => {
+              window.removeEventListener("dragover", onDragOver);
+              window.removeEventListener("dragleave", onDragLeave);
+              window.removeEventListener("drop", onDrop);
+            }),
+          )
+          .catch(() => {});
       }
 
-      // Read the launcher's intent before boot: the entrance screenshot needs
-      // the splash pinned open, and it is gone 960 ms after mount otherwise.
       const intent = await smokeIntent();
       if (subscriptions.isDisposed) return;
       if (intent?.phase === "hold-entrance") setState({ holdEntrance: true });
 
       await boot();
       if (subscriptions.isDisposed) return;
-      // Scripted evidence runs against the built app, through the same
-      // actions a click uses. No-op unless the launcher asked for it.
       await runSmoke();
     })().catch((error) => {
       if (subscriptions.isDisposed) return;
@@ -199,69 +189,103 @@ export default function App() {
     };
   }, []);
 
-  // Keyboard. Ctrl+O open · Ctrl+1/2 views · Ctrl+= / - / 0 app zoom ·
-  // Ctrl+C copies the selected cell's text.
+  // Global keyboard & Korean IME guard (Ruling H).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // F11 and Esc are window-level and reach past a focused field on
-      // purpose — every editor's are. Esc while a syllable is composing is the
-      // IME's own cancel, though, so it is left alone there.
+      if (e.isComposing || e.keyCode === 229) {
+        return;
+      }
+
       if (e.key === "F11") {
         e.preventDefault();
         void toggleFullscreen();
         return;
       }
-      if (e.key === "Escape" && !e.isComposing) {
-        // One place, one order: innermost overlay first. Handled centrally so
-        // two components cannot both decide what Esc meant.
+
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !e.altKey && (e.code === "KeyK" || e.key.toLowerCase() === "k")) {
+        e.preventDefault();
+        toggleCommandPalette();
+        return;
+      }
+
+      if (e.key === "Escape") {
         if (closeTopmostOverlay()) e.preventDefault();
         return;
       }
-      // A shortcut must never reach past a text field the user is typing in.
-      // Ctrl+C inside the inline editor is a copy, not a "copy the selected
-      // cell", and Ctrl+O while composing Hangul would throw the edit away.
+
       const target = e.target as HTMLElement | null;
-      const typing =
-        target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
-      if (typing) return;
-      if (!e.ctrlKey || e.altKey) return;
-      switch (e.key) {
-        case "o":
-        case "O":
+      const isEditable =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        Boolean(target?.isContentEditable);
+      if (isEditable) return;
+
+      if (mod && !e.altKey) {
+        switch (e.code) {
+          case "KeyO":
+            e.preventDefault();
+            navigateScreen("open");
+            void openViaDialog();
+            return;
+          case "Digit1":
+            if (getState().activeSessionId) {
+              e.preventDefault();
+              navigateScreen("review");
+            }
+            return;
+          case "Comma":
+            e.preventDefault();
+            setState({ settingsOpen: true });
+            return;
+          case "KeyE":
+            if (getState().activeSessionId) {
+              e.preventDefault();
+              void exportApplied();
+            }
+            return;
+          case "Equal":
+            e.preventDefault();
+            stepUiZoom(1);
+            return;
+          case "Minus":
+            e.preventDefault();
+            stepUiZoom(-1);
+            return;
+          case "Digit0":
+            e.preventDefault();
+            resetUiZoom();
+            return;
+          case "KeyC":
+            void copySelection();
+            return;
+          default:
+            break;
+        }
+        return;
+      }
+
+      if (!mod && !e.altKey) {
+        const current = getState();
+        const modalOpen =
+          current.commandPaletteOpen ||
+          current.operatorModalOpen ||
+          current.settingsOpen ||
+          current.openDialogOpen ||
+          current.approvalDialogOpen ||
+          current.returnPopoverOpen;
+        if (current.screen === "review" && !modalOpen && REVIEW_KEY_CODES.has(e.code)) {
           e.preventDefault();
-          void openViaDialog();
-          break;
-        case "1":
-          e.preventDefault();
-          switchView("document");
-          break;
-        case "2":
-          e.preventDefault();
-          switchView("agent");
-          break;
-        case "=":
-        case "+":
-          e.preventDefault();
-          stepUiZoom(1);
-          break;
-        case "-":
-        case "_":
-          e.preventDefault();
-          stepUiZoom(-1);
-          break;
-        case "0":
-          e.preventDefault();
-          resetUiZoom();
-          break;
-        case "c":
-        case "C":
-          // Only intercept when there is no real text selection to copy.
-          void copySelection();
-          break;
-        default:
-          break;
+          window.dispatchEvent(
+            new CustomEvent("rigorloom:review-key", {
+              detail: { code: e.code, key: e.key, shiftKey: e.shiftKey },
+            }),
+          );
+        }
       }
     };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -270,7 +294,6 @@ export default function App() {
     return <Fatal code={fatal.code} message={fatal.message} onRetry={() => void boot()} />;
   }
 
-  // The entrance covers the cold start; underneath, the app boots for real.
   const showSplash = !entranceDone;
   if (phase !== "ready") {
     return (
@@ -288,116 +311,30 @@ export default function App() {
     );
   }
 
-  const sidecarDown = status !== null && !status.running;
+  const activeScreen = screen === "review" && session ? "review" : "open";
 
   return (
     <div
       className="shell"
+      data-session={session?.sessionId ?? ""}
       data-last-composed={lastCommit ? String(lastCommit.composed) : ""}
-      data-last-commit={lastCommit?.value ?? ""}
+      data-last-commit={lastCommit ? lastCommit.value : ""}
     >
-      {showSplash ? (
-        <Splash note={phaseNote} onDone={() => setState({ entranceDone: true })} />
-      ) : null}
-
-      <header className="titlebar">
-        <div className="brand">
-          <Logo size={19} />
-          <span className="wordmark">Rigorloom</span>
-        </div>
-
-        <div className="viewswitch" role="group" aria-label="화면 전환">
-          <button
-            aria-pressed={view === "document"}
-            data-testid="switch-document"
-            title="문서 (Ctrl+1)"
-            onClick={() => switchView("document")}
-          >
-            문서
-          </button>
-          <button
-            aria-pressed={view === "agent"}
-            data-testid="switch-agent"
-            title="작업 (Ctrl+2)"
-            onClick={() => switchView("agent")}
-          >
-            작업
-          </button>
-        </div>
-
-        {session ? (
-          <div className="docchip">
-            <span className="name" data-testid="doc-name">
-              {session.source.name}
-            </span>
-            <span className="latin-caps">{session.source.documentKind}</span>
-          </div>
-        ) : null}
-
-        <span className="spacer" />
-
-        {panic ? (
-          <span className="tag point" title={`${panic.location} · ${panic.logPath}`}>
-            셸 오류 기록됨
-          </span>
-        ) : null}
-
-        {sidecarDown ? (
-          <>
-            <span className="tag point" data-testid="sidecar-down">
-              런타임 끊김
-            </span>
-            <button className="ghost" onClick={() => void restartRuntime()}>
-              다시 시작
-            </button>
-          </>
-        ) : null}
-
-        <button
-          type="button"
-          className="ghost theme-toggle"
-          data-testid="theme-toggle"
-          title="라이트/다크 테마 전환"
-          onClick={() => void toggleTheme()}
-        >
-          {activeTheme === "dark" ? "라이트 · Light" : "다크 · Dark"}
-        </button>
-        <button className="ghost" title="Ctrl+O" onClick={() => void openViaDialog()}>
-          문서 열기
-        </button>
-        <button
-          className="ghost"
-          data-testid="open-settings"
-          title="에이전트 제공자 설정"
-          onClick={() => setState({ settingsOpen: true })}
-        >
-          설정
-        </button>
-      </header>
+      <TopBar />
 
       <div className="viewport">
-        <div key={view} className={`view-enter-from-${direction}`} style={{ height: "100%" }}>
-          {view === "document" ? (
-            <DocumentView />
-          ) : (
-            <AgentView
-              onOpen={() => void openViaDialog()}
-              onSelectSession={(id) => void selectSession(id)}
-            />
-          )}
-        </div>
+        {activeScreen === "review" ? <ReviewView /> : <OpenView />}
       </div>
 
-      {/* One mount, outside the view switch: the settings pane is chrome, not
-          part of either room, and reopening it after Ctrl+2 must not lose what
-          the probe found. */}
       <Settings />
       <BrowserOpenDialog />
       <ApprovalDialog />
+      <CommandPalette />
+      <OperatorAgentModal />
 
       {dragOver ? (
         <div className="dropveil" data-testid="dropveil">
-          <div className="box">여기에 놓으면 문서를 엽니다</div>
+          <div className="box">{t("open_drop_prompt", language)}</div>
         </div>
       ) : null}
 

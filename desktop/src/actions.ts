@@ -57,6 +57,7 @@ import {
   type CaretRefusal as RevisionCaretRefusal,
   type ParagraphEditEffect,
 } from "./revision";
+import { t } from "./i18n/vocabulary";
 import type {
   AppliedCandidate,
   EditableRegion,
@@ -75,7 +76,9 @@ import type {
   Recent,
   RegionText,
   RuntimeError,
+  ScreenId,
   Turn,
+  UiLanguage,
   VerificationReport,
 } from "./types";
 
@@ -237,9 +240,13 @@ export async function selectSession(sessionId: string) {
   if (previous !== sessionId) stopDocumentEvents();
   setState({
     activeSessionId: sessionId,
+    screen: "review" as const,
     ...(previous !== sessionId
       ? {
           selection: null,
+          selectedChangeId: null,
+          expandedChangeId: null,
+          returnPopoverOpen: false,
           page: 1,
           findings: [],
           checkedAt: null,
@@ -3217,13 +3224,18 @@ export const resetUiZoom = () => void applyUiZoom(1);
  * the session id and then calling `session/list`.
  */
 export async function boot(): Promise<void> {
-  setState({ phase: "starting", phaseNote: "런타임을 시작하는 중", fatal: null });
+  setState({ phase: "starting", phaseNote: t("splash_loading", getState().language), fatal: null });
   applyStoredTheme();
+  applyStoredLanguage();
   try {
     const prefs = await rt.loadPrefs();
     if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "auto") {
       setState({ theme: prefs.theme });
       applyThemeToDom(prefs.theme);
+    }
+    if (prefs.language === "ko" || prefs.language === "en") {
+      setState({ language: prefs.language });
+      applyLanguageToDom(prefs.language);
     }
     const root = (prefs.root as string | undefined) ?? (await rt.defaultRoot());
 
@@ -3825,12 +3837,24 @@ export async function toggleFullscreen(): Promise<void> {
  */
 export function closeTopmostOverlay(): boolean {
   const state = getState();
+  if (state.commandPaletteOpen) {
+    setState({ commandPaletteOpen: false });
+    return true;
+  }
+  if (state.returnPopoverOpen) {
+    setState({ returnPopoverOpen: false });
+    return true;
+  }
   if (state.inlineEdit) {
     cancelEdit();
     return true;
   }
   if (state.approvalDialogOpen) {
     setState({ approvalDialogOpen: false });
+    return true;
+  }
+  if (state.operatorModalOpen) {
+    setState({ operatorModalOpen: false });
     return true;
   }
   if (state.openDialogOpen) {
@@ -3854,4 +3878,120 @@ export function closeTopmostOverlay(): boolean {
     return true;
   }
   return false;
+}
+
+// --- Run 1 shell navigation, language & overlay helpers --------------------
+
+const LANGUAGE_STORAGE_KEY = "rigorloom:language";
+
+export function applyLanguageToDom(language: UiLanguage): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.lang = language;
+}
+
+export function applyStoredLanguage(): void {
+  let language: UiLanguage = "ko";
+  try {
+    const saved = window.localStorage?.getItem(LANGUAGE_STORAGE_KEY);
+    if (saved === "ko" || saved === "en") {
+      language = saved;
+    }
+  } catch {
+    // ignore storage errors in restricted contexts
+  }
+  setState({ language });
+  applyLanguageToDom(language);
+}
+
+export async function setLanguage(language: UiLanguage): Promise<void> {
+  if (language !== "ko" && language !== "en") return;
+  setState({ language });
+  applyLanguageToDom(language);
+  try {
+    window.localStorage?.setItem(LANGUAGE_STORAGE_KEY, language);
+  } catch {
+    // ignore storage errors
+  }
+  await rt.savePrefs({ language }).catch(() => {});
+  showToast(t("lang_switched_toast", language));
+}
+
+export async function toggleLanguage(): Promise<void> {
+  const next: UiLanguage = getState().language === "ko" ? "en" : "ko";
+  await setLanguage(next);
+}
+
+export function navigateScreen(screen: ScreenId): void {
+  const state = getState();
+  if ((screen === "review" || screen === "fill" || screen === "history") && !state.activeSessionId) {
+    setState({ screen: "open" });
+    return;
+  }
+  if (screen === "settings") {
+    setState({ settingsOpen: true });
+    return;
+  }
+  setState({
+    screen,
+    ...(screen === "review" || screen === "fill" || screen === "history"
+      ? { view: "document" as const }
+      : {}),
+  });
+}
+
+export async function loadInitialPrefs(): Promise<void> {
+  try {
+    const prefs = await rt.loadPrefs();
+    if (prefs.theme === "light" || prefs.theme === "dark" || prefs.theme === "auto") {
+      setState({ theme: prefs.theme });
+      applyThemeToDom(prefs.theme);
+    }
+    if (prefs.language === "ko" || prefs.language === "en") {
+      setState({ language: prefs.language });
+      applyLanguageToDom(prefs.language);
+    }
+  } catch {
+    // prefs load failure keeps in-memory defaults
+  }
+}
+
+export function openCommandPalette(): void {
+  setState({ commandPaletteOpen: true });
+}
+
+export function closeCommandPalette(): void {
+  setState({ commandPaletteOpen: false });
+}
+
+export function toggleCommandPalette(): void {
+  setState({ commandPaletteOpen: !getState().commandPaletteOpen });
+}
+
+export function openOperatorModal(): void {
+  setState({ operatorModalOpen: true });
+}
+
+export function closeOperatorModal(): void {
+  setState({ operatorModalOpen: false });
+}
+
+export function setReturnPopoverOpen(open: boolean): void {
+  setState({ returnPopoverOpen: open });
+}
+
+export function setSelectedChangeId(id: string | null): void {
+  setState({ selectedChangeId: id });
+}
+
+export function setExpandedChangeId(id: string | null): void {
+  setState({ expandedChangeId: id });
+}
+
+export function togglePrintView(explicit?: boolean): void {
+  const next = explicit ?? !getState().printViewEnabled;
+  setState({ printViewEnabled: next });
+}
+
+export function setMobileReviewPane(pane: "sheet" | "list"): void {
+  setState({ mobileReviewPane: pane });
 }

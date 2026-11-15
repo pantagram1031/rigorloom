@@ -47,10 +47,12 @@ import type {
   RenderResult,
   RuntimeError,
   RuntimeEvent,
+  ScreenId,
   Session,
   SidecarStatus,
   TaskPackList,
   Turn,
+  UiLanguage,
 } from "./types";
 
 export type View = "document" | "agent";
@@ -632,6 +634,17 @@ export interface WorkspaceState {
 
   /** Set when the app was launched by the scripted smoke. */
   smokePhase: string | null;
+
+  // --- Run 1 navigation & chrome state ------------------------------------
+  screen: ScreenId;
+  language: UiLanguage;
+  selectedChangeId: string | null;
+  expandedChangeId: string | null;
+  printViewEnabled: boolean;
+  mobileReviewPane: "sheet" | "list";
+  commandPaletteOpen: boolean;
+  operatorModalOpen: boolean;
+  returnPopoverOpen: boolean;
 }
 
 /**
@@ -825,6 +838,16 @@ const initial: WorkspaceState = {
   fullscreen: false,
 
   smokePhase: null,
+
+  screen: "open",
+  language: "ko",
+  selectedChangeId: null,
+  expandedChangeId: null,
+  printViewEnabled: false,
+  mobileReviewPane: "sheet",
+  commandPaletteOpen: false,
+  operatorModalOpen: false,
+  returnPopoverOpen: false,
 };
 
 let state: WorkspaceState = initial;
