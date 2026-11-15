@@ -224,7 +224,16 @@ export function ChangeRow({
         </div>
 
         <div className="change-row-line2">
-          <span className="change-row-preview">{previewText}</span>
+          {change.previewMode === "before_only" ? (
+            <del
+              className="change-row-preview change-row-before-only"
+              data-testid={`change-before-only-${change.ordinal}`}
+            >
+              {previewText}
+            </del>
+          ) : (
+            <span className="change-row-preview">{previewText}</span>
+          )}
           {change.previewMode === "after_only" &&
           isSelected &&
           !isExpanded &&
@@ -258,9 +267,11 @@ export function ChangeRow({
                 {t("review_before_label", language, [change.beforeText])}
               </p>
             ) : null}
-            <p className="change-expanded-after">
-              {t("review_after_label", language, [change.afterText])}
-            </p>
+            {change.previewMode !== "before_only" || change.afterText.trim().length > 0 ? (
+              <p className="change-expanded-after">
+                {t("review_after_label", language, [change.afterText])}
+              </p>
+            ) : null}
             {op.origin === "agent" ? (
               <p className="change-origin-note">
                 {t("review_agent_suggestion", language)}

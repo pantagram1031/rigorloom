@@ -247,15 +247,16 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
+  max-width: 100%;
   overflow: auto;
   padding: var(--space-2);
-  display: flex;
-  justify-content: safe center;
-  align-items: flex-start;
+  display: block;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 .page-sheet-scale-frame {
   position: relative;
+  margin: 0 auto;
 }
 
 .page-sheet {
@@ -346,8 +347,9 @@
 }
 
 .page-cell--selected {
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .page-cell-inner {
@@ -450,6 +452,13 @@
   cursor: pointer;
 }
 
+.page-inline-edit--selected {
+  background: transparent;
+  border-bottom: 2px solid var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
 .page-inline-edit--changed {
   background: transparent;
   border-bottom-color: var(--changed-fact-fg);
@@ -507,7 +516,9 @@
 }
 
 .page-para--selected {
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .page-para-body {
@@ -532,6 +543,12 @@
   align-items: center;
   gap: 8px;
   cursor: pointer;
+}
+
+.page-delete-guide-item--selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .page-delete-guide-label {
@@ -579,7 +596,7 @@
 
 .change-list-title-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: var(--space-1);
   flex-wrap: wrap;
@@ -594,7 +611,9 @@
 
 .change-list-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-1);
 }
 
@@ -835,6 +854,11 @@
   text-overflow: ellipsis;
   font-size: var(--text-sm);
   color: var(--fg-secondary);
+}
+
+.change-row-before-only {
+  color: var(--fg-muted);
+  text-decoration: line-through;
 }
 
 .change-row-before-inline {
@@ -1305,8 +1329,13 @@
 }
 
 @media (max-width: 640px) {
+  .page-sheet-controls,
   .page-sheet-zoom {
     display: none;
+  }
+
+  .page-raster-stage {
+    margin: 0 auto;
   }
 
   .page-sheet-subbar {

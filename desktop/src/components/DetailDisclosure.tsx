@@ -8,6 +8,7 @@ export interface DetailDisclosureProps {
   open?: boolean;
   onToggle?: (open: boolean) => void;
   testId?: string;
+  inline?: boolean;
 }
 
 export function DetailDisclosure({
@@ -16,11 +17,12 @@ export function DetailDisclosure({
   open,
   onToggle,
   testId,
+  inline = false,
 }: DetailDisclosureProps) {
   const language = useWorkspace((s) => s.language);
   return (
     <details
-      className="detail-disclosure"
+      className={inline ? "detail-disclosure detail-disclosure--inline" : "detail-disclosure"}
       open={open}
       data-testid={testId}
       onToggle={

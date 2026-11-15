@@ -391,18 +391,6 @@ export function ReviewView() {
         <button
           type="button"
           role="tab"
-          aria-selected={mobileReviewPane === "sheet"}
-          className={`review-mobile-tab${
-            mobileReviewPane === "sheet" ? " review-mobile-tab--active" : ""
-          }`}
-          data-testid="review-mobile-tab-sheet"
-          onClick={() => setMobileReviewPane("sheet")}
-        >
-          {t("review_mobile_sheet_tab", language)}
-        </button>
-        <button
-          type="button"
-          role="tab"
           aria-selected={mobileReviewPane === "list"}
           className={`review-mobile-tab${
             mobileReviewPane === "list" ? " review-mobile-tab--active" : ""
@@ -411,6 +399,18 @@ export function ReviewView() {
           onClick={() => setMobileReviewPane("list")}
         >
           {t("review_mobile_list_tab", language, [changes.length])}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mobileReviewPane === "sheet"}
+          className={`review-mobile-tab${
+            mobileReviewPane === "sheet" ? " review-mobile-tab--active" : ""
+          }`}
+          data-testid="review-mobile-tab-sheet"
+          onClick={() => setMobileReviewPane("sheet")}
+        >
+          {t("review_mobile_sheet_tab", language)}
         </button>
       </div>
 

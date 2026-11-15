@@ -392,6 +392,8 @@ test("genuine content edits remain auditable with diff previews", () => {
 
   assert.equal(byId.get("c-3")?.isAuditable, true);
   assert.equal(byId.get("c-3")?.opKindText, "안내문 지움");
+  assert.equal(byId.get("c-3")?.previewMode, "before_only");
+  assert.equal(byId.get("c-3")?.afterText, "");
 
   // Non-guide, non-instruction symbol clearing keeps `기호 지움` and remains auditable.
   assert.equal(byId.get("c-4")?.isAuditable, true);

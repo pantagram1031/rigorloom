@@ -15,14 +15,13 @@ import {
   setReturnPopoverOpen,
 } from "../actions";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
-import { draftStaleness, useWorkspace } from "../store";
+import { draftStaleness, headCandidate, useWorkspace } from "../store";
 import type { UiLanguage } from "../types";
 import type {
   IndexedChange,
   ReviewGuardSummary,
   RowGuardAudit,
 } from "../workspace/guardHelper";
-import { getSessionDisplayTitle } from "../workspace/openHelpers";
 import { ChangeRow } from "./ChangeRow";
 import { DetailDisclosure } from "./DetailDisclosure";
 
@@ -63,8 +62,10 @@ export function ChangeList({
   const session = useWorkspace(
     (s) => s.sessions.find((x) => x.sessionId === sessionId) ?? null,
   );
-  const openedPaths = useWorkspace((s) => s.openedPaths);
-  const corpusFiles = useWorkspace((s) => s.corpusFiles);
+  const inspect = useWorkspace((s) => s.inspects[sessionId] ?? null);
+  const render = useWorkspace((s) => s.render);
+  const geometry = useWorkspace((s) => s.geometry);
+  const head = useWorkspace(headCandidate);
   const approval = useWorkspace((s) => s.approval);
   const approvalPhase = useWorkspace((s) => s.approvalPhase);
   const applyPhase = useWorkspace((s) => s.applyPhase);
@@ -120,16 +121,6 @@ export function ChangeList({
     selectedTargetKey !== null
       ? changes.filter((ch) => ch.targetKey === selectedTargetKey).length
       : 0;
-  const sessionDisplayTitle = getSessionDisplayTitle(
-    session,
-    openedPaths,
-    corpusFiles,
-    language,
-  );
-  const showRawSourceFilename =
-    session !== null &&
-    sessionDisplayTitle !== "" &&
-    sessionDisplayTitle !== session.source.name;
 
   useEffect(() => {
     if (!selectedChangeId || !listRef.current) return;
@@ -185,90 +176,127 @@ export function ChangeList({
               : t("review_changes_header", language, [changes.length])}
           </h2>
 
-          <div className="change-list-actions">
-            {appliedAndEmpty ? (
+          {session ? (
+            <DetailDisclosure inline testId="review-source-detail">
+              <div className="change-source-detail-meta">
+                <div>{`file: ${session.source.name}`}</div>
+                <div>{`sessionId: ${session.sessionId}`}</div>
+                <div>{`sourceSha256: ${session.source.sha256}`}</div>
+                <div>{`bytes: ${session.source.bytes} · format: ${session.source.name.split(".").pop() ?? "hwpx"}`}</div>
+                {head ? (
+                  <div>{`headCandidate: runId=${head.runId ?? "-"} sha256=${head.sha256 ?? "-"} bytes=${head.bytes ?? "-"}`}</div>
+                ) : null}
+                {inspect ? (
+                  <div>
+                    {`inspect: tables=${inspect.graph.tables.length} paragraphs=${inspect.graph.paragraphs.length} regions=${inspect.regions.regions.length} fillTargets=${inspect.summary.fillTargetCount}`}
+                  </div>
+                ) : null}
+                {render ? (
+                  <div>
+                    {`render: ${
+                      render.available
+                        ? `grade=${render.grade ?? "-"} dpi=${render.dpi ?? "-"} skipped=${render.elementsSkipped?.length ?? 0}`
+                        : `unavailable (${render.unavailable?.reason ?? "unknown"})`
+                    }`}
+                  </div>
+                ) : null}
+                {geometry ? (
+                  <div>
+                    {`geometry: ${
+                      geometry.available
+                        ? `source=${geometry.geometrySource ?? "-"} grade=${geometry.grade ?? "-"} spans=${geometry.spans?.length ?? 0} seats=${geometry.seats?.length ?? 0}`
+                        : `unavailable (${geometry.unavailable?.reason ?? "unknown"})`
+                    }`}
+                  </div>
+                ) : null}
+              </div>
+            </DetailDisclosure>
+          ) : null}
+        </div>
+
+        <div className="change-list-actions">
+          {appliedAndEmpty ? (
+            <button
+              type="button"
+              className="review-btn review-btn--primary"
+              data-testid="review-export-btn"
+              onClick={() => void exportApplied()}
+            >
+              {t("action_export", language)}
+            </button>
+          ) : (
+            <>
+              <div className="return-popover-anchor">
+                <button
+                  type="button"
+                  className="review-btn review-btn--secondary"
+                  data-testid="review-return-btn"
+                  disabled={changes.length === 0 || busy}
+                  aria-expanded={returnPopoverOpen}
+                  onClick={() => setReturnPopoverOpen(!returnPopoverOpen)}
+                >
+                  {t("review_return", language)}
+                </button>
+
+                {returnPopoverOpen ? (
+                  <form
+                    className="return-popover"
+                    data-testid="return-popover"
+                    onSubmit={(e) => void submitReturn(e)}
+                  >
+                    <input
+                      ref={returnInputRef}
+                      type="text"
+                      className="return-reason-input"
+                      data-testid="return-reason-input"
+                      value={returnReason}
+                      disabled={returning}
+                      placeholder={t("review_return_reason_placeholder", language)}
+                      aria-label={t("review_return_reason_placeholder", language)}
+                      onCompositionStart={() => {
+                        isComposingRef.current = true;
+                      }}
+                      onCompositionEnd={(e) => {
+                        isComposingRef.current = false;
+                        setReturnReason(e.currentTarget.value);
+                      }}
+                      onChange={(e) => setReturnReason(e.target.value)}
+                      onKeyDown={handleReturnKeyDown}
+                    />
+                    <div className="return-popover-buttons">
+                      <button
+                        type="submit"
+                        className="review-btn review-btn--danger"
+                        data-testid="return-confirm-btn"
+                        disabled={returning}
+                      >
+                        {t("review_return", language)}
+                      </button>
+                      <button
+                        type="button"
+                        className="review-btn review-btn--secondary"
+                        data-testid="return-cancel-btn"
+                        disabled={returning}
+                        onClick={() => setReturnPopoverOpen(false)}
+                      >
+                        {t("review_cancel", language)}
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+              </div>
+
               <button
                 type="button"
                 className="review-btn review-btn--primary"
-                data-testid="review-export-btn"
-                onClick={() => void exportApplied()}
+                data-testid="review-approve-btn"
+                disabled={!canApprove}
+                onClick={() => openApprovalDialog()}
               >
-                {t("action_export", language)}
+                {t("review_approve", language)}
               </button>
-            ) : (
-              <>
-                <div className="return-popover-anchor">
-                  <button
-                    type="button"
-                    className="review-btn review-btn--secondary"
-                    data-testid="review-return-btn"
-                    disabled={changes.length === 0 || busy}
-                    aria-expanded={returnPopoverOpen}
-                    onClick={() => setReturnPopoverOpen(!returnPopoverOpen)}
-                  >
-                    {t("review_return", language)}
-                  </button>
-
-                  {returnPopoverOpen ? (
-                    <form
-                      className="return-popover"
-                      data-testid="return-popover"
-                      onSubmit={(e) => void submitReturn(e)}
-                    >
-                      <input
-                        ref={returnInputRef}
-                        type="text"
-                        className="return-reason-input"
-                        data-testid="return-reason-input"
-                        value={returnReason}
-                        disabled={returning}
-                        placeholder={t("review_return_reason_placeholder", language)}
-                        aria-label={t("review_return_reason_placeholder", language)}
-                        onCompositionStart={() => {
-                          isComposingRef.current = true;
-                        }}
-                        onCompositionEnd={(e) => {
-                          isComposingRef.current = false;
-                          setReturnReason(e.currentTarget.value);
-                        }}
-                        onChange={(e) => setReturnReason(e.target.value)}
-                        onKeyDown={handleReturnKeyDown}
-                      />
-                      <div className="return-popover-buttons">
-                        <button
-                          type="submit"
-                          className="review-btn review-btn--danger"
-                          data-testid="return-confirm-btn"
-                          disabled={returning}
-                        >
-                          {t("review_return", language)}
-                        </button>
-                        <button
-                          type="button"
-                          className="review-btn review-btn--secondary"
-                          data-testid="return-cancel-btn"
-                          disabled={returning}
-                          onClick={() => setReturnPopoverOpen(false)}
-                        >
-                          {t("review_cancel", language)}
-                        </button>
-                      </div>
-                    </form>
-                  ) : null}
-                </div>
-
-                <button
-                  type="button"
-                  className="review-btn review-btn--primary"
-                  data-testid="review-approve-btn"
-                  disabled={!canApprove}
-                  onClick={() => openApprovalDialog()}
-                >
-                  {t("review_approve", language)}
-                </button>
-              </>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
         {isStale && changes.length > 0 ? (
@@ -352,12 +380,6 @@ export function ChangeList({
               </button>
             ) : null}
           </div>
-        ) : null}
-
-        {showRawSourceFilename ? (
-          <DetailDisclosure testId="review-source-detail">
-            <span>{session.source.name}</span>
-          </DetailDisclosure>
         ) : null}
       </header>
 

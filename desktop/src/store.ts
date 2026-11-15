@@ -642,6 +642,7 @@ export interface WorkspaceState {
   expandedChangeId: string | null;
   printViewEnabled: boolean;
   mobileReviewPane: "sheet" | "list";
+  mobileExplicitFit: boolean;
   commandPaletteOpen: boolean;
   operatorModalOpen: boolean;
   returnPopoverOpen: boolean;
@@ -846,7 +847,8 @@ const initial: WorkspaceState = {
   selectedChangeId: null,
   expandedChangeId: null,
   printViewEnabled: false,
-  mobileReviewPane: "sheet",
+  mobileReviewPane: "list",
+  mobileExplicitFit: false,
   commandPaletteOpen: false,
   operatorModalOpen: false,
   returnPopoverOpen: false,
@@ -976,10 +978,15 @@ export function toggleExpanded(id: string) {
  * does not do what it says.
  */
 export const setZoom = (zoom: number) =>
-  setState({ zoom: Math.min(4, Math.max(0.5, zoom)), pageFit: "free" });
+  setState({
+    zoom: Math.min(4, Math.max(0.5, zoom)),
+    pageFit: "free",
+    mobileExplicitFit: false,
+  });
 
 /** Enter (or leave) a fit mode. The scale itself is measured by the page view. */
-export const setPageFit = (pageFit: PageFit) => setState({ pageFit });
+export const setPageFit = (pageFit: PageFit) =>
+  setState({ pageFit, mobileExplicitFit: pageFit !== "free" });
 
 /**
  * The scale a FIT arrived at. Keeps the mode, unlike `setZoom`.

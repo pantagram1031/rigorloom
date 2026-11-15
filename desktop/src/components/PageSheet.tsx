@@ -5,6 +5,8 @@ import {
   useRef,
   useState,
   type MouseEvent,
+  type TouchEvent,
+  type WheelEvent,
 } from "react";
 
 import {
@@ -248,6 +250,8 @@ export function PageSheet({
 }: PageSheetProps) {
   const zoom = useWorkspace((s) => s.zoom);
   const pageFit = useWorkspace((s) => s.pageFit);
+  const mobileReviewPane = useWorkspace((s) => s.mobileReviewPane);
+  const mobileExplicitFit = useWorkspace((s) => s.mobileExplicitFit);
   const page = useWorkspace((s) => s.page);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const printViewEnabled = useWorkspace((s) => s.printViewEnabled);
@@ -259,8 +263,23 @@ export function PageSheet({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const sheetRef = useRef<HTMLElement | null>(null);
   const skipNextAutoScroll = useRef(false);
+  const pinchRef = useRef<{ dist: number; startZoom: number } | null>(null);
   const [boxWidth, setBoxWidth] = useState(0);
   const [naturalHeightMeasure, setNaturalHeightMeasure] = useState(0);
+  const [isCompactMobile, setIsCompactMobile] = useState<boolean>(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 640px)").matches
+      : false,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const sync = () => setIsCompactMobile(mq.matches);
+    sync();
+    mq.addEventListener?.("change", sync);
+    return () => mq.removeEventListener?.("change", sync);
+  }, []);
 
   const metrics = inspect.summary?.pageMetrics;
   const naturalWidthPx = useMemo(
@@ -301,14 +320,20 @@ export function PageSheet({
       const w = Math.max(0, el.clientWidth - padH);
       const h = Math.max(0, el.clientHeight - padV);
       setBoxWidth(w);
-      if (getState().pageFit === "width" && w > 0) {
+      const cur = getState();
+      const compact =
+        typeof window !== "undefined" && typeof window.matchMedia === "function"
+          ? window.matchMedia("(max-width: 640px)").matches
+          : false;
+      const allowFit = !compact || cur.mobileExplicitFit;
+      if (allowFit && cur.pageFit === "width" && w > 0) {
         const next = fitScale(
           "width",
           { width: naturalWidthPx, height: naturalHeightPx },
           { width: w, height: Math.max(1, h) },
-          getState().zoom,
+          cur.zoom,
         );
-        if (Math.abs(next - getState().zoom) > 0.002) {
+        if (Math.abs(next - cur.zoom) > 0.002) {
           setFittedZoom(next);
         }
       }
@@ -334,12 +359,19 @@ export function PageSheet({
   }, [naturalHeightPx, inspect, changes, printViewEnabled]);
 
   const effectiveZoom = useMemo(() => {
+    if (isCompactMobile) {
+      if (mobileExplicitFit && pageFit === "width" && boxWidth > 0) {
+        const ratio = boxWidth / naturalWidthPx;
+        return Math.max(0.25, Math.min(2, Math.floor(ratio * 1000) / 1000));
+      }
+      return pageFit === "free" ? zoom : 1;
+    }
     if (pageFit === "width" && boxWidth > 0) {
       const ratio = boxWidth / naturalWidthPx;
       return Math.max(0.25, Math.min(2, Math.floor(ratio * 1000) / 1000));
     }
     return zoom;
-  }, [pageFit, boxWidth, naturalWidthPx, zoom]);
+  }, [isCompactMobile, mobileExplicitFit, pageFit, boxWidth, naturalWidthPx, zoom]);
 
   // If print view is toggled on externally (e.g. command palette), fetch page 1 once.
   useEffect(() => {
@@ -350,25 +382,73 @@ export function PageSheet({
     }
   }, [printViewEnabled, render, renderPhase, page, sessionId]);
 
-  // Bidirectional scroll sync when a change row is selected from the list or keyboard.
+  // Bidirectional scroll sync when a change row is selected from the list, stepper, or keyboard.
   useEffect(() => {
     if (!selectedChangeId) return;
+    if (isCompactMobile && mobileReviewPane !== "sheet") return;
     if (skipNextAutoScroll.current) {
       skipNextAutoScroll.current = false;
       return;
     }
     const container = viewportRef.current;
-    if (!container) return;
+    if (!container || container.clientWidth === 0) return;
     const esc = CSS.escape(selectedChangeId);
-    const markerEl =
-      container.querySelector<HTMLElement>(`[data-marker-op-ids~="${esc}"]`) ??
-      container.querySelector<HTMLElement>(`[data-marker-op-id="${esc}"]`);
     const targetEl =
-      markerEl ??
+      container.querySelector<HTMLElement>('[data-selected-anchor="true"]') ??
+      container.querySelector<HTMLElement>(`[data-marker-op-ids~="${esc}"]`) ??
+      container.querySelector<HTMLElement>(`[data-marker-op-id="${esc}"]`) ??
       container.querySelector<HTMLElement>(`[data-cell-op-ids~="${esc}"]`);
     if (!targetEl) return;
+    if (isCompactMobile) {
+      const cRect = container.getBoundingClientRect();
+      const tRect = targetEl.getBoundingClientRect();
+      const left =
+        container.scrollLeft + (tRect.left - cRect.left) + tRect.width / 2 - container.clientWidth / 2;
+      const top =
+        container.scrollTop + (tRect.top - cRect.top) + tRect.height / 2 - container.clientHeight / 2;
+      container.scrollTo({
+        left: Math.max(0, left),
+        top: Math.max(0, top),
+        behavior: "auto",
+      });
+      return;
+    }
     targetEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
-  }, [selectedChangeId, printViewEnabled]);
+  }, [selectedChangeId, printViewEnabled, mobileReviewPane, isCompactMobile, effectiveZoom]);
+
+  const handleTouchStart = (e: TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const [a, b] = [e.touches[0], e.touches[1]];
+      pinchRef.current = {
+        dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY),
+        startZoom: effectiveZoom,
+      };
+    }
+  };
+
+  const handleTouchMove = (e: TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2 && pinchRef.current && pinchRef.current.dist > 0) {
+      const [a, b] = [e.touches[0], e.touches[1]];
+      const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      const next = Math.min(2.0, Math.max(0.5, Number(((pinchRef.current.startZoom * dist) / pinchRef.current.dist).toFixed(2))));
+      setZoom(next);
+    }
+  };
+
+  const handleTouchEnd = (e: TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length < 2) {
+      pinchRef.current = null;
+    }
+  };
+
+  const handleWheel = (e: WheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.1 : -0.1;
+      const next = Math.min(2.0, Math.max(0.5, Number((effectiveZoom + delta).toFixed(2))));
+      setZoom(next);
+    }
+  };
 
   const canTryPrintView = Boolean(
     capabilities?.render?.rasterizer?.state === "yes" || render?.available,
@@ -583,10 +663,14 @@ export function PageSheet({
                     return null;
                   }
                   const status = rowAudits[hit.opId]?.status ?? "none";
+                  const isSelectedRun = hit.opId === selectedChangeId;
                   return (
                     <span
                       key={run.index}
-                      className={`page-inline-edit page-inline-edit--${status}`}
+                      className={`page-inline-edit page-inline-edit--${status}${
+                        isSelectedRun ? " page-inline-edit--selected" : ""
+                      }`}
+                      data-selected-anchor={isSelectedRun ? "true" : undefined}
                       onClick={(e) => handleMarkerClick(e, hit.opId)}
                     >
                       {hit.afterText}
@@ -659,6 +743,7 @@ export function PageSheet({
         className={`page-para${
           paraChanges.length > 0 ? ` page-para--changed page-para--rail-${worstStatus}` : ""
         }${hasSelected ? " page-para--selected" : ""}`}
+        data-selected-anchor={hasSelected ? "true" : undefined}
         onClick={() => {
           if (paraChanges.length > 0) {
             selectFromSheet(paraChanges[0].opId);
@@ -678,10 +763,14 @@ export function PageSheet({
               const hit = runMap.get(run.index);
               if (!hit) return <span key={run.index}>{run.text}</span>;
               const status = rowAudits[hit.opId]?.status ?? "none";
+              const isSelectedRun = hit.opId === selectedChangeId;
               return (
                 <span
                   key={run.index}
-                  className={`page-inline-edit page-inline-edit--${status}`}
+                  className={`page-inline-edit page-inline-edit--${status}${
+                    isSelectedRun ? " page-inline-edit--selected" : ""
+                  }`}
+                  data-selected-anchor={isSelectedRun ? "true" : undefined}
                   onClick={(e) => handleMarkerClick(e, hit.opId)}
                 >
                   {hit.afterText}
@@ -815,7 +904,16 @@ export function PageSheet({
         </div>
       ) : null}
 
-      <div className="page-sheet-viewport" ref={viewportRef}>
+      <div
+        className="page-sheet-viewport"
+        ref={viewportRef}
+        data-zoom-pct={String(Math.round(effectiveZoom * 100))}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        onWheel={handleWheel}
+      >
         {hasRenderImage && render?.image ? (
           <div
             className="page-raster-stage"
@@ -880,6 +978,19 @@ export function PageSheet({
                           const hasKept = cellChanges.some(
                             (ch) => rowAudits[ch.opId]?.status === "kept",
                           );
+                          const wholeCellSelected = cellChanges.some(
+                            (ch) =>
+                              ch.opId === selectedChangeId &&
+                              (ch.op.kind === "fill_cell" ||
+                                (ch.op.kind === "replace_at_cell" &&
+                                  ch.op.run === undefined)),
+                          );
+                          const hasRunAnchor = cellChanges.some(
+                            (ch) =>
+                              ch.opId === selectedChangeId &&
+                              ch.op.kind === "replace_at_cell" &&
+                              ch.op.run !== undefined,
+                          );
                           const displaySample = (region?.text ?? cell.textPreview ?? "")
                             .replace(/\s+/g, " ")
                             .trim();
@@ -918,6 +1029,11 @@ export function PageSheet({
                               className={cls}
                               data-testid={`page-cell-${table.index}-${cell.addr.row}-${cell.addr.col}`}
                               data-cell-op-ids={cellChanges.map((ch) => ch.opId).join(" ")}
+                              data-selected-anchor={
+                                wholeCellSelected || (isSelected && !hasRunAnchor)
+                                  ? "true"
+                                  : undefined
+                              }
                               onClick={() => {
                                 if (isFillTarget && !isEditing) {
                                   if (cellChanges.length > 0) {
@@ -955,6 +1071,7 @@ export function PageSheet({
                         className={`page-delete-guide-item${
                           isSelected ? " page-delete-guide-item--selected" : ""
                         }`}
+                        data-selected-anchor={isSelected ? "true" : undefined}
                         onClick={() => selectFromSheet(ch.opId)}
                       >
                         <button

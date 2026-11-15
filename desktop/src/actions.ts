@@ -241,6 +241,7 @@ export async function selectSession(sessionId: string) {
   setState({
     activeSessionId: sessionId,
     screen: "review" as const,
+    mobileReviewPane: "list" as const,
     ...(previous !== sessionId
       ? {
           selection: null,

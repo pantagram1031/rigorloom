@@ -252,6 +252,15 @@ function classifyQueuedOp(
     };
   }
 
+  if (op.kind === "delete_guides") {
+    return {
+      fieldLabel: defaultFieldLabel,
+      opKindText: defaultOpKindText,
+      isAuditable: isAuditableOp(op),
+      previewMode: "before_only",
+    };
+  }
+
   if (op.kind !== "replace_at_cell") {
     return {
       fieldLabel: defaultFieldLabel,
@@ -426,11 +435,24 @@ export function buildIndexedChanges(
       op.kind === "replace_at_cell" ? (op.mode ?? null) : null,
     );
 
-    const beforeText = op.before ?? "";
+    const deleteBeforeFallback =
+      op.kind === "delete_guides" &&
+      !(op.before ?? "").trim() &&
+      inspect?.summary?.removalTargets?.length
+        ? inspect.summary.removalTargets
+            .map(
+              (rt) =>
+                inspect.graph.paragraphs
+                  .find((p) => p.para_idx === rt.para_idx)
+                  ?.text?.trim() ?? "",
+            )
+            .filter(Boolean)
+            .slice(0, 3)
+            .join(" / ")
+        : "";
+    const beforeText = (op.before ?? "") || deleteBeforeFallback;
     const afterText =
-      op.kind === "delete_guides"
-        ? defaultOpKindText
-        : projectedAfterText(op);
+      op.kind === "delete_guides" ? "" : projectedAfterText(op);
 
     const classification = classifyQueuedOp(
       op,

@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  loadGeometry,
   navigateScreen,
   openCommandPalette,
+  renderCurrentPage,
   restartRuntime,
   exportApplied,
+  togglePrintView,
 } from "../actions";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
-import { activeSession, headCandidate, setState, useWorkspace } from "../store";
+import {
+  activeSession,
+  headCandidate,
+  setPageFit,
+  setState,
+  setZoom,
+  useWorkspace,
+} from "../store";
 import { getSessionDisplayTitle } from "../workspace/openHelpers";
 import { Logo } from "./Logo";
 
@@ -19,6 +29,13 @@ export function TopBar() {
   const head = useWorkspace(headCandidate);
   const openedPaths = useWorkspace((s) => s.openedPaths);
   const corpusFiles = useWorkspace((s) => s.corpusFiles);
+  const zoom = useWorkspace((s) => s.zoom);
+  const pageFit = useWorkspace((s) => s.pageFit);
+  const mobileExplicitFit = useWorkspace((s) => s.mobileExplicitFit);
+  const page = useWorkspace((s) => s.page);
+  const printViewEnabled = useWorkspace((s) => s.printViewEnabled);
+  const capabilities = useWorkspace((s) => s.capabilities);
+  const render = useWorkspace((s) => s.render);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -45,6 +62,12 @@ export function TopBar() {
 
   const sidecarDown = status !== null && !status.running;
   const canExport = Boolean(session && (applied?.runId ?? head?.runId));
+  const showSheetMenuControls = Boolean(session && (screen === "review" || screen === "fill"));
+  const canTryPrintView = Boolean(
+    capabilities?.render?.rasterizer?.state === "yes" || render?.available,
+  );
+  const effectiveMenuZoom = !mobileExplicitFit && pageFit === "width" ? 1 : zoom;
+  const displayZoomPct = Math.round(effectiveMenuZoom * 100);
   const docTitle = session
     ? getSessionDisplayTitle(session, openedPaths, corpusFiles, language)
     : t("doc_none_open", language);
@@ -170,6 +193,77 @@ export function TopBar() {
               role="menu"
               data-testid="topbar-menu-popover"
             >
+              {showSheetMenuControls ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="topbar-menu-item"
+                    data-testid="topbar-menu-print-view"
+                    disabled={!canTryPrintView && !printViewEnabled}
+                    title={
+                      !canTryPrintView && !printViewEnabled
+                        ? errorCodeMessage("render_unavailable", language)
+                        : undefined
+                    }
+                    onClick={() => {
+                      const turningOn = !printViewEnabled;
+                      togglePrintView(turningOn);
+                      if (turningOn) {
+                        void renderCurrentPage(page);
+                        void loadGeometry(page);
+                      }
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {printViewEnabled
+                      ? t("review_mode_document", language)
+                      : t("review_mode_print", language)}
+                  </button>
+                  <div
+                    className="topbar-menu-zoom-row"
+                    data-testid="topbar-menu-zoom"
+                    role="group"
+                    aria-label={t("review_zoom_label", language, [displayZoomPct])}
+                  >
+                    <button
+                      type="button"
+                      className="topbar-menu-zoom-btn"
+                      data-testid="topbar-menu-zoom-out"
+                      disabled={effectiveMenuZoom <= 0.5}
+                      aria-label={t("review_zoom_out", language)}
+                      onClick={() =>
+                        setZoom(Math.max(0.5, Number((effectiveMenuZoom - 0.1).toFixed(2))))
+                      }
+                    >
+                      −
+                    </button>
+                    <button
+                      type="button"
+                      className="topbar-menu-zoom-btn"
+                      data-testid="topbar-menu-zoom-fit"
+                      onClick={() => setPageFit(pageFit === "width" ? "free" : "width")}
+                    >
+                      {mobileExplicitFit && pageFit === "width"
+                        ? t("review_zoom_label", language, [displayZoomPct])
+                        : t("review_zoom_fit", language)}
+                    </button>
+                    <button
+                      type="button"
+                      className="topbar-menu-zoom-btn"
+                      data-testid="topbar-menu-zoom-in"
+                      disabled={effectiveMenuZoom >= 2.0}
+                      aria-label={t("review_zoom_in", language)}
+                      onClick={() =>
+                        setZoom(Math.min(2.0, Number((effectiveMenuZoom + 0.1).toFixed(2))))
+                      }
+                    >
+                      +
+                    </button>
+                  </div>
+                  <div className="topbar-menu-divider" role="separator" />
+                </>
+              ) : null}
               {canExport ? (
                 <button
                   type="button"
