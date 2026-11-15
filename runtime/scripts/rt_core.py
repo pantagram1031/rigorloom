@@ -25,11 +25,14 @@ omission.
 """
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_apply import (  # noqa: E402
+    _execute_preedit_steps,
     apply_plan,
     candidate_artifact,
     list_candidates,
@@ -74,6 +77,7 @@ from rt_session import (  # noqa: E402
     MAX_EVENTS_PER_POLL_DEFAULT,
     SessionStore,
     append_event,
+    atomic_write_bytes,
     read_events,
     bound_region_result,
     document_graph,
@@ -83,6 +87,7 @@ from rt_session import (  # noqa: E402
     full_text_spec,
     load_profile,
     region_runs_with_faces,
+    sha256_file,
 )
 
 #: Every method an agent connection may reach, ``initialize`` included.
@@ -563,6 +568,95 @@ class RuntimeCore:
             return response
 
         return apply_once(self.store.root, session, plan, record, execute, reconcile)
+
+    def plan_preview(self, session_id, plan_id, *, out_path=None) -> dict:
+        """Read-only plan validation and step preview without mutating runtime state."""
+        session = self.store.get(session_id)
+        plan = self.plan(plan_id)
+        if plan.payload.get("sessionId") != session.id:
+            raise RpcError(
+                "unknown_plan",
+                f"plan {plan.id} does not belong to session {session.id}",
+                planId=plan.id,
+                sessionId=session.id,
+            )
+        if plan.payload.get("backend") != "preedit":
+            raise RpcError(
+                "unsupported_backend",
+                f"backend {plan.payload.get('backend')!r} does not support preedit preview",
+                planId=plan.id,
+                backend=plan.payload.get("backend"),
+            )
+        subject, current = self.plan_subject(session, plan)
+        origin = session.source if subject is None else subject
+        if plan.payload["boundSha256"] != current:
+            raise RpcError(
+                "plan_stale",
+                "the source changed after this plan was proposed",
+                planId=plan.id,
+                boundSha256=plan.payload["boundSha256"],
+                currentSha256=current,
+            )
+
+        with tempfile.TemporaryDirectory(prefix="rigorloom-plan-preview-") as tmp:
+            tmp_dir = Path(tmp)
+            base_profile_path = tmp_dir / "profile-base.json"
+            self.tools.profile(origin, base_profile_path)
+            base = json.loads(base_profile_path.read_text(encoding="utf-8"))
+            profile = base
+            specs = safe_full_text_specs(wanted_full_text(plan), base)
+            if specs:
+                try:
+                    ft_profile_path = tmp_dir / "profile-ft.json"
+                    self.tools.profile(origin, ft_profile_path, full_text=specs)
+                    profile = json.loads(ft_profile_path.read_text(encoding="utf-8"))
+                except RpcError:
+                    profile = base
+
+            report = validate_plan(plan, profile=profile, current_sha256=current)
+            if report["stale"]:
+                raise RpcError(
+                    "plan_stale",
+                    "the source changed after this plan was proposed",
+                    planId=plan.id,
+                    boundSha256=plan.payload["boundSha256"],
+                    currentSha256=report["currentSha256"],
+                )
+            if not report["ok"]:
+                raise RpcError(
+                    "plan_invalid",
+                    "this plan does not validate against the current document",
+                    planId=plan.id,
+                    hard=report["hard"],
+                )
+
+            work_dir = tmp_dir / "work"
+            work_dir.mkdir()
+            ops = plan.payload["ops"]
+            if not ops:
+                final_path, steps = origin, []
+            else:
+                final_path, steps = _execute_preedit_steps(
+                    self.tools, ops, origin, work_dir, origin.suffix,
+                )
+            preview_sha, preview_bytes = sha256_file(final_path)
+            written_out = None
+            if out_path is not None:
+                dst = Path(out_path)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_bytes(dst, final_path.read_bytes())
+                written_out = str(dst)
+
+        return {
+            "sessionId": session.id,
+            "planId": plan.id,
+            "planHash": plan.hash,
+            "base": plan.payload.get("base"),
+            "validation": report,
+            "steps": steps,
+            "preview": {"sha256": preview_sha, "bytes": preview_bytes},
+            "outPath": written_out,
+        }
 
     # -- rendering ----------------------------------------------------------
     def document_render(self, session_id, *, page: int = 0,

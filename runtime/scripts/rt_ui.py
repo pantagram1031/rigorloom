@@ -41,12 +41,12 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 try:
-    from .rt_apply import _argv_for as _apply_argv_for
     from .rt_codes import IMPL_VERSION, PROTOCOL_VERSION, RpcError
+    from .rt_core import RuntimeCore
     from .rt_session import MAX_SOURCE_BYTES, atomic_write_bytes, sha256_file
 except ImportError:
-    from rt_apply import _argv_for as _apply_argv_for
     from rt_codes import IMPL_VERSION, PROTOCOL_VERSION, RpcError
+    from rt_core import RuntimeCore
     from rt_session import MAX_SOURCE_BYTES, atomic_write_bytes, sha256_file
 
 HERE = Path(__file__).resolve().parent
@@ -484,17 +484,32 @@ def _annotate_protected_status(
     return before_out, after_out
 
 
-def _preedit_argv_for(op: dict[str, Any], src: Path, dst: Path, tmp_dir: Path, idx: int) -> list[str]:
-    """Build `preedit.py` subcommand argv for one normalised OperationPlan step."""
-    del tmp_dir, idx  # retained in signature; rt_apply._argv_for builds direct args
-    kind = str(op.get("kind") or "")
-    params = op.get("params") if isinstance(op.get("params"), dict) else op
-    try:
-        return _apply_argv_for(kind, params, src, dst)
-    except RpcError as exc:
-        raise BridgeError("unsupported_op", exc.message, data=exc.data) from exc
-    except KeyError as exc:
-        raise BridgeError("invalid_params", f"{kind} op missing required field {exc}") from exc
+def _rpc_error_classes() -> tuple[type[BaseException], ...]:
+    classes: list[type[BaseException]] = [RpcError]
+    alt = sys.modules.get("rt_codes")
+    alt_cls = getattr(alt, "RpcError", None) if alt is not None else None
+    if isinstance(alt_cls, type) and issubclass(alt_cls, BaseException) and alt_cls not in classes:
+        classes.append(alt_cls)
+    return tuple(classes)
+
+
+def _bridge_error_from_rpc(exc: BaseException) -> BridgeError:
+    code = str(getattr(exc, "code", "runtime_error"))
+    message = str(getattr(exc, "message", str(exc)))
+    data = getattr(exc, "data", None) or None
+    if code == "unknown_session":
+        return BridgeError("session_not_found", message, status=HTTPStatus.NOT_FOUND, data=data)
+    if code == "unknown_plan":
+        return BridgeError("plan_not_found", message, status=HTTPStatus.NOT_FOUND, data=data)
+    if code == "artifact_missing":
+        return BridgeError("candidate_not_found", message, status=HTTPStatus.NOT_FOUND, data=data)
+    if code in ("candidate_hash_mismatch", "receipt_body_mismatch", "plan_stale"):
+        return BridgeError(code, message, status=HTTPStatus.CONFLICT, data=data)
+    if code in ("capability_unavailable", "child_python_invalid"):
+        return BridgeError(code, message, status=HTTPStatus.SERVICE_UNAVAILABLE, data=data)
+    if code == "invalid_params":
+        return BridgeError("invalid_params", message, status=HTTPStatus.BAD_REQUEST, data=data)
+    return BridgeError(code, message, status=HTTPStatus.UNPROCESSABLE_ENTITY, data=data)
 
 
 class SSEHub:
@@ -1598,62 +1613,21 @@ class BridgeApplication:
             raise BridgeError("candidate_hash_mismatch", "candidate artifact sha256 mismatch", status=HTTPStatus.CONFLICT)
         return artifact
 
-    def _load_plan_record(self, root: Path, session_id: str, plan_id: str) -> dict[str, Any]:
-        plan_file = root / "sessions" / session_id / "plans" / f"{plan_id}.json"
-        if plan_file.is_file():
-            return json.loads(plan_file.read_text(encoding="utf-8"))
-        ok, res = self.sidecar.rpc("plan/get", {"planId": plan_id})
-        if ok and isinstance(res, dict) and isinstance(res.get("plan"), dict):
-            plan = res["plan"]
-            if plan.get("sessionId") == session_id:
-                return plan
-        raise BridgeError("plan_not_found", f"plan {plan_id} not found in session {session_id}", status=HTTPStatus.NOT_FOUND)
+    def _runtime_core(self, root: Path | None = None) -> RuntimeCore:
+        return RuntimeCore(root or self.current_root(), engine_root=self.engine_root)
 
-    def _preview_plan_paragraphs(
-        self,
-        base_hwpx: Path,
-        plan: dict[str, Any],
-    ) -> list[str]:
-        ops = plan.get("ops") or []
-        if not isinstance(ops, list) or not ops:
-            return _extract_hwpx_paragraphs(base_hwpx)
-        search_roots = [r for r in (self.engine_root, self.repo_root) if r is not None]
-        preedit_script = next(
-            (r / "engine" / "scripts" / "preedit.py" for r in search_roots
-             if (r / "engine" / "scripts" / "preedit.py").is_file()),
-            None,
-        )
-        if preedit_script is None:
-            raise BridgeError(
-                "guard_preview_unavailable",
-                "engine/scripts/preedit.py not found in this installation",
-                status=HTTPStatus.SERVICE_UNAVAILABLE,
-            )
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-        with tempfile.TemporaryDirectory(prefix="rigorloom-guard-preview-") as td:
-            tmp_dir = Path(td)
-            current = tmp_dir / "step-0.hwpx"
-            shutil.copyfile(base_hwpx, current)
-            for idx, op in enumerate(ops, start=1):
-                next_out = tmp_dir / f"step-{idx}.hwpx"
-                argv = _preedit_argv_for(op, current, next_out, tmp_dir, idx)
-                proc = subprocess.run(
-                    [sys.executable, str(preedit_script), *argv],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    env=env,
-                    timeout=60,
-                )
-                if proc.returncode != 0 or not next_out.is_file():
-                    raise BridgeError(
-                        "guard_preview_failed",
-                        f"preedit preview failed at op {idx} (exit {proc.returncode})",
-                        status=HTTPStatus.UNPROCESSABLE_ENTITY,
-                        data={"step": idx, "stderr": proc.stderr[-1000:], "stdout": proc.stdout[-1000:]},
-                    )
-                current = next_out
-            return _extract_hwpx_paragraphs(current)
+    def _core_candidate_hwpx(self, core: RuntimeCore, session_id: str, run_id: str) -> Path:
+        try:
+            session = core.store.get(session_id)
+            receipt = core.receipt_read(session_id, run_id)["receipt"]
+        except _rpc_error_classes() as exc:
+            raise _bridge_error_from_rpc(exc) from exc
+        rel = (receipt.get("candidate") or {}).get("path") or "artifact.hwpx"
+        cand_dir = (session.candidates_dir / run_id).resolve()
+        artifact = _resolve_relative_candidate(cand_dir, rel)
+        if not artifact.is_file():
+            raise BridgeError("candidate_not_found", f"missing candidate artifact {artifact}", status=HTTPStatus.NOT_FOUND)
+        return artifact
 
     def guard_diff(self, body: dict[str, Any]) -> dict[str, Any]:
         rt_guard = _try_import_rt_guard()
@@ -1678,35 +1652,64 @@ class BridgeApplication:
                 )
             session_id = _require_bare_component(raw_session, "sessionId")
             root = self.current_root()
+            core = self._runtime_core(root)
 
             plan_record = None
+            plan_obj = None
             if body.get("planId"):
                 plan_id = _require_bare_component(body["planId"], "planId")
-                plan_record = self._load_plan_record(root, session_id, plan_id)
+                try:
+                    session = core.store.get(session_id)
+                    plan_obj = core.plan(plan_id)
+                    plan_record = plan_obj.public()
+                except _rpc_error_classes() as exc:
+                    raise _bridge_error_from_rpc(exc) from exc
+                if plan_record.get("sessionId") != session_id:
+                    raise BridgeError(
+                        "plan_not_found",
+                        f"plan {plan_id} not found in session {session_id}",
+                        status=HTTPStatus.NOT_FOUND,
+                    )
+            else:
+                try:
+                    session = core.store.get(session_id)
+                except _rpc_error_classes() as exc:
+                    raise _bridge_error_from_rpc(exc) from exc
 
             if body.get("againstRunId"):
                 against_id = _require_bare_component(body["againstRunId"], "againstRunId")
-                before_hwpx = self._verified_candidate_hwpx(root, session_id, against_id)
+                before_hwpx = self._core_candidate_hwpx(core, session_id, against_id)
                 before_label = f"run:{against_id}"
-            elif plan_record and isinstance(plan_record.get("base"), dict) and plan_record["base"].get("runId"):
+            elif plan_obj is not None and isinstance(plan_record.get("base"), dict) and plan_record["base"].get("runId"):
                 base_run = _require_bare_component(plan_record["base"]["runId"], "base.runId")
-                before_hwpx = self._verified_candidate_hwpx(root, session_id, base_run)
+                try:
+                    subject, _ = core.plan_subject(session, plan_obj)
+                except _rpc_error_classes() as exc:
+                    raise _bridge_error_from_rpc(exc) from exc
+                before_hwpx = subject if subject is not None else session.source
                 before_label = f"run:{base_run}"
             else:
-                before_hwpx = self._session_source_hwpx(root, session_id)
+                before_hwpx = session.source
                 before_label = "source"
 
-            before_paras = _extract_hwpx_paragraphs(before_hwpx)
-
             if body.get("runId"):
+                before_paras = _extract_hwpx_paragraphs(before_hwpx)
                 run_id = _require_bare_component(body["runId"], "runId")
-                after_hwpx = self._verified_candidate_hwpx(root, session_id, run_id)
+                after_hwpx = self._core_candidate_hwpx(core, session_id, run_id)
                 after_label = f"run:{run_id}"
                 after_paras = _extract_hwpx_paragraphs(after_hwpx)
             elif plan_record is not None:
                 after_label = f"plan:{plan_record['planId']}"
-                after_paras = self._preview_plan_paragraphs(before_hwpx, plan_record)
+                with tempfile.TemporaryDirectory(prefix="rigorloom-guard-preview-") as td:
+                    preview_hwpx = Path(td) / f"preview{before_hwpx.suffix or '.hwpx'}"
+                    try:
+                        core.plan_preview(session_id, plan_record["planId"], out_path=preview_hwpx)
+                    except _rpc_error_classes() as exc:
+                        raise _bridge_error_from_rpc(exc) from exc
+                    before_paras = _extract_hwpx_paragraphs(before_hwpx)
+                    after_paras = _extract_hwpx_paragraphs(preview_hwpx)
             else:
+                before_paras = _extract_hwpx_paragraphs(before_hwpx)
                 after_label = before_label
                 after_paras = list(before_paras)
 
