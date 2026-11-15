@@ -69,7 +69,9 @@ was home), so it stays quiet rather than guess.
   on student and research reports kept outside this repository. Those notes
   compared paragraph openers, sentence length and hedges in human and generated
   reports, and drew on public writing guides. Only their conclusions are used
-  here, not their measurements.
+  here, not their measurements. The notes are the Pentaverse research notes
+  (2026-11): ask through hub mail AX-0009 and the replies from PV2, GROK and
+  RPT.
 - The same notes found that these signals point in opposite directions across
   genres. Fiction writers use more connectives than generated text does, and
   academic text the reverse. So every rule names the document types it applies

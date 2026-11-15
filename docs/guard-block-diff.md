@@ -71,7 +71,9 @@ Rules:
 
 The same as the default mode: 0 when every protected fact is unchanged
 (kept blocks may exist), 3 when at least one paragraph changed one or the
-paragraph counts differ, 2 when the files cannot be compared.
+paragraph counts differ, 2 when the files cannot be compared. Exit 2 prints
+the same one-document JSON usage error as the default mode, not text, because
+there is no comparison to show.
 
 ## Acceptance
 

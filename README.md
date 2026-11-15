@@ -1,10 +1,16 @@
 # Rigorloom
 
-When an AI edits a document, Rigorloom checks every paragraph it touched and
-names each one where a number, a date, a quotation, a negation or a direction
-word ("increased", "감소") changed. In the report pipeline those paragraphs are
-restored to the original; `rigorloom guard` only reports them. The check is
-plain code: the same two files always get the same verdict.
+Rigorloom fills in Korean official documents in `.hwpx` (보고서, 공문,
+지원서, 민원 서식, 근로계약서 같은 인사 서류) without Hancom Office. An agent
+or a person proposes each change, and a person approves it. The form is edited
+in place rather than regenerated: parts of the package that were not edited
+stay byte-identical.
+
+Two checks can run on any edit. `rigorloom guard` names each paragraph where a
+number, date, quotation or negation changed. `rigorloom style check` points to
+Korean phrasing worth a second look, such as 번역 투 and template-like report
+habits; most of its findings are notices, not errors. Both checks are
+deterministic.
 
 [![CI](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml/badge.svg)](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -14,7 +20,8 @@ plain code: the same two files always get the same verdict.
 
 ## Try it in one minute
 
-No Hancom, no session root, no network. Works on `.hwpx`, `.txt` and `.md`.
+The quickest thing to run today is the fact check. No Hancom, no session root,
+no network. Works on `.hwpx`, `.txt` and `.md`.
 
 ```sh
 pip install git+https://github.com/pantagram1031/rigorloom
@@ -40,15 +47,23 @@ files cannot be compared. The lower-level `prose_fidelity.py` compares two whole
 texts and uses 0/1 instead. Without `--format text`
 the result is one JSON document. It counts expressions; it does not read
 meaning, so a swap of two values or a reversal said in other words still
-passes. [examples/guard/](examples/guard/) has an HWPX pair with its committed
+passes. In the report pipeline's rewriting step such an edit is not applied,
+and the paragraph keeps its original text
+([`humanization_ctl.py`](modules/style/scripts/humanization_ctl.py), `apply`);
+`rigorloom guard` on its own only reports. `--mode block-diff` prints each
+edited paragraph's old and new text side by side
+([docs/guard-block-diff.md](docs/guard-block-diff.md)).
+[examples/guard/](examples/guard/) has an HWPX pair with its committed
 verdict, and the rules are in
 [pipeline/references/humanization_contract.md](pipeline/references/humanization_contract.md).
 
 ## What this is
 
-Around that check, Rigorloom is a **report-automation pipeline** that turns a
-research brief and a blank Korean government form (.hwp/.hwpx) into a filled,
-verified, typeset document, with deterministic gates at every stage.
+Support differs by document type. Reports have a full pipeline from a research
+brief and a blank form to a filled, checked, typeset document, with a gate at
+every stage. For 공문, 지원서, 민원 and 인사 서류, form checkers and cell filling
+are available through the Runtime CLI; end-to-end paths for these types are
+being built next.
 Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 The core workflow does not require Hancom Office. Linux and Windows
