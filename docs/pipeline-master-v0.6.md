@@ -62,7 +62,7 @@ runtime/                   local Runtime and web UI (`rigorloom ui`)
 scripts/new_report.py      atomic workspace scaffolder
 adapters/                  optional document/provider integrations
 docs/                      current public documentation
-archive/                   superseded sanitized specifications
+docs/archive/              superseded sanitized specifications
 workspaces/report-<slug>/  local run data, ignored by Git
 ```
 
@@ -428,7 +428,7 @@ Completion requires:
 - no private workspaces, forms, credentials, or personal profiles committed to
   the public repository.
 
-Historical internal notes and superseded contracts are under `archive/` and are
+Historical internal notes and superseded contracts are under `docs/archive/` and are
 not part of the active workflow.
 
 ## 9. Preference packs

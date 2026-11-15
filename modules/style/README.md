@@ -1,7 +1,7 @@
 # Style distribution module
 
 The humanization stack as one optional distribution module (plan
-`docs/plans/v0.16-unified-core-and-modules.md` §4.2): the bounded-edit
+`docs/archive/plans/v0.16-unified-core-and-modules.md` §4.2): the bounded-edit
 controller (`humanization_ctl.py`, surfaced as the `humanize` CLI command),
 the deterministic fact-invariance gate (`prose_fidelity.py`, imported by the
 controller as a sibling), and the deterministic prose/structure style checker

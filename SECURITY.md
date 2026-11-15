@@ -40,7 +40,7 @@ content through logs, generated artifacts, or `rigorloom ui`.
 - Fidelity gaps that are already documented as known limitations (for
   example, LibreOffice/H2Orestart equation rendering, or the
   `experimental-rhwp` render path — see the "Project status" section of
-  [README.md](README.md) and [docs/plans/p0-parity-report.md](docs/plans/p0-parity-report.md)).
+  [README.md](README.md) and [docs/archive/plans/p0-parity-report.md](docs/archive/plans/p0-parity-report.md)).
 - Issues in the archived standalone hwp-master repository — its engine now
   lives at `engine/` in this repo (Wave 2 absorb); report engine issues here.
 

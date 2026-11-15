@@ -1,6 +1,6 @@
 # HWP usage landscape — where the format lives and what each family demands
 
-Status: RESEARCH (Wave 5.1 of `docs/plans/v0.16-unified-core-and-modules.md`).
+Status: RESEARCH (Wave 5.1 of `docs/archive/plans/v0.16-unified-core-and-modules.md`).
 Feeds 5.2 eval scenarios and the W6 per-family benchmarks (§6.1–6.2).
 Method: web survey (Korean-language queries), 2026-08. Prevalence claims are
 **estimates from distribution signals** (who publishes forms, in what format),

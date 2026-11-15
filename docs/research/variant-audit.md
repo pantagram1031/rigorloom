@@ -1,6 +1,6 @@
 # Variant audit — decision matrix (Phase 0.C output)
 
-Executed 2026-08-06 per `docs/plans/v0.16-prep-variant-audit.md`. All five
+Executed 2026-08-06 per `docs/archive/plans/v0.16-prep-variant-audit.md`. All five
 benches ran on existing artifacts — zero pipeline reruns, zero workspace
 mutations, COM leg deferred (R5, concurrent-session risk). Raw bench reports
 live in the private workspace: `agenthwpx/work/bench1-gate-crossfire.md`,

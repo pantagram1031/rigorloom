@@ -1,6 +1,6 @@
 # Per-family form eval scenarios (W5.2)
 
-Status: ACTIVE (Wave 5.2 of `docs/plans/v0.16-unified-core-and-modules.md`).
+Status: ACTIVE (Wave 5.2 of `docs/archive/plans/v0.16-unified-core-and-modules.md`).
 These scenarios are the acceptance instrument for the 5.3 skill surface and the
 seed of the Wave 6 regression benches (§6.1–6.2).
 

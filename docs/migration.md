@@ -10,7 +10,7 @@ Included:
 - the local web UI (`rigorloom ui`, replacing the retired read-only viewer);
 - generic style/layout examples;
 - automatic handoff and archive behavior;
-- legacy public contracts under `archive/`.
+- legacy public contracts under `docs/archive/legacy/`.
 
 Excluded:
 

@@ -68,7 +68,7 @@ provides:
 
 ## The four rules
 
-Verbatim from `docs/plans/v0.16-unified-core-and-modules.md` §3.1; the
+Verbatim from `docs/archive/plans/v0.16-unified-core-and-modules.md` §3.1; the
 registry and CI enforce them.
 
 - **Core never imports a module.** Dependency points one way; modules register

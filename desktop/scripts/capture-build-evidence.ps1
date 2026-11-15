@@ -27,12 +27,12 @@ Fresh-build example (PowerShell):
 
   .\desktop\scripts\capture-build-evidence.ps1 `
     -Repository . `
-    -Executable F:\RigorloomQA\build\rigorloom-desktop.exe `
-    -Sidecar F:\RigorloomQA\build\rigorloomd.exe `
-    -Installer F:\RigorloomQA\build\Rigorloom_0.1.0_x64-setup.exe `
-    -EvidenceDirectory F:\RigorloomQA\card5-<sha>\evidence `
-    -InstalledRoot F:\RigorloomQA\card5-<sha>\installed `
-    -BuildLogDirectory F:\RigorloomQA\card5-<sha>\logs `
+    -Executable .\work\qa\build\rigorloom-desktop.exe `
+    -Sidecar .\work\qa\build\rigorloomd.exe `
+    -Installer .\work\qa\build\Rigorloom_0.1.0_x64-setup.exe `
+    -EvidenceDirectory .\work\qa\card5-<sha>\evidence `
+    -InstalledRoot .\work\qa\card5-<sha>\installed `
+    -BuildLogDirectory .\work\qa\card5-<sha>\logs `
     -AllowInstallerPatchedExecutable
 
 The collector proves source and copied artifact hash linkage. Even with an

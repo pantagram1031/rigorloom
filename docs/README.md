@@ -74,7 +74,7 @@ plans, not living documentation:
 
 ## Plans
 
-[plans/](plans/) holds the design history behind each release wave — one
-doc per hardening or feature wave. These are point-in-time design records,
+[archive/plans/](archive/plans/) holds the design history behind each release wave — one
+doc per hardening or feature wave (see [archive/README.md](archive/README.md) for the index). These are point-in-time design records,
 not living documentation; for current behavior, prefer the operating docs
 above and [CHANGELOG.md](../CHANGELOG.md).

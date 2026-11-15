@@ -1686,7 +1686,7 @@ chain.
 
 ## v0.16.0 — unified core and modules
 
-The whole v0.16 program (`docs/plans/v0.16-unified-core-and-modules.md`):
+The whole v0.16 program (`docs/archive/plans/v0.16-unified-core-and-modules.md`):
 rigorloom becomes a general HWP/HWPX document engine — one core, with the
 report, style, and personalization capability split behind a distribution-
 module contract and shipped as separately installable bundles
@@ -2096,7 +2096,7 @@ verification evidence: `docs/release-v0.16.0.md`.
   table + experimental section, golden-path "equation documents on Linux
   (experimental)" subsection); externally-supplied pixel metrics stayed
   tagged `provenance: external` rather than restated as repo facts.
-- Honest status: `docs/plans/p0-parity-report.md` records this work as
+- Honest status: `docs/archive/plans/p0-parity-report.md` records this work as
   **PARTIAL** — canonical-preservation and semantic-fingerprint parity are
   reproduced in this repository, but pixel-level parity with Hancom rendering
   is not achieved (max displacement 676px externally reported, `provenance:
