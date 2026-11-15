@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -373,6 +374,9 @@ def test_scaffolder_refuses_clearly_without_report_module(tmp_path: Path):
             "--workspace-root", str(tmp_path / "runs"),
         ],
         capture_output=True, text=True, encoding="utf-8",
+        # The message has an em dash. On Windows the child would write it in
+        # the console code page and the utf-8 reader would drop the stream.
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     assert proc.returncode != 0
     assert "report distribution module" in (proc.stderr + proc.stdout)
