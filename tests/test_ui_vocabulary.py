@@ -121,6 +121,7 @@ process.stdout.write(JSON.stringify({{
         cwd=str(REPO),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
         check=False,
     )
