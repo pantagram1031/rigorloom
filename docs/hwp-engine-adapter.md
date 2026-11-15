@@ -17,8 +17,14 @@ Point `RIGORLOOM_HWP_ENGINE` at the directory that holds the engine's
 
 ```sh
 export RIGORLOOM_HWP_ENGINE=/path/to/engine
-rigorloom engine          # exit 0 when the engine answers, 3 when it is absent
+rigorloom engine          # exit 0 when the engine is configured, 3 when it is not
 ```
+
+Exit code 3 is the CLI's general "refused" code. The CLI has no separate
+code for a missing environment piece (4 is reserved for internal errors), so a
+missing optional engine is reported as a refusal with the reason in the JSON.
+`rigorloom capabilities` also reports the same thing under `hwpEngine`
+(`available`, `reason`, and the variable name) without starting the engine.
 
 Rigorloom never imports the engine. Each call runs `kit_api.py` as a separate
 process in your working directory, so relative paths mean what you meant, and
@@ -44,9 +50,11 @@ The reasons say what the built-in path cannot do:
 Other reasons come from a present engine: `engine_path_missing`,
 `engine_timeout`, `engine_not_runnable`, `engine_contract_violation`,
 `engine_result_too_large`, and `engine_refused`. For a refusal from the engine
-only its error code is kept (`error.engine.code`). Engine messages and stderr
-can quote file paths or document text, so they are printed to your terminal's
-stderr and never put into a result that might be stored or shared.
+only its error code is kept (`error.engine.code`). Engine error messages and
+stderr can quote file paths or document text, so they are printed to your
+terminal's stderr and never put into a result that might be stored or shared.
+This applies to engine errors and diagnostics. A successful engine answer is
+passed through whole, so it can contain paths you supplied in the arguments.
 
 ## What never goes into this repository
 
