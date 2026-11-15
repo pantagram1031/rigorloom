@@ -298,7 +298,11 @@ def payload(tmp_path_factory, bundles, built_wheel) -> dict:
     shutil.copy2(built_wheel, local_wheel)
 
     venv = sandbox.root / "venv"
-    created = _plain_run([sys.executable, "-m", "venv", str(venv)])
+    # --copies: a POSIX venv otherwise symlinks its interpreter to the system
+    # Python, which the containment scan rightly reports as a link leaving the
+    # sandbox. Windows venvs copy already.
+    created = _plain_run([sys.executable, "-m", "venv",
+                          *([] if os.name == "nt" else ["--copies"]), str(venv)])
     assert created.returncode == 0, (
         f"venv creation failed:\n{created.stdout[-2000:]}\n{created.stderr[-2000:]}")
     venv_python = _exe(venv, "python")
