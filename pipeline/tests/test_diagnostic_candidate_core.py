@@ -54,6 +54,12 @@ def test_run_child_capture_evidence_is_hash_and_count_only() -> None:
     ) == (0, False, False)
 
 
+def _wait_until_dead(pid: int, seconds: float = 5.0) -> None:
+    end = time.monotonic() + seconds
+    while _pid_is_live(pid) and time.monotonic() < end:
+        time.sleep(0.02)
+
+
 def _pid_is_live(pid: int) -> bool:
     if os.name == "nt":
         # ``os.kill(pid, 0)`` maps to an unsupported Windows signal and
@@ -117,6 +123,11 @@ def test_run_child_capture_cleans_ordinary_grandchild_cross_platform(tmp_path: P
     assert pid_path.exists()
     pid = int(pid_path.read_text(encoding="utf-8"))
     try:
+        # SIGKILL to the process group is asynchronous: the grandchild can
+        # still be running for a moment after run_child_capture returns
+        # (seen on a loaded CI runner). Wait for it, bounded, rather than
+        # sampling once.
+        _wait_until_dead(pid)
         assert not _pid_is_live(pid)
     finally:
         if _pid_is_live(pid):
@@ -171,4 +182,5 @@ def test_run_child_capture_posix_process_group_boundary_has_no_live_escape(
         int, record_path.read_text(encoding="utf-8").split(","))
     assert session == process_group
     assert session != parent_group
+    _wait_until_dead(pid)
     assert not _pid_is_live(pid)

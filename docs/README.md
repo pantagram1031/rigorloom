@@ -34,6 +34,8 @@
 
 ## Extension and installation
 
+- [korean-style-rules.md](korean-style-rules.md) — `rigorloom style check`,
+  its versioned Korean phrasing rules, and what a notice means.
 - [extensions.md](extensions.md) — receipt-backed, data-only local
   knowledge packs and their resolution precedence.
 - [hwp-engine-adapter.md](hwp-engine-adapter.md) — the optional adapter for a

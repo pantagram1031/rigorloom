@@ -195,6 +195,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine-root", dest="doctor_engine_root", default=None,
         help="installed engine root to inspect (optional; no checkout default)")
 
+    p_guard = sub.add_parser(
+        "guard", help="did an edit change a number, quote, negation, ...? "
+                      "(.hwpx, .txt, .md; no root needed)")
+    p_guard.add_argument("before", help="the original file")
+    p_guard.add_argument("after", help="the edited file, same type")
+    p_guard.add_argument("--format", choices=("json", "text"), default="json",
+                         help="json (default, one document on stdout) or a readable table")
+    p_guard.add_argument("--mode", choices=("verdict", "block-diff"), default="verdict",
+                         help="block-diff prints each edited paragraph's old and new text "
+                              "(always text; see docs/guard-block-diff.md)")
+
+    p_style = sub.add_parser(
+        "style", help="Korean phrasing worth a second look (.hwpx, .txt, .md; no root needed)")
+    style_sub = p_style.add_subparsers(dest="style_command", required=True)
+    p_style_check = style_sub.add_parser(
+        "check", help="list matches as file:line:col rule-id; exit 3 only on an error rule")
+    p_style_check.add_argument("file", help="the document to check")
+    p_style_check.add_argument(
+        "--doc-type", default="any",
+        choices=("report", "gongmun", "grant", "minwon", "contract", "any"),
+        help="apply only the rules for this document type (default: all rules)")
+    p_style_check.add_argument(
+        "--format", choices=("json", "text"), default="json",
+        help="json (default, one document on stdout) or one line per match")
+
     sub.add_parser(
         "engine",
         help="is the separately installed HWP engine available (optional)")
@@ -515,6 +540,51 @@ def main(argv: list[str] | None = None) -> int:
             "command": command,
             "result": result,
         }, code)
+
+    if command == "guard":
+        # Read-only and rootless, like doctor: it opens two files and writes
+        # nothing. Exit 0 = every protected fact unchanged, 3 = at least one
+        # paragraph changed one (or paragraphs were added/removed), 2 = the
+        # inputs cannot be compared.
+        try:
+            from . import rt_guard
+        except ImportError:
+            import rt_guard
+        try:
+            if args.mode == "block-diff":
+                text, passed = rt_guard.block_diff(Path(args.before), Path(args.after))
+                sys.stdout.write(text)
+                return EXIT_OK if passed else EXIT_REFUSED
+            result = rt_guard.guard(Path(args.before), Path(args.after))
+        except (rt_guard.GuardInputError, OSError, UnicodeDecodeError) as exc:
+            return emit({"ok": False, "command": command,
+                         "error": {"code": "invalid_params", "message": str(exc)}},
+                        EXIT_USAGE)
+        code = EXIT_OK if result["pass"] else EXIT_REFUSED
+        if args.format == "text":
+            sys.stdout.write(rt_guard.format_table(result))
+            return code
+        return emit({"ok": code == EXIT_OK, "command": command, "result": result}, code)
+
+    if command == "style":
+        # Read-only and rootless, like guard. Exit 0 = no error-level rule
+        # matched (notices may exist), 3 = at least one did, 2 = unreadable.
+        try:
+            from . import rt_style
+        except ImportError:
+            import rt_style
+        try:
+            result = rt_style.check(Path(args.file), args.doc_type)
+        except (rt_style.StyleInputError, OSError, UnicodeDecodeError) as exc:
+            return emit({"ok": False, "command": "style check",
+                         "error": {"code": "invalid_params", "message": str(exc)}},
+                        EXIT_USAGE)
+        code = EXIT_OK if result["pass"] else EXIT_REFUSED
+        if args.format == "text":
+            sys.stdout.write(rt_style.format_lines(result, args.file))
+            return code
+        return emit({"ok": code == EXIT_OK, "command": "style check",
+                     "result": result}, code)
 
     if command == "engine":
         try:

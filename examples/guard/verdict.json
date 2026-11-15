@@ -1,0 +1,54 @@
+{
+  "command": "guard",
+  "ok": false,
+  "result": {
+    "after": "after.hwpx",
+    "before": "before.hwpx",
+    "changed": [
+      {
+        "after": "2. 근로계약기간 :      년   월   일부터      년   월   일까지",
+        "before": "1. 근로계약기간 :      년   월   일부터      년   월   일까지",
+        "changes": [
+          {
+            "after": {
+              "2": 1
+            },
+            "before": {
+              "1": 1
+            },
+            "kind": "numbers"
+          }
+        ],
+        "kinds": [
+          "numbers"
+        ],
+        "paragraph": 4
+      },
+      {
+        "after": "  ※ 근로계약기간을 정한 경우에는 “근로개시일”만 기재",
+        "before": "  ※ 근로계약기간을 정하지 않는 경우에는 “근로개시일”만 기재",
+        "changes": [
+          {
+            "after": {},
+            "before": {
+              "않": 1
+            },
+            "kind": "qualifiers"
+          }
+        ],
+        "kinds": [
+          "qualifiers"
+        ],
+        "paragraph": 5
+      }
+    ],
+    "edited": 3,
+    "paragraphs": {
+      "after": 295,
+      "before": 295
+    },
+    "pass": false,
+    "reason": "protected_change",
+    "schema": "rigorloom/guard-v1"
+  }
+}

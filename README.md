@@ -1,6 +1,16 @@
 # Rigorloom
 
-A report-automation pipeline for Korean HWP/HWPX government forms.
+Rigorloom fills in Korean official documents in `.hwpx` (보고서, 공문,
+지원서, 민원 서식, 근로계약서 같은 인사 서류) without Hancom Office. An agent
+or a person proposes each change, and a person approves it. The form is edited
+in place rather than regenerated: parts of the package that were not edited
+stay byte-identical.
+
+Two checks can run on any edit. `rigorloom guard` names each paragraph where a
+number, date, quotation or negation changed. `rigorloom style check` points to
+Korean phrasing worth a second look, such as 번역 투 and template-like report
+habits; most of its findings are notices, not errors. Both checks are
+deterministic.
 
 [![CI](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml/badge.svg)](https://github.com/pantagram1031/rigorloom/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -8,11 +18,52 @@ A report-automation pipeline for Korean HWP/HWPX government forms.
 
 ---
 
+## Try it in one minute
+
+The quickest thing to run today is the fact check. No Hancom, no session root,
+no network. Works on `.hwpx`, `.txt` and `.md`.
+
+```sh
+pip install git+https://github.com/pantagram1031/rigorloom
+printf '응답률은 18.6%%였고, 표본이 작아 일반화할 수 없다.\n' > before.txt
+printf '응답률은 19%%였고, 표본이 작지만 일반화할 수 있다.\n' > after.txt
+rigorloom guard before.txt after.txt --format text
+```
+
+```text
+paragraphs: 1, edited: 1, changed a protected fact: 1
+
+¶1
+  number/unit           18.6%  ->  19%
+  negation/hedge/bound  없  ->  (gone)
+
+CHANGED: restore or review the paragraphs above.
+```
+
+Exit codes follow the Runtime CLI: 0 means every protected fact is unchanged;
+3 means at least one paragraph changed one, or paragraphs were added or removed
+(guard refuses to guess an alignment; `result.reason` says which); 2 means the
+files cannot be compared. The lower-level `prose_fidelity.py` compares two whole
+texts and uses 0/1 instead. Without `--format text`
+the result is one JSON document. It counts expressions; it does not read
+meaning, so a swap of two values or a reversal said in other words still
+passes. In the report pipeline's rewriting step such an edit is not applied,
+and the paragraph keeps its original text
+([`humanization_ctl.py`](modules/style/scripts/humanization_ctl.py), `apply`);
+`rigorloom guard` on its own only reports. `--mode block-diff` prints each
+edited paragraph's old and new text side by side
+([docs/guard-block-diff.md](docs/guard-block-diff.md)).
+[examples/guard/](examples/guard/) has an HWPX pair with its committed
+verdict, and the rules are in
+[pipeline/references/humanization_contract.md](pipeline/references/humanization_contract.md).
+
 ## What this is
 
-Rigorloom is a **report-automation pipeline** that turns a research brief and
-a blank Korean government form (.hwp/.hwpx) into a filled, verified,
-typeset document — with deterministic gates at every stage.
+Support differs by document type. Reports have a full pipeline from a research
+brief and a blank form to a filled, checked, typeset document, with a gate at
+every stage. For 공문, 지원서, 민원 and 인사 서류, form checkers and cell filling
+are available through the Runtime CLI; end-to-end paths for these types are
+being built next.
 Current release: **v0.17.0**. See [CHANGELOG.md](CHANGELOG.md) for history.
 
 The core workflow does not require Hancom Office. Linux and Windows
@@ -250,6 +301,7 @@ python studio/main.py
 | [docs/architecture.md](docs/architecture.md) | System architecture |
 | [docs/support-matrix.md](docs/support-matrix.md) | Per-capability status with evidence |
 | [docs/extensions.md](docs/extensions.md) | Data-only local knowledge packs |
+| [docs/korean-style-rules.md](docs/korean-style-rules.md) | `rigorloom style check` and its Korean phrasing rules |
 | [docs/hwp-engine-adapter.md](docs/hwp-engine-adapter.md) | Optional adapter for a separately installed HWP engine |
 | [evals/README.md](evals/README.md) | Clean-room validation harness |
 | [AGENTS.md](AGENTS.md) | Agent operating instructions |

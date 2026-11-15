@@ -1,0 +1,18 @@
+paragraphs: 295, edited: 3, changed a protected fact: 2
+
+¶3 kept
+-                 (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다.
++                 (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 맺는다.
+
+¶4 CHANGED: number/unit
+- 1. 근로계약기간 :      년   월   일부터      년   월   일까지
++ 2. 근로계약기간 :      년   월   일부터      년   월   일까지
+  lost   number/unit  1
+  added  number/unit  2
+
+¶5 CHANGED: negation/hedge/bound
+-   ※ 근로계약기간을 정하지 않는 경우에는 “근로개시일”만 기재
++   ※ 근로계약기간을 정한 경우에는 “근로개시일”만 기재
+  lost   negation/hedge/bound  않
+
+CHANGED: restore or review the paragraphs above.
