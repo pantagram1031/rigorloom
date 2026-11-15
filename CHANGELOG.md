@@ -40,6 +40,32 @@ the kernel's contract shape.
   `modules/report/scripts/pipeline_ctl.py:1150` (verified end-to-end in
   `tests/test_ui_approval_roundtrip.py::test_pipeline_gates_list_approve_reject_and_script_gate_refusal`).
 
+### Changed
+
+- **T169:** every document edit now has one owner, `RuntimeCore`
+  (propose, validate, request approval, resolve, apply), and the paths that
+  are still outside it are named in [docs/architecture.md](docs/architecture.md).
+  - `RuntimeCore.plan_preview` replaces the web UI's own preedit preview loop.
+    It runs the same steps in a temporary directory and writes no event,
+    journal, receipt or candidate, and never uses an approval
+    (`tests/test_runtime_preview.py`).
+  - The preedit step loop moved into `rt_apply._execute_preedit_steps`, with no
+    behaviour change; a test checks candidate bytes and receipt fields stay
+    the same.
+  - `pipeline_ctl.py` now owns one APPROVALS.md codec (`parse_gate_approvals`,
+    `format_gate_decision_line`, `record_gate_decision_text`,
+    `write_gate_decision`), and `rigorloom ui` writes gate decisions through it.
+  - Behaviour change: for a `rejected` line, the recorded reason no longer
+    includes a trailing `at=...`, and that timestamp is kept instead of being
+    replaced with the current time
+    (`TestApprovalsMdCodec::test_parse_gate_approvals_precedence_and_timestamps`).
+    `pipeline_ctl gate` exit codes are unchanged.
+  - docs/architecture.md is rewritten around the edit transaction, and the
+    opening of docs/runtime-protocol-v0.md no longer says no runtime code
+    exists. `tests/test_wp4a_inventory_boundary.py` replays the inventory
+    commands and their exit codes. The Studio row is retired because #375
+    removed Studio.
+
 ### Added
 
 - **T167:** `rigorloom demo gongmun --out DIR` fills the blank 기안문 form
