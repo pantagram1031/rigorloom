@@ -2,7 +2,6 @@
 """S1 boundary suite: replay the Phase-1 CLI inventory and verify approval separation."""
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -318,13 +317,11 @@ def test_inventory_env_gated_rows_system_python_pytest() -> None:
     assert "No module named pytest" in res.stderr
 
 
-def test_inventory_env_gated_rows_studio_fastapi() -> None:
-    """Row 15: studio/main.py exits 1 when fastapi is absent."""
-    if importlib.util.find_spec("fastapi") is not None:
-        pytest.skip("requires environment without fastapi installed")
-    res = _run_py(["studio/main.py"])
-    assert res.returncode == 1
-    assert "fastapi" in res.stderr
+def test_inventory_row_15_studio_is_retired() -> None:
+    """Row 15 (studio/main.py, exit 1 without fastapi) is retired: #375 removed
+    studio/ and `rigorloom ui` replaces it. Pin the removal so the row cannot
+    come back unnoticed."""
+    assert not (REPO / "studio" / "main.py").exists()
 
 
 def test_inventory_disabled_module_exit_codes(tmp_path: Path) -> None:
