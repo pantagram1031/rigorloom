@@ -220,6 +220,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--format", choices=("json", "text"), default="json",
         help="json (default, one document on stdout) or one line per match")
 
+    sub.add_parser(
+        "engine",
+        help="is the separately installed HWP engine available (optional)")
     sub.add_parser("capabilities", help="what this build can do")
     sub.add_parser("sessions", help="list sessions under the root")
 
@@ -582,6 +585,16 @@ def main(argv: list[str] | None = None) -> int:
             return code
         return emit({"ok": code == EXIT_OK, "command": "style check",
                      "result": result}, code)
+
+    if command == "engine":
+        try:
+            from . import rt_kit
+        except ImportError:
+            import rt_kit
+        result = rt_kit.status()
+        return emit({"ok": result["available"], "command": command,
+                     "result": result},
+                    EXIT_OK if result["available"] else EXIT_REFUSED)
 
     if command == "install":
         try:

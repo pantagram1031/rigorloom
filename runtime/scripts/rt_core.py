@@ -165,6 +165,16 @@ def _text_by_spec(profile: dict) -> dict:
     return out
 
 
+
+def _hwp_engine_status() -> dict:
+    """Whether the optional HWP engine is configured. Never runs it, and
+    leaves out the engine's path, which may name a private directory."""
+    import rt_kit
+    found = rt_kit.detect()
+    return {"available": found["available"],
+            "reason": found.get("reason"),
+            "env": rt_kit.ENGINE_ENV}
+
 class RuntimeCore:
     """Sessions, documents, plans, approvals and candidates under one root."""
 
@@ -209,6 +219,7 @@ class RuntimeCore:
             "modules": module_capability(self.tools.root),
             "childPython": child_python_facts(),
             "deferredRefusals": list(DEFERRED_REFUSALS),
+            "hwpEngine": _hwp_engine_status(),
             "unavailable": {
                 "renderProbe": ("not run unless capabilities/list is called "
                                 "with probeRenderers:true; it costs seconds"),

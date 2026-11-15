@@ -302,6 +302,7 @@ python studio/main.py
 | [docs/support-matrix.md](docs/support-matrix.md) | Per-capability status with evidence |
 | [docs/extensions.md](docs/extensions.md) | Data-only local knowledge packs |
 | [docs/korean-style-rules.md](docs/korean-style-rules.md) | `rigorloom style check` and its Korean phrasing rules |
+| [docs/hwp-engine-adapter.md](docs/hwp-engine-adapter.md) | Optional adapter for a separately installed HWP engine |
 | [evals/README.md](evals/README.md) | Clean-room validation harness |
 | [AGENTS.md](AGENTS.md) | Agent operating instructions |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
