@@ -121,7 +121,7 @@ form: gianmun-byeolji-1ho.hwpx
 brief: brief.json
 checks: residue hard=0 (acceptance=true, ranAll=true); gongmun hard=0 warn=1 (acceptance=true, ranAll=true)
 policies: form->filled PASS; draft->polished skipped
-sha256: 4b2972801f79843464ce0d30adf9c8ea7f433c3f6e687bc545d0bb828e33ac1d
+sha256: f6159cbb779a6467c7e844b117c18f3dbcac490d1fc71521faf2ea20d2dee0de
 artifacts: filled.hwpx, plan.json, verdict.json, approval.json
 ```
 
