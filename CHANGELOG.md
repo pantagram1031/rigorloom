@@ -30,7 +30,7 @@ the kernel's contract shape.
 
 ### Removed
 
-- **T167:** removed the legacy read-only `studio/` dashboard
+- **T168:** removed the legacy read-only `studio/` dashboard
   (`studio/main.py`, `studio/index.html`, `studio/README.md`,
   `studio/requirements.txt`), `tests/test_studio.py`, and the `studio`
   optional extra in `pyproject.toml`. Use `rigorloom ui`
