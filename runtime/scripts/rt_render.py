@@ -7,7 +7,7 @@ module is built on rather than around:
 
   * A PDF can be rasterised offline, if PyMuPDF is importable. It is an
     OPTIONAL dependency (``pyproject.toml`` lists ``pymupdf`` only under the
-    ``studio`` and ``engine`` extras), so it is imported lazily inside the call
+    ``engine`` extra), so it is imported lazily inside the call
     and its absence is a reported state, never an import error at startup.
   * An HWPX cannot become a PDF in THIS module. Conversion is Hancom COM,
     and it lives one door along in ``rt_convert``, behind the host-only
@@ -97,7 +97,7 @@ def rasterizer_facts() -> dict:
                     "reason": None, "formats": list(RASTERIZABLE_SUFFIXES)}
     return {"state": "no", "module": None,
             "reason": ("PyMuPDF is not importable in this interpreter; it is an "
-                       "optional dependency (pyproject extras: studio, engine)"),
+                       "optional dependency (pyproject extra: engine)"),
             "formats": []}
 
 

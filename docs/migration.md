@@ -7,7 +7,7 @@ Included:
 
 - the v0.6 state machine and tests;
 - current contracts and stage playbooks;
-- the read-only Studio;
+- the local web UI (`rigorloom ui`, replacing the retired read-only viewer);
 - generic style/layout examples;
 - automatic handoff and archive behavior;
 - legacy public contracts under `archive/`.

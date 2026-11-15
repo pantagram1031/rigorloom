@@ -7,7 +7,7 @@ The project separates orchestration from document production.
 3. **Document adapters** — HWP is supported through the engine bundled at
    `engine/`; other formats can implement the same inspect/assemble/measure/
    proof interface.
-4. **Services** — Studio, scheduling, notifications, and external knowledge
+4. **Services** — Local UI (`rigorloom ui`), scheduling, notifications, and external knowledge
    systems are optional. The kernel runs without them.
 
 Workspace state lives in `PIPELINE.md`; machine handoff state lives in

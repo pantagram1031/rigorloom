@@ -34,10 +34,11 @@ Discard the partial derivative and rebuild from the canonical bundle and a
 pristine form copy. Do not hand-patch a failed assembly and then continue the
 pipeline from that derivative.
 
-## Studio or an adapter accepts an unexpected path
+## Local UI or an adapter accepts an unexpected path
 
-Treat workspace identifiers as untrusted input. Validate the slug, resolve the
-path, and assert containment within the configured workspace root before reading
+Treat workspace identifiers, uploaded filenames, and `--root` or bridge inputs
+as untrusted input (`rigorloom ui`, `runtime/scripts/rt_ui.py`). Validate names,
+resolve the path, and assert containment within the configured root before reading
 or writing any file.
 
 ## HWP stages are unavailable

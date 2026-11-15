@@ -277,7 +277,6 @@ pipeline/    core contracts, checkers, registry, render proof
 modules/     distribution modules: report, style, gongmun, minwon, hr, grant
 evals/       clean-room validation harness (installs from dist zips only)
 skill/       router skill surface + references (forms, fill-recipe, rubric)
-studio/      optional read-only local workspace viewer
 scripts/     bootstrap, scaffolder, installer, packaging
 adapters/    provider-neutral agent entrypoints
 docs/        architecture, research, and operating documentation
@@ -308,15 +307,20 @@ not by vendor name.
 - **Model routing:** [skill/references/model-routing.md](skill/references/model-routing.md) —
   measured per-task-class tier guidance, including what is unmeasured.
 
-## Local Studio
+## Local Web UI
 
-A read-only local viewer for inspecting workspaces, gates, evidence,
-and document previews. No data leaves the machine.
+A local browser workspace served by `rigorloom ui` (`runtime/scripts/rt_ui.py`),
+with no Node.js required at runtime. Open corpus forms or `.hwpx` files, queue
+preedit edits, inspect guard diffs, approve plans bound to exact hashes, and
+resolve human pipeline gates locally on `127.0.0.1`.
 
 ```sh
-pip install -r studio/requirements.txt
-python studio/main.py
+rigorloom ui
+# or from a checkout:
+python runtime/scripts/cli.py ui
 ```
+
+See [docs/web-ui.md](docs/web-ui.md) for options, security model, and limits.
 
 ## Documentation
 

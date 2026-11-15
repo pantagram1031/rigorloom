@@ -58,7 +58,7 @@ Run commands from the repository root.
 
 ```text
 pipeline/                  kernel, contract, configuration, playbooks
-studio/                    optional read-only local viewer
+runtime/                   local Runtime and web UI (`rigorloom ui`)
 scripts/new_report.py      atomic workspace scaffolder
 adapters/                  optional document/provider integrations
 docs/                      current public documentation
@@ -155,7 +155,8 @@ python modules/report/scripts/pipeline_ctl.py check <WS> content_audit
 `modules/report/references/stages.yaml`, then records provenance (checker argv, exit
 code, stdout sha256, checked-at) to the event stream and
 `.pipeline/gate_checks.jsonl`. The `PIPELINE.md` header gate scalar keeps its
-studio-compatible name/state/by/at shape. A non-zero checker exit rejects the
+name/state/by/at shape (compatible with `rigorloom ui` and `APPROVALS.md`
+parsing in `pipeline_ctl.py`). A non-zero checker exit rejects the
 gate; never edit that result to pass — change the inputs and rerun `check`. The
 retired `gate ... --script-exit` form is now a hard usage error.
 
@@ -174,10 +175,12 @@ python scripts/new_report.py --slug <slug> --subject <subject> \
   --topic "<topic>" --form <absolute-form-path> --mode supervised
 ```
 
-The Studio is optional:
+The local web UI is optional (see `docs/web-ui.md`):
 
 ```sh
-python studio/main.py
+rigorloom ui
+# or from a checkout:
+python runtime/scripts/cli.py ui
 ```
 
 ### Stage 0 — form intake

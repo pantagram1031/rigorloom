@@ -8,25 +8,17 @@ the kernel's contract shape.
 
 ## Unreleased
 
-### Security
+### Removed
 
-- **Studio: DNS rebinding could read workspaces and the action token.** Studio
-  binds to `127.0.0.1`, but a web page open on the operator's machine could
-  point a domain it controls at `127.0.0.1` and then read every GET response as
-  same-origin: workspace state, drafts, personalization data, and the action
-  token embedded in `/`. The action guard compared the Host header with
-  `startswith("localhost")` / `startswith("127.0.0.1")`, so a name like
-  `localhost.attacker.example` also passed it, which made action POSTs
-  reachable once `STUDIO_ALLOW_ACTIONS=1` was set. Every request now has to
-  carry an exact loopback Host (`127.0.0.1`, `localhost`, `[::1]`, any port)
-  and, when a browser sends one, a loopback Origin; anything else gets 403
-  before a route runs. The token comparison is constant-time.
-- **Studio: figures are served only when they are regular files inside the
-  workspace.** A figure that was a symlink could expose any file the Studio
-  process could read.
-- **Studio: the deliverable preview is served with `Content-Security-Policy:
-  sandbox`,** so its scripts stay in an opaque origin even when the URL is
-  opened directly rather than through the dashboard's sandboxed iframe.
+- **T167:** removed the legacy read-only `studio/` dashboard
+  (`studio/main.py`, `studio/index.html`, `studio/README.md`,
+  `studio/requirements.txt`), `tests/test_studio.py`, and the `studio`
+  optional extra in `pyproject.toml`. Use `rigorloom ui`
+  (`runtime/scripts/rt_ui.py`, [docs/web-ui.md](docs/web-ui.md)) instead.
+  Human pipeline gate resolution in the web UI writes the exact
+  `<gate>: approved by <approver> via ui at=<timestamp>` format parsed by
+  `modules/report/scripts/pipeline_ctl.py:1150` (verified end-to-end in
+  `tests/test_ui_approval_roundtrip.py::test_pipeline_gates_list_approve_reject_and_script_gate_refusal`).
 
 ### Added
 

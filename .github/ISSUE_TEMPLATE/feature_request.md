@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an addition or change to the pipeline, gates, or Studio
+about: Suggest an addition or change to the pipeline, gates, or Local UI
 title: "[Feature] "
 labels: enhancement
 ---

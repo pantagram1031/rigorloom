@@ -1,4 +1,4 @@
-# Stage -1 — Setup / Studio boot
+# Stage -1 — Setup / Local Web UI boot
 
 PURPOSE: Create a complete job ticket and register a workspace before report
 work begins.
@@ -14,8 +14,10 @@ python scripts/new_report.py --slug <slug> --subject <subject> \
   --topic "<topic>" --form <ABSOLUTE_FORM_PATH> \
   --mode <supervised|autonomous|night>
 
-# Optional read-only viewer on http://127.0.0.1:8000
-python studio/main.py
+# Optional local web UI on http://127.0.0.1:8765/ (see docs/web-ui.md)
+rigorloom ui
+# or from a checkout:
+python runtime/scripts/cli.py ui
 ```
 
 ROLE BINDINGS: orchestrator = current interactive session. No worker required.
@@ -31,7 +33,7 @@ FAILURE table:
 
 | Symptom | Cause | Action |
 |---|---|---|
-| Studio will not start | port/dependency issue | Studio is optional; continue and log it |
+| Local UI (`rigorloom ui`) will not start | port/runtime-root issue | the web UI is optional; continue and log it |
 | init refuses | workspace already exists | use `resume`; do not overwrite |
 | required field missing in supervised mode | operator input needed | ask only for the missing required value |
 | required field missing unattended | no operator available | choose a conservative default and record the assumption |

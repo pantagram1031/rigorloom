@@ -11,9 +11,10 @@ and pipeline entrypoints. The Runtime is an adapter, not a second editing
 engine: every mutation it exposes must terminate in an operation this repo
 already ships.
 
-Non-goals for v0: no localhost control server (Studio's HTTP surface stays
-what it is, `studio/main.py:14`), no network of any kind, no new document
-model, no new checker vocabulary.
+Non-goals for v0: no localhost control server inside the Runtime stdio core
+(the browser UI bridge lives separately in `rigorloom ui` /
+`runtime/scripts/rt_ui.py`; see `docs/web-ui.md`), no network of any kind,
+no new document model, no new checker vocabulary.
 
 ---
 
@@ -174,8 +175,8 @@ The unit the whole pipeline already addresses: a directory holding
 `PIPELINE.md` (authoritative stage/gate state, `docs/architecture.md:12`),
 `bundle/`, `output/`, `.pipeline/`, `events.jsonl`, `APPROVALS.md`. The
 canonical root set is enumerated at `pipeline/scripts/ws_snapshot.py:29`
-(`ARCHIVE_ROOTS`). Slug validation and traversal refusal already exist at
-`studio/main.py:98` (`_SLUG_RE`) and `studio/main.py:100` (`safe_workspace`).
+(`ARCHIVE_ROOTS`). Gate/name validation and workspace checks for the web UI
+now live in `runtime/scripts/rt_ui.py` (`docs/web-ui.md`).
 
 ### 3.2 Session
 
@@ -423,8 +424,8 @@ POSIX path, a role, a sha256 and a byte count (`_capture_file`, `:457`;
 
 Producer: the append-only workspace stream `events.jsonl`, described at
 `docs/pipeline-master-v0.6.md:81` and written by
-`modules/report/scripts/pipeline_ctl.py:857`. Studio already tails it
-(`studio/main.py:1005`).
+`modules/report/scripts/pipeline_ctl.py:857` (`rigorloom ui` streams Runtime
+and Agent Host events over SSE at `/events` in `runtime/scripts/rt_ui.py`).
 
 Runtime mapping: an `event` notification is a projection of an appended line,
 not a second source of truth. The Runtime may push; the file remains
@@ -459,7 +460,7 @@ how the Runtime was launched — never a field a client sets in a request. A
 
 | Method | Why host-only | Existing enforcement to reuse |
 | --- | --- | --- |
-| `workspace/openPath` (arbitrary filesystem path) | escapes any containment the workspace root provides | `studio/main.py:100` (`safe_workspace`) refuses out-of-root today; agent-side opens must go through a slug, not a path |
+| `workspace/openPath` (arbitrary filesystem path) | escapes any containment the workspace root provides | `runtime/scripts/rt_ui.py` opens only bundled corpus forms and validated `.hwpx` uploads for browser clients; agent-side opens go through session ids/slugs, not raw filesystem paths |
 | `workspace/importAttachment` | brings unvetted bytes into the tree | `pipeline/scripts/hwp_ingress.py:40-46` bounds every input dimension; `pipeline/scripts/privacy_scan.py:1` is the content gate |
 | `approval/resolve` | this *is* the human gate | `modules/report/scripts/pipeline_ctl.py:1112-1159` — never fabricates approval |
 | `artifact/exportTo` (user-chosen path) | writes outside the workspace | `engine/scripts/document_evidence.py:558` (`_safe_relative_path`) refuses escapes for everything inside |
@@ -600,8 +601,8 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 | Exact-byte binding, stale plans refuse | `engine/scripts/preedit.py:2454` (`--at-cell-expect`, writes nothing on mismatch); `engine/scripts/form_inspect.py:1418` (`form_hash`); `engine/scripts/document_evidence.py:1356` (`validate_receipt` re-checks bytes) |
 | Fail closed | `engine/scripts/document_evidence.py:780` (`derive_proof_grade` → `none` on anything unknown); `pipeline/scripts/check_residue.py:99` (an untrustworthy removal policy falls back to the strict legacy mode); `pipeline/scripts/submission_preflight.py:1` |
 | Explicit unavailable / unknown | `pipeline/scripts/render_probe.py:22` (`"yes"|"no"|"unknown"` + reason strings); `engine/scripts/form_inspect.py:913` (key omitted when undecidable); `pipeline/scripts/checker_base.py:41` (`skipped` is a reported state) |
-| No ambient network | `studio/README.md:6` ("no CDN or network dependency"); `pipeline/scripts/render_probe.py:4` (probes, never launches); `pipeline/scripts/renderer_runtime_v2.py:47` (`ENV_POLICY = "minimal_allowlist_v1"`). The Runtime inherits this: no socket, no HTTP client, no DNS. |
-| Core stays module-agnostic | `pipeline/scripts/module_registry.py:15` (core never learns a module's name); typed accessors at `:694`–`:751`; `studio/main.py:20` follows the same rule |
+| No ambient network | `docs/web-ui.md:5-7` (local `127.0.0.1` only, prebuilt `ui_dist/` needs no Node.js); `pipeline/scripts/render_probe.py:4` (probes, never launches); `pipeline/scripts/renderer_runtime_v2.py:47` (`ENV_POLICY = "minimal_allowlist_v1"`). The Runtime inherits this: no socket, no HTTP client, no DNS. |
+| Core stays module-agnostic | `pipeline/scripts/module_registry.py:15` (core never learns a module's name); typed accessors at `:694`–`:751`; `runtime/scripts/rt_module.py` queries the registry without hardcoding module names |
 | No second editing engine | this document: every mutating method routes to `preedit`, `xml_backend` or `com_backend` |
 
 ---
@@ -638,17 +639,15 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
    the vision verdict over this protocol, the Runtime becomes the thing
    handing PNGs to a model — does that violate the separation, or is the
    Runtime merely a courier?
-7. **Studio's HTTP surface versus the Runtime.** Studio is already a localhost
-   control server with actions, a CSRF token and a Host guard
-   (`studio/main.py:993`). v0 says no localhost control server for the
-   Runtime. Do the two coexist, does Studio become a Runtime client, or is
-   Studio's action mode retired? This is a program-level decision, not a
-   protocol one.
-8. **Event ordering across a restart.** `events.jsonl` is append-only but has
-   no sequence number; Studio finds the newest by reading the tail
-   (`studio/main.py:1005`). A subscriber that reconnects cannot say "resume
-   after event N". Does the Event object gain a monotonic id, and who assigns
-   it?
+7. **Browser HTTP surface versus the Runtime (resolved by `rigorloom ui`).**
+   The retired legacy dashboard has been replaced by `rigorloom ui`
+   (`runtime/scripts/rt_ui.py`, `docs/web-ui.md`), a loopback HTTP/SSE bridge
+   that forwards JSON-RPC to `serve.py --entry host` with `Host`,
+   `Sec-Fetch-Site`, and `X-Rigorloom-Token` guards.
+8. **Event ordering across a restart.** `events.jsonl` is append-only and
+   pipeline events have no global sequence number across restarts. Runtime
+   document logs carry session-scoped sequence numbers; whether pipeline
+   `events.jsonl` gains a monotonic id remains an open protocol question.
 
 ---
 
@@ -833,7 +832,7 @@ document/render {sessionId, page?=0, dpi?=96, runId?, inline?=true}
 
 **What can produce a page image today, without COM.** Only a PDF. PyMuPDF can
 rasterise one and is importable in most installs, but it is an OPTIONAL
-dependency (`pyproject.toml` extras `studio`, `engine`), so it is imported
+dependency (`pyproject.toml` extra `engine`), so it is imported
 lazily inside the call and its absence is a reported state rather than a
 startup error. An HWPX cannot become a PDF here: conversion is Hancom COM
 (`engine/scripts/com_backend.py convert`) or LibreOffice, and this build runs
