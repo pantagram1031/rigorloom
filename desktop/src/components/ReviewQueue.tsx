@@ -98,7 +98,7 @@ function opSlug(op: QueuedOp): string {
 const OP_KIND_BADGE: Record<QueuedOp["kind"], string> = {
   fill_cell: "채움 · fill_cell",
   replace_at_cell: "치환 · replace_at_cell",
-  set_run: "문단 런 · set_run",
+  set_run: "문단 덩어리 고치기 · set_run",
   delete_guides: "안내문 삭제 · delete_guides",
 };
 
@@ -154,7 +154,7 @@ function OpRow({
         )}
         <Tag tone={op.kind === "delete_guides" ? "warn" : "fill"}>
           {op.kind === "replace_at_cell" && op.mode === "append"
-            ? "셀 추가 · append"
+            ? "셀 내용에 덧붙이기 · append"
             : OP_KIND_BADGE[op.kind]}
         </Tag>
         {op.origin === "agent" ? (
@@ -305,7 +305,7 @@ function QueueOpComposer({ disabled }: { disabled: boolean }) {
         kind: "delete_guides",
         ...(color.trim() ? { color: color.trim() } : {}),
         text: "(안내문 삭제됨)",
-        before: "대상 문서 내 안내문(해당 시 제거)",
+        before: "문서에 있는 삭제 대상 안내문",
         origin: "user",
       });
     }
@@ -332,7 +332,7 @@ function QueueOpComposer({ disabled }: { disabled: boolean }) {
           >
             <option value="fill_cell">채움 (fill_cell)</option>
             <option value="replace_at_cell">셀 치환 (replace_at_cell)</option>
-            <option value="set_run">문단 런 (set_run)</option>
+            <option value="set_run">문단 덩어리 고치기 (set_run)</option>
             <option value="delete_guides">안내문 삭제 (delete_guides)</option>
           </select>
 
@@ -343,7 +343,7 @@ function QueueOpComposer({ disabled }: { disabled: boolean }) {
               <input type="number" min={0} value={col} onChange={(e) => setCol(e.target.value)} aria-label="열" placeholder="열" />
               {kind === "replace_at_cell" && (
                 <>
-                  <input type="text" value={cellRun} onChange={(e) => setCellRun(e.target.value)} aria-label="런(선택)" placeholder="런(선택)" />
+                  <input type="text" value={cellRun} onChange={(e) => setCellRun(e.target.value)} aria-label="덩어리 번호(선택)" placeholder="덩어리 번호(선택)" />
                   <select value={mode} onChange={(e) => setMode(e.target.value as "replace" | "append")}>
                     <option value="replace">replace</option>
                     <option value="append">append</option>
@@ -356,7 +356,7 @@ function QueueOpComposer({ disabled }: { disabled: boolean }) {
           {kind === "set_run" && (
             <div className="add-op-coords">
               <input type="number" min={0} value={atPara} onChange={(e) => setAtPara(e.target.value)} aria-label="문단" placeholder="atPara" />
-              <input type="number" min={0} value={run} onChange={(e) => setRun(e.target.value)} aria-label="런" placeholder="run" />
+              <input type="number" min={0} value={run} onChange={(e) => setRun(e.target.value)} aria-label="덩어리 번호" placeholder="run" />
             </div>
           )}
 
@@ -490,7 +490,7 @@ export function ReviewQueue() {
             data-testid="queue-repropose-reapproval"
             onClick={() => void reproposeDraft()}
           >
-            지금 문서로 다시 제안
+            지금 문서를 기준으로 다시 제안
           </button>
         </div>
       ) : null}
@@ -512,7 +512,7 @@ export function ReviewQueue() {
             data-testid="queue-repropose"
             onClick={() => void reproposeDraft()}
           >
-            지금 문서로 다시 제안
+            지금 문서를 기준으로 다시 제안
           </button>
         </div>
       ) : null}
@@ -746,7 +746,7 @@ export function ReviewQueue() {
           <p className="mono tiny">{approvalError.code}</p>
           {approvalError.code === "plan_stale" ? (
             <button className="action" onClick={() => void reproposeDraft()}>
-              지금 문서로 다시 제안
+              지금 문서를 기준으로 다시 제안
             </button>
           ) : null}
         </div>

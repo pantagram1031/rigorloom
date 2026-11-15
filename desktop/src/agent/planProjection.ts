@@ -107,9 +107,9 @@ const SUPPORTED_OP_FIELDS: Record<string, Set<string>> = {
 
 const KNOWN_UNIMPLEMENTED_REASONS: Record<string, string> = {
   normalize_clones:
-    "동일 스타일 클론 정리(normalize_clones)는 헤더 재작성 작업이라 검토 대기열이 아직 안전하게 표현할 수 없습니다.",
+    "같은 스타일의 복제본 정리(normalize_clones)는 헤더를 다시 쓰는 작업이라 검토 대기열에 정확히 표시할 수 없습니다.",
   goto_text:
-    "위치 이동 작업(goto_text)은 프리에딧 검토 대기열이 지원하지 않는 백엔드 작업입니다.",
+    "위치 이동(goto_text)은 검토 대기열에서 지원하지 않는 작업입니다.",
 };
 
 function refusal(
@@ -135,7 +135,7 @@ function isStringArray(value: unknown): value is string[] {
 function checkAllowedFields(op: ProjectablePlanOp, allowed: Set<string>): void {
   const unsupportedFields = Object.keys(op.params).filter((field) => !allowed.has(field));
   if (unsupportedFields.length > 0) {
-    throw refusal(op, "일부 작업 의미를 대기열이 보존할 수 없습니다.", {
+    throw refusal(op, "일부 작업의 내용을 검토 대기열에 정확히 표시할 수 없습니다.", {
       unsupportedFields: unsupportedFields.sort(),
     });
   }
@@ -550,7 +550,7 @@ export function projectionInverseSupport(op: { kind: string }): {
     return {
       invertible: false,
       reason:
-        "안내문 삭제(delete_guides)는 삭제된 안내 문단·서식을 런타임에서 복구할 수 없어 역연산(되돌리기)이 지원되지 않습니다.",
+        "안내문 삭제(delete_guides)는 지운 안내 문단과 서식을 되살릴 수 없어 되돌릴 수 없습니다.",
     };
   }
   if (op.kind === "fill_cell" || op.kind === "replace_at_cell" || op.kind === "set_run") {
@@ -558,6 +558,6 @@ export function projectionInverseSupport(op: { kind: string }): {
   }
   return {
     invertible: false,
-    reason: `작업 종류(${op.kind})의 역연산을 지원하지 않습니다.`,
+    reason: `${op.kind} 작업은 되돌릴 수 없습니다.`,
   };
 }

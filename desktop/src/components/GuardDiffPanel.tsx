@@ -10,12 +10,12 @@ const KIND_LABELS: Record<string, string> = {
   citations: "인용",
   tags: "태그",
   inline_math: "수식",
-  direct_quotes: "인용부",
+  direct_quotes: "직접 인용문",
   urls: "URL",
   markdown_links: "링크",
   qualifiers: "한정어",
   quantifiers: "수량어",
-  causal_markers: "인과표지",
+  causal_markers: "인과 표현",
   direction: "방향",
   headings: "제목",
 };
@@ -108,9 +108,9 @@ export function GuardDiffPanel() {
     <section className="guard-panel" data-testid="guard-diff-panel">
       <div className="guard-head">
         <div>
-          <h3>보호 비교 · Guard diff</h3>
+          <h3>보호 표현 비교 · Guard diff</h3>
           <p className="hint">
-            숫자·날짜·한정어 등 보호 토큰의 변경 전후 유지 여부를 확인합니다.
+            숫자·날짜·한정어처럼 지켜야 할 표현이 고친 뒤에도 남아 있는지 확인합니다.
           </p>
         </div>
         <div className="guard-controls">
@@ -198,7 +198,7 @@ export function GuardDiffPanel() {
               className={`guard-verdict ${guardDiff.pass ? "guard-verdict--pass" : "guard-verdict--fail"}`}
               data-testid="guard-diff-verdict"
             >
-              {guardDiff.pass ? "보호 유지 · PASS" : "보호 변화 감지 · CHECK"}
+              {guardDiff.pass ? "보호 표현 유지 · PASS" : "보호 표현 바뀜 · CHECK"}
             </span>
             <span className="guard-meta mono">
               {labelText(guardDiff.before)} → {labelText(guardDiff.after)}

@@ -19,7 +19,7 @@ import { draftStaleness, useWorkspace } from "../store";
 const OP_KIND_LABEL: Record<string, string> = {
   fill_cell: "채움 · fill_cell",
   replace_at_cell: "치환 · replace_at_cell",
-  set_run: "문단 런 · set_run",
+  set_run: "문단 덩어리 고치기 · set_run",
   delete_guides: "안내문 삭제 · delete_guides",
 };
 
@@ -81,7 +81,7 @@ export function ApprovalDialog() {
           <div>
             <h2 id="approval-dialog-title">승인 검토 · Approval review</h2>
             <p className="hint">
-              계획 해시와 결합된 문서 해시, 모든 작업 내역을 확인한 뒤 적용합니다.
+              계획 해시, 계획이 묶인 문서의 해시, 모든 작업 내역을 확인한 뒤 승인하고 적용하십시오.
             </p>
           </div>
           <button
@@ -133,7 +133,7 @@ export function ApprovalDialog() {
               </span>
             </div>
             <div className="binding-row">
-              <span className="binding-k">결합 해시 · boundSha256</span>
+              <span className="binding-k">계획이 묶인 문서 해시 · boundSha256</span>
               <span className="binding-v mono" data-testid="dialog-bound-sha">
                 {plan?.boundSha256 ?? draft.boundSha256 ?? "—"}
               </span>
@@ -279,7 +279,7 @@ export function ApprovalDialog() {
             disabled={busy}
             onClick={() => void clearQueue()}
           >
-            되돌리기(비우기) · Discard
+            대기열 비우기 · Discard
           </button>
           {approval?.state === "pending" && (
             <button

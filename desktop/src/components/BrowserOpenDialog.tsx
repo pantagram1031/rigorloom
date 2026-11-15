@@ -65,7 +65,7 @@ export function BrowserOpenDialog() {
           <div>
             <h2 id="browser-open-title">양식 열기 · Open form</h2>
             <p className="hint">
-              한글 문서(.hwpx, .hwp)를 업로드하거나 서버 코퍼스/경로에서 엽니다.
+              한글 문서(.hwpx, .hwp)를 올리거나, 들어 있는 견본 문서에서 고르거나, 이 컴퓨터의 파일 경로를 넣어 엽니다.
             </p>
           </div>
           <button
@@ -93,7 +93,7 @@ export function BrowserOpenDialog() {
           </section>
 
           <section className="open-section">
-            <span className="section-label">직접 경로 입력 · Open path on host</span>
+            <span className="section-label">이 컴퓨터의 파일 경로 · Open path on host</span>
             <form
               className="open-path-form"
               onSubmit={(e) => {

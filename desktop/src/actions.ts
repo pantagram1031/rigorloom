@@ -1142,8 +1142,8 @@ export async function proposeUndoOf(runId: string): Promise<number> {
           message:
             `이 후보본에는 되돌릴 수 없는 작업이 있습니다: ` +
             `${uninvertible.map((op) => op.kind).join(", ")}. ` +
-            `삭제된 안내문(delete_guides)은 이전 서식/위치 복원이 불가능하며, ` +
-            `되돌리기는 fill_cell, replace_at_cell, set_run 작업에만 만들 수 있습니다.`,
+            `안내문 삭제(delete_guides)는 지운 안내문을 원래 서식과 위치로 되살릴 수 없으며, ` +
+            `fill_cell, replace_at_cell, set_run 작업만 되돌릴 수 있습니다.`,
           data: { kinds: uninvertible.map((op) => op.kind) },
         },
       });
@@ -2202,7 +2202,7 @@ export async function exportApplied(
           exportError: {
             code: "export_hash_mismatch",
             message:
-              "다운로드된 파일의 해시가 후보본과 다릅니다. 이 파일을 제출하지 마십시오.",
+              "내려받은 파일의 해시가 후보본의 해시와 다릅니다. 이 파일을 제출하지 마십시오.",
             data: { expected: applied.candidate.sha256, actual: digest },
           },
         });
@@ -3551,7 +3551,7 @@ async function adoptAgentPlan(
         inspect?.graph.tables.flatMap((t) =>
           t.cells.filter((c) => c.classification === "guide"),
         ) ?? [];
-      if (guideCells.length === 0) return "대상 문서 내 안내문(해당 시 제거)";
+      if (guideCells.length === 0) return "문서에 있는 삭제 대상 안내문";
       const preview = guideCells
         .map((c) => c.textPreview?.trim())
         .filter(Boolean)

@@ -111,7 +111,7 @@ export function DocumentView() {
             setMobilePane("guard_diff");
           }}
         >
-          보호 비교
+          보호 표현 비교
         </button>
       </div>
 
@@ -164,7 +164,7 @@ export function DocumentView() {
               data-testid="tab-guard-diff"
               onClick={() => setDocumentTab("guard_diff")}
             >
-              보호 비교 · Guard diff
+              보호 표현 비교 · Guard diff
             </button>
           </div>
           {documentTab === "guard_diff" ? (

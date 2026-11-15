@@ -63,7 +63,7 @@ function CentreTabs() {
         data-testid="tab-guard-diff"
         onClick={() => setState({ agentTab: "guard_diff" })}
       >
-        보호 비교
+        보호 표현 비교
       </button>
     </div>
   );
@@ -126,7 +126,7 @@ export function AgentView({
             setMobilePane("guard_diff");
           }}
         >
-          보호 비교
+          보호 표현 비교
         </button>
       </div>
 
