@@ -1,0 +1,238 @@
+/*
+ * Warm Paper light/dark token sheet with WCAG 2.1 AA (>= 4.5:1) contrast.
+ */
+
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("/assets/fonts/PretendardVariable.woff2") format("woff2-variations");
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: block;
+}
+
+:root {
+  /* Typography: single bundled Korean face, 3 text sizes + 1 display size, 2 weights */
+  --font-sans: "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Cascadia Mono", monospace;
+
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-lg: 15px;
+  --text-display: 20px;
+
+  --weight-regular: 400;
+  --weight-semibold: 600;
+
+  --leading-ui: 1.45;
+  --leading-doc: 1.7;
+
+  /* 8 px spacing scale */
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-5: 40px;
+  --space-6: 48px;
+  --space-8: 64px;
+
+  /* Work-tool density & structure */
+  --topbar-h: 48px;
+  --row-compact-h: 32px;
+  --row-h: 36px;
+  --divider: 1px;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Purposeful motion (150-200 ms, no overshoot) */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 150ms;
+  --duration-scroll: 180ms;
+  --duration-panel: 200ms;
+}
+
+/* Light theme (default) */
+:root,
+:root[data-theme="light"] {
+  --bg-app: #F7F7F5;
+  --bg-canvas: #F0F0EE;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #F7F7F5;
+  --bg-control: #F0F0EE;
+  --bg-paper: #FFFFFF;
+  --bg-seat-empty: #FAF9F5;
+  --bg-hover: rgba(24, 24, 23, 0.04);
+  --bg-selected: #F7F9FE;
+
+  --fg-primary: #181817;
+  --fg-secondary: #575653;
+  --fg-muted: #5F5E59;
+  --fg-on-accent: #FFFFFF;
+  --ink: #181817;
+  --fg-on-ink: #FFFFFF;
+
+  --border-subtle: #E4E4E0;
+  --border-strong: #C8C7C1;
+  --border-print: #181817;
+
+  /* Cobalt Blue accent */
+  --accent: #1A56DB;
+  --accent-hover: #1545B5;
+  --accent-soft: #EBF1FD;
+  --accent-marker-bg: #F2F6FE;
+  --focus-ring: #1A56DB;
+
+  /* Semantic 1: Kept */
+  --kept-fg: #166534;
+  --kept-bg: #E8F5ED;
+  --kept-rail: #16A34A;
+
+  /* Semantic 2: Needs a look */
+  --needs-look-fg: #92400E;
+  --needs-look-bg: #FEF3C7;
+  --needs-look-rail: #D97706;
+
+  /* Semantic 3: Changed fact */
+  --changed-fact-fg: #B91C1C;
+  --changed-fact-bg: #FDF2F2;
+  --changed-fact-rail: #DC2626;
+  --changed-fact-border: #F3C5C5;
+
+  --shadow-paper: 0 1px 2px rgba(24, 24, 23, 0.06);
+  --shadow-pop: 0 1px 3px rgba(24, 24, 23, 0.10), 0 6px 14px rgba(24, 24, 23, 0.10);
+}
+
+/* Dark theme (explicit choice or system preference when light is not forced) */
+:root[data-theme="dark"] {
+  --bg-app: #141413;
+  --bg-canvas: #111110;
+  --bg-surface: #1C1C1A;
+  --bg-subtle: #232320;
+  --bg-control: #2A2A27;
+  --bg-paper: #1E1E1C;
+  --bg-seat-empty: #252521;
+  --bg-hover: rgba(238, 238, 235, 0.05);
+  --bg-selected: #1B2436;
+
+  --fg-primary: #EEEEEB;
+  --fg-secondary: #C2C1BC;
+  --fg-muted: #A3A29D;
+  --fg-on-accent: #0D1526;
+  --ink: #111110;
+  --fg-on-ink: #EEEEEB;
+
+  --border-subtle: #2C2C29;
+  --border-strong: #42423D;
+  --border-print: #6E6D68;
+
+  --accent: #6BA1F8;
+  --accent-hover: #8BB6FA;
+  --accent-soft: #1B2A47;
+  --accent-marker-bg: #182338;
+  --focus-ring: #6BA1F8;
+
+  --kept-fg: #4ADE80;
+  --kept-bg: #132A1C;
+  --kept-rail: #22C55E;
+
+  --needs-look-fg: #FBBF24;
+  --needs-look-bg: #2D210B;
+  --needs-look-rail: #F59E0B;
+
+  --changed-fact-fg: #F87171;
+  --changed-fact-bg: #2E1517;
+  --changed-fact-rail: #EF4444;
+  --changed-fact-border: #5C2327;
+
+  --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.45);
+  --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-app: #141413;
+    --bg-canvas: #111110;
+    --bg-surface: #1C1C1A;
+    --bg-subtle: #232320;
+    --bg-control: #2A2A27;
+    --bg-paper: #1E1E1C;
+    --bg-seat-empty: #252521;
+    --bg-hover: rgba(238, 238, 235, 0.05);
+    --bg-selected: #1B2436;
+
+    --fg-primary: #EEEEEB;
+    --fg-secondary: #C2C1BC;
+    --fg-muted: #A3A29D;
+    --fg-on-accent: #0D1526;
+    --ink: #111110;
+    --fg-on-ink: #EEEEEB;
+
+    --border-subtle: #2C2C29;
+    --border-strong: #42423D;
+    --border-print: #6E6D68;
+
+    --accent: #6BA1F8;
+    --accent-hover: #8BB6FA;
+    --accent-soft: #1B2A47;
+    --accent-marker-bg: #182338;
+    --focus-ring: #6BA1F8;
+
+    --kept-fg: #4ADE80;
+    --kept-bg: #132A1C;
+    --kept-rail: #22C55E;
+
+    --needs-look-fg: #FBBF24;
+    --needs-look-bg: #2D210B;
+    --needs-look-rail: #F59E0B;
+
+    --changed-fact-fg: #F87171;
+    --changed-fact-bg: #2E1517;
+    --changed-fact-rail: #EF4444;
+    --changed-fact-border: #5C2327;
+
+    --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.45);
+    --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* Hard font scoping: Korean sans everywhere, mono strictly in technical surfaces */
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-ui);
+  color: var(--fg-primary);
+  background: var(--bg-app);
+}
+
+.detail-disclosure,
+.approval-hash {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible keyboard focus */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-scroll: 0ms;
+    --duration-panel: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}

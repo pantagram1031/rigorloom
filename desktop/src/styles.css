@@ -1,215 +1,64 @@
+@import "./tokens.css";
+
 /*
- * Rigorloom design tokens.
- *
- * The identity is paper, not web. Warm hanji neutrals instead of the blue-grey
- * default every framework ships; a dark ink strip across the top so the window
- * reads as an application rather than a page; one working accent and one
- * reserved point colour whose whole value is that it is almost never used.
- *
- * Rationale for each group sits with it. The longer version is in README.
+ * Compatibility aliases for legacy selectors alongside tokens.css.
  */
-
-/* ── Pretendard Variable, bundled ────────────────────────────────────────
-   SIL OFL 1.1; the licence travels with the file at src/assets/fonts/OFL.txt
-   and ships inside the installer. Bundling is what makes the product look the
-   same on every machine: the fallbacks below only resolve to 맑은 고딕, which
-   has three weights and cannot express a hierarchy. */
-@font-face {
-  font-family: "Pretendard Variable";
-  src: url("/assets/fonts/PretendardVariable.woff2") format("woff2-variations");
-  font-weight: 45 920;
-  font-style: normal;
-  font-display: block;
-}
-
 :root {
-  --font-ui: "Pretendard Variable", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
-  /* Deliberately a system mono stack: no second webfont for numbers, and
-     Consolas has the tabular figures and unambiguous 0/O that hashes need. */
-  --font-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
+  --font-ui: var(--font-sans);
 
-  /* Bumped one step across the board. The old scale bottomed out at 11px for
-     labels a person is expected to READ, which on a 1080p laptop at 100% is
-     smaller than any office suite ships and is most of why the window read as
-     a dense web dashboard rather than as a document tool. Nothing below 12px
-     survives, and the text people work in is 14px. */
-  --text-xs: 12px;
-  --text-sm: 13px;
-  --text-base: 14px;
-  --text-md: 15px;
-  --text-lg: 17px;
-  --text-xl: 22px;
-  --text-2xl: 30px;
+  --text-xs: var(--text-sm);
+  --text-md: 14px;
+  --text-xl: var(--text-display);
+  --text-2xl: 24px;
 
-  /* Hangul glyphs fill their em box; Latin-tuned 1.4-1.5 crowds them. */
-  --leading-body: 1.6;
-  --leading-doc: 1.75;
+  --leading-body: var(--leading-ui);
   --leading-tight: 1.3;
-  --leading-ui: 1.45;
 
-  --weight-body: 400;
-  --weight-emph: 500;
-  --weight-head: 600;
+  --weight-body: var(--weight-regular);
+  --weight-emph: var(--weight-semibold);
+  --weight-head: var(--weight-semibold);
 
   --s1: 4px;
-  --s2: 8px;
+  --s2: var(--space-1);
   --s3: 12px;
-  --s4: 16px;
-  --s6: 24px;
-  --s8: 32px;
-  --s12: 48px;
-  --s16: 64px;
+  --s4: var(--space-2);
+  --s6: var(--space-3);
+  --s8: var(--space-4);
+  --s12: var(--space-6);
+  --s16: var(--space-8);
 
-  /* Hit targets. 27px was a mouse-only row; 32 is the smallest thing that is
-     comfortable to click without aiming, and --ctl-h is what every button in
-     the band inherits so none of them can drift back under it. */
-  --row-h: 32px;
-  --ctl-h: 30px;
-  --radius: 5px;
-  --radius-lg: 10px;
+  --ctl-h: var(--row-compact-h);
+  --radius: var(--radius-md);
 
-  /* ── motion ───────────────────────────────────────────────────────────
-     One easing curve for everything that moves between states. Nothing
-     overshoots: a document tool that bounces reads as a toy. */
-  --ease: cubic-bezier(0.2, 0, 0, 1);
-  --t-micro: 120ms;
-  --t-view: 200ms;
-}
+  --ease: var(--ease-standard);
+  --t-micro: var(--duration-fast);
+  --t-view: var(--duration-panel);
 
-/* ── light: hanji paper ─────────────────────────────────────────────────
-   No pure #FFF anywhere. The document column is the brightest surface on
-   screen and everything else steps back from it. */
-:root,
-:root[data-theme="light"] {
-  --bg-app: #f1eee8;
-  --bg-panel: #faf8f4;
-  --bg-raised: #fdfbf7;
-  --bg-sunken: #eae6de;
-  --bg-paper: #fefdfb;
-  --bg-hover: rgba(28, 30, 33, 0.045);
-  --bg-active: rgba(28, 30, 33, 0.075);
+  --bg-panel: var(--bg-surface);
+  --bg-raised: var(--bg-surface);
+  --bg-sunken: var(--bg-control);
+  --bg-active: var(--bg-hover);
 
-  --fg: #1c1e21;
-  --fg-muted: #5f6165;
-  --fg-faint: #8b8d90;
-  --fg-on-ink: #f1eee8;
+  --fg: var(--fg-primary);
+  --fg-faint: var(--fg-muted);
 
-  --line: #e4e0d8;
-  --line-strong: #cfcabf;
+  --line: var(--border-subtle);
+  --line-strong: var(--border-strong);
 
-  /* the working accent - interactive, selection, focus, and nothing else */
-  --accent: #0f766e;
-  --accent-fg: #fefdfb;
-  --accent-soft: rgba(15, 118, 110, 0.11);
-  --accent-line: rgba(15, 118, 110, 0.4);
+  --accent-fg: var(--fg-on-accent);
+  --accent-line: var(--accent);
 
-  /* the reserved point colour. Approval-pending and attention ONLY.
-     Scarcity is the whole mechanism; spend it on a chip and it stops
-     meaning anything. */
-  --point: #c2410c;
-  --point-soft: rgba(194, 65, 12, 0.1);
+  --point: var(--changed-fact-rail);
+  --point-soft: var(--changed-fact-bg);
 
-  --ink: #1c1e21;
-
-  --ok: #2f6b46;
-  --ok-soft: rgba(47, 107, 70, 0.11);
-  --warn: #8a5a12;
-  --warn-soft: rgba(138, 90, 18, 0.12);
-  --bad: #a03a1f;
-  --bad-soft: rgba(160, 58, 31, 0.11);
-  --none: #6f7175;
-  --none-soft: rgba(111, 113, 117, 0.1);
-
-  /* Tightened. The wide soft halos read as glow rather than as elevation, and
-     a document tool that glows looks like a marketing page. What is left is
-     enough to separate a surface from the one under it and no more. */
-  --shadow-paper: 0 1px 2px rgba(28, 30, 33, 0.06);
-  --shadow-pop: 0 1px 3px rgba(28, 30, 33, 0.10), 0 6px 14px rgba(28, 30, 33, 0.10);
-}
-
-/* Dark keeps the roles, not the values: warm ink rather than a blue night
-   mode, and the two signal colours are re-tuned rather than reused. It is
-   derived from the light theme, which is the designed one. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg-app: #16171a;
-    --bg-panel: #1c1e21;
-    --bg-raised: #24262a;
-    --bg-sunken: #131417;
-    --bg-paper: #23252a;
-    --bg-hover: rgba(250, 248, 244, 0.05);
-    --bg-active: rgba(250, 248, 244, 0.085);
-
-    --fg: #e8e5df;
-    --fg-muted: #a2a09b;
-    --fg-faint: #787671;
-    --fg-on-ink: #e8e5df;
-
-    --line: #32343a;
-    --line-strong: #474a52;
-
-    --accent: #4db6a8;
-    --accent-fg: #14161a;
-    --accent-soft: rgba(77, 182, 168, 0.15);
-    --accent-line: rgba(77, 182, 168, 0.45);
-
-    --point: #f0743d;
-    --point-soft: rgba(240, 116, 61, 0.14);
-
-    --ink: #101114;
-
-    --ok: #79c295;
-    --ok-soft: rgba(121, 194, 149, 0.14);
-    --warn: #d8a75a;
-    --warn-soft: rgba(216, 167, 90, 0.14);
-    --bad: #e08b74;
-    --bad-soft: rgba(224, 139, 116, 0.14);
-    --none: #8b8c86;
-    --none-soft: rgba(139, 140, 134, 0.14);
-
-    --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.45);
-    --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.55);
-  }
-}
-
-:root[data-theme="dark"] {
-  --bg-app: #16171a;
-  --bg-panel: #1c1e21;
-  --bg-raised: #24262a;
-  --bg-sunken: #131417;
-  --bg-paper: #23252a;
-  --bg-hover: rgba(250, 248, 244, 0.05);
-  --bg-active: rgba(250, 248, 244, 0.085);
-
-  --fg: #e8e5df;
-  --fg-muted: #a2a09b;
-  --fg-faint: #787671;
-  --fg-on-ink: #e8e5df;
-
-  --line: #32343a;
-  --line-strong: #474a52;
-
-  --accent: #4db6a8;
-  --accent-fg: #14161a;
-  --accent-soft: rgba(77, 182, 168, 0.15);
-  --accent-line: rgba(77, 182, 168, 0.45);
-
-  --point: #f0743d;
-  --point-soft: rgba(240, 116, 61, 0.14);
-
-  --ink: #101114;
-
-  --ok: #79c295;
-  --ok-soft: rgba(121, 194, 149, 0.14);
-  --warn: #d8a75a;
-  --warn-soft: rgba(216, 167, 90, 0.14);
-  --bad: #e08b74;
-  --bad-soft: rgba(224, 139, 116, 0.14);
-  --none: #8b8c86;
-  --none-soft: rgba(139, 140, 134, 0.14);
-
-  --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px rgba(0, 0, 0, 0.45);
-  --shadow-pop: 0 2px 8px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.55);
+  --ok: var(--kept-fg);
+  --ok-soft: var(--kept-bg);
+  --warn: var(--needs-look-fg);
+  --warn-soft: var(--needs-look-bg);
+  --bad: var(--changed-fact-fg);
+  --bad-soft: var(--changed-fact-bg);
+  --none: var(--fg-muted);
+  --none-soft: var(--bg-subtle);
 }
 
 * {
@@ -224,7 +73,7 @@ body,
 }
 
 body {
-  font-family: var(--font-ui);
+  font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--leading-ui);
   font-weight: var(--weight-body);
@@ -258,7 +107,7 @@ button {
 /* Tracking is allowed on exactly one class, and it is Latin-only by
    construction. */
 .latin-caps {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -266,7 +115,7 @@ button {
 }
 
 .mono {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
@@ -515,7 +364,7 @@ button {
 
 .count {
   margin-left: auto;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
@@ -868,7 +717,7 @@ button {
   padding-bottom: var(--s2);
   color: var(--fg-faint);
   font-size: var(--text-xs);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -999,7 +848,7 @@ button {
   padding: var(--s3);
   background: var(--bg-sunken);
   border-radius: var(--radius);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
   line-height: var(--leading-body);
   color: var(--fg-muted);
@@ -1149,7 +998,7 @@ body.dragging .drop {
 .recent .meta {
   margin-left: auto;
   flex: none;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
@@ -1188,7 +1037,7 @@ body.dragging .drop {
 }
 
 .fact .v {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
@@ -1279,7 +1128,7 @@ body.dragging .drop {
 .finding:hover { background: var(--bg-hover); }
 
 .finding .where {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--fg-faint);
   flex: none;
@@ -1305,7 +1154,7 @@ body.dragging .drop {
 
 .kv dd {
   margin: 0;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
@@ -1377,7 +1226,7 @@ body.dragging .drop {
 
 .card .head .when {
   margin-left: auto;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
@@ -1405,7 +1254,7 @@ body.dragging .drop {
   padding: var(--s2);
   background: var(--bg-sunken);
   border-radius: 3px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   line-height: 1.55;
   overflow-x: auto;
@@ -1481,7 +1330,7 @@ body.dragging .drop {
 }
 
 .row .secondary {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
@@ -1766,7 +1615,7 @@ body.dragging .drop {
 .queue-finding code {
   flex: 0 0 auto;
   margin-left: auto;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--fg-faint);
   white-space: nowrap;
@@ -1808,7 +1657,7 @@ body.dragging .drop {
   padding: var(--s2);
   background: var(--bg-sunken);
   border-radius: var(--radius);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   line-height: 1.5;
   overflow: auto;
@@ -1826,7 +1675,7 @@ body.dragging .drop {
 }
 
 .deferred li {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   padding: 1px 5px;
   border-radius: 3px;
@@ -2162,7 +2011,7 @@ body.dragging .drop {
   border-radius: 7px;
   background: var(--warn);
   color: var(--bg-paper);
-  font: var(--weight-head) 9px/14px var(--font-mono);
+  font: var(--weight-semibold) 12px/14px var(--font-sans);
   text-align: center;
   line-height: 14px;
 }
@@ -2301,7 +2150,7 @@ body.dragging .drop {
 }
 
 .unavailable-head code {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--fg-faint);
 }
@@ -2644,7 +2493,7 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   position: absolute;
   left: 2px;
   top: -1px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 9px;
   line-height: 1;
   color: var(--fg-faint);
@@ -2723,7 +2572,7 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
 
 .tabs .count {
   margin-left: var(--s1);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
@@ -2846,7 +2695,7 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   overflow: auto;
   background: var(--bg-sunken);
   border-radius: 3px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   line-height: 1.55;
   user-select: text;
@@ -2991,7 +2840,7 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   padding: var(--s2);
   background: var(--bg-sunken);
   border-radius: 3px;
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   line-height: 1.55;
   overflow-x: auto;
   user-select: text;
@@ -3200,11 +3049,7 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(
-    135deg,
-    transparent 0 5px,
-    var(--warn-soft) 5px 10px
-  );
+  background: var(--warn-soft);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3648,7 +3493,7 @@ body,
   border-radius: var(--radius);
   background: var(--bg-paper);
   color: var(--fg);
-  font-family: var(--font-ui);
+  font-family: var(--font-sans);
   font-size: var(--text-sm);
 }
 
