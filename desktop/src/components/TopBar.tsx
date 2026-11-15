@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import {
   navigateScreen,
   openCommandPalette,
@@ -6,6 +7,7 @@ import {
 } from "../actions";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
 import { activeSession, headCandidate, setState, useWorkspace } from "../store";
+import { getSessionDisplayTitle } from "../workspace/openHelpers";
 import { Logo } from "./Logo";
 
 export function TopBar() {
@@ -15,9 +17,37 @@ export function TopBar() {
   const status = useWorkspace((s) => s.status);
   const applied = useWorkspace((s) => s.applied);
   const head = useWorkspace(headCandidate);
+  const openedPaths = useWorkspace((s) => s.openedPaths);
+  const corpusFiles = useWorkspace((s) => s.corpusFiles);
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
 
   const sidecarDown = status !== null && !status.running;
   const canExport = Boolean(session && (applied?.runId ?? head?.runId));
+  const docTitle = session
+    ? getSessionDisplayTitle(session, openedPaths, corpusFiles, language)
+    : t("doc_none_open", language);
   const isMac =
     typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform);
   const paletteShortcut = isMac ? "⌘K" : "Ctrl+K";
@@ -30,9 +60,9 @@ export function TopBar() {
           <span
             className="topbar-doc-title"
             data-testid="doc-name"
-            title={session?.source.name ?? t("doc_none_open", language)}
+            title={docTitle}
           >
-            {session ? session.source.name : t("doc_none_open", language)}
+            {docTitle}
           </span>
         </div>
 
@@ -90,34 +120,97 @@ export function TopBar() {
           </button>
         ) : null}
 
-        <button
-          type="button"
-          className="topbar-btn"
-          data-testid="topbar-export"
-          disabled={!canExport}
-          onClick={() => void exportApplied()}
-        >
-          {t("action_export", language)}
-        </button>
+        <div className="topbar-desktop-actions">
+          {canExport ? (
+            <button
+              type="button"
+              className="topbar-btn topbar-btn--primary"
+              data-testid="topbar-export"
+              onClick={() => void exportApplied()}
+            >
+              {t("action_export", language)}
+            </button>
+          ) : null}
 
-        <button
-          type="button"
-          className="topbar-btn"
-          data-testid="topbar-palette"
-          onClick={() => openCommandPalette()}
-        >
-          <span>{t("action_command_palette", language)}</span>
-          <kbd className="topbar-kbd">{paletteShortcut}</kbd>
-        </button>
+          <button
+            type="button"
+            className="topbar-btn"
+            data-testid="topbar-palette"
+            onClick={() => openCommandPalette()}
+          >
+            <span>{t("action_command_palette", language)}</span>
+            <kbd className="topbar-kbd">{paletteShortcut}</kbd>
+          </button>
 
-        <button
-          type="button"
-          className="topbar-btn topbar-btn--subtle"
-          data-testid="open-settings"
-          onClick={() => setState({ settingsOpen: true })}
-        >
-          {t("nav_settings", language)}
-        </button>
+          <button
+            type="button"
+            className="topbar-btn topbar-btn--subtle"
+            data-testid="open-settings"
+            onClick={() => setState({ settingsOpen: true })}
+          >
+            {t("nav_settings", language)}
+          </button>
+        </div>
+
+        <div className="topbar-mobile-menu" ref={menuRef}>
+          <button
+            type="button"
+            className="topbar-btn topbar-menu-trigger"
+            data-testid="topbar-menu-btn"
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+            onClick={() => setMenuOpen((prev) => !prev)}
+          >
+            {t("topbar_more_menu", language)}
+          </button>
+
+          {menuOpen ? (
+            <div
+              className="topbar-menu-popover"
+              role="menu"
+              data-testid="topbar-menu-popover"
+            >
+              {canExport ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="topbar-menu-item topbar-menu-item--primary"
+                  data-testid="topbar-menu-export"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void exportApplied();
+                  }}
+                >
+                  {t("action_export", language)}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                className="topbar-menu-item"
+                data-testid="topbar-menu-palette"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openCommandPalette();
+                }}
+              >
+                {t("action_command_palette", language)}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="topbar-menu-item"
+                data-testid="topbar-menu-settings"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setState({ settingsOpen: true });
+                }}
+              >
+                {t("nav_settings", language)}
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
     </header>
   );

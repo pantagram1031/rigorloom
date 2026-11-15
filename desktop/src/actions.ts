@@ -286,6 +286,9 @@ export async function selectSession(sessionId: string) {
       : {}),
   });
   await rt.savePrefs({ lastSessionId: sessionId });
+  if (Array.isArray(getState().corpusFiles) && getState().corpusFiles.length === 0) {
+    void loadCorpusFiles();
+  }
   await loadInspect(sessionId);
   await loadText(sessionId);
   await loadCandidates(sessionId);
@@ -3263,6 +3266,9 @@ export async function boot(): Promise<void> {
     await refreshAgentHost();
     await loadProviderSettings();
     await loadTaskPacks();
+    if (getState().corpusFiles.length === 0) {
+      await loadCorpusFiles();
+    }
     setState({ phaseNote: "열린 문서를 찾는 중" });
     await refreshSessions();
 

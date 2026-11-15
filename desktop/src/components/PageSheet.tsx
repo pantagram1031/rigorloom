@@ -32,12 +32,181 @@ import {
 } from "../store";
 import type {
   GraphCell,
+  GraphParagraph,
   InspectResult,
   RegionText,
   UiLanguage,
 } from "../types";
 import type { IndexedChange, RowGuardAudit } from "../workspace/guardHelper";
 import { SeatEditor } from "./SeatEditor";
+
+/**
+ * Align sequential cell runs against `inspect.graph.paragraphs` so runs belonging
+ * to distinct `<hp:p>` paragraphs render on separate lines (e.g. `(0,1,0)`),
+ * while runs from the same paragraph render inline on one line (e.g. `(0,0,0)`).
+ */
+export function groupCellRunsIntoParagraphs<R extends { text: string }>(
+  runs: readonly R[],
+  inspectParagraphs: readonly GraphParagraph[],
+): R[][] {
+  if (runs.length === 0) return [];
+  if (runs.length === 1) return [[runs[0]]];
+
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  const paraTexts = inspectParagraphs.map((p) => norm(p.text));
+
+  let bestGroups: R[][] | null = null;
+  let bestMatchedCount = 1;
+
+  for (let startR = 0; startR < runs.length; startR++) {
+    const firstNorm = norm(runs[startR].text);
+    if (!firstNorm) continue;
+
+    for (let startP = 0; startP < paraTexts.length; startP++) {
+      const target0 = paraTexts[startP];
+      if (!target0) continue;
+      if (target0 !== firstNorm && !target0.startsWith(firstNorm)) continue;
+
+      const groups: R[][] = [];
+      let currentGroup: R[] = startR > 0 ? runs.slice(0, startR) : [];
+      let matchedCount = 0;
+      let pIdx = startP;
+      let acc = "";
+
+      for (let r = startR; r < runs.length; r++) {
+        const run = runs[r];
+        const candidateAcc = norm(acc + run.text);
+        const curTarget = pIdx < paraTexts.length ? paraTexts[pIdx] : "";
+
+        if (
+          acc.length > 0 &&
+          curTarget &&
+          (acc === curTarget || !curTarget.startsWith(candidateAcc))
+        ) {
+          const rNorm = norm(run.text);
+          let nextP = -1;
+          if (rNorm) {
+            for (let scan = pIdx + 1; scan < paraTexts.length; scan++) {
+              const cand = paraTexts[scan];
+              if (cand && (cand === rNorm || cand.startsWith(rNorm))) {
+                nextP = scan;
+                break;
+              }
+            }
+          }
+          if (nextP !== -1) {
+            groups.push(currentGroup);
+            currentGroup = [run];
+            pIdx = nextP;
+            acc = rNorm;
+            if (acc === paraTexts[pIdx]) matchedCount++;
+            continue;
+          }
+        }
+
+        currentGroup.push(run);
+        acc = candidateAcc;
+        if (curTarget && acc === curTarget) {
+          matchedCount++;
+        }
+      }
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+      }
+
+      if (groups.length > 1 && matchedCount > bestMatchedCount) {
+        bestMatchedCount = matchedCount;
+        bestGroups = groups;
+      }
+    }
+  }
+
+  return bestGroups ?? [runs.slice()];
+}
+
+function measureLabelWidthPx(el: HTMLElement, label: string): number {
+  try {
+    const cs = getComputedStyle(el);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.font = `${cs.fontWeight || "400"} ${cs.fontSize || "12px"} ${cs.fontFamily || "sans-serif"}`;
+      return Math.ceil(ctx.measureText(label).width);
+    }
+  } catch {
+    // Fallback below when canvas is unavailable.
+  }
+  return label.length * 14;
+}
+
+function EmptyBlankSlot({ label }: { label: string }) {
+  const slotRef = useRef<HTMLDivElement | null>(null);
+  const [showLabel, setShowLabel] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = slotRef.current;
+    if (!el) return;
+    const measure = () => {
+      const needed = Math.max(88, measureLabelWidthPx(el, label) + 18);
+      setShowLabel(el.clientWidth >= needed);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [label]);
+
+  return (
+    <div ref={slotRef} className="page-empty-blank" aria-hidden="true">
+      {showLabel ? <span className="page-seat-hint">{label}</span> : null}
+    </div>
+  );
+}
+
+function renderGroupMarker(
+  groupChanges: readonly IndexedChange[],
+  rowAudits: Record<string, RowGuardAudit>,
+  selectedChangeId: string | null,
+  onClickMarker: (e: MouseEvent, opId: string) => void,
+) {
+  if (groupChanges.length === 0) return null;
+  const first = groupChanges[0];
+  const last = groupChanges[groupChanges.length - 1];
+  const label =
+    groupChanges.length === 1
+      ? String(first.ordinal)
+      : `${first.ordinal}-${last.ordinal}`;
+  const status = groupChanges.some(
+    (ch) => rowAudits[ch.opId]?.status === "changed",
+  )
+    ? "changed"
+    : groupChanges.some((ch) => rowAudits[ch.opId]?.status === "needs_fixes")
+      ? "needs_fixes"
+      : groupChanges.some((ch) => rowAudits[ch.opId]?.status === "kept")
+        ? "kept"
+        : "none";
+  const isSelected = groupChanges.some((ch) => ch.opId === selectedChangeId);
+
+  return (
+    <div className="page-marker-strip">
+      <button
+        type="button"
+        className={`page-marker-badge page-marker-badge--${status}${
+          isSelected ? " page-marker-badge--selected" : ""
+        }`}
+        data-testid={`page-marker-${first.ordinal}`}
+        data-marker-ordinals={groupChanges.map((c) => c.ordinal).join(",")}
+        data-marker-op-id={first.opId}
+        data-marker-op-ids={groupChanges.map((c) => c.opId).join(" ")}
+        aria-pressed={isSelected}
+        onClick={(e) => onClickMarker(e, first.opId)}
+      >
+        {label}
+      </button>
+    </div>
+  );
+}
 
 const HWPUNIT_PER_INCH = 7200;
 const PX_PER_INCH = 96;
@@ -124,8 +293,13 @@ export function PageSheet({
     const el = viewportRef.current;
     if (!el) return;
     const update = () => {
-      const w = Math.max(0, el.clientWidth - 32);
-      const h = Math.max(0, el.clientHeight - 32);
+      const cs = getComputedStyle(el);
+      const padH =
+        (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      const padV =
+        (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      const w = Math.max(0, el.clientWidth - padH);
+      const h = Math.max(0, el.clientHeight - padV);
       setBoxWidth(w);
       if (getState().pageFit === "width" && w > 0) {
         const next = fitScale(
@@ -162,9 +336,7 @@ export function PageSheet({
   const effectiveZoom = useMemo(() => {
     if (pageFit === "width" && boxWidth > 0) {
       const ratio = boxWidth / naturalWidthPx;
-      if (ratio < 0.5) {
-        return Math.max(0.32, Math.round(ratio * 1000) / 1000);
-      }
+      return Math.max(0.25, Math.min(2, Math.floor(ratio * 1000) / 1000));
     }
     return zoom;
   }, [pageFit, boxWidth, naturalWidthPx, zoom]);
@@ -187,14 +359,13 @@ export function PageSheet({
     }
     const container = viewportRef.current;
     if (!container) return;
-    const markerEl = container.querySelector<HTMLElement>(
-      `[data-marker-op-id="${CSS.escape(selectedChangeId)}"]`,
-    );
+    const esc = CSS.escape(selectedChangeId);
+    const markerEl =
+      container.querySelector<HTMLElement>(`[data-marker-op-ids~="${esc}"]`) ??
+      container.querySelector<HTMLElement>(`[data-marker-op-id="${esc}"]`);
     const targetEl =
       markerEl ??
-      container.querySelector<HTMLElement>(
-        `[data-cell-op-ids~="${CSS.escape(selectedChangeId)}"]`,
-      );
+      container.querySelector<HTMLElement>(`[data-cell-op-ids~="${esc}"]`);
     if (!targetEl) return;
     targetEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   }, [selectedChangeId, printViewEnabled]);
@@ -281,12 +452,24 @@ export function PageSheet({
     const set = new Set<string>();
     for (const region of texts) {
       if (!region.addr) continue;
-      for (const run of region.runs ?? []) {
-        set.add(run.text.trim());
+      if (region.text) {
+        set.add(region.text.trim());
+      }
+      if (region.runs?.length) {
+        for (const run of region.runs) {
+          set.add(run.text.trim());
+        }
+        const groups = groupCellRunsIntoParagraphs(
+          region.runs,
+          inspect.graph.paragraphs,
+        );
+        for (const group of groups) {
+          set.add(group.map((r) => r.text).join("").trim());
+        }
       }
     }
     return set;
-  }, [texts]);
+  }, [texts, inspect.graph.paragraphs]);
 
   const looseParagraphs = useMemo(
     () =>
@@ -314,7 +497,7 @@ export function PageSheet({
   const sheetOuterHeight = Math.round(
     Math.max(naturalHeightPx, naturalHeightMeasure) * effectiveZoom,
   );
-  const sheetOuterWidth = Math.round(naturalWidthPx * effectiveZoom);
+  const sheetOuterWidth = Math.floor(naturalWidthPx * effectiveZoom);
 
   const hasRenderImage = Boolean(
     printViewEnabled &&
@@ -371,64 +554,70 @@ export function PageSheet({
       }
     }
 
-    const activeCellChange =
-      cellChanges.find((ch) => ch.opId === selectedChangeId) ??
-      (cellChanges.length === 1 ? cellChanges[0] : null);
+    const isEmptyBlank =
+      cellChanges.length === 0 &&
+      cell.classification === "fill_target" &&
+      !(region?.text ?? cell.textPreview ?? "").trim();
 
-    const showBeforeCallout =
-      activeCellChange !== null &&
-      activeCellChange.op.kind === "replace_at_cell" &&
-      activeCellChange.beforeText.trim().length > 0;
+    const paraGroups =
+      !wholeCellChange && region?.runs?.length && !isEmptyBlank
+        ? groupCellRunsIntoParagraphs(region.runs, inspect.graph.paragraphs)
+        : null;
+
+    const visibleParas = paraGroups
+      ? paraGroups
+          .map((paraRuns, pIdx) => {
+            const allCleared = paraRuns.every((run) => {
+              const hit = runMap.get(run.index);
+              return (hit ? hit.afterText : run.text) === "";
+            });
+            if (allCleared) return null;
+            return (
+              <div key={pIdx} className="page-cell-para">
+                {paraRuns.map((run) => {
+                  const hit = runMap.get(run.index);
+                  if (!hit) {
+                    return <span key={run.index}>{run.text}</span>;
+                  }
+                  if (hit.afterText === "") {
+                    return null;
+                  }
+                  const status = rowAudits[hit.opId]?.status ?? "none";
+                  return (
+                    <span
+                      key={run.index}
+                      className={`page-inline-edit page-inline-edit--${status}`}
+                      onClick={(e) => handleMarkerClick(e, hit.opId)}
+                    >
+                      {hit.afterText}
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          })
+          .filter(Boolean)
+      : null;
 
     return (
       <div className="page-cell-inner">
-        {cellChanges.length > 0 ? (
-          <div className="page-marker-strip">
-            {cellChanges.map((ch) => {
-              const status = rowAudits[ch.opId]?.status ?? "none";
-              const isSelected = selectedChangeId === ch.opId;
-              return (
-                <button
-                  key={ch.opId}
-                  type="button"
-                  className={`page-marker-badge page-marker-badge--${status}${
-                    isSelected ? " page-marker-badge--selected" : ""
-                  }`}
-                  data-testid={`page-marker-${ch.ordinal}`}
-                  data-marker-op-id={ch.opId}
-                  aria-pressed={isSelected}
-                  onClick={(e) => handleMarkerClick(e, ch.opId)}
-                >
-                  [{ch.ordinal}]
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
+        {renderGroupMarker(
+          cellChanges,
+          rowAudits,
+          selectedChangeId,
+          handleMarkerClick,
+        )}
 
         {wholeCellChange ? (
           <div className="page-cell-text page-cell-text--proposed">
             {wholeCellChange.afterText}
           </div>
-        ) : runMap.size > 0 && region?.runs?.length ? (
-          <div className="page-cell-text">
-            {region.runs.map((run) => {
-              const hit = runMap.get(run.index);
-              if (!hit) {
-                return <span key={run.index}>{run.text}</span>;
-              }
-              const status = rowAudits[hit.opId]?.status ?? "none";
-              return (
-                <span
-                  key={run.index}
-                  className={`page-inline-edit page-inline-edit--${status}`}
-                  onClick={(e) => handleMarkerClick(e, hit.opId)}
-                >
-                  {hit.afterText}
-                </span>
-              );
-            })}
-          </div>
+        ) : isEmptyBlank ? (
+          <EmptyBlankSlot label={cellClassLabel("fill_target", language)} />
+        ) : visibleParas ? (
+          visibleParas.length > 0 ? (
+            <div className="page-cell-text">{visibleParas}</div>
+          ) : null
         ) : cellChanges.length > 0 ? (
           <div className="page-cell-text page-cell-text--proposed">
             {cellChanges.map((ch) => ch.afterText).join("\n")}
@@ -439,20 +628,6 @@ export function PageSheet({
             {cell.truncated && !region ? "…" : ""}
           </div>
         )}
-
-        {showBeforeCallout && activeCellChange ? (
-          <div className="page-before-callout">
-            {t("review_before_label", language, [activeCellChange.beforeText])}
-          </div>
-        ) : null}
-
-        {cellChanges.length === 0 &&
-        cell.classification === "fill_target" &&
-        !(region?.text ?? cell.textPreview ?? "").trim() ? (
-          <span className="page-seat-hint" aria-hidden="true">
-            {cellClassLabel("fill_target", language)}
-          </span>
-        ) : null}
       </div>
     );
   };
@@ -464,10 +639,12 @@ export function PageSheet({
     const worstStatus = paraChanges.some((ch) => rowAudits[ch.opId]?.status === "changed")
       ? "changed"
       : paraChanges.some((ch) => rowAudits[ch.opId]?.status === "needs_fixes")
-        ? "needs_fixes"
-        : paraChanges.length > 0
-          ? "accent"
-          : "none";
+        ? "needs-fixes"
+        : paraChanges.some((ch) => rowAudits[ch.opId]?.status === "kept")
+          ? "kept"
+          : paraChanges.length > 0
+            ? "accent"
+            : "none";
 
     const runMap = new Map<number, IndexedChange>();
     for (const ch of paraChanges) {
@@ -475,10 +652,6 @@ export function PageSheet({
         runMap.set(ch.op.run, ch);
       }
     }
-
-    const activeParaChange =
-      paraChanges.find((ch) => ch.opId === selectedChangeId) ??
-      (paraChanges.length === 1 ? paraChanges[0] : null);
 
     return (
       <div
@@ -492,29 +665,12 @@ export function PageSheet({
           }
         }}
       >
-        {paraChanges.length > 0 ? (
-          <div className="page-marker-strip">
-            {paraChanges.map((ch) => {
-              const status = rowAudits[ch.opId]?.status ?? "none";
-              const isSelected = selectedChangeId === ch.opId;
-              return (
-                <button
-                  key={ch.opId}
-                  type="button"
-                  className={`page-marker-badge page-marker-badge--${status}${
-                    isSelected ? " page-marker-badge--selected" : ""
-                  }`}
-                  data-testid={`page-marker-${ch.ordinal}`}
-                  data-marker-op-id={ch.opId}
-                  aria-pressed={isSelected}
-                  onClick={(e) => handleMarkerClick(e, ch.opId)}
-                >
-                  [{ch.ordinal}]
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
+        {renderGroupMarker(
+          paraChanges,
+          rowAudits,
+          selectedChangeId,
+          handleMarkerClick,
+        )}
 
         <p className="page-para-body">
           {region?.runs?.length ? (
@@ -538,12 +694,6 @@ export function PageSheet({
             region?.text ?? fallbackText
           )}
         </p>
-
-        {activeParaChange && activeParaChange.beforeText.trim().length > 0 ? (
-          <div className="page-before-callout">
-            {t("review_before_label", language, [activeParaChange.beforeText])}
-          </div>
-        ) : null}
       </div>
     );
   };
@@ -706,11 +856,6 @@ export function PageSheet({
                   className="page-doc-table"
                   data-testid={`page-table-${table.index}`}
                 >
-                  <colgroup>
-                    {Array.from({ length: table.columns }, (_, idx) => (
-                      <col key={idx} />
-                    ))}
-                  </colgroup>
                   <tbody>
                     {table.rows.map((row) => (
                       <tr key={row.row}>
@@ -732,19 +877,34 @@ export function PageSheet({
                           const hasHardFix = cellChanges.some(
                             (ch) => rowAudits[ch.opId]?.status === "needs_fixes",
                           );
+                          const hasKept = cellChanges.some(
+                            (ch) => rowAudits[ch.opId]?.status === "kept",
+                          );
+                          const displaySample = (region?.text ?? cell.textPreview ?? "")
+                            .replace(/\s+/g, " ")
+                            .trim();
+                          const isSingleShortLabel =
+                            cellChanges.length === 0 &&
+                            displaySample.length > 0 &&
+                            displaySample.length <= 8 &&
+                            !(region?.text ?? cell.textPreview ?? "").includes("\n");
 
                           const cls = [
                             "page-cell",
                             `page-cell--class-${cell.classification}`,
                             isFillTarget ? "page-cell--fill-seat" : "",
+                            isSingleShortLabel ? "page-cell--nowrap-label" : "",
+                            colSpan >= 8 ? "page-cell--wide" : "",
                             cellChanges.length > 0 ? "page-cell--changed" : "",
                             hasChangedFact
                               ? "page-cell--rail-changed"
                               : hasHardFix
                                 ? "page-cell--rail-needs-fixes"
-                                : cellChanges.length > 0
-                                  ? "page-cell--rail-accent"
-                                  : "",
+                                : hasKept
+                                  ? "page-cell--rail-kept"
+                                  : cellChanges.length > 0
+                                    ? "page-cell--rail-accent"
+                                    : "",
                             isSelected ? "page-cell--selected" : "",
                             isEditing ? "page-cell--editing" : "",
                           ]
@@ -803,11 +963,13 @@ export function PageSheet({
                             isSelected ? " page-marker-badge--selected" : ""
                           }`}
                           data-testid={`page-marker-${ch.ordinal}`}
+                          data-marker-ordinals={String(ch.ordinal)}
                           data-marker-op-id={ch.opId}
+                          data-marker-op-ids={ch.opId}
                           aria-pressed={isSelected}
                           onClick={(e) => handleMarkerClick(e, ch.opId)}
                         >
-                          [{ch.ordinal}]
+                          {ch.ordinal}
                         </button>
                         <span className="page-delete-guide-label">{ch.opKindText}</span>
                         {ch.beforeText.trim() ? (
