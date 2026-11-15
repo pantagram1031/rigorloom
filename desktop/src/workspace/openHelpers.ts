@@ -490,3 +490,37 @@ export function corpusFormDisplayInfo(
     filename,
   };
 }
+
+/**
+ * Resolve the user-facing document title for a session: built-in sample forms
+ * opened from the corpus show their localized catalog title (e.g. `기안문 (별지 제1호서식)`),
+ * while user-opened files keep their source filename.
+ */
+export function getSessionDisplayTitle(
+  session: Session | null,
+  openedPaths: Record<string, string>,
+  corpusFiles: readonly CorpusFileEntry[],
+  language: UiLanguage,
+): string {
+  if (!session) return "";
+  const knownPath = openedPaths[session.sessionId];
+  if (knownPath && corpusFiles.length > 0) {
+    const normKnown = normalizePathKey(knownPath);
+    if (normKnown && normKnown.includes("/")) {
+      const matched = corpusFiles.find((entry) => {
+        if (!entry.path) return false;
+        const normEntry = normalizePathKey(entry.path);
+        if (!normEntry) return false;
+        return (
+          normKnown === normEntry ||
+          normKnown.endsWith(`/${normEntry}`) ||
+          normEntry.endsWith(`/${normKnown}`)
+        );
+      });
+      if (matched) {
+        return corpusFormDisplayInfo(matched, language).title;
+      }
+    }
+  }
+  return session.source.name;
+}

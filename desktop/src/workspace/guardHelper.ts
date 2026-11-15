@@ -7,6 +7,7 @@ import { opKindLabel, t } from "../i18n/vocabulary";
 import type { Draft, QueuedOp } from "../store";
 import * as rt from "../runtime";
 import type {
+  GraphCell,
   GuardDiffParagraph,
   GuardDiffResult,
   InspectResult,
@@ -14,7 +15,14 @@ import type {
   RegionText,
   UiLanguage,
 } from "../types";
-import { deriveOpFieldLabel } from "./fieldLabels";
+import {
+  collapseFormGuideLabel,
+  deriveOpFieldLabel,
+  deriveSiblingRunFieldLabel,
+  extractFormInstructionContext,
+  truncateLabel,
+  type FormInstructionContext,
+} from "./fieldLabels";
 
 export type GuardAuditState =
   | "idle"
@@ -29,6 +37,8 @@ export type RowGuardStatus =
   | "not_checked"
   | "kept"
   | "changed";
+
+export type ChangePreviewMode = "diff" | "before_only" | "after_only";
 
 export interface IndexedChange {
   ordinal: number;
@@ -45,6 +55,7 @@ export interface IndexedChange {
   hasHardFailure: boolean;
   isAuditable: boolean;
   isEmptyBlankFill: boolean;
+  previewMode: ChangePreviewMode;
   invertible: boolean;
   nonInvertibleReason?: string;
 }
@@ -155,6 +166,217 @@ export function isAuditableOp(op: QueuedOp): boolean {
   return false;
 }
 
+function matchesSlotPlaceholder(
+  compactBefore: string,
+  formCtx: FormInstructionContext,
+): boolean {
+  if (!compactBefore) return false;
+  if (
+    compactBefore.includes("연도별일련번호") ||
+    compactBefore.includes("직위(직급)서명")
+  ) {
+    return true;
+  }
+  if (Array.from(compactBefore).length > 35) {
+    return false;
+  }
+  for (const term of formCtx.quotedTerms) {
+    if (compactBefore === term || compactBefore.includes(term)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isShortNonDigitAnchorFill(
+  beforeTrim: string,
+  collapsedBefore: string,
+  afterTrim: string,
+  anchors: readonly string[] | undefined,
+): boolean {
+  if (!beforeTrim || Array.from(beforeTrim).length > 12 || /\d/.test(beforeTrim)) {
+    return false;
+  }
+  if (!afterTrim.startsWith(`${beforeTrim} `)) {
+    return false;
+  }
+  if (!anchors || anchors.length === 0) return false;
+  return anchors.some((a) => {
+    const aTrim = a.trim();
+    return aTrim === beforeTrim || collapseFormGuideLabel(aTrim) === collapsedBefore;
+  });
+}
+
+interface ClassificationResult {
+  fieldLabel: string;
+  opKindText: string;
+  isAuditable: boolean;
+  previewMode: ChangePreviewMode;
+}
+
+function classifyQueuedOp(
+  op: QueuedOp,
+  beforeText: string,
+  afterText: string,
+  defaultFieldLabel: string,
+  defaultOpKindText: string,
+  inspect: InspectResult | null,
+  textMap: Record<string, RegionText>,
+  cellByKey: ReadonlyMap<string, GraphCell>,
+  regionCellKeys: ReadonlySet<string>,
+  formCtx: FormInstructionContext,
+  language: UiLanguage,
+): ClassificationResult {
+  const beforeTrim = beforeText.trim();
+  const afterTrim = afterText.trim();
+
+  if (op.kind === "fill_cell") {
+    const isContentOverwrite = Boolean(op.overwrite) && beforeTrim.length > 0;
+    if (!isContentOverwrite) {
+      const collapsed = collapseFormGuideLabel(beforeText);
+      return {
+        fieldLabel:
+          beforeTrim.length > 0 && collapsed.length > 0
+            ? truncateLabel(collapsed, 20)
+            : defaultFieldLabel,
+        opKindText: opKindLabel("fill_cell", language),
+        isAuditable: false,
+        previewMode: "after_only",
+      };
+    }
+    return {
+      fieldLabel: defaultFieldLabel,
+      opKindText: defaultOpKindText,
+      isAuditable: true,
+      previewMode: "diff",
+    };
+  }
+
+  if (op.kind !== "replace_at_cell") {
+    return {
+      fieldLabel: defaultFieldLabel,
+      opKindText: defaultOpKindText,
+      isAuditable: isAuditableOp(op),
+      previewMode: "diff",
+    };
+  }
+
+  const key = `c:${op.table}:${op.row}:${op.col}`;
+  const cell = cellByKey.get(key);
+  const region = textMap[key];
+  const isGuideCell = cell?.classification === "guide" || formCtx.guideCellKeys.has(key);
+  const isFillTargetCell = cell?.classification === "fill_target";
+  const isInstructionCell = formCtx.instructionCellKeys.has(key);
+  const inRegions = regionCellKeys.has(key);
+
+  const hasRunColorAnomaly = Boolean(
+    region?.runs?.some(
+      (r) => (op.run === undefined || r.index === op.run) && r.color_anomaly === true,
+    ),
+  );
+  const hasRegionColorAnomaly = Boolean(
+    inspect?.regions?.regions?.some(
+      (r) =>
+        r.table === op.table &&
+        r.row === op.row &&
+        r.col === op.col &&
+        (op.run === undefined || r.run === undefined || r.run === op.run) &&
+        r.colorAnomaly === true,
+    ),
+  );
+  const hasColorAnomaly =
+    Boolean(cell?.colorAnomaly) || hasRunColorAnomaly || hasRegionColorAnomaly;
+
+  const collapsedBefore = collapseFormGuideLabel(beforeText);
+  const compactBefore = collapsedBefore.replace(/\s+/g, "");
+
+  // 1. Clearing operations (`afterText` empty while `beforeText` is non-empty).
+  if (afterTrim === "" && beforeTrim.length > 0) {
+    const hasLettersOrDigits = /[\p{L}\p{N}]/u.test(beforeTrim);
+    if (!hasLettersOrDigits) {
+      return {
+        fieldLabel: deriveSiblingRunFieldLabel(
+          op.table,
+          op.row,
+          op.col,
+          op.run,
+          beforeText,
+          textMap,
+          20,
+        ),
+        opKindText: t("op_clear_symbol", language),
+        isAuditable: !(isGuideCell || isInstructionCell),
+        previewMode: "before_only",
+      };
+    }
+
+    if (
+      isGuideCell ||
+      hasColorAnomaly ||
+      isInstructionCell ||
+      matchesSlotPlaceholder(compactBefore, formCtx)
+    ) {
+      return {
+        fieldLabel:
+          collapsedBefore.length > 0
+            ? truncateLabel(collapsedBefore, 20)
+            : defaultFieldLabel,
+        opKindText: opKindLabel("delete_guides", language),
+        isAuditable: false,
+        previewMode: "before_only",
+      };
+    }
+
+    return {
+      fieldLabel: defaultFieldLabel,
+      opKindText: defaultOpKindText,
+      isAuditable: true,
+      previewMode: "diff",
+    };
+  }
+
+  // 2. Guide-text / form-slot blank-fill operations (`afterText` non-empty).
+  if (afterTrim.length > 0) {
+    const hasSlotBlankParens = /\(\s{2,}\)|\[\s{2,}\]/.test(beforeText);
+    const isShortAnchorPrefix =
+      formCtx.isFormDocument &&
+      isShortNonDigitAnchorFill(
+        beforeTrim,
+        collapsedBefore,
+        afterTrim,
+        inspect?.summary?.anchors,
+      );
+
+    if (
+      isGuideCell ||
+      isFillTargetCell ||
+      inRegions ||
+      hasColorAnomaly ||
+      matchesSlotPlaceholder(compactBefore, formCtx) ||
+      hasSlotBlankParens ||
+      isShortAnchorPrefix
+    ) {
+      return {
+        fieldLabel:
+          beforeTrim.length > 0 && collapsedBefore.length > 0
+            ? truncateLabel(collapsedBefore, 20)
+            : defaultFieldLabel,
+        opKindText: opKindLabel("fill_cell", language),
+        isAuditable: false,
+        previewMode: "after_only",
+      };
+    }
+  }
+
+  // 3. Genuine content cell edits stay auditable.
+  return {
+    fieldLabel: defaultFieldLabel,
+    opKindText: defaultOpKindText,
+    isAuditable: true,
+    previewMode: "diff",
+  };
+}
+
 export function buildIndexedChanges(
   draft: Draft,
   inspect: InspectResult | null,
@@ -171,6 +393,20 @@ export function buildIndexedChanges(
   const hardAll = draft.validation?.hard ?? [];
   const warnAll = draft.validation?.warn ?? [];
 
+  const formCtx = extractFormInstructionContext(inspect, textMap);
+  const cellByKey = new Map<string, GraphCell>();
+  for (const tbl of inspect?.graph.tables ?? []) {
+    for (const cell of tbl.cells) {
+      cellByKey.set(`c:${tbl.index}:${cell.addr.row}:${cell.addr.col}`, cell);
+    }
+  }
+  const regionCellKeys = new Set<string>();
+  for (const reg of inspect?.regions?.regions ?? []) {
+    if (reg.table !== undefined && reg.row !== undefined && reg.col !== undefined) {
+      regionCellKeys.add(`c:${reg.table}:${reg.row}:${reg.col}`);
+    }
+  }
+
   return sorted.map(({ op, originalIndex }, idx) => {
     const ordinal = idx + 1;
     const matchTargets = new Set([`ops[${op.opId}]`, `ops[${originalIndex}]`]);
@@ -179,12 +415,12 @@ export function buildIndexedChanges(
 
     const derived = deriveOpFieldLabel(op, inspect, textMap, language, ordinal);
     const looksLikeRawCoord = /^R\d+C\d+$/i.test(derived.trim());
-    const fieldLabel =
+    const defaultFieldLabel =
       derived.trim().length > 0 && !looksLikeRawCoord
         ? derived
         : t("field_blank_fallback", language, [ordinal]);
 
-    const opKindText = opKindLabel(
+    const defaultOpKindText = opKindLabel(
       op.kind,
       language,
       op.kind === "replace_at_cell" ? (op.mode ?? null) : null,
@@ -193,8 +429,22 @@ export function buildIndexedChanges(
     const beforeText = op.before ?? "";
     const afterText =
       op.kind === "delete_guides"
-        ? opKindText
+        ? defaultOpKindText
         : projectedAfterText(op);
+
+    const classification = classifyQueuedOp(
+      op,
+      beforeText,
+      afterText,
+      defaultFieldLabel,
+      defaultOpKindText,
+      inspect,
+      textMap,
+      cellByKey,
+      regionCellKeys,
+      formCtx,
+      language,
+    );
 
     const inv = projectionInverseSupport(op);
     const nonInvertibleReason = !inv.invertible
@@ -208,16 +458,17 @@ export function buildIndexedChanges(
       originalIndex,
       op,
       opId: op.opId,
-      fieldLabel,
-      opKindText,
+      fieldLabel: classification.fieldLabel,
+      opKindText: classification.opKindText,
       beforeText,
       afterText,
       targetKey: opTargetKey(op),
       hardFindings,
       warnFindings,
       hasHardFailure: hardFindings.length > 0,
-      isAuditable: isAuditableOp(op),
+      isAuditable: classification.isAuditable,
       isEmptyBlankFill: op.kind === "fill_cell" && beforeText.trim().length === 0,
+      previewMode: classification.previewMode,
       invertible: inv.invertible,
       nonInvertibleReason,
     };
@@ -269,16 +520,14 @@ function normalizeForMatch(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-function extractAddedNumbers(para: GuardDiffParagraph | null): string[] {
+export function extractAddedNumbers(para: GuardDiffParagraph | null): string[] {
   if (!para) return [];
-  const seenSpans = new Set<string>();
+  const seenText = new Set<string>();
   const addedNumbers: string[] = [];
   for (const tok of para.afterProtected ?? []) {
-    if (tok.status !== "added") continue;
-    if (!(tok.kind === "numbers" || /\d/.test(tok.text))) continue;
-    const spanKey = `${tok.start}:${tok.end}:${tok.text}`;
-    if (seenSpans.has(spanKey)) continue;
-    seenSpans.add(spanKey);
+    if (tok.status !== "added" || tok.kind !== "numbers") continue;
+    if (seenText.has(tok.text)) continue;
+    seenText.add(tok.text);
     addedNumbers.push(tok.text);
   }
   return addedNumbers;
@@ -323,9 +572,20 @@ function matchParagraphTier(ch: IndexedChange, para: GuardDiffParagraph): number
 
   if (beforeExact && (afterExact || afterOverlap)) return 1;
   if (beforeOverlap && afterOverlap) return 2;
+  if (beforeOverlap && opAfter.length === 0 && pAfter.length === 0) return 2;
   if (afterExact || (opText.length >= 2 && afterContainsOpText)) return 3;
   if (
+    beforeOverlap &&
+    opAfter.length === 0 &&
+    opBefore.length >= 2 &&
+    pBefore !== pAfter &&
+    !pAfter.includes(opBefore)
+  ) {
+    return 3;
+  }
+  if (
     opAfter.length >= 2 &&
+    pAfter.length >= 2 &&
     (pAfter.includes(opAfter) || opAfter.includes(pAfter))
   ) {
     return 4;
@@ -361,6 +621,11 @@ function hasTextContainment(ch: IndexedChange, para: GuardDiffParagraph): boolea
   return false;
 }
 
+export type GuardDiffInvoker = (req: {
+  sessionId: string;
+  planId: string;
+}) => Promise<GuardDiffResult>;
+
 /**
  * Execute authoritative Python prose-fidelity diff via `/api/guard/diff`.
  * Never calls `/api/guard/diff` on TS-projected text or runs JS pass/fail regexes.
@@ -369,6 +634,7 @@ export async function runAuthoritativeGuardDiff(
   sessionId: string,
   draft: Draft,
   changes: readonly IndexedChange[],
+  guardDiffFn: GuardDiffInvoker = rt.guardDiff,
 ): Promise<ReviewGuardSummary> {
   if (changes.length === 0) {
     return emptyReviewGuardSummary("idle", null);
@@ -390,7 +656,7 @@ export async function runAuthoritativeGuardDiff(
   const audited = changes.filter((c) => c.isAuditable);
 
   try {
-    const documentDiff = await rt.guardDiff({ sessionId, planId });
+    const documentDiff = await guardDiffFn({ sessionId, planId });
 
     const rowAudits: Record<string, RowGuardAudit> = {};
     for (const ch of changes) {
@@ -408,11 +674,14 @@ export async function runAuthoritativeGuardDiff(
     const matchedParaByOp = new Map<string, GuardDiffParagraph>();
     const attributedParaNums = new Map<string, number[]>();
 
-    const nonDeleteAudited = audited.filter(
+    // Match ALL non-delete changes (both auditable and non-auditable) against
+    // `changedParas` so raw guard paragraphs stay available for every row's
+    // detail disclosure and non-auditable rows claim their own paragraphs.
+    const nonDeleteChanges = changes.filter(
       (c) => c.op.kind !== "delete_guides",
     );
 
-    for (const ch of nonDeleteAudited) {
+    for (const ch of nonDeleteChanges) {
       let bestPara: GuardDiffParagraph | null = null;
       let bestTier = 99;
       for (const para of changedParas) {
@@ -425,7 +694,7 @@ export async function runAuthoritativeGuardDiff(
         }
       }
 
-      if (bestPara) {
+      if (bestPara && bestTier <= 2) {
         claimedChangedNums.add(bestPara.paragraph);
         if (ch.targetKey && !targetSharedPara.has(ch.targetKey)) {
           targetSharedPara.set(ch.targetKey, bestPara);
@@ -440,20 +709,32 @@ export async function runAuthoritativeGuardDiff(
         if (shared) {
           matchedParaByOp.set(ch.opId, shared);
           attributedParaNums.set(ch.opId, [shared.paragraph]);
+          continue;
         }
+      }
+
+      if (bestPara) {
+        claimedChangedNums.add(bestPara.paragraph);
+        if (ch.targetKey && !targetSharedPara.has(ch.targetKey)) {
+          targetSharedPara.set(ch.targetKey, bestPara);
+        }
+        matchedParaByOp.set(ch.opId, bestPara);
+        attributedParaNums.set(ch.opId, [bestPara.paragraph]);
       }
     }
 
-    for (const ch of nonDeleteAudited) {
+    for (const ch of nonDeleteChanges) {
       if (matchedParaByOp.has(ch.opId)) continue;
       const opText = normalizeForMatch(opTargetText(ch.op));
       const opAfter = normalizeForMatch(ch.afterText);
-      if (opText.length === 0 && opAfter.length === 0) continue;
+      const opBefore = normalizeForMatch(ch.beforeText);
+      if (opText.length === 0 && opAfter.length === 0 && opBefore.length === 0) continue;
 
       const remainingEdited = changedParas.filter(
         (p) =>
           !claimedChangedNums.has(p.paragraph) &&
-          normalizeForMatch(p.after).length > 0,
+          (normalizeForMatch(p.after).length > 0 ||
+            normalizeForMatch(p.before).length > 0),
       );
       if (
         remainingEdited.length === 1 &&
@@ -501,9 +782,58 @@ export async function runAuthoritativeGuardDiff(
 
     const changedSet = new Set<string>();
     const claimedEqualNums = new Set<number>();
+    const targetSharedEqualPara = new Map<string, GuardDiffParagraph>();
+    const nonAuditableParaNums = new Set<number>();
 
-    for (const ch of audited) {
+    for (const ch of changes) {
       const matched = matchedParaByOp.get(ch.opId) ?? null;
+
+      let resolvedPara: GuardDiffParagraph | null = matched;
+      if (!resolvedPara) {
+        const opAfter = normalizeForMatch(ch.afterText);
+        const opBefore = normalizeForMatch(ch.beforeText);
+        const equalPara =
+          allParas.find((p) => {
+            if (
+              claimedChangedNums.has(p.paragraph) ||
+              claimedEqualNums.has(p.paragraph)
+            ) {
+              return false;
+            }
+            const pb = normalizeForMatch(p.before);
+            const pa = normalizeForMatch(p.after);
+            return (
+              (opAfter.length > 0 && (pa === opAfter || pa.includes(opAfter))) ||
+              (opBefore.length > 0 && pb === opBefore && pa === opBefore)
+            );
+          }) ?? null;
+
+        if (equalPara) {
+          claimedEqualNums.add(equalPara.paragraph);
+          if (ch.targetKey && !targetSharedEqualPara.has(ch.targetKey)) {
+            targetSharedEqualPara.set(ch.targetKey, equalPara);
+          }
+          resolvedPara = equalPara;
+        } else if (ch.targetKey) {
+          resolvedPara = targetSharedEqualPara.get(ch.targetKey) ?? null;
+        }
+      }
+
+      if (!ch.isAuditable) {
+        if (resolvedPara) {
+          nonAuditableParaNums.add(resolvedPara.paragraph);
+        }
+        for (const extra of attributedParaNums.get(ch.opId) ?? []) {
+          nonAuditableParaNums.add(extra);
+        }
+        rowAudits[ch.opId] = {
+          status: "none",
+          paragraph: resolvedPara,
+          addedNumbers: [],
+        };
+        continue;
+      }
+
       if (matched) {
         const status: RowGuardStatus =
           matched.pass === false ? "changed" : "kept";
@@ -518,37 +848,16 @@ export async function runAuthoritativeGuardDiff(
         continue;
       }
 
-      const opAfter = normalizeForMatch(ch.afterText);
-      const opBefore = normalizeForMatch(ch.beforeText);
-      const equalPara =
-        allParas.find((p) => {
-          if (
-            claimedChangedNums.has(p.paragraph) ||
-            claimedEqualNums.has(p.paragraph)
-          ) {
-            return false;
-          }
-          const pb = normalizeForMatch(p.before);
-          const pa = normalizeForMatch(p.after);
-          return (
-            (opAfter.length > 0 && (pa === opAfter || pa.includes(opAfter))) ||
-            (opBefore.length > 0 && pb === opBefore && pa === opBefore)
-          );
-        }) ?? null;
-
-      if (equalPara) {
-        claimedEqualNums.add(equalPara.paragraph);
-      }
       rowAudits[ch.opId] = {
         status: "kept",
-        paragraph: equalPara,
-        addedNumbers: extractAddedNumbers(equalPara),
+        paragraph: resolvedPara,
+        addedNumbers: extractAddedNumbers(resolvedPara),
       };
     }
 
     if (documentDiff.pass === false && audited.length > 0) {
       const failingParas = changedParas.filter((p) => p.pass === false);
-      const coveredParaNums = new Set<number>();
+      const coveredParaNums = new Set<number>(nonAuditableParaNums);
       for (const opId of changedSet) {
         const paraNum = rowAudits[opId]?.paragraph?.paragraph;
         if (typeof paraNum === "number") coveredParaNums.add(paraNum);
@@ -559,12 +868,10 @@ export async function runAuthoritativeGuardDiff(
 
       for (const failPara of failingParas) {
         if (coveredParaNums.has(failPara.paragraph)) continue;
-        const targetRow =
-          audited.find(
-            (c) => !changedSet.has(c.opId) && hasTextContainment(c, failPara),
-          ) ??
-          audited.find((c) => !changedSet.has(c.opId)) ??
-          audited[0];
+        const targetRow = audited.find(
+          (c) => !changedSet.has(c.opId) && hasTextContainment(c, failPara),
+        );
+        if (!targetRow) continue;
         changedSet.add(targetRow.opId);
         coveredParaNums.add(failPara.paragraph);
         rowAudits[targetRow.opId] = {
@@ -573,25 +880,10 @@ export async function runAuthoritativeGuardDiff(
           addedNumbers: extractAddedNumbers(failPara),
         };
       }
-
-      if (changedSet.size === 0) {
-        const fallbackRow = audited[0];
-        const fallbackPara =
-          failingParas[0] ??
-          changedParas[0] ??
-          rowAudits[fallbackRow.opId]?.paragraph ??
-          null;
-        changedSet.add(fallbackRow.opId);
-        rowAudits[fallbackRow.opId] = {
-          status: "changed",
-          paragraph: fallbackPara,
-          addedNumbers: extractAddedNumbers(fallbackPara),
-        };
-      }
     }
 
     const changedFactOpIds = changes
-      .filter((c) => changedSet.has(c.opId))
+      .filter((c) => rowAudits[c.opId]?.status === "changed")
       .map((c) => c.opId);
 
     return {

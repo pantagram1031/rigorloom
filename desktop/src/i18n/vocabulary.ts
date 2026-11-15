@@ -497,11 +497,11 @@ export const VOCABULARY = {
     en: "Drop a Hangul document here to open.",
   },
   open_drop_sub: {
-    ko: "파일이나 기본 양식을 선택할 수 있습니다.",
-    en: "Or choose a file from your computer or a built-in form.",
+    ko: "파일이나 예시 양식을 선택할 수 있습니다.",
+    en: "Or choose a file from your computer or an example form.",
   },
   open_choose_file: { ko: "파일 선택", en: "Choose file" },
-  open_builtin_forms: { ko: "기본 양식 열기", en: "Open built-in form" },
+  open_builtin_forms: { ko: "예시 양식 열기", en: "Open example form" },
   open_recent_title: { ko: "최근 연 문서", en: "Recent documents" },
   open_recent_hint: {
     ko: "문서를 선택하면 이어서 작업할 수 있습니다.",
@@ -610,7 +610,7 @@ export const VOCABULARY = {
   cmd_return: { ko: "변경 돌려보내기", en: "Return changes" },
   cmd_export: { ko: "파일 내보내기", en: "Export file" },
   cmd_open_doc: { ko: "문서 열기", en: "Open document" },
-  cmd_open_builtin: { ko: "기본 양식 열기", en: "Open built-in form" },
+  cmd_open_builtin: { ko: "예시 양식 열기", en: "Open example form" },
   cmd_go_review: { ko: "검토로 이동", en: "Go to review" },
   cmd_go_fill: { ko: "채우기로 이동", en: "Go to fill" },
   cmd_go_history: { ko: "기록으로 이동", en: "Go to history" },
@@ -737,6 +737,14 @@ export const VOCABULARY = {
     ko: "안내문을 지울 때 사라진 문단 서식을 되살릴 수 없어 자동으로 되돌릴 수 없습니다.",
     en: "Removing form instructions cannot be undone automatically because removed paragraph formatting cannot be restored.",
   },
+  op_clear_symbol: { ko: "기호 지움", en: "Remove symbol" },
+  guard_added_numbers_more: { ko: "외 {0}개", en: "and {0} more" },
+  topbar_more_menu: { ko: "메뉴", en: "Menu" },
+  export_no_revision_toast: {
+    ko: "아직 내보낼 수정본이 없습니다. 변경 제안을 승인해 적용한 뒤 내보낼 수 있습니다.",
+    en: "No revision to export yet. Approve and apply changes first.",
+  },
+  field_body_fallback: { ko: "본문", en: "Body" },
 } as const satisfies Record<string, VocabEntry>;
 
 export type VocabularyKey = keyof typeof VOCABULARY;

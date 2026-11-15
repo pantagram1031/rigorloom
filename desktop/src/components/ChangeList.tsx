@@ -22,6 +22,7 @@ import type {
   ReviewGuardSummary,
   RowGuardAudit,
 } from "../workspace/guardHelper";
+import { getSessionDisplayTitle } from "../workspace/openHelpers";
 import { ChangeRow } from "./ChangeRow";
 import { DetailDisclosure } from "./DetailDisclosure";
 
@@ -59,6 +60,11 @@ export function ChangeList({
   onConfirmReturn,
 }: ChangeListProps) {
   const draft = useWorkspace((s) => s.draft);
+  const session = useWorkspace(
+    (s) => s.sessions.find((x) => x.sessionId === sessionId) ?? null,
+  );
+  const openedPaths = useWorkspace((s) => s.openedPaths);
+  const corpusFiles = useWorkspace((s) => s.corpusFiles);
   const approval = useWorkspace((s) => s.approval);
   const approvalPhase = useWorkspace((s) => s.approvalPhase);
   const applyPhase = useWorkspace((s) => s.applyPhase);
@@ -106,6 +112,24 @@ export function ChangeList({
     !busy;
 
   const changedFactCount = guardSummary.changedFactOpIds.length;
+  const selectedChange = selectedChangeId
+    ? (changes.find((ch) => ch.opId === selectedChangeId) ?? null)
+    : null;
+  const selectedTargetKey = selectedChange?.targetKey ?? null;
+  const selectedGroupCount =
+    selectedTargetKey !== null
+      ? changes.filter((ch) => ch.targetKey === selectedTargetKey).length
+      : 0;
+  const sessionDisplayTitle = getSessionDisplayTitle(
+    session,
+    openedPaths,
+    corpusFiles,
+    language,
+  );
+  const showRawSourceFilename =
+    session !== null &&
+    sessionDisplayTitle !== "" &&
+    sessionDisplayTitle !== session.source.name;
 
   useEffect(() => {
     if (!selectedChangeId || !listRef.current) return;
@@ -329,6 +353,12 @@ export function ChangeList({
             ) : null}
           </div>
         ) : null}
+
+        {showRawSourceFilename ? (
+          <DetailDisclosure testId="review-source-detail">
+            <span>{session.source.name}</span>
+          </DetailDisclosure>
+        ) : null}
       </header>
 
       <div className="change-list-scroll">
@@ -370,6 +400,11 @@ export function ChangeList({
                 change={change}
                 audit={guardSummary.rowAudits[change.opId] ?? DEFAULT_ROW_AUDIT}
                 isSelected={selectedChangeId === change.opId}
+                isGroupHighlighted={
+                  selectedGroupCount > 1 &&
+                  change.targetKey === selectedTargetKey &&
+                  change.opId !== selectedChangeId
+                }
                 isExpanded={expandedChangeId === change.opId}
                 focusEditNonce={focusEditNonce}
                 disabled={busy}

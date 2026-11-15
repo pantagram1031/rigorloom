@@ -43,6 +43,7 @@ interface ChangeRowProps {
   change: IndexedChange;
   audit: RowGuardAudit;
   isSelected: boolean;
+  isGroupHighlighted?: boolean;
   isExpanded: boolean;
   focusEditNonce: number;
   disabled?: boolean;
@@ -55,6 +56,7 @@ export function ChangeRow({
   change,
   audit,
   isSelected,
+  isGroupHighlighted = false,
   isExpanded,
   focusEditNonce,
   disabled = false,
@@ -116,9 +118,28 @@ export function ChangeRow({
   const beforeSingle = collapseOneLine(change.beforeText);
   const afterSingle = collapseOneLine(change.afterText);
   const previewText =
-    beforeSingle.length > 0
-      ? `${beforeSingle} → ${afterSingle}`
-      : afterSingle;
+    change.previewMode === "before_only"
+      ? beforeSingle
+      : change.previewMode === "after_only"
+        ? afterSingle
+        : beforeSingle.length > 0
+          ? `${beforeSingle} → ${afterSingle}`
+          : afterSingle;
+
+  const showAddedNumbers = change.isAuditable && audit.addedNumbers.length > 0;
+  const visibleAddedNumbers = showAddedNumbers
+    ? audit.addedNumbers.slice(0, 3)
+    : [];
+  const extraAddedNumbers = showAddedNumbers
+    ? Math.max(0, audit.addedNumbers.length - visibleAddedNumbers.length)
+    : 0;
+  const addedNumbersLabel = showAddedNumbers
+    ? `${t("guard_added_numbers", language)} ${visibleAddedNumbers.join(", ")}${
+        extraAddedNumbers > 0
+          ? ` ${t("guard_added_numbers_more", language, [extraAddedNumbers])}`
+          : ""
+      }`
+    : null;
 
   const allFindings = [...change.hardFindings, ...change.warnFindings];
   const suggestedCharPr = findSuggestedCharPr(allFindings);
@@ -153,6 +174,7 @@ export function ChangeRow({
   const rowClasses = [
     "change-row",
     isSelected ? "change-row--selected" : "",
+    isGroupHighlighted ? "change-row--group-peer" : "",
     isExpanded ? "change-row--expanded" : "change-row--collapsed",
     audit.status === "changed"
       ? "change-row--changed"
@@ -203,12 +225,23 @@ export function ChangeRow({
 
         <div className="change-row-line2">
           <span className="change-row-preview">{previewText}</span>
-          {audit.addedNumbers.length > 0 ? (
+          {change.previewMode === "after_only" &&
+          isSelected &&
+          !isExpanded &&
+          beforeSingle.length > 0 ? (
+            <span
+              className="change-row-before-inline"
+              data-testid={`change-before-inline-${change.ordinal}`}
+            >
+              {t("review_before_label", language, [beforeSingle])}
+            </span>
+          ) : null}
+          {addedNumbersLabel ? (
             <span
               className="change-row-added-numbers"
               data-testid={`change-added-numbers-${change.ordinal}`}
             >
-              {`${t("guard_added_numbers", language)} ${audit.addedNumbers.join(", ")}`}
+              {addedNumbersLabel}
             </span>
           ) : null}
         </div>
@@ -384,7 +417,7 @@ export function ChangeRow({
                 <div>
                   {`guard: paragraph=${audit.paragraph.paragraph}, pass=${String(
                     audit.paragraph.pass,
-                  )}, kinds=[${audit.paragraph.kinds.join(", ")}]`}
+                  )}, kinds=[${audit.paragraph.kinds.join(", ")}], changes=[${audit.paragraph.changes.join(", ")}]`}
                 </div>
               ) : null}
             </div>

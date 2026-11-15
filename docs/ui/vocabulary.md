@@ -245,9 +245,9 @@
 | `open_title` | 문서 열기 | Open document |
 | `open_subtitle` | 원본은 그대로 두고 작업 사본을 엽니다. | Opens a working copy while keeping the original file unchanged. |
 | `open_drop_prompt` | 한글 문서를 여기에 놓으면 열립니다. | Drop a Hangul document here to open. |
-| `open_drop_sub` | 파일이나 기본 양식을 선택할 수 있습니다. | Or choose a file from your computer or a built-in form. |
+| `open_drop_sub` | 파일이나 예시 양식을 선택할 수 있습니다. | Or choose a file from your computer or an example form. |
 | `open_choose_file` | 파일 선택 | Choose file |
-| `open_builtin_forms` | 기본 양식 열기 | Open built-in form |
+| `open_builtin_forms` | 예시 양식 열기 | Open example form |
 | `open_recent_title` | 최근 연 문서 | Recent documents |
 | `open_recent_hint` | 문서를 선택하면 이어서 작업할 수 있습니다. | Select a document to continue working. |
 | `open_empty_recent` | 아직 연 문서가 없습니다. | No documents opened yet. |
@@ -296,7 +296,7 @@
 | `cmd_return` | 변경 돌려보내기 | Return changes |
 | `cmd_export` | 파일 내보내기 | Export file |
 | `cmd_open_doc` | 문서 열기 | Open document |
-| `cmd_open_builtin` | 기본 양식 열기 | Open built-in form |
+| `cmd_open_builtin` | 예시 양식 열기 | Open example form |
 | `cmd_go_review` | 검토로 이동 | Go to review |
 | `cmd_go_fill` | 채우기로 이동 | Go to fill |
 | `cmd_go_history` | 기록으로 이동 | Go to history |
@@ -355,3 +355,8 @@
 | `review_zoom_out` | 축소 | Zoom out |
 | `review_zoom_in` | 확대 | Zoom in |
 | `delete_guides_noninvertible` | 안내문을 지울 때 사라진 문단 서식을 되살릴 수 없어 자동으로 되돌릴 수 없습니다. | Removing form instructions cannot be undone automatically because removed paragraph formatting cannot be restored. |
+| `op_clear_symbol` | 기호 지움 | Remove symbol |
+| `guard_added_numbers_more` | 외 {0}개 | and {0} more |
+| `topbar_more_menu` | 메뉴 | Menu |
+| `export_no_revision_toast` | 아직 내보낼 수정본이 없습니다. 변경 제안을 승인해 적용한 뒤 내보낼 수 있습니다. | No revision to export yet. Approve and apply changes first. |
+| `field_body_fallback` | 본문 | Body |

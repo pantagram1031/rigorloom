@@ -139,15 +139,7 @@ export function ApprovalDialog() {
   const changedFactItems = guardMatchesPlan
     ? changes.filter((ch) => guardSummary.changedFactOpIds.includes(ch.opId))
     : [];
-  const changedFactCount =
-    changedFactItems.length > 0
-      ? changedFactItems.length
-      : guardMatchesPlan &&
-          guardSummary.state === "ready" &&
-          guardSummary.documentDiff &&
-          !guardSummary.documentDiff.pass
-        ? Math.max(1, guardSummary.documentDiff.changed.filter((r) => !r.pass).length)
-        : 0;
+  const changedFactCount = changedFactItems.length;
 
   const requiresChangedFactAck = changedFactCount > 0;
 
