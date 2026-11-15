@@ -73,7 +73,10 @@ def _hwpx_paragraphs(path: Path) -> list[str]:
                 raise GuardInputError(f"{path.name}: no Contents/section*.xml, not an HWPX body")
             out: list[str] = []
             for _, name in sections:
-                data = zf.read(name)
+                with zf.open(name) as member:  # bound real bytes, not declared sizes
+                    data = member.read(MAX_ZIP_TOTAL_UNCOMPRESSED + 1)
+                if len(data) > MAX_ZIP_TOTAL_UNCOMPRESSED:
+                    raise GuardInputError(f"{path.name}: {name} is larger than {MAX_ZIP_TOTAL_UNCOMPRESSED} bytes")
                 if b"<!DOCTYPE" in data[:4096].upper():
                     raise GuardInputError(f"{path.name}: {name} declares a DOCTYPE; refused")
                 _walk(ET.fromstring(data), None, out)
