@@ -39,13 +39,60 @@ CAUSAL_MARKERS = (
     "because", "therefore", "thus", "causes", "results in",
 )
 
+# Words that carry the direction of a change. "약 18.6% 감소" -> "약 18.6% 증가"
+# keeps every number and hedge, so without these the verdict was "same".
+# Sino-Korean nouns match anywhere; native stems only at a word start so that
+# 목적은 or 오늘 do not count as 적은 or 늘.
+DIRECTION_NOUNS = (
+    "증가", "감소", "상승", "하락", "증대", "감축", "향상", "저하", "개선", "악화",
+)
+DIRECTION_STEMS = (
+    "늘어", "늘었", "늘리", "늘린", "줄어", "줄었", "줄이", "줄인",
+    "높아", "높은", "높다", "높았", "높게", "낮아", "낮은", "낮다", "낮았", "낮게",
+    "많아", "많은", "많다", "많았", "많이", "적어", "적은", "적다", "적었", "적게",
+    "빨라", "빠른", "느려", "느린",
+)
+DIRECTION_EN = (
+    "increase", "increased", "increases", "decrease", "decreased", "decreases",
+    "rise", "rose", "risen", "fall", "fell", "fallen", "higher", "lower",
+    "more", "less", "fewer", "greater", "improve", "improved", "worsen", "worsened",
+    "faster", "slower",
+)
+_STEM_RE = re.compile("(?<![가-힣])(" + "|".join(DIRECTION_STEMS) + ")")
+_EN_RE = re.compile(r"(?<![A-Za-z])(" + "|".join(DIRECTION_EN) + r")(?![A-Za-z])", re.I)
+
+# A short line such as "3. 실험 방법" or "II. 결과" is a numbered heading. Lines
+# ending in sentence punctuation are list items, not headings.
+_NUMBERED_HEADING = re.compile(r"^\s*(?:\d+(?:\.\d+)*\.?|[IVX]+\.|[가-하]\.)\s+\S")
+
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _is_heading(line: str) -> bool:
+    if re.match(r"^#{1,6}\s+\S", line):
+        return True
+    stripped = line.strip()
+    return (
+        len(stripped) <= 40
+        and bool(_NUMBERED_HEADING.match(stripped))
+        and not re.search(r"[.?!。]$", stripped)
+    )
+
+
 def _headings(text: str) -> list[str]:
-    return [line.rstrip() for line in text.splitlines() if re.match(r"^#{1,6}\s+\S", line)]
+    return [line.rstrip() for line in text.splitlines() if _is_heading(line)]
+
+
+def _direction_words(text: str) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for token in DIRECTION_NOUNS:
+        if token in text:
+            counts[token] = text.count(token)
+    counts.update(_STEM_RE.findall(text))
+    counts.update(match.lower() for match in _EN_RE.findall(text))
+    return counts
 
 
 def _qualifiers(text: str) -> Counter[str]:
@@ -67,6 +114,7 @@ def extract_protected(text: str) -> dict[str, object]:
     result["qualifiers"] = dict(_qualifiers(text))
     result["quantifiers"] = dict(_token_counts(text, QUANTIFIERS))
     result["causal_markers"] = dict(_token_counts(text, CAUSAL_MARKERS))
+    result["direction_words"] = dict(_direction_words(text))
     return result
 
 

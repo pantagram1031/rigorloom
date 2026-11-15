@@ -278,3 +278,25 @@ def test_local_worker_is_default_humanizer_and_v2_schema_is_valid_json():
         .read_text(encoding="utf-8")
     )
     assert schema["$id"] == "report-pipeline/humanization-changes-v2"
+
+
+def _kinds(before: str, after: str) -> list[str]:
+    return [change["kind"] for change in fidelity.audit_text(before, after)["changes"]]
+
+
+def test_direction_flip_with_same_numbers_is_caught():
+    assert _kinds("반응 시간이 약 18.6% 감소했다.", "반응 시간이 약 18.6% 증가했다.") == ["direction_words"]
+    assert _kinds("값이 더 높은 편이다.", "값이 더 낮은 편이다.") == ["direction_words"]
+    assert _kinds("The score rose by 3%.", "The score fell by 3%.") == ["direction_words"]
+
+
+def test_direction_stems_ignore_words_that_only_contain_them():
+    # 목적은 contains 적은 and 오늘 contains 늘; neither is a direction word.
+    assert _kinds("연구의 목적은 분명하다.", "연구의 목적이 분명하다.") == []
+    assert _kinds("오늘 측정했다.", "금일 측정했다.") == []
+    assert _kinds("Furthermore, it held.", "Moreover, it held.") == []
+
+
+def test_numbered_heading_rename_is_caught_but_list_sentences_are_not():
+    assert _kinds("3. 실험 방법", "3. 연구 설계") == ["headings"]
+    assert _kinds("1. 먼저 시료를 준비했다.", "1. 우선 시료를 준비했다.") == []

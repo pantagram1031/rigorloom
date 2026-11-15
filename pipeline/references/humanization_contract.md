@@ -94,8 +94,14 @@ document scope. It protects:
 
 - numbers, units, dates, percentages, and source ids;
 - citations, direct quotations, URLs, links, document tags, and inline math;
-- headings and declared protected spans;
-- negation, uncertainty, bounds, quantifiers, and causal markers.
+- headings (Markdown `#` lines and short numbered lines such as `3. 실험 방법`)
+  and declared protected spans;
+- negation, uncertainty, bounds, quantifiers, and causal markers;
+- direction words (증가/감소, 높은/낮은, rose/fell and similar), counted, so
+  flipping 감소 to 증가 next to an unchanged number is a deterministic failure.
+
+Counting words is not reading meaning. A swap of two values, or a direction
+expressed with a word outside the list, still passes this layer.
 
 The independent fidelity reviewer additionally checks claim direction,
 agent preservation, causal direction, meaningful sequence, and information
