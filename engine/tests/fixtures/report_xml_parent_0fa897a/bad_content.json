@@ -1,0 +1,9 @@
+{
+  "error": "build_report 실패: SECTION이 하나도 없음",
+  "exit_code": 2,
+  "result": {
+    "error": "build_report 실패: SECTION이 하나도 없음",
+    "ok": false
+  },
+  "source_changed": false
+}

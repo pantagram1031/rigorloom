@@ -1859,16 +1859,14 @@ def _normalize_receipt(receipt: dict, form_path: Path, out_hwpx: Path) -> dict:
 
 
 def test_regression_item1_legacy_and_worker_alias_refusal(
-    tmp_path: Path, parent_0fa897a_root: Path
+    tmp_path: Path
 ):
     """Item 1: refuse form/output/ops aliasing in legacy & worker without touching form."""
     repo_root = ENGINE_ROOT.parent
     for mode in ("--assemble", "--loop"):
         # Direct out.hwpx collision
-        ws_parent = tmp_path / f"parent-{mode.strip('-')}"
         ws_cur = tmp_path / f"cur-{mode.strip('-')}"
         for label, root, ws in (
-            ("parent", parent_0fa897a_root, ws_parent),
             ("current", repo_root, ws_cur),
         ):
             form = _make_synthetic_form_hwpx(ws / "output" / "out.hwpx")
@@ -1958,7 +1956,7 @@ def test_regression_item1_legacy_and_worker_alias_refusal(
 
 
 def test_regression_item2_ops_json_replayable_and_no_legacy_ops_out(
-    tmp_path: Path, parent_0fa897a_root: Path
+    tmp_path: Path
 ):
     """Item 2: remove legacy_ops_out from worker; legacy ops.json stays replayable."""
     assert "legacy_ops_out" not in inspect.signature(
@@ -1967,15 +1965,7 @@ def test_regression_item2_ops_json_replayable_and_no_legacy_ops_out(
     repo_root = ENGINE_ROOT.parent
     env = _build_rich_workspace(tmp_path / "ws")
 
-    out_parent = tmp_path / "out_parent"
     out_current = tmp_path / "out_current"
-    rc_p, _, _ = _run_fill_cli(
-        parent_0fa897a_root,
-        mode="--assemble",
-        form=env["form"],
-        content=env["content"],
-        out_dir=out_parent,
-    )
     rc_c, _, _ = _run_fill_cli(
         repo_root,
         mode="--assemble",
@@ -1983,11 +1973,9 @@ def test_regression_item2_ops_json_replayable_and_no_legacy_ops_out(
         content=env["content"],
         out_dir=out_current,
     )
-    assert rc_p == 0 and rc_c == 0
+    assert rc_c == 0
 
-    ops_p = json.loads((out_parent / "ops.json").read_text(encoding="utf-8"))
     ops_c = json.loads((out_current / "ops.json").read_text(encoding="utf-8"))
-    assert ops_c == ops_p
     pic_op = next(o for o in ops_c if o["op"] == "insert_picture")
     assert Path(pic_op["path"]).is_file()
     assert Path(pic_op["path"]).resolve() == env["figure"].resolve()
@@ -2043,13 +2031,13 @@ def test_regression_item2_ops_json_replayable_and_no_legacy_ops_out(
 
 
 def test_regression_item3_legacy_loop_postprocess_settings_fixed_before_loop(
-    tmp_path: Path, parent_0fa897a_root: Path
+    tmp_path: Path
 ):
     """Item 3: legacy XML loop resolves post-processing once before loop while compiling per iter."""
     pytest.importorskip("fitz")
     repo_root = ENGINE_ROOT.parent
     results = {}
-    for label, root in (("parent", parent_0fa897a_root), ("current", repo_root)):
+    for label, root in (("current", repo_root),):
         ws = tmp_path / f"ws-{label}"
         form = _make_synthetic_form_hwpx(ws / "output" / "form_copy.hwpx")
         content = _write_plain_content(ws / "bundle" / "content.md")
@@ -2077,14 +2065,13 @@ def test_regression_item3_legacy_loop_postprocess_settings_fixed_before_loop(
             extra=("--max-loops", "2", "--build-yaml", str(by), "--pdf-cmd", cmd),
         )
         results[label] = (rc, payload)
-    assert results["parent"][0] == 0
     assert results["current"][0] == 0
-    assert results["current"][1]["iterations"] == results["parent"][1]["iterations"] == 2
+    assert results["current"][1]["iterations"] == 2
     assert results["current"][1].get("error") is None
 
 
 def test_regression_item4_zero_byte_blobs_and_optional_input_policies(
-    tmp_path: Path, parent_0fa897a_root: Path
+    tmp_path: Path
 ):
     """Item 4: zero-byte blobs allowed; legacy skips dir/unreadable optional inputs, strict refuses."""
     repo_root = ENGINE_ROOT.parent
@@ -2135,14 +2122,6 @@ def test_regression_item4_zero_byte_blobs_and_optional_input_policies(
         ("profile_dir", ("--form-profile", str(dir_opt))),
         ("baseline_dir", ("--baseline", str(dir_opt))),
     ):
-        rc_p, v_p, _ = _run_fill_cli(
-            parent_0fa897a_root,
-            mode="--assemble",
-            form=form,
-            content=content,
-            out_dir=tmp_path / f"p-{case_name}",
-            extra=extra_args,
-        )
         rc_c, v_c, _ = _run_fill_cli(
             repo_root,
             mode="--assemble",
@@ -2151,12 +2130,12 @@ def test_regression_item4_zero_byte_blobs_and_optional_input_policies(
             out_dir=tmp_path / f"c-{case_name}",
             extra=extra_args,
         )
-        assert rc_c == rc_p == 0
-        assert v_c["status"] == v_p["status"] == "xml_verified_no_proof"
+        assert rc_c == 0
+        assert v_c["status"] == "xml_verified_no_proof"
 
 
 def test_regression_item5_universal_newlines_and_legacy_error_parity(
-    tmp_path: Path, parent_0fa897a_root: Path
+    tmp_path: Path
 ):
     """Item 5: universal newline decoding (raw bytes hashed) & legacy error formatting parity."""
     repo_root = ENGINE_ROOT.parent
@@ -2186,14 +2165,11 @@ def test_regression_item5_universal_newlines_and_legacy_error_parity(
         assert req["manifest"]["inputs"]["content"]["sha256"] == hashlib.sha256(raw_bytes).hexdigest()
         assert worker.execute_frozen_xml_worker(req, ws / "frozen.hwpx").ok is True
 
-        rc_p, v_p, _ = _run_fill_cli(
-            parent_0fa897a_root, mode="--assemble", form=form, content=content, out_dir=ws / "p_out"
-        )
         rc_c, v_c, _ = _run_fill_cli(
             repo_root, mode="--assemble", form=form, content=content, out_dir=ws / "c_out"
         )
-        assert rc_c == rc_p == 0
-        assert v_c["status"] == v_p["status"] == "xml_verified_no_proof"
+        assert rc_c == 0
+        assert v_c["status"] == "xml_verified_no_proof"
 
     # Legacy error formatting parity: bad content, unsupported op, missing figure.
     ws_err = tmp_path / "err_cases"
@@ -2218,14 +2194,6 @@ def test_regression_item5_universal_newlines_and_legacy_error_parity(
         ("unsup_op", unsup_content, ("--build-yaml", str(unsup_by))),
         ("miss_fig", miss_fig_content, ()),
     ):
-        rc_p, p_p, _ = _run_fill_cli(
-            parent_0fa897a_root,
-            mode="--assemble",
-            form=form_e,
-            content=cpath,
-            out_dir=ws_err / f"p-{cname}",
-            extra=extra,
-        )
         rc_c, p_c, _ = _run_fill_cli(
             repo_root,
             mode="--assemble",
@@ -2234,12 +2202,12 @@ def test_regression_item5_universal_newlines_and_legacy_error_parity(
             out_dir=ws_err / f"c-{cname}",
             extra=extra,
         )
-        assert rc_c == rc_p == 2
-        assert p_c == p_p
+        assert rc_c == 2
+        assert p_c.get("error")
 
 
 def test_regression_item6_figure_containment_backslashes_and_resolved_basename(
-    tmp_path: Path, parent_0fa897a_root: Path
+    tmp_path: Path
 ):
     """Item 6: strict figure containment + backslash rel + resolved.name; legacy abs/symlink parity."""
     repo_root = ENGINE_ROOT.parent
@@ -2283,11 +2251,9 @@ def test_regression_item6_figure_containment_backslashes_and_resolved_basename(
         frozen_out = ws / "frozen_sym.hwpx"
         worker.execute_frozen_xml_worker(req, frozen_out)
 
-        p_out = ws / "p_sym"
         c_out = ws / "c_sym"
-        assert _run_fill_cli(parent_0fa897a_root, mode="--assemble", form=env["form"], content=env["content"], out_dir=p_out)[0] == 0
         assert _run_fill_cli(repo_root, mode="--assemble", form=env["form"], content=env["content"], out_dir=c_out)[0] == 0
-        for hwpx in (frozen_out, p_out / "out.hwpx", c_out / "out.hwpx"):
+        for hwpx in (frozen_out, c_out / "out.hwpx"):
             sec_xml = _zip_members(hwpx)["Contents/section0.xml"].decode("utf-8")
             assert "Original file: plot.png" in sec_xml
 
@@ -2298,13 +2264,6 @@ def test_regression_item6_figure_containment_backslashes_and_resolved_basename(
         f'## SECTION: I. Intro\n\n[[FIG file="{env_abs["figure"]}" width=80]]\n',
         encoding="utf-8",
     )
-    rc_pa, _, _ = _run_fill_cli(
-        parent_0fa897a_root,
-        mode="--assemble",
-        form=env_abs["form"],
-        content=env_abs["content"],
-        out_dir=ws_abs / "p_abs",
-    )
     rc_ca, _, _ = _run_fill_cli(
         repo_root,
         mode="--assemble",
@@ -2312,10 +2271,7 @@ def test_regression_item6_figure_containment_backslashes_and_resolved_basename(
         content=env_abs["content"],
         out_dir=ws_abs / "c_abs",
     )
-    assert rc_ca == rc_pa == 0
-    assert _zip_members(ws_abs / "c_abs" / "out.hwpx") == _zip_members(
-        ws_abs / "p_abs" / "out.hwpx"
-    )
+    assert rc_ca == 0
 
 
 def test_regression_item7_private_exec_subdir_and_symlink_staging_defense(tmp_path: Path):
@@ -2503,7 +2459,7 @@ def test_regression_item10_worker_verifies_all_present_input_blobs_before_stagin
     assert sym_exc.value.code == "blob_path_escape"
 
 
-def test_regression_item11_parent_0fa897a_cli_vs_current_cli_and_worker_parity(
+def test_local_optional_live_parent_0fa897a_oracle(
     tmp_path: Path, parent_0fa897a_root: Path
 ):
     """Item 11: full CLI parity vs 0fa897a parent across ops, replay, ZIP, verdicts, receipts."""
@@ -2639,3 +2595,113 @@ def test_regression_item13_live_path_forbidden_reachable_and_no_unused_shutil(
     )
     assert shutil_refs == 0
     assert shutil_imports == 0
+
+# Committed 0fa897a oracle: shared by capture.py and the mandatory CI tests.
+_PARENT_FIXTURES = HERE / "fixtures" / "report_xml_parent_0fa897a"
+_PARENT_CASES = (
+    "alias_assemble", "alias_loop", "ops_replay", "iteration_settings",
+    "empty_build", "empty_profile", "empty_baseline", "profile_dir", "baseline_dir",
+    "newline_cr", "newline_crlf", "bad_content", "unsup_op", "miss_fig",
+    "absolute_figure", "symlink_basename", "rich_receipt",
+)
+
+
+def _parent_probe(root: Path, ws: Path, case: str) -> dict:
+    """Build identical inputs for capture and verification, and retain stable results."""
+    ws.mkdir(parents=True, exist_ok=True)
+    mode, extra = "--assemble", ()
+    rich = case in {"ops_replay", "absolute_figure", "symlink_basename", "rich_receipt"}
+    if rich:
+        env = _build_rich_workspace(ws)
+        form, content = env["form"], env["content"]
+    else:
+        form = _make_synthetic_form_hwpx(ws / "output" / ("out.hwpx" if case.startswith("alias_") else "form_copy.hwpx"))
+        content = _write_plain_content(ws / "bundle" / "content.md")
+    out = form.parent if case.startswith("alias_") else ws / "results"
+    if case == "alias_loop":
+        mode = "--loop"
+    if case == "iteration_settings":
+        mode = "--loop"
+        by = ws / "build.yaml"
+        by.write_text("fill:\n  target_pages: [2, 3]\n", encoding="utf-8")
+        renderer = ws / "renderer.py"
+        renderer.write_text(
+            "import fitz, sys\nfrom pathlib import Path\n"
+            "d = fitz.open(); p = d.new_page(); p.insert_text((72, 650), 'Rendered')\n"
+            "d.save(sys.argv[2])\n"
+            "Path(sys.argv[3]).write_text('fill:\\n  target_pages: [2, 3]\\nkeep_with_next:\\n  - MISSING_PREFIX\\n', encoding='utf-8')\n",
+            encoding="utf-8")
+        cmd = shlex.join([sys.executable, str(renderer), "{in}", "{out}", str(by)])
+        extra = ("--max-loops", "2", "--build-yaml", str(by), "--pdf-cmd", cmd)
+    if case in {"empty_build", "empty_profile", "empty_baseline", "profile_dir", "baseline_dir"}:
+        opt = ws / "optional"
+        if case.endswith("_dir"):
+            opt.mkdir()
+        else:
+            opt.touch()
+        flag = {"empty_build": "--build-yaml", "empty_profile": "--form-profile", "empty_baseline": "--baseline", "profile_dir": "--form-profile", "baseline_dir": "--baseline"}[case]
+        extra = (flag, str(opt))
+    if case in {"newline_cr", "newline_crlf"}:
+        nl = "\r" if case == "newline_cr" else "\r\n"
+        content.write_bytes(f"---{nl}base_pt: 12{nl}---{nl}{nl}## SECTION: I. Intro{nl}{nl}Body.{nl}".encode())
+    if case == "bad_content":
+        content.write_text("no section header\n", encoding="utf-8")
+    if case == "unsup_op":
+        by = ws / "unsup_build.yaml"
+        by.write_text('delete_texts:\n  - "Guide"\n', encoding="utf-8")
+        extra = ("--build-yaml", str(by))
+    if case == "miss_fig":
+        content.write_text('## SECTION: I. Intro\n\n[[FIG file="missing.png" width=80]]\n', encoding="utf-8")
+    if case == "absolute_figure":
+        content.write_text(f'## SECTION: I. Intro\n\n[[FIG file="{env["figure"]}" width=80]]\n', encoding="utf-8")
+    if case == "symlink_basename":
+        _symlink_or_skip(env["figure"].with_name("alias.png"), env["figure"])
+        content.write_text('## SECTION: I. Intro\n\n[[FIG file="alias.png" width=80]]\n', encoding="utf-8")
+    if case == "rich_receipt":
+        extra = ("--build-yaml", str(env["build_yaml"]), "--form-profile", str(env["profile"]), "--baseline", str(env["baseline"]))
+    before = hashlib.sha256(form.read_bytes()).hexdigest()
+    rc, payload, _ = _run_fill_cli(root, mode=mode, form=form, content=content, out_dir=out, extra=extra)
+    result = {"exit_code": rc, "error": payload.get("error"), "result": payload,
+              "source_changed": hashlib.sha256(form.read_bytes()).hexdigest() != before}
+    if case == "iteration_settings" and payload.get("render_quality"):
+        quality = payload["render_quality"]
+        assert quality["artifact_sha256"] == hashlib.sha256((out / "out.pdf").read_bytes()).hexdigest()
+        quality["artifact_sha256"] = "<VERIFIED_PDF_SHA256>"
+    ops_file = out / "ops.json"
+    if ops_file.is_file() and ops_file != form:
+        result["ops"] = json.loads(ops_file.read_text(encoding="utf-8"))
+    receipt_file = form.parent / "proof" / "backend" / "receipt.json"
+    if receipt_file.is_file():
+        result["receipt"] = _normalize_receipt(json.loads(receipt_file.read_text(encoding="utf-8")), form, out / "out.hwpx")
+        # The synthetic input HWPX ZIP timestamps vary too.
+        result["receipt"]["execution"]["input"]["sha256"] = "<VERIFIED_INPUT_HWPX_SHA256>"
+    if case == "ops_replay":
+        proc = subprocess.run([sys.executable, str(root / "engine" / "scripts" / "xml_backend.py"), "edit", "--file", str(form), "--ops", str(ops_file), "--save-as", str(ws / "replayed.hwpx"), "--json"], capture_output=True, text=True, encoding="utf-8")
+        result["replay_exit_code"] = proc.returncode
+        result["replay_result"] = json.loads(proc.stdout)
+    if case in {"absolute_figure", "symlink_basename", "rich_receipt"} and rc == 0:
+        result["zip_members_sha256"] = {name: hashlib.sha256(data).hexdigest()
+                                         for name, data in sorted(_zip_members(out / "out.hwpx").items())}
+    if case == "symlink_basename" and rc == 0:
+        section = _zip_members(out / "out.hwpx")["Contents/section0.xml"].decode("utf-8")
+        result["shape_comments"] = [node.text for node in _local_nodes(ET.fromstring(section), "shapeComment")]
+    def normalize(value):
+        if isinstance(value, dict):
+            return {k: normalize(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [normalize(v) for v in value]
+        if isinstance(value, str):
+            return value.replace(str(ws.resolve()), "<workspace>").replace(ws.resolve().as_posix(), "<workspace>")
+        return value
+    return normalize(result)
+
+
+@pytest.mark.parametrize("case", _PARENT_CASES)
+def test_committed_parent_0fa897a_parity(tmp_path: Path, case: str):
+    expected = json.loads((_PARENT_FIXTURES / f"{case}.json").read_text(encoding="utf-8"))
+    actual = _parent_probe(ENGINE_ROOT.parent, tmp_path / "probe", case)
+    if case.startswith("alias_"):
+        # The current guard refuses before writing ops; the parent wrote them first.
+        assert expected.pop("ops")
+        assert "ops" not in actual
+    assert actual == expected

@@ -1,0 +1,80 @@
+{
+  "error": null,
+  "exit_code": 0,
+  "ops": [
+    {
+      "next_para": true,
+      "op": "goto_text",
+      "text": "I. Intro"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": ""
+    },
+    {
+      "op": "insert_picture",
+      "own_paragraph": true,
+      "path": "<workspace>/bundle/figures/plot.png",
+      "width_mm": 80.0
+    },
+    {
+      "op": "set_line_spacing",
+      "percent": 160
+    }
+  ],
+  "receipt": {
+    "evidence_class": "structural_only",
+    "execution": {
+      "backend": "xml_only",
+      "exit_code": 0,
+      "input": {
+        "bytes": 3974,
+        "path": "output/form_copy.hwpx",
+        "role": "source_form",
+        "sha256": "<VERIFIED_INPUT_HWPX_SHA256>"
+      },
+      "output": {
+        "bytes": "<VERIFIED_OUT_HWPX_BYTES>",
+        "path": "results/out.hwpx",
+        "role": "assembled_hwpx",
+        "sha256": "<VERIFIED_OUT_HWPX_SHA256>"
+      },
+      "reason_code": "xml_assembly_succeeded",
+      "state": "succeeded"
+    },
+    "proof_grade": "none",
+    "proof_unavailable": true,
+    "schema": "rigorloom/document-evidence/v1"
+  },
+  "result": {
+    "checks": {},
+    "converged": true,
+    "engine": "xml",
+    "hwpx": "<workspace>/results/out.hwpx",
+    "iterations": 1,
+    "needs": [],
+    "pdf": null,
+    "phase": "xml",
+    "preview_pdf": null,
+    "proof_grade": "none",
+    "proof_unavailable": true,
+    "reason": "XML-level verification complete; PDF proof unavailable",
+    "status": "xml_verified_no_proof",
+    "style_anomalies": []
+  },
+  "shape_comments": [
+    "Picture.\nOriginal file: plot.png\nOriginal size: 8 x 4 pixels"
+  ],
+  "source_changed": false,
+  "zip_members_sha256": {
+    "BinData/image1.png": "37283a50da46a0c2217ca3cb8a3c8f67de171d49442ed7bc6fe7f0b233120892",
+    "BinData/image2.png": "4fc04a3f1603095ab09341281f9e1938df9e81d9b7ef163ae299cf3bdf16779a",
+    "Contents/content.hpf": "d86eb8eb92fae4f7e24e7ba3824f1fdef8cefba0a286712b9fc6f39d64b9a1e4",
+    "Contents/header.xml": "62bc7292f974f250b80f5ee97d636608cf7ea4f7e7b2ea1f5e8216213d86aae6",
+    "Contents/section0.xml": "70ca1a8d8d76b2f1f0033718ab35651eb68f889e43cc43abae4e748d08008c32",
+    "META-INF/manifest.xml": "953929251cac34e7364a70eba8f31a2e3cad13930df737de2e726a36ce2031d9",
+    "mimetype": "5ab5230b5af04f78947736bf8dd1a269aa684e234f7f4a392efb85289d1655c2"
+  }
+}

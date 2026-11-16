@@ -1,0 +1,82 @@
+{
+  "error": null,
+  "exit_code": 0,
+  "ops": [
+    {
+      "next_para": true,
+      "op": "goto_text",
+      "text": "I. Intro"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": "Plain text."
+    }
+  ],
+  "result": {
+    "bottom_white_worst": {
+      "page": null,
+      "pct": 0.0
+    },
+    "checks": {
+      "body_markers": [],
+      "equations": [],
+      "figure_placement": [],
+      "line_spacing_uniformity": [],
+      "tables": []
+    },
+    "converged": false,
+    "engine": "xml",
+    "escalate": true,
+    "fig_count": 0,
+    "flagged_pages": [],
+    "gappy_pages": [],
+    "gaps_worst": {
+      "lines": 0.0,
+      "page": null
+    },
+    "hwpx": "<workspace>/results/out.hwpx",
+    "iterations": 2,
+    "min_figures": 0,
+    "needs": [
+      {
+        "directive": "expand: deepen section / add worked example / add figure or table (page_count 1 < 2)",
+        "kind": "expand",
+        "page": null
+      }
+    ],
+    "page_count": 1,
+    "pdf": "<workspace>/results/out.pdf",
+    "preview_pdf": "<workspace>/results/preview/iter_2.pdf",
+    "proof_grade": "none",
+    "reason": "state=underfilled",
+    "render_quality": {
+      "artifact_bytes": 796,
+      "artifact_sha256": "<VERIFIED_PDF_SHA256>",
+      "checked_font_xrefs": 0,
+      "checker": "hangul_glyphs",
+      "mapped_font_xrefs": 0,
+      "max_unique_hangul_per_xref": 0,
+      "min_glyph_capacity": 0,
+      "page_count": 1,
+      "pdf_hangul_count": 0,
+      "reason_code": "source_ascii_only",
+      "schema": "rigorloom/render-quality/v1",
+      "source_hangul_count": 0,
+      "state": "not_applicable",
+      "version": "1"
+    },
+    "state": "underfilled",
+    "style_anomalies": [],
+    "target_pages": [
+      2,
+      3
+    ],
+    "thresholds": {
+      "bottom_white_max": 25.0,
+      "max_gap_lines": 3.0
+    }
+  },
+  "source_changed": false
+}

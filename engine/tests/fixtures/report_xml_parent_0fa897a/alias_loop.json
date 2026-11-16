@@ -1,0 +1,22 @@
+{
+  "error": "xml_backend edit failed: unsupported=[] anchors_missing=[]",
+  "exit_code": 2,
+  "ops": [
+    {
+      "next_para": true,
+      "op": "goto_text",
+      "text": "I. Intro"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": "Plain text."
+    }
+  ],
+  "result": {
+    "error": "xml_backend edit failed: unsupported=[] anchors_missing=[]",
+    "ok": false
+  },
+  "source_changed": false
+}
