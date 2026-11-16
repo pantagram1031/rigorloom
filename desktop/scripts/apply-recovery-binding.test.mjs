@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
+import { t } from "../src/i18n/vocabulary.ts";
 
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 const start = source.indexOf("export async function resolveRecovery(");
@@ -103,6 +104,7 @@ function fixture() {
     setState: (patch) => {
       state = { ...state, ...patch };
     },
+    t,
   });
   vm.runInContext(`${implementation}\nglobalThis.invokeResolveRecovery = resolveRecovery;`, context);
   return {

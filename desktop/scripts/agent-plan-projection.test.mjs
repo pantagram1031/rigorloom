@@ -3,11 +3,18 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
+import { opKindLabel, t } from "../src/i18n/vocabulary.ts";
+
+function stripModuleSyntax(code) {
+  return stripTypeScriptTypes(code)
+    .replace(/^\s*import\s+[\s\S]*?from\s+["'][^"']+["'];?\s*$/gm, "")
+    .replaceAll("export ", "");
+}
 
 const source = readFileSync(new URL("../src/agent/planProjection.ts", import.meta.url), "utf8");
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
-const executable = stripTypeScriptTypes(source).replaceAll("export ", "");
-const context = vm.createContext({ Set, Number, Object });
+const executable = stripModuleSyntax(source);
+const context = vm.createContext({ Set, Number, Object, opKindLabel, t });
 vm.runInContext(
   `${executable}\nglobalThis.projectForTest = projectAgentPlan; globalThis.addressesForTest = agentPlanCellAddresses;`,
   context,
@@ -44,8 +51,8 @@ function adoptFixture(authoritative, returnedRegions = []) {
   };
   const calls = { reads: [], approvals: [], patches: [] };
   const validation = { planId: authoritative.planId, ok: true };
-  const fixtureContext = vm.createContext({ Set, Number, Object });
-  vm.runInContext(stripTypeScriptTypes(source).replaceAll("export ", ""), fixtureContext);
+  const fixtureContext = vm.createContext({ Set, Number, Object, opKindLabel, t });
+  vm.runInContext(stripModuleSyntax(source), fixtureContext);
   Object.assign(fixtureContext, {
     rt: {
       getPlan: async (planId) => {

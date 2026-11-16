@@ -81,11 +81,14 @@ function loadTs(rel) {
   const localRequire = (spec) => {
     if (spec.startsWith("./") || spec.startsWith("../")) {
       const base = path.join(path.dirname(file), spec);
-      const resolved = fs.existsSync(`${base}.ts`)
-        ? `${base}.ts`
-        : fs.existsSync(`${base}.tsx`)
-          ? `${base}.tsx`
-          : base;
+      const resolved =
+        fs.existsSync(base) && fs.statSync(base).isFile()
+          ? base
+          : fs.existsSync(`${base}.ts`)
+            ? `${base}.ts`
+            : fs.existsSync(`${base}.tsx`)
+              ? `${base}.tsx`
+              : base;
       return loadTs(path.relative(root, resolved));
     }
     return Module._load(spec, wrapper, false);
@@ -99,6 +102,7 @@ const projection = loadTs("desktop/src/agent/planProjection.ts");
 const runtime = loadTs("desktop/src/runtime.ts");
 const store = loadTs("desktop/src/store.ts");
 const actions = loadTs("desktop/src/actions.ts");
+const vocabulary = loadTs("desktop/src/i18n/vocabulary.ts");
 
 function runTest(name, fn) {
   try {
@@ -384,11 +388,24 @@ async function main() {
         approvalError: null,
       };
       const calls = { reads: [], patches: [], approvals: [] };
-      const ctx = vm.createContext({ Set, Number, Object, Array, Error, RegExp, String, Boolean });
+      const ctx = vm.createContext({
+        Set,
+        Number,
+        Object,
+        Array,
+        Error,
+        RegExp,
+        String,
+        Boolean,
+        t: vocabulary.t,
+        opKindLabel: vocabulary.opKindLabel,
+      });
       const strip = (s) =>
-        ts.transpileModule(s, {
-          compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
-        }).outputText;
+        ts
+          .transpileModule(s, {
+            compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
+          })
+          .outputText.replace(/^\s*import\s+[\s\S]*?from\s+["'][^"']+["'];?\s*$/gm, "");
       vm.runInContext(strip(planProjSource).replaceAll("export ", ""), ctx);
       Object.assign(ctx, {
         rt: {
@@ -509,6 +526,8 @@ async function main() {
           approvalHelpers,
           agentPlanCellAddresses: projection.agentPlanCellAddresses,
           projectAgentPlan: projection.projectAgentPlan,
+          opKindLabel: vocabulary.opKindLabel,
+          t: vocabulary.t,
         };
       }
       return require(spec);

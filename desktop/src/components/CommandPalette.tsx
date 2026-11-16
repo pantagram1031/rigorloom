@@ -28,7 +28,7 @@ interface PaletteItem {
   labelKey: VocabularyKey;
   labelText?: string;
   shortcut?: string;
-  keywords: string;
+  keywordsKey: VocabularyKey;
   run: () => void;
 }
 
@@ -58,7 +58,7 @@ export function CommandPalette() {
         id: "open-doc",
         labelKey: "cmd_open_doc",
         shortcut: "Ctrl+O",
-        keywords: "열기 파일 선택 open file",
+        keywordsKey: "cmd_kw_open_doc",
         run: () => {
           navigateScreen("open");
           void openViaDialog();
@@ -67,7 +67,7 @@ export function CommandPalette() {
       {
         id: "open-builtin",
         labelKey: "cmd_open_builtin",
-        keywords: "예시 양식 열기 기본 open form example",
+        keywordsKey: "cmd_kw_open_builtin",
         run: () => {
           navigateScreen("open");
           setState({
@@ -83,27 +83,27 @@ export function CommandPalette() {
         id: "go-review",
         labelKey: "cmd_go_review",
         shortcut: "Ctrl+1",
-        keywords: "검토 화면 이동 review",
+        keywordsKey: "cmd_kw_go_review",
         run: () => navigateScreen("review"),
       });
       items.push({
         id: "go-fill",
         labelKey: "cmd_go_fill",
         shortcut: "Ctrl+2",
-        keywords: "채우기 빈칸 양식 입력 fill",
+        keywordsKey: "cmd_kw_go_fill",
         run: () => navigateScreen("fill"),
       });
       items.push({
         id: "go-history",
         labelKey: "cmd_go_history",
         shortcut: "Ctrl+3",
-        keywords: "기록 수정본 이력 비교 history revisions",
+        keywordsKey: "cmd_kw_go_history",
         run: () => navigateScreen("history"),
       });
       items.push({
         id: "toggle-print-view",
         labelKey: "cmd_toggle_print_view",
-        keywords: "인쇄 화면 문서 보기 print view",
+        keywordsKey: "cmd_kw_toggle_print_view",
         run: () => togglePrintView(),
       });
     }
@@ -113,7 +113,7 @@ export function CommandPalette() {
         id: "approve",
         labelKey: "cmd_approve",
         shortcut: "A",
-        keywords: "승인 적용 approve",
+        keywordsKey: "cmd_kw_approve",
         run: () => openApprovalDialog(),
       });
     }
@@ -123,7 +123,7 @@ export function CommandPalette() {
         id: "return",
         labelKey: "cmd_return",
         shortcut: "R",
-        keywords: "돌려보내기 반려 return",
+        keywordsKey: "cmd_kw_return",
         run: () => {
           navigateScreen("review");
           setReturnPopoverOpen(true);
@@ -140,7 +140,7 @@ export function CommandPalette() {
             ? t("action_export_revision", language, [exportRevNum])
             : undefined,
         shortcut: "Ctrl+E",
-        keywords: "내보내기 저장 수정본 export revision",
+        keywordsKey: "cmd_kw_export",
         run: () => {
           if (!canExport) {
             showToast(t("export_no_revision_toast", language), 2600);
@@ -155,13 +155,13 @@ export function CommandPalette() {
       {
         id: "switch-language",
         labelKey: "cmd_switch_language",
-        keywords: "언어 한국어 영어 language",
+        keywordsKey: "cmd_kw_switch_language",
         run: () => void toggleLanguage(),
       },
       {
         id: "change-theme",
         labelKey: "cmd_change_theme",
-        keywords: "화면 테마 밝게 어둡게 theme",
+        keywordsKey: "cmd_kw_change_theme",
         run: () => {
           const order = ["auto", "light", "dark"] as const;
           const next = order[(order.indexOf(theme) + 1) % order.length];
@@ -172,13 +172,13 @@ export function CommandPalette() {
         id: "open-settings",
         labelKey: "cmd_open_settings",
         shortcut: "Ctrl+,",
-        keywords: "설정 언어 화면 테마 작업 폴더 settings language theme workspace folder",
+        keywordsKey: "cmd_kw_open_settings",
         run: () => navigateScreen("settings"),
       },
       {
         id: "open-by-path",
         labelKey: "cmd_open_by_path_details",
-        keywords: "경로 자세히 열기 path details",
+        keywordsKey: "cmd_kw_open_by_path",
         run: () => {
           setState({ openDialogOpen: true });
           void loadCorpusFiles();
@@ -187,7 +187,7 @@ export function CommandPalette() {
       {
         id: "operator-agent",
         labelKey: "cmd_operator_agent_details",
-        keywords: "에이전트 연결 작업 기록 인증 공급자 자세히 agent log credentials provider details",
+        keywordsKey: "cmd_kw_operator_agent",
         run: () => openOperatorModal(),
       },
     );
@@ -200,7 +200,9 @@ export function CommandPalette() {
     if (!q) return commands;
     return commands.filter((item) => {
       const label = (item.labelText ?? t(item.labelKey, language)).toLowerCase();
-      return label.includes(q) || item.keywords.toLowerCase().includes(q);
+      const kwKo = t(item.keywordsKey, "ko").toLowerCase();
+      const kwEn = t(item.keywordsKey, "en").toLowerCase();
+      return label.includes(q) || kwKo.includes(q) || kwEn.includes(q);
     });
   }, [commands, query, language]);
 

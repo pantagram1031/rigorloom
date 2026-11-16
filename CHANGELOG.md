@@ -10,6 +10,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T??:** removed all live imports of the 23 legacy UI modules from the desktop bundle, rebuilt `OperatorAgentModal` directly over the workspace store, routed all remaining kept-source Korean strings through `desktop/src/i18n/vocabulary.ts` and `desktop/src/i18n/formTokens.ts`, and added `tests/test_ui_no_hangul_literals.py`.
 - **T172:** the local review UI has been rebuilt as five screens: Open, Review, Fill, History and Settings. Review shows the proposed form page next to a list of changes, Fill lets you type into blanks on the page itself, and History lists approved revisions and lets you compare or undo them. Approval and export work as before: you approve one plan hash and the runtime applies it; a test checks that exporting the 공문 example still gives the same file byte for byte. The old session list, plan view and structure tree screens are gone, and the screenshots in `docs/ui/` show the new screens in light and dark at desktop and phone width.
 
 ## v0.18.0 — 2026-11-15

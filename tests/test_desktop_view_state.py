@@ -13,14 +13,20 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 DESKTOP = REPO / "desktop"
 STORE = DESKTOP / "src" / "store.ts"
-COMPOSER = DESKTOP / "src" / "components" / "Composer.tsx"
+OPERATOR_MODAL = DESKTOP / "src" / "components" / "OperatorAgentModal.tsx"
 NODE_TEST = DESKTOP / "scripts" / "view-state.test.mjs"
 
 
+def _composer_block(modal_src: str) -> str:
+    start = modal_src.index("function OperatorAgentComposer(")
+    end = modal_src.index("function OperatorAgentTab(", start)
+    return modal_src[start:end]
+
+
 def test_composer_draft_is_workspace_state():
-    """The unmounted Agent view must not own unsent user work."""
+    """Closing or switching tabs in the operator modal must not own unsent user work."""
     store = STORE.read_text(encoding="utf-8")
-    composer = COMPOSER.read_text(encoding="utf-8")
+    composer = _composer_block(OPERATOR_MODAL.read_text(encoding="utf-8"))
 
     assert "composerDraft: { text: string };" in store
     assert 'composerDraft: { text: "" }' in store
@@ -32,8 +38,7 @@ def test_composer_draft_is_workspace_state():
 
 def test_late_send_reconciliation_is_wired():
     """A failed old send may restore itself, but may not replace newer typing."""
-    store = STORE.read_text(encoding="utf-8")
-    composer = COMPOSER.read_text(encoding="utf-8")
+    composer = _composer_block(OPERATOR_MODAL.read_text(encoding="utf-8"))
 
     helper = (DESKTOP / "src/workspace/composerDraft.ts").read_text(encoding="utf-8")
     assert "await submitComposerDraft({" in composer

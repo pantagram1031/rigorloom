@@ -7,6 +7,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { t } from "./i18n/vocabulary";
 
 import type {
   Activity,
@@ -41,7 +42,14 @@ import type {
   Session,
   SidecarStatus,
   TaskPackList,
+  UiLanguage,
 } from "./types";
+
+function currentUiLanguage(): UiLanguage {
+  return typeof document !== "undefined" && document.documentElement.lang === "en"
+    ? "en"
+    : "ko";
+}
 
 export const EVENT_ACTIVITY = "runtime://activity";
 export const EVENT_STATUS = "runtime://status";
@@ -110,7 +118,7 @@ async function parseHttpJson<T>(res: Response): Promise<T> {
       if (!res.ok) {
         throw { code: "http_error", message: text || `HTTP ${res.status}` };
       }
-      throw { code: "invalid_json", message: "서버 응답이 올바른 JSON이 아닙니다." };
+      throw { code: "invalid_json", message: t("err_invalid_json", currentUiLanguage()) };
     }
   }
   if (!res.ok) {
@@ -165,7 +173,10 @@ async function rpcCall<T>(
     tag: tag ?? null,
   });
   if (!envelope || envelope.ok !== true) {
-    throw envelope?.error ?? { code: "rpc_error", message: `${method} 호출이 실패했습니다.` };
+    throw envelope?.error ?? {
+      code: "rpc_error",
+      message: t("err_rpc_failed", currentUiLanguage(), [method]),
+    };
   }
   return envelope.result as T;
 }

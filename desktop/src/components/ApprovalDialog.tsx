@@ -272,7 +272,7 @@ export function ApprovalDialog() {
                 <li key={label} className="approval-kind-item">
                   <span>{label}</span>
                   <strong>
-                    {language === "en" ? `${count}` : `${count}건`}
+                    {t("approval_kind_count", language, [count])}
                   </strong>
                 </li>
               ))}

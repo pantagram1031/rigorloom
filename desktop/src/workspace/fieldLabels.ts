@@ -1,3 +1,4 @@
+import { INSTRUCTION_PHRASES } from "../i18n/formTokens.ts";
 import { opKindLabel, t } from "../i18n/vocabulary.ts";
 import type {
   GraphCell,
@@ -7,12 +8,6 @@ import type {
   RegionText,
   UiLanguage,
 } from "../types.ts";
-
-const INSTRUCTION_PHRASES = [
-  "서식에 포함하지 아니한다",
-  "표시하지 아니하고",
-  "작성할 때",
-] as const;
 
 const QUOTED_PATTERNS: readonly RegExp[] = [
   /"([^"]+)"/g,
@@ -41,11 +36,11 @@ export interface FormInstructionContext {
 export function collapseFormGuideLabel(raw: string): string {
   const norm = raw.replace(/\s+/g, " ").trim();
   if (!norm) return "";
-  if (/^[가-힣] [가-힣]$/.test(norm)) {
+  if (/^[\uAC00-\uD7A3] [\uAC00-\uD7A3]$/.test(norm)) {
     return norm.replace(/ /g, "");
   }
   return norm.replace(
-    /(?:^|(?<=\s))[가-힣](?: [가-힣]){2,}(?=$|\s)/g,
+    /(?:^|(?<=\s))[\uAC00-\uD7A3](?: [\uAC00-\uD7A3]){2,}(?=$|\s)/g,
     (segment) => segment.replace(/ /g, ""),
   );
 }

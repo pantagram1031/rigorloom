@@ -21,7 +21,6 @@ import { CommandPalette } from "./components/CommandPalette";
 import { DetailDisclosure } from "./components/DetailDisclosure";
 import { Logo } from "./components/Logo";
 import { OperatorAgentModal } from "./components/OperatorAgentModal";
-import { Settings } from "./components/Settings";
 import { Splash } from "./components/Splash";
 import { Toast } from "./components/Toast";
 import { TopBar } from "./components/TopBar";
@@ -115,6 +114,12 @@ export default function App() {
   const dragOver = useWorkspace((s) => s.dragOver);
   const lastCommit = useWorkspace((s) => s.lastCommit);
   const session = useWorkspace(activeSession);
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = language;
+    }
+  }, [language]);
 
   useEffect(() => {
     const subscriptions = new RuntimeSubscriptionScope();
@@ -360,7 +365,6 @@ export default function App() {
         )}
       </div>
 
-      <Settings />
       <BrowserOpenDialog />
       <ApprovalDialog />
       <CommandPalette />

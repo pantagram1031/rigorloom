@@ -68,9 +68,10 @@ FRESHNESS = REPO / "desktop" / "scripts" / "set-queue-freshness.test.mjs"
 HEAD_FRESHNESS = REPO / "desktop" / "scripts" / "set-head-freshness.test.mjs"
 REVIEW_FRESHNESS = REPO / "desktop" / "scripts" / "review-apply-freshness.test.mjs"
 TSC = REPO / "desktop" / "node_modules" / "typescript"
-DOCUMENT_CONTEXT = REPO / "desktop" / "src" / "components" / "DocumentContext.tsx"
-AGENT_VIEW = REPO / "desktop" / "src" / "views" / "AgentView.tsx"
-CONVERSATION = REPO / "desktop" / "src" / "components" / "Conversation.tsx"
+REVIEW_VIEW = REPO / "desktop" / "src" / "views" / "ReviewView.tsx"
+CHANGE_LIST = REPO / "desktop" / "src" / "components" / "ChangeList.tsx"
+OPERATOR_MODAL = REPO / "desktop" / "src" / "components" / "OperatorAgentModal.tsx"
+VOCABULARY = REPO / "desktop" / "src" / "i18n" / "vocabulary.ts"
 
 
 # ---------------------------------------------------------------------------
@@ -235,24 +236,32 @@ def test_approval_actions_keep_their_draft_owner_across_awaits():
 
 
 def test_agent_document_context_reads_shared_work_state():
-    """The agent pane must project the store, not hard-coded duplicate state."""
-    context = DOCUMENT_CONTEXT.read_text(encoding="utf-8")
-    assert "useWorkspace(activeReviewQueueCount)" in context
-    assert "useWorkspace(activeReviewApprovalState)" in context
-    assert "useWorkspace(activeReviewVerificationState)" in context
-    assert "<ReviewQueue" in context
-    agent = AGENT_VIEW.read_text(encoding="utf-8")
-    assert "useWorkspace(activeSession)" in agent
-    assert "useWorkspace(activeInspect)" in agent
-    assert "useWorkspace(activeCandidates)" in agent
-    assert "<DocumentContext session={session} inspect={inspect} candidates={candidates}" in agent
+    """Review and operator panels must project the shared workspace store."""
+    review = REVIEW_VIEW.read_text(encoding="utf-8")
+    assert "useWorkspace(activeSession)" in review
+    assert "useWorkspace(activeInspect)" in review
+    assert "useWorkspace(activeText)" in review
+    assert "<ChangeList" in review
+
+    change_list = CHANGE_LIST.read_text(encoding="utf-8")
+    assert "useWorkspace((s) => s.draft)" in change_list
+    assert "useWorkspace((s) => s.approval)" in change_list
+
+    operator = OPERATOR_MODAL.read_text(encoding="utf-8")
+    assert "useWorkspace(activeSession)" in operator
+    assert "useWorkspace(activeInspect)" in operator
+    assert "useWorkspace(activeCandidates)" in operator
+    assert "useWorkspace((s) => s.turns)" in operator
 
 
 def test_superseded_agent_plan_is_not_described_as_queued():
     """A turn card must distinguish a runtime plan from an adopted draft."""
-    conversation = CONVERSATION.read_text(encoding="utf-8")
-    assert "turn.planId ?" in conversation
-    assert "대기열에는 넣지 않았습니다." in conversation
+    operator = OPERATOR_MODAL.read_text(encoding="utf-8")
+    vocab = VOCABULARY.read_text(encoding="utf-8")
+    assert "if (turn.planId)" in operator
+    assert "operator_turn_plan_adopted" in operator
+    assert "operator_turn_plan_not_queued" in operator
+    assert "대기열에는 넣지 않았습니다." in vocab
 
 
 def test_set_queue_error_path_is_also_fenced():

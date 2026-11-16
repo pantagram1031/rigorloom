@@ -37,10 +37,16 @@ function loadModules() {
   }
 
   const vocabulary = loadCjs("../../i18n/vocabulary.ts");
-  const planProjection = loadCjs("../../agent/planProjection.ts");
+  const formTokens = loadCjs("../../i18n/formTokens.ts");
+  const planProjection = loadCjs("../../agent/planProjection.ts", {
+    "../i18n/vocabulary.ts": vocabulary,
+    "../i18n/vocabulary": vocabulary,
+  });
   const fieldLabels = loadCjs("../fieldLabels.ts", {
     "../i18n/vocabulary.ts": vocabulary,
     "../i18n/vocabulary": vocabulary,
+    "../i18n/formTokens.ts": formTokens,
+    "../i18n/formTokens": formTokens,
   });
   const guardHelper = loadCjs("../guardHelper.ts", {
     react: {
@@ -48,6 +54,8 @@ function loadModules() {
     },
     "../agent/planProjection": planProjection,
     "../i18n/vocabulary": vocabulary,
+    "../i18n/formTokens.ts": formTokens,
+    "../i18n/formTokens": formTokens,
     "./fieldLabels": fieldLabels,
     "../runtime": {
       guardDiff: async () => {

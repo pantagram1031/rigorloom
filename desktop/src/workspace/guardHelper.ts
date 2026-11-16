@@ -3,6 +3,7 @@ import {
   projectedAfterText,
   projectionInverseSupport,
 } from "../agent/planProjection";
+import { SLOT_PLACEHOLDER_MARKERS } from "../i18n/formTokens.ts";
 import { opKindLabel, t } from "../i18n/vocabulary";
 import type { Draft, QueuedOp } from "../store";
 import * as rt from "../runtime";
@@ -171,10 +172,7 @@ function matchesSlotPlaceholder(
   formCtx: FormInstructionContext,
 ): boolean {
   if (!compactBefore) return false;
-  if (
-    compactBefore.includes("연도별일련번호") ||
-    compactBefore.includes("직위(직급)서명")
-  ) {
+  if (SLOT_PLACEHOLDER_MARKERS.some((marker) => compactBefore.includes(marker))) {
     return true;
   }
   if (Array.from(compactBefore).length > 35) {

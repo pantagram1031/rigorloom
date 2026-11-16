@@ -8,7 +8,12 @@ import type {
   UiLanguage,
 } from "../types";
 import type { Draft, WorkspaceState } from "../store";
-import { errorCodeMessage, planStateLabel, t } from "../i18n/vocabulary";
+import {
+  errorCodeMessage,
+  planStateLabel,
+  t,
+  type VocabularyKey,
+} from "../i18n/vocabulary";
 
 export interface OpenRecentBadge {
   kind: "pending" | "applied";
@@ -34,110 +39,80 @@ export interface CorpusDisplayInfo {
 }
 
 interface CorpusFormMeta {
-  ko: string;
-  en: string;
-  sourceKo: string;
-  sourceEn: string;
+  titleKey: VocabularyKey;
+  sourceKey: VocabularyKey;
   order: number;
 }
 
 const KNOWN_CORPUS_FORMS: Record<string, CorpusFormMeta> = {
   "gianmun-byeolji-1ho.hwpx": {
-    ko: "기안문 (별지 제1호서식)",
-    en: "Drafting Form (Annex 1)",
-    sourceKo: "행정안전부 예시",
-    sourceEn: "MOIS example",
+    titleKey: "corpus_title_gianmun_1",
+    sourceKey: "corpus_source_mois",
     order: 1,
   },
   "gianmun-byeolji-2ho.hwpx": {
-    ko: "기안문 (별지 제2호서식)",
-    en: "Drafting Form (Annex 2)",
-    sourceKo: "행정안전부 예시",
-    sourceEn: "MOIS example",
+    titleKey: "corpus_title_gianmun_2",
+    sourceKey: "corpus_source_mois",
     order: 2,
   },
   "jumin-deungchobon-sinchengseo.hwpx": {
-    ko: "주민등록표 등·초본 교부 신청서",
-    en: "Resident Registration Copy Request",
-    sourceKo: "행정안전부 예시",
-    sourceEn: "MOIS example",
+    titleKey: "corpus_title_jumin",
+    sourceKey: "corpus_source_mois",
     order: 3,
   },
   "jeongbo-gonggae-cheongguseo.hwpx": {
-    ko: "정보공개 청구서",
-    en: "Information Disclosure Request",
-    sourceKo: "행정안전부 예시",
-    sourceEn: "MOIS example",
+    titleKey: "corpus_title_jeongbo_gonggae",
+    sourceKey: "corpus_source_mois",
     order: 4,
   },
   "saeopja-deungnok-sinchengseo.hwpx": {
-    ko: "사업자등록 신청서 (개인사업자용)",
-    en: "Business Registration Application",
-    sourceKo: "국세청 예시",
-    sourceEn: "NTS example",
+    titleKey: "corpus_title_saeopja",
+    sourceKey: "corpus_source_nts",
     order: 5,
   },
   "admrul-gajokdolbom-hyuga-sinchengseo.hwpx": {
-    ko: "가족돌봄 휴직·휴가 신청서",
-    en: "Family Care Leave Request",
-    sourceKo: "국립중앙과학관 예시",
-    sourceEn: "NSM example",
+    titleKey: "corpus_title_gajokdolbom",
+    sourceKey: "corpus_source_nsm",
     order: 6,
   },
   "moel-pyojun-geunrogyeyakseo-2025.hwpx": {
-    ko: "표준근로계약서 (2025)",
-    en: "Standard Employment Contract (2025)",
-    sourceKo: "고용노동부 예시",
-    sourceEn: "MOEL example",
+    titleKey: "corpus_title_moel_2025",
+    sourceKey: "corpus_source_moel",
     order: 7,
   },
   "moel-pyojun-geunrogyeyakseo-2013.hwpx": {
-    ko: "표준근로계약서 (2013)",
-    en: "Standard Employment Contract (2013)",
-    sourceKo: "고용노동부 예시",
-    sourceEn: "MOEL example",
+    titleKey: "corpus_title_moel_2013",
+    sourceKey: "corpus_source_moel",
     order: 8,
   },
   "nrf-gyeolgwa-bogoseo-yangsik.hwpx": {
-    ko: "연구결과보고서 양식",
-    en: "Research Result Report Form",
-    sourceKo: "한국연구재단 예시",
-    sourceEn: "NRF example",
+    titleKey: "corpus_title_nrf_report",
+    sourceKey: "corpus_source_nrf",
     order: 9,
   },
   "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx": {
-    ko: "예비창업가 지원 신청서 및 사업계획서",
-    en: "Startup Support Application & Plan",
-    sourceKo: "창업진흥원 예시",
-    sourceEn: "KISED example",
+    titleKey: "corpus_title_kstartup",
+    sourceKey: "corpus_source_kised",
     order: 10,
   },
   "pps-hyeopeop-seungin-sinchengseo.hwpx": {
-    ko: "협업 승인 신청서",
-    en: "Collaboration Approval Request",
-    sourceKo: "조달청 예시",
-    sourceEn: "PPS example",
+    titleKey: "corpus_title_pps_collab",
+    sourceKey: "corpus_source_pps",
     order: 11,
   },
   "pps-jeongbogonggae-donguiseo.hwpx": {
-    ko: "정보공개 동의서 (개인정보 수집·이용)",
-    en: "Information Disclosure Consent Form",
-    sourceKo: "조달청 예시",
-    sourceEn: "PPS example",
+    titleKey: "corpus_title_pps_consent",
+    sourceKey: "corpus_source_pps",
     order: 12,
   },
   "render-check-01.hwpx": {
-    ko: "문서 배치 확인용 예시",
-    en: "Layout Check Sample",
-    sourceKo: "내부 점검 예시",
-    sourceEn: "Internal check sample",
+    titleKey: "corpus_title_render_check",
+    sourceKey: "corpus_source_internal",
     order: 90,
   },
   "table-break-probe.hwpx": {
-    ko: "표 페이지 나눔 확인용 예시",
-    en: "Table Break Check Sample",
-    sourceKo: "내부 점검 예시",
-    sourceEn: "Internal check sample",
+    titleKey: "corpus_title_table_break",
+    sourceKey: "corpus_source_internal",
     order: 91,
   },
 };
@@ -478,8 +453,8 @@ export function corpusFormDisplayInfo(
   const known = KNOWN_CORPUS_FORMS[filename];
   if (known) {
     return {
-      title: language === "ko" ? known.ko : known.en,
-      sourceLabel: language === "ko" ? known.sourceKo : known.sourceEn,
+      title: t(known.titleKey, language),
+      sourceLabel: t(known.sourceKey, language),
       filename,
     };
   }
