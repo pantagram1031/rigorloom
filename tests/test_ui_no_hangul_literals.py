@@ -15,8 +15,8 @@ IMPORT_SPEC_RE = re.compile(
     r"""(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)"""
 )
 
-# Legacy UI modules marked for removal in WP10c: kept files must never import
-# them, and once deleted via `git rm` this test continues checking the rest of src/.
+# Legacy UI modules removed in WP10c. They must not come back, and no file in
+# desktop/src may import them.
 PENDING_OLD_UI_DELETIONS: frozenset[str] = frozenset(
     {
         "views/DocumentView.tsx",
@@ -257,8 +257,6 @@ def _strip_js_comments(source: str) -> str:
 
 
 def _is_allowlisted(rel_posix: str) -> bool:
-    if rel_posix in PENDING_OLD_UI_DELETIONS:
-        return True
     if rel_posix in {"devMock.ts", "smoke.ts"}:
         return True
     if rel_posix.startswith("i18n/"):
