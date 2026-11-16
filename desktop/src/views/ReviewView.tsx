@@ -10,6 +10,7 @@ import {
 
 import {
   adoptExternalPlan,
+  attachExternalApproval,
   clearQueue,
   navigateScreen,
   openApprovalDialog,
@@ -35,11 +36,14 @@ import {
 import {
   buildRegionTextMap,
   findAdoptableExternalPlan,
+  findPendingExternalApproval,
   markExternalPlanDismissed,
 } from "../workspace/externalPlan";
 import {
   buildIndexedChanges,
   emptyReviewGuardSummary,
+  getReviewGuardKey,
+  getReviewGuardSummary,
   runAuthoritativeGuardDiff,
   setReviewGuardSummary,
   useReviewGuardSummary,
@@ -91,6 +95,7 @@ export function ReviewView() {
   const [promptText, setPromptText] = useState("");
   const promptComposingRef = useRef(false);
   const adoptedAttemptRef = useRef<string | null>(null);
+  const attachedApprovalRef = useRef<string | null>(null);
 
   const sessionId = session?.sessionId ?? null;
   const hasTextsLoaded = Boolean(
@@ -101,16 +106,49 @@ export function ReviewView() {
   useEffect(() => {
     if (!sessionId || !hasTextsLoaded) return;
     const candidate = findAdoptableExternalPlan(sessionId, events, draft);
-    if (!candidate) return;
-    const attemptKey = `${sessionId}:${candidate.planId}:${candidate.approvalId ?? ""}`;
-    if (adoptedAttemptRef.current === attemptKey) return;
-    adoptedAttemptRef.current = attemptKey;
-    void adoptExternalPlan(sessionId, candidate.planId, candidate.approvalId);
-  }, [sessionId, hasTextsLoaded, events, draft]);
+    if (candidate) {
+      const attemptKey = `${sessionId}:${candidate.planId}`;
+      if (adoptedAttemptRef.current !== attemptKey) {
+        adoptedAttemptRef.current = attemptKey;
+        if (candidate.approvalId) {
+          attachedApprovalRef.current = `${sessionId}:${candidate.planId}:${candidate.approvalId}`;
+        }
+        void adoptExternalPlan(sessionId, candidate.planId, candidate.approvalId);
+        return;
+      }
+      if (candidate.approvalId) {
+        const attachKey = `${sessionId}:${candidate.planId}:${candidate.approvalId}`;
+        if (attachedApprovalRef.current !== attachKey) {
+          attachedApprovalRef.current = attachKey;
+          void adoptExternalPlan(sessionId, candidate.planId, candidate.approvalId);
+        }
+      }
+      return;
+    }
+
+    const pendingApproval = findPendingExternalApproval(
+      sessionId,
+      events,
+      draft,
+      approval,
+    );
+    if (pendingApproval) {
+      const attachKey = `${sessionId}:${pendingApproval.planId}:${pendingApproval.approvalId}`;
+      if (attachedApprovalRef.current !== attachKey) {
+        attachedApprovalRef.current = attachKey;
+        void attachExternalApproval(
+          sessionId,
+          pendingApproval.planId,
+          pendingApproval.approvalId,
+        );
+      }
+    }
+  }, [sessionId, hasTextsLoaded, events, draft, approval]);
 
   // Reset attempt fence when switching active documents.
   useEffect(() => {
     adoptedAttemptRef.current = null;
+    attachedApprovalRef.current = null;
   }, [sessionId]);
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
@@ -134,42 +172,86 @@ export function ReviewView() {
     }
   }, [changes, selectedChangeId, expandedChangeId]);
 
-  // Execute authoritative Python guard diff via /api/guard/diff whenever plan changes.
+  // Execute authoritative Python guard diff via /api/guard/diff whenever semantic plan/changes change.
   const opsSignature = useMemo(
-    () => changes.map((c) => `${c.opId}:${c.afterText}`).join("\u0001"),
+    () =>
+      changes
+        .map(
+          (c) =>
+            `${c.opId}:${c.beforeText}:${c.afterText}:${c.isAuditable ? 1 : 0}`,
+        )
+        .join("\u0001"),
     [changes],
   );
+  const planId = draft.plan?.planId ?? null;
+  const planHash = draft.plan?.planHash ?? null;
+  const validationOk = draft.validation?.ok ?? null;
+  const draftPhase = draft.phase;
+  const hardSignature = useMemo(
+    () =>
+      (draft.validation?.hard ?? [])
+        .map((f) => `${f.code}@${f.at}`)
+        .join("\u0001"),
+    [draft.validation?.hard],
+  );
+  const guardSemanticKey = useMemo(
+    () =>
+      sessionId && changes.length > 0
+        ? `${sessionId}\u0000${planId ?? ""}\u0000${planHash ?? ""}\u0000${String(validationOk)}\u0000${draftPhase}\u0000${hardSignature}\u0000${opsSignature}`
+        : null,
+    [
+      sessionId,
+      planId,
+      planHash,
+      validationOk,
+      draftPhase,
+      hardSignature,
+      opsSignature,
+      changes.length,
+    ],
+  );
+  const latestDraftRef = useRef(draft);
+  const latestChangesRef = useRef(changes);
+  latestDraftRef.current = draft;
+  latestChangesRef.current = changes;
 
   useEffect(() => {
-    if (!sessionId || changes.length === 0) {
-      setReviewGuardSummary(emptyReviewGuardSummary("idle", null));
+    if (!sessionId || !guardSemanticKey) {
+      setReviewGuardSummary(emptyReviewGuardSummary("idle", null), null);
       return;
     }
-    if (draft.phase === "starting") {
+    if (draftPhase === "starting") {
+      return;
+    }
+    const existing = getReviewGuardSummary();
+    if (
+      getReviewGuardKey() === guardSemanticKey &&
+      (existing.state === "ready" ||
+        existing.state === "invalid_plan" ||
+        existing.state === "unavailable")
+    ) {
       return;
     }
     let cancelled = false;
-    if (draft.plan && draft.validation?.ok === true) {
-      setReviewGuardSummary(emptyReviewGuardSummary("running", draft.plan.planId));
+    const currentDraft = latestDraftRef.current;
+    const currentChanges = latestChangesRef.current;
+    if (currentDraft.plan && currentDraft.validation?.ok === true) {
+      setReviewGuardSummary(
+        emptyReviewGuardSummary("running", currentDraft.plan.planId),
+        guardSemanticKey,
+      );
     }
-    void runAuthoritativeGuardDiff(sessionId, draft, changes).then((result) => {
-      if (!cancelled) {
-        setReviewGuardSummary(result);
-      }
-    });
+    void runAuthoritativeGuardDiff(sessionId, currentDraft, currentChanges).then(
+      (result) => {
+        if (!cancelled) {
+          setReviewGuardSummary(result, guardSemanticKey);
+        }
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [
-    sessionId,
-    draft.plan?.planId,
-    draft.plan?.planHash,
-    draft.validation?.ok,
-    draft.phase,
-    opsSignature,
-    changes,
-    draft,
-  ]);
+  }, [sessionId, draftPhase, guardSemanticKey]);
 
   const handleSelectChange = useCallback((opId: string) => {
     setSelectedChangeId(opId);

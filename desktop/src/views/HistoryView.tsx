@@ -33,13 +33,23 @@ interface RevisionItem {
   receipt: Receipt | null;
 }
 
+const CAPTURE_FIXED_TIME_ATTR = "data-capture-fixed-time";
+
+function readCaptureFixedTime(): string | null {
+  if (typeof document === "undefined") return null;
+  const val = document.documentElement?.getAttribute(CAPTURE_FIXED_TIME_ATTR);
+  return val && val.trim().length > 0 ? val.trim() : null;
+}
+
 function formatDisplayTimestamp(
   iso: string | null | undefined,
   language: UiLanguage,
+  fixedTime: string | null = null,
 ): string {
   if (!iso) return t("history_unknown_time", language);
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
+  if (fixedTime) return fixedTime;
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -82,6 +92,26 @@ export function HistoryView() {
   const sessionId = session?.sessionId ?? null;
   const requestedReceiptsRef = useRef<Set<string>>(new Set());
   const [undoBusyRunId, setUndoBusyRunId] = useState<string | null>(null);
+  const [captureFixedTime, setCaptureFixedTime] = useState<string | null>(
+    () => readCaptureFixedTime(),
+  );
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof MutationObserver === "undefined") {
+      return;
+    }
+    const rootEl = document.documentElement;
+    if (!rootEl) return;
+    setCaptureFixedTime(readCaptureFixedTime());
+    const observer = new MutationObserver(() => {
+      setCaptureFixedTime(readCaptureFixedTime());
+    });
+    observer.observe(rootEl, {
+      attributes: true,
+      attributeFilter: [CAPTURE_FIXED_TIME_ATTR],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   const [baseRunId, setBaseRunId] = useState<string>("__source__");
   const [targetRunId, setTargetRunId] = useState<string>("");
@@ -374,12 +404,12 @@ export function HistoryView() {
                     <dt>{t("history_approved_at_label", language)}</dt>
                     <dd data-testid={`history-approved-at-${revNum}`}>
                       {receipt
-                        ? formatDisplayTimestamp(approvedRaw, language)
+                        ? formatDisplayTimestamp(approvedRaw, language, captureFixedTime)
                         : t("history_receipt_unavailable", language)}
                     </dd>
                     <dt>{t("history_applied_at_label", language)}</dt>
                     <dd data-testid={`history-applied-at-${revNum}`}>
-                      {formatDisplayTimestamp(appliedRaw, language)}
+                      {formatDisplayTimestamp(appliedRaw, language, captureFixedTime)}
                     </dd>
                   </dl>
 

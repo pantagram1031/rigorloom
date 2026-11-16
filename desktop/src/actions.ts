@@ -66,6 +66,7 @@ import {
 import { opKindLabel, t, type VocabularyKey } from "./i18n/vocabulary";
 import type {
   AppliedCandidate,
+  ApprovalRecord,
   EditableRegion,
   Finding,
   GeometryAddress,
@@ -1737,6 +1738,9 @@ export async function applyApproved(): Promise<void> {
       inverseProof: null,
     } : {}),
   });
+  if (ownsQueue && typeof markExternalPlanDismissed === "function") {
+    markExternalPlanDismissed(sessionId, plan.planId);
+  }
   await loadCandidates(sessionId);
   if (!ownsPresentation || getState().activeSessionId !== sessionId || getState().head !== applied.runId) return;
   if (reversed) await verifyReversal(applied.runId, reversed);
@@ -4332,11 +4336,98 @@ export function setMobileReviewPane(pane: "sheet" | "list"): void {
   setState({ mobileReviewPane: pane });
 }
 
+let inFlightExternalAdopt: {
+  sessionId: string;
+  planId: string;
+  pendingApprovalId: string | null;
+  promise: Promise<{ plan: OperationPlan; validation: PlanValidation } | null>;
+} | null = null;
+
+/** Attach an external approval record to the currently adopted draft without replacing `draft`. */
+export async function attachExternalApproval(
+  sessionId: string,
+  planId: string,
+  approvalId: string,
+): Promise<ApprovalRecord | null> {
+  const initial = getState();
+  if (
+    initial.activeSessionId !== sessionId ||
+    initial.draft.sessionId !== sessionId ||
+    initial.draft.plan?.planId !== planId
+  ) {
+    return null;
+  }
+  const capturedDraft = initial.draft;
+  const record = await rt.getApproval(approvalId).catch(() => null);
+  if (!record || record.planId !== planId) return null;
+  const current = getState();
+  if (
+    current.activeSessionId !== sessionId ||
+    current.draft !== capturedDraft ||
+    current.draft.plan?.planId !== planId ||
+    current.draft.plan.planHash !== record.planHash
+  ) {
+    return null;
+  }
+  if (current.approval?.approvalId === record.approvalId) {
+    return current.approval;
+  }
+  setState({
+    approval: record,
+    approvalPhase: record.state === "pending" ? "pending" : "resolved",
+    approvalError: null,
+  });
+  return record;
+}
+
 export async function adoptExternalPlan(
   sessionId: string,
   planId: string,
   approvalId?: string | null,
 ): Promise<{ plan: OperationPlan; validation: PlanValidation } | null> {
-  return adoptAgentPlan(sessionId, planId, approvalId ?? null);
+  const normalizedApprovalId = approvalId ?? null;
+  if (
+    inFlightExternalAdopt &&
+    inFlightExternalAdopt.sessionId === sessionId &&
+    inFlightExternalAdopt.planId === planId
+  ) {
+    if (normalizedApprovalId) {
+      inFlightExternalAdopt.pendingApprovalId = normalizedApprovalId;
+    }
+    return inFlightExternalAdopt.promise;
+  }
+
+  const owner = captureDraftOwner();
+  const entry = {
+    sessionId,
+    planId,
+    pendingApprovalId: normalizedApprovalId,
+    promise: Promise.resolve(null) as Promise<{
+      plan: OperationPlan;
+      validation: PlanValidation;
+    } | null>,
+  };
+  const run = (async () => {
+    try {
+      const adopted = await adoptAgentPlan(sessionId, planId, normalizedApprovalId, owner);
+      const attachId = entry.pendingApprovalId;
+      if (
+        adopted &&
+        attachId &&
+        getState().draft.plan?.planId === planId &&
+        getState().approval?.approvalId !== attachId
+      ) {
+        await attachExternalApproval(sessionId, planId, attachId);
+      }
+      return adopted;
+    } finally {
+      if (inFlightExternalAdopt === entry) {
+        inFlightExternalAdopt = null;
+      }
+    }
+  })();
+  entry.promise = run;
+  inFlightExternalAdopt = entry;
+  return run;
 }
 
