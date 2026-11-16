@@ -37,6 +37,7 @@ jobs:
           echo "$TARGET" | grep -Eq '^[0-9a-f]{40}$'
           git merge-base --is-ancestor "$TARGET" origin/main
           test -f "docs/release-$VERSION.md"
+          grep -q "^version = \"${VERSION#v}\"" pyproject.toml
           if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; then
             echo "tag $VERSION already exists" >&2
             exit 1
