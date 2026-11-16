@@ -249,6 +249,7 @@ BUILD_YAML_BLOCK_LIST_KEYS = {
 
 def parse_build_yaml_text(text: str) -> dict:
     """Parse flat build.yaml (with optional fill: block) from text using stdlib."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     result, fill = {}, {}
     in_fill = False
     in_block_list = None  # 현재 수집 중인 BUILD_YAML_BLOCK_LIST_KEYS 키 이름
@@ -740,6 +741,11 @@ def compile_bundle_text(
     """Compile report content text and optional build/profile inputs into backend ops."""
     if not isinstance(content_text, str):
         raise CompileReportError("content_text must be a string", exit_code=2)
+    content_text = content_text.replace("\r\n", "\n").replace("\r", "\n")
+    if build_yaml_text is not None:
+        if not isinstance(build_yaml_text, str):
+            raise CompileReportError("build_yaml_text must be a string", exit_code=2)
+        build_yaml_text = build_yaml_text.replace("\r\n", "\n").replace("\r", "\n")
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         try:

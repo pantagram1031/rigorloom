@@ -1316,6 +1316,60 @@ def match_trouble(verdict, checks, style_anomalies, trouble_map):
     return None
 
 
+def _paths_alias_same_target(src, dst):
+    """Return True when two paths resolve to the same target or existing file."""
+    return report_xml_worker._paths_alias_same_target(src, dst)
+
+
+def _guard_xml_output_paths(form, ops_path, out_hwpx):
+    """Refuse before staging/writing when form aliases ops_path or out_hwpx."""
+    if form is not None and (
+        _paths_alias_same_target(form, ops_path)
+        or _paths_alias_same_target(form, out_hwpx)
+    ):
+        die("xml_backend edit failed: unsupported=[] anchors_missing=[]")
+
+
+def _write_ops_json(ops_path, ops):
+    target = Path(ops_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(ops, ensure_ascii=False), encoding="utf-8")
+
+
+def _resolve_legacy_xml_postprocess_settings(
+    *, build_yaml, form_profile, content, baseline
+):
+    """Resolve post-processing settings once before legacy XML loop/assemble."""
+    tidy_before, tidy_after, derived_tidy_anchors, tidy_keep_map = (
+        read_tidy_anchors_with_source(build_yaml, form_profile, content)
+    )
+    keep_with_next = read_keep_with_next(build_yaml)
+    use_restore = baseline_has_para_formats(baseline)
+    baseline_bytes = None
+    if use_restore and baseline:
+        try:
+            baseline_bytes = Path(baseline).read_bytes()
+        except OSError:
+            use_restore = False
+            baseline_bytes = None
+    use_typeset_defaults = bool(form_profile)
+    profile_anchors = (
+        read_profile_anchors(form_profile) if use_typeset_defaults else []
+    )
+    return {
+        "tidy_before": tidy_before,
+        "tidy_after": tidy_after,
+        "derived_tidy_anchors": derived_tidy_anchors,
+        "tidy_keep_map": tidy_keep_map,
+        "tidy_soft": bool(derived_tidy_anchors),
+        "keep_with_next": keep_with_next,
+        "use_restore": use_restore,
+        "baseline_bytes": baseline_bytes,
+        "use_typeset_defaults": use_typeset_defaults,
+        "profile_anchors": profile_anchors,
+    }
+
+
 def _xml_worker_runners():
     """Return XmlWorkerRunners bound dynamically to fill_report module hooks."""
     return report_xml_worker.XmlWorkerRunners(
@@ -1364,22 +1418,32 @@ def _run_xml_worker_step(
     ops_path,
     out_hwpx,
     frozen_request=None,
+    postprocess_settings=None,
 ):
     """Run one XML assembly pass via frozen worker (freeze once if needed)."""
+    _guard_xml_output_paths(form, ops_path, out_hwpx)
     runners = _xml_worker_runners()
     if frozen_request is not None:
+        _write_ops_json(ops_path, frozen_request["operation"]["params"]["ops"])
         try:
             worker_res = report_xml_worker.execute_frozen_xml_worker(
                 frozen_request,
                 out_hwpx,
                 form_path=(form if form is not None else None),
-                legacy_ops_out=ops_path,
                 runners=runners,
             )
         except report_xml_worker.FrozenReportError as exc:
             die(exc.message)
         settings = frozen_request["operation"]["params"]["settings"]
         return worker_res, settings["derived_tidy_anchors"], settings["tidy_keep_map"]
+
+    if postprocess_settings is None:
+        postprocess_settings = _resolve_legacy_xml_postprocess_settings(
+            build_yaml=build_yaml,
+            form_profile=form_profile,
+            content=content,
+            baseline=baseline,
+        )
 
     compile_override = (
         _make_compile_override(form, content, build_yaml, form_profile, ops_path)
@@ -1388,24 +1452,38 @@ def _run_xml_worker_step(
     )
     with tempfile.TemporaryDirectory(prefix="fill-report-xml-") as snap_dir:
         try:
-            req = report_xml_worker.freeze_report_xml_request(
+            req, legacy_ops = report_xml_worker.prepare_legacy_xml_request(
                 form,
                 content,
                 snap_dir,
                 build_yaml_path=build_yaml,
                 form_profile_path=form_profile,
                 baseline_path=baseline,
+                postprocess_settings=postprocess_settings,
                 compile_override=compile_override,
             )
+        except build_report.CompileReportError as exc:
+            die(f"build_report 실패: {exc.message}", code=exc.exit_code)
+        except report_xml_worker.LegacyOpsRefusal as exc:
+            _write_ops_json(ops_path, exc.legacy_ops)
+            die(exc.message)
+        except report_xml_worker.LegacyAssetMissingError as exc:
+            _write_ops_json(ops_path, exc.legacy_ops)
+            run_xml_edit(form, ops_path, out_hwpx)
+            die(exc.message)
+        except report_xml_worker.FrozenReportError as exc:
+            die(exc.message)
+
+        _write_ops_json(ops_path, legacy_ops)
+        try:
             worker_res = report_xml_worker.execute_frozen_xml_worker(
                 req,
                 out_hwpx,
                 form_path=form,
-                legacy_ops_out=ops_path,
                 runners=runners,
             )
-        except (build_report.CompileReportError, report_xml_worker.FrozenReportError) as exc:
-            die(getattr(exc, "message", str(exc)))
+        except report_xml_worker.FrozenReportError as exc:
+            die(exc.message)
         settings = req["operation"]["params"]["settings"]
         return worker_res, settings["derived_tidy_anchors"], settings["tidy_keep_map"]
 
@@ -1413,7 +1491,8 @@ def _run_xml_worker_step(
 def _build_xml_measurement_settings(args, *, guide_strings=None,
                                     spacing_skip_pages=None,
                                     gap_skip_pages=None,
-                                    bottom_skip_pages=None):
+                                    bottom_skip_pages=None,
+                                    strict_inputs=True):
     """Capture XML measurement/render config separately from report_assemble."""
     pdf_cmd = getattr(args, "pdf_cmd", None)
     renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
@@ -1432,6 +1511,7 @@ def _build_xml_measurement_settings(args, *, guide_strings=None,
             spacing_skip_pages=spacing_skip_pages,
             gap_skip_pages=gap_skip_pages,
             bottom_skip_pages=bottom_skip_pages,
+            strict_inputs=strict_inputs,
         )
     except report_xml_worker.FrozenReportError as exc:
         die(exc.message)
@@ -1558,17 +1638,18 @@ def mode_loop(args, *, frozen_request=None):
             die(f"양식 없음: {form}")
         if not content.exists():
             die(f"content.md 없음: {content}")
-    elif form is not None and not form.exists():
-        die(f"양식 없음: {form}")
 
     out_dir = Path(args.out_dir)
+    ops_path = out_dir / "ops.json"
+    out_hwpx = out_dir / "out.hwpx"
+    if engine == "xml":
+        _guard_xml_output_paths(form, ops_path, out_hwpx)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     _invalidate_evidence_receipt(form if form is not None else out_dir, out_dir)
     preview_dir = out_dir / "preview"
     preview_dir.mkdir(parents=True, exist_ok=True)
 
-    ops_path = out_dir / "ops.json"
-    out_hwpx = out_dir / "out.hwpx"
     out_pdf = out_dir / "out.pdf"
     events_path = out_dir / "fill_events.jsonl"
     max_loops = max(1, int(args.max_loops or 4))
@@ -1580,6 +1661,7 @@ def mode_loop(args, *, frozen_request=None):
         getattr(args, "bottom_skip_pages", None))
     form_profile = getattr(args, "form_profile", None)
 
+    legacy_postprocess = None
     if engine == "xml":
         measurement = _build_xml_measurement_settings(
             args,
@@ -1587,6 +1669,7 @@ def mode_loop(args, *, frozen_request=None):
             spacing_skip_pages=spacing_skip_pages,
             gap_skip_pages=gap_skip_pages,
             bottom_skip_pages=bottom_skip_pages,
+            strict_inputs=(frozen_request is not None),
         )
         pdf_cmd = measurement["pdf_cmd"]
         renderer_id = measurement["renderer_id"]
@@ -1600,6 +1683,13 @@ def mode_loop(args, *, frozen_request=None):
         use_restore = False
         use_tidy = False
         tidy_soft = False
+        if frozen_request is None:
+            legacy_postprocess = _resolve_legacy_xml_postprocess_settings(
+                build_yaml=args.build_yaml,
+                form_profile=form_profile,
+                content=content,
+                baseline=getattr(args, "baseline", None),
+            )
     else:
         pdf_cmd = getattr(args, "pdf_cmd", None)
         renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
@@ -1633,6 +1723,7 @@ def mode_loop(args, *, frozen_request=None):
                 ops_path=ops_path,
                 out_hwpx=out_hwpx,
                 frozen_request=frozen_request,
+                postprocess_settings=legacy_postprocess,
             )
             tidy_warnings = worker_res.tidy_warnings
             xml_para_verification = worker_res.para_verification
@@ -1880,21 +1971,25 @@ def mode_assemble(args, *, frozen_request=None):
             die(f"양식 없음: {form}")
         if not content.exists():
             die(f"content.md 없음: {content}")
-    elif form is not None and not form.exists():
-        die(f"양식 없음: {form}")
 
     out_dir = Path(args.out_dir)
+    ops_path = out_dir / "ops.json"
+    out_hwpx = out_dir / "out.hwpx"   # 단일 정규 이름(버전 누적 금지, 항상 덮어씀).
+    if engine == "xml":
+        _guard_xml_output_paths(form, ops_path, out_hwpx)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     _invalidate_evidence_receipt(form if form is not None else out_dir, out_dir)
 
-    ops_path = out_dir / "ops.json"
-    out_hwpx = out_dir / "out.hwpx"   # 단일 정규 이름(버전 누적 금지, 항상 덮어씀).
     out_pdf = out_dir / "out.pdf"
     iters = max(1, int(args.max_iters or 1))
     form_profile = getattr(args, "form_profile", None)
 
+    legacy_postprocess = None
     if engine == "xml":
-        measurement = _build_xml_measurement_settings(args)
+        measurement = _build_xml_measurement_settings(
+            args, strict_inputs=(frozen_request is not None)
+        )
         pdf_cmd = measurement["pdf_cmd"]
         renderer_id = measurement["renderer_id"]
         proof_grade = "advisory"
@@ -1907,6 +2002,13 @@ def mode_assemble(args, *, frozen_request=None):
         keep_with_next = None
         use_restore = False
         use_tidy = False
+        if frozen_request is None:
+            legacy_postprocess = _resolve_legacy_xml_postprocess_settings(
+                build_yaml=args.build_yaml,
+                form_profile=form_profile,
+                content=content,
+                baseline=getattr(args, "baseline", None),
+            )
     else:
         pdf_cmd = getattr(args, "pdf_cmd", None)
         renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
@@ -1937,6 +2039,7 @@ def mode_assemble(args, *, frozen_request=None):
                 ops_path=ops_path,
                 out_hwpx=out_hwpx,
                 frozen_request=frozen_request,
+                postprocess_settings=legacy_postprocess,
             )
             xml_para_verification = worker_res.para_verification
             if not pdf_cmd:

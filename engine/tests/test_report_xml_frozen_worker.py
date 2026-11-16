@@ -7,16 +7,25 @@ fixtures generated inside ``tmp_path``.  They have zero dependency on
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
+import errno
+import hashlib
+import inspect
+import io
 import json
 import os
+import re
+import shlex
 import shutil
 import struct
 import subprocess
 import sys
+import tarfile
 import zipfile
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -557,6 +566,8 @@ def test_derived_soft_tidy_keep_map_and_absent_settings_parity(
     tmp_path: Path, monkeypatch
 ):
     """Derived soft tidy + keep_map + absent optional settings match legacy exactly."""
+    _freeze_zipfile_time(monkeypatch)
+    monkeypatch.setattr(fr, "run_xml_edit", worker._default_xml_edit)
     # Case A: form_profile without explicit tidy_blank_* in build.yaml
     # Include an anchor missing from the form so soft tidy emits tidy_warnings.
     ws_a = tmp_path / "ws_a"
@@ -1061,8 +1072,9 @@ def test_closed_validation_rejects_extra_fields_recipes_live_paths_and_bad_eq(
     bad_pic = copy.deepcopy(base_op)
     pic_op = next(o for o in bad_pic["params"]["ops"] if o["op"] == "insert_picture")
     pic_op["path"] = "/etc/passwd"
-    with pytest.raises(worker.FrozenWorkerRefusal):
+    with pytest.raises(worker.FrozenWorkerRefusal) as live_exc:
         worker.validate_report_assemble_op(bad_pic)
+    assert live_exc.value.code == "live_path_forbidden"
 
     # Invalid equation operation rejected statically.
     bad_eq = copy.deepcopy(base_op)
@@ -1079,6 +1091,61 @@ def test_closed_validation_rejects_extra_fields_recipes_live_paths_and_bad_eq(
     pic_op2["asset_ref"]["name"] = "../escape.png"
     with pytest.raises(worker.FrozenWorkerRefusal):
         worker.validate_report_assemble_op(bad_asset)
+
+
+_SYMLINK_UNSUPPORTED_ERRNOS = frozenset(
+    v
+    for v in (
+        getattr(errno, "EPERM", None),
+        getattr(errno, "EACCES", None),
+        getattr(errno, "EOPNOTSUPP", None),
+        getattr(errno, "ENOTSUP", None),
+        1314,
+    )
+    if v is not None
+)
+
+
+def _is_symlink_capability_error(exc: OSError) -> bool:
+    return (
+        getattr(exc, "winerror", None) == 1314
+        or getattr(exc, "errno", None) in _SYMLINK_UNSUPPORTED_ERRNOS
+    )
+
+
+def _try_symlink(
+    link_path: Path, target: Path, *, target_is_directory: bool = False
+) -> bool:
+    if os.path.lexists(link_path) and link_path.is_symlink():
+        link_path.unlink()
+    try:
+        os.symlink(
+            str(target), str(link_path), target_is_directory=target_is_directory
+        )
+        return True
+    except NotImplementedError:
+        return False
+    except OSError as exc:
+        if _is_symlink_capability_error(exc):
+            return False
+        raise
+
+
+def _symlink_or_skip(
+    link_path: Path, target: Path, *, target_is_directory: bool = False
+) -> None:
+    if os.path.lexists(link_path) and link_path.is_symlink():
+        link_path.unlink()
+    try:
+        os.symlink(
+            str(target), str(link_path), target_is_directory=target_is_directory
+        )
+    except NotImplementedError as exc:
+        pytest.skip(f"Windows symlink capability unavailable: {exc}")
+    except OSError as exc:
+        if _is_symlink_capability_error(exc):
+            pytest.skip(f"Windows symlink capability unavailable: {exc}")
+        raise
 
 
 def test_asset_path_traversal_symlink_escape_and_tampered_blob_refusals(
@@ -1111,17 +1178,17 @@ def test_asset_path_traversal_symlink_escape_and_tampered_blob_refusals(
         worker.freeze_report_xml_request(form, c_trav, tmp_path / "snap_trav")
     assert trav_exc.value.code == "asset_path_escape"
 
-    # 3. Symlink escaping bundle/figures
+    # 3. Symlink escaping bundle/figures (skip only symlink subcase if unavailable)
     sym_fig = figs_dir / "link_out.png"
-    sym_fig.symlink_to(outside)
-    c_sym = ws / "bundle" / "sym.md"
-    c_sym.write_text(
-        '## SECTION: I. Intro\n\n[[FIG file="link_out.png" width=80]]\n',
-        encoding="utf-8",
-    )
-    with pytest.raises(worker.FrozenRequestError) as sym_exc:
-        worker.freeze_report_xml_request(form, c_sym, tmp_path / "snap_sym")
-    assert sym_exc.value.code == "asset_symlink_escape"
+    if _try_symlink(sym_fig, outside):
+        c_sym = ws / "bundle" / "sym.md"
+        c_sym.write_text(
+            '## SECTION: I. Intro\n\n[[FIG file="link_out.png" width=80]]\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(worker.FrozenRequestError) as sym_exc:
+            worker.freeze_report_xml_request(form, c_sym, tmp_path / "snap_sym")
+        assert sym_exc.value.code == "asset_symlink_escape"
 
     # 4. Tampered blob bytes & symlinked blob in snapshot_dir
     env = _build_rich_workspace(tmp_path / "ws_tamper")
@@ -1141,12 +1208,12 @@ def test_asset_path_traversal_symlink_escape_and_tampered_blob_refusals(
         worker.execute_frozen_xml_worker(req, tmp_path / "tam_out.hwpx")
     assert tam_exc.value.code == "blob_digest_mismatch"
 
-    # Replace blob with a symlink -> refused.
+    # Replace blob with a symlink -> refused (when symlinks can be created).
     form_blob_path.unlink()
-    form_blob_path.symlink_to(env["form"])
-    with pytest.raises(worker.FrozenRequestError) as sblob_exc:
-        worker.execute_frozen_xml_worker(req, tmp_path / "sblob_out.hwpx")
-    assert sblob_exc.value.code == "blob_path_escape"
+    if _try_symlink(form_blob_path, env["form"]):
+        with pytest.raises(worker.FrozenRequestError) as sblob_exc:
+            worker.execute_frozen_xml_worker(req, tmp_path / "sblob_out.hwpx")
+        assert sblob_exc.value.code == "blob_path_escape"
 
 
 # ---------------------------------------------------------------------------
@@ -1168,6 +1235,7 @@ def test_post_freeze_mutation_and_deletion_identical_output_zero_compiler_calls(
     )
     baseline_hwpx = tmp_path / "baseline" / "out.hwpx"
     _freeze_zipfile_time(monkeypatch)
+    monkeypatch.setattr(fr, "run_xml_edit", worker._default_xml_edit)
     worker.execute_frozen_xml_worker(req, baseline_hwpx)
     baseline_bytes = baseline_hwpx.read_bytes()
 
@@ -1188,7 +1256,6 @@ def test_post_freeze_mutation_and_deletion_identical_output_zero_compiler_calls(
     monkeypatch.setattr(br, "parse_content", _fail_compile)
     monkeypatch.setattr(br, "parse_build_yaml_text", _fail_compile)
     monkeypatch.setattr(fr, "run_build_report", _fail_compile)
-    monkeypatch.setattr(fr, "run_xml_edit", worker._default_xml_edit)
 
     real_subproc_run = subprocess.run
 
@@ -1684,12 +1751,891 @@ def test_mode_assemble_max_iters_compile_timing_and_worker_form_mismatch(
     assert v_loop["status"] == "xml_verified_no_proof"
     assert v_loop["converged"] is True
 
-    # Worker refuses when optional form_path points to different bytes.
+    # Host staleness helper refuses when live form_path points to different bytes,
+    # while worker never reads live form_path and succeeds even after live form deletion.
+    assert worker.verify_live_form_digest(req, env["form"])["sha256"] == req["manifest"]["inputs"]["form"]["sha256"]
     wrong_form = _make_synthetic_form_hwpx(
         tmp_path / "wrong_form.hwpx", blanks_before_second=6
     )
     with pytest.raises(worker.FrozenRequestError) as fm_exc:
-        worker.execute_frozen_xml_worker(
-            req, tmp_path / "mismatch.hwpx", form_path=wrong_form
-        )
+        worker.verify_live_form_digest(req, wrong_form)
     assert fm_exc.value.code == "form_digest_mismatch"
+
+    env["form"].unlink()
+    deleted_form_res = worker.execute_frozen_xml_worker(
+        req, tmp_path / "deleted_live_form.hwpx", form_path=env["form"]
+    )
+    assert deleted_form_res.ok is True
+
+
+# ---------------------------------------------------------------------------
+# 12. Parent (0fa897a) parity oracle & S4b regressions (items 1-13)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def parent_0fa897a_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    if shutil.which("git") is None:
+        pytest.skip("git unavailable for 0fa897a parent parity")
+    repo_root = ENGINE_ROOT.parent
+    check = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "0fa897a^{commit}"],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        pytest.skip("parent commit 0fa897a unavailable in repository")
+    dest = tmp_path_factory.mktemp("parent_0fa897a")
+    arc = subprocess.run(
+        ["git", "archive", "--format=tar", "0fa897a", "engine", "pipeline"],
+        cwd=str(repo_root),
+        capture_output=True,
+        check=True,
+    )
+    with tarfile.open(fileobj=io.BytesIO(arc.stdout), mode="r:") as tf:
+        if hasattr(tarfile, "data_filter"):
+            tf.extractall(path=str(dest), filter="data")
+        else:
+            tf.extractall(path=str(dest))
+    assert (dest / "engine" / "scripts" / "fill_report.py").is_file()
+    return dest
+
+
+def _run_fill_cli(
+    repo_root: Path,
+    *,
+    mode: str,
+    form: Path,
+    content: Path,
+    out_dir: Path,
+    extra: tuple[str, ...] = (),
+) -> tuple[int, dict, str]:
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    cmd = [
+        sys.executable,
+        str(repo_root / "engine" / "scripts" / "fill_report.py"),
+        mode,
+        "--engine",
+        "xml",
+        "--form",
+        str(form),
+        "--content",
+        str(content),
+        "--out-dir",
+        str(out_dir),
+        *extra,
+    ]
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8")
+    try:
+        payload = json.loads(proc.stdout)
+    except Exception:
+        payload = {"stdout": proc.stdout, "stderr": proc.stderr}
+    return proc.returncode, payload, proc.stderr
+
+
+def _normalize_cli_verdict(verdict: dict, out_dir: Path) -> dict:
+    norm = dict(verdict)
+    for key in ("hwpx", "pdf", "preview_pdf"):
+        val = norm.get(key)
+        if isinstance(val, str) and val:
+            try:
+                norm[key] = "<OUT_DIR>/" + Path(val).relative_to(out_dir.resolve()).as_posix()
+            except ValueError:
+                pass
+    return norm
+
+
+def _normalize_receipt(receipt: dict, form_path: Path, out_hwpx: Path) -> dict:
+    assert receipt["execution"]["input"]["sha256"] == hashlib.sha256(form_path.read_bytes()).hexdigest()
+    assert receipt["execution"]["output"]["sha256"] == hashlib.sha256(out_hwpx.read_bytes()).hexdigest()
+    assert receipt["execution"]["output"]["bytes"] == out_hwpx.stat().st_size
+    norm = copy.deepcopy(receipt)
+    norm.pop("created_utc", None)
+    norm.pop("receipt_sha256", None)
+    norm["execution"]["output"]["sha256"] = "<VERIFIED_OUT_HWPX_SHA256>"
+    norm["execution"]["output"]["bytes"] = "<VERIFIED_OUT_HWPX_BYTES>"
+    return norm
+
+
+def test_regression_item1_legacy_and_worker_alias_refusal(
+    tmp_path: Path, parent_0fa897a_root: Path
+):
+    """Item 1: refuse form/output/ops aliasing in legacy & worker without touching form."""
+    repo_root = ENGINE_ROOT.parent
+    for mode in ("--assemble", "--loop"):
+        # Direct out.hwpx collision
+        ws_parent = tmp_path / f"parent-{mode.strip('-')}"
+        ws_cur = tmp_path / f"cur-{mode.strip('-')}"
+        for label, root, ws in (
+            ("parent", parent_0fa897a_root, ws_parent),
+            ("current", repo_root, ws_cur),
+        ):
+            form = _make_synthetic_form_hwpx(ws / "output" / "out.hwpx")
+            content = _write_plain_content(ws / "bundle" / "content.md")
+            before_sha = hashlib.sha256(form.read_bytes()).hexdigest()
+            rc, payload, _ = _run_fill_cli(
+                root, mode=mode, form=form, content=content, out_dir=form.parent
+            )
+            assert rc == 2, f"{label} {mode}: {payload}"
+            assert payload == {
+                "ok": False,
+                "error": "xml_backend edit failed: unsupported=[] anchors_missing=[]",
+            }
+            assert hashlib.sha256(form.read_bytes()).hexdigest() == before_sha
+
+        # Symlink out.hwpx -> form, parent dir symlink, and ops.json alias
+        ws_sym = tmp_path / f"sym-{mode.strip('-')}"
+        real_out = ws_sym / "real_out"
+        real_out.mkdir(parents=True)
+        form_s = _make_synthetic_form_hwpx(ws_sym / "pristine.hwpx")
+        before_sha = hashlib.sha256(form_s.read_bytes()).hexdigest()
+        _symlink_or_skip(real_out / "out.hwpx", form_s)
+        content_s = _write_plain_content(ws_sym / "bundle" / "content.md")
+        rc_s, payload_s, _ = _run_fill_cli(
+            repo_root, mode=mode, form=form_s, content=content_s, out_dir=real_out
+        )
+        assert rc_s == 2
+        assert payload_s == {
+            "ok": False,
+            "error": "xml_backend edit failed: unsupported=[] anchors_missing=[]",
+        }
+        assert hashlib.sha256(form_s.read_bytes()).hexdigest() == before_sha
+
+        # Parent directory symlink alias
+        ws_pdir = tmp_path / f"pdir-{mode.strip('-')}"
+        real_dir = ws_pdir / "real_dir"
+        form_p = _make_synthetic_form_hwpx(real_dir / "out.hwpx")
+        before_p_sha = hashlib.sha256(form_p.read_bytes()).hexdigest()
+        alias_dir = ws_pdir / "alias_dir"
+        _symlink_or_skip(alias_dir, real_dir, target_is_directory=True)
+        content_p = _write_plain_content(ws_pdir / "bundle" / "content.md")
+        rc_p, payload_p, _ = _run_fill_cli(
+            repo_root, mode=mode, form=form_p, content=content_p, out_dir=alias_dir
+        )
+        assert rc_p == 2
+        assert payload_p == {
+            "ok": False,
+            "error": "xml_backend edit failed: unsupported=[] anchors_missing=[]",
+        }
+        assert hashlib.sha256(form_p.read_bytes()).hexdigest() == before_p_sha
+
+        # form aliasing ops.json
+        ws_ops = tmp_path / f"ops-{mode.strip('-')}"
+        ops_out = ws_ops / "out"
+        form_ops = _make_synthetic_form_hwpx(ops_out / "ops.json")
+        before_ops_sha = hashlib.sha256(form_ops.read_bytes()).hexdigest()
+        content_ops = _write_plain_content(ws_ops / "bundle" / "content.md")
+        rc_o, payload_o, _ = _run_fill_cli(
+            repo_root, mode=mode, form=form_ops, content=content_ops, out_dir=ops_out
+        )
+        assert rc_o == 2
+        assert payload_o == {
+            "ok": False,
+            "error": "xml_backend edit failed: unsupported=[] anchors_missing=[]",
+        }
+        assert hashlib.sha256(form_ops.read_bytes()).hexdigest() == before_ops_sha
+
+    # Worker direct guards: out_hwpx aliases form_path (even after deletion / via parent symlink)
+    # and out_hwpx inside snapshot_dir.
+    ws_w = tmp_path / "worker-guards"
+    form_w = _make_synthetic_form_hwpx(ws_w / "real" / "form.hwpx")
+    content_w = _write_plain_content(ws_w / "bundle" / "content.md")
+    snap_w = ws_w / "snap"
+    req = worker.freeze_report_xml_request(form_w, content_w, snap_w)
+    alias_parent = ws_w / "alias_parent"
+    _symlink_or_skip(alias_parent, form_w.parent, target_is_directory=True)
+    form_w.unlink()
+    with pytest.raises(worker.FrozenWorkerRefusal) as alias_exc:
+        worker.execute_frozen_xml_worker(
+            req, alias_parent / "form.hwpx", form_path=form_w
+        )
+    assert alias_exc.value.code == "output_aliases_form"
+
+    with pytest.raises(worker.FrozenWorkerRefusal) as snap_exc:
+        worker.execute_frozen_xml_worker(req, snap_w / "blobs" / "evil.hwpx")
+    assert snap_exc.value.code == "output_inside_snapshot"
+
+
+def test_regression_item2_ops_json_replayable_and_no_legacy_ops_out(
+    tmp_path: Path, parent_0fa897a_root: Path
+):
+    """Item 2: remove legacy_ops_out from worker; legacy ops.json stays replayable."""
+    assert "legacy_ops_out" not in inspect.signature(
+        worker.execute_frozen_xml_worker
+    ).parameters
+    repo_root = ENGINE_ROOT.parent
+    env = _build_rich_workspace(tmp_path / "ws")
+
+    out_parent = tmp_path / "out_parent"
+    out_current = tmp_path / "out_current"
+    rc_p, _, _ = _run_fill_cli(
+        parent_0fa897a_root,
+        mode="--assemble",
+        form=env["form"],
+        content=env["content"],
+        out_dir=out_parent,
+    )
+    rc_c, _, _ = _run_fill_cli(
+        repo_root,
+        mode="--assemble",
+        form=env["form"],
+        content=env["content"],
+        out_dir=out_current,
+    )
+    assert rc_p == 0 and rc_c == 0
+
+    ops_p = json.loads((out_parent / "ops.json").read_text(encoding="utf-8"))
+    ops_c = json.loads((out_current / "ops.json").read_text(encoding="utf-8"))
+    assert ops_c == ops_p
+    pic_op = next(o for o in ops_c if o["op"] == "insert_picture")
+    assert Path(pic_op["path"]).is_file()
+    assert Path(pic_op["path"]).resolve() == env["figure"].resolve()
+
+    replay_proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "xml_backend.py"),
+            "edit",
+            "--file",
+            str(env["form"]),
+            "--ops",
+            str(out_current / "ops.json"),
+            "--save-as",
+            str(tmp_path / "replayed.hwpx"),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    assert json.loads(replay_proc.stdout)["ok"] is True
+
+    # Frozen caller writes frozen params.ops (with asset_ref, no temp staging path).
+    req = worker.freeze_report_xml_request(
+        env["form"],
+        env["content"],
+        tmp_path / "snap",
+        build_yaml_path=env["build_yaml"],
+        form_profile_path=env["profile"],
+        baseline_path=env["baseline"],
+    )
+    frozen_out = tmp_path / "frozen_out"
+    fr.mode_assemble(
+        argparse.Namespace(
+            form=str(env["form"]),
+            content=str(env["content"]),
+            out_dir=str(frozen_out),
+            build_yaml=str(env["build_yaml"]),
+            baseline=str(env["baseline"]),
+            form_profile=str(env["profile"]),
+            engine="xml",
+            pdf_cmd=None,
+            max_iters=1,
+            fig_count=None,
+            out=None,
+        ),
+        frozen_request=req,
+    )
+    frozen_ops = json.loads((frozen_out / "ops.json").read_text(encoding="utf-8"))
+    assert frozen_ops == req["operation"]["params"]["ops"]
+
+
+def test_regression_item3_legacy_loop_postprocess_settings_fixed_before_loop(
+    tmp_path: Path, parent_0fa897a_root: Path
+):
+    """Item 3: legacy XML loop resolves post-processing once before loop while compiling per iter."""
+    pytest.importorskip("fitz")
+    repo_root = ENGINE_ROOT.parent
+    results = {}
+    for label, root in (("parent", parent_0fa897a_root), ("current", repo_root)):
+        ws = tmp_path / f"ws-{label}"
+        form = _make_synthetic_form_hwpx(ws / "output" / "form_copy.hwpx")
+        content = _write_plain_content(ws / "bundle" / "content.md")
+        by = ws / "build.yaml"
+        by.write_text("fill:\n  target_pages: [2, 3]\n", encoding="utf-8")
+        renderer = ws / "renderer.py"
+        renderer.write_text(
+            "import fitz, sys\n"
+            "from pathlib import Path\n"
+            "d = fitz.open(); p = d.new_page(); p.insert_text((72, 650), 'Rendered')\n"
+            "d.save(sys.argv[2])\n"
+            "Path(sys.argv[3]).write_text("
+            "'fill:\\n  target_pages: [2, 3]\\nkeep_with_next:\\n  - MISSING_PREFIX\\n', "
+            "encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        cmd = shlex.join([sys.executable, str(renderer), "{in}", "{out}", str(by)])
+        out_dir = ws / "results"
+        rc, payload, _ = _run_fill_cli(
+            root,
+            mode="--loop",
+            form=form,
+            content=content,
+            out_dir=out_dir,
+            extra=("--max-loops", "2", "--build-yaml", str(by), "--pdf-cmd", cmd),
+        )
+        results[label] = (rc, payload)
+    assert results["parent"][0] == 0
+    assert results["current"][0] == 0
+    assert results["current"][1]["iterations"] == results["parent"][1]["iterations"] == 2
+    assert results["current"][1].get("error") is None
+
+
+def test_regression_item4_zero_byte_blobs_and_optional_input_policies(
+    tmp_path: Path, parent_0fa897a_root: Path
+):
+    """Item 4: zero-byte blobs allowed; legacy skips dir/unreadable optional inputs, strict refuses."""
+    repo_root = ENGINE_ROOT.parent
+    ws = tmp_path / "ws"
+    form = _make_synthetic_form_hwpx(ws / "output" / "form_copy.hwpx")
+    content = _write_plain_content(ws / "bundle" / "content.md")
+
+    empty_by = ws / "empty_build.yaml"
+    empty_prof = ws / "empty_profile.json"
+    empty_base = ws / "empty_baseline.json"
+    for p in (empty_by, empty_prof, empty_base):
+        p.touch()
+
+    # Strict frozen mode accepts 0-byte blobs and verifies exact SHA-256 + length=0.
+    req_empty = worker.freeze_report_xml_request(
+        form,
+        content,
+        tmp_path / "snap_empty",
+        build_yaml_path=empty_by,
+        form_profile_path=empty_prof,
+        baseline_path=empty_base,
+    )
+    assert req_empty["manifest"]["inputs"]["build_yaml"]["bytes"] == 0
+    assert req_empty["manifest"]["inputs"]["form_profile"]["bytes"] == 0
+    assert req_empty["manifest"]["inputs"]["baseline"]["bytes"] == 0
+    res_empty = worker.execute_frozen_xml_worker(req_empty, tmp_path / "empty_out.hwpx")
+    assert res_empty.ok is True
+
+    # Strict frozen mode refuses directory optional inputs.
+    dir_opt = ws / "opt_dir"
+    dir_opt.mkdir()
+    with pytest.raises(worker.FrozenRequestError):
+        worker.freeze_report_xml_request(
+            form, content, tmp_path / "snap_dir_prof", form_profile_path=dir_opt
+        )
+    with pytest.raises(worker.FrozenRequestError):
+        worker.freeze_report_xml_request(
+            form, content, tmp_path / "snap_dir_base", baseline_path=dir_opt
+        )
+    with pytest.raises(worker.FrozenRequestError):
+        worker.freeze_report_measurement_settings(baseline_path=dir_opt)
+
+    # Legacy CLI parity vs 0fa897a for empty files and directory optional inputs.
+    for case_name, extra_args in (
+        ("empty_build", ("--build-yaml", str(empty_by))),
+        ("empty_profile", ("--form-profile", str(empty_prof))),
+        ("empty_baseline", ("--baseline", str(empty_base))),
+        ("profile_dir", ("--form-profile", str(dir_opt))),
+        ("baseline_dir", ("--baseline", str(dir_opt))),
+    ):
+        rc_p, v_p, _ = _run_fill_cli(
+            parent_0fa897a_root,
+            mode="--assemble",
+            form=form,
+            content=content,
+            out_dir=tmp_path / f"p-{case_name}",
+            extra=extra_args,
+        )
+        rc_c, v_c, _ = _run_fill_cli(
+            repo_root,
+            mode="--assemble",
+            form=form,
+            content=content,
+            out_dir=tmp_path / f"c-{case_name}",
+            extra=extra_args,
+        )
+        assert rc_c == rc_p == 0
+        assert v_c["status"] == v_p["status"] == "xml_verified_no_proof"
+
+
+def test_regression_item5_universal_newlines_and_legacy_error_parity(
+    tmp_path: Path, parent_0fa897a_root: Path
+):
+    """Item 5: universal newline decoding (raw bytes hashed) & legacy error formatting parity."""
+    repo_root = ENGINE_ROOT.parent
+
+    # build_report text APIs normalize CR and CRLF.
+    for nl in ("\r", "\r\n"):
+        by_cfg = br.parse_build_yaml_text(f"base_pt: 11{nl}delete_texts:{nl}  - \"x\"{nl}")
+        assert by_cfg["base_pt"] == "11"
+        assert by_cfg["delete_texts"] == ["x"]
+        compiled = br.compile_bundle_text(
+            f"---{nl}base_pt: 12{nl}---{nl}{nl}## SECTION: I. Intro{nl}{nl}Body.{nl}",
+            build_yaml_text=f"caption_pt: 8{nl}",
+        )
+        assert compiled["ok"] is True
+
+    # Freeze preserves raw CR/CRLF bytes in blob digest while compiling cleanly.
+    for tag, nl in (("cr", "\r"), ("crlf", "\r\n")):
+        ws = tmp_path / f"nl-{tag}"
+        form = _make_synthetic_form_hwpx(ws / "form.hwpx")
+        content = ws / "bundle" / "content.md"
+        content.parent.mkdir(parents=True, exist_ok=True)
+        raw_bytes = f"---{nl}base_pt: 12{nl}---{nl}{nl}## SECTION: I. Intro{nl}{nl}Body.{nl}".encode(
+            "utf-8"
+        )
+        content.write_bytes(raw_bytes)
+        req = worker.freeze_report_xml_request(form, content, ws / "snap")
+        assert req["manifest"]["inputs"]["content"]["sha256"] == hashlib.sha256(raw_bytes).hexdigest()
+        assert worker.execute_frozen_xml_worker(req, ws / "frozen.hwpx").ok is True
+
+        rc_p, v_p, _ = _run_fill_cli(
+            parent_0fa897a_root, mode="--assemble", form=form, content=content, out_dir=ws / "p_out"
+        )
+        rc_c, v_c, _ = _run_fill_cli(
+            repo_root, mode="--assemble", form=form, content=content, out_dir=ws / "c_out"
+        )
+        assert rc_c == rc_p == 0
+        assert v_c["status"] == v_p["status"] == "xml_verified_no_proof"
+
+    # Legacy error formatting parity: bad content, unsupported op, missing figure.
+    ws_err = tmp_path / "err_cases"
+    form_e = _make_synthetic_form_hwpx(ws_err / "form.hwpx")
+
+    bad_content = ws_err / "bundle" / "bad.md"
+    bad_content.parent.mkdir(parents=True, exist_ok=True)
+    bad_content.write_text("no section header\n", encoding="utf-8")
+
+    unsup_content = ws_err / "bundle" / "unsup.md"
+    unsup_content.write_text("## SECTION: I. Intro\n\nBody.\n", encoding="utf-8")
+    unsup_by = ws_err / "unsup_build.yaml"
+    unsup_by.write_text('delete_texts:\n  - "Guide"\n', encoding="utf-8")
+
+    miss_fig_content = ws_err / "bundle" / "miss_fig.md"
+    miss_fig_content.write_text(
+        '## SECTION: I. Intro\n\n[[FIG file="missing.png" width=80]]\n', encoding="utf-8"
+    )
+
+    for cname, cpath, extra in (
+        ("bad_content", bad_content, ()),
+        ("unsup_op", unsup_content, ("--build-yaml", str(unsup_by))),
+        ("miss_fig", miss_fig_content, ()),
+    ):
+        rc_p, p_p, _ = _run_fill_cli(
+            parent_0fa897a_root,
+            mode="--assemble",
+            form=form_e,
+            content=cpath,
+            out_dir=ws_err / f"p-{cname}",
+            extra=extra,
+        )
+        rc_c, p_c, _ = _run_fill_cli(
+            repo_root,
+            mode="--assemble",
+            form=form_e,
+            content=cpath,
+            out_dir=ws_err / f"c-{cname}",
+            extra=extra,
+        )
+        assert rc_c == rc_p == 2
+        assert p_c == p_p
+
+
+def test_regression_item6_figure_containment_backslashes_and_resolved_basename(
+    tmp_path: Path, parent_0fa897a_root: Path
+):
+    """Item 6: strict figure containment + backslash rel + resolved.name; legacy abs/symlink parity."""
+    repo_root = ENGINE_ROOT.parent
+    ws = tmp_path / "ws"
+    env = _build_rich_workspace(ws)
+    sub_fig = ws / "bundle" / "figures" / "nested" / "sub.png"
+    _tiny_png(sub_fig, 10, 5)
+
+    # Strict rejections: leading /, leading \, UNC \\, drive prefix C:, NUL, ..
+    for bad_ref in (
+        "/etc/passwd",
+        "\\abs\\plot.png",
+        "\\\\server\\share\\plot.png",
+        "C:plot.png",
+        "C:\\plot.png",
+        "a\x00b.png",
+        "nested\\..\\..\\outside.png",
+    ):
+        with pytest.raises(worker.FrozenRequestError) as bad_exc:
+            worker._resolve_bundle_figure(ws / "bundle", bad_ref)
+        assert bad_exc.value.code in {"asset_path_escape", "invalid_asset_path"}
+
+    # Strict accepts relative backslash nested\sub.png -> rel_posix="nested/sub.png".
+    cand_bs, rel_bs, name_bs = worker._resolve_bundle_figure(
+        ws / "bundle", "nested\\sub.png"
+    )
+    assert cand_bs.resolve() == sub_fig.resolve()
+    assert rel_bs == "nested/sub.png"
+    assert name_bs == "sub.png"
+
+    # Internal symlink inside bundle/figures preserves resolved target basename plot.png.
+    alias = env["figure"].with_name("alias.png")
+    if _try_symlink(alias, env["figure"]):
+        env["content"].write_text(
+            '## SECTION: I. Intro\n\n[[FIG file="alias.png" width=80]]\n',
+            encoding="utf-8",
+        )
+        req = worker.freeze_report_xml_request(env["form"], env["content"], ws / "snap_sym")
+        pic_op = next(o for o in req["operation"]["params"]["ops"] if o["op"] == "insert_picture")
+        assert pic_op["asset_ref"]["name"] == "plot.png"
+        frozen_out = ws / "frozen_sym.hwpx"
+        worker.execute_frozen_xml_worker(req, frozen_out)
+
+        p_out = ws / "p_sym"
+        c_out = ws / "c_sym"
+        assert _run_fill_cli(parent_0fa897a_root, mode="--assemble", form=env["form"], content=env["content"], out_dir=p_out)[0] == 0
+        assert _run_fill_cli(repo_root, mode="--assemble", form=env["form"], content=env["content"], out_dir=c_out)[0] == 0
+        for hwpx in (frozen_out, p_out / "out.hwpx", c_out / "out.hwpx"):
+            sec_xml = _zip_members(hwpx)["Contents/section0.xml"].decode("utf-8")
+            assert "Original file: plot.png" in sec_xml
+
+    # Legacy CLI allows absolute figure path just like 0fa897a.
+    ws_abs = tmp_path / "ws_abs"
+    env_abs = _build_rich_workspace(ws_abs)
+    env_abs["content"].write_text(
+        f'## SECTION: I. Intro\n\n[[FIG file="{env_abs["figure"]}" width=80]]\n',
+        encoding="utf-8",
+    )
+    rc_pa, _, _ = _run_fill_cli(
+        parent_0fa897a_root,
+        mode="--assemble",
+        form=env_abs["form"],
+        content=env_abs["content"],
+        out_dir=ws_abs / "p_abs",
+    )
+    rc_ca, _, _ = _run_fill_cli(
+        repo_root,
+        mode="--assemble",
+        form=env_abs["form"],
+        content=env_abs["content"],
+        out_dir=ws_abs / "c_abs",
+    )
+    assert rc_ca == rc_pa == 0
+    assert _zip_members(ws_abs / "c_abs" / "out.hwpx") == _zip_members(
+        ws_abs / "p_abs" / "out.hwpx"
+    )
+
+
+def test_regression_item7_private_exec_subdir_and_symlink_staging_defense(tmp_path: Path):
+    """Item 7: worker uses fresh private exec-* dir inside work_dir and rejects symlink work_dir."""
+    env = _build_rich_workspace(tmp_path / "ws")
+    req = worker.freeze_report_xml_request(
+        env["form"],
+        env["content"],
+        tmp_path / "snap",
+        build_yaml_path=env["build_yaml"],
+        form_profile_path=env["profile"],
+        baseline_path=env["baseline"],
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    victim = tmp_path / "outside.txt"
+    victim.write_bytes(b"KEEP ME")
+    _symlink_or_skip(work / "source_form.hwpx", victim)
+    _symlink_or_skip(work / "ops.json", victim)
+    _symlink_or_skip(work / "baseline.json", victim)
+
+    res = worker.execute_frozen_xml_worker(req, tmp_path / "out.hwpx", work_dir=work)
+    assert res.ok is True
+    assert victim.read_bytes() == b"KEEP ME"
+    assert sorted(p.name for p in work.iterdir()) == [
+        "baseline.json",
+        "ops.json",
+        "source_form.hwpx",
+    ]
+
+    sym_work = tmp_path / "sym_work"
+    _symlink_or_skip(sym_work, tmp_path / "real_target", target_is_directory=True)
+    with pytest.raises(worker.FrozenWorkerRefusal) as w_exc:
+        worker.execute_frozen_xml_worker(req, tmp_path / "out2.hwpx", work_dir=sym_work)
+    assert w_exc.value.code == "invalid_work_dir"
+
+
+def test_regression_item8_blob_read_defends_intermediate_dir_toctou_swap(tmp_path: Path):
+    """Item 8: dir_fd pinned blob read refuses intermediate blobs/ TOCTOU swaps."""
+    if os.name == "nt" or os.open not in os.supports_dir_fd:
+        pytest.skip("POSIX dir_fd TOCTOU test requires dir_fd support")
+    env = _build_rich_workspace(tmp_path / "ws")
+    snap = tmp_path / "snap"
+    req = worker.freeze_report_xml_request(env["form"], env["content"], snap)
+    form_ref = {
+        k: req["manifest"]["inputs"]["form"][k] for k in ("blob", "sha256", "bytes")
+    }
+    blobs = snap / "blobs"
+    external = tmp_path / "external_blobs"
+    shutil.copytree(blobs, external)
+
+    # Case A: swap blobs/ to symlink right before os.open("blobs", ..., dir_fd=snap_fd)
+    real_open = os.open
+
+    def race_before_blobs_open(path, flags, *a, **kw):
+        if str(path) == "blobs" and "dir_fd" in kw and (blobs.exists() and not blobs.is_symlink()):
+            blobs.rename(snap / "blobs_orig_a")
+            _symlink_or_skip(blobs, external, target_is_directory=True)
+        return real_open(path, flags, *a, **kw)
+
+    with patch.object(os, "open", race_before_blobs_open):
+        with pytest.raises(worker.FrozenRequestError) as exc_a:
+            worker._read_verified_blob(snap, form_ref)
+    assert exc_a.value.code == "blob_path_escape"
+
+    # Restore real blobs/ and test Case B: swap blobs/ AFTER blobs_fd opened, before leaf open.
+    if blobs.is_symlink():
+        blobs.unlink()
+    (snap / "blobs_orig_a").rename(blobs)
+
+    opened_paths: list[str] = []
+
+    def race_after_blobs_open(path, flags, *a, **kw):
+        if str(path) == form_ref["sha256"] and "dir_fd" in kw:
+            blobs.rename(snap / "blobs_orig_b")
+            _symlink_or_skip(blobs, external, target_is_directory=True)
+            opened_paths.append(str(path))
+        return real_open(path, flags, *a, **kw)
+
+    with patch.object(os, "open", race_after_blobs_open):
+        with pytest.raises(worker.FrozenRequestError) as exc_b:
+            worker._read_verified_blob(snap, form_ref)
+    assert exc_b.value.code == "blob_path_escape"
+    assert opened_paths == [form_ref["sha256"]]
+
+
+def test_regression_item9_worker_never_reads_live_form_and_host_staleness_helper(
+    tmp_path: Path,
+):
+    """Item 9: worker and frozen mode_assemble/mode_loop succeed when live form is deleted."""
+    env = _build_rich_workspace(tmp_path / "ws")
+    req = worker.freeze_report_xml_request(
+        env["form"],
+        env["content"],
+        tmp_path / "snap",
+        build_yaml_path=env["build_yaml"],
+        form_profile_path=env["profile"],
+        baseline_path=env["baseline"],
+    )
+    wrong_form = _make_synthetic_form_hwpx(tmp_path / "wrong.hwpx", blanks_before_second=6)
+    with pytest.raises(worker.FrozenRequestError) as staleness_exc:
+        worker.verify_live_form_digest(req, wrong_form)
+    assert staleness_exc.value.code == "form_digest_mismatch"
+
+    # Even with wrong_form as form_path (different path), worker consumes frozen snapshot only.
+    res_wrong = worker.execute_frozen_xml_worker(
+        req, tmp_path / "out_wrong_path.hwpx", form_path=wrong_form
+    )
+    assert res_wrong.ok is True
+
+    # Delete live form; worker, frozen mode_assemble, and frozen mode_loop all succeed.
+    env["form"].unlink()
+    res_del = worker.execute_frozen_xml_worker(
+        req, tmp_path / "out_deleted.hwpx", form_path=env["form"]
+    )
+    assert res_del.ok is True
+
+    for mode_fn, out_name in ((fr.mode_assemble, "asm_del"), (fr.mode_loop, "loop_del")):
+        out_dir = tmp_path / out_name
+        ns = argparse.Namespace(
+            form=str(env["form"]),
+            content=str(env["content"]),
+            out_dir=str(out_dir),
+            build_yaml=str(env["build_yaml"]),
+            baseline=str(env["baseline"]),
+            form_profile=str(env["profile"]),
+            engine="xml",
+            pdf_cmd=None,
+            max_iters=1,
+            max_loops=1,
+            trouble_table=None,
+            guide_file=None,
+            spacing_skip_pages=None,
+            gap_skip_pages=None,
+            bottom_skip_pages=None,
+            fig_count=None,
+            kill_stale=False,
+            proof=False,
+            out=None,
+        )
+        mode_fn(ns, frozen_request=req)
+        assert (out_dir / "out.hwpx").is_file()
+
+
+@pytest.mark.parametrize(
+    "input_key",
+    ["form", "content", "build_yaml", "form_profile", "baseline", "asset"],
+)
+def test_regression_item10_worker_verifies_all_present_input_blobs_before_staging(
+    tmp_path: Path, monkeypatch, input_key: str
+):
+    """Item 10: tampering or symlinking ANY present manifest input blob refuses before edit."""
+    env = _build_rich_workspace(tmp_path / "ws")
+    # Ensure baseline has empty para_formats so use_restore=False still has baseline present=True.
+    env["baseline"].write_text('{"para_formats": []}', encoding="utf-8")
+    snap = tmp_path / "snap"
+    req = worker.freeze_report_xml_request(
+        env["form"],
+        env["content"],
+        snap,
+        build_yaml_path=env["build_yaml"],
+        form_profile_path=env["profile"],
+        baseline_path=env["baseline"],
+    )
+    if input_key == "asset":
+        rel_blob = req["manifest"]["inputs"]["assets"][0]["blob"]
+    else:
+        rel_blob = req["manifest"]["inputs"][input_key]["blob"]
+    blob_path = snap / rel_blob
+    orig = blob_path.read_bytes()
+
+    monkeypatch.setattr(
+        xml_backend, "main", lambda *_a, **_k: pytest.fail("xml_backend must not run")
+    )
+
+    blob_path.write_bytes(orig + b"tampered")
+    with pytest.raises(worker.FrozenRequestError) as tam_exc:
+        worker.execute_frozen_xml_worker(req, tmp_path / "never_tam.hwpx")
+    assert tam_exc.value.code == "blob_digest_mismatch"
+
+    blob_path.unlink()
+    _symlink_or_skip(blob_path, env["form"])
+    with pytest.raises(worker.FrozenRequestError) as sym_exc:
+        worker.execute_frozen_xml_worker(req, tmp_path / "never_sym.hwpx")
+    assert sym_exc.value.code == "blob_path_escape"
+
+
+def test_regression_item11_parent_0fa897a_cli_vs_current_cli_and_worker_parity(
+    tmp_path: Path, parent_0fa897a_root: Path
+):
+    """Item 11: full CLI parity vs 0fa897a parent across ops, replay, ZIP, verdicts, receipts."""
+    repo_root = ENGINE_ROOT.parent
+    ws_p = tmp_path / "ws_parent"
+    ws_c = tmp_path / "ws_current"
+    env_p = _build_rich_workspace(ws_p)
+    env_c = _build_rich_workspace(ws_c)
+
+    out_p = ws_p / "output"
+    out_c = ws_c / "output"
+    extra = (
+        "--build-yaml",
+        str(env_p["build_yaml"]),
+        "--form-profile",
+        str(env_p["profile"]),
+        "--baseline",
+        str(env_p["baseline"]),
+    )
+    extra_c = (
+        "--build-yaml",
+        str(env_c["build_yaml"]),
+        "--form-profile",
+        str(env_c["profile"]),
+        "--baseline",
+        str(env_c["baseline"]),
+    )
+
+    rc_p, v_p, _ = _run_fill_cli(
+        parent_0fa897a_root,
+        mode="--assemble",
+        form=env_p["form"],
+        content=env_p["content"],
+        out_dir=out_p,
+        extra=extra,
+    )
+    rc_c, v_c, _ = _run_fill_cli(
+        repo_root,
+        mode="--assemble",
+        form=env_c["form"],
+        content=env_c["content"],
+        out_dir=out_c,
+        extra=extra_c,
+    )
+    assert rc_c == rc_p == 0
+    assert _normalize_cli_verdict(v_c, out_c) == _normalize_cli_verdict(v_p, out_p)
+    assert _zip_members(out_c / "out.hwpx") == _zip_members(out_p / "out.hwpx")
+
+    # Compare receipts
+    rec_p = json.loads((out_p / "proof" / "backend" / "receipt.json").read_text(encoding="utf-8"))
+    rec_c = json.loads((out_c / "proof" / "backend" / "receipt.json").read_text(encoding="utf-8"))
+    assert _normalize_receipt(rec_c, env_c["form"], out_c / "out.hwpx") == _normalize_receipt(
+        rec_p, env_p["form"], out_p / "out.hwpx"
+    )
+
+    # Compare against direct frozen worker ZIP members as well
+    req = worker.freeze_report_xml_request(
+        env_c["form"],
+        env_c["content"],
+        tmp_path / "snap_parity",
+        build_yaml_path=env_c["build_yaml"],
+        form_profile_path=env_c["profile"],
+        baseline_path=env_c["baseline"],
+    )
+    frozen_hwpx = tmp_path / "frozen_parity.hwpx"
+    worker.execute_frozen_xml_worker(req, frozen_hwpx)
+    assert _zip_members(frozen_hwpx) == _zip_members(out_p / "out.hwpx")
+
+
+def test_regression_item12_symlink_escape_asset_refusal(tmp_path: Path):
+    """Item 12: dedicated symlink escape test using _symlink_or_skip."""
+    ws = tmp_path / "ws"
+    form = _make_synthetic_form_hwpx(ws / "form.hwpx")
+    figs = ws / "bundle" / "figures"
+    figs.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.png"
+    _tiny_png(outside)
+    _symlink_or_skip(figs / "escape.png", outside)
+    content = ws / "bundle" / "content.md"
+    content.write_text('## SECTION: I. Intro\n\n[[FIG file="escape.png" width=80]]\n', encoding="utf-8")
+    with pytest.raises(worker.FrozenRequestError) as exc:
+        worker.freeze_report_xml_request(form, content, tmp_path / "snap")
+    assert exc.value.code == "asset_symlink_escape"
+
+
+def test_regression_item12_symlink_snapshot_blob_refusal(tmp_path: Path):
+    """Item 12: dedicated symlink snapshot blob test using _symlink_or_skip."""
+    env = _build_rich_workspace(tmp_path / "ws")
+    snap = tmp_path / "snap"
+    req = worker.freeze_report_xml_request(env["form"], env["content"], snap)
+    blob = snap / req["manifest"]["inputs"]["form"]["blob"]
+    blob.unlink()
+    _symlink_or_skip(blob, env["form"])
+    with pytest.raises(worker.FrozenRequestError) as exc:
+        worker.execute_frozen_xml_worker(req, tmp_path / "out.hwpx")
+    assert exc.value.code == "blob_path_escape"
+
+
+def test_regression_item12_symlink_or_skip_handles_oserror_1314(tmp_path: Path):
+    """Item 12: _symlink_or_skip skips cleanly with reason on Windows OSError(1314)."""
+    target = tmp_path / "target.txt"
+    target.write_text("hi", encoding="utf-8")
+    with patch.object(
+        os,
+        "symlink",
+        side_effect=OSError(1314, "A required privilege is not held by the client"),
+    ):
+        with pytest.raises(pytest.skip.Exception) as skip_exc:
+            _symlink_or_skip(tmp_path / "link.txt", target)
+    assert "Windows symlink capability unavailable" in str(skip_exc.value)
+
+
+def test_regression_item13_live_path_forbidden_reachable_and_no_unused_shutil(
+    tmp_path: Path,
+):
+    """Item 13: insert_picture.path raises live_path_forbidden; report_xml_worker has no shutil."""
+    env = _build_rich_workspace(tmp_path / "ws")
+    req = worker.freeze_report_xml_request(env["form"], env["content"], tmp_path / "snap")
+    op = copy.deepcopy(req["operation"])
+    pic = next(o for o in op["params"]["ops"] if o["op"] == "insert_picture")
+    pic["path"] = "/etc/passwd"
+    with pytest.raises(worker.FrozenWorkerRefusal) as exc:
+        worker.validate_report_assemble_op(op)
+    assert exc.value.code == "live_path_forbidden"
+
+    src_path = SCRIPTS_DIR / "report_xml_worker.py"
+    tree = ast.parse(src_path.read_text(encoding="utf-8"), filename=str(src_path))
+    shutil_refs = sum(
+        isinstance(node, ast.Name) and node.id == "shutil" for node in ast.walk(tree)
+    )
+    shutil_imports = sum(
+        isinstance(node, ast.alias) and node.name == "shutil" for node in ast.walk(tree)
+    )
+    assert shutil_refs == 0
+    assert shutil_imports == 0

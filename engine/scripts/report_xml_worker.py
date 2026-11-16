@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import dataclasses
+import errno
 import hashlib
 import inspect
 import io
@@ -21,7 +22,6 @@ import json
 import math
 import os
 import re
-import shutil
 import stat
 import sys
 import tempfile
@@ -140,6 +140,71 @@ class FrozenRequestError(FrozenReportError):
 
 class FrozenWorkerRefusal(FrozenReportError):
     """Raised when the frozen worker refuses an unsupported or invalid request."""
+
+
+class LegacyOpsRefusal(FrozenWorkerRefusal):
+    """Raised in legacy preparation when compiled ops are unsupported by xml_backend."""
+
+    def __init__(self, legacy_ops: list[dict], unsupported: list[str], message: str):
+        self.legacy_ops = legacy_ops
+        self.unsupported = unsupported
+        super().__init__("unsupported_xml_op", message, unsupported=unsupported)
+
+
+class LegacyAssetMissingError(FrozenRequestError):
+    """Raised in legacy preparation when a referenced figure asset is missing/invalid."""
+
+    def __init__(self, legacy_ops: list[dict], code: str, message: str):
+        self.legacy_ops = legacy_ops
+        super().__init__(code, message)
+
+
+_FILE_ATTRIBUTE_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+
+
+def _is_symlink_or_reparse(st: os.stat_result) -> bool:
+    """Return True when ``st`` represents a symlink or Windows reparse point."""
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    attrs = getattr(st, "st_file_attributes", 0)
+    return bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _paths_alias_same_target(
+    src: str | Path | None, dst: str | Path | None
+) -> bool:
+    """Return True when two paths resolve to the same target or existing file."""
+    if src is None or dst is None:
+        return False
+    src_p = Path(src)
+    dst_p = Path(dst)
+    try:
+        if src_p.exists() and dst_p.exists() and os.path.samefile(src_p, dst_p):
+            return True
+    except OSError:
+        pass
+    try:
+        return os.path.normcase(str(src_p.resolve())) == os.path.normcase(
+            str(dst_p.resolve())
+        )
+    except (OSError, RuntimeError):
+        return os.path.normcase(os.path.abspath(str(src_p))) == os.path.normcase(
+            os.path.abspath(str(dst_p))
+        )
+
+
+def _path_resolves_inside(path: str | Path, root: str | Path) -> bool:
+    """Return True when ``path`` resolves to ``root`` or a descendant of ``root``."""
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+        return True
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _normalize_newlines(text: str) -> str:
+    """Apply universal-newline normalization without mutating source bytes."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 @dataclasses.dataclass
@@ -279,9 +344,9 @@ def _validate_blob_ref(
             "invalid_blob_ref", f"{field_name}.sha256 must be 64-hex"
         )
     size = ref["bytes"]
-    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+    if not _is_nonneg_int(size):
         raise FrozenWorkerRefusal(
-            "invalid_blob_ref", f"{field_name}.bytes must be a positive int"
+            "invalid_blob_ref", f"{field_name}.bytes must be a non-negative int"
         )
     blob = ref["blob"]
     if not isinstance(blob, str) or "\\" in blob or blob.startswith("/"):
@@ -317,6 +382,12 @@ def _validate_xml_op(op: Any, index: int) -> None:
             "unsupported_xml_op",
             f"unsupported XML operation at ops[{index}]: {op_name!r}",
             op=op_name,
+            index=index,
+        )
+    if op_name == "insert_picture" and "path" in op:
+        raise FrozenWorkerRefusal(
+            "live_path_forbidden",
+            f"ops[{index}] insert_picture must not carry a live path",
             index=index,
         )
     allowed_keys = _OP_ALLOWED_KEYS[op_name]
@@ -470,12 +541,6 @@ def _validate_xml_op(op: Any, index: int) -> None:
         return
 
     if op_name == "insert_picture":
-        if "path" in op:
-            raise FrozenWorkerRefusal(
-                "live_path_forbidden",
-                f"ops[{index}] insert_picture must not carry a live path",
-                index=index,
-            )
         _validate_blob_ref(
             op.get("asset_ref"), field_name=f"ops[{index}].asset_ref", require_name=True
         )
@@ -978,13 +1043,24 @@ def _resolve_bundle_figure(bundle_dir: Path, raw_file: Any) -> tuple[Path, str, 
         raise FrozenRequestError(
             "invalid_asset_path", f"invalid figure reference: {raw_file!r}"
         )
-    if "\\" in raw_file or _DRIVE_PREFIX_RE.match(raw_file) or raw_file.startswith("/"):
+    if (
+        raw_file.startswith("/")
+        or raw_file.startswith("\\")
+        or raw_file.startswith("\\\\")
+        or _DRIVE_PREFIX_RE.match(raw_file)
+    ):
         raise FrozenRequestError(
             "asset_path_escape",
             f"figure path must be relative inside bundle/figures: {raw_file!r}",
         )
-    posix = PurePosixPath(raw_file)
-    if posix.is_absolute() or any(part in {"", ".", ".."} for part in posix.parts):
+    normalized = raw_file.replace("\\", "/")
+    posix = PurePosixPath(normalized)
+    if (
+        posix.is_absolute()
+        or not posix.parts
+        or ".." in normalized.split("/")
+        or any(part in {"", ".", ".."} for part in posix.parts)
+    ):
         raise FrozenRequestError(
             "asset_path_escape",
             f"figure path escapes bundle/figures: {raw_file!r}",
@@ -1033,16 +1109,63 @@ def _resolve_bundle_figure(bundle_dir: Path, raw_file: Any) -> tuple[Path, str, 
         raise FrozenRequestError(
             "invalid_asset", f"figure asset is not a regular file: {candidate}"
         )
+    if not _is_safe_basename(resolved.name):
+        raise FrozenRequestError(
+            "invalid_asset_path",
+            f"figure resolved basename is unsafe: {resolved.name!r}",
+        )
     rel_posix = "/".join(posix.parts)
-    return candidate, rel_posix, safe_name
+    return candidate, rel_posix, resolved.name
+
+
+def _resolve_legacy_figure(bundle_dir: Path, raw_file: Any) -> tuple[Path, str, str]:
+    """Resolve a figure reference under 0fa897a legacy policy (allows abs/symlinks)."""
+    if not isinstance(raw_file, str) or not raw_file or "\x00" in raw_file:
+        raise FrozenRequestError(
+            "invalid_asset_path", f"invalid figure reference: {raw_file!r}"
+        )
+    figs_dir = bundle_dir / "figures"
+    candidate = figs_dir / raw_file
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise FrozenRequestError(
+            "missing_asset", f"figure asset missing: {candidate}"
+        ) from exc
+    except OSError as exc:
+        raise FrozenRequestError(
+            "unreadable_asset", f"figure asset cannot be inspected: {candidate}"
+        ) from exc
+    if not resolved.is_file():
+        raise FrozenRequestError(
+            "invalid_asset", f"figure asset is not a regular file: {candidate}"
+        )
+    if not _is_safe_basename(resolved.name):
+        raise FrozenRequestError(
+            "invalid_asset_path",
+            f"figure resolved basename is unsafe: {resolved.name!r}",
+        )
+    rel_posix: str | None = None
+    try:
+        figs_real = figs_dir.resolve(strict=True)
+        cand_rel = resolved.relative_to(figs_real).as_posix()
+        if cand_rel and cand_rel != "." and "\\" not in cand_rel and not cand_rel.startswith("/"):
+            rel_posix = cand_rel
+    except (OSError, ValueError):
+        rel_posix = None
+    if rel_posix is None:
+        key_hash = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
+        rel_posix = f"legacy/{key_hash}/{resolved.name}"
+    return resolved, rel_posix, resolved.name
 
 
 def _write_blob(blobs_dir: Path, sha256: str, data: bytes) -> dict[str, Any]:
     target = blobs_dir / sha256
-    if target.is_symlink():
-        raise FrozenRequestError(
-            "blob_path_escape", f"blob target cannot be a symlink: {target}"
-        )
+    if os.path.lexists(target):
+        if _is_symlink_or_reparse(target.lstat()):
+            raise FrozenRequestError(
+                "blob_path_escape", f"blob target cannot be a symlink: {target}"
+            )
     if target.exists():
         existing = target.read_bytes()
         if hashlib.sha256(existing).hexdigest() != sha256 or len(existing) != len(data):
@@ -1092,7 +1215,7 @@ def _parse_content_silently(content_text: str) -> tuple[dict, list]:
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         try:
-            return build_report.parse_content(content_text)
+            return build_report.parse_content(_normalize_newlines(content_text))
         except SystemExit as exc:
             raw_out = buf.getvalue().strip()
             msg = None
@@ -1109,7 +1232,24 @@ def _parse_content_silently(content_text: str) -> tuple[dict, list]:
             ) from exc
 
 
-def freeze_report_xml_request(
+def _collect_unsupported_xml_ops(ops: list[dict[str, Any]]) -> list[str]:
+    """Return xml_backend-order list of unsupported operation names in ``ops``."""
+    unsupported: list[str] = []
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        name = op.get("op")
+        if not isinstance(name, str) or not name:
+            continue
+        if name not in SUPPORTED_XML_OPS and name not in unsupported:
+            unsupported.append(name)
+        elif name == "insert_equation" and not eqn.validate_equation_operation(op)[2]:
+            if name not in unsupported:
+                unsupported.append(name)
+    return unsupported
+
+
+def _freeze_report_xml_internal(
     form_path: str | Path,
     content_path: str | Path,
     snapshot_dir: str | Path,
@@ -1120,15 +1260,18 @@ def freeze_report_xml_request(
     expected_form_sha256: str | None = None,
     compile_override: Callable[..., dict] | None = None,
     _capture_hook: Callable[..., Any] | None = None,
-) -> dict[str, Any]:
-    """Capture consistent snapshots, compile once, and freeze a report_assemble request."""
+    strict_inputs: bool = True,
+    postprocess_settings: dict[str, Any] | None = None,
+    legacy_mode: bool = False,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Shared implementation for strict frozen request and legacy preparation."""
     build_yaml_path = build_yaml_path or None
     form_profile_path = form_profile_path or None
     baseline_path = baseline_path or None
     form_p = Path(form_path)
     content_p = Path(content_path)
     snap_p = Path(snapshot_dir)
-    if snap_p.is_symlink():
+    if os.path.lexists(snap_p) and _is_symlink_or_reparse(snap_p.lstat()):
         raise FrozenRequestError(
             "invalid_snapshot_dir", f"snapshot_dir cannot be a symlink: {snap_p}"
         )
@@ -1150,7 +1293,7 @@ def freeze_report_xml_request(
     content_rec = _capture_regular_file(content_p, label="content")
     captured_records.append(content_rec)
     try:
-        content_text = content_rec["data"].decode("utf-8")
+        content_text = _normalize_newlines(content_rec["data"].decode("utf-8"))
     except UnicodeDecodeError as exc:
         raise FrozenRequestError(
             "invalid_content_encoding", f"content.md is not UTF-8: {exc}"
@@ -1199,7 +1342,9 @@ def freeze_report_xml_request(
     compiler_build_yaml_text: str | None = None
     if build_yaml_rec is not None:
         try:
-            compiler_build_yaml_text = build_yaml_rec["data"].decode("utf-8")
+            compiler_build_yaml_text = _normalize_newlines(
+                build_yaml_rec["data"].decode("utf-8")
+            )
         except UnicodeDecodeError as exc:
             raise FrozenRequestError(
                 "invalid_build_yaml_encoding", f"build.yaml is not UTF-8: {exc}"
@@ -1220,10 +1365,16 @@ def freeze_report_xml_request(
             form_profile_reason = "missing"
             absent_candidates.append(fp_p)
         else:
-            form_profile_rec = _capture_regular_file(fp_p, label="form_profile")
-            captured_records.append(form_profile_rec)
+            try:
+                form_profile_rec = _capture_regular_file(fp_p, label="form_profile")
+                captured_records.append(form_profile_rec)
+            except FrozenRequestError:
+                if strict_inputs:
+                    raise
+                form_profile_rec = None
+                form_profile_reason = "missing"
     form_profile_text = (
-        form_profile_rec["data"].decode("utf-8", errors="replace")
+        _normalize_newlines(form_profile_rec["data"].decode("utf-8", errors="replace"))
         if form_profile_rec is not None
         else None
     )
@@ -1240,12 +1391,20 @@ def freeze_report_xml_request(
             baseline_reason = "missing"
             absent_candidates.append(bl_p)
         else:
-            baseline_rec = _capture_regular_file(bl_p, label="baseline")
-            captured_records.append(baseline_rec)
+            try:
+                baseline_rec = _capture_regular_file(bl_p, label="baseline")
+                captured_records.append(baseline_rec)
+            except FrozenRequestError:
+                if strict_inputs:
+                    raise
+                baseline_rec = None
+                baseline_reason = "missing"
     baseline_obj: dict | None = None
     if baseline_rec is not None:
         try:
-            loaded_bl = json.loads(baseline_rec["data"].decode("utf-8"))
+            loaded_bl = json.loads(
+                _normalize_newlines(baseline_rec["data"].decode("utf-8"))
+            )
             if isinstance(loaded_bl, dict):
                 baseline_obj = loaded_bl
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1255,6 +1414,7 @@ def freeze_report_xml_request(
     bundle_dir = content_p.parent
     fig_records: dict[str, dict[str, Any]] = {}
     parsed_sections: list | None = None
+    pending_asset_error: FrozenRequestError | None = None
     if compile_override is None:
         _parsed_meta, parsed_sections = _parse_content_silently(content_text)
         for sec in parsed_sections:
@@ -1264,9 +1424,25 @@ def freeze_report_xml_request(
                 raw_file = blk.get("file")
                 if not raw_file:
                     continue
-                cand_path, rel_posix, safe_name = _resolve_bundle_figure(
-                    bundle_dir, raw_file
-                )
+                if strict_inputs:
+                    cand_path, rel_posix, safe_name = _resolve_bundle_figure(
+                        bundle_dir, raw_file
+                    )
+                else:
+                    try:
+                        cand_path, rel_posix, safe_name = _resolve_legacy_figure(
+                            bundle_dir, raw_file
+                        )
+                    except FrozenRequestError as exc:
+                        if legacy_mode and exc.code in {
+                            "missing_asset",
+                            "invalid_asset",
+                            "unreadable_asset",
+                        }:
+                            if pending_asset_error is None:
+                                pending_asset_error = exc
+                            continue
+                        raise
                 if raw_file not in fig_records:
                     rec = _capture_regular_file(cand_path, label="asset")
                     rec["rel_path"] = rel_posix
@@ -1319,14 +1495,33 @@ def freeze_report_xml_request(
         compiled_counts = dict(compiled["counts"])
         section_anchors = [s["anchor"] for s in compiled["sections"]]
 
+    if legacy_mode:
+        unsupported = _collect_unsupported_xml_ops(raw_ops)
+        if unsupported:
+            raise LegacyOpsRefusal(
+                legacy_ops=copy.deepcopy(raw_ops),
+                unsupported=unsupported,
+                message=(
+                    f"xml_backend edit failed: unsupported={unsupported} anchors_missing=[]"
+                ),
+            )
+        if pending_asset_error is not None:
+            raise LegacyAssetMissingError(
+                legacy_ops=copy.deepcopy(raw_ops),
+                code=pending_asset_error.code,
+                message=pending_asset_error.message,
+            )
+
     # Materialize snapshot directory and write content-addressed blobs.
     snap_p.mkdir(parents=True, exist_ok=True)
     snap_real = snap_p.resolve(strict=True)
     blobs_dir = snap_real / "blobs"
-    if blobs_dir.is_symlink():
-        raise FrozenRequestError(
-            "blob_path_escape", f"blobs dir cannot be a symlink: {blobs_dir}"
-        )
+    if os.path.lexists(blobs_dir):
+        blobs_lstat = blobs_dir.lstat()
+        if _is_symlink_or_reparse(blobs_lstat) or not stat.S_ISDIR(blobs_lstat.st_mode):
+            raise FrozenRequestError(
+                "blob_path_escape", f"blobs dir cannot be a symlink: {blobs_dir}"
+            )
     blobs_dir.mkdir(exist_ok=True)
 
     form_blob_ref = _write_blob(blobs_dir, form_rec["sha256"], form_rec["data"])
@@ -1358,11 +1553,22 @@ def freeze_report_xml_request(
     else:
         form_profile_input = {"present": False, "reason": form_profile_reason}
 
-    if baseline_rec is not None:
+    if postprocess_settings is not None and postprocess_settings.get("use_restore"):
+        bl_bytes = postprocess_settings.get("baseline_bytes")
+        if not isinstance(bl_bytes, (bytes, bytearray)):
+            raise FrozenRequestError(
+                "invalid_baseline",
+                "postprocess_settings.baseline_bytes required when use_restore is true",
+            )
+        bl_bytes_val = bytes(bl_bytes)
+        bl_sha = hashlib.sha256(bl_bytes_val).hexdigest()
+        bl_blob_ref = _write_blob(blobs_dir, bl_sha, bl_bytes_val)
+        baseline_input: dict[str, Any] = {"present": True, **bl_blob_ref}
+    elif baseline_rec is not None:
         bl_blob_ref = _write_blob(
             blobs_dir, baseline_rec["sha256"], baseline_rec["data"]
         )
-        baseline_input: dict[str, Any] = {"present": True, **bl_blob_ref}
+        baseline_input = {"present": True, **bl_blob_ref}
     else:
         bl_blob_ref = None
         baseline_input = {"present": False, "reason": baseline_reason}
@@ -1399,18 +1605,36 @@ def freeze_report_xml_request(
                         "invalid_asset_path",
                         "compile_override insert_picture missing path",
                     )
-                figs_real = (bundle_dir / "figures").resolve()
-                p_obj = Path(raw_path)
-                try:
-                    rel_part = p_obj.resolve(strict=True).relative_to(figs_real).as_posix()
-                except (OSError, ValueError) as exc:
-                    raise FrozenRequestError(
-                        "asset_path_escape",
-                        f"compile_override insert_picture path escapes bundle/figures: {raw_path}",
-                    ) from exc
-                cand_path, rel_posix, safe_name = _resolve_bundle_figure(
-                    bundle_dir, rel_part
-                )
+                if strict_inputs:
+                    figs_real = (bundle_dir / "figures").resolve()
+                    p_obj = Path(raw_path)
+                    try:
+                        rel_part = p_obj.resolve(strict=True).relative_to(figs_real).as_posix()
+                    except (OSError, ValueError) as exc:
+                        raise FrozenRequestError(
+                            "asset_path_escape",
+                            f"compile_override insert_picture path escapes bundle/figures: {raw_path}",
+                        ) from exc
+                    cand_path, rel_posix, safe_name = _resolve_bundle_figure(
+                        bundle_dir, rel_part
+                    )
+                else:
+                    try:
+                        cand_path, rel_posix, safe_name = _resolve_legacy_figure(
+                            bundle_dir, raw_path
+                        )
+                    except FrozenRequestError as exc:
+                        if legacy_mode and exc.code in {
+                            "missing_asset",
+                            "invalid_asset",
+                            "unreadable_asset",
+                        }:
+                            raise LegacyAssetMissingError(
+                                legacy_ops=copy.deepcopy(raw_ops),
+                                code=exc.code,
+                                message=exc.message,
+                            ) from exc
+                        raise
                 rec = _capture_regular_file(cand_path, label="asset")
                 rec["rel_path"] = rel_posix
                 rec["name"] = safe_name
@@ -1431,14 +1655,51 @@ def freeze_report_xml_request(
         manifest_assets_by_key[key] for key in sorted(manifest_assets_by_key)
     ]
 
-    settings = _resolve_postprocess_settings(
-        postprocess_build_yaml_text=postprocess_build_yaml_text,
-        form_profile_requested=form_profile_requested,
-        form_profile_obj=form_profile_obj,
-        section_anchors=section_anchors,
-        baseline_ref=bl_blob_ref,
-        baseline_obj=baseline_obj,
-    )
+    if postprocess_settings is not None:
+        use_restore_flag = bool(postprocess_settings.get("use_restore"))
+        settings = {
+            "tidy_before": (
+                list(postprocess_settings["tidy_before"])
+                if postprocess_settings.get("tidy_before")
+                else None
+            ),
+            "tidy_after": (
+                list(postprocess_settings["tidy_after"])
+                if postprocess_settings.get("tidy_after")
+                else None
+            ),
+            "tidy_soft": bool(postprocess_settings.get("tidy_soft")),
+            "tidy_keep_map": (
+                dict(postprocess_settings["tidy_keep_map"])
+                if postprocess_settings.get("tidy_keep_map") is not None
+                else None
+            ),
+            "derived_tidy_anchors": (
+                list(postprocess_settings["derived_tidy_anchors"])
+                if postprocess_settings.get("derived_tidy_anchors")
+                else None
+            ),
+            "use_restore": use_restore_flag,
+            "baseline_ref": dict(bl_blob_ref) if use_restore_flag and bl_blob_ref else None,
+            "keep_with_next": (
+                list(postprocess_settings["keep_with_next"])
+                if postprocess_settings.get("keep_with_next")
+                else None
+            ),
+            "use_typeset_defaults": bool(
+                postprocess_settings.get("use_typeset_defaults")
+            ),
+            "profile_anchors": list(postprocess_settings.get("profile_anchors") or []),
+        }
+    else:
+        settings = _resolve_postprocess_settings(
+            postprocess_build_yaml_text=postprocess_build_yaml_text,
+            form_profile_requested=form_profile_requested,
+            form_profile_obj=form_profile_obj,
+            section_anchors=section_anchors,
+            baseline_ref=bl_blob_ref,
+            baseline_obj=baseline_obj,
+        )
 
     manifest = {
         "schema": MANIFEST_SCHEMA,
@@ -1481,7 +1742,79 @@ def freeze_report_xml_request(
         "anchors": list(compiled_anchors),
     }
     validate_frozen_xml_request(request)
+    return request, raw_ops
+
+
+def freeze_report_xml_request(
+    form_path: str | Path,
+    content_path: str | Path,
+    snapshot_dir: str | Path,
+    *,
+    build_yaml_path: str | Path | None = None,
+    form_profile_path: str | Path | None = None,
+    baseline_path: str | Path | None = None,
+    expected_form_sha256: str | None = None,
+    compile_override: Callable[..., dict] | None = None,
+    _capture_hook: Callable[..., Any] | None = None,
+    strict_inputs: bool = True,
+) -> dict[str, Any]:
+    """Capture consistent snapshots, compile once, and freeze a report_assemble request."""
+    request, _raw_ops = _freeze_report_xml_internal(
+        form_path,
+        content_path,
+        snapshot_dir,
+        build_yaml_path=build_yaml_path,
+        form_profile_path=form_profile_path,
+        baseline_path=baseline_path,
+        expected_form_sha256=expected_form_sha256,
+        compile_override=compile_override,
+        _capture_hook=_capture_hook,
+        strict_inputs=strict_inputs,
+        postprocess_settings=None,
+        legacy_mode=False,
+    )
     return request
+
+
+def prepare_legacy_xml_request(
+    form_path: str | Path,
+    content_path: str | Path,
+    snapshot_dir: str | Path,
+    *,
+    build_yaml_path: str | Path | None = None,
+    form_profile_path: str | Path | None = None,
+    baseline_path: str | Path | None = None,
+    postprocess_settings: dict[str, Any] | None = None,
+    compile_override: Callable[..., dict] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Prepare a legacy XML worker request preserving 0fa897a input/ops semantics."""
+    return _freeze_report_xml_internal(
+        form_path,
+        content_path,
+        snapshot_dir,
+        build_yaml_path=build_yaml_path,
+        form_profile_path=form_profile_path,
+        baseline_path=baseline_path,
+        compile_override=compile_override,
+        strict_inputs=False,
+        postprocess_settings=postprocess_settings,
+        legacy_mode=True,
+    )
+
+
+def verify_live_form_digest(request: dict[str, Any], form_path: str | Path) -> dict[str, Any]:
+    """Verify at host/preparation boundaries that live ``form_path`` matches the frozen form."""
+    validate_frozen_xml_request(request)
+    expected_sha256 = request["manifest"]["inputs"]["form"]["sha256"]
+    live_form = _capture_regular_file(Path(form_path), label="form")
+    if live_form["sha256"] != expected_sha256:
+        raise FrozenRequestError(
+            "form_digest_mismatch",
+            f"form_path digest {live_form['sha256']} != frozen {expected_sha256}",
+            actual=live_form["sha256"],
+            expected=expected_sha256,
+        )
+    return {"sha256": live_form["sha256"], "bytes": live_form["bytes"]}
 
 
 def freeze_report_measurement_settings(
@@ -1498,6 +1831,7 @@ def freeze_report_measurement_settings(
     gap_skip_pages: list[int] | set[int] | None = None,
     bottom_skip_pages: list[int] | set[int] | None = None,
     fill_overrides: dict | None = None,
+    strict_inputs: bool = True,
 ) -> dict[str, Any]:
     """Capture rendering and layout-measurement settings separately from report_assemble."""
     build_yaml_path = build_yaml_path or None
@@ -1509,7 +1843,7 @@ def freeze_report_measurement_settings(
         if by_p.exists():
             rec = _capture_regular_file(by_p, label="build_yaml")
             cfg = build_report.parse_build_yaml_text(
-                rec["data"].decode("utf-8")
+                _normalize_newlines(rec["data"].decode("utf-8"))
             )
             for key, val in (cfg.get("fill") or {}).items():
                 fill[key] = val
@@ -1539,12 +1873,17 @@ def freeze_report_measurement_settings(
     if baseline_path is not None:
         bl_p = Path(baseline_path)
         if bl_p.exists():
-            bl_rec = _capture_regular_file(bl_p, label="baseline")
-            baseline_info = {
-                "present": True,
-                "sha256": bl_rec["sha256"],
-                "bytes": bl_rec["bytes"],
-            }
+            try:
+                bl_rec = _capture_regular_file(bl_p, label="baseline")
+                baseline_info = {
+                    "present": True,
+                    "sha256": bl_rec["sha256"],
+                    "bytes": bl_rec["bytes"],
+                }
+            except FrozenRequestError:
+                if strict_inputs:
+                    raise
+                baseline_info = {"present": False, "reason": "missing"}
         else:
             baseline_info = {"present": False, "reason": "missing"}
 
@@ -1572,36 +1911,291 @@ def freeze_report_measurement_settings(
     }
 
 
-def _read_verified_blob(snap_root: Path, ref: dict[str, Any]) -> bytes:
-    sha_expected, size_expected, blob_rel = _validate_blob_ref(
-        ref, field_name="blob_ref", require_name=False
-    ) if set(ref) == {"blob", "sha256", "bytes"} else _validate_blob_ref(
-        ref, field_name="blob_ref", require_name=True
-    )
+def _windows_final_path_for_fd(fd: int) -> Path | None:
+    """Return kernel-resolved path for an open Windows file descriptor."""
+    import ctypes
+    import msvcrt
+
+    handle = msvcrt.get_osfhandle(fd)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    fn = kernel32.GetFinalPathNameByHandleW
+    fn.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32]
+    fn.restype = ctypes.c_uint32
+    size = 512
+    while size <= 32768:
+        buf = ctypes.create_unicode_buffer(size)
+        used = fn(handle, buf, size, 0)
+        if used == 0:
+            return None
+        if used < size - 1:
+            value = buf.value
+            if value.startswith("\\\\?\\UNC\\"):
+                value = "\\\\" + value[8:]
+            elif value.startswith("\\\\?\\"):
+                value = value[4:]
+            return Path(value)
+        size *= 2
+    return None
+
+
+def _windows_verify_dir_not_reparse(dir_path: Path, *, error_code: str) -> Path:
+    """Verify on Windows that ``dir_path`` is a real directory without reparse points."""
     try:
-        snap_st = snap_root.lstat()
+        st = dir_path.lstat()
     except OSError as exc:
+        raise FrozenRequestError(error_code, f"directory unreadable: {dir_path}") from exc
+    if _is_symlink_or_reparse(st) or not stat.S_ISDIR(st.st_mode):
         raise FrozenRequestError(
-            "invalid_snapshot_dir", f"snapshot_dir unreadable: {snap_root}"
-        ) from exc
-    if stat.S_ISLNK(snap_st.st_mode) or not stat.S_ISDIR(snap_st.st_mode):
-        raise FrozenRequestError(
-            "invalid_snapshot_dir",
-            f"snapshot_dir must be a non-symlink directory: {snap_root}",
+            error_code, f"directory cannot be a symlink or reparse point: {dir_path}"
         )
-    snap_real = snap_root.resolve(strict=True)
-    blobs_dir = snap_root / "blobs"
+    resolved = dir_path.resolve(strict=True)
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
+    create_file.restype = ctypes.c_void_p
+    close_handle = kernel32.CloseHandle
+    # GENERIC_READ=0x80000000, FILE_SHARE_READ|WRITE|DELETE=7, OPEN_EXISTING=3,
+    # FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT = 0x02200000
+    invalid = ctypes.c_void_p(-1).value
+    handle = create_file(str(dir_path), 0x80000000, 7, None, 3, 0x02200000, None)
+    if handle == invalid:
+        raise FrozenRequestError(error_code, f"directory handle unavailable: {dir_path}")
     try:
-        blobs_st = blobs_dir.lstat()
-    except OSError as exc:
-        raise FrozenRequestError(
-            "missing_blob", f"blobs directory missing in snapshot: {blobs_dir}"
-        ) from exc
-    if stat.S_ISLNK(blobs_st.st_mode) or not stat.S_ISDIR(blobs_st.st_mode):
-        raise FrozenRequestError(
-            "blob_path_escape", f"blobs directory cannot be a symlink: {blobs_dir}"
+        fn = kernel32.GetFinalPathNameByHandleW
+        fn.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32]
+        fn.restype = ctypes.c_uint32
+        buf = ctypes.create_unicode_buffer(4096)
+        used = fn(handle, buf, 4096, 0)
+        if used == 0:
+            raise FrozenRequestError(error_code, f"directory final path unavailable: {dir_path}")
+        val = buf.value
+        if val.startswith("\\\\?\\UNC\\"):
+            val = "\\\\" + val[8:]
+        elif val.startswith("\\\\?\\"):
+            val = val[4:]
+        if os.path.normcase(str(Path(val))) != os.path.normcase(str(resolved)):
+            raise FrozenRequestError(
+                error_code, f"directory resolved unexpectedly: {dir_path}"
+            )
+    finally:
+        close_handle(handle)
+    return resolved
+
+
+def _read_verified_blob_posix(
+    snap_root: Path, sha_expected: str, size_expected: int, blob_rel: str
+) -> bytes:
+    dir_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_BINARY", 0)
+    snap_fd: int | None = None
+    blobs_fd: int | None = None
+    blob_fd: int | None = None
+    try:
+        try:
+            snap_lstat = snap_root.lstat()
+        except OSError as exc:
+            raise FrozenRequestError(
+                "invalid_snapshot_dir", f"snapshot_dir unreadable: {snap_root}"
+            ) from exc
+        if _is_symlink_or_reparse(snap_lstat) or not stat.S_ISDIR(snap_lstat.st_mode):
+            raise FrozenRequestError(
+                "invalid_snapshot_dir",
+                f"snapshot_dir must be a non-symlink directory: {snap_root}",
+            )
+        try:
+            snap_fd = os.open(str(snap_root), dir_flags)
+        except OSError as exc:
+            if exc.errno in (getattr(errno, "ELOOP", -1), getattr(errno, "ENOTDIR", -1)):
+                raise FrozenRequestError(
+                    "invalid_snapshot_dir",
+                    f"snapshot_dir must be a non-symlink directory: {snap_root}",
+                ) from exc
+            raise FrozenRequestError(
+                "invalid_snapshot_dir", f"snapshot_dir unreadable: {snap_root}"
+            ) from exc
+        snap_fstat = os.fstat(snap_fd)
+        if (snap_fstat.st_dev, snap_fstat.st_ino) != (
+            snap_lstat.st_dev,
+            snap_lstat.st_ino,
+        ):
+            raise FrozenRequestError(
+                "invalid_snapshot_dir",
+                f"snapshot_dir changed while opening: {snap_root}",
+            )
+
+        try:
+            blobs_lstat = os.stat("blobs", dir_fd=snap_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise FrozenRequestError(
+                "missing_blob", f"blobs directory missing in snapshot: {snap_root / 'blobs'}"
+            ) from exc
+        except OSError as exc:
+            raise FrozenRequestError(
+                "missing_blob",
+                f"blobs directory unreadable in snapshot: {snap_root / 'blobs'}",
+            ) from exc
+        if _is_symlink_or_reparse(blobs_lstat) or not stat.S_ISDIR(blobs_lstat.st_mode):
+            raise FrozenRequestError(
+                "blob_path_escape",
+                f"blobs directory cannot be a symlink: {snap_root / 'blobs'}",
+            )
+        try:
+            blobs_fd = os.open("blobs", dir_flags, dir_fd=snap_fd)
+        except OSError as exc:
+            if exc.errno == getattr(errno, "ELOOP", -1):
+                raise FrozenRequestError(
+                    "blob_path_escape",
+                    f"blobs directory cannot be a symlink: {snap_root / 'blobs'}",
+                ) from exc
+            if exc.errno == errno.ENOENT:
+                raise FrozenRequestError(
+                    "missing_blob",
+                    f"blobs directory missing in snapshot: {snap_root / 'blobs'}",
+                ) from exc
+            raise FrozenRequestError(
+                "blob_path_escape",
+                f"blobs directory invalid in snapshot: {snap_root / 'blobs'}",
+            ) from exc
+        blobs_fstat = os.fstat(blobs_fd)
+        if (blobs_fstat.st_dev, blobs_fstat.st_ino) != (
+            blobs_lstat.st_dev,
+            blobs_lstat.st_ino,
+        ):
+            raise FrozenRequestError(
+                "blob_path_escape",
+                f"blobs directory changed during open: {snap_root / 'blobs'}",
+            )
+
+        try:
+            leaf_lstat = os.stat(sha_expected, dir_fd=blobs_fd, follow_symlinks=False)
+        except FileNotFoundError as exc:
+            raise FrozenRequestError(
+                "missing_blob", f"snapshot blob missing: {blob_rel}"
+            ) from exc
+        except OSError as exc:
+            raise FrozenRequestError(
+                "missing_blob", f"snapshot blob unreadable: {blob_rel}"
+            ) from exc
+        if _is_symlink_or_reparse(leaf_lstat) or not stat.S_ISREG(leaf_lstat.st_mode):
+            raise FrozenRequestError(
+                "blob_path_escape",
+                f"snapshot blob must be a non-symlink file: {blob_rel}",
+            )
+        try:
+            blob_fd = os.open(sha_expected, file_flags, dir_fd=blobs_fd)
+        except OSError as exc:
+            if exc.errno == getattr(errno, "ELOOP", -1):
+                raise FrozenRequestError(
+                    "blob_path_escape",
+                    f"snapshot blob must be a non-symlink file: {blob_rel}",
+                ) from exc
+            if exc.errno == errno.ENOENT:
+                raise FrozenRequestError(
+                    "missing_blob", f"snapshot blob missing: {blob_rel}"
+                ) from exc
+            raise FrozenRequestError(
+                "unreadable_blob", f"failed reading blob {blob_rel}: {exc}"
+            ) from exc
+        blob_fstat = os.fstat(blob_fd)
+        if (
+            _is_symlink_or_reparse(blob_fstat)
+            or not stat.S_ISREG(blob_fstat.st_mode)
+            or (blob_fstat.st_dev, blob_fstat.st_ino)
+            != (leaf_lstat.st_dev, leaf_lstat.st_ino)
+        ):
+            raise FrozenRequestError(
+                "blob_path_escape", f"snapshot blob changed during open: {blob_rel}"
+            )
+
+        try:
+            blobs_after = os.stat("blobs", dir_fd=snap_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise FrozenRequestError(
+                "blob_path_escape",
+                f"blobs directory disappeared during read: {snap_root / 'blobs'}",
+            ) from exc
+        if _is_symlink_or_reparse(blobs_after) or (
+            blobs_after.st_dev,
+            blobs_after.st_ino,
+        ) != (blobs_fstat.st_dev, blobs_fstat.st_ino):
+            raise FrozenRequestError(
+                "blob_path_escape",
+                f"blobs directory swapped during read: {snap_root / 'blobs'}",
+            )
+
+        with os.fdopen(blob_fd, "rb") as stream:
+            blob_fd = None
+            try:
+                return stream.read()
+            except OSError as exc:
+                raise FrozenRequestError(
+                    "unreadable_blob", f"failed reading blob {blob_rel}: {exc}"
+                ) from exc
+    finally:
+        for fd in (blob_fd, blobs_fd, snap_fd):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+
+def _read_verified_blob_fallback(
+    snap_root: Path, sha_expected: str, blob_rel: str
+) -> bytes:
+    if os.name == "nt":
+        snap_real = _windows_verify_dir_not_reparse(
+            snap_root, error_code="invalid_snapshot_dir"
         )
-    target = snap_root / blob_rel
+        blobs_dir = snap_real / "blobs"
+        if not os.path.lexists(blobs_dir):
+            raise FrozenRequestError(
+                "missing_blob", f"blobs directory missing in snapshot: {blobs_dir}"
+            )
+        blobs_real = _windows_verify_dir_not_reparse(
+            blobs_dir, error_code="blob_path_escape"
+        )
+        if os.path.normcase(str(blobs_real)) != os.path.normcase(str(snap_real / "blobs")):
+            raise FrozenRequestError(
+                "blob_path_escape", f"blobs directory escapes snapshot_dir: {blobs_dir}"
+            )
+    else:
+        try:
+            snap_st = snap_root.lstat()
+        except OSError as exc:
+            raise FrozenRequestError(
+                "invalid_snapshot_dir", f"snapshot_dir unreadable: {snap_root}"
+            ) from exc
+        if _is_symlink_or_reparse(snap_st) or not stat.S_ISDIR(snap_st.st_mode):
+            raise FrozenRequestError(
+                "invalid_snapshot_dir",
+                f"snapshot_dir must be a non-symlink directory: {snap_root}",
+            )
+        snap_real = snap_root.resolve(strict=True)
+        blobs_dir = snap_root / "blobs"
+        try:
+            blobs_st = blobs_dir.lstat()
+        except OSError as exc:
+            raise FrozenRequestError(
+                "missing_blob", f"blobs directory missing in snapshot: {blobs_dir}"
+            ) from exc
+        if _is_symlink_or_reparse(blobs_st) or not stat.S_ISDIR(blobs_st.st_mode):
+            raise FrozenRequestError(
+                "blob_path_escape", f"blobs directory cannot be a symlink: {blobs_dir}"
+            )
+        blobs_real = blobs_dir.resolve(strict=True)
+
+    target = blobs_real / sha_expected
     try:
         leaf_st = target.lstat()
     except FileNotFoundError as exc:
@@ -1612,28 +2206,65 @@ def _read_verified_blob(snap_root: Path, ref: dict[str, Any]) -> bytes:
         raise FrozenRequestError(
             "missing_blob", f"snapshot blob unreadable: {blob_rel}"
         ) from exc
-    if stat.S_ISLNK(leaf_st.st_mode) or not stat.S_ISREG(leaf_st.st_mode):
+    if _is_symlink_or_reparse(leaf_st) or not stat.S_ISREG(leaf_st.st_mode):
         raise FrozenRequestError(
             "blob_path_escape", f"snapshot blob must be a non-symlink file: {blob_rel}"
         )
-    try:
-        target.resolve(strict=True).relative_to(snap_real)
-    except (OSError, ValueError) as exc:
-        raise FrozenRequestError(
-            "blob_path_escape", f"snapshot blob escapes snapshot_dir: {blob_rel}"
-        ) from exc
 
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(str(target), flags)
     try:
+        opened_st = os.fstat(fd)
+        if _is_symlink_or_reparse(opened_st) or not stat.S_ISREG(opened_st.st_mode):
+            raise FrozenRequestError(
+                "blob_path_escape", f"snapshot blob must be a regular file: {blob_rel}"
+            )
+        if os.name == "nt":
+            final_path = _windows_final_path_for_fd(fd)
+            if final_path is None or os.path.normcase(str(final_path)) != os.path.normcase(
+                str(blobs_real / sha_expected)
+            ):
+                raise FrozenRequestError(
+                    "blob_path_escape", f"snapshot blob escapes snapshot_dir: {blob_rel}"
+                )
         with os.fdopen(fd, "rb") as stream:
-            data = stream.read()
+            fd = -1
+            return stream.read()
     except OSError as exc:
         raise FrozenRequestError(
             "unreadable_blob", f"failed reading blob {blob_rel}: {exc}"
         ) from exc
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+_POSIX_DIR_FD_SUPPORTED = (
+    os.name != "nt"
+    and os.open in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+    and hasattr(os, "O_NOFOLLOW")
+    and hasattr(os, "O_DIRECTORY")
+)
+
+
+def _read_verified_blob(snap_root: Path, ref: dict[str, Any]) -> bytes:
+    sha_expected, size_expected, blob_rel = (
+        _validate_blob_ref(ref, field_name="blob_ref", require_name=False)
+        if set(ref) == {"blob", "sha256", "bytes"}
+        else _validate_blob_ref(ref, field_name="blob_ref", require_name=True)
+    )
+    if _POSIX_DIR_FD_SUPPORTED:
+        data = _read_verified_blob_posix(
+            snap_root, sha_expected, size_expected, blob_rel
+        )
+    else:
+        data = _read_verified_blob_fallback(snap_root, sha_expected, blob_rel)
 
     if len(data) != size_expected or hashlib.sha256(data).hexdigest() != sha_expected:
         raise FrozenRequestError(
@@ -1843,6 +2474,18 @@ def _atomic_write_bytes(target: Path, data: bytes) -> None:
             pass
 
 
+def _write_exclusive_nofollow(target: Path, data: bytes) -> None:
+    """Create ``target`` exclusively without following symlinks and write ``data``."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(target), flags, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(data)
+        stream.flush()
+
+
 def execute_frozen_xml_worker(
     request: dict[str, Any],
     out_hwpx: str | Path,
@@ -1850,7 +2493,6 @@ def execute_frozen_xml_worker(
     snapshot_dir: str | Path | None = None,
     form_path: str | Path | None = None,
     work_dir: str | Path | None = None,
-    legacy_ops_out: str | Path | None = None,
     runners: XmlWorkerRunners | None = None,
 ) -> XmlWorkerResult:
     """Execute one frozen ``report_assemble`` XML request without re-compiling."""
@@ -1861,37 +2503,62 @@ def execute_frozen_xml_worker(
         if snapshot_dir is not None
         else Path(request["snapshot_dir"])
     )
+    if form_path is not None and _paths_alias_same_target(form_path, out_hwpx):
+        raise FrozenWorkerRefusal(
+            "output_aliases_form",
+            "xml_backend edit failed: unsupported=[] anchors_missing=[]",
+        )
+    if _path_resolves_inside(out_hwpx, snap_root):
+        raise FrozenWorkerRefusal(
+            "output_inside_snapshot",
+            f"out_hwpx cannot resolve inside snapshot_dir: {out_hwpx}",
+        )
+
     manifest = request["manifest"]
+    inputs = manifest["inputs"]
     params = request["operation"]["params"]
     settings = params["settings"]
-    form_input = manifest["inputs"]["form"]
-    form_ref = {
-        "blob": form_input["blob"],
-        "sha256": form_input["sha256"],
-        "bytes": form_input["bytes"],
-    }
 
-    if form_path is not None:
-        live_form = _capture_regular_file(Path(form_path), label="form")
-        if live_form["sha256"] != form_ref["sha256"]:
-            raise FrozenRequestError(
-                "form_digest_mismatch",
-                f"form_path digest {live_form['sha256']} != frozen {form_ref['sha256']}",
-                actual=live_form["sha256"],
-                expected=form_ref["sha256"],
-            )
+    verified_blobs: dict[tuple[str, str, int], bytes] = {}
 
-    form_bytes = _read_verified_blob(snap_root, form_ref)
+    def _verify_input_entry(entry: dict[str, Any]) -> bytes:
+        ref = {
+            "blob": entry["blob"],
+            "sha256": entry["sha256"],
+            "bytes": entry["bytes"],
+        }
+        key = (ref["blob"], ref["sha256"], ref["bytes"])
+        data = _read_verified_blob(snap_root, ref)
+        verified_blobs[key] = data
+        return data
+
+    form_input = inputs["form"]
+    form_bytes = _verify_input_entry(form_input)
+    _verify_input_entry(inputs["content"])
+    for opt_key in ("build_yaml", "form_profile", "baseline"):
+        opt_entry = inputs[opt_key]
+        if opt_entry.get("present"):
+            _verify_input_entry(opt_entry)
+    for asset_entry in inputs["assets"]:
+        _verify_input_entry(asset_entry)
+
     baseline_bytes: bytes | None = None
     if settings["use_restore"]:
-        baseline_bytes = _read_verified_blob(snap_root, settings["baseline_ref"])
+        b_ref = settings["baseline_ref"]
+        b_key = (b_ref["blob"], b_ref["sha256"], b_ref["bytes"])
+        baseline_bytes = verified_blobs.get(b_key)
+        if baseline_bytes is None:
+            baseline_bytes = _read_verified_blob(snap_root, b_ref)
 
     staged_ops = copy.deepcopy(params["ops"])
     staged_asset_blobs: list[tuple[int, str, bytes]] = []
     for idx, op in enumerate(staged_ops):
         if op.get("op") == "insert_picture":
             asset_ref = op.pop("asset_ref")
-            asset_bytes = _read_verified_blob(snap_root, asset_ref)
+            a_key = (asset_ref["blob"], asset_ref["sha256"], asset_ref["bytes"])
+            asset_bytes = verified_blobs.get(a_key)
+            if asset_bytes is None:
+                asset_bytes = _read_verified_blob(snap_root, asset_ref)
             staged_asset_blobs.append((idx, asset_ref["name"], asset_bytes))
 
     active_runners = runners or XmlWorkerRunners()
@@ -1904,27 +2571,21 @@ def execute_frozen_xml_worker(
 
     def _run_in_work_dir(work_root: Path) -> XmlWorkerResult:
         staged_form = work_root / "source_form.hwpx"
-        staged_form.write_bytes(form_bytes)
+        _write_exclusive_nofollow(staged_form, form_bytes)
 
         for idx, asset_name, asset_bytes in staged_asset_blobs:
             asset_dest = work_root / "assets" / str(idx) / asset_name
-            asset_dest.parent.mkdir(parents=True, exist_ok=True)
-            asset_dest.write_bytes(asset_bytes)
+            _write_exclusive_nofollow(asset_dest, asset_bytes)
             staged_ops[idx]["path"] = str(asset_dest)
 
         staged_ops_path = work_root / "ops.json"
         ops_json_text = json.dumps(staged_ops, ensure_ascii=False)
-        staged_ops_path.write_text(ops_json_text, encoding="utf-8")
-
-        if legacy_ops_out is not None:
-            legacy_p = Path(legacy_ops_out)
-            legacy_p.parent.mkdir(parents=True, exist_ok=True)
-            legacy_p.write_text(ops_json_text, encoding="utf-8")
+        _write_exclusive_nofollow(staged_ops_path, ops_json_text.encode("utf-8"))
 
         staged_baseline: Path | None = None
         if baseline_bytes is not None:
             staged_baseline = work_root / "baseline.json"
-            staged_baseline.write_bytes(baseline_bytes)
+            _write_exclusive_nofollow(staged_baseline, baseline_bytes)
 
         staged_candidate = work_root / "candidate.hwpx"
         steps_executed: list[str] = []
@@ -1980,7 +2641,7 @@ def execute_frozen_xml_worker(
             ok=True,
             out_hwpx=out_path,
             manifest_digest=request["manifest_digest"],
-            source_form_sha256=form_ref["sha256"],
+            source_form_sha256=form_input["sha256"],
             output_sha256=output_sha256,
             edit_result=dict(edit_result or {}),
             tidy_result=dict(tidy_result or {}),
@@ -2002,8 +2663,33 @@ def execute_frozen_xml_worker(
 
     if work_dir is not None:
         wroot = Path(work_dir)
+        if os.path.lexists(wroot):
+            wst = wroot.lstat()
+            if _is_symlink_or_reparse(wst) or not stat.S_ISDIR(wst.st_mode):
+                raise FrozenWorkerRefusal(
+                    "invalid_work_dir",
+                    f"work_dir must be a non-symlink directory: {wroot}",
+                )
         wroot.mkdir(parents=True, exist_ok=True)
-        return _run_in_work_dir(wroot)
+        wst_after = wroot.lstat()
+        if _is_symlink_or_reparse(wst_after) or not stat.S_ISDIR(wst_after.st_mode):
+            raise FrozenWorkerRefusal(
+                "invalid_work_dir",
+                f"work_dir must be a non-symlink directory: {wroot}",
+            )
+        if os.name == "nt":
+            wroot_real = _windows_verify_dir_not_reparse(
+                wroot, error_code="invalid_work_dir"
+            )
+        else:
+            wroot_real = wroot.resolve(strict=True)
+        if _path_resolves_inside(wroot_real, snap_root):
+            raise FrozenWorkerRefusal(
+                "invalid_work_dir",
+                f"work_dir cannot resolve inside snapshot_dir: {wroot}",
+            )
+        with tempfile.TemporaryDirectory(prefix="exec-", dir=str(wroot_real)) as exec_dir:
+            return _run_in_work_dir(Path(exec_dir))
 
     with tempfile.TemporaryDirectory(prefix="report-xml-worker-") as tmp_dir:
         return _run_in_work_dir(Path(tmp_dir))
