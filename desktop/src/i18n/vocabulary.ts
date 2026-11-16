@@ -1004,6 +1004,706 @@ export const VOCABULARY = {
     ko: "언어·화면 테마·작업 폴더 설정",
     en: "Language, theme & workspace settings",
   },
+  err_invalid_json: {
+    ko: "서버 응답 형식이 올바르지 않습니다.",
+    en: "Server response is not valid JSON.",
+  },
+  err_rpc_failed: {
+    ko: "요청을 처리하지 못했습니다.",
+    en: "Could not process the request.",
+  },
+  seat_editor_aria_label: {
+    ko: "이 자리에 넣을 값",
+    en: "Value for this blank",
+  },
+  approval_kind_count: { ko: "{0}건", en: "{0}" },
+  cmd_kw_open_doc: { ko: "열기 파일 선택", en: "open file" },
+  cmd_kw_open_builtin: { ko: "예시 양식 열기 기본", en: "open form example" },
+  cmd_kw_go_review: { ko: "검토 화면 이동", en: "review" },
+  cmd_kw_go_fill: { ko: "채우기 빈칸 양식 입력", en: "fill" },
+  cmd_kw_go_history: { ko: "기록 수정본 이력 비교", en: "history revisions" },
+  cmd_kw_toggle_print_view: { ko: "인쇄 화면 문서 보기", en: "print view" },
+  cmd_kw_approve: { ko: "승인 적용", en: "approve" },
+  cmd_kw_return: {
+    ko: "돌려보내기",
+    en: "return",
+  },
+  cmd_kw_export: { ko: "내보내기 저장 수정본", en: "export revision" },
+  cmd_kw_switch_language: { ko: "언어 한국어 영어", en: "language" },
+  cmd_kw_change_theme: { ko: "화면 테마 밝게 어둡게", en: "theme" },
+  cmd_kw_open_settings: {
+    ko: "설정 언어 화면 테마 작업 폴더",
+    en: "settings language theme workspace folder",
+  },
+  cmd_kw_open_by_path: { ko: "경로 자세히 열기", en: "path details" },
+  cmd_kw_operator_agent: {
+    ko: "에이전트 연결 작업 기록 인증 공급자 자세히",
+    en: "agent log credentials provider details",
+  },
+  corpus_title_gianmun_1: {
+    ko: "기안문 (별지 제1호서식)",
+    en: "Drafting Form (Annex 1)",
+  },
+  corpus_title_gianmun_2: {
+    ko: "기안문 (별지 제2호서식)",
+    en: "Drafting Form (Annex 2)",
+  },
+  corpus_title_jumin: {
+    ko: "주민등록표 등·초본 교부 신청서",
+    en: "Resident Registration Copy Request",
+  },
+  corpus_title_jeongbo_gonggae: {
+    ko: "정보공개 청구서",
+    en: "Information Disclosure Request",
+  },
+  corpus_title_saeopja: {
+    ko: "사업자등록 신청서 (개인사업자용)",
+    en: "Business Registration Application",
+  },
+  corpus_title_gajokdolbom: {
+    ko: "가족돌봄 휴직·휴가 신청서",
+    en: "Family Care Leave Request",
+  },
+  corpus_title_moel_2025: {
+    ko: "표준근로계약서 (2025)",
+    en: "Standard Employment Contract (2025)",
+  },
+  corpus_title_moel_2013: {
+    ko: "표준근로계약서 (2013)",
+    en: "Standard Employment Contract (2013)",
+  },
+  corpus_title_nrf_report: {
+    ko: "연구결과보고서 양식",
+    en: "Research Result Report Form",
+  },
+  corpus_title_kstartup: {
+    ko: "예비창업가 지원 신청서 및 사업계획서",
+    en: "Startup Support Application & Plan",
+  },
+  corpus_title_pps_collab: {
+    ko: "협업 승인 신청서",
+    en: "Collaboration Approval Request",
+  },
+  corpus_title_pps_consent: {
+    ko: "정보공개 동의서 (개인정보 수집·이용)",
+    en: "Information Disclosure Consent Form",
+  },
+  corpus_title_render_check: {
+    ko: "문서 배치 확인용 예시",
+    en: "Layout Check Sample",
+  },
+  corpus_title_table_break: {
+    ko: "표 페이지 나눔 확인용 예시",
+    en: "Table Break Check Sample",
+  },
+  corpus_source_mois: { ko: "행정안전부 예시", en: "MOIS example" },
+  corpus_source_nts: { ko: "국세청 예시", en: "NTS example" },
+  corpus_source_nsm: { ko: "국립중앙과학관 예시", en: "NSM example" },
+  corpus_source_moel: { ko: "고용노동부 예시", en: "MOEL example" },
+  corpus_source_nrf: { ko: "한국연구재단 예시", en: "NRF example" },
+  corpus_source_kised: { ko: "창업진흥원 예시", en: "KISED example" },
+  corpus_source_pps: { ko: "조달청 예시", en: "PPS example" },
+  corpus_source_internal: { ko: "내부 점검 예시", en: "Internal check sample" },
+  proj_unimpl_normalize_clones: {
+    ko: "중복 글자 서식 정리는 문서의 서식 정보를 다시 쓰는 작업이어서 검토 대기열에 정확히 표시할 수 없습니다.",
+    en: "Style clone normalization rewrites headers and cannot be accurately shown in the review queue.",
+  },
+  proj_unimpl_goto_text: {
+    ko: "위치 이동은 검토 대기열에서 지원하지 않는 작업입니다.",
+    en: "Jumping to text is not supported in the review queue.",
+  },
+  proj_refuse_op_unrepresentable: {
+    ko: "변경 작업을 검토 대기열에 정확히 표시할 수 없습니다.",
+    en: "This change operation cannot be accurately shown in the review queue.",
+  },
+  proj_refuse_partial_unrepresentable: {
+    ko: "일부 작업의 내용을 검토 대기열에 정확히 표시할 수 없습니다.",
+    en: "Some operations cannot be accurately represented in the review queue.",
+  },
+  proj_refuse_kind_unsupported: {
+    ko: "이 변경 작업은 검토 대기열에서 지원하지 않습니다.",
+    en: "This change operation is not supported in the review queue.",
+  },
+  proj_refuse_invalid_params: {
+    ko: "입력한 변경 내용을 확인해야 합니다.",
+    en: "Check the change details.",
+  },
+  proj_refuse_invalid_fields: {
+    ko: "입력한 변경 내용을 검토 대기열에 표시할 수 없습니다.",
+    en: "The change details cannot be shown in the review queue.",
+  },
+  proj_guide_color_prefix: { ko: "색상 {0}", en: "color {0}" },
+  proj_guide_charpr_prefix: { ko: "서식 번호 {0}", en: "charPr {0}" },
+  proj_guide_target_with_parts: { ko: "안내문 ({0})", en: "Guides ({0})" },
+  proj_guide_target_default: { ko: "대상 안내문", en: "Target guide text" },
+  proj_guides_deleted: { ko: "(안내문 삭제됨)", en: "(Guide text removed)" },
+  proj_addr_table_cell: { ko: "표 {0} {1}행 {2}열", en: "Table {0} R{1}C{2}" },
+  proj_addr_run_suffix: {
+    ko: "· 글자 구간 {0}",
+    en: "· Run {0}",
+  },
+  proj_addr_para_run: {
+    ko: "문단 {0} · 글자 구간 {1}",
+    en: "Paragraph {0} · Run {1}",
+  },
+  proj_addr_delete_guides: { ko: "안내문 삭제", en: "Delete guides" },
+  proj_inverse_delete_guides: {
+    ko: "안내문 지움은 지운 안내 문단과 서식을 되살릴 수 없어 되돌릴 수 없습니다.",
+    en: "Guide text removal cannot be undone because deleted guide paragraphs and formatting cannot be restored.",
+  },
+  proj_inverse_unsupported_kind: {
+    ko: "이 변경 작업은 되돌릴 수 없습니다.",
+    en: "This change operation cannot be undone.",
+  },
+  action_open_hwpx_title: { ko: "한글 문서 열기", en: "Open Hangul document" },
+  action_open_hwpx_filter: { ko: "한글 문서", en: "Hangul documents" },
+  toast_hwpx_only: {
+    ko: "지원하지 않는 파일 형식입니다. 한글 문서만 열 수 있습니다.",
+    en: "Only Hangul documents (.hwpx, .hwp) can be opened.",
+  },
+  toast_opened_first_of_many: {
+    ko: "{0}개 중 첫 문서만 열었습니다",
+    en: "Opened only the first of {0} documents.",
+  },
+  toast_not_editable_cell: {
+    ko: "이 칸은 입력용 빈칸이 아닙니다.",
+    en: "This cell is not a fillable blank.",
+  },
+  overlay_not_editable_cell: {
+    ko: "{0} — 이 칸은 입력용 빈칸이 아닙니다.",
+    en: "{0} — Not a fillable blank",
+  },
+  caret_refusal_no_address: {
+    ko: "이 줄의 문단 위치를 확인할 수 없습니다.",
+    en: "This line has no paragraph address.",
+  },
+  caret_refusal_multi_run: {
+    ko: "선택한 범위를 한 번에 고칠 수 없습니다. 문구를 나눠서 수정해야 합니다.",
+    en: "This selection cannot be edited at once. Edit smaller sections.",
+  },
+  caret_refusal_run_text_differs: {
+    ko: "이 줄에서 수정할 글자 위치를 정확히 찾을 수 없습니다.",
+    en: "Cannot resolve a single cursor offset within this text segment.",
+  },
+  caret_refusal_no_inventory: {
+    ko: "이 문단의 글자 구간 정보를 확인할 수 없습니다.",
+    en: "The runtime did not return text segments for this paragraph.",
+  },
+  caret_refusal_revision_mismatch: {
+    ko: "표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓을 수 없습니다.",
+    en: "Displayed document differs from the loaded document; cannot place cursor.",
+  },
+  caret_refusal_cross_run: {
+    ko: "선택한 범위를 한 번에 고칠 수 없습니다. 문구를 나눠서 수정해야 합니다.",
+    en: "This selection cannot be edited at once. Edit smaller sections.",
+  },
+  caret_refusal_utf16_split: {
+    ko: "선택한 위치가 한 글자의 중간이어서 수정할 수 없습니다. 글자 앞이나 뒤를 선택해야 합니다.",
+    en: "This position is inside a character and cannot be edited. Select a position before or after the character.",
+  },
+  overlay_caret_snapped: {
+    ko: "글자별 위치를 확인할 수 없어 줄 앞에 커서를 놓았습니다",
+    en: "Snapped cursor to start of line",
+  },
+  overlay_caret_offset: {
+    ko: "{0}번째 글자 앞",
+    en: "Before character {0}",
+  },
+  toast_removed_from_queue: {
+    ko: "대기열에서 뺐습니다. 이 동작으로 문서 내용은 바뀌지 않습니다.",
+    en: "Removed from queue. This action does not change the document content.",
+  },
+  err_undo_not_invertible: {
+    ko: "이 수정본에는 되돌릴 수 없는 작업이 있습니다: {0}. 안내문 지움은 지운 안내문을 원래 서식과 위치로 되살릴 수 없으며, 빈칸 채움·칸 문구 바꿈·본문 문구 바꿈 작업만 되돌릴 수 있습니다.",
+    en: "This revision contains operations that cannot be undone: {0}. Removing guide text cannot be restored with original formatting and position; only blank fills, cell text replacements, and body text replacements can be undone.",
+  },
+  err_undo_no_addresses: {
+    ko: "이 변경 제안의 작업들이 주소를 갖고 있지 않아 이전 값을 읽을 수 없습니다.",
+    en: "Operations in this change proposal carry no addresses, so previous values cannot be read.",
+  },
+  err_undo_previous_unreadable: {
+    ko: "되돌릴 이전 값을 런타임이 돌려주지 못한 자리가 있습니다. 빈 값으로 짐작해서 덮어쓰지 않습니다.",
+    en: "The runtime did not return a previous value for some targets. Refusing to guess an empty value.",
+  },
+  toast_undo_proposed: {
+    ko: "되돌리기를 제안했습니다. 승인해야 수정본이 하나 더 생깁니다.",
+    en: "Proposed undo. Approving creates a new revision.",
+  },
+  toast_proposal_returned: {
+    ko: "변경 제안을 돌려보냈습니다. 문서는 그대로입니다.",
+    en: "Returned the change proposal. The document is unchanged.",
+  },
+  reapproval_prompt: {
+    ko: "문서 또는 수정본이 바뀌어 기존 승인이 무효화되었습니다. 변경 제안을 다시 확인하고 승인해야 합니다.",
+    en: "The document or revision changed and invalidated the previous approval. Review the updated change proposal and approve again.",
+  },
+  toast_apply_cancelling: {
+    ko: "적용을 멈추라고 알렸습니다. 진행 중인 한 단계는 끝납니다.",
+    en: "Requested cancellation. The current step will finish first.",
+  },
+  err_pipeline_workspace_missing: {
+    ko: "작업 폴더 경로를 입력해야 합니다.",
+    en: "Please enter a workspace path.",
+  },
+  gate_decision_approved: {
+    ko: "승인했습니다",
+    en: "Approved",
+  },
+  gate_decision_rejected: {
+    ko: "돌려보냈습니다",
+    en: "Returned",
+  },
+  toast_gate_resolved: {
+    ko: "{1}",
+    en: "{1}",
+  },
+  err_recovery_receipt_mismatch: {
+    ko: "복구 대상 수정본의 검증 기록이 중단된 적용 요청과 일치하지 않습니다.",
+    en: "The recovery revision's verification record does not match the interrupted apply request.",
+  },
+  action_export_revision_dialog_title: { ko: "수정본 내보내기", en: "Export revision" },
+  err_export_file_mismatch: {
+    ko: "내보낸 파일이 수정본과 일치하지 않습니다. 이 파일을 제출하지 마십시오.",
+    en: "The exported file does not match the revision. Do not submit this file.",
+  },
+  err_export_download_failed: {
+    ko: "수정본 내려받기에 실패했습니다 (상태 {0}).",
+    en: "Failed to download revision (HTTP {0}).",
+  },
+  err_export_download_mismatch: {
+    ko: "내려받은 파일이 수정본과 일치하지 않습니다. 이 파일을 제출하지 마십시오.",
+    en: "The downloaded file does not match the revision. Do not submit this file.",
+  },
+  addr_table_cell: {
+    ko: "표 {0} {1}행 {2}열",
+    en: "Table {0} R{1}C{2}",
+  },
+  addr_paragraph: { ko: "문단 {0}", en: "Paragraph {0}" },
+  addr_anchor: { ko: "위치 “{0}”", en: "Anchor “{0}”" },
+  addr_none: { ko: "주소 없음", en: "No address" },
+  deriv_cell_borders: {
+    ko: "칸 테두리를 기준으로 위치를 찾았습니다",
+    en: "Matched by cell borders",
+  },
+  deriv_matched_text: {
+    ko: "칸의 문구를 기준으로 위치를 찾았습니다",
+    en: "Matched by cell text",
+  },
+  deriv_interpolated: {
+    ko: "항목 이름을 기준으로 위치를 추정했습니다",
+    en: "Inferred from label",
+  },
+  overlay_ambiguous_pick: {
+    ko: "후보 {0}개 — 직접 선택",
+    en: "{0} matches — choose one",
+  },
+  overlay_unmapped_sidecar: {
+    ko: "{0}번째 줄 — 양식에서 이 줄의 위치를 확인할 수 없습니다. 미리보기에 표시된 위치만으로는 수정할 위치를 정할 수 없습니다.",
+    en: "Line {0} — Could not verify this line’s position in the form. Its preview position alone cannot identify where to edit.",
+  },
+  overlay_unmapped_plain: {
+    ko: "{0}번째 줄 — 양식에서 이 줄의 위치를 확인할 수 없습니다.",
+    en: "Line {0} — could not match this line to any position in the form.",
+  },
+  overlay_user_selected: {
+    ko: "{0} — 사용자가 선택했습니다",
+    en: "{0} — selected by user",
+  },
+  prepare_note_revision_ready: {
+    ko: "수정본 인쇄 화면을 준비했습니다",
+    en: "Prepared revision print view",
+  },
+  prepare_note_original_ready: {
+    ko: "원본 인쇄 화면을 준비했습니다",
+    en: "Prepared original print view",
+  },
+  prepare_note_already_ready: {
+    ko: "이미 준비되어 있습니다",
+    en: "Already prepared",
+  },
+  err_agent_output_unreadable: {
+    ko: "에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다.",
+    en: "Could not display the agent’s proposal. Request it again.",
+  },
+  err_agent_draft_superseded: {
+    ko: "제안이 도착하는 동안 문서나 검토 대기열이 바뀌어 이 제안을 대기열에 넣지 않았습니다.",
+    en: "The document or review queue changed while this proposal arrived, so it was not queued.",
+  },
+  finding_where_checker: {
+    ko: "점검 항목",
+    en: "Check",
+  },
+  finding_reason_none: { ko: "이유 없음", en: "no reason given" },
+  finding_check_not_run: {
+    ko: "이 점검은 실행되지 않았습니다. 실행하지 않은 점검은 통과로 세지 않습니다.",
+    en: "This check did not run. Checks that did not run are not counted as passes.",
+  },
+  finding_where_cell: { ko: "표 {0} {1}행 {2}열", en: "Table {0} R{1}C{2}" },
+  finding_color_anomaly: {
+    ko: "글자색이 본문 기준과 다릅니다. 이대로 채우면 색이 남습니다.",
+    en: "Text colour differs from body baseline; filling as-is leaves coloured text.",
+  },
+  finding_script_anomaly: {
+    ko: "글자 속성이 본문 기준과 다릅니다. 서식 번호 {0} 대신 {1} 사용을 권장합니다.",
+    en: "Character formatting differs from body baseline; charPr {0} -> {1} recommended.",
+  },
+  finding_where_cell_run: {
+    ko: "표 {0} {1}행 {2}열 · 글자 구간 {3}",
+    en: "Table {0} R{1}C{2} #{3}",
+  },
+  finding_where_para_run: {
+    ko: "문단 {0} · 글자 구간 {1}",
+    en: "Paragraph {0} #{1}",
+  },
+  finding_color_unknown: { ko: "알 수 없음", en: "unknown" },
+  finding_run_color_anomaly: {
+    ko: "본문 기준과 다른 글자색을 사용하는 문구가 있습니다. 문구: “{1}”.",
+    en: "Some text uses a different colour from the body text. Text: “{1}”.",
+  },
+  finding_script_anomaly_target: {
+    ko: "글자 서식이 본문 기준과 다릅니다. 서식 번호 {1} 대신 {2} 사용을 권장합니다.",
+    en: "Character formatting differs from the body text. Use format {2} instead of {1}.",
+  },
+  finding_where_document: { ko: "문서 전체", en: "Whole document" },
+  finding_clean_notice: {
+    ko: "현재 점검할 수 있는 범위에서는 문제가 발견되지 않았습니다. 인쇄 확인과 제출 전 점검은 아직 실행할 수 없습니다.",
+    en: "No issues found within what this build can inspect. Print verification and submission checks cannot run yet.",
+  },
+  toast_nothing_to_copy: { ko: "복사할 글이 없습니다", en: "Nothing to copy" },
+  toast_copied_label: {
+    ko: "{0} 복사를 마쳤습니다",
+    en: "Copied {0}",
+  },
+  boot_checking_capabilities: {
+    ko: "지원 기능을 확인하고 있습니다",
+    en: "Checking capabilities...",
+  },
+  boot_finding_open_docs: {
+    ko: "열린 문서를 찾고 있습니다",
+    en: "Finding open documents...",
+  },
+  boot_reloading_doc: {
+    ko: "문서를 다시 읽고 있습니다",
+    en: "Reloading document...",
+  },
+  boot_restarting_runtime: {
+    ko: "작업 공간 연결을 다시 시작하고 있습니다",
+    en: "Restarting runtime...",
+  },
+  err_credential_name_missing: {
+    ko: "먼저 자격 증명 이름을 정해야 합니다.",
+    en: "Set a credential key name first.",
+  },
+  toast_credential_stored: {
+    ko: "자격 증명을 이 기계의 저장소에 넣었습니다",
+    en: "Stored credential in this machine's keyring.",
+  },
+  err_agent_host_exit: {
+    ko: "에이전트 호스트가 종료 코드 {0}로 끝났습니다.",
+    en: "Agent host exited with code {0}.",
+  },
+  err_agent_plan_before_unreadable: {
+    ko: "에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다.",
+    en: "Could not display the agent’s proposal. Request it again.",
+  },
+  agent_guide_summary_empty: {
+    ko: "문서에 있는 삭제 대상 안내문",
+    en: "Guide text marked for removal",
+  },
+  agent_guide_summary_preview: {
+    ko: "안내문 {0}건 ({1})",
+    en: "{0} guide entries ({1})",
+  },
+  agent_guide_summary_count: {
+    ko: "안내문 {0}건",
+    en: "{0} guide entries",
+  },
+  err_agent_cancelled: { ko: "사람이 중간에 멈췄습니다.", en: "Stopped by operator." },
+  toast_open_doc_before_check: {
+    ko: "점검하려면 먼저 문서를 열어야 합니다.",
+    en: "Open a document before running checks.",
+  },
+  err_invalid_root_path: {
+    ko: "작업 폴더 경로를 입력해야 합니다.",
+    en: "Enter a workspace folder path.",
+  },
+  err_workspace_start_failed: {
+    ko: "새 작업 폴더로 작업 공간을 시작하지 못했습니다.",
+    en: "Failed to start workspace with the new folder.",
+  },
+  operator_host_heading: {
+    ko: "에이전트 연결",
+    en: "Agent connection",
+  },
+  operator_host_available: {
+    ko: "사용할 수 있습니다",
+    en: "Available",
+  },
+  operator_host_unavailable: {
+    ko: "사용할 수 없습니다",
+    en: "Unavailable",
+  },
+  operator_host_unknown_reason: { ko: "확인하지 못했습니다.", en: "Could not verify." },
+  operator_host_status_btn: { ko: "상태 새로고침", en: "Refresh status" },
+  operator_host_boundary_note: {
+    ko: "서비스 제공자와 통신하는 것은 이 별도 프로세스뿐이며, 문서 처리 쪽은 네트워크에 연결되지 않습니다.",
+    en: "Only this separate process talks to providers; document processing stays offline.",
+  },
+  operator_session_summary: {
+    ko: "현재 문서: {0} · 수정본 {1}건",
+    en: "Current document: {0} · {1} revisions",
+  },
+  operator_no_open_doc: {
+    ko: "열린 문서가 없습니다",
+    en: "No open document",
+  },
+  operator_prompt_placeholder: {
+    ko: "작업 지시 입력",
+    en: "Enter an instruction for the agent",
+  },
+  operator_prompt_submit: { ko: "실행", en: "Run" },
+  operator_prompt_stop: { ko: "멈추기", en: "Stop" },
+  operator_composer_blocked: {
+    ko: "지금은 실행할 수 없습니다.",
+    en: "Cannot run right now.",
+  },
+  operator_turns_empty: {
+    ko: "아직 실행한 작업이 없습니다. 지시를 보내면 이력이 여기에 표시됩니다.",
+    en: "No turns yet. Sent instructions will appear here.",
+  },
+  operator_turn_working: {
+    ko: "실행 중입니다",
+    en: "Running",
+  },
+  operator_turn_fault: {
+    ko: "서비스 제공자 오류가 발생했습니다",
+    en: "Provider fault",
+  },
+  operator_turn_failed: {
+    ko: "실행하지 못했습니다",
+    en: "Failed",
+  },
+  operator_turn_plan_ready: {
+    ko: "변경 제안이 도착했습니다",
+    en: "Proposal arrived",
+  },
+  operator_turn_no_plan: {
+    ko: "변경 제안이 없습니다",
+    en: "No proposal",
+  },
+  operator_turn_count: { ko: "{0}단계", en: "{0} turns" },
+  operator_turn_fault_note: {
+    ko: "문서에 대한 판정이 아닙니다. 변경 제안과 승인 상태는 그대로입니다.",
+    en: "This is not a document verdict; proposals and approvals are unchanged.",
+  },
+  operator_turn_plan_adopted: {
+    ko: "검토 대기열에 반영되었습니다. 검토 화면에서 직접 승인해야 문서에 적용됩니다.",
+    en: "Adopted into the review queue. Approve on the Review screen to apply.",
+  },
+  operator_turn_plan_not_queued: {
+    ko: "제안이 도착하는 동안 문서나 검토 대기열이 바뀌어 대기열에는 넣지 않았습니다.",
+    en: "The document or review queue changed in flight, so this proposal was not queued.",
+  },
+  operator_turn_never_compiled: {
+    ko: "현재 연결에서는 요청한 기능을 지원하지 않습니다.",
+    en: "The requested capability is not supported in this session.",
+  },
+  operator_turn_events_summary: { ko: "세부 기록 ({0})", en: "Host events ({0})" },
+  operator_events_heading: { ko: "문서 작업 기록", en: "Document activity log" },
+  operator_events_count: { ko: "{0}건", en: "{0} events" },
+  operator_events_live: { ko: "실시간", en: "Live" },
+  operator_events_disconnected: {
+    ko: "연결이 끊겼습니다",
+    en: "Disconnected",
+  },
+  operator_events_idle: {
+    ko: "대기 중입니다",
+    en: "Idle",
+  },
+  operator_events_sub_error: {
+    ko: "작업 기록을 받아오지 못했습니다.",
+    en: "Failed to subscribe to events",
+  },
+  operator_events_empty: {
+    ko: "아직 이 문서에 기록된 사건이 없습니다.",
+    en: "No events recorded for this document yet.",
+  },
+  operator_protocol_chatter: { ko: "프로토콜 통신 기록 ({0})", en: "Protocol trace ({0})" },
+  operator_protocol_note: {
+    ko: "위쪽은 문서 사건 기록이고, 여기는 진단용 내부 통신 내역입니다.",
+    en: "Above is the document event log; below is diagnostic shell-runtime traffic.",
+  },
+  operator_provider_heading: { ko: "서비스 제공자", en: "Provider" },
+  operator_provider_mock_label: { ko: "내장 모의 제공자", en: "Built-in mock" },
+  operator_provider_mock_blurb: {
+    ko: "네트워크도 시계도 없는 결정론 제공자입니다. 같은 문서에는 같은 요청을 냅니다.",
+    en: "Deterministic offline provider without network or clock.",
+  },
+  operator_provider_router_label: { ko: "사용자 지정 라우터", en: "Custom router" },
+  operator_provider_router_blurb: {
+    ko: "호환 접속 주소와 모델 이름을 직접 지정합니다.",
+    en: "OpenAI-compatible endpoint with custom base URL and model.",
+  },
+  operator_provider_anthropic_label: { ko: "앤스로픽", en: "Anthropic" },
+  operator_provider_anthropic_blurb: {
+    ko: "공식 메시지 연결입니다. 키를 저장하고 지시를 보낼 때만 호출합니다.",
+    en: "Official Messages API; network calls occur only when credentials are set and run.",
+  },
+  operator_scenario_heading: { ko: "모의 대본", en: "Mock scenario" },
+  operator_scenario_propose_one: { ko: "한 칸 채우기 제안", en: "Propose single blank" },
+  operator_scenario_propose_invalid: {
+    ko: "쓰기 전 확인에서 막히는 제안",
+    en: "Propose invalid plan",
+  },
+  operator_scenario_propose_wait: { ko: "제안 후 승인 대기", en: "Propose and await approval" },
+  operator_scenario_escalate: {
+    ko: "적용 시도 후 차단 확인",
+    en: "Attempt apply (blocked at gate)",
+  },
+  operator_scenario_note: {
+    ko: "인증 키나 네트워크 없이 동작합니다.",
+    en: "Uses neither credentials nor network.",
+  },
+  operator_router_heading: { ko: "라우터 설정", en: "Router configuration" },
+  operator_field_base_url: { ko: "접속 주소", en: "Base URL" },
+  operator_field_model: { ko: "모델 이름", en: "Model" },
+  operator_field_store_key: { ko: "자격 증명 이름", en: "Credential key name" },
+  operator_anthropic_heading: { ko: "앤스로픽 설정", en: "Anthropic configuration" },
+  operator_anthropic_model_placeholder: {
+    ko: "비워 두면 기본값 사용",
+    en: "Leave empty for adapter default",
+  },
+  operator_model_empty_note: {
+    ko: "모델 이름을 비워 두면 연결 쪽 기본값을 사용합니다.",
+    en: "Leaving model blank uses the adapter's default.",
+  },
+  operator_save_settings: { ko: "설정 저장", en: "Save settings" },
+  operator_settings_dirty: { ko: "저장되지 않은 변경이 있습니다", en: "Unsaved changes" },
+  operator_credential_heading: { ko: "자격 증명", en: "Credentials" },
+  operator_credential_note: {
+    ko: "비밀 값은 이 기계의 자격 증명 저장소에만 들어가며, 설정 파일에는 이름만 저장되고 화면에 다시 표시되지 않습니다.",
+    en: "Secrets go straight to the OS credential store; config stores only the key name and secrets are never read back.",
+  },
+  operator_credential_status_label: { ko: "현재 상태", en: "Status" },
+  operator_credential_stored: {
+    ko: "저장되어 있습니다 ({0} · {1}바이트)",
+    en: "Present ({0} · {1} bytes)",
+  },
+  operator_credential_absent: {
+    ko: "저장된 자격 증명이 없습니다 ({0})",
+    en: "Absent ({0})",
+  },
+  operator_credential_unnamed: { ko: "이름 없음", en: "unnamed" },
+  operator_credential_paste_label: { ko: "값 붙여넣기", en: "Paste secret" },
+  operator_credential_placeholder: {
+    ko: "자격 증명 값 입력",
+    en: "Enter credential value",
+  },
+  operator_credential_store_btn: { ko: "저장소에 넣기", en: "Store credential" },
+  operator_credential_forget_btn: { ko: "지우기", en: "Forget" },
+  operator_probe_heading: {
+    ko: "지원 기능 확인",
+    en: "Check supported capabilities",
+  },
+  operator_probe_btn: {
+    ko: "지원 기능 확인",
+    en: "Check supported capabilities",
+  },
+  operator_probe_busy: {
+    ko: "확인 중입니다",
+    en: "Probing...",
+  },
+  operator_probe_note: {
+    ko: "어댑터가 무엇을 지원하는지만 로컬에서 확인합니다.",
+    en: "Asks the adapter locally what it supports; touches neither document nor network.",
+  },
+  operator_cap_model_prefix: { ko: "모델: {0}", en: "Model: {0}" },
+  operator_cap_verdict_label: { ko: "자격 증명 참조", en: "Credential ref" },
+  operator_cap_th_capability: { ko: "기능", en: "Capability" },
+  operator_cap_th_supported: { ko: "지원", en: "Support" },
+  operator_cap_th_reason: { ko: "사유", en: "Reason" },
+  operator_cap_th_source: { ko: "출처", en: "Source" },
+  operator_cap_text: { ko: "글 생성", en: "Text generation" },
+  operator_cap_tools: { ko: "도구 호출", en: "Structured tool use" },
+  operator_cap_streaming: { ko: "토막 전송", en: "Streaming" },
+  operator_cap_structured: { ko: "구조화 출력", en: "Structured output" },
+  operator_cap_models: { ko: "모델 목록", en: "Model discovery" },
+  operator_cap_thread: { ko: "대화 이어받기", en: "Resumable thread" },
+  operator_cap_vision: { ko: "그림 입력", en: "Vision" },
+  operator_state_yes: { ko: "예", en: "Yes" },
+  operator_state_no: { ko: "아니오", en: "No" },
+  operator_state_unknown: {
+    ko: "확인하지 못했습니다",
+    en: "Unknown",
+  },
+  operator_cred_configured: {
+    ko: "설정되어 있습니다",
+    en: "Configured",
+  },
+  operator_cred_missing: {
+    ko: "자격 증명이 없습니다",
+    en: "Missing",
+  },
+  operator_cred_not_required: {
+    ko: "자격 증명이 필요하지 않습니다",
+    en: "Not required",
+  },
+  operator_cred_unsupported: {
+    ko: "이 인증 방식은 지원하지 않습니다",
+    en: "Unsupported",
+  },
+  operator_own_none: {
+    ko: "인증 키가 필요하지 않습니다",
+    en: "No key required",
+  },
+  operator_own_env: { ko: "환경 변수 이름으로 참조합니다", en: "Referenced via environment variable" },
+  operator_own_os: {
+    ko: "운영체제 저장소 키로 참조합니다",
+    en: "Referenced via OS credential store",
+  },
+  operator_own_managed: {
+    ko: "서비스 제공자가 인증을 관리합니다",
+    en: "Provider-managed authentication",
+  },
+  operator_config_heading: { ko: "이 제공자가 읽을 설정 파일", en: "Provider config file" },
+  operator_config_note: {
+    ko: "이 설정에는 비밀 값 대신 자격 증명 이름만 저장됩니다.",
+    en: "This configuration stores credential names instead of secret values.",
+  },
+  operator_config_empty: { ko: "아직 저장된 설정 파일이 없습니다.", en: "No config file saved yet." },
+  operator_event_opened: { ko: "문서를 열었습니다 — {0}", en: "Opened document — {0}" },
+  operator_event_proposed: {
+    ko: "변경 작업 {0}건을 제안했습니다 — {1}",
+    en: "Proposed {0} operations — {1}",
+  },
+  operator_event_validated_ok: {
+    ko: "쓰기 전 확인을 통과했습니다",
+    en: "Pre-write validation passed",
+  },
+  operator_event_validated_fail: {
+    ko: "쓰기 전 확인에서 막혔습니다",
+    en: "Pre-write validation blocked",
+  },
+  operator_event_approval_req: {
+    ko: "승인을 요청했습니다 — {0}",
+    en: "Approval requested — {0}",
+  },
+  operator_event_approved: { ko: "{0}이(가) 승인했습니다", en: "Approved by {0}" },
+  operator_event_rejected: { ko: "{0}이(가) 돌려보냈습니다", en: "Returned by {0}" },
+  operator_event_applied: {
+    ko: "변경 제안을 사본에 적용했습니다",
+    en: "Applied change proposal to copy",
+  },
+  operator_event_candidate: {
+    ko: "수정본을 남겼습니다 · 검사 {0}",
+    en: "Saved revision · checks {0}",
+  },
+  operator_event_check_pass: { ko: "통과", en: "passed" },
+  operator_event_check_fail: { ko: "미통과", en: "not passed" },
+  operator_event_pdf: {
+    ko: "인쇄 화면용 문서를 준비했습니다",
+    en: "Prepared print view document",
+  },
 } as const satisfies Record<string, VocabEntry>;
 
 export type VocabularyKey = keyof typeof VOCABULARY;

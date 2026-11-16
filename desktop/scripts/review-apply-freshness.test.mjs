@@ -1,4 +1,10 @@
-import { approvalHelpers, agentPlanCellAddresses, projectAgentPlan } from "./action-test-support.mjs";
+import {
+  approvalHelpers,
+  agentPlanCellAddresses,
+  opKindLabel,
+  projectAgentPlan,
+  t,
+} from "./action-test-support.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
@@ -134,6 +140,8 @@ function fixture() {
     verifyReversal: async () => true,
     showToast: () => {},
     seatText: () => "",
+    opKindLabel,
+    t,
   });
   vm.runInContext(
     `${stripTypeScriptTypes(implementation).replaceAll("export ", "")}

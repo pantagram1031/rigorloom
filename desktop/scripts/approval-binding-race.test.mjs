@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
+import { t } from "../src/i18n/vocabulary.ts";
 
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 const resolveStart = actionsSource.indexOf("export async function resolveApprovalDecision(");
@@ -85,6 +86,7 @@ function fixture() {
     showToast: () => {},
     draftStaleness: () => null,
     headCandidate: () => null,
+    t,
   });
   vm.runInContext(
     stripTypeScriptTypes(`${helperImplementation}\n${resolveImplementation}\nglobalThis.decide = resolveApprovalDecision;`),
@@ -184,6 +186,7 @@ async function applyRuntimeCalls(state) {
     showToast: () => {},
     draftStaleness: () => null,
     headCandidate: () => null,
+    t,
   });
   vm.runInContext(
     stripTypeScriptTypes(`${helperImplementation}\n${applyImplementation}\nglobalThis.applyForTest = applyApproved;`),

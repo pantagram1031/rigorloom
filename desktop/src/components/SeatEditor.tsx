@@ -29,7 +29,8 @@
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
-import { setState } from "../store";
+import { t } from "../i18n/vocabulary";
+import { setState, useWorkspace } from "../store";
 
 export function SeatEditor({
   value,
@@ -43,7 +44,7 @@ export function SeatEditor({
   onMultilineChange,
   onCycleBlank,
   onEscapeExit,
-  ariaLabel = "이 자리에 넣을 값",
+  ariaLabel,
   placeholder,
 }: {
   value: string;
@@ -73,6 +74,8 @@ export function SeatEditor({
   ariaLabel?: string;
   placeholder?: string;
 }) {
+  const language = useWorkspace((s) => s.language);
+  const resolvedAriaLabel = ariaLabel ?? t("seat_editor_aria_label", language);
   const [text, setText] = useState(value);
   const [isMultiline, setIsMultiline] = useState(
     Boolean(initialMultiline || value.includes("\n")),
@@ -204,7 +207,7 @@ export function SeatEditor({
         style={style}
         rows={Math.max(2, Math.min(6, text.split(/\r?\n/).length + 1))}
         placeholder={placeholder}
-        aria-label={ariaLabel}
+        aria-label={resolvedAriaLabel}
         onChange={(e) => setText(e.target.value)}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
@@ -223,7 +226,7 @@ export function SeatEditor({
       value={text}
       style={style}
       placeholder={placeholder}
-      aria-label={ariaLabel}
+      aria-label={resolvedAriaLabel}
       onChange={(e) => setText(e.target.value)}
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}

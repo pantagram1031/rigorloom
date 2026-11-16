@@ -1200,8 +1200,8 @@ async function echoChecks() {
   await waitFor(() => (getState().changedByRun[echoRun] ?? []).length > 0, 20000);
   await settled(400);
 
-  checkDom("the page now says 후보본과 다름 — 이 그림은 원본 기준",
-    domText('[data-testid="layout-echo"]').includes("후보본과 다름") &&
+  checkDom("the page now says 수정본과 다름 — 이 그림은 원본 기준",
+    domText('[data-testid="layout-echo"]').includes("수정본과 다름") &&
       domText('[data-testid="layout-echo"]').includes("이 그림은 원본 기준"),
     domText('[data-testid="layout-echo"]').slice(0, 200));
   checkDom("it names the candidate the page is NOT showing",

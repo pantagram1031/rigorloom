@@ -106,7 +106,7 @@ export function SettingsView() {
               aria-pressed={language === "ko"}
               onClick={() => void setLanguage("ko")}
             >
-              한국어
+              {t("lang_ko", "ko")}
             </button>
             <button
               type="button"

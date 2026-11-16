@@ -10,6 +10,9 @@
  * faithfully through `rebuildPlanOpFromProjection`.
  */
 
+import { opKindLabel, t, type VocabularyKey } from "../i18n/vocabulary.ts";
+import type { UiLanguage } from "../types.ts";
+
 export interface ProjectablePlanOp {
   opId: string;
   kind: string;
@@ -105,21 +108,20 @@ const SUPPORTED_OP_FIELDS: Record<string, Set<string>> = {
   delete_guides: new Set(["color", "charPrIds"]),
 };
 
-const KNOWN_UNIMPLEMENTED_REASONS: Record<string, string> = {
-  normalize_clones:
-    "같은 스타일의 복제본 정리(normalize_clones)는 헤더를 다시 쓰는 작업이라 검토 대기열에 정확히 표시할 수 없습니다.",
-  goto_text:
-    "위치 이동(goto_text)은 검토 대기열에서 지원하지 않는 작업입니다.",
+const KNOWN_UNIMPLEMENTED_REASONS: Record<string, VocabularyKey> = {
+  normalize_clones: "proj_unimpl_normalize_clones",
+  goto_text: "proj_unimpl_goto_text",
 };
 
 function refusal(
   op: ProjectablePlanOp,
   reason: string,
   details: Partial<AgentPlanProjectionRefusal["data"]> = {},
+  lang: UiLanguage = "ko",
 ): AgentPlanProjectionRefusal {
   return {
     code: "agent_plan_projection_unsupported",
-    message: `작업 ${op.opId} (${op.kind})을 검토 대기열에 정확히 표시할 수 없습니다: ${reason}`,
+    message: t("proj_refuse_op_unrepresentable", lang, [op.opId, op.kind, reason]),
     data: { opId: op.opId, kind: op.kind, ...details },
   };
 }
@@ -132,12 +134,16 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
-function checkAllowedFields(op: ProjectablePlanOp, allowed: Set<string>): void {
+function checkAllowedFields(
+  op: ProjectablePlanOp,
+  allowed: Set<string>,
+  lang: UiLanguage = "ko",
+): void {
   const unsupportedFields = Object.keys(op.params).filter((field) => !allowed.has(field));
   if (unsupportedFields.length > 0) {
-    throw refusal(op, "일부 작업의 내용을 검토 대기열에 정확히 표시할 수 없습니다.", {
+    throw refusal(op, t("proj_refuse_partial_unrepresentable", lang), {
       unsupportedFields: unsupportedFields.sort(),
-    });
+    }, lang);
   }
 }
 
@@ -145,23 +151,27 @@ function checkAllowedFields(op: ProjectablePlanOp, allowed: Set<string>): void {
  * Validate every op in a plan atomically before any projection or read happens,
  * so an invalid later op never triggers reads or produces a partial queue.
  */
-function validateProjectableAgentPlan(plan: ProjectableAgentPlan): void {
+function validateProjectableAgentPlan(
+  plan: ProjectableAgentPlan,
+  lang: UiLanguage = "ko",
+): void {
   for (const op of plan.ops) {
     const allowed = SUPPORTED_OP_FIELDS[op.kind];
     if (!allowed) {
-      const reason =
-        KNOWN_UNIMPLEMENTED_REASONS[op.kind] ??
-        `작업 종류 "${op.kind}"는 검토 대기열이 지원하지 않습니다.`;
-      throw refusal(op, reason);
+      const reasonKey = KNOWN_UNIMPLEMENTED_REASONS[op.kind];
+      const reason = reasonKey
+        ? t(reasonKey, lang)
+        : t("proj_refuse_kind_unsupported", lang, [op.kind]);
+      throw refusal(op, reason, {}, lang);
     }
 
     if (!op.params || typeof op.params !== "object" || Array.isArray(op.params)) {
-      throw refusal(op, "작업 매개변수 객체가 올바르지 않습니다.", {
+      throw refusal(op, t("proj_refuse_invalid_params", lang), {
         invalidFields: ["params"],
-      });
+      }, lang);
     }
 
-    checkAllowedFields(op, allowed);
+    checkAllowedFields(op, allowed, lang);
     const invalidFields: string[] = [];
 
     if (op.kind === "fill_cell") {
@@ -242,9 +252,9 @@ function validateProjectableAgentPlan(plan: ProjectableAgentPlan): void {
     }
 
     if (invalidFields.length > 0) {
-      throw refusal(op, "작업 필드의 형식이 대기열 표현과 맞지 않습니다.", {
+      throw refusal(op, t("proj_refuse_invalid_fields", lang), {
         invalidFields: [...new Set(invalidFields)],
-      });
+      }, lang);
     }
   }
 }
@@ -314,19 +324,28 @@ function attachTableExplicit(target: ProjectedAgentOp, explicit: boolean): void 
   });
 }
 
-function defaultGuideSummary(color?: string, charPrIds?: string[]): string {
+function defaultGuideSummary(
+  color?: string,
+  charPrIds?: string[],
+  lang: UiLanguage = "ko",
+): string {
   const parts: string[] = [];
-  if (color) parts.push(`색상 ${color}`);
-  if (charPrIds && charPrIds.length > 0) parts.push(`charPr ${charPrIds.join(", ")}`);
-  return parts.length > 0 ? `안내문 (${parts.join(" · ")})` : "대상 안내문";
+  if (color) parts.push(t("proj_guide_color_prefix", lang, [color]));
+  if (charPrIds && charPrIds.length > 0) {
+    parts.push(t("proj_guide_charpr_prefix", lang, [charPrIds.join(", ")]));
+  }
+  return parts.length > 0
+    ? t("proj_guide_target_with_parts", lang, [parts.join(" · ")])
+    : t("proj_guide_target_default", lang);
 }
 
 export function projectAgentPlan(
   plan: ProjectableAgentPlan,
   beforeCell: (table: number, row: number, col: number, run?: number) => string,
   context: PlanProjectionContext = {},
+  lang: UiLanguage = "ko",
 ): ProjectedAgentOp[] {
-  validateProjectableAgentPlan(plan);
+  validateProjectableAgentPlan(plan, lang);
 
   return plan.ops.map((op) => {
     if (op.kind === "fill_cell") {
@@ -405,13 +424,13 @@ export function projectAgentPlan(
     const charPrIds = isStringArray(op.params.charPrIds) ? [...op.params.charPrIds] : undefined;
     const before = context.guideSummary
       ? context.guideSummary(color, charPrIds)
-      : defaultGuideSummary(color, charPrIds);
+      : defaultGuideSummary(color, charPrIds, lang);
     return {
       opId: op.opId,
       kind: "delete_guides",
       ...(color === undefined ? {} : { color }),
       ...(charPrIds === undefined ? {} : { charPrIds }),
-      text: "(안내문 삭제됨)",
+      text: t("proj_guides_deleted", lang),
       before,
       origin: "agent",
       proposer: plan.proposer,
@@ -518,21 +537,32 @@ export function rebuildPlanOpFromProjection(projected: ReconstructibleOp): Proje
   throw new Error(`Unsupported projected op kind: ${(projected as { kind: string }).kind}`);
 }
 
-export function formatProjectedAddress(op: ReconstructibleOp): string {
-  if (op.kind === "fill_cell") return `표 ${op.table} R${op.row}C${op.col}`;
-  if (op.kind === "replace_at_cell") {
-    return op.run !== undefined
-      ? `표 ${op.table} R${op.row}C${op.col} · 덩어리 ${op.run}`
-      : `표 ${op.table} R${op.row}C${op.col}`;
+export function formatProjectedAddress(
+  op: ReconstructibleOp,
+  lang: UiLanguage = "ko",
+): string {
+  if (op.kind === "fill_cell") {
+    return t("proj_addr_table_cell", lang, [op.table, op.row, op.col]);
   }
-  if (op.kind === "set_run") return `문단 ${op.atPara} · 덩어리 ${op.run}`;
-  return "안내문 삭제 · Delete guides";
+  if (op.kind === "replace_at_cell") {
+    const base = t("proj_addr_table_cell", lang, [op.table, op.row, op.col]);
+    return op.run !== undefined
+      ? `${base} ${t("proj_addr_run_suffix", lang, [op.run])}`
+      : base;
+  }
+  if (op.kind === "set_run") {
+    return t("proj_addr_para_run", lang, [op.atPara, op.run]);
+  }
+  return lang === "ko"
+    ? `${t("proj_addr_delete_guides", "ko")} · ${t("proj_addr_delete_guides", "en")}`
+    : t("proj_addr_delete_guides", lang);
 }
 
 export function projectedAfterText(
   op: ReconstructibleOp & { before: string },
+  lang: UiLanguage = "ko",
 ): string {
-  if (op.kind === "delete_guides") return "(안내문 삭제됨)";
+  if (op.kind === "delete_guides") return t("proj_guides_deleted", lang);
   if (op.kind === "replace_at_cell" && op.mode === "append") {
     return `${op.before}${op.text}`;
   }
@@ -542,15 +572,17 @@ export function projectedAfterText(
   return op.text ?? "";
 }
 
-export function projectionInverseSupport(op: { kind: string }): {
+export function projectionInverseSupport(
+  op: { kind: string },
+  lang: UiLanguage = "ko",
+): {
   invertible: boolean;
   reason?: string;
 } {
   if (op.kind === "delete_guides") {
     return {
       invertible: false,
-      reason:
-        "안내문 삭제(delete_guides)는 지운 안내 문단과 서식을 되살릴 수 없어 되돌릴 수 없습니다.",
+      reason: t("proj_inverse_delete_guides", lang),
     };
   }
   if (op.kind === "fill_cell" || op.kind === "replace_at_cell" || op.kind === "set_run") {
@@ -558,6 +590,6 @@ export function projectionInverseSupport(op: { kind: string }): {
   }
   return {
     invertible: false,
-    reason: `${op.kind} 작업은 되돌릴 수 없습니다.`,
+    reason: t("proj_inverse_unsupported_kind", lang, [opKindLabel(op.kind, lang)]),
   };
 }

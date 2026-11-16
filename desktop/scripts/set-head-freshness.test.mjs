@@ -204,24 +204,43 @@ function loadComponentModule(path, stubs) {
 }
 
 function renderHistory(statePatch) {
+  const realReact = nodeRequire("react");
   const store = loadComponentModule("../src/store.ts", {
-    react: { useSyncExternalStore: (_subscribe, snapshot) => snapshot() },
+    react: { ...realReact, useSyncExternalStore: (_subscribe, snapshot) => snapshot() },
   });
-  const tag = loadComponentModule("../src/components/Tag.tsx", {});
+  const vocabulary = loadComponentModule("../src/i18n/vocabulary.ts", {});
+  const detailDisclosure = loadComponentModule("../src/components/DetailDisclosure.tsx", {
+    "../i18n/vocabulary": vocabulary,
+    "../store": store,
+  });
+  const externalPlan = loadComponentModule("../src/workspace/externalPlan.ts", {});
   const actions = {
     exportApplied: () => {},
+    loadCandidates: () => {},
     loadReceipt: () => {},
+    navigateScreen: () => {},
     proposeUndoOf: () => {},
-    selectHistory: () => {},
-    setHead: () => {},
   };
-  const { History } = loadComponentModule("../src/components/History.tsx", {
+  const { HistoryView } = loadComponentModule("../src/views/HistoryView.tsx", {
+    react: realReact,
     "../actions": actions,
+    "../components/DetailDisclosure": detailDisclosure,
+    "../i18n/vocabulary": vocabulary,
+    "../runtime": {},
     "../store": store,
-    "./Tag": tag,
+    "../workspace/externalPlan": externalPlan,
+    "./history.css": {},
   });
   store.setState({
     activeSessionId: "session-A",
+    language: "ko",
+    sessions: [
+      {
+        sessionId: "session-A",
+        openedUtc: "2026-09-14T00:00:00Z",
+        source: { name: "sample.hwpx", sha256: "a".repeat(64), bytes: 1024, documentKind: "hwpx" },
+      },
+    ],
     candidates: {
       "session-A": [
         { runId: "run-1", sha256: "a".repeat(64), base: null, createdUtc: "2026-09-14T01:00:00Z" },
@@ -233,46 +252,54 @@ function renderHistory(statePatch) {
         },
       ],
     },
+    receipts: {},
+    applied: null,
+    draft: {
+      ops: [],
+      plan: null,
+      validation: null,
+      sessionId: null,
+      boundSha256: null,
+      phase: "idle",
+      error: null,
+      rewrittenFromAgent: false,
+      baseRunId: null,
+      reverses: null,
+    },
+    events: [],
     head: null,
-    historySelected: null,
+    undoPhase: "idle",
     undoError: null,
-    inverseProof: null,
     ...statePatch,
   });
   const { renderToStaticMarkup } = nodeRequire("react-dom/server");
-  const { createElement } = nodeRequire("react");
-  return renderToStaticMarkup(createElement(History));
+  const { createElement } = realReact;
+  return renderToStaticMarkup(createElement(HistoryView));
 }
 
-function rowButton(html, runId) {
+function historyNodeTag(html, revNum) {
   const match = html.match(
-    new RegExp(`<button class="history-head" data-testid="history-select-${runId}"[^>]*>`),
+    new RegExp(`<li class="([^"]+)" data-testid="history-node-${revNum}"`),
   );
-  assert.ok(match, `history row button for ${runId} not rendered`);
-  return match[0];
+  assert.ok(match, `history-node-${revNum} not rendered`);
+  return match[1];
 }
 
-test("the open history row announces its expanded state and names its detail region", () => {
-  const html = renderHistory({ historySelected: "run-1" });
-  const open = rowButton(html, "run-1");
-  assert.match(open, /aria-expanded="true"/);
-  assert.match(open, /aria-controls="history-detail-run-1"/);
-  assert.match(html, /<div class="history-detail" id="history-detail-run-1"/);
-  const closed = rowButton(html, "run-2");
-  assert.match(closed, /aria-expanded="false"/);
-  // A collapsed row must not point assistive tech at a region that is not in the DOM.
-  assert.doesNotMatch(closed, /aria-controls/);
-  assert.doesNotMatch(html, /id="history-detail-run-2"/);
+test("history revision detail disclosure starts collapsed and exposes metadata inside details", () => {
+  const html = renderHistory({});
+  assert.match(html, /data-testid="history-detail-1"/);
+  assert.match(html, /<details[^>]*data-testid="history-detail-1"[^>]*>/);
+  assert.doesNotMatch(html, /<details[^>]*open[^>]*data-testid="history-detail-1"/);
 });
 
-test("only the head row is announced as current, following the shell's head choice", () => {
+test("only the head revision node is marked current, following the shell's head choice", () => {
   const byDefault = renderHistory({});
-  assert.match(rowButton(byDefault, "run-2"), /aria-current="true"/);
-  assert.doesNotMatch(rowButton(byDefault, "run-1"), /aria-current/);
+  assert.match(historyNodeTag(byDefault, 2), /history-node--current/);
+  assert.doesNotMatch(historyNodeTag(byDefault, 1), /history-node--current/);
 
   const chosen = renderHistory({ head: "run-1" });
-  assert.match(rowButton(chosen, "run-1"), /aria-current="true"/);
-  assert.doesNotMatch(rowButton(chosen, "run-2"), /aria-current/);
+  assert.match(historyNodeTag(chosen, 1), /history-node--current/);
+  assert.doesNotMatch(historyNodeTag(chosen, 2), /history-node--current/);
 });
 
 // --- lineage: one walk per published history, not one per notification ---

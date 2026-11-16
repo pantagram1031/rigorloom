@@ -93,9 +93,14 @@ def test_run_text_after_edit_bases_on_range_text():
 def test_overlay_field_slices_range_text():
     """The caret field's initial value is the clicked line, sliced from the
     text the range was measured on — not from the op baseline."""
-    text = _read("components/PageOverlay.tsx")
-    assert "editing.rangeText ?? editing.before" in text
-    assert "fieldTextForRunEdit(editing.before," not in text
+    smoke = _read("smoke.ts")
+    run_map = _read("run_map.ts")
+    store = _read("store.ts")
+    assert "runEdit.rangeText ?? runEdit.before" in smoke
+    assert "viaPointer.rangeText ?? viaPointer.before" in smoke
+    assert "export function fieldTextForRunEdit(" in run_map
+    assert "rangeText?: string;" in store
+    assert "fieldTextForRunEdit(editing.before," not in smoke
 
 
 # ---------------------------------------------------------------------------

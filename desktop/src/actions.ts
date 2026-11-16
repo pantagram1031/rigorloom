@@ -63,7 +63,7 @@ import {
   type CaretRefusal as RevisionCaretRefusal,
   type ParagraphEditEffect,
 } from "./revision";
-import { t } from "./i18n/vocabulary";
+import { opKindLabel, t, type VocabularyKey } from "./i18n/vocabulary";
 import type {
   AppliedCandidate,
   EditableRegion,
@@ -377,11 +377,12 @@ export async function openViaDialog(): Promise<string | null> {
     void loadCorpusFiles();
     return null;
   }
+  const lang = getState().language;
   const chosen = await openFileDialog({
     multiple: false,
     directory: false,
-    title: "한글 문서 열기",
-    filters: [{ name: "한글 문서", extensions: ["hwpx", "hwp"] }],
+    title: t("action_open_hwpx_title", lang),
+    filters: [{ name: t("action_open_hwpx_filter", lang), extensions: ["hwpx", "hwp"] }],
   });
   if (typeof chosen !== "string") return null;
   return openPath(chosen);
@@ -413,8 +414,9 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 }
 
 export async function openUploadedFile(file: File): Promise<string | null> {
+  const lang = getState().language;
   if (!SUPPORTED.test(file.name)) {
-    showToast("한글 문서(.hwpx, .hwp)만 열 수 있습니다", 2400);
+    showToast(t("toast_hwpx_only", lang), 2400);
     return null;
   }
   try {
@@ -441,30 +443,32 @@ const SUPPORTED = /\.(hwpx|hwp)$/i;
 /** Files dropped on the window. Anything unsupported is refused out loud. */
 export async function openDropped(paths: string[]): Promise<void> {
   setState({ dragOver: false });
+  const lang = getState().language;
   const usable = paths.filter((p) => SUPPORTED.test(p));
   if (usable.length === 0) {
-    showToast("한글 문서(.hwpx, .hwp)만 열 수 있습니다", 2000);
+    showToast(t("toast_hwpx_only", lang), 2000);
     return;
   }
   for (const path of usable.slice(0, 1)) {
     await openPath(path);
   }
   if (usable.length > 1) {
-    showToast(`${usable.length}개 중 첫 문서만 열었습니다`, 2000);
+    showToast(t("toast_opened_first_of_many", lang, [usable.length]), 2000);
   }
 }
 
 /** Browser HTML5 file drop handler. */
 export async function openDroppedFiles(files: File[]): Promise<void> {
   setState({ dragOver: false });
+  const lang = getState().language;
   const usable = files.filter((f) => SUPPORTED.test(f.name));
   if (usable.length === 0) {
-    showToast("한글 문서(.hwpx, .hwp)만 열 수 있습니다", 2000);
+    showToast(t("toast_hwpx_only", lang), 2000);
     return;
   }
   await openUploadedFile(usable[0]);
   if (usable.length > 1) {
-    showToast(`${usable.length}개 중 첫 문서만 열었습니다`, 2000);
+    showToast(t("toast_opened_first_of_many", lang, [usable.length]), 2000);
   }
 }
 
@@ -538,7 +542,7 @@ export function beginEdit(
   const inspect = state.inspects[sessionId] ?? null;
   const seat = seatAt(inspect, table, row, col);
   if (!seat) {
-    showToast("이 칸은 값을 넣는 자리가 아닙니다", 1600);
+    showToast(t("toast_not_editable_cell", state.language), 1600);
     return false;
   }
   const queued = queuedOpAt(state, table, row, col);
@@ -616,23 +620,21 @@ export function setInlineEditMultiline(multiline: boolean): void {
  */
 export type CaretRefusal = RevisionCaretRefusal;
 
-const CARET_REFUSAL_TEXT: Record<CaretRefusal, string> = {
-  no_address: "이 줄에는 문단 주소가 없습니다",
-  multi_run:
-    "이 줄의 글이 여러 덩어리에 같이 들어 있어 어느 덩어리인지 고를 수 없습니다",
-  run_text_differs:
-    "이 줄의 글을 한 덩어리 안에서 한곳으로 짚을 수 없습니다",
-  no_inventory: "런타임이 이 문단의 글 덩어리 목록을 돌려주지 못했습니다",
-  revision_mismatch:
-    "표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓지 않습니다",
-  cross_run:
-    "이 고침은 여러 글 덩어리에 걸쳐 있습니다. 문단을 하나로 합치지 않습니다",
-  utf16_split:
-    "이 위치가 한 글자의 가운데를 가릅니다. 그 글자를 쪼개서 고치지 않습니다",
+const CARET_REFUSAL_KEYS: Record<CaretRefusal, VocabularyKey> = {
+  no_address: "caret_refusal_no_address",
+  multi_run: "caret_refusal_multi_run",
+  run_text_differs: "caret_refusal_run_text_differs",
+  no_inventory: "caret_refusal_no_inventory",
+  revision_mismatch: "caret_refusal_revision_mismatch",
+  cross_run: "caret_refusal_cross_run",
+  utf16_split: "caret_refusal_utf16_split",
 };
 
-export function caretRefusalText(reason: CaretRefusal): string {
-  return CARET_REFUSAL_TEXT[reason];
+export function caretRefusalText(
+  reason: CaretRefusal,
+  lang = getState().language,
+): string {
+  return t(CARET_REFUSAL_KEYS[reason], lang);
 }
 
 /**
@@ -736,10 +738,12 @@ function applyOverlayParagraphCommit(effect: ParagraphEditEffect): boolean {
       address: commit.overlayPick.address,
       caret: commit.overlayPick.caret,
       label:
-        `${addressLabel(commit.overlayPick.address)}` +
+        `${addressLabel(commit.overlayPick.address)} · ` +
         (commit.overlayPick.snapped
-          ? " · 글자별 위치가 없어 줄 앞에 커서를 놓음"
-          : ` · ${commit.overlayPick.caret ?? 0}번째 글자 앞`),
+          ? t("overlay_caret_snapped", getState().language)
+          : t("overlay_caret_offset", getState().language, [
+              commit.overlayPick.caret ?? 0,
+            ])),
     },
   });
   return true;
@@ -948,7 +952,7 @@ export async function undoQueuedOp(opId: string): Promise<boolean> {
     getState().draft.ops.filter((x) => x.opId !== opId),
     { rewritten },
   );
-  showToast("대기열에서 뺐습니다. 문서는 처음부터 바뀐 적이 없습니다.", 2000);
+  showToast(t("toast_removed_from_queue", getState().language), 2000);
   return true;
 }
 
@@ -1238,15 +1242,14 @@ export async function proposeUndoOf(runId: string): Promise<number> {
 
     const uninvertible = plan.ops.filter((op) => !INVERTIBLE_KINDS.has(op.kind));
     if (uninvertible.length > 0) {
+      const lang = getState().language;
       setState({
         undoPhase: "failed",
         undoError: {
           code: "not_invertible",
-          message:
-            `이 후보본에는 되돌릴 수 없는 작업이 있습니다: ` +
-            `${uninvertible.map((op) => op.kind).join(", ")}. ` +
-            `안내문 삭제(delete_guides)는 지운 안내문을 원래 서식과 위치로 되살릴 수 없으며, ` +
-            `fill_cell, replace_at_cell, set_run 작업만 되돌릴 수 있습니다.`,
+          message: t("err_undo_not_invertible", lang, [
+            uninvertible.map((op) => opKindLabel(op.kind, lang)).join(", "),
+          ]),
           data: { kinds: uninvertible.map((op) => op.kind) },
         },
       });
@@ -1266,7 +1269,7 @@ export async function proposeUndoOf(runId: string): Promise<number> {
         undoPhase: "failed",
         undoError: {
           code: "not_invertible",
-          message: "이 계획의 작업들이 주소를 갖고 있지 않아 이전 값을 읽을 수 없습니다.",
+          message: t("err_undo_no_addresses", getState().language),
         },
       });
       return 0;
@@ -1291,9 +1294,7 @@ export async function proposeUndoOf(runId: string): Promise<number> {
           undoPhase: "failed",
           undoError: {
             code: "previous_value_unreadable",
-            message:
-              "되돌릴 이전 값을 런타임이 돌려주지 못한 자리가 있습니다. " +
-              "빈 값으로 짐작해서 덮어쓰지 않습니다.",
+            message: t("err_undo_previous_unreadable", getState().language),
             data: { address, subject: answer.subject },
           },
         });
@@ -1361,7 +1362,7 @@ export async function proposeUndoOf(runId: string): Promise<number> {
     });
     if (getState().draft.ops !== ops) return 0;
     setState({ undoPhase: "ready", undoError: null, inverseProof: null });
-    showToast("되돌리기를 제안했습니다. 승인해야 후보본이 하나 더 생깁니다.", 2600);
+    showToast(t("toast_undo_proposed", getState().language), 2600);
     return ops.length;
   } catch (e) {
     if (!ownsDraftFence(fence)) return 0;
@@ -1588,7 +1589,7 @@ export async function resolveApprovalDecision(
     if (decision === "approved" && current.draft === state.draft && current.head === state.head && approvalBindingIsCurrent(getState(), binding)) {
       await applyApproved();
     } else if (decision === "rejected" && approvalBindingIsCurrent(getState(), binding)) {
-      showToast("계획을 거절했습니다. 문서는 그대로입니다.", 2000);
+      showToast(t("toast_proposal_returned", getState().language), 2000);
     }
   } catch (e) {
     // `plan_stale` lands here when the source moved between the approval
@@ -1621,8 +1622,7 @@ export async function applyApproved(): Promise<void> {
   const sessionId = state.activeSessionId;
   if (!plan || !approval || approval.state !== "approved" || !sessionId || state.applyPhase === "starting" || applyInFlight) return;
   const draft = state.draft;
-  const driftMsg =
-    "문서 또는 후보본이 변경되어 기존 승인이 무효화되었습니다. 다시 계획을 확인하고 승인해 주세요.";
+  const driftMsg = t("reapproval_prompt", state.language);
   const sameDraftApproval =
     draft.sessionId === sessionId &&
     plan.sessionId === sessionId &&
@@ -1759,11 +1759,10 @@ export async function applyApproved(): Promise<void> {
 /** Cooperative cancel, between ops. Never a kill. */
 export async function cancelApply(): Promise<void> {
   await rt.cancel(APPLY_TAG);
-  showToast("적용을 멈추라고 알렸습니다. 진행 중인 한 단계는 끝납니다.", 2400);
+  showToast(t("toast_apply_cancelling", getState().language), 2400);
 }
 
-export const REAPPROVAL_PROMPT =
-  "문서 또는 후보본이 변경되어 기존 승인이 무효화되었습니다. 다시 계획을 확인하고 승인해 주세요.";
+export const REAPPROVAL_PROMPT = t("reapproval_prompt", "ko");
 
 /**
  * Re-validate the active draft plan against current source/candidate bytes.
@@ -1985,7 +1984,10 @@ export async function loadPipelineGates(workspace?: string): Promise<PipelineGat
   if (!ws) {
     setState({
       pipelineGatesPhase: "failed",
-      pipelineGatesError: { code: "workspace_missing", message: "워크스페이스 경로를 입력해 주세요." },
+      pipelineGatesError: {
+        code: "workspace_missing",
+        message: t("err_pipeline_workspace_missing", getState().language),
+      },
     });
     return null;
   }
@@ -2023,7 +2025,17 @@ export async function resolvePipelineGateAction(
       approver: "host-operator",
       reason,
     });
-    showToast(`${res.gate} 게이트를 ${decision === "approved" ? "승인" : "거절"}했습니다`, 2400);
+    const lang = getState().language;
+    showToast(
+      t("toast_gate_resolved", lang, [
+        res.gate,
+        t(
+          decision === "approved" ? "gate_decision_approved" : "gate_decision_rejected",
+          lang,
+        ),
+      ]),
+      2400,
+    );
     await loadPipelineGates(workspace);
     return true;
   } catch (e) {
@@ -2100,7 +2112,7 @@ export async function resolveRecovery(): Promise<void> {
   if (!receiptMatches) {
     publishError({
       code: "recovery_receipt_mismatch",
-      message: "복구 후보의 영수증이 중단된 적용 요청과 일치하지 않습니다.",
+      message: t("err_recovery_receipt_mismatch", getState().language),
     });
     return;
   }
@@ -2265,11 +2277,12 @@ export async function exportApplied(
       ?.source.name.replace(/(\.hwpx?)$/i, "-candidate$1") ?? "candidate.hwpx";
 
   let target: string | null = destination ?? null;
+  const lang = getState().language;
   if (!target && rt.isTauri()) {
     const picked = await saveFileDialog({
-      title: "후보본 내보내기",
+      title: t("action_export_revision_dialog_title", lang),
       defaultPath: suggested,
-      filters: [{ name: "한글 문서", extensions: ["hwpx", "hwp"] }],
+      filters: [{ name: t("action_open_hwpx_filter", lang), extensions: ["hwpx", "hwp"] }],
     });
     if (typeof picked !== "string") return false;
     target = picked;
@@ -2290,8 +2303,7 @@ export async function exportApplied(
         exportPhase: "failed",
         exportError: {
           code: "export_hash_mismatch",
-          message:
-            "내보낸 파일의 해시가 후보본과 다릅니다. 이 파일을 제출하지 마십시오.",
+          message: t("err_export_file_mismatch", lang),
           data: { expected: applied.candidate.sha256, actual: result.sha256 },
         },
       });
@@ -2305,7 +2317,7 @@ export async function exportApplied(
       if (!resp.ok) {
         throw {
           code: "export_download_failed",
-          message: `후보본 다운로드에 실패했습니다 (HTTP ${resp.status}).`,
+          message: t("err_export_download_failed", lang, [resp.status]),
         };
       }
       const bytes = await resp.arrayBuffer();
@@ -2315,8 +2327,7 @@ export async function exportApplied(
           exportPhase: "failed",
           exportError: {
             code: "export_hash_mismatch",
-            message:
-              "내려받은 파일의 해시가 후보본의 해시와 다릅니다. 이 파일을 제출하지 마십시오.",
+            message: t("err_export_download_mismatch", lang),
             data: { expected: applied.candidate.sha256, actual: digest },
           },
         });
@@ -2504,14 +2515,23 @@ export function addressIsEditable(address: GeometryAddress | null | undefined): 
 }
 
 /** How the status bar spells an address. Same vocabulary as 위치. */
-export function addressLabel(address: GeometryAddress): string {
+export function addressLabel(
+  address: GeometryAddress,
+  lang = getState().language,
+): string {
   if (address.kind === "cell") {
-    return `표${address.table} (${address.row},${address.col})`;
+    return t("addr_table_cell", lang, [
+      address.table ?? 0,
+      address.row ?? 0,
+      address.col ?? 0,
+    ]);
   }
   if (address.atPara !== undefined && address.atPara !== null) {
-    return `문단 ${address.atPara}`;
+    return t("addr_paragraph", lang, [address.atPara]);
   }
-  return address.text ? `앵커 “${trimRun(address.text, 12)}”` : "주소 없음";
+  return address.text
+    ? t("addr_anchor", lang, [trimRun(address.text, 12)])
+    : t("addr_none", lang);
 }
 
 /** Open the seat at an address in the SAME editor a tree click opens. */
@@ -2546,7 +2566,9 @@ export function clickOverlaySeat(seat: GeometrySeat): void {
         targetId: id,
         address,
         derivation: seat.derivation,
-        label: `${addressLabel(address)} — 값을 넣는 자리가 아닙니다`,
+        label: t("overlay_not_editable_cell", getState().language, [
+          addressLabel(address),
+        ]),
       },
     });
     return;
@@ -2567,14 +2589,17 @@ export function clickOverlaySeat(seat: GeometrySeat): void {
 }
 
 /** How the runtime found this rectangle, in four words. Status-bar length. */
-export function derivationLabel(derivation: string): string {
+export function derivationLabel(
+  derivation: string,
+  lang = getState().language,
+): string {
   switch (derivation) {
     case "cell_borders":
-      return "그려진 선으로 잡음";
+      return t("deriv_cell_borders", lang);
     case "matched_text":
-      return "칸의 글자로 잡음";
+      return t("deriv_matched_text", lang);
     case "interpolated":
-      return "이름표에서 미루어 잡음";
+      return t("deriv_interpolated", lang);
     default:
       return derivation;
   }
@@ -2613,13 +2638,14 @@ export async function clickOverlaySpan(
         // On an own-rendered page the runtime also passes along which of these
         // OUR renderer drew the line from. Shown, not taken.
         sidecarPick: span.sidecarPick,
-        label: `후보 ${candidates.length}개 — 직접 선택`,
+        label: t("overlay_ambiguous_pick", getState().language, [candidates.length]),
       },
     });
     return;
   }
   const address = span.address;
   if (!address) {
+    const lang = getState().language;
     // UNMAPPED, and it now says so. This used to return in silence, which was
     // fine while every page came from a PDF and an unmapped line was a rare
     // miss.
@@ -2637,10 +2663,11 @@ export async function clickOverlaySpan(
         address: null,
         label:
           span.addressBasis === "sidecar_only"
-            ? `${span.index + 1}번째 줄 — 서식과 맞추지 못했습니다. 자체 렌더러는 ${addressLabel(
-                span.sidecarAddress!,
-              )}에서 그렸다고 하지만, 확인되지 않은 주소는 쓰지 않습니다`
-            : `${span.index + 1}번째 줄 — 이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다`,
+            ? t("overlay_unmapped_sidecar", lang, [
+                span.index + 1,
+                addressLabel(span.sidecarAddress!, lang),
+              ])
+            : t("overlay_unmapped_plain", lang, [span.index + 1]),
       },
     });
     return;
@@ -2675,7 +2702,9 @@ export async function clickOverlaySpan(
         kind: "not_editable",
         targetId: id,
         address,
-        label: `${addressLabel(address)} — 값을 넣는 자리가 아닙니다`,
+        label: t("overlay_not_editable_cell", getState().language, [
+          addressLabel(address),
+        ]),
       },
     });
     if (address.kind === "cell" && address.table != null && address.row != null &&
@@ -2745,7 +2774,9 @@ export async function chooseCandidate(address: GeometryAddress): Promise<void> {
         kind: "not_editable",
         targetId: pick?.targetId ?? "candidate",
         address,
-        label: `${addressLabel(address)} — 값을 넣는 자리가 아닙니다`,
+        label: t("overlay_not_editable_cell", getState().language, [
+          addressLabel(address),
+        ]),
       },
     });
     return;
@@ -2755,7 +2786,9 @@ export async function chooseCandidate(address: GeometryAddress): Promise<void> {
       kind: "unique",
       targetId: pick?.targetId ?? "candidate",
       address,
-      label: `${addressLabel(address)} — 사용자가 고름`,
+      label: t("overlay_user_selected", getState().language, [
+        addressLabel(address),
+      ]),
     },
   });
   openAddress(address);
@@ -2778,14 +2811,18 @@ export function dismissOverlayPick(): void {
 export async function preparePages(runId?: string | null): Promise<void> {
   const sessionId = getState().activeSessionId;
   if (!sessionId) return;
+  const lang = getState().language;
   setState({ preparePhase: "starting", prepareError: null, prepareNote: null });
   try {
     const result = await rt.renderPrepare(sessionId, runId ?? null);
     setState({
       preparePhase: "ready",
       prepareNote: result.prepared
-        ? `${runId ? "후보본" : "원본"} PDF를 만들었습니다 · ${result.pdf?.sha256.slice(0, 12)}`
-        : (result.reason ?? "이미 준비되어 있습니다"),
+        ? t(
+            runId ? "prepare_note_revision_ready" : "prepare_note_original_ready",
+            lang,
+          )
+        : (result.reason ?? t("prepare_note_already_ready", lang)),
     });
     await renderCurrentPage(1, runId ?? null);
   } catch (e) {
@@ -2964,7 +3001,7 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
     } catch {
       throw {
         code: "agent_output_unreadable",
-        message: "에이전트가 JSON을 내놓지 않았습니다.",
+        message: t("err_agent_output_unreadable", getState().language),
         data: { exitCode: outcome.exitCode, stderr: outcome.stderr.slice(-1200) },
       };
     }
@@ -2990,8 +3027,7 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
     if (!adopted) {
       throw {
         code: "draft_superseded",
-        message:
-          "제안이 도착하는 동안 문서나 검토 대기열이 바뀌어 이 제안을 대기열에 넣지 않았습니다.",
+        message: t("err_agent_draft_superseded", getState().language),
       };
     }
     const { plan: authoritative } = adopted;
@@ -3079,7 +3115,10 @@ export async function runCheck(): Promise<void> {
 }
 
 /** Every finding the candidate's own verification report carries. */
-export function verdictFindings(report: VerificationReport): Finding[] {
+export function verdictFindings(
+  report: VerificationReport,
+  lang = getState().language,
+): Finding[] {
   const out: Finding[] = [];
   for (const row of report.checks) {
     const state = String(row.state ?? "unknown");
@@ -3087,9 +3126,11 @@ export function verdictFindings(report: VerificationReport): Finding[] {
       out.push({
         code: `${row.checker}_unavailable`,
         severity: "warn",
-        where: `검사 ${row.checker}`,
+        where: t("finding_where_checker", lang, [row.checker]),
         selection: null,
-        message: `이 검사는 실행되지 않았습니다: ${String(row.reason ?? "이유 없음")}. 실행되지 않은 검사는 통과로 세지 않습니다.`,
+        message: t("finding_check_not_run", lang, [
+          String(row.reason ?? t("finding_reason_none", lang)),
+        ]),
       });
       continue;
     }
@@ -3099,7 +3140,7 @@ export function verdictFindings(report: VerificationReport): Finding[] {
       out.push({
         code: item.code ?? "hard",
         severity: "hard",
-        where: item.at ?? `검사 ${row.checker}`,
+        where: item.at ?? t("finding_where_checker", lang, [row.checker]),
         selection: null,
         message: item.msg ?? "",
       });
@@ -3108,7 +3149,7 @@ export function verdictFindings(report: VerificationReport): Finding[] {
       out.push({
         code: item.code ?? "warn",
         severity: "warn",
-        where: item.at ?? `검사 ${row.checker}`,
+        where: item.at ?? t("finding_where_checker", lang, [row.checker]),
         selection: null,
         message: item.msg ?? "",
       });
@@ -3117,12 +3158,20 @@ export function verdictFindings(report: VerificationReport): Finding[] {
   return out;
 }
 
-export function collectFindings(inspect: InspectResult, texts: RegionText[]): Finding[] {
+export function collectFindings(
+  inspect: InspectResult,
+  texts: RegionText[],
+  lang = getState().language,
+): Finding[] {
   const out: Finding[] = [];
 
   for (const region of inspect.regions.regions) {
     if (region.kind !== "cell" || region.table === undefined) continue;
-    const where = `표 ${region.table} R${region.row}C${region.col}`;
+    const where = t("finding_where_cell", lang, [
+      region.table,
+      region.row ?? 0,
+      region.col ?? 0,
+    ]);
     const selection = {
       kind: "cell" as const,
       table: region.table,
@@ -3135,7 +3184,7 @@ export function collectFindings(inspect: InspectResult, texts: RegionText[]): Fi
         severity: "hard",
         where,
         selection,
-        message: "글자색이 본문 기준과 다릅니다. 이대로 채우면 색이 남습니다.",
+        message: t("finding_color_anomaly", lang),
       });
     }
     if (region.scriptAnomaly) {
@@ -3144,7 +3193,10 @@ export function collectFindings(inspect: InspectResult, texts: RegionText[]): Fi
         severity: "warn",
         where,
         selection,
-        message: `글자 속성이 본문 기준과 다릅니다. charPr ${region.charPr} → ${region.charPrSuggested} 권장.`,
+        message: t("finding_script_anomaly", lang, [
+          region.charPr ?? "",
+          region.charPrSuggested ?? "",
+        ]),
       });
     }
   }
@@ -3159,8 +3211,13 @@ export function collectFindings(inspect: InspectResult, texts: RegionText[]): Fi
         code: "run_color_anomaly",
         severity: "warn",
         where: isCell
-          ? `표 ${region.table} R${region.addr!.row}C${region.addr!.col} #${run.index}`
-          : `문단 ${region.at_para} #${run.index}`,
+          ? t("finding_where_cell_run", lang, [
+              region.table ?? 0,
+              region.addr!.row,
+              region.addr!.col,
+              run.index,
+            ])
+          : t("finding_where_para_run", lang, [region.at_para ?? 0, run.index]),
         selection: isCell
           ? {
               kind: "cell",
@@ -3171,13 +3228,20 @@ export function collectFindings(inspect: InspectResult, texts: RegionText[]): Fi
           : region.at_para !== undefined
             ? { kind: "paragraph", atPara: region.at_para }
             : null,
-        message: `본문 기준과 다른 색(${run.color_value ?? "알 수 없음"})으로 쓰인 글이 있습니다: "${trimRun(run.text)}"`,
+        message: t("finding_run_color_anomaly", lang, [
+          run.color_value ?? t("finding_color_unknown", lang),
+          trimRun(run.text),
+        ]),
       });
     }
   }
 
   for (const target of inspect.summary.scriptAnomalyTargets) {
-    const where = `표 ${target.table} R${target.addr.row}C${target.addr.col}`;
+    const where = t("finding_where_cell", lang, [
+      target.table,
+      target.addr.row,
+      target.addr.col,
+    ]);
     if (out.some((f) => f.where === where && f.code.includes("script"))) continue;
     out.push({
       code: "script_anomaly_target",
@@ -3189,7 +3253,11 @@ export function collectFindings(inspect: InspectResult, texts: RegionText[]): Fi
         row: target.addr.row,
         col: target.addr.col,
       },
-      message: `글자 속성 ${target.differing.join(", ")}이(가) 기준과 다릅니다. charPr ${target.charpr} → ${target.charpr_suggested}.`,
+      message: t("finding_script_anomaly_target", lang, [
+        target.differing.join(", "),
+        target.charpr,
+        target.charpr_suggested,
+      ]),
     });
   }
 
@@ -3197,9 +3265,9 @@ export function collectFindings(inspect: InspectResult, texts: RegionText[]): Fi
     out.push({
       code: "clean",
       severity: "info",
-      where: "문서 전체",
+      where: t("finding_where_document", lang),
       selection: null,
-      message: "이 빌드가 볼 수 있는 범위에서는 걸리는 것이 없습니다. 렌더 증명과 제출 검사는 아직 실행할 수 없습니다.",
+      message: t("finding_clean_notice", lang),
     });
   }
   return out;
@@ -3234,6 +3302,7 @@ export async function copySelection(): Promise<boolean> {
   let text: string | null = null;
   let label = "";
 
+  const lang = state.language;
   if (selection.kind === "cell") {
     const region = texts.find(
       (r) =>
@@ -3248,19 +3317,23 @@ export async function copySelection(): Promise<boolean> {
         ?.cells.find((c) => c.addr.row === selection.row && c.addr.col === selection.col)
         ?.textPreview ??
       null;
-    label = `표 ${selection.table} R${selection.row}C${selection.col}`;
+    label = t("finding_where_cell", lang, [
+      selection.table,
+      selection.row,
+      selection.col,
+    ]);
   } else if (selection.kind === "paragraph") {
     text =
       inspect?.graph.paragraphs.find((p) => p.at_para === selection.atPara)?.text ?? null;
-    label = `문단 ${selection.atPara}`;
+    label = t("addr_paragraph", lang, [selection.atPara]);
   }
 
   if (text === null || text.length === 0) {
-    showToast("복사할 글이 없습니다", 1400);
+    showToast(t("toast_nothing_to_copy", lang), 1400);
     return true;
   }
   await writeClipboard(text);
-  showToast(`${label} 복사됨`, 1400);
+  showToast(t("toast_copied_label", lang, [label]), 1400);
   return true;
 }
 
@@ -3357,7 +3430,11 @@ export async function boot(): Promise<void> {
     }
 
     const { status } = await rt.start(root);
-    setState({ status, root: status.root ?? root, phaseNote: "능력을 확인하는 중" });
+    setState({
+      status,
+      root: status.root ?? root,
+      phaseNote: t("boot_checking_capabilities", getState().language),
+    });
 
     setState({ capabilities: await rt.capabilities() });
     // Whether the dev-mode agent door is reachable from this build. Cheap:
@@ -3373,7 +3450,7 @@ export async function boot(): Promise<void> {
     if (getState().corpusFiles.length === 0) {
       await loadCorpusFiles();
     }
-    setState({ phaseNote: "열린 문서를 찾는 중" });
+    setState({ phaseNote: t("boot_finding_open_docs", getState().language) });
     await refreshSessions();
 
     const remembered = prefs.lastSessionId as string | undefined;
@@ -3385,7 +3462,7 @@ export async function boot(): Promise<void> {
     setState({ view: prefs.lastView === "agent" ? "agent" : "document" });
 
     if (target) {
-      setState({ phaseNote: "문서를 다시 읽는 중" });
+      setState({ phaseNote: t("boot_reloading_doc", getState().language) });
       await selectSession(target);
     }
     setState({ phase: "ready", phaseNote: "" });
@@ -3397,7 +3474,11 @@ export async function boot(): Promise<void> {
 /** A dead sidecar must be recoverable without losing document state. */
 export async function restartRuntime(): Promise<void> {
   const keepSession = getState().activeSessionId;
-  setState({ phase: "starting", phaseNote: "런타임을 다시 시작하는 중", fatal: null });
+  setState({
+    phase: "starting",
+    phaseNote: t("boot_restarting_runtime", getState().language),
+    fatal: null,
+  });
   try {
     const { status } = await rt.start(getState().root);
     // The old subscription died with the old process; it is not resumable and
@@ -3513,7 +3594,7 @@ export async function storeCredential(secret: string): Promise<boolean> {
     setState({
       probeError: {
         code: "credential_name_missing",
-        message: "먼저 자격 증명 이름을 정해야 합니다.",
+        message: t("err_credential_name_missing", getState().language),
       },
     });
     return false;
@@ -3523,7 +3604,7 @@ export async function storeCredential(secret: string): Promise<boolean> {
     await refreshCredential();
     // The config's credential member appears only once a key really exists.
     await saveProviderSettings(getState().provider);
-    showToast("자격 증명을 이 기계의 저장소에 넣었습니다");
+    showToast(t("toast_credential_stored", getState().language));
     return true;
   } catch (e) {
     setState({ probeError: rt.asRuntimeError(e) });
@@ -3569,7 +3650,7 @@ export async function probeProvider(): Promise<boolean> {
         probeError:
           (outcome.payload.error as RuntimeError | undefined) ?? {
             code: "capabilities_failed",
-            message: `에이전트 호스트가 exit ${outcome.exitCode} 로 끝났습니다.`,
+            message: t("err_agent_host_exit", state.language, [outcome.exitCode]),
             detail: outcome.stderr,
           },
       });
@@ -3620,11 +3701,10 @@ async function adoptAgentPlan(
     beforeCell = (table, row, col) => {
       const before = regionTextAt(answer.regions, { table, row, col });
       if (before === null) {
+        const lang = getState().language ?? "ko";
         throw {
           code: "agent_plan_before_unreadable",
-          message:
-            "에이전트 작업이 덮어쓸 현재 값을 런타임이 돌려주지 못했습니다. " +
-            "원본 값으로 짐작해서 검토 대기열을 만들지 않습니다.",
+          message: t("err_agent_plan_before_unreadable", lang),
           data: { planId, runId: authoritative.base?.runId, table, row, col },
         };
       }
@@ -3669,19 +3749,20 @@ async function adoptAgentPlan(
       return match?.text ?? beforeCell(table, row, col);
     };
     const guideSummary = (): string => {
+      const lang = getState().language ?? "ko";
       const guideCells =
         inspect?.graph.tables.flatMap((t) =>
           t.cells.filter((c) => c.classification === "guide"),
         ) ?? [];
-      if (guideCells.length === 0) return "문서에 있는 삭제 대상 안내문";
+      if (guideCells.length === 0) return t("agent_guide_summary_empty", lang);
       const preview = guideCells
         .map((c) => c.textPreview?.trim())
         .filter(Boolean)
         .slice(0, 2)
         .join(" / ");
       return preview
-        ? `안내문 ${guideCells.length}건 (${preview})`
-        : `안내문 ${guideCells.length}건`;
+        ? t("agent_guide_summary_preview", lang, [guideCells.length, preview])
+        : t("agent_guide_summary_count", lang, [guideCells.length]);
     };
     ops = projectAgentPlan(authoritative, beforeCell, {
       beforeParaRun,
@@ -3807,7 +3888,10 @@ export async function stopInstruction(): Promise<boolean> {
   if (id) {
     patchTurn(id, {
       phase: "failed",
-      error: { code: "cancelled", message: "사람이 중간에 멈췄습니다." },
+      error: {
+        code: "cancelled",
+        message: t("err_agent_cancelled", getState().language),
+      },
     });
   }
   setState({ activeTurn: null });
@@ -3871,7 +3955,7 @@ export function packEnablementDisagrees(): string[] {
 export async function runModuleCheck(module: string): Promise<void> {
   const sessionId = getState().activeSessionId;
   if (!sessionId) {
-    showToast("문서를 먼저 열어야 검사를 돌립니다", 1600);
+    showToast(t("toast_open_doc_before_check", getState().language), 1600);
     return;
   }
   setState({ packRun: { module, sessionId, phase: "running", report: null, error: null } });
@@ -4096,7 +4180,10 @@ export async function switchWorkspaceRoot(
   if (!trimmed) {
     return {
       ok: false,
-      error: { code: "invalid_root", message: "작업 폴더 경로를 입력하세요." },
+      error: {
+        code: "invalid_root",
+        message: t("err_invalid_root_path", getState().language),
+      },
     };
   }
   const state = getState();
@@ -4123,7 +4210,9 @@ export async function switchWorkspaceRoot(
         ok: false,
         error: {
           code: "runtime_start_failed",
-          message: status?.failure ?? "새 작업 폴더로 작업 공간을 시작하지 못했습니다.",
+          message:
+            status?.failure ??
+            t("err_workspace_start_failed", getState().language),
         },
       };
     }
