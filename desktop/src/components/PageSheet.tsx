@@ -6,6 +6,7 @@ import {
   useState,
   type MouseEvent,
   type MutableRefObject,
+  type ReactNode,
   type TouchEvent,
   type WheelEvent,
 } from "react";
@@ -213,6 +214,23 @@ function renderGroupMarker(
   );
 }
 
+const NOWRAP_TOKEN_RE = /(\(\d+(?:-\d+)+\)|\d+(?:-\d+)+)/g;
+
+function renderTextWithNowrapTokens(text: string): ReactNode {
+  if (!text) return text;
+  const parts = text.split(NOWRAP_TOKEN_RE);
+  if (parts.length === 1) return text;
+  return parts.map((part, idx) =>
+    idx % 2 === 1 ? (
+      <span key={idx} className="page-nowrap-token">
+        {part}
+      </span>
+    ) : (
+      part
+    ),
+  );
+}
+
 const HWPUNIT_PER_INCH = 7200;
 const PX_PER_INCH = 96;
 
@@ -226,6 +244,65 @@ function hwpunitToPx(units: number | undefined, fallbackMm: number): number {
 function clampMarginPx(units: number | undefined, fallbackMm: number): number {
   const px = hwpunitToPx(units, fallbackMm);
   return Math.max(20, Math.min(120, px));
+}
+
+export const FILL_MIN_TAPPABLE_BLANK_PX = 32;
+
+export interface SheetZoomInput {
+  isFillMode: boolean;
+  isCompactMobile: boolean;
+  mobileExplicitFit: boolean;
+  pageFit: "width" | "page" | "free";
+  boxWidth: number;
+  naturalWidthPx: number;
+  zoom: number;
+  isBlankFocused: boolean;
+  minBlankHeightPx: number | null;
+}
+
+export function computeEffectiveSheetZoom({
+  isFillMode,
+  isCompactMobile,
+  mobileExplicitFit,
+  pageFit,
+  boxWidth,
+  naturalWidthPx,
+  zoom,
+  isBlankFocused,
+  minBlankHeightPx,
+}: SheetZoomInput): number {
+  const widthFitZoom =
+    boxWidth > 0 && naturalWidthPx > 0
+      ? Math.max(0.25, Math.min(2, Math.floor((boxWidth / naturalWidthPx) * 1000) / 1000))
+      : null;
+
+  let baseZoom: number;
+  if (isCompactMobile) {
+    if ((isFillMode || mobileExplicitFit) && pageFit === "width" && widthFitZoom !== null) {
+      baseZoom = widthFitZoom;
+    } else {
+      baseZoom = pageFit === "free" ? zoom : 1;
+    }
+  } else if (pageFit === "width" && widthFitZoom !== null) {
+    baseZoom = widthFitZoom;
+  } else {
+    baseZoom = zoom;
+  }
+
+  if (
+    isFillMode &&
+    isBlankFocused &&
+    pageFit === "width" &&
+    widthFitZoom !== null &&
+    minBlankHeightPx !== null &&
+    minBlankHeightPx > 0 &&
+    minBlankHeightPx * baseZoom < FILL_MIN_TAPPABLE_BLANK_PX &&
+    baseZoom < 1
+  ) {
+    return 1;
+  }
+
+  return baseZoom;
 }
 
 interface PageSheetProps {
@@ -308,6 +385,14 @@ export function PageSheet({
   const pinchRef = useRef<{ dist: number; startZoom: number } | null>(null);
   const [boxWidth, setBoxWidth] = useState(0);
   const [naturalHeightMeasure, setNaturalHeightMeasure] = useState(0);
+  const [restingSeatHeights, setRestingSeatHeights] = useState<{
+    min: number | null;
+    byKey: Record<string, number>;
+  }>({ min: null, byKey: {} });
+  const editingCellKey =
+    inlineEdit && inlineEdit.kind === "cell"
+      ? cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col)
+      : null;
   const [isCompactMobile, setIsCompactMobile] = useState<boolean>(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia("(max-width: 640px)").matches
@@ -367,7 +452,7 @@ export function PageSheet({
         typeof window !== "undefined" && typeof window.matchMedia === "function"
           ? window.matchMedia("(max-width: 640px)").matches
           : false;
-      const allowFit = !compact || cur.mobileExplicitFit;
+      const allowFit = !compact || isFillMode || cur.mobileExplicitFit;
       if (allowFit && cur.pageFit === "width" && w > 0) {
         const next = fitScale(
           "width",
@@ -385,7 +470,7 @@ export function PageSheet({
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [naturalWidthPx, naturalHeightPx]);
+  }, [naturalWidthPx, naturalHeightPx, isFillMode]);
 
   useLayoutEffect(() => {
     const sheet = sheetRef.current;
@@ -400,20 +485,74 @@ export function PageSheet({
     return () => ro.disconnect();
   }, [naturalHeightPx, inspect, changes, printViewEnabled]);
 
-  const effectiveZoom = useMemo(() => {
-    if (isCompactMobile) {
-      if (mobileExplicitFit && pageFit === "width" && boxWidth > 0) {
-        const ratio = boxWidth / naturalWidthPx;
-        return Math.max(0.25, Math.min(2, Math.floor(ratio * 1000) / 1000));
+  useLayoutEffect(() => {
+    if (!isFillMode) {
+      setRestingSeatHeights({ min: null, byKey: {} });
+      return;
+    }
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const measureSeats = () => {
+      const seats = sheet.querySelectorAll<HTMLElement>(
+        editingCellKey === null
+          ? ".page-cell--fill-seat"
+          : ".page-cell--fill-seat:not(.page-cell--editing)",
+      );
+      if (seats.length === 0) return;
+      let minH: number | null = null;
+      const nextByKey: Record<string, number> = {};
+      for (const seat of seats) {
+        const h = seat.offsetHeight;
+        if (h > 0) {
+          const cellId = seat.getAttribute("data-cell-key");
+          if (cellId) nextByKey[cellId] = h;
+          if (minH === null || h < minH) minH = h;
+        }
       }
-      return pageFit === "free" ? zoom : 1;
-    }
-    if (pageFit === "width" && boxWidth > 0) {
-      const ratio = boxWidth / naturalWidthPx;
-      return Math.max(0.25, Math.min(2, Math.floor(ratio * 1000) / 1000));
-    }
-    return zoom;
-  }, [isCompactMobile, mobileExplicitFit, pageFit, boxWidth, naturalWidthPx, zoom]);
+      if (minH === null) return;
+      setRestingSeatHeights((prev) => {
+        if (editingCellKey !== null && prev.min !== null) {
+          return prev;
+        }
+        return { min: minH, byKey: nextByKey };
+      });
+    };
+    measureSeats();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measureSeats);
+    ro.observe(sheet);
+    return () => ro.disconnect();
+  }, [isFillMode, editingCellKey, inspect, texts, changes, printViewEnabled, sessionId, naturalWidthPx]);
+
+  const targetBlankHeight =
+    (editingCellKey ? restingSeatHeights.byKey[editingCellKey] : undefined) ??
+    restingSeatHeights.min;
+
+  const effectiveZoom = useMemo(
+    () =>
+      computeEffectiveSheetZoom({
+        isFillMode,
+        isCompactMobile,
+        mobileExplicitFit,
+        pageFit,
+        boxWidth,
+        naturalWidthPx,
+        zoom,
+        isBlankFocused: isFillMode && editingCellKey !== null,
+        minBlankHeightPx: targetBlankHeight,
+      }),
+    [
+      isFillMode,
+      isCompactMobile,
+      mobileExplicitFit,
+      pageFit,
+      boxWidth,
+      naturalWidthPx,
+      zoom,
+      editingCellKey,
+      targetBlankHeight,
+    ],
+  );
 
   // If print view is toggled on externally (e.g. command palette), fetch page 1 once.
   useEffect(() => {
@@ -611,11 +750,6 @@ export function PageSheet({
     [inspect, coveredCellStrings],
   );
 
-  const editingCellKey =
-    inlineEdit && inlineEdit.kind === "cell"
-      ? cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col)
-      : null;
-
   const selectFromSheet = (opId: string) => {
     skipNextAutoScroll.current = true;
     onSelectChange(opId);
@@ -736,7 +870,7 @@ export function PageSheet({
                 {paraRuns.map((run) => {
                   const hit = runMap.get(run.index);
                   if (!hit) {
-                    return <span key={run.index}>{run.text}</span>;
+                    return <span key={run.index}>{renderTextWithNowrapTokens(run.text)}</span>;
                   }
                   if (hit.afterText === "") {
                     return null;
@@ -752,7 +886,7 @@ export function PageSheet({
                       data-selected-anchor={isSelectedRun ? "true" : undefined}
                       onClick={(e) => handleMarkerClick(e, hit.opId)}
                     >
-                      {hit.afterText}
+                      {renderTextWithNowrapTokens(hit.afterText)}
                     </span>
                   );
                 })}
@@ -779,14 +913,14 @@ export function PageSheet({
 
         {wholeCellChange ? (
           <div className="page-cell-text page-cell-text--proposed">
-            {wholeCellChange.afterText}
+            {renderTextWithNowrapTokens(wholeCellChange.afterText)}
           </div>
         ) : isEmptyBlank ? (
           <EmptyBlankSlot label={blankHintLabel} />
         ) : isFillMode && cell.classification === "fill_target" ? (
           <div className="page-empty-blank page-empty-blank--guided">
             <span className="page-cell-text">
-              {region?.text ?? cell.textPreview ?? ""}
+              {renderTextWithNowrapTokens(region?.text ?? cell.textPreview ?? "")}
               {cell.truncated && !region ? "…" : ""}
             </span>
           </div>
@@ -796,11 +930,11 @@ export function PageSheet({
           ) : null
         ) : cellChanges.length > 0 ? (
           <div className="page-cell-text page-cell-text--proposed">
-            {cellChanges.map((ch) => ch.afterText).join("\n")}
+            {renderTextWithNowrapTokens(cellChanges.map((ch) => ch.afterText).join("\n"))}
           </div>
         ) : (
           <div className="page-cell-text">
-            {region?.text ?? cell.textPreview ?? ""}
+            {renderTextWithNowrapTokens(region?.text ?? cell.textPreview ?? "")}
             {cell.truncated && !region ? "…" : ""}
           </div>
         )}
@@ -896,9 +1030,9 @@ export function PageSheet({
             <button
               type="button"
               className="page-ctrl-btn"
-              disabled={zoom <= 0.5}
+              disabled={effectiveZoom <= 0.5}
               aria-label={t("review_zoom_out", language)}
-              onClick={() => setZoom(Math.max(0.5, Number((zoom - 0.1).toFixed(2))))}
+              onClick={() => setZoom(Math.max(0.5, Number((effectiveZoom - 0.1).toFixed(2))))}
             >
               −
             </button>
@@ -915,9 +1049,9 @@ export function PageSheet({
             <button
               type="button"
               className="page-ctrl-btn"
-              disabled={zoom >= 2.0}
+              disabled={effectiveZoom >= 2.0}
               aria-label={t("review_zoom_in", language)}
-              onClick={() => setZoom(Math.min(2.0, Number((zoom + 0.1).toFixed(2))))}
+              onClick={() => setZoom(Math.min(2.0, Number((effectiveZoom + 0.1).toFixed(2))))}
             >
               +
             </button>
@@ -1129,6 +1263,7 @@ export function PageSheet({
                               key={key}
                               colSpan={colSpan}
                               className={cls}
+                              data-cell-key={key}
                               data-testid={`page-cell-${table.index}-${cell.addr.row}-${cell.addr.col}`}
                               data-cell-op-ids={cellChanges.map((ch) => ch.opId).join(" ")}
                               data-selected-anchor={

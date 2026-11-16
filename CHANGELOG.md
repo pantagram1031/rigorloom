@@ -10,6 +10,8 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T178:** The five screens have calmer controls and clearer layouts, with a fitted Fill page on phones and more legible document edits.
+
 - **T177:** XML report assembly now splits snapshot capture and one-shot compilation in `engine/scripts/build_report.py` from mechanical HWPX execution in `engine/scripts/report_xml_worker.py`. The worker consumes frozen operations, resolved post-processing settings, and content-addressed form, baseline, and figure blobs without re-reading source files, while measurement and rendering settings stay separate in `engine/scripts/fill_report.py`. User-visible CLI behavior, exit codes, verdicts, and receipts are unchanged.
 - **T176:** Added docs/research: the Korean naturalness A/B protocol and the 2026-11-16 pilot results. The pilot could not measure naturalness: 12 of 19 drafts per condition failed the reference guard, and the editors left most drafts unchanged. Limits: 19 of 21 items from korea.kr, model-only screening, dates 2015-08 to 2019-12.
 - **T175:** The review screen no longer loses its guard results when a plan and its approval request arrive as separate events. Plan adoption is serialized and the guard check reruns only when the plan itself changes, not on every re-render. The change list now says in the page when its guard results are ready, and the gongmun walkthrough waits for that instead of sleeping. Screenshots of the History screen use a fixed time during capture, so the 20 images under `docs/ui/` come out byte-identical from run to run.

@@ -95,28 +95,30 @@ export function SettingsView() {
           data-testid="settings-section-language"
           aria-label={t("settings_section_language", language)}
         >
-          <h2 className="settings-section-title">
-            {t("settings_section_language", language)}
-          </h2>
-          <div className="settings-segmented" role="group" aria-label={t("settings_section_language", language)}>
-            <button
-              type="button"
-              className={`settings-seg-btn${language === "ko" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-lang-ko"
-              aria-pressed={language === "ko"}
-              onClick={() => void setLanguage("ko")}
-            >
-              {t("lang_ko", "ko")}
-            </button>
-            <button
-              type="button"
-              className={`settings-seg-btn${language === "en" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-lang-en"
-              aria-pressed={language === "en"}
-              onClick={() => void setLanguage("en")}
-            >
-              English
-            </button>
+          <div className="settings-row-head">
+            <h2 className="settings-section-title">
+              {t("settings_section_language", language)}
+            </h2>
+            <div className="settings-segmented" role="group" aria-label={t("settings_section_language", language)}>
+              <button
+                type="button"
+                className={`settings-seg-btn${language === "ko" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-lang-ko"
+                aria-pressed={language === "ko"}
+                onClick={() => void setLanguage("ko")}
+              >
+                {t("lang_ko", "ko")}
+              </button>
+              <button
+                type="button"
+                className={`settings-seg-btn${language === "en" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-lang-en"
+                aria-pressed={language === "en"}
+                onClick={() => void setLanguage("en")}
+              >
+                English
+              </button>
+            </div>
           </div>
           <p className="settings-note" data-testid="settings-language-note">
             {t("settings_language_note", language)}
@@ -129,37 +131,39 @@ export function SettingsView() {
           data-testid="settings-section-theme"
           aria-label={t("settings_section_theme", language)}
         >
-          <h2 className="settings-section-title">
-            {t("settings_section_theme", language)}
-          </h2>
-          <div className="settings-segmented" role="group" aria-label={t("settings_section_theme", language)}>
-            <button
-              type="button"
-              className={`settings-seg-btn${theme === "light" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-theme-light"
-              aria-pressed={theme === "light"}
-              onClick={() => void toggleTheme("light")}
-            >
-              {t("theme_light", language)}
-            </button>
-            <button
-              type="button"
-              className={`settings-seg-btn${theme === "dark" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-theme-dark"
-              aria-pressed={theme === "dark"}
-              onClick={() => void toggleTheme("dark")}
-            >
-              {t("theme_dark", language)}
-            </button>
-            <button
-              type="button"
-              className={`settings-seg-btn${theme === "auto" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-theme-auto"
-              aria-pressed={theme === "auto"}
-              onClick={() => void toggleTheme("auto")}
-            >
-              {t("theme_system", language)}
-            </button>
+          <div className="settings-row-head">
+            <h2 className="settings-section-title">
+              {t("settings_section_theme", language)}
+            </h2>
+            <div className="settings-segmented" role="group" aria-label={t("settings_section_theme", language)}>
+              <button
+                type="button"
+                className={`settings-seg-btn${theme === "light" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-theme-light"
+                aria-pressed={theme === "light"}
+                onClick={() => void toggleTheme("light")}
+              >
+                {t("theme_light", language)}
+              </button>
+              <button
+                type="button"
+                className={`settings-seg-btn${theme === "dark" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-theme-dark"
+                aria-pressed={theme === "dark"}
+                onClick={() => void toggleTheme("dark")}
+              >
+                {t("theme_dark", language)}
+              </button>
+              <button
+                type="button"
+                className={`settings-seg-btn${theme === "auto" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-theme-auto"
+                aria-pressed={theme === "auto"}
+                onClick={() => void toggleTheme("auto")}
+              >
+                {t("theme_system", language)}
+              </button>
+            </div>
           </div>
           <p className="settings-note" data-testid="settings-theme-note">
             {t("settings_theme_note", language)}

@@ -355,6 +355,19 @@ export function deriveCellFieldLabel(
     if (isFullWidthBodyCell(table, row, col, targetCell)) {
       return t("field_body_fallback", lang);
     }
+
+    // 4. Inherit the nearest non-composite static row header to the left,
+    //    scanning past sibling fill_target cells on multi-slot rows.
+    for (let c = col - 1; c >= 0; c -= 1) {
+      const candidate = byPos.get(`${row}:${c}`);
+      if (!candidate || candidate.classification !== "static") continue;
+      if (isCompositeHeaderCell(table.index, candidate, texts, inspect)) continue;
+      const text = readCellText(table.index, candidate, texts);
+      if (!text) continue;
+      const collapsed = collapseFormGuideLabel(text);
+      if (!collapsed || Array.from(collapsed).length > 20) continue;
+      return truncateLabel(collapsed, 20);
+    }
   }
 
   const ordinal = blankOrdinal ?? computeBlankOrdinal(inspect, tableIdx, row, col);

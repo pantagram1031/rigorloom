@@ -77,7 +77,9 @@ export function TopBar() {
   const canTryPrintView = Boolean(
     capabilities?.render?.rasterizer?.state === "yes" || render?.available,
   );
-  const effectiveMenuZoom = !mobileExplicitFit && pageFit === "width" ? 1 : zoom;
+  const isMobileWidthFit =
+    pageFit === "width" && (screen === "fill" || mobileExplicitFit);
+  const effectiveMenuZoom = !isMobileWidthFit && pageFit === "width" ? 1 : zoom;
   const displayZoomPct = Math.round(effectiveMenuZoom * 100);
   const docTitle = session
     ? getSessionDisplayTitle(session, openedPaths, corpusFiles, language)
@@ -192,8 +194,11 @@ export function TopBar() {
         <div className="topbar-mobile-menu" ref={menuRef}>
           <button
             type="button"
-            className="topbar-btn topbar-menu-trigger"
+            className={`topbar-btn topbar-menu-trigger${
+              screen === "settings" ? " topbar-menu-trigger--active" : ""
+            }`}
             data-testid="topbar-menu-btn"
+            aria-current={screen === "settings" ? "page" : undefined}
             aria-expanded={menuOpen}
             aria-haspopup="menu"
             onClick={() => setMenuOpen((prev) => !prev)}
@@ -213,6 +218,7 @@ export function TopBar() {
                     type="button"
                     role="menuitem"
                     className="topbar-menu-item"
+                    aria-current={screen === "fill" ? "page" : undefined}
                     data-testid="topbar-menu-fill"
                     onClick={() => {
                       setMenuOpen(false);
@@ -225,6 +231,7 @@ export function TopBar() {
                     type="button"
                     role="menuitem"
                     className="topbar-menu-item"
+                    aria-current={screen === "history" ? "page" : undefined}
                     data-testid="topbar-menu-history"
                     onClick={() => {
                       setMenuOpen(false);
@@ -285,10 +292,12 @@ export function TopBar() {
                       type="button"
                       className="topbar-menu-zoom-btn"
                       data-testid="topbar-menu-zoom-fit"
-                      onClick={() => setPageFit(pageFit === "width" ? "free" : "width")}
+                      onClick={() =>
+                        isMobileWidthFit ? setZoom(1) : setPageFit("width")
+                      }
                     >
-                      {mobileExplicitFit && pageFit === "width"
-                        ? t("review_zoom_label", language, [displayZoomPct])
+                      {isMobileWidthFit
+                        ? t("review_zoom_label", language, [100])
                         : t("review_zoom_fit", language)}
                     </button>
                     <button
@@ -337,6 +346,7 @@ export function TopBar() {
                 type="button"
                 role="menuitem"
                 className="topbar-menu-item"
+                aria-current={screen === "settings" ? "page" : undefined}
                 data-testid="topbar-menu-settings"
                 onClick={() => {
                   setMenuOpen(false);

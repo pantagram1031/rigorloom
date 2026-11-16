@@ -517,7 +517,9 @@ export function OpenView() {
         <section className="open-recents" aria-label={t("open_recent_title", language)}>
           <div className="open-recents-head">
             <h2>{t("open_recent_title", language)}</h2>
-            <p className="open-recents-hint">{t("open_recent_hint", language)}</p>
+            {items.length > 0 ? (
+              <p className="open-recents-hint">{t("open_recent_hint", language)}</p>
+            ) : null}
           </div>
 
           {items.length === 0 ? (

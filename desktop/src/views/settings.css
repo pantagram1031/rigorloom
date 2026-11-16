@@ -10,12 +10,12 @@
 }
 
 .settings-container {
-  max-width: 720px;
+  max-width: 560px;
   margin: 0 auto;
-  padding: var(--space-3) var(--space-2) var(--space-5);
+  padding: var(--space-4) var(--space-2) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 0;
   min-width: 0;
 }
 
@@ -31,11 +31,20 @@
 .settings-card {
   display: flex;
   flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) 0;
+  border: 0;
+  border-bottom: var(--divider) solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-2);
-  padding: var(--space-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
 }
 
 .settings-section-title {
@@ -54,41 +63,49 @@
 
 .settings-segmented {
   display: inline-flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--seg-track);
 }
 
 .settings-seg-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 36px;
-  padding: 6px 16px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
-  color: var(--fg-primary);
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-secondary);
   font-family: var(--font-sans);
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
+  white-space: nowrap;
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-standard),
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
     border-color var(--duration-fast) var(--ease-standard);
 }
 
 .settings-seg-btn:hover {
-  background: var(--bg-hover);
+  color: var(--fg-primary);
 }
 
 .settings-seg-btn--active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--fg-on-accent);
+  background: var(--seg-thumb);
+  border-color: var(--border-subtle);
+  color: var(--fg-primary);
+  box-shadow: 0 1px 2px rgba(24, 24, 23, 0.08);
 }
 
 .settings-seg-btn--active:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--seg-thumb);
+  border-color: var(--border-strong);
 }
 
 .settings-folder-row {
@@ -97,10 +114,10 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-1);
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
+  padding: 4px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .settings-folder-meta {
@@ -204,5 +221,22 @@
 @media (max-width: 640px) {
   .settings-container {
     padding: 12px 12px 32px;
+  }
+
+  .settings-row-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+  }
+
+  .settings-segmented {
+    display: flex;
+    width: 100%;
+  }
+
+  .settings-seg-btn {
+    flex: 1 1 0;
+    min-height: 36px;
+    padding: 6px 8px;
   }
 }

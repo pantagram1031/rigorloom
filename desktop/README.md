@@ -122,6 +122,10 @@ Dev mode spawns `python runtime/scripts/serve.py`; set `RIGORLOOM_PYTHON` to
 choose the interpreter. The UI reports which mode is live (`패키지` / `개발`) in
 the verification bar, because "works on my machine" is usually this.
 
+### Testing
+
+For deterministic Revision History screenshot capture, `tests/test_ui_walkthrough_gongmun.py` sets `data-capture-fixed-time` on the document root immediately before saving screenshots.
+
 ---
 
 ## The sidecar is the real Runtime, and freezing it took one trick

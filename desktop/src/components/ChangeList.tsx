@@ -216,91 +216,91 @@ export function ChangeList({
               </div>
             </DetailDisclosure>
           ) : null}
-        </div>
 
-        <div className="change-list-actions">
-          {appliedAndEmpty ? (
-            <button
-              type="button"
-              className="review-btn review-btn--primary"
-              data-testid="review-export-btn"
-              onClick={() => void exportApplied(undefined, exportRunId ?? undefined)}
-            >
-              {t("action_export_revision", language, [exportRevNum])}
-            </button>
-          ) : (
-            <>
-              <div className="return-popover-anchor">
-                <button
-                  type="button"
-                  className="review-btn review-btn--secondary"
-                  data-testid="review-return-btn"
-                  disabled={changes.length === 0 || busy}
-                  aria-expanded={returnPopoverOpen}
-                  onClick={() => setReturnPopoverOpen(!returnPopoverOpen)}
-                >
-                  {t("review_return", language)}
-                </button>
-
-                {returnPopoverOpen ? (
-                  <form
-                    className="return-popover"
-                    data-testid="return-popover"
-                    onSubmit={(e) => void submitReturn(e)}
-                  >
-                    <input
-                      ref={returnInputRef}
-                      type="text"
-                      className="return-reason-input"
-                      data-testid="return-reason-input"
-                      value={returnReason}
-                      disabled={returning}
-                      placeholder={t("review_return_reason_placeholder", language)}
-                      aria-label={t("review_return_reason_placeholder", language)}
-                      onCompositionStart={() => {
-                        isComposingRef.current = true;
-                      }}
-                      onCompositionEnd={(e) => {
-                        isComposingRef.current = false;
-                        setReturnReason(e.currentTarget.value);
-                      }}
-                      onChange={(e) => setReturnReason(e.target.value)}
-                      onKeyDown={handleReturnKeyDown}
-                    />
-                    <div className="return-popover-buttons">
-                      <button
-                        type="submit"
-                        className="review-btn review-btn--danger"
-                        data-testid="return-confirm-btn"
-                        disabled={returning}
-                      >
-                        {t("review_return", language)}
-                      </button>
-                      <button
-                        type="button"
-                        className="review-btn review-btn--secondary"
-                        data-testid="return-cancel-btn"
-                        disabled={returning}
-                        onClick={() => setReturnPopoverOpen(false)}
-                      >
-                        {t("review_cancel", language)}
-                      </button>
-                    </div>
-                  </form>
-                ) : null}
-              </div>
-
+          <div className="change-list-actions">
+            {appliedAndEmpty ? (
               <button
                 type="button"
                 className="review-btn review-btn--primary"
-                data-testid="review-approve-btn"
-                disabled={!canApprove}
-                onClick={() => openApprovalDialog()}
+                data-testid="review-export-btn"
+                onClick={() => void exportApplied(undefined, exportRunId ?? undefined)}
               >
-                {t("review_approve", language)}
+                {t("action_export_revision", language, [exportRevNum])}
               </button>
-            </>
-          )}
+            ) : (
+              <>
+                <div className="return-popover-anchor">
+                  <button
+                    type="button"
+                    className="review-btn review-btn--secondary"
+                    data-testid="review-return-btn"
+                    disabled={changes.length === 0 || busy}
+                    aria-expanded={returnPopoverOpen}
+                    onClick={() => setReturnPopoverOpen(!returnPopoverOpen)}
+                  >
+                    {t("review_return", language)}
+                  </button>
+
+                  {returnPopoverOpen ? (
+                    <form
+                      className="return-popover"
+                      data-testid="return-popover"
+                      onSubmit={(e) => void submitReturn(e)}
+                    >
+                      <input
+                        ref={returnInputRef}
+                        type="text"
+                        className="return-reason-input"
+                        data-testid="return-reason-input"
+                        value={returnReason}
+                        disabled={returning}
+                        placeholder={t("review_return_reason_placeholder", language)}
+                        aria-label={t("review_return_reason_placeholder", language)}
+                        onCompositionStart={() => {
+                          isComposingRef.current = true;
+                        }}
+                        onCompositionEnd={(e) => {
+                          isComposingRef.current = false;
+                          setReturnReason(e.currentTarget.value);
+                        }}
+                        onChange={(e) => setReturnReason(e.target.value)}
+                        onKeyDown={handleReturnKeyDown}
+                      />
+                      <div className="return-popover-buttons">
+                        <button
+                          type="submit"
+                          className="review-btn review-btn--danger"
+                          data-testid="return-confirm-btn"
+                          disabled={returning}
+                        >
+                          {t("review_return", language)}
+                        </button>
+                        <button
+                          type="button"
+                          className="review-btn review-btn--secondary"
+                          data-testid="return-cancel-btn"
+                          disabled={returning}
+                          onClick={() => setReturnPopoverOpen(false)}
+                        >
+                          {t("review_cancel", language)}
+                        </button>
+                      </div>
+                    </form>
+                  ) : null}
+                </div>
+
+                <button
+                  type="button"
+                  className="review-btn review-btn--primary"
+                  data-testid="review-approve-btn"
+                  disabled={!canApprove}
+                  onClick={() => openApprovalDialog()}
+                >
+                  {t("review_approve", language)}
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         {isStale && changes.length > 0 ? (
