@@ -1,0 +1,57 @@
+name: Release
+
+# Manual only. Tags the given commit and publishes a GitHub release whose
+# notes are docs/release-<version>.md as of that commit.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag, for example v0.18.0"
+        required: true
+      target:
+        description: "Full commit SHA on main to tag"
+        required: true
+      title:
+        description: "Release title"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target }}
+          fetch-depth: 0
+
+      - name: Check inputs
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -eu
+          echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          echo "$TARGET" | grep -Eq '^[0-9a-f]{40}$'
+          git merge-base --is-ancestor "$TARGET" origin/main
+          test -f "docs/release-$VERSION.md"
+          grep -q "^version = \"${VERSION#v}\"" pyproject.toml
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; then
+            echo "tag $VERSION already exists" >&2
+            exit 1
+          fi
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ inputs.target }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          gh release create "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET" \
+            --title "$TITLE" \
+            --notes-file "docs/release-$VERSION.md"
