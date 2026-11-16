@@ -357,6 +357,8 @@ export function ChangeList({
               <p
                 className="guard-status-notice guard-status-notice--warn"
                 data-testid="guard-not-run-notice"
+                data-guard-state={guardSummary.state}
+                data-guard-plan-id={guardSummary.planId ?? ""}
               >
                 {t("guard_not_run_invalid", language)}
               </p>
@@ -364,11 +366,18 @@ export function ChangeList({
               <p
                 className="guard-status-notice guard-status-notice--warn"
                 data-testid="guard-unavailable-notice"
+                data-guard-state={guardSummary.state}
+                data-guard-plan-id={guardSummary.planId ?? ""}
               >
                 {errorCodeMessage("guard_unavailable", language)}
               </p>
             ) : (
-              <p className="guard-list-header" data-testid="guard-list-header">
+              <p
+                className="guard-list-header"
+                data-testid="guard-list-header"
+                data-guard-state={guardSummary.state}
+                data-guard-plan-id={guardSummary.planId ?? ""}
+              >
                 {t("guard_list_header", language)}
               </p>
             )}

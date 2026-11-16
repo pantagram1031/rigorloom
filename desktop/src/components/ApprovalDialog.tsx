@@ -62,6 +62,10 @@ export function ApprovalDialog() {
   const plan = draft.plan;
   const validation = draft.validation;
   const sessionId = activeSessionId ?? draft.sessionId ?? "";
+  const latestDraftRef = useRef(draft);
+  const latestChangesRef = useRef(changes);
+  latestDraftRef.current = draft;
+  latestChangesRef.current = changes;
 
   useEffect(() => {
     setWsInput(pipelineWorkspace);
@@ -91,7 +95,11 @@ export function ApprovalDialog() {
       return;
     }
     let cancelled = false;
-    void runAuthoritativeGuardDiff(sessionId, draft, changes).then((res) => {
+    void runAuthoritativeGuardDiff(
+      sessionId,
+      latestDraftRef.current,
+      latestChangesRef.current,
+    ).then((res) => {
       if (!cancelled) {
         setReviewGuardSummary(res);
       }
@@ -99,7 +107,15 @@ export function ApprovalDialog() {
     return () => {
       cancelled = true;
     };
-  }, [open, sessionId, plan, validation?.ok, draft, changes, guardSummary.planId, guardSummary.state]);
+  }, [
+    open,
+    sessionId,
+    plan?.planId,
+    plan?.planHash,
+    validation?.ok,
+    guardSummary.planId,
+    guardSummary.state,
+  ]);
 
   const kindCounts = useMemo(() => {
     const counts = new Map<string, number>();

@@ -205,10 +205,47 @@ def _set_viewport_and_theme(page, width: int, height: int, theme: str) -> None:
         """(t) => {
             document.documentElement.setAttribute('data-theme', t);
             try { window.localStorage.setItem('rigorloom.theme', t); } catch {}
+            void document.documentElement.offsetHeight;
         }""",
         theme,
     )
-    page.wait_for_timeout(250)
+    page.evaluate(
+        """async () => {
+            if (document.fonts) await document.fonts.ready;
+            const waitFrames = (n) => new Promise((resolve) => {
+                const step = (rem) => rem <= 0 ? resolve() : requestAnimationFrame(() => step(rem - 1));
+                step(n);
+            });
+            await waitFrames(2);
+            if (typeof document.getAnimations === 'function') {
+                const anims = document.getAnimations({ subtree: true }).filter((a) => {
+                    const timing = a.effect && typeof a.effect.getComputedTiming === 'function'
+                        ? a.effect.getComputedTiming()
+                        : null;
+                    return !timing || timing.iterations !== Infinity;
+                });
+                await Promise.all(anims.map((a) => a.finished.catch(() => {})));
+            }
+            const vp = document.querySelector('.page-sheet-viewport');
+            if (vp) {
+                let prevTop = vp.scrollTop;
+                let prevLeft = vp.scrollLeft;
+                let stable = 0;
+                while (stable < 3) {
+                    await waitFrames(1);
+                    if (vp.scrollTop === prevTop && vp.scrollLeft === prevLeft) {
+                        stable += 1;
+                    } else {
+                        prevTop = vp.scrollTop;
+                        prevLeft = vp.scrollLeft;
+                        stable = 0;
+                    }
+                }
+            } else {
+                await waitFrames(2);
+            }
+        }"""
+    )
     if width <= 400:
         scroll_w = page.evaluate("document.documentElement.scrollWidth")
         inner_w = page.evaluate("window.innerWidth")
@@ -429,6 +466,10 @@ def _save_canonical_variants(
     overflow_390: list[dict] | None = None,
 ) -> None:
     DOCS_UI_DIR.mkdir(parents=True, exist_ok=True)
+    page.wait_for_function(
+        "() => !document.querySelector('[data-testid=\"toast\"]')",
+        timeout=10000,
+    )
     for width, height in ((1440, 900), (390, 844)):
         for theme in ("light", "dark"):
             _set_viewport_and_theme(page, width, height, theme)
@@ -676,14 +717,13 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             )
             assert req_res["ok"] is True, req_res
 
-            # 3) Verify auto-adoption of all 24 changes & /api/guard/diff readiness (Items 1-4, 6-7)
+            # 3) Verify auto-adoption of all 24 changes & /api/guard/diff DOM readiness (Items 1-4, 6-7)
             page.wait_for_selector('[data-testid="change-row-24"]', timeout=20000)
-            page.wait_for_selector('[data-testid="guard-list-header"]', timeout=20000)
-            deadline = time.monotonic() + 20.0
-            while len(guard_diff_responses) < 1 and time.monotonic() < deadline:
-                page.wait_for_timeout(100)
+            page.wait_for_selector(
+                f'[data-testid="guard-list-header"][data-guard-state="ready"][data-guard-plan-id="{proposed_plan["planId"]}"]',
+                timeout=20000,
+            )
             assert len(guard_diff_responses) >= 1, guard_diff_responses
-            page.wait_for_timeout(150)
 
             assert len(guard_diff_requests) >= 1, guard_diff_requests
             for payload in guard_diff_requests:
@@ -977,8 +1017,14 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 }""",
                 timeout=15000,
             )
+            page.wait_for_selector('[data-testid="history-compare-summary"]', timeout=15000)
+            page.wait_for_selector('[data-testid="history-compare-detail"]', timeout=15000)
             assert page.locator('[data-testid="history-approved-at-1"]').is_visible()
             assert page.locator('[data-testid="history-applied-at-1"]').is_visible()
+            live_approved_at = page.locator('[data-testid="history-approved-at-1"]').inner_text().strip()
+            live_applied_at = page.locator('[data-testid="history-applied-at-1"]').inner_text().strip()
+            assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", live_approved_at), live_approved_at
+            assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", live_applied_at), live_applied_at
             assert (
                 page.locator('[data-testid="history-approval-method-1"]').inner_text().strip()
                 == "승인 방식: 직접 승인"
@@ -1000,7 +1046,26 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
                 )
                 assert report["minRatio"] is not None and report["minRatio"] >= 4.5, report
 
-            _save_canonical_variants(page, "history", overflow_390)
+            fixed_history_time = "2026-11-15 00:00:00"
+            page.evaluate(
+                "(ts) => document.documentElement.setAttribute('data-capture-fixed-time', ts)",
+                fixed_history_time,
+            )
+            try:
+                page.wait_for_function(
+                    """(ts) => {
+                        const a = document.querySelector('[data-testid="history-approved-at-1"]')?.textContent?.trim();
+                        const b = document.querySelector('[data-testid="history-applied-at-1"]')?.textContent?.trim();
+                        return a === ts && b === ts;
+                    }""",
+                    arg=fixed_history_time,
+                    timeout=5000,
+                )
+                _save_canonical_variants(page, "history", overflow_390)
+            finally:
+                page.evaluate(
+                    "() => document.documentElement.removeAttribute('data-capture-fixed-time')"
+                )
             _set_viewport_and_theme(page, 1440, 900, "light")
             page.click('[data-testid="open-settings"]')
             page.wait_for_selector('[data-testid="settings-view"]', timeout=10000)

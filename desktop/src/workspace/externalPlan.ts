@@ -1,9 +1,14 @@
 import type { Draft } from "../store";
-import type { RegionText, RuntimeEvent } from "../types";
+import type { ApprovalRecord, RegionText, RuntimeEvent } from "../types";
 
 export interface ExternalPlanCandidate {
   planId: string;
   approvalId: string | null;
+}
+
+export interface PendingExternalApproval {
+  planId: string;
+  approvalId: string;
 }
 
 const dismissedPlansBySession = new Map<string, Set<string>>();
@@ -37,9 +42,59 @@ function eventPayload(ev: RuntimeEvent): Record<string, unknown> {
   return {};
 }
 
+interface PlanLifecycleScan {
+  rejectedOrApplied: boolean;
+  unresolvedApprovalId: string | null;
+}
+
+function scanPlanLifecycle(
+  sessionId: string,
+  events: readonly RuntimeEvent[],
+  planId: string,
+  proposedIndex: number,
+): PlanLifecycleScan {
+  const resolvedApprovals = new Set<string>();
+  let unresolvedApprovalId: string | null = null;
+
+  for (let i = 0; i < events.length; i += 1) {
+    const ev = events[i];
+    if (ev.sessionId && ev.sessionId !== sessionId) continue;
+    const payload = eventPayload(ev);
+    const evPlanId = typeof payload.planId === "string" ? payload.planId : null;
+    if (evPlanId !== planId) continue;
+
+    if (i > proposedIndex && ev.kind === "plan.applied") {
+      return { rejectedOrApplied: true, unresolvedApprovalId: null };
+    }
+
+    if (ev.kind === "approval.resolved") {
+      const approvalId = typeof payload.approvalId === "string" ? payload.approvalId : null;
+      const state = typeof payload.state === "string" ? payload.state : null;
+      if (approvalId) {
+        resolvedApprovals.add(approvalId);
+        if (unresolvedApprovalId === approvalId) {
+          unresolvedApprovalId = null;
+        }
+      }
+      if (i > proposedIndex && state === "rejected") {
+        return { rejectedOrApplied: true, unresolvedApprovalId: null };
+      }
+    }
+
+    if (ev.kind === "approval.requested") {
+      const approvalId = typeof payload.approvalId === "string" ? payload.approvalId : null;
+      if (approvalId && !resolvedApprovals.has(approvalId)) {
+        unresolvedApprovalId = approvalId;
+      }
+    }
+  }
+
+  return { rejectedOrApplied: false, unresolvedApprovalId };
+}
+
 /**
- * Inspect replayed session events for the latest `plan.proposed` event that
- * should be adopted into the Review workspace automatically.
+ * Inspect replayed session events for the latest external `plan.proposed`
+ * event that should be adopted into the Review workspace automatically.
  */
 export function findAdoptableExternalPlan(
   sessionId: string | null | undefined,
@@ -47,6 +102,7 @@ export function findAdoptableExternalPlan(
   draft: Draft,
 ): ExternalPlanCandidate | null {
   if (!sessionId || !events || events.length === 0) return null;
+  if (draft.phase === "starting") return null;
 
   if (draft.sessionId === sessionId && draft.ops.some((op) => op.origin === "user")) {
     return null;
@@ -60,6 +116,8 @@ export function findAdoptableExternalPlan(
     if (ev.sessionId && ev.sessionId !== sessionId) continue;
     if (ev.kind !== "plan.proposed") continue;
     const payload = eventPayload(ev);
+    const proposer = typeof payload.proposer === "string" ? payload.proposer : null;
+    if (proposer === "rigorloom-desktop") continue;
     const planId = typeof payload.planId === "string" ? payload.planId : null;
     if (planId) {
       latestIndex = i;
@@ -73,45 +131,59 @@ export function findAdoptableExternalPlan(
     return null;
   }
 
-  const resolvedApprovals = new Set<string>();
-  let unresolvedApprovalId: string | null = null;
-
-  for (let i = 0; i < events.length; i += 1) {
-    const ev = events[i];
-    if (ev.sessionId && ev.sessionId !== sessionId) continue;
-    const payload = eventPayload(ev);
-    const evPlanId = typeof payload.planId === "string" ? payload.planId : null;
-    if (evPlanId !== latestPlanId) continue;
-
-    if (i > latestIndex && ev.kind === "plan.applied") {
-      return null;
-    }
-
-    if (ev.kind === "approval.resolved") {
-      const approvalId = typeof payload.approvalId === "string" ? payload.approvalId : null;
-      const state = typeof payload.state === "string" ? payload.state : null;
-      if (approvalId) {
-        resolvedApprovals.add(approvalId);
-        if (unresolvedApprovalId === approvalId) {
-          unresolvedApprovalId = null;
-        }
-      }
-      if (i > latestIndex && state === "rejected") {
-        return null;
-      }
-    }
-
-    if (ev.kind === "approval.requested") {
-      const approvalId = typeof payload.approvalId === "string" ? payload.approvalId : null;
-      if (approvalId && !resolvedApprovals.has(approvalId)) {
-        unresolvedApprovalId = approvalId;
-      }
-    }
-  }
+  const scan = scanPlanLifecycle(sessionId, events, latestPlanId, latestIndex);
+  if (scan.rejectedOrApplied) return null;
 
   return {
     planId: latestPlanId,
-    approvalId: unresolvedApprovalId,
+    approvalId: scan.unresolvedApprovalId,
+  };
+}
+
+/**
+ * Find an unresolved external `approval.requested` event belonging to the
+ * currently adopted external draft when SSE delivered it after `plan.proposed`.
+ */
+export function findPendingExternalApproval(
+  sessionId: string | null | undefined,
+  events: readonly RuntimeEvent[] | undefined,
+  draft: Draft,
+  approval: ApprovalRecord | null | undefined,
+): PendingExternalApproval | null {
+  const planId = draft.plan?.planId ?? null;
+  if (!sessionId || !events || events.length === 0 || !planId) return null;
+  if (draft.sessionId !== sessionId || draft.phase !== "ready") return null;
+  if (isExternalPlanDismissed(sessionId, planId)) return null;
+  if (draft.ops.some((op) => op.origin === "user")) return null;
+
+  let proposedIndex = -1;
+  let proposer: string | null = null;
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const ev = events[i];
+    if (ev.sessionId && ev.sessionId !== sessionId) continue;
+    if (ev.kind !== "plan.proposed") continue;
+    const payload = eventPayload(ev);
+    if (payload.planId === planId) {
+      proposedIndex = i;
+      proposer = typeof payload.proposer === "string" ? payload.proposer : null;
+      break;
+    }
+  }
+  if (proposedIndex < 0 || proposer === "rigorloom-desktop") return null;
+
+  const scan = scanPlanLifecycle(sessionId, events, planId, proposedIndex);
+  if (scan.rejectedOrApplied || !scan.unresolvedApprovalId) return null;
+  if (
+    approval &&
+    approval.planId === planId &&
+    approval.approvalId === scan.unresolvedApprovalId
+  ) {
+    return null;
+  }
+
+  return {
+    planId,
+    approvalId: scan.unresolvedApprovalId,
   };
 }
 

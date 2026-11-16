@@ -930,10 +930,15 @@ export async function runAuthoritativeGuardDiff(
 }
 
 let currentGuardSummary: ReviewGuardSummary = emptyReviewGuardSummary("idle", null);
+let currentGuardKey: string | null = null;
 const guardListeners = new Set<() => void>();
 
-export function setReviewGuardSummary(next: ReviewGuardSummary): void {
+export function setReviewGuardSummary(
+  next: ReviewGuardSummary,
+  key: string | null = null,
+): void {
   currentGuardSummary = next;
+  currentGuardKey = key;
   for (const listener of guardListeners) {
     listener();
   }
@@ -941,6 +946,10 @@ export function setReviewGuardSummary(next: ReviewGuardSummary): void {
 
 export function getReviewGuardSummary(): ReviewGuardSummary {
   return currentGuardSummary;
+}
+
+export function getReviewGuardKey(): string | null {
+  return currentGuardKey;
 }
 
 function subscribeReviewGuard(listener: () => void): () => void {
