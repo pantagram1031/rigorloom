@@ -362,6 +362,8 @@ def test_quoted_counterexamples_exit_zero_without_findings(
         ("minwon", "minwon.vague-followup", "검토 결과는 2026. 5. 15.까지 추후 별도 안내드리겠습니다."),
         ("hr", "hr.rank-step-vague", "적정 호봉은 7호봉으로 확정되었습니다."),
         ("hr", "hr.rank-step-vague", "적정 호봉은 인사위원회 심의 결과 7호봉으로 확정되었습니다."),
+        ("hr", "hr.effective-date-vague", "직무대리 기간은 별도 발령 시까지로 하되, 2026. 9. 30.을 넘지 않습니다."),
+        ("minwon", "minwon.internal-rule-refusal", "내부 지침상 지급일은 매월 25일이며, 관련 조례 제5조에 따라 지원 가능합니다."),
     ],
 )
 def test_adversarial_counterexamples_do_not_fire(
@@ -375,6 +377,21 @@ def test_adversarial_counterexamples_do_not_fire(
         f"{rule_id} unexpectedly matched {text!r}: {result['findings']}"
     )
 
+
+def test_internal_rule_refusal_is_conditional_when_article_comes_first(tmp_path: Path):
+    # A regex cannot see a 제N조 citation before the phrase, so the rule still
+    # fires there; its explanation must then not claim the refusal has no basis.
+    doc = tmp_path / "article-first.txt"
+    doc.write_text(
+        "관련 조례 제5조에 따라 지원 가능하며, 내부 지침상 지급일은 매월 25일입니다.\n",
+        encoding="utf-8",
+    )
+    result = rt_style.check(doc, pack="minwon")
+    hits = [f for f in result["findings"] if f["rule"] == "minwon.internal-rule-refusal"]
+    assert hits, result["findings"]
+    assert all(f["severity"] == "notice" for f in hits)
+    assert all("조항을 함께 밝혔다면 그대로 두어도 됩니다" in f["why"] for f in hits)
+    assert result["counts"]["error"] == 0
 
 def test_pack_rules_64kib_adversarial_performance():
     prose_unit = (

@@ -139,6 +139,8 @@ external official guide, as noted in the `minwon`, `hr`, and `grant` packs.
 | `minwon.vague-followup` | `notice` | 일정 안내 확인이 필요한 `추후 별도 안내` 표현 | `제출하신 현장 확인 요청은 담당 부서 검토 후 추후 별도 안내드리겠습니다.` | `제출하신 현장 확인 요청은 담당 부서 확인을 거쳐 2026. 5. 15.까지 결과를 안내드리겠습니다.` | `house` |
 | `minwon.blunt-closure` | `notice` | 설명 없이 `수용 불가`, `민원 종결` 등 단정적 종결 | `제출하신 이의 신청 건은 관련 요건 미충족으로 수용 불가합니다.` | `필수 증빙 서류가 제출되지 않아 이의 신청 내용을 확인하기 어렵습니다. 보완할 서류와 제출 기한은 다음과 같습니다.` | `house` |
 
+`minwon.internal-rule-refusal` stays quiet when a 법령·조례 article (제N조) comes after the phrase on the same line, but it still fires when the article comes first, as in `관련 조례 제5조에 따라 지원 가능하며, 내부 지침상 지급일은 매월 25일입니다.` A single regex cannot look back that far, so the notice says it can be left alone when the sentence already cites the article.
+
 ### hr
 
 `version`: `hr/1` | `baseDocType`: `gongmun` (includes `house` / 자체 rules)
