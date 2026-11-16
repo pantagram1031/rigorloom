@@ -1,6 +1,6 @@
 # Korean naturalness A/B pilot results, 2026-11-16
 
-The pilot could not measure naturalness. In each condition, 12 of 20 outputs failed the reference-to-final guard while passing the draft-to-final guard, so only 7 pairs per condition were eligible. Most drafts were left unchanged: 13 of 20 in condition A and 19 of 20 in condition B. One fact card failed verification.
+The pilot could not measure naturalness. Each condition scheduled 20 paragraphs. One fact card failed verification and was excluded, leaving 19 inputs per condition. Of those 19, 12 failed the reference-to-final guard while passing the draft-to-final guard, so only 7 pairs per condition were eligible. Most edited outputs were unchanged from the draft: 13 of 19 in condition A and 19 of 19 in condition B.
 
 These are descriptive counts; they do not support a comparative finding.
 
@@ -31,5 +31,5 @@ The corpus is a convenience sample, and publication age does not prove authorshi
 
 ## What this means for Rigorloom
 
-1. Fact-card drafts drifted in protected tokens (numbers, dates, quotations, negations and direction words); the model verifier did not catch this while the deterministic guard did.
+1. For 12 paragraph IDs in each condition, the deterministic guard flagged protected-token differences (numbers, dates, quotations, negations and direction words) between the reference and the final text, although model semantic verification of the draft had passed.
 2. The revised stage 2 uses a number-normalized guard comparison, verifies fact cards before generation, and gives the editor findings only.
