@@ -444,7 +444,7 @@
 | `cmd_export_revision` | 현재 수정본 내보내기 | Export current revision |
 | `cmd_open_workspace_settings` | 언어·화면 테마·작업 폴더 설정 | Language, theme & workspace settings |
 | `err_invalid_json` | 서버 응답 형식이 올바르지 않습니다. | Server response is not valid JSON. |
-| `err_rpc_failed` | 요청({0}) 호출에 실패했습니다. | {0} call failed. |
+| `err_rpc_failed` | 요청을 처리하지 못했습니다. | Could not process the request. |
 | `seat_editor_aria_label` | 이 자리에 넣을 값 | Value for this blank |
 | `approval_kind_count` | {0}건 | {0} |
 | `cmd_kw_open_doc` | 열기 파일 선택 | open file |
@@ -454,7 +454,7 @@
 | `cmd_kw_go_history` | 기록 수정본 이력 비교 | history revisions |
 | `cmd_kw_toggle_print_view` | 인쇄 화면 문서 보기 | print view |
 | `cmd_kw_approve` | 승인 적용 | approve |
-| `cmd_kw_return` | 돌려보내기 반려 | return |
+| `cmd_kw_return` | 돌려보내기 | return |
 | `cmd_kw_export` | 내보내기 저장 수정본 | export revision |
 | `cmd_kw_switch_language` | 언어 한국어 영어 | language |
 | `cmd_kw_change_theme` | 화면 테마 밝게 어둡게 | theme |
@@ -483,132 +483,132 @@
 | `corpus_source_kised` | 창업진흥원 예시 | KISED example |
 | `corpus_source_pps` | 조달청 예시 | PPS example |
 | `corpus_source_internal` | 내부 점검 예시 | Internal check sample |
-| `proj_unimpl_normalize_clones` | 같은 스타일의 복제본 정리는 헤더를 다시 쓰는 작업이라 검토 대기열에 정확히 표시할 수 없습니다. | Style clone normalization rewrites headers and cannot be accurately shown in the review queue. |
+| `proj_unimpl_normalize_clones` | 중복 글자 서식 정리는 문서의 서식 정보를 다시 쓰는 작업이어서 검토 대기열에 정확히 표시할 수 없습니다. | Style clone normalization rewrites headers and cannot be accurately shown in the review queue. |
 | `proj_unimpl_goto_text` | 위치 이동은 검토 대기열에서 지원하지 않는 작업입니다. | Jumping to text is not supported in the review queue. |
-| `proj_refuse_op_unrepresentable` | 작업 {0} ({1})을 검토 대기열에 정확히 표시할 수 없습니다: {2} | Operation {0} ({1}) cannot be accurately represented in the review queue: {2} |
+| `proj_refuse_op_unrepresentable` | 변경 작업을 검토 대기열에 정확히 표시할 수 없습니다. | This change operation cannot be accurately shown in the review queue. |
 | `proj_refuse_partial_unrepresentable` | 일부 작업의 내용을 검토 대기열에 정확히 표시할 수 없습니다. | Some operations cannot be accurately represented in the review queue. |
-| `proj_refuse_kind_unsupported` | 작업 종류 "{0}"는 검토 대기열이 지원하지 않습니다. | Operation kind "{0}" is not supported in the review queue. |
-| `proj_refuse_invalid_params` | 작업 매개변수 객체가 올바르지 않습니다. | Operation parameter object is invalid. |
-| `proj_refuse_invalid_fields` | 작업 필드의 형식이 대기열 표현과 맞지 않습니다. | Operation field formats do not match the queue representation. |
+| `proj_refuse_kind_unsupported` | 이 변경 작업은 검토 대기열에서 지원하지 않습니다. | This change operation is not supported in the review queue. |
+| `proj_refuse_invalid_params` | 입력한 변경 내용을 확인해야 합니다. | Check the change details. |
+| `proj_refuse_invalid_fields` | 입력한 변경 내용을 검토 대기열에 표시할 수 없습니다. | The change details cannot be shown in the review queue. |
 | `proj_guide_color_prefix` | 색상 {0} | color {0} |
 | `proj_guide_charpr_prefix` | 서식 번호 {0} | charPr {0} |
 | `proj_guide_target_with_parts` | 안내문 ({0}) | Guides ({0}) |
 | `proj_guide_target_default` | 대상 안내문 | Target guide text |
 | `proj_guides_deleted` | (안내문 삭제됨) | (Guide text removed) |
 | `proj_addr_table_cell` | 표 {0} {1}행 {2}열 | Table {0} R{1}C{2} |
-| `proj_addr_run_suffix` | · 덩어리 {0} | · Run {0} |
-| `proj_addr_para_run` | 문단 {0} · 덩어리 {1} | Paragraph {0} · Run {1} |
+| `proj_addr_run_suffix` | · 글자 구간 {0} | · Run {0} |
+| `proj_addr_para_run` | 문단 {0} · 글자 구간 {1} | Paragraph {0} · Run {1} |
 | `proj_addr_delete_guides` | 안내문 삭제 | Delete guides |
 | `proj_inverse_delete_guides` | 안내문 지움은 지운 안내 문단과 서식을 되살릴 수 없어 되돌릴 수 없습니다. | Guide text removal cannot be undone because deleted guide paragraphs and formatting cannot be restored. |
-| `proj_inverse_unsupported_kind` | {0} 작업은 되돌릴 수 없습니다. | Operation {0} cannot be undone. |
+| `proj_inverse_unsupported_kind` | 이 변경 작업은 되돌릴 수 없습니다. | This change operation cannot be undone. |
 | `action_open_hwpx_title` | 한글 문서 열기 | Open Hangul document |
 | `action_open_hwpx_filter` | 한글 문서 | Hangul documents |
 | `toast_hwpx_only` | 지원하지 않는 파일 형식입니다. 한글 문서만 열 수 있습니다. | Only Hangul documents (.hwpx, .hwp) can be opened. |
 | `toast_opened_first_of_many` | {0}개 중 첫 문서만 열었습니다 | Opened only the first of {0} documents. |
-| `toast_not_editable_cell` | 이 칸은 값을 넣는 자리가 아닙니다 | This cell is not a fillable blank. |
-| `overlay_not_editable_cell` | {0} — 값을 넣는 자리가 아닙니다 | {0} — Not a fillable blank |
-| `caret_refusal_no_address` | 이 줄에는 문단 주소가 없습니다 | This line has no paragraph address. |
-| `caret_refusal_multi_run` | 이 줄의 글이 여러 덩어리에 같이 들어 있어 어느 덩어리인지 고를 수 없습니다 | This line spans multiple text segments; cannot target a single run. |
-| `caret_refusal_run_text_differs` | 이 줄의 글을 한 덩어리 안에서 한곳으로 짚을 수 없습니다 | Cannot resolve a single cursor offset within this text segment. |
-| `caret_refusal_no_inventory` | 런타임이 이 문단의 글 덩어리 목록을 돌려주지 못했습니다 | The runtime did not return text segments for this paragraph. |
-| `caret_refusal_revision_mismatch` | 표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓지 않습니다 | Displayed document differs from the loaded document; cannot place cursor. |
-| `caret_refusal_cross_run` | 이 고침은 여러 글 덩어리에 걸쳐 있습니다. 문단을 하나로 합치지 않습니다 | This edit spans multiple text segments and cannot be merged. |
-| `caret_refusal_utf16_split` | 이 위치가 한 글자의 가운데를 가릅니다. 그 글자를 쪼개서 고치지 않습니다 | This offset splits a character; cannot edit mid-character. |
-| `overlay_caret_snapped` | 글자별 위치가 없어 줄 앞에 커서를 놓음 | Snapped cursor to start of line |
+| `toast_not_editable_cell` | 이 칸은 입력용 빈칸이 아닙니다. | This cell is not a fillable blank. |
+| `overlay_not_editable_cell` | {0} — 이 칸은 입력용 빈칸이 아닙니다. | {0} — Not a fillable blank |
+| `caret_refusal_no_address` | 이 줄의 문단 위치를 확인할 수 없습니다. | This line has no paragraph address. |
+| `caret_refusal_multi_run` | 선택한 범위를 한 번에 고칠 수 없습니다. 문구를 나눠서 수정해야 합니다. | This selection cannot be edited at once. Edit smaller sections. |
+| `caret_refusal_run_text_differs` | 이 줄에서 수정할 글자 위치를 정확히 찾을 수 없습니다. | Cannot resolve a single cursor offset within this text segment. |
+| `caret_refusal_no_inventory` | 이 문단의 글자 구간 정보를 확인할 수 없습니다. | The runtime did not return text segments for this paragraph. |
+| `caret_refusal_revision_mismatch` | 표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓을 수 없습니다. | Displayed document differs from the loaded document; cannot place cursor. |
+| `caret_refusal_cross_run` | 선택한 범위를 한 번에 고칠 수 없습니다. 문구를 나눠서 수정해야 합니다. | This selection cannot be edited at once. Edit smaller sections. |
+| `caret_refusal_utf16_split` | 선택한 위치가 한 글자의 중간이어서 수정할 수 없습니다. 글자 앞이나 뒤를 선택해야 합니다. | This position is inside a character and cannot be edited. Select a position before or after the character. |
+| `overlay_caret_snapped` | 글자별 위치를 확인할 수 없어 줄 앞에 커서를 놓았습니다 | Snapped cursor to start of line |
 | `overlay_caret_offset` | {0}번째 글자 앞 | Before character {0} |
-| `toast_removed_from_queue` | 대기열에서 뺐습니다. 문서는 처음부터 바뀐 적이 없습니다. | Removed from queue. The document itself has not changed. |
+| `toast_removed_from_queue` | 대기열에서 뺐습니다. 이 동작으로 문서 내용은 바뀌지 않습니다. | Removed from queue. This action does not change the document content. |
 | `err_undo_not_invertible` | 이 수정본에는 되돌릴 수 없는 작업이 있습니다: {0}. 안내문 지움은 지운 안내문을 원래 서식과 위치로 되살릴 수 없으며, 빈칸 채움·칸 문구 바꿈·본문 문구 바꿈 작업만 되돌릴 수 있습니다. | This revision contains operations that cannot be undone: {0}. Removing guide text cannot be restored with original formatting and position; only blank fills, cell text replacements, and body text replacements can be undone. |
 | `err_undo_no_addresses` | 이 변경 제안의 작업들이 주소를 갖고 있지 않아 이전 값을 읽을 수 없습니다. | Operations in this change proposal carry no addresses, so previous values cannot be read. |
 | `err_undo_previous_unreadable` | 되돌릴 이전 값을 런타임이 돌려주지 못한 자리가 있습니다. 빈 값으로 짐작해서 덮어쓰지 않습니다. | The runtime did not return a previous value for some targets. Refusing to guess an empty value. |
 | `toast_undo_proposed` | 되돌리기를 제안했습니다. 승인해야 수정본이 하나 더 생깁니다. | Proposed undo. Approving creates a new revision. |
 | `toast_proposal_returned` | 변경 제안을 돌려보냈습니다. 문서는 그대로입니다. | Returned the change proposal. The document is unchanged. |
-| `reapproval_prompt` | 문서 또는 수정본이 변경되어 기존 승인이 무효화되었습니다. 다시 변경 제안을 확인하고 승인해 주세요. | The document or revision changed and invalidated the previous approval. Review the updated change proposal and approve again. |
+| `reapproval_prompt` | 문서 또는 수정본이 바뀌어 기존 승인이 무효화되었습니다. 변경 제안을 다시 확인하고 승인해야 합니다. | The document or revision changed and invalidated the previous approval. Review the updated change proposal and approve again. |
 | `toast_apply_cancelling` | 적용을 멈추라고 알렸습니다. 진행 중인 한 단계는 끝납니다. | Requested cancellation. The current step will finish first. |
-| `err_pipeline_workspace_missing` | 작업 폴더 경로를 입력해 주세요. | Please enter a workspace path. |
-| `gate_decision_approved` | 승인 | approved |
-| `gate_decision_rejected` | 반려 | rejected |
-| `toast_gate_resolved` | {0} 게이트를 {1}했습니다 | {0} gate {1} |
+| `err_pipeline_workspace_missing` | 작업 폴더 경로를 입력해야 합니다. | Please enter a workspace path. |
+| `gate_decision_approved` | 승인했습니다 | Approved |
+| `gate_decision_rejected` | 돌려보냈습니다 | Returned |
+| `toast_gate_resolved` | {1} | {1} |
 | `err_recovery_receipt_mismatch` | 복구 대상 수정본의 검증 기록이 중단된 적용 요청과 일치하지 않습니다. | The recovery revision's verification record does not match the interrupted apply request. |
 | `action_export_revision_dialog_title` | 수정본 내보내기 | Export revision |
 | `err_export_file_mismatch` | 내보낸 파일이 수정본과 일치하지 않습니다. 이 파일을 제출하지 마십시오. | The exported file does not match the revision. Do not submit this file. |
 | `err_export_download_failed` | 수정본 내려받기에 실패했습니다 (상태 {0}). | Failed to download revision (HTTP {0}). |
 | `err_export_download_mismatch` | 내려받은 파일이 수정본과 일치하지 않습니다. 이 파일을 제출하지 마십시오. | The downloaded file does not match the revision. Do not submit this file. |
-| `addr_table_cell` | 표 {0} ({1},{2}) | Table {0} ({1},{2}) |
+| `addr_table_cell` | 표 {0} {1}행 {2}열 | Table {0} R{1}C{2} |
 | `addr_paragraph` | 문단 {0} | Paragraph {0} |
 | `addr_anchor` | 위치 “{0}” | Anchor “{0}” |
 | `addr_none` | 주소 없음 | No address |
-| `deriv_cell_borders` | 그려진 선으로 잡음 | Matched by cell borders |
-| `deriv_matched_text` | 칸의 글자로 잡음 | Matched by cell text |
-| `deriv_interpolated` | 이름표에서 미루어 잡음 | Inferred from label |
+| `deriv_cell_borders` | 칸 테두리를 기준으로 위치를 찾았습니다 | Matched by cell borders |
+| `deriv_matched_text` | 칸의 문구를 기준으로 위치를 찾았습니다 | Matched by cell text |
+| `deriv_interpolated` | 항목 이름을 기준으로 위치를 추정했습니다 | Inferred from label |
 | `overlay_ambiguous_pick` | 후보 {0}개 — 직접 선택 | {0} matches — choose one |
-| `overlay_unmapped_sidecar` | {0}번째 줄 — 서식과 맞추지 못했습니다. 자체 렌더러는 {1}에서 그렸다고 하지만, 확인되지 않은 주소는 쓰지 않습니다 | Line {0} — could not match to form structure. Own renderer drew at {1}, but unverified addresses are not used. |
-| `overlay_unmapped_plain` | {0}번째 줄 — 이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다 | Line {0} — could not match this line to any position in the form. |
-| `overlay_user_selected` | {0} — 사용자가 고름 | {0} — selected by user |
+| `overlay_unmapped_sidecar` | {0}번째 줄 — 양식에서 이 줄의 위치를 확인할 수 없습니다. 미리보기에 표시된 위치만으로는 수정할 위치를 정할 수 없습니다. | Line {0} — Could not verify this line’s position in the form. Its preview position alone cannot identify where to edit. |
+| `overlay_unmapped_plain` | {0}번째 줄 — 양식에서 이 줄의 위치를 확인할 수 없습니다. | Line {0} — could not match this line to any position in the form. |
+| `overlay_user_selected` | {0} — 사용자가 선택했습니다 | {0} — selected by user |
 | `prepare_note_revision_ready` | 수정본 인쇄 화면을 준비했습니다 | Prepared revision print view |
 | `prepare_note_original_ready` | 원본 인쇄 화면을 준비했습니다 | Prepared original print view |
 | `prepare_note_already_ready` | 이미 준비되어 있습니다 | Already prepared |
-| `err_agent_output_unreadable` | 에이전트가 올바른 구조화 응답을 내놓지 않았습니다. | Agent did not return valid JSON output. |
+| `err_agent_output_unreadable` | 에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다. | Could not display the agent’s proposal. Request it again. |
 | `err_agent_draft_superseded` | 제안이 도착하는 동안 문서나 검토 대기열이 바뀌어 이 제안을 대기열에 넣지 않았습니다. | The document or review queue changed while this proposal arrived, so it was not queued. |
-| `finding_where_checker` | 검사 {0} | Check {0} |
+| `finding_where_checker` | 점검 항목 | Check |
 | `finding_reason_none` | 이유 없음 | no reason given |
-| `finding_check_not_run` | 이 검사는 실행되지 않았습니다: {0}. 실행되지 않은 검사는 통과로 세지 않습니다. | This check did not run: {0}. Unrun checks are not counted as passes. |
+| `finding_check_not_run` | 이 점검은 실행되지 않았습니다. 실행하지 않은 점검은 통과로 세지 않습니다. | This check did not run. Checks that did not run are not counted as passes. |
 | `finding_where_cell` | 표 {0} {1}행 {2}열 | Table {0} R{1}C{2} |
 | `finding_color_anomaly` | 글자색이 본문 기준과 다릅니다. 이대로 채우면 색이 남습니다. | Text colour differs from body baseline; filling as-is leaves coloured text. |
 | `finding_script_anomaly` | 글자 속성이 본문 기준과 다릅니다. 서식 번호 {0} 대신 {1} 사용을 권장합니다. | Character formatting differs from body baseline; charPr {0} -> {1} recommended. |
-| `finding_where_cell_run` | 표 {0} {1}행 {2}열 · 조각 {3} | Table {0} R{1}C{2} #{3} |
-| `finding_where_para_run` | 문단 {0} · 조각 {1} | Paragraph {0} #{1} |
+| `finding_where_cell_run` | 표 {0} {1}행 {2}열 · 글자 구간 {3} | Table {0} R{1}C{2} #{3} |
+| `finding_where_para_run` | 문단 {0} · 글자 구간 {1} | Paragraph {0} #{1} |
 | `finding_color_unknown` | 알 수 없음 | unknown |
-| `finding_run_color_anomaly` | 본문 기준과 다른 색({0})으로 쓰인 글이 있습니다: "{1}" | Text uses a different colour ({0}) from body baseline: "{1}" |
-| `finding_script_anomaly_target` | 글자 속성({0})이 기준과 다릅니다. 서식 번호 {1} 대신 {2} 사용을 권장합니다. | Character attributes ({0}) differ from baseline; charPr {1} -> {2} recommended. |
+| `finding_run_color_anomaly` | 본문 기준과 다른 글자색을 사용하는 문구가 있습니다. 문구: “{1}”. | Some text uses a different colour from the body text. Text: “{1}”. |
+| `finding_script_anomaly_target` | 글자 서식이 본문 기준과 다릅니다. 서식 번호 {1} 대신 {2} 사용을 권장합니다. | Character formatting differs from the body text. Use format {2} instead of {1}. |
 | `finding_where_document` | 문서 전체 | Whole document |
-| `finding_clean_notice` | 이 빌드가 볼 수 있는 범위에서는 걸리는 것이 없습니다. 인쇄 확인과 제출 검사는 아직 실행할 수 없습니다. | No issues found within what this build can inspect. Print verification and submission checks cannot run yet. |
+| `finding_clean_notice` | 현재 점검할 수 있는 범위에서는 문제가 발견되지 않았습니다. 인쇄 확인과 제출 전 점검은 아직 실행할 수 없습니다. | No issues found within what this build can inspect. Print verification and submission checks cannot run yet. |
 | `toast_nothing_to_copy` | 복사할 글이 없습니다 | Nothing to copy |
-| `toast_copied_label` | {0} 복사됨 | Copied {0} |
-| `boot_checking_capabilities` | 능력을 확인하는 중 | Checking capabilities... |
-| `boot_finding_open_docs` | 열린 문서를 찾는 중 | Finding open documents... |
-| `boot_reloading_doc` | 문서를 다시 읽는 중 | Reloading document... |
-| `boot_restarting_runtime` | 런타임을 다시 시작하는 중 | Restarting runtime... |
+| `toast_copied_label` | {0} 복사를 마쳤습니다 | Copied {0} |
+| `boot_checking_capabilities` | 지원 기능을 확인하고 있습니다 | Checking capabilities... |
+| `boot_finding_open_docs` | 열린 문서를 찾고 있습니다 | Finding open documents... |
+| `boot_reloading_doc` | 문서를 다시 읽고 있습니다 | Reloading document... |
+| `boot_restarting_runtime` | 작업 공간 연결을 다시 시작하고 있습니다 | Restarting runtime... |
 | `err_credential_name_missing` | 먼저 자격 증명 이름을 정해야 합니다. | Set a credential key name first. |
 | `toast_credential_stored` | 자격 증명을 이 기계의 저장소에 넣었습니다 | Stored credential in this machine's keyring. |
 | `err_agent_host_exit` | 에이전트 호스트가 종료 코드 {0}로 끝났습니다. | Agent host exited with code {0}. |
-| `err_agent_plan_before_unreadable` | 에이전트 작업이 덮어쓸 현재 값을 런타임이 돌려주지 못했습니다. 원본 값으로 짐작해서 검토 대기열을 만들지 않습니다. | The runtime did not return the current value to be overwritten. Refusing to guess from source text. |
+| `err_agent_plan_before_unreadable` | 에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다. | Could not display the agent’s proposal. Request it again. |
 | `agent_guide_summary_empty` | 문서에 있는 삭제 대상 안내문 | Guide text marked for removal |
 | `agent_guide_summary_preview` | 안내문 {0}건 ({1}) | {0} guide entries ({1}) |
 | `agent_guide_summary_count` | 안내문 {0}건 | {0} guide entries |
 | `err_agent_cancelled` | 사람이 중간에 멈췄습니다. | Stopped by operator. |
-| `toast_open_doc_before_check` | 문서를 먼저 열어야 검사를 돌립니다 | Open a document before running checks. |
-| `err_invalid_root_path` | 작업 폴더 경로를 입력하세요. | Enter a workspace folder path. |
+| `toast_open_doc_before_check` | 점검하려면 먼저 문서를 열어야 합니다. | Open a document before running checks. |
+| `err_invalid_root_path` | 작업 폴더 경로를 입력해야 합니다. | Enter a workspace folder path. |
 | `err_workspace_start_failed` | 새 작업 폴더로 작업 공간을 시작하지 못했습니다. | Failed to start workspace with the new folder. |
-| `operator_host_heading` | 에이전트 호스트 | Agent host |
-| `operator_host_available` | 사용 가능 | Available |
-| `operator_host_unavailable` | 사용 불가 | Unavailable |
+| `operator_host_heading` | 에이전트 연결 | Agent connection |
+| `operator_host_available` | 사용할 수 있습니다 | Available |
+| `operator_host_unavailable` | 사용할 수 없습니다 | Unavailable |
 | `operator_host_unknown_reason` | 확인하지 못했습니다. | Could not verify. |
 | `operator_host_status_btn` | 상태 새로고침 | Refresh status |
 | `operator_host_boundary_note` | 서비스 제공자와 통신하는 것은 이 별도 프로세스뿐이며, 문서 처리 쪽은 네트워크에 연결되지 않습니다. | Only this separate process talks to providers; document processing stays offline. |
 | `operator_session_summary` | 현재 문서: {0} · 수정본 {1}건 | Current document: {0} · {1} revisions |
-| `operator_no_open_doc` | 열린 문서 없음 | No open document |
-| `operator_prompt_placeholder` | 에이전트에게 시킬 작업을 입력하세요 | Enter an instruction for the agent |
+| `operator_no_open_doc` | 열린 문서가 없습니다 | No open document |
+| `operator_prompt_placeholder` | 작업 지시 입력 | Enter an instruction for the agent |
 | `operator_prompt_submit` | 실행 | Run |
 | `operator_prompt_stop` | 멈추기 | Stop |
-| `operator_composer_blocked` | 실행할 수 없는 상태입니다: {0} | Cannot run right now: {0} |
+| `operator_composer_blocked` | 지금은 실행할 수 없습니다. | Cannot run right now. |
 | `operator_turns_empty` | 아직 실행한 작업이 없습니다. 지시를 보내면 이력이 여기에 표시됩니다. | No turns yet. Sent instructions will appear here. |
-| `operator_turn_working` | 실행 중 | Running |
-| `operator_turn_fault` | 제공자 오류 | Provider fault |
-| `operator_turn_failed` | 실행 실패 | Failed |
-| `operator_turn_plan_ready` | 제안 도착 | Proposal arrived |
-| `operator_turn_no_plan` | 제안 없음 | No proposal |
+| `operator_turn_working` | 실행 중입니다 | Running |
+| `operator_turn_fault` | 서비스 제공자 오류가 발생했습니다 | Provider fault |
+| `operator_turn_failed` | 실행하지 못했습니다 | Failed |
+| `operator_turn_plan_ready` | 변경 제안이 도착했습니다 | Proposal arrived |
+| `operator_turn_no_plan` | 변경 제안이 없습니다 | No proposal |
 | `operator_turn_count` | {0}단계 | {0} turns |
 | `operator_turn_fault_note` | 문서에 대한 판정이 아닙니다. 변경 제안과 승인 상태는 그대로입니다. | This is not a document verdict; proposals and approvals are unchanged. |
 | `operator_turn_plan_adopted` | 검토 대기열에 반영되었습니다. 검토 화면에서 직접 승인해야 문서에 적용됩니다. | Adopted into the review queue. Approve on the Review screen to apply. |
 | `operator_turn_plan_not_queued` | 제안이 도착하는 동안 문서나 검토 대기열이 바뀌어 대기열에는 넣지 않았습니다. | The document or review queue changed in flight, so this proposal was not queued. |
-| `operator_turn_never_compiled` | 이 연결에 없는 기능: {0} | Unavailable in this session: {0} |
+| `operator_turn_never_compiled` | 현재 연결에서는 요청한 기능을 지원하지 않습니다. | The requested capability is not supported in this session. |
 | `operator_turn_events_summary` | 세부 기록 ({0}) | Host events ({0}) |
 | `operator_events_heading` | 문서 작업 기록 | Document activity log |
 | `operator_events_count` | {0}건 | {0} events |
 | `operator_events_live` | 실시간 | Live |
-| `operator_events_disconnected` | 연결 끊김 | Disconnected |
-| `operator_events_idle` | 대기 | Idle |
-| `operator_events_sub_error` | 작업 기록을 구독하지 못했습니다 | Failed to subscribe to events |
+| `operator_events_disconnected` | 연결이 끊겼습니다 | Disconnected |
+| `operator_events_idle` | 대기 중입니다 | Idle |
+| `operator_events_sub_error` | 작업 기록을 받아오지 못했습니다. | Failed to subscribe to events |
 | `operator_events_empty` | 아직 이 문서에 기록된 사건이 없습니다. | No events recorded for this document yet. |
 | `operator_protocol_chatter` | 프로토콜 통신 기록 ({0}) | Protocol trace ({0}) |
 | `operator_protocol_note` | 위쪽은 문서 사건 기록이고, 여기는 진단용 내부 통신 내역입니다. | Above is the document event log; below is diagnostic shell-runtime traffic. |
@@ -637,16 +637,16 @@
 | `operator_credential_heading` | 자격 증명 | Credentials |
 | `operator_credential_note` | 비밀 값은 이 기계의 자격 증명 저장소에만 들어가며, 설정 파일에는 이름만 저장되고 화면에 다시 표시되지 않습니다. | Secrets go straight to the OS credential store; config stores only the key name and secrets are never read back. |
 | `operator_credential_status_label` | 현재 상태 | Status |
-| `operator_credential_stored` | 저장됨 ({0} · {1}바이트) | Present ({0} · {1} bytes) |
-| `operator_credential_absent` | 없음 ({0}) | Absent ({0}) |
+| `operator_credential_stored` | 저장되어 있습니다 ({0} · {1}바이트) | Present ({0} · {1} bytes) |
+| `operator_credential_absent` | 저장된 자격 증명이 없습니다 ({0}) | Absent ({0}) |
 | `operator_credential_unnamed` | 이름 없음 | unnamed |
 | `operator_credential_paste_label` | 값 붙여넣기 | Paste secret |
-| `operator_credential_placeholder` | 여기에 붙여넣으면 곧바로 저장소로 갑니다 | Paste here to store directly in OS keyring |
+| `operator_credential_placeholder` | 자격 증명 값 입력 | Enter credential value |
 | `operator_credential_store_btn` | 저장소에 넣기 | Store credential |
 | `operator_credential_forget_btn` | 지우기 | Forget |
-| `operator_probe_heading` | 연결 확인 | Probe capabilities |
-| `operator_probe_btn` | 연결 확인 | Probe provider |
-| `operator_probe_busy` | 확인 중... | Probing... |
+| `operator_probe_heading` | 지원 기능 확인 | Check supported capabilities |
+| `operator_probe_btn` | 지원 기능 확인 | Check supported capabilities |
+| `operator_probe_busy` | 확인 중입니다 | Probing... |
 | `operator_probe_note` | 어댑터가 무엇을 지원하는지만 로컬에서 확인합니다. | Asks the adapter locally what it supports; touches neither document nor network. |
 | `operator_cap_model_prefix` | 모델: {0} | Model: {0} |
 | `operator_cap_verdict_label` | 자격 증명 참조 | Credential ref |
@@ -663,17 +663,17 @@
 | `operator_cap_vision` | 그림 입력 | Vision |
 | `operator_state_yes` | 예 | Yes |
 | `operator_state_no` | 아니오 | No |
-| `operator_state_unknown` | 모름 | Unknown |
-| `operator_cred_configured` | 설정됨 | Configured |
-| `operator_cred_missing` | 없음 | Missing |
-| `operator_cred_not_required` | 필요 없음 | Not required |
-| `operator_cred_unsupported` | 이 방식은 아직 안 됩니다 | Unsupported |
-| `operator_own_none` | 열쇠가 필요 없습니다 | No key required |
+| `operator_state_unknown` | 확인하지 못했습니다 | Unknown |
+| `operator_cred_configured` | 설정되어 있습니다 | Configured |
+| `operator_cred_missing` | 자격 증명이 없습니다 | Missing |
+| `operator_cred_not_required` | 자격 증명이 필요하지 않습니다 | Not required |
+| `operator_cred_unsupported` | 이 인증 방식은 지원하지 않습니다 | Unsupported |
+| `operator_own_none` | 인증 키가 필요하지 않습니다 | No key required |
 | `operator_own_env` | 환경 변수 이름으로 참조합니다 | Referenced via environment variable |
 | `operator_own_os` | 운영체제 저장소 키로 참조합니다 | Referenced via OS credential store |
-| `operator_own_managed` | 제공자 쪽이 인증을 갖고 있습니다 | Provider-managed authentication |
+| `operator_own_managed` | 서비스 제공자가 인증을 관리합니다 | Provider-managed authentication |
 | `operator_config_heading` | 이 제공자가 읽을 설정 파일 | Provider config file |
-| `operator_config_note` | 비밀 값이 포함되지 않고 이름만 저장됩니다. | Verify that only key names appear here, never secrets. |
+| `operator_config_note` | 이 설정에는 비밀 값 대신 자격 증명 이름만 저장됩니다. | This configuration stores credential names instead of secret values. |
 | `operator_config_empty` | 아직 저장된 설정 파일이 없습니다. | No config file saved yet. |
 | `operator_event_opened` | 문서를 열었습니다 — {0} | Opened document — {0} |
 | `operator_event_proposed` | 변경 작업 {0}건을 제안했습니다 — {1} | Proposed {0} operations — {1} |

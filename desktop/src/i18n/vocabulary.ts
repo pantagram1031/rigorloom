@@ -1009,8 +1009,8 @@ export const VOCABULARY = {
     en: "Server response is not valid JSON.",
   },
   err_rpc_failed: {
-    ko: "요청({0}) 호출에 실패했습니다.",
-    en: "{0} call failed.",
+    ko: "요청을 처리하지 못했습니다.",
+    en: "Could not process the request.",
   },
   seat_editor_aria_label: {
     ko: "이 자리에 넣을 값",
@@ -1024,7 +1024,10 @@ export const VOCABULARY = {
   cmd_kw_go_history: { ko: "기록 수정본 이력 비교", en: "history revisions" },
   cmd_kw_toggle_print_view: { ko: "인쇄 화면 문서 보기", en: "print view" },
   cmd_kw_approve: { ko: "승인 적용", en: "approve" },
-  cmd_kw_return: { ko: "돌려보내기 반려", en: "return" },
+  cmd_kw_return: {
+    ko: "돌려보내기",
+    en: "return",
+  },
   cmd_kw_export: { ko: "내보내기 저장 수정본", en: "export revision" },
   cmd_kw_switch_language: { ko: "언어 한국어 영어", en: "language" },
   cmd_kw_change_theme: { ko: "화면 테마 밝게 어둡게", en: "theme" },
@@ -1102,7 +1105,7 @@ export const VOCABULARY = {
   corpus_source_pps: { ko: "조달청 예시", en: "PPS example" },
   corpus_source_internal: { ko: "내부 점검 예시", en: "Internal check sample" },
   proj_unimpl_normalize_clones: {
-    ko: "같은 스타일의 복제본 정리는 헤더를 다시 쓰는 작업이라 검토 대기열에 정확히 표시할 수 없습니다.",
+    ko: "중복 글자 서식 정리는 문서의 서식 정보를 다시 쓰는 작업이어서 검토 대기열에 정확히 표시할 수 없습니다.",
     en: "Style clone normalization rewrites headers and cannot be accurately shown in the review queue.",
   },
   proj_unimpl_goto_text: {
@@ -1110,24 +1113,24 @@ export const VOCABULARY = {
     en: "Jumping to text is not supported in the review queue.",
   },
   proj_refuse_op_unrepresentable: {
-    ko: "작업 {0} ({1})을 검토 대기열에 정확히 표시할 수 없습니다: {2}",
-    en: "Operation {0} ({1}) cannot be accurately represented in the review queue: {2}",
+    ko: "변경 작업을 검토 대기열에 정확히 표시할 수 없습니다.",
+    en: "This change operation cannot be accurately shown in the review queue.",
   },
   proj_refuse_partial_unrepresentable: {
     ko: "일부 작업의 내용을 검토 대기열에 정확히 표시할 수 없습니다.",
     en: "Some operations cannot be accurately represented in the review queue.",
   },
   proj_refuse_kind_unsupported: {
-    ko: "작업 종류 \"{0}\"는 검토 대기열이 지원하지 않습니다.",
-    en: "Operation kind \"{0}\" is not supported in the review queue.",
+    ko: "이 변경 작업은 검토 대기열에서 지원하지 않습니다.",
+    en: "This change operation is not supported in the review queue.",
   },
   proj_refuse_invalid_params: {
-    ko: "작업 매개변수 객체가 올바르지 않습니다.",
-    en: "Operation parameter object is invalid.",
+    ko: "입력한 변경 내용을 확인해야 합니다.",
+    en: "Check the change details.",
   },
   proj_refuse_invalid_fields: {
-    ko: "작업 필드의 형식이 대기열 표현과 맞지 않습니다.",
-    en: "Operation field formats do not match the queue representation.",
+    ko: "입력한 변경 내용을 검토 대기열에 표시할 수 없습니다.",
+    en: "The change details cannot be shown in the review queue.",
   },
   proj_guide_color_prefix: { ko: "색상 {0}", en: "color {0}" },
   proj_guide_charpr_prefix: { ko: "서식 번호 {0}", en: "charPr {0}" },
@@ -1135,16 +1138,22 @@ export const VOCABULARY = {
   proj_guide_target_default: { ko: "대상 안내문", en: "Target guide text" },
   proj_guides_deleted: { ko: "(안내문 삭제됨)", en: "(Guide text removed)" },
   proj_addr_table_cell: { ko: "표 {0} {1}행 {2}열", en: "Table {0} R{1}C{2}" },
-  proj_addr_run_suffix: { ko: "· 덩어리 {0}", en: "· Run {0}" },
-  proj_addr_para_run: { ko: "문단 {0} · 덩어리 {1}", en: "Paragraph {0} · Run {1}" },
+  proj_addr_run_suffix: {
+    ko: "· 글자 구간 {0}",
+    en: "· Run {0}",
+  },
+  proj_addr_para_run: {
+    ko: "문단 {0} · 글자 구간 {1}",
+    en: "Paragraph {0} · Run {1}",
+  },
   proj_addr_delete_guides: { ko: "안내문 삭제", en: "Delete guides" },
   proj_inverse_delete_guides: {
     ko: "안내문 지움은 지운 안내 문단과 서식을 되살릴 수 없어 되돌릴 수 없습니다.",
     en: "Guide text removal cannot be undone because deleted guide paragraphs and formatting cannot be restored.",
   },
   proj_inverse_unsupported_kind: {
-    ko: "{0} 작업은 되돌릴 수 없습니다.",
-    en: "Operation {0} cannot be undone.",
+    ko: "이 변경 작업은 되돌릴 수 없습니다.",
+    en: "This change operation cannot be undone.",
   },
   action_open_hwpx_title: { ko: "한글 문서 열기", en: "Open Hangul document" },
   action_open_hwpx_filter: { ko: "한글 문서", en: "Hangul documents" },
@@ -1157,43 +1166,43 @@ export const VOCABULARY = {
     en: "Opened only the first of {0} documents.",
   },
   toast_not_editable_cell: {
-    ko: "이 칸은 값을 넣는 자리가 아닙니다",
+    ko: "이 칸은 입력용 빈칸이 아닙니다.",
     en: "This cell is not a fillable blank.",
   },
   overlay_not_editable_cell: {
-    ko: "{0} — 값을 넣는 자리가 아닙니다",
+    ko: "{0} — 이 칸은 입력용 빈칸이 아닙니다.",
     en: "{0} — Not a fillable blank",
   },
   caret_refusal_no_address: {
-    ko: "이 줄에는 문단 주소가 없습니다",
+    ko: "이 줄의 문단 위치를 확인할 수 없습니다.",
     en: "This line has no paragraph address.",
   },
   caret_refusal_multi_run: {
-    ko: "이 줄의 글이 여러 덩어리에 같이 들어 있어 어느 덩어리인지 고를 수 없습니다",
-    en: "This line spans multiple text segments; cannot target a single run.",
+    ko: "선택한 범위를 한 번에 고칠 수 없습니다. 문구를 나눠서 수정해야 합니다.",
+    en: "This selection cannot be edited at once. Edit smaller sections.",
   },
   caret_refusal_run_text_differs: {
-    ko: "이 줄의 글을 한 덩어리 안에서 한곳으로 짚을 수 없습니다",
+    ko: "이 줄에서 수정할 글자 위치를 정확히 찾을 수 없습니다.",
     en: "Cannot resolve a single cursor offset within this text segment.",
   },
   caret_refusal_no_inventory: {
-    ko: "런타임이 이 문단의 글 덩어리 목록을 돌려주지 못했습니다",
+    ko: "이 문단의 글자 구간 정보를 확인할 수 없습니다.",
     en: "The runtime did not return text segments for this paragraph.",
   },
   caret_refusal_revision_mismatch: {
-    ko: "표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓지 않습니다",
+    ko: "표시 중인 문서와 읽은 문서가 다릅니다. 이 줄에는 커서를 놓을 수 없습니다.",
     en: "Displayed document differs from the loaded document; cannot place cursor.",
   },
   caret_refusal_cross_run: {
-    ko: "이 고침은 여러 글 덩어리에 걸쳐 있습니다. 문단을 하나로 합치지 않습니다",
-    en: "This edit spans multiple text segments and cannot be merged.",
+    ko: "선택한 범위를 한 번에 고칠 수 없습니다. 문구를 나눠서 수정해야 합니다.",
+    en: "This selection cannot be edited at once. Edit smaller sections.",
   },
   caret_refusal_utf16_split: {
-    ko: "이 위치가 한 글자의 가운데를 가릅니다. 그 글자를 쪼개서 고치지 않습니다",
-    en: "This offset splits a character; cannot edit mid-character.",
+    ko: "선택한 위치가 한 글자의 중간이어서 수정할 수 없습니다. 글자 앞이나 뒤를 선택해야 합니다.",
+    en: "This position is inside a character and cannot be edited. Select a position before or after the character.",
   },
   overlay_caret_snapped: {
-    ko: "글자별 위치가 없어 줄 앞에 커서를 놓음",
+    ko: "글자별 위치를 확인할 수 없어 줄 앞에 커서를 놓았습니다",
     en: "Snapped cursor to start of line",
   },
   overlay_caret_offset: {
@@ -1201,8 +1210,8 @@ export const VOCABULARY = {
     en: "Before character {0}",
   },
   toast_removed_from_queue: {
-    ko: "대기열에서 뺐습니다. 문서는 처음부터 바뀐 적이 없습니다.",
-    en: "Removed from queue. The document itself has not changed.",
+    ko: "대기열에서 뺐습니다. 이 동작으로 문서 내용은 바뀌지 않습니다.",
+    en: "Removed from queue. This action does not change the document content.",
   },
   err_undo_not_invertible: {
     ko: "이 수정본에는 되돌릴 수 없는 작업이 있습니다: {0}. 안내문 지움은 지운 안내문을 원래 서식과 위치로 되살릴 수 없으며, 빈칸 채움·칸 문구 바꿈·본문 문구 바꿈 작업만 되돌릴 수 있습니다.",
@@ -1225,7 +1234,7 @@ export const VOCABULARY = {
     en: "Returned the change proposal. The document is unchanged.",
   },
   reapproval_prompt: {
-    ko: "문서 또는 수정본이 변경되어 기존 승인이 무효화되었습니다. 다시 변경 제안을 확인하고 승인해 주세요.",
+    ko: "문서 또는 수정본이 바뀌어 기존 승인이 무효화되었습니다. 변경 제안을 다시 확인하고 승인해야 합니다.",
     en: "The document or revision changed and invalidated the previous approval. Review the updated change proposal and approve again.",
   },
   toast_apply_cancelling: {
@@ -1233,12 +1242,21 @@ export const VOCABULARY = {
     en: "Requested cancellation. The current step will finish first.",
   },
   err_pipeline_workspace_missing: {
-    ko: "작업 폴더 경로를 입력해 주세요.",
+    ko: "작업 폴더 경로를 입력해야 합니다.",
     en: "Please enter a workspace path.",
   },
-  gate_decision_approved: { ko: "승인", en: "approved" },
-  gate_decision_rejected: { ko: "반려", en: "rejected" },
-  toast_gate_resolved: { ko: "{0} 게이트를 {1}했습니다", en: "{0} gate {1}" },
+  gate_decision_approved: {
+    ko: "승인했습니다",
+    en: "Approved",
+  },
+  gate_decision_rejected: {
+    ko: "돌려보냈습니다",
+    en: "Returned",
+  },
+  toast_gate_resolved: {
+    ko: "{1}",
+    en: "{1}",
+  },
   err_recovery_receipt_mismatch: {
     ko: "복구 대상 수정본의 검증 기록이 중단된 적용 요청과 일치하지 않습니다.",
     en: "The recovery revision's verification record does not match the interrupted apply request.",
@@ -1256,27 +1274,39 @@ export const VOCABULARY = {
     ko: "내려받은 파일이 수정본과 일치하지 않습니다. 이 파일을 제출하지 마십시오.",
     en: "The downloaded file does not match the revision. Do not submit this file.",
   },
-  addr_table_cell: { ko: "표 {0} ({1},{2})", en: "Table {0} ({1},{2})" },
+  addr_table_cell: {
+    ko: "표 {0} {1}행 {2}열",
+    en: "Table {0} R{1}C{2}",
+  },
   addr_paragraph: { ko: "문단 {0}", en: "Paragraph {0}" },
   addr_anchor: { ko: "위치 “{0}”", en: "Anchor “{0}”" },
   addr_none: { ko: "주소 없음", en: "No address" },
-  deriv_cell_borders: { ko: "그려진 선으로 잡음", en: "Matched by cell borders" },
-  deriv_matched_text: { ko: "칸의 글자로 잡음", en: "Matched by cell text" },
-  deriv_interpolated: { ko: "이름표에서 미루어 잡음", en: "Inferred from label" },
+  deriv_cell_borders: {
+    ko: "칸 테두리를 기준으로 위치를 찾았습니다",
+    en: "Matched by cell borders",
+  },
+  deriv_matched_text: {
+    ko: "칸의 문구를 기준으로 위치를 찾았습니다",
+    en: "Matched by cell text",
+  },
+  deriv_interpolated: {
+    ko: "항목 이름을 기준으로 위치를 추정했습니다",
+    en: "Inferred from label",
+  },
   overlay_ambiguous_pick: {
     ko: "후보 {0}개 — 직접 선택",
     en: "{0} matches — choose one",
   },
   overlay_unmapped_sidecar: {
-    ko: "{0}번째 줄 — 서식과 맞추지 못했습니다. 자체 렌더러는 {1}에서 그렸다고 하지만, 확인되지 않은 주소는 쓰지 않습니다",
-    en: "Line {0} — could not match to form structure. Own renderer drew at {1}, but unverified addresses are not used.",
+    ko: "{0}번째 줄 — 양식에서 이 줄의 위치를 확인할 수 없습니다. 미리보기에 표시된 위치만으로는 수정할 위치를 정할 수 없습니다.",
+    en: "Line {0} — Could not verify this line’s position in the form. Its preview position alone cannot identify where to edit.",
   },
   overlay_unmapped_plain: {
-    ko: "{0}번째 줄 — 이 줄의 글자를 서식의 어느 자리와도 맞추지 못했습니다",
+    ko: "{0}번째 줄 — 양식에서 이 줄의 위치를 확인할 수 없습니다.",
     en: "Line {0} — could not match this line to any position in the form.",
   },
   overlay_user_selected: {
-    ko: "{0} — 사용자가 고름",
+    ko: "{0} — 사용자가 선택했습니다",
     en: "{0} — selected by user",
   },
   prepare_note_revision_ready: {
@@ -1292,18 +1322,21 @@ export const VOCABULARY = {
     en: "Already prepared",
   },
   err_agent_output_unreadable: {
-    ko: "에이전트가 올바른 구조화 응답을 내놓지 않았습니다.",
-    en: "Agent did not return valid JSON output.",
+    ko: "에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다.",
+    en: "Could not display the agent’s proposal. Request it again.",
   },
   err_agent_draft_superseded: {
     ko: "제안이 도착하는 동안 문서나 검토 대기열이 바뀌어 이 제안을 대기열에 넣지 않았습니다.",
     en: "The document or review queue changed while this proposal arrived, so it was not queued.",
   },
-  finding_where_checker: { ko: "검사 {0}", en: "Check {0}" },
+  finding_where_checker: {
+    ko: "점검 항목",
+    en: "Check",
+  },
   finding_reason_none: { ko: "이유 없음", en: "no reason given" },
   finding_check_not_run: {
-    ko: "이 검사는 실행되지 않았습니다: {0}. 실행되지 않은 검사는 통과로 세지 않습니다.",
-    en: "This check did not run: {0}. Unrun checks are not counted as passes.",
+    ko: "이 점검은 실행되지 않았습니다. 실행하지 않은 점검은 통과로 세지 않습니다.",
+    en: "This check did not run. Checks that did not run are not counted as passes.",
   },
   finding_where_cell: { ko: "표 {0} {1}행 {2}열", en: "Table {0} R{1}C{2}" },
   finding_color_anomaly: {
@@ -1314,28 +1347,49 @@ export const VOCABULARY = {
     ko: "글자 속성이 본문 기준과 다릅니다. 서식 번호 {0} 대신 {1} 사용을 권장합니다.",
     en: "Character formatting differs from body baseline; charPr {0} -> {1} recommended.",
   },
-  finding_where_cell_run: { ko: "표 {0} {1}행 {2}열 · 조각 {3}", en: "Table {0} R{1}C{2} #{3}" },
-  finding_where_para_run: { ko: "문단 {0} · 조각 {1}", en: "Paragraph {0} #{1}" },
+  finding_where_cell_run: {
+    ko: "표 {0} {1}행 {2}열 · 글자 구간 {3}",
+    en: "Table {0} R{1}C{2} #{3}",
+  },
+  finding_where_para_run: {
+    ko: "문단 {0} · 글자 구간 {1}",
+    en: "Paragraph {0} #{1}",
+  },
   finding_color_unknown: { ko: "알 수 없음", en: "unknown" },
   finding_run_color_anomaly: {
-    ko: "본문 기준과 다른 색({0})으로 쓰인 글이 있습니다: \"{1}\"",
-    en: "Text uses a different colour ({0}) from body baseline: \"{1}\"",
+    ko: "본문 기준과 다른 글자색을 사용하는 문구가 있습니다. 문구: “{1}”.",
+    en: "Some text uses a different colour from the body text. Text: “{1}”.",
   },
   finding_script_anomaly_target: {
-    ko: "글자 속성({0})이 기준과 다릅니다. 서식 번호 {1} 대신 {2} 사용을 권장합니다.",
-    en: "Character attributes ({0}) differ from baseline; charPr {1} -> {2} recommended.",
+    ko: "글자 서식이 본문 기준과 다릅니다. 서식 번호 {1} 대신 {2} 사용을 권장합니다.",
+    en: "Character formatting differs from the body text. Use format {2} instead of {1}.",
   },
   finding_where_document: { ko: "문서 전체", en: "Whole document" },
   finding_clean_notice: {
-    ko: "이 빌드가 볼 수 있는 범위에서는 걸리는 것이 없습니다. 인쇄 확인과 제출 검사는 아직 실행할 수 없습니다.",
+    ko: "현재 점검할 수 있는 범위에서는 문제가 발견되지 않았습니다. 인쇄 확인과 제출 전 점검은 아직 실행할 수 없습니다.",
     en: "No issues found within what this build can inspect. Print verification and submission checks cannot run yet.",
   },
   toast_nothing_to_copy: { ko: "복사할 글이 없습니다", en: "Nothing to copy" },
-  toast_copied_label: { ko: "{0} 복사됨", en: "Copied {0}" },
-  boot_checking_capabilities: { ko: "능력을 확인하는 중", en: "Checking capabilities..." },
-  boot_finding_open_docs: { ko: "열린 문서를 찾는 중", en: "Finding open documents..." },
-  boot_reloading_doc: { ko: "문서를 다시 읽는 중", en: "Reloading document..." },
-  boot_restarting_runtime: { ko: "런타임을 다시 시작하는 중", en: "Restarting runtime..." },
+  toast_copied_label: {
+    ko: "{0} 복사를 마쳤습니다",
+    en: "Copied {0}",
+  },
+  boot_checking_capabilities: {
+    ko: "지원 기능을 확인하고 있습니다",
+    en: "Checking capabilities...",
+  },
+  boot_finding_open_docs: {
+    ko: "열린 문서를 찾고 있습니다",
+    en: "Finding open documents...",
+  },
+  boot_reloading_doc: {
+    ko: "문서를 다시 읽고 있습니다",
+    en: "Reloading document...",
+  },
+  boot_restarting_runtime: {
+    ko: "작업 공간 연결을 다시 시작하고 있습니다",
+    en: "Restarting runtime...",
+  },
   err_credential_name_missing: {
     ko: "먼저 자격 증명 이름을 정해야 합니다.",
     en: "Set a credential key name first.",
@@ -1349,8 +1403,8 @@ export const VOCABULARY = {
     en: "Agent host exited with code {0}.",
   },
   err_agent_plan_before_unreadable: {
-    ko: "에이전트 작업이 덮어쓸 현재 값을 런타임이 돌려주지 못했습니다. 원본 값으로 짐작해서 검토 대기열을 만들지 않습니다.",
-    en: "The runtime did not return the current value to be overwritten. Refusing to guess from source text.",
+    ko: "에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다.",
+    en: "Could not display the agent’s proposal. Request it again.",
   },
   agent_guide_summary_empty: {
     ko: "문서에 있는 삭제 대상 안내문",
@@ -1366,20 +1420,29 @@ export const VOCABULARY = {
   },
   err_agent_cancelled: { ko: "사람이 중간에 멈췄습니다.", en: "Stopped by operator." },
   toast_open_doc_before_check: {
-    ko: "문서를 먼저 열어야 검사를 돌립니다",
+    ko: "점검하려면 먼저 문서를 열어야 합니다.",
     en: "Open a document before running checks.",
   },
   err_invalid_root_path: {
-    ko: "작업 폴더 경로를 입력하세요.",
+    ko: "작업 폴더 경로를 입력해야 합니다.",
     en: "Enter a workspace folder path.",
   },
   err_workspace_start_failed: {
     ko: "새 작업 폴더로 작업 공간을 시작하지 못했습니다.",
     en: "Failed to start workspace with the new folder.",
   },
-  operator_host_heading: { ko: "에이전트 호스트", en: "Agent host" },
-  operator_host_available: { ko: "사용 가능", en: "Available" },
-  operator_host_unavailable: { ko: "사용 불가", en: "Unavailable" },
+  operator_host_heading: {
+    ko: "에이전트 연결",
+    en: "Agent connection",
+  },
+  operator_host_available: {
+    ko: "사용할 수 있습니다",
+    en: "Available",
+  },
+  operator_host_unavailable: {
+    ko: "사용할 수 없습니다",
+    en: "Unavailable",
+  },
   operator_host_unknown_reason: { ko: "확인하지 못했습니다.", en: "Could not verify." },
   operator_host_status_btn: { ko: "상태 새로고침", en: "Refresh status" },
   operator_host_boundary_note: {
@@ -1390,26 +1453,44 @@ export const VOCABULARY = {
     ko: "현재 문서: {0} · 수정본 {1}건",
     en: "Current document: {0} · {1} revisions",
   },
-  operator_no_open_doc: { ko: "열린 문서 없음", en: "No open document" },
+  operator_no_open_doc: {
+    ko: "열린 문서가 없습니다",
+    en: "No open document",
+  },
   operator_prompt_placeholder: {
-    ko: "에이전트에게 시킬 작업을 입력하세요",
+    ko: "작업 지시 입력",
     en: "Enter an instruction for the agent",
   },
   operator_prompt_submit: { ko: "실행", en: "Run" },
   operator_prompt_stop: { ko: "멈추기", en: "Stop" },
   operator_composer_blocked: {
-    ko: "실행할 수 없는 상태입니다: {0}",
-    en: "Cannot run right now: {0}",
+    ko: "지금은 실행할 수 없습니다.",
+    en: "Cannot run right now.",
   },
   operator_turns_empty: {
     ko: "아직 실행한 작업이 없습니다. 지시를 보내면 이력이 여기에 표시됩니다.",
     en: "No turns yet. Sent instructions will appear here.",
   },
-  operator_turn_working: { ko: "실행 중", en: "Running" },
-  operator_turn_fault: { ko: "제공자 오류", en: "Provider fault" },
-  operator_turn_failed: { ko: "실행 실패", en: "Failed" },
-  operator_turn_plan_ready: { ko: "제안 도착", en: "Proposal arrived" },
-  operator_turn_no_plan: { ko: "제안 없음", en: "No proposal" },
+  operator_turn_working: {
+    ko: "실행 중입니다",
+    en: "Running",
+  },
+  operator_turn_fault: {
+    ko: "서비스 제공자 오류가 발생했습니다",
+    en: "Provider fault",
+  },
+  operator_turn_failed: {
+    ko: "실행하지 못했습니다",
+    en: "Failed",
+  },
+  operator_turn_plan_ready: {
+    ko: "변경 제안이 도착했습니다",
+    en: "Proposal arrived",
+  },
+  operator_turn_no_plan: {
+    ko: "변경 제안이 없습니다",
+    en: "No proposal",
+  },
   operator_turn_count: { ko: "{0}단계", en: "{0} turns" },
   operator_turn_fault_note: {
     ko: "문서에 대한 판정이 아닙니다. 변경 제안과 승인 상태는 그대로입니다.",
@@ -1424,17 +1505,23 @@ export const VOCABULARY = {
     en: "The document or review queue changed in flight, so this proposal was not queued.",
   },
   operator_turn_never_compiled: {
-    ko: "이 연결에 없는 기능: {0}",
-    en: "Unavailable in this session: {0}",
+    ko: "현재 연결에서는 요청한 기능을 지원하지 않습니다.",
+    en: "The requested capability is not supported in this session.",
   },
   operator_turn_events_summary: { ko: "세부 기록 ({0})", en: "Host events ({0})" },
   operator_events_heading: { ko: "문서 작업 기록", en: "Document activity log" },
   operator_events_count: { ko: "{0}건", en: "{0} events" },
   operator_events_live: { ko: "실시간", en: "Live" },
-  operator_events_disconnected: { ko: "연결 끊김", en: "Disconnected" },
-  operator_events_idle: { ko: "대기", en: "Idle" },
+  operator_events_disconnected: {
+    ko: "연결이 끊겼습니다",
+    en: "Disconnected",
+  },
+  operator_events_idle: {
+    ko: "대기 중입니다",
+    en: "Idle",
+  },
   operator_events_sub_error: {
-    ko: "작업 기록을 구독하지 못했습니다",
+    ko: "작업 기록을 받아오지 못했습니다.",
     en: "Failed to subscribe to events",
   },
   operator_events_empty: {
@@ -1498,19 +1585,34 @@ export const VOCABULARY = {
     en: "Secrets go straight to the OS credential store; config stores only the key name and secrets are never read back.",
   },
   operator_credential_status_label: { ko: "현재 상태", en: "Status" },
-  operator_credential_stored: { ko: "저장됨 ({0} · {1}바이트)", en: "Present ({0} · {1} bytes)" },
-  operator_credential_absent: { ko: "없음 ({0})", en: "Absent ({0})" },
+  operator_credential_stored: {
+    ko: "저장되어 있습니다 ({0} · {1}바이트)",
+    en: "Present ({0} · {1} bytes)",
+  },
+  operator_credential_absent: {
+    ko: "저장된 자격 증명이 없습니다 ({0})",
+    en: "Absent ({0})",
+  },
   operator_credential_unnamed: { ko: "이름 없음", en: "unnamed" },
   operator_credential_paste_label: { ko: "값 붙여넣기", en: "Paste secret" },
   operator_credential_placeholder: {
-    ko: "여기에 붙여넣으면 곧바로 저장소로 갑니다",
-    en: "Paste here to store directly in OS keyring",
+    ko: "자격 증명 값 입력",
+    en: "Enter credential value",
   },
   operator_credential_store_btn: { ko: "저장소에 넣기", en: "Store credential" },
   operator_credential_forget_btn: { ko: "지우기", en: "Forget" },
-  operator_probe_heading: { ko: "연결 확인", en: "Probe capabilities" },
-  operator_probe_btn: { ko: "연결 확인", en: "Probe provider" },
-  operator_probe_busy: { ko: "확인 중...", en: "Probing..." },
+  operator_probe_heading: {
+    ko: "지원 기능 확인",
+    en: "Check supported capabilities",
+  },
+  operator_probe_btn: {
+    ko: "지원 기능 확인",
+    en: "Check supported capabilities",
+  },
+  operator_probe_busy: {
+    ko: "확인 중입니다",
+    en: "Probing...",
+  },
   operator_probe_note: {
     ko: "어댑터가 무엇을 지원하는지만 로컬에서 확인합니다.",
     en: "Asks the adapter locally what it supports; touches neither document nor network.",
@@ -1530,25 +1632,43 @@ export const VOCABULARY = {
   operator_cap_vision: { ko: "그림 입력", en: "Vision" },
   operator_state_yes: { ko: "예", en: "Yes" },
   operator_state_no: { ko: "아니오", en: "No" },
-  operator_state_unknown: { ko: "모름", en: "Unknown" },
-  operator_cred_configured: { ko: "설정됨", en: "Configured" },
-  operator_cred_missing: { ko: "없음", en: "Missing" },
-  operator_cred_not_required: { ko: "필요 없음", en: "Not required" },
-  operator_cred_unsupported: { ko: "이 방식은 아직 안 됩니다", en: "Unsupported" },
-  operator_own_none: { ko: "열쇠가 필요 없습니다", en: "No key required" },
+  operator_state_unknown: {
+    ko: "확인하지 못했습니다",
+    en: "Unknown",
+  },
+  operator_cred_configured: {
+    ko: "설정되어 있습니다",
+    en: "Configured",
+  },
+  operator_cred_missing: {
+    ko: "자격 증명이 없습니다",
+    en: "Missing",
+  },
+  operator_cred_not_required: {
+    ko: "자격 증명이 필요하지 않습니다",
+    en: "Not required",
+  },
+  operator_cred_unsupported: {
+    ko: "이 인증 방식은 지원하지 않습니다",
+    en: "Unsupported",
+  },
+  operator_own_none: {
+    ko: "인증 키가 필요하지 않습니다",
+    en: "No key required",
+  },
   operator_own_env: { ko: "환경 변수 이름으로 참조합니다", en: "Referenced via environment variable" },
   operator_own_os: {
     ko: "운영체제 저장소 키로 참조합니다",
     en: "Referenced via OS credential store",
   },
   operator_own_managed: {
-    ko: "제공자 쪽이 인증을 갖고 있습니다",
+    ko: "서비스 제공자가 인증을 관리합니다",
     en: "Provider-managed authentication",
   },
   operator_config_heading: { ko: "이 제공자가 읽을 설정 파일", en: "Provider config file" },
   operator_config_note: {
-    ko: "비밀 값이 포함되지 않고 이름만 저장됩니다.",
-    en: "Verify that only key names appear here, never secrets.",
+    ko: "이 설정에는 비밀 값 대신 자격 증명 이름만 저장됩니다.",
+    en: "This configuration stores credential names instead of secret values.",
   },
   operator_config_empty: { ko: "아직 저장된 설정 파일이 없습니다.", en: "No config file saved yet." },
   operator_event_opened: { ko: "문서를 열었습니다 — {0}", en: "Opened document — {0}" },
