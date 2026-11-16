@@ -21,9 +21,9 @@ The strata were 정책 보도, 공개 문답, 인사 and 보조금; the first tw
 
 Sentence boundaries and personal-data screening were model-only, with no human review.
 
-Dates run from 2015-08 to 2019-12.
+The indexed items’ publication dates range from 2015-08 to 2019-12.
 
-Every role was a model and no human took part.
+Every listed role was filled by a model. No human served in the listed preparation, editing, verification, or judging roles.
 
 The judges are from the same model family as the generator.
 
