@@ -1,0 +1,32 @@
+{
+  "command": "style check",
+  "ok": true,
+  "result": {
+    "counts": {
+      "error": 0,
+      "notice": 0
+    },
+    "docType": "any",
+    "file": "filled.hwpx",
+    "findings": [],
+    "pass": true,
+    "rulesApplied": [
+      "ko.double-passive",
+      "ko.e-isseoseo",
+      "ko.e-dareum-anida",
+      "ko.ji-anhumyeon-an-doenda",
+      "ko.hayeogeum",
+      "ko.e-uihae",
+      "ko.gajigo-itda",
+      "ko.geot-i-pilyohada",
+      "ko.para-opener-summary",
+      "ko.filler-opener",
+      "ko.contrast-frame",
+      "ko.md-bold",
+      "ko.exclamation"
+    ],
+    "ruleset": "ko-style/1",
+    "schema": "rigorloom/style-check-v1",
+    "unit": "paragraph"
+  }
+}

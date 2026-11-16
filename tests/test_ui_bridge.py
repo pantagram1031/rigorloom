@@ -144,10 +144,16 @@ def started_bridge(tmp_path: Path):
 def test_pyproject_package_data_and_cli_ui_subcommand(tmp_path: Path, monkeypatch):
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     st_cfg = pyproject["tool"]["setuptools"]
-    assert st_cfg["packages"] == ["rigorloom_runtime"]
+    assert st_cfg["packages"] == ["rigorloom_runtime", "rigorloom_runtime.style_packs"]
     assert st_cfg["include-package-data"] is False
-    assert st_cfg["package-dir"] == {"rigorloom_runtime": "runtime/scripts"}
-    assert st_cfg["package-data"] == {"rigorloom_runtime": ["ui_dist/*", "ui_dist/assets/*"]}
+    assert st_cfg["package-dir"] == {
+        "rigorloom_runtime": "runtime/scripts",
+        "rigorloom_runtime.style_packs": "runtime/style_packs",
+    }
+    assert st_cfg["package-data"] == {
+        "rigorloom_runtime": ["ui_dist/*", "ui_dist/assets/*"],
+        "rigorloom_runtime.style_packs": ["*.json"],
+    }
 
     # Global --root must stay un-defaulted so `capabilities` without --root exits 2.
     parser = cli.build_parser()

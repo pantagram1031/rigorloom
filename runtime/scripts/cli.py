@@ -213,9 +213,13 @@ def build_parser() -> argparse.ArgumentParser:
         "check", help="list matches as file:line:col rule-id; exit 3 only on an error rule")
     p_style_check.add_argument("file", help="the document to check")
     p_style_check.add_argument(
-        "--doc-type", default="any",
+        "--doc-type", default=None,
         choices=("report", "gongmun", "grant", "minwon", "contract", "any"),
-        help="apply only the rules for this document type (default: all rules)")
+        help="apply only the rules for this document type (default: pack baseDocType, or all rules)")
+    p_style_check.add_argument(
+        "--pack", default=None,
+        choices=("gongmun", "minwon", "hr", "grant"),
+        help="apply a document-type rule pack in addition to ko-style/1")
     p_style_check.add_argument(
         "--format", choices=("json", "text"), default="json",
         help="json (default, one document on stdout) or one line per match")
@@ -605,7 +609,7 @@ def main(argv: list[str] | None = None) -> int:
         except ImportError:
             import rt_style
         try:
-            result = rt_style.check(Path(args.file), args.doc_type)
+            result = rt_style.check(Path(args.file), args.doc_type, pack=args.pack)
         except (rt_style.StyleInputError, OSError, UnicodeDecodeError) as exc:
             return emit({"ok": False, "command": "style check",
                          "error": {"code": "invalid_params", "message": str(exc)}},
