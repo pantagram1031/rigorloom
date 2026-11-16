@@ -36,6 +36,12 @@ STYLE_SCHEMA = "rigorloom/style-check-v1"
 DOC_TYPES = ("report", "gongmun", "grant", "minwon", "contract", "any")
 SEVERITIES = ("error", "notice")
 PACK_NAMES = ("gongmun", "minwon", "hr", "grant")
+PACK_BASE_DOC_TYPES = {
+    "gongmun": "gongmun",
+    "minwon": "minwon",
+    "hr": "gongmun",
+    "grant": "grant",
+}
 
 
 @dataclass(frozen=True)
@@ -122,7 +128,7 @@ class StyleInputError(ValueError):
     """The input cannot be checked (missing, unsupported, unreadable)."""
 
 
-_PACK_ID_RE = re.compile(r"^[a-z0-9-]+\.[a-z0-9]+(?:-[a-z0-9]+)*$")
+_PACK_ID_RE = re.compile(r"\A[a-z0-9-]+\.[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _REQUIRED_PACK_KEYS = ("pack", "version", "baseDocType", "note", "rules")
 _REQUIRED_RULE_KEYS = (
     "id", "pattern", "severity", "why", "suggest", "positive", "negative", "source"
@@ -153,6 +159,196 @@ def _default_pack_dir() -> Path:
 
 def _pack_error(pack_name: str, detail: str) -> StyleInputError:
     return StyleInputError(f"pack {pack_name!r}: {detail}")
+
+
+def _parse_quantifier(pattern: str, index: int) -> tuple[int, int | None, int] | None:
+    """Parse a regex quantifier at ``index`` -> ``(min_rep, max_rep, next_index)`` or None."""
+    n = len(pattern)
+    ch = pattern[index]
+    if ch == "*":
+        end = index + 1
+        q_min, q_max = 0, None
+    elif ch == "+":
+        end = index + 1
+        q_min, q_max = 1, None
+    elif ch == "?":
+        end = index + 1
+        q_min, q_max = 0, 1
+    elif ch == "{":
+        m = re.match(r"\{(?:(\d+)|(\d*),(\d*))\}", pattern[index:])
+        if m is None:
+            return None
+        if m.group(1) is not None:
+            val = int(m.group(1))
+            q_min, q_max = val, val
+        else:
+            s_min, s_max = m.group(2), m.group(3)
+            if not s_min and not s_max:
+                return None
+            q_min = int(s_min) if s_min else 0
+            q_max = int(s_max) if s_max else None
+        end = index + m.end()
+    else:
+        return None
+    if end < n and pattern[end] in "?+":
+        end += 1
+    return q_min, q_max, end
+
+
+def _has_nested_quantifier(pattern: str) -> bool:
+    """Return True if a variable-length quantifier is nested inside a repeating group."""
+    # Each stack frame is [is_lookaround, has_var, is_verbose].
+    stack: list[list[bool]] = [[False, False, False]]
+    last_atom_has_var = False
+    has_atom = False
+    i = 0
+    n = len(pattern)
+
+    while i < n:
+        ch = pattern[i]
+        verbose = stack[-1][2]
+
+        if verbose:
+            if ch.isspace():
+                i += 1
+                continue
+            if ch == "#":
+                nl = pattern.find("\n", i + 1)
+                i = n if nl == -1 else nl + 1
+                continue
+
+        if ch == "\\":
+            if pattern.startswith("\\N{", i):
+                close = pattern.find("}", i + 3)
+                i = (i + 2) if close == -1 else (close + 1)
+            else:
+                i += 2 if i + 1 < n else 1
+            last_atom_has_var = False
+            has_atom = True
+            continue
+
+        if ch == "[":
+            i += 1
+            if i < n and pattern[i] == "^":
+                i += 1
+            if i < n and pattern[i] == "]":
+                i += 1
+            while i < n and pattern[i] != "]":
+                if pattern[i] == "\\" and i + 1 < n:
+                    i += 2
+                else:
+                    i += 1
+            if i < n:
+                i += 1
+            last_atom_has_var = False
+            has_atom = True
+            continue
+
+        if ch == "(":
+            if i + 1 < n and pattern[i + 1] == "?":
+                if i + 2 < n and pattern[i + 2] == "#":
+                    close = pattern.find(")", i + 3)
+                    i = n if close == -1 else close + 1
+                    continue
+                if pattern.startswith(("(?=", "(?!"), i):
+                    stack.append([True, False, verbose])
+                    i += 3
+                    last_atom_has_var = False
+                    has_atom = False
+                    continue
+                if pattern.startswith(("(?<=", "(?<!"), i):
+                    stack.append([True, False, verbose])
+                    i += 4
+                    last_atom_has_var = False
+                    has_atom = False
+                    continue
+                if pattern.startswith(("(?:", "(?>"), i):
+                    stack.append([False, False, verbose])
+                    i += 3
+                    last_atom_has_var = False
+                    has_atom = False
+                    continue
+                if pattern.startswith("(?P=", i):
+                    close = pattern.find(")", i + 4)
+                    i = n if close == -1 else close + 1
+                    last_atom_has_var = False
+                    has_atom = True
+                    continue
+                if pattern.startswith("(?P<", i):
+                    close = pattern.find(">", i + 4)
+                    i = i + 4 if close == -1 else close + 1
+                    stack.append([False, False, verbose])
+                    last_atom_has_var = False
+                    has_atom = False
+                    continue
+                if pattern.startswith("(?(", i):
+                    close = pattern.find(")", i + 3)
+                    i = i + 3 if close == -1 else close + 1
+                    stack.append([False, False, verbose])
+                    last_atom_has_var = False
+                    has_atom = False
+                    continue
+                m_flags = re.match(r"\(\?([aiLmsux]+)(?:-([imsx]+))?([:)])", pattern[i:])
+                if m_flags is not None:
+                    add_f, rem_f, term = m_flags.groups()
+                    new_verbose = verbose or ("x" in add_f)
+                    if rem_f and "x" in rem_f:
+                        new_verbose = False
+                    i += m_flags.end()
+                    if term == ")":
+                        stack[-1][2] = new_verbose
+                    else:
+                        stack.append([False, False, new_verbose])
+                        last_atom_has_var = False
+                        has_atom = False
+                    continue
+            stack.append([False, False, verbose])
+            i += 1
+            last_atom_has_var = False
+            has_atom = False
+            continue
+
+        if ch == ")":
+            if len(stack) > 1:
+                is_lookaround, group_has_var, _ = stack.pop()
+                if is_lookaround:
+                    last_atom_has_var = False
+                else:
+                    last_atom_has_var = group_has_var
+                    if group_has_var:
+                        stack[-1][1] = True
+                has_atom = True
+            i += 1
+            continue
+
+        if ch == "|":
+            last_atom_has_var = False
+            has_atom = False
+            i += 1
+            continue
+
+        quant = _parse_quantifier(pattern, i)
+        if quant is not None and has_atom:
+            q_min, q_max, next_i = quant
+            if (q_max is None or q_max > 1) and last_atom_has_var:
+                return True
+            if q_max is None or q_min != q_max:
+                last_atom_has_var = True
+                stack[-1][1] = True
+            i = next_i
+            continue
+
+        if ch in "^$":
+            last_atom_has_var = False
+            has_atom = False
+            i += 1
+            continue
+
+        last_atom_has_var = False
+        has_atom = True
+        i += 1
+
+    return False
 
 
 def _validate_rule_source(pack_name: str, rule_id: str, source: object, note: str) -> None:
@@ -201,6 +397,12 @@ def load_pack(pack_name: str, *, pack_dir: Path | None = None) -> StylePack:
     base_doc_type = data["baseDocType"]
     if not isinstance(base_doc_type, str) or base_doc_type not in DOC_TYPES or base_doc_type == "any":
         raise _pack_error(pack_name, f"invalid baseDocType {base_doc_type!r}")
+    expected_base = PACK_BASE_DOC_TYPES.get(pack_name)
+    if expected_base is not None and base_doc_type != expected_base:
+        raise _pack_error(
+            pack_name,
+            f"baseDocType must be {expected_base!r}, got {base_doc_type!r}",
+        )
     note = data["note"]
     if not isinstance(note, str) or not note.strip():
         raise _pack_error(pack_name, "top-level 'note' must be a non-empty string")
@@ -222,7 +424,7 @@ def load_pack(pack_name: str, *, pack_dir: Path | None = None) -> StylePack:
                 raise _pack_error(pack_name, f"rule at index {index} field {key!r} must be a non-empty string")
 
         rid = raw["id"]
-        if not rid.startswith(f"{pack_name}.") or not _PACK_ID_RE.match(rid):
+        if not rid.startswith(f"{pack_name}.") or not _PACK_ID_RE.fullmatch(rid):
             raise _pack_error(pack_name, f"invalid rule id {rid!r}; expected {pack_name}.<kebab-name>")
         if rid in _BY_ID or rid in seen_ids:
             raise _pack_error(pack_name, f"duplicate rule id {rid!r}")
@@ -236,8 +438,11 @@ def load_pack(pack_name: str, *, pack_dir: Path | None = None) -> StylePack:
 
         try:
             compiled = re.compile(raw["pattern"])
-        except re.error as exc:
+        except (re.error, OverflowError, RecursionError, Exception) as exc:
             raise _pack_error(pack_name, f"rule {rid!r} regex failed to compile: {exc}") from exc
+
+        if _has_nested_quantifier(raw["pattern"]):
+            raise _pack_error(pack_name, f"rule {rid!r} pattern contains nested quantifiers")
 
         if compiled.search(raw["positive"]) is None:
             raise _pack_error(pack_name, f"rule {rid!r} pattern did not match positive example")

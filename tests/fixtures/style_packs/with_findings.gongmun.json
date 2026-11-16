@@ -1,0 +1,72 @@
+{
+  "command": "style check",
+  "ok": false,
+  "result": {
+    "counts": {
+      "error": 1,
+      "notice": 4
+    },
+    "docType": "gongmun",
+    "file": "with_findings.txt",
+    "findings": [
+      {
+        "col": 20,
+        "line": 1,
+        "match": "되어지고",
+        "rule": "ko.double-passive",
+        "severity": "error",
+        "suggest": "되어진 → 된, 되어집니다 → 됩니다",
+        "why": "이중 피동입니다. '되다'가 이미 피동이라 '-어지다'를 겹칠 필요가 없습니다."
+      },
+      {
+        "col": 6,
+        "line": 3,
+        "match": "에 있어서는",
+        "rule": "ko.e-isseoseo",
+        "severity": "notice",
+        "suggest": "~에서, ~할 때, ~에 대해",
+        "why": "일본어 '~において'를 옮긴 말투로 자주 쓰입니다."
+      },
+      {
+        "col": 4,
+        "line": 4,
+        "match": "로 하여금",
+        "rule": "ko.hayeogeum",
+        "severity": "notice",
+        "suggest": "A로 하여금 B하게 하다 → A가 B하도록 하다",
+        "why": "사동을 겹쳐 쓰는 번역 투입니다. 누가 무엇을 하는지 바로 쓰면 짧아집니다."
+      },
+      {
+        "col": 7,
+        "line": 5,
+        "match": "**반드시**",
+        "rule": "ko.md-bold",
+        "severity": "notice",
+        "suggest": "강조가 필요하면 문장으로",
+        "why": "본문 굵게 표시입니다. 한글 양식 문서에서는 대개 서식으로 강조하지 않습니다."
+      },
+      {
+        "col": 15,
+        "line": 6,
+        "match": "다!",
+        "rule": "ko.exclamation",
+        "severity": "notice",
+        "suggest": "마침표",
+        "why": "공식 문서 본문의 느낌표입니다."
+      }
+    ],
+    "pass": false,
+    "rulesApplied": [
+      "ko.double-passive",
+      "ko.e-isseoseo",
+      "ko.e-dareum-anida",
+      "ko.ji-anhumyeon-an-doenda",
+      "ko.hayeogeum",
+      "ko.md-bold",
+      "ko.exclamation"
+    ],
+    "ruleset": "ko-style/1",
+    "schema": "rigorloom/style-check-v1",
+    "unit": "line"
+  }
+}

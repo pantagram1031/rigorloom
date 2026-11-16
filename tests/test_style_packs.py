@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -11,12 +13,14 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "runtime" / "scripts"
 PACK_DIR = REPO_ROOT / "runtime" / "style_packs"
+FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "style_packs"
 DOCS_PATH = REPO_ROOT / "docs" / "korean-style-rules.md"
 DEMO_HWPX = REPO_ROOT / "examples" / "gongmun" / "expected" / "filled.hwpx"
 
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import cli  # noqa: E402
 import rt_style  # noqa: E402
 
 
@@ -39,11 +43,19 @@ _PACK_RULE_PARAMS = _iter_pack_rules()
 _PACK_RULE_IDS = [rule["id"] for _, rule in _PACK_RULE_PARAMS]
 
 
-def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+def _run_cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    cli_arg = "runtime/scripts/cli.py" if cwd == REPO_ROOT else str(SCRIPTS_DIR / "cli.py")
     return subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "cli.py"), *args],
+        [sys.executable, "-B", cli_arg, *args],
+        cwd=str(cwd) if cwd is not None else None,
+        env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
         check=False,
     )
@@ -121,38 +133,30 @@ def test_unselected_pack_never_fires(tmp_path: Path):
     assert not any(f["rule"].startswith("gongmun.") for f in cli_payload["result"]["findings"])
 
 
-def test_without_pack_output_byte_identical_to_baseline():
-    # Construct expected baseline result directly from ko-style/1 primitives
-    unit, units = rt_style._units(DEMO_HWPX)
-    rules = rt_style.rules_for("any")
-    findings = rt_style.check_text(units, rules)
-    errors = sum(1 for f in findings if f["severity"] == "error")
-    baseline_result = {
-        "schema": "rigorloom/style-check-v1",
-        "ruleset": "ko-style/1",
-        "file": DEMO_HWPX.name,
-        "docType": "any",
-        "unit": unit,
-        "rulesApplied": [r.id for r in rules],
-        "pass": errors == 0,
-        "counts": {"error": errors, "notice": len(findings) - errors},
-        "findings": findings,
-    }
-    expected_json = json.dumps(
-        {"ok": errors == 0, "command": "style check", "result": baseline_result},
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        allow_nan=False,
-    ) + "\n"
-    expected_text = rt_style.format_lines(baseline_result, str(DEMO_HWPX))
+@pytest.mark.parametrize(
+    ("rel_path", "extra_args", "baseline_stem", "expected_rc"),
+    [
+        ("tests/fixtures/style_packs/with_findings.txt", (), "with_findings.any", 3),
+        ("tests/fixtures/style_packs/with_findings.txt", ("--doc-type", "any"), "with_findings.any", 3),
+        ("tests/fixtures/style_packs/with_findings.txt", ("--doc-type", "gongmun"), "with_findings.gongmun", 3),
+        ("examples/gongmun/expected/filled.hwpx", (), "filled_hwpx.any", 0),
+        ("examples/gongmun/expected/filled.hwpx", ("--doc-type", "any"), "filled_hwpx.any", 0),
+    ],
+)
+def test_without_pack_output_byte_identical_to_baseline(
+    rel_path: str, extra_args: tuple[str, ...], baseline_stem: str, expected_rc: int
+):
+    expected_json = (FIXTURES_DIR / f"{baseline_stem}.json").read_text(encoding="utf-8")
+    expected_text = (FIXTURES_DIR / f"{baseline_stem}.txt").read_text(encoding="utf-8")
 
-    proc_json = _run_cli("style", "check", str(DEMO_HWPX), "--format", "json")
-    assert proc_json.returncode in (0, 3)
+    proc_json = _run_cli("style", "check", rel_path, *extra_args, "--format", "json", cwd=REPO_ROOT)
+    assert proc_json.returncode == expected_rc
+    assert proc_json.stderr == ""
     assert proc_json.stdout == expected_json
 
-    proc_text = _run_cli("style", "check", str(DEMO_HWPX), "--format", "text")
-    assert proc_text.returncode == proc_json.returncode
+    proc_text = _run_cli("style", "check", rel_path, *extra_args, "--format", "text", cwd=REPO_ROOT)
+    assert proc_text.returncode == expected_rc
+    assert proc_text.stderr == ""
     assert proc_text.stdout == expected_text
 
 
@@ -308,3 +312,223 @@ def test_docs_list_all_pack_rules_and_disclaimers():
             else:
                 assert rule["source"]["title"] in docs
                 assert rule["source"]["page"] in docs
+
+
+def test_no_pack_rule_has_error_severity():
+    error_rules = [rule["id"] for _, rule in _PACK_RULE_PARAMS if rule["severity"] == "error"]
+    assert error_rules == []
+
+
+@pytest.mark.parametrize(
+    ("pack_name", "rule_id", "text"),
+    [
+        ("gongmun", "gongmun.saishiot-orthography", "기존 서식의 ‘갯수(수정 전)’ 항목을 ‘개수’로 변경합니다."),
+        ("grant", "grant.rate-dueum-error", "입력 자료의 열 이름 ‘집행율(%)’은 원본과 동일하게 유지합니다."),
+    ],
+)
+def test_quoted_counterexamples_exit_zero_without_findings(
+    pack_name: str, rule_id: str, text: str, tmp_path: Path
+):
+    doc = tmp_path / "quoted.txt"
+    doc.write_text(text + "\n", encoding="utf-8")
+
+    result = rt_style.check(doc, pack=pack_name)
+    assert result["counts"]["error"] == 0
+    assert not any(f["rule"] == rule_id for f in result["findings"])
+
+    proc = _run_cli("style", "check", str(doc), "--pack", pack_name)
+    assert proc.returncode == 0
+    payload = json.loads(proc.stdout)
+    assert payload["ok"] is True
+    assert payload["result"]["counts"] == {"error": 0, "notice": 0}
+    assert payload["result"]["findings"] == []
+
+
+@pytest.mark.parametrize(
+    ("pack_name", "rule_id", "text"),
+    [
+        ("gongmun", "gongmun.submit-receive-confusion", "신청자가 제출한 서류는 담당자가 접수하여 처리합니다."),
+        ("gongmun", "gongmun.attachment-label", "별첨 서식은 수정하지 말고 붙임과 같이 사용하시기 바랍니다."),
+        ("gongmun", "gongmun.attachment-label", "별첨 서식은 별도로 수정하지 말고 붙임과 같이 사용하시기 바랍니다."),
+        ("grant", "grant.e-hanhaeo-limit", "양식장 수조에 한해성 어류를 입식합니다."),
+        ("gongmun", "gongmun.currency-no-korean", "금0원(금영원)으로 계약 금액을 확정합니다."),
+        ("gongmun", "gongmun.amount-unit-awkward", "예산은 1억 2천 원으로 편성합니다."),
+        ("gongmun", "gongmun.date-zero-pad", "관련: 교육지원과-1234(2026. 03. 05.)호."),
+        (
+            "gongmun",
+            "gongmun.date-zero-pad",
+            '행정안전부 정보공개과-1004 (2020. 03. 03., "2020년 행정업무편람 운영지침")호와 관련됩니다.',
+        ),
+        ("minwon", "minwon.vague-followup", "검토 결과는 2026. 5. 15.까지 추후 별도 안내드리겠습니다."),
+        ("hr", "hr.rank-step-vague", "적정 호봉은 7호봉으로 확정되었습니다."),
+        ("hr", "hr.rank-step-vague", "적정 호봉은 인사위원회 심의 결과 7호봉으로 확정되었습니다."),
+    ],
+)
+def test_adversarial_counterexamples_do_not_fire(
+    pack_name: str, rule_id: str, text: str, tmp_path: Path
+):
+    doc = tmp_path / "counterexample.txt"
+    doc.write_text(text + "\n", encoding="utf-8")
+
+    result = rt_style.check(doc, pack=pack_name)
+    assert not any(f["rule"] == rule_id for f in result["findings"]), (
+        f"{rule_id} unexpectedly matched {text!r}: {result['findings']}"
+    )
+
+
+def test_pack_rules_64kib_adversarial_performance():
+    prose_unit = (
+        "신청자가 제출한 서류는 담당자가 접수하여 처리합니다. "
+        "예산은 1억 2천 원으로 편성합니다. "
+        "별첨 서식은 수정하지 말고 붙임과 같이 사용하시기 바랍니다. "
+        "기존 서식의 ‘갯수(수정 전)’ 항목을 ‘개수’로 변경합니다. "
+        "99999999999999999999 "
+    )
+    prose_64k = (prose_unit * ((65536 // len(prose_unit)) + 2))[:65536] + "!"
+    adversarial_inputs = {
+        "digits-64k": "9" * 65536 + "!",
+        "hangul-64k": "가" * 65536 + "!",
+        "commas-64k": "999," * 16384 + "!",
+        "prose-64k": prose_64k,
+    }
+    for label, text in adversarial_inputs.items():
+        assert len(text.encode("utf-8")) >= 65536, label
+
+    for pack_name in rt_style.PACK_NAMES:
+        loaded = rt_style.load_pack(pack_name)
+        for rule in loaded.rules:
+            rx = rule.regex()
+            for label, text in adversarial_inputs.items():
+                start = time.perf_counter()
+                list(rx.finditer(text))
+                elapsed = time.perf_counter() - start
+                assert elapsed < 0.5, f"{rule.id} on {label} took {elapsed:.3f}s (>= 0.5s)"
+
+
+@pytest.mark.parametrize(
+    "bad_pattern",
+    [
+        "^(a+)+$",
+        "(a*)*",
+        "(a+)*",
+        "((a+))+",
+        "(?:a+|b){2,}",
+        "(?:a+?)+",
+    ],
+)
+def test_loader_rejects_nested_quantifiers(bad_pattern: str, tmp_path: Path):
+    name = "badpack"
+    data = _valid_sample_pack(name)
+    rule_id = f"{name}.nested"
+    data["rules"][0].update(id=rule_id, pattern=bad_pattern, positive="a", negative="b")
+    _write_pack(tmp_path, name, data)
+
+    with pytest.raises(rt_style.StyleInputError) as exc_info:
+        rt_style.load_pack(name, pack_dir=tmp_path)
+    msg = str(exc_info.value)
+    assert name in msg and rule_id in msg
+
+
+def test_loader_and_cli_reject_regex_overflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
+    pack_dir = tmp_path / "packs"
+    pack_dir.mkdir()
+    data = _valid_sample_pack("gongmun")
+    rule_id = "gongmun.overflow-rule"
+    data["rules"][0].update(id=rule_id, pattern="a{4294967296}", positive="a", negative="b")
+    _write_pack(pack_dir, "gongmun", data)
+
+    with pytest.raises(rt_style.StyleInputError) as exc_info:
+        rt_style.load_pack("gongmun", pack_dir=pack_dir)
+    msg = str(exc_info.value)
+    assert "gongmun" in msg and rule_id in msg
+
+    doc = tmp_path / "doc.txt"
+    doc.write_text("정상 문장입니다.\n", encoding="utf-8")
+
+    monkeypatch.setattr(rt_style, "_default_pack_dir", lambda: pack_dir)
+    rc = cli.main(["style", "check", str(doc), "--pack", "gongmun"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "invalid_params"
+    assert "gongmun" in payload["error"]["message"]
+    assert rule_id in payload["error"]["message"]
+
+    sub_code = (
+        "import sys; from pathlib import Path; "
+        f"sys.path.insert(0, {str(SCRIPTS_DIR)!r}); "
+        "import rt_style, cli; "
+        f"rt_style._default_pack_dir = lambda: Path({str(pack_dir)!r}); "
+        f"raise SystemExit(cli.main(['style', 'check', {str(doc)!r}, '--pack', 'gongmun']))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-B", "-c", sub_code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 2
+    sub_payload = json.loads(proc.stdout)
+    assert sub_payload["ok"] is False
+    assert sub_payload["error"]["code"] == "invalid_params"
+
+
+@pytest.mark.parametrize(
+    ("pack_name", "bad_base"),
+    [
+        ("gongmun", "contract"),
+        ("hr", "minwon"),
+        ("minwon", "gongmun"),
+        ("grant", "gongmun"),
+    ],
+)
+def test_loader_enforces_pack_base_doc_type(pack_name: str, bad_base: str, tmp_path: Path):
+    data = _valid_sample_pack(pack_name)
+    data["baseDocType"] = bad_base
+    _write_pack(tmp_path, pack_name, data)
+
+    with pytest.raises(rt_style.StyleInputError) as exc_info:
+        rt_style.load_pack(pack_name, pack_dir=tmp_path)
+    assert pack_name in str(exc_info.value)
+
+
+def test_loader_rejects_rule_id_with_trailing_newline(tmp_path: Path):
+    data = _valid_sample_pack("gongmun")
+    data["rules"][0]["id"] = "gongmun.date-zero-pad\n"
+    _write_pack(tmp_path, "gongmun", data)
+
+    with pytest.raises(rt_style.StyleInputError) as exc_info:
+        rt_style.load_pack("gongmun", pack_dir=tmp_path)
+    assert "gongmun" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "positive", "negative"),
+    [
+        (r"(?:,\d{3}){1,5}", ",123,456", "123"),
+        (r"^a(?:\s?(?:님|귀하))?$", "a 님", "b"),
+        (r"^(?:(?!foo+)\w)+$", "bar", "foo"),
+        (r"^(?:a+){0,1}$", "aaa", "bbb"),
+    ],
+)
+def test_loader_allows_safe_bounded_and_lookaround_patterns(
+    pattern: str, positive: str, negative: str, tmp_path: Path
+):
+    name = "safepack"
+    data = _valid_sample_pack(name)
+    data["rules"][0].update(pattern=pattern, positive=positive, negative=negative)
+    _write_pack(tmp_path, name, data)
+
+    pack = rt_style.load_pack(name, pack_dir=tmp_path)
+    assert pack.rules[0].pattern == pattern
+
+
+def test_conditional_notice_rules_ask_person_to_check():
+    grant_rules = {r["id"]: r for r in _all_pack_data()["grant"]["rules"]}
+    for rid in ("grant.bare-foreign-abbr", "grant.vague-impact-claim"):
+        rule = grant_rules[rid]
+        assert rule["severity"] == "notice"
+        assert "확인" in rule["why"]

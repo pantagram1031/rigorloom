@@ -1,0 +1,1 @@
+ko-style/1 (any, per paragraph): 0 error, 0 notice
