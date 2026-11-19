@@ -1964,6 +1964,103 @@ class BridgeApplication:
         }
 
 
+# --- extension routes (WP2 hook, J1 §5) --------------------------------------
+#
+# New read-only routes live in their own modules, never as lines in this file:
+# `rt_workspace` (WP2/WPS), `rt_page` (WP6), `rt_ui_style` (WP4). Each, when
+# present next to this file, exposes `register_routes(router)` and calls
+# `router.get(path, handler)` / `router.post(path, handler)`.
+#
+# - GET handlers are called as `handler(bridge, query)` with the parsed query
+#   (`dict[str, list[str]]`); POST handlers as `handler(bridge, body)` with the
+#   JSON object body. Both return a JSON-serialisable dict (sent with 200) or
+#   raise `router.BridgeError`.
+# - Paths must start with `/api/` and may not shadow a core route, so every
+#   extension request passes the same Host/Origin guard, header token and body
+#   cap as the core routes before its handler runs.
+# - A module that is absent is skipped. A module that is present but fails to
+#   import raises, so a broken extension is loud rather than silently missing.
+
+UI_EXTENSION_MODULES = ("rt_workspace", "rt_page", "rt_ui_style")
+
+_CORE_GET_API_PATHS = frozenset({
+    "/api/export-download",
+    "/api/runtime/status",
+    "/api/prefs",
+    "/api/default-root",
+    "/api/corpus-files",
+    "/api/agent-tool-status",
+    "/api/agent-host/status",
+    "/api/task-packs",
+    "/api/pipeline/gates",
+})
+_CORE_POST_API_PATHS = frozenset({
+    "/api/runtime/start",
+    "/api/runtime/stop",
+    "/api/runtime/cancel",
+    "/api/prefs",
+    "/api/open-upload",
+    "/api/export",
+    "/api/run-mock-agent",
+    "/api/agent-host/capabilities",
+    "/api/agent-host/save-config",
+    "/api/agent-host/read-config",
+    "/api/agent-host/run",
+    "/api/agent-host/stop",
+    "/api/credential/status",
+    "/api/credential/set",
+    "/api/credential/delete",
+    "/api/guard/diff",
+    "/api/pipeline/gate-resolve",
+})
+_EXTENSION_PATH_RE = re.compile(r"^/api/[a-z0-9][a-z0-9/_-]*$")
+
+
+class ExtensionRouter:
+    """What an extension module's `register_routes(router)` receives."""
+
+    BridgeError = BridgeError
+
+    def __init__(self) -> None:
+        self.get_routes: dict[str, Any] = {}
+        self.post_routes: dict[str, Any] = {}
+        self.modules: list[str] = []
+
+    def _add(self, table: dict[str, Any], core: frozenset[str], path: str, handler: Any) -> None:
+        if not isinstance(path, str) or not _EXTENSION_PATH_RE.match(path) or ".." in path:
+            raise ValueError(f"extension route must be a plain /api/ path: {path!r}")
+        if path in core:
+            raise ValueError(f"extension route shadows a core route: {path}")
+        if path in table:
+            raise ValueError(f"extension route registered twice: {path}")
+        if not callable(handler):
+            raise ValueError(f"extension handler for {path} is not callable")
+        table[path] = handler
+
+    def get(self, path: str, handler: Any) -> None:
+        self._add(self.get_routes, _CORE_GET_API_PATHS, path, handler)
+
+    def post(self, path: str, handler: Any) -> None:
+        self._add(self.post_routes, _CORE_POST_API_PATHS, path, handler)
+
+
+def load_ui_extensions(names: tuple[str, ...] = UI_EXTENSION_MODULES) -> ExtensionRouter:
+    """Import each extension module that exists next to this file and collect its routes."""
+    router = ExtensionRouter()
+    for name in names:
+        module = sys.modules.get(name) or sys.modules.get(f"rigorloom_runtime.{name}")
+        if module is None:
+            path = HERE / f"{name}.py"
+            if not path.is_file():
+                continue
+            module = _load_python_module(name, path)
+        register = getattr(module, "register_routes", None)
+        if callable(register):
+            register(router)
+            router.modules.append(name)
+    return router
+
+
 class BridgeHTTPServer(ThreadingHTTPServer):
     """Threading HTTP/1.1 server bound strictly to 127.0.0.1."""
 
@@ -1973,6 +2070,7 @@ class BridgeHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address: tuple[str, int], bridge: BridgeApplication) -> None:
         self.bridge = bridge
         self.stop_event = threading.Event()
+        self.extensions = load_ui_extensions(UI_EXTENSION_MODULES)
         super().__init__(server_address, BridgeHTTPHandler)
 
     @property
@@ -2176,6 +2274,19 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 elif path == "/api/pipeline/gates":
                     ws = (query.get("workspace") or [""])[0]
                     self._send_json(HTTPStatus.OK, self.server.bridge.pipeline_gates(ws))
+                elif path in self.server.extensions.get_routes:
+                    handler = self.server.extensions.get_routes[path]
+                    try:
+                        payload = handler(self.server.bridge, query)
+                    except BridgeError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - an extension fault must not drop the server
+                        raise BridgeError(
+                            "internal_error",
+                            f"{type(exc).__name__}: {exc}",
+                            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        ) from exc
+                    self._send_json(HTTPStatus.OK, payload)
                 else:
                     raise BridgeError("not_found", f"unknown GET endpoint {path}", status=HTTPStatus.NOT_FOUND)
             except BridgeError as exc:
@@ -2250,6 +2361,9 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 "/api/pipeline/gate-resolve": self.server.bridge.pipeline_gate_resolve,
             }
             handler = routes.get(path)
+            if handler is None and path in self.server.extensions.post_routes:
+                extension = self.server.extensions.post_routes[path]
+                handler = lambda b, _h=extension: _h(self.server.bridge, b)  # noqa: E731
             if handler is None:
                 raise BridgeError("not_found", f"unknown POST endpoint {path}", status=HTTPStatus.NOT_FOUND)
             result = handler(body)

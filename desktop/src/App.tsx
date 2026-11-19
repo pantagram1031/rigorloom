@@ -37,6 +37,7 @@ import {
   useWorkspace,
 } from "./store";
 import { runSmoke, smokeIntent } from "./smoke";
+import "./shell/registrations";
 import { FillView } from "./views/FillView";
 import { HistoryView } from "./views/HistoryView";
 import { OpenView } from "./views/OpenView";

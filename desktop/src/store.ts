@@ -1632,3 +1632,205 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
       : null,
   });
 }
+
+// --- per-document state: docs[sessionId] (WP2 shell contract, J1 §5) -----------
+//
+// One tab is one session. Anything that belongs to a document (decisions,
+// selection, scroll, zoom, which pane is open) lives under that document's key,
+// so state from document A cannot appear in document B by construction.
+// Packages add per-document state with `defineDocSlice(key, initial)` in their
+// own directory and read it with `slice.use(sessionId)` / `slice.useActive()`,
+// or the whole record with `useDoc(sessionId)` / `useActiveDoc()`. Kept apart
+// from `WorkspaceState` so this block is append-only for the trust rebase.
+
+export interface DocState {
+  sessionId: string;
+  /** Slice values by slice key. A slice never written reads as its initial value. */
+  slices: Readonly<Record<string, unknown>>;
+}
+
+export interface DocSlice<T> {
+  readonly key: string;
+  /** The value for a document; the initial value when the document has none yet. */
+  get(sessionId: string | null | undefined): T;
+  /** Replace or update the value for one document. Other documents are untouched. */
+  set(sessionId: string, next: T | ((prev: T) => T)): void;
+  /** Shallow-merge into an object slice. */
+  patch(sessionId: string, partial: T extends object ? Partial<T> : never): void;
+  /** Back to the initial value for one document. */
+  reset(sessionId: string): void;
+  /** React: the value for a document, optionally selected. */
+  use(sessionId: string | null | undefined): T;
+  use<R>(sessionId: string | null | undefined, select: (value: T) => R): R;
+  /** React: the value for the active document. */
+  useActive(): T;
+  useActive<R>(select: (value: T) => R): R;
+}
+
+type DocsMap = Readonly<Record<string, DocState>>;
+
+let docs: DocsMap = {};
+const docListeners = new Set<() => void>();
+const sliceInitials = new Map<string, () => unknown>();
+
+const activeGetter = (): string | null => state.activeSessionId;
+
+function emitDocs() {
+  for (const l of docListeners) l();
+}
+
+/** Doc hooks re-render on a slice write and on an active-document change. */
+function subscribeDocs(listener: () => void) {
+  docListeners.add(listener);
+  const off = subscribe(listener);
+  return () => {
+    docListeners.delete(listener);
+    off();
+  };
+}
+
+export function activeDocId(): string | null {
+  return activeGetter();
+}
+
+export function getDocs(): DocsMap {
+  return docs;
+}
+
+export function getDoc(sessionId: string | null | undefined): DocState | null {
+  if (!sessionId) return null;
+  return docs[sessionId] ?? null;
+}
+
+function writeSlice(sessionId: string, key: string, value: unknown) {
+  const prev = docs[sessionId] ?? { sessionId, slices: {} };
+  if (prev.slices[key] === value && docs[sessionId]) return;
+  docs = { ...docs, [sessionId]: { sessionId, slices: { ...prev.slices, [key]: value } } };
+  emitDocs();
+}
+
+/** Ensure a document has a record (a tab opened). Idempotent. */
+export function ensureDoc(sessionId: string): void {
+  if (docs[sessionId]) return;
+  docs = { ...docs, [sessionId]: { sessionId, slices: {} } };
+  emitDocs();
+}
+
+/** Forget a document's state (its tab closed and nothing needs it). */
+export function dropDoc(sessionId: string): void {
+  if (!docs[sessionId]) return;
+  const next = { ...docs };
+  delete next[sessionId];
+  docs = next;
+  emitDocs();
+}
+
+const identity = <T,>(v: T) => v;
+
+export function defineDocSlice<T>(key: string, initial: T | (() => T)): DocSlice<T> {
+  if (sliceInitials.has(key)) {
+    // Re-definition happens under HMR; anything else is two packages fighting over a name.
+    // `main.tsx` sets the flag in development builds only.
+    const g = globalThis as { __RL_HMR__?: boolean };
+    if (!g.__RL_HMR__) {
+      throw new Error(`defineDocSlice: key "${key}" is already defined`);
+    }
+  }
+  const makeInitial = typeof initial === "function" ? (initial as () => T) : () => initial;
+  // One initial value per document, cached so selectors stay reference-stable.
+  const initials = new Map<string, T>();
+  let globalInitial: T | undefined;
+  const initialFor = (sessionId: string | null | undefined): T => {
+    if (!sessionId) {
+      if (globalInitial === undefined) globalInitial = makeInitial();
+      return globalInitial;
+    }
+    let v = initials.get(sessionId);
+    if (v === undefined) {
+      v = makeInitial();
+      initials.set(sessionId, v);
+    }
+    return v;
+  };
+  sliceInitials.set(key, makeInitial);
+
+  const get = (sessionId: string | null | undefined): T => {
+    if (!sessionId) return initialFor(null);
+    const doc = docs[sessionId];
+    if (doc && Object.prototype.hasOwnProperty.call(doc.slices, key)) return doc.slices[key] as T;
+    return initialFor(sessionId);
+  };
+
+  const slice: DocSlice<T> = {
+    key,
+    get,
+    set(sessionId, next) {
+      const value = typeof next === "function" ? (next as (prev: T) => T)(get(sessionId)) : next;
+      writeSlice(sessionId, key, value);
+    },
+    patch(sessionId, partial) {
+      const prev = get(sessionId) as unknown as Record<string, unknown>;
+      writeSlice(sessionId, key, { ...prev, ...(partial as Record<string, unknown>) });
+    },
+    reset(sessionId) {
+      initials.delete(sessionId);
+      const doc = docs[sessionId];
+      if (!doc || !Object.prototype.hasOwnProperty.call(doc.slices, key)) return;
+      const slices = { ...doc.slices };
+      delete slices[key];
+      docs = { ...docs, [sessionId]: { sessionId, slices } };
+      emitDocs();
+    },
+    use<R>(sessionId: string | null | undefined, select?: (value: T) => R): R {
+      const sel = (select ?? identity) as (value: T) => R;
+      return useSyncExternalStore(
+        subscribeDocs,
+        () => sel(get(sessionId)),
+        () => sel(initialFor(sessionId)),
+      );
+    },
+    useActive<R>(select?: (value: T) => R): R {
+      const sel = (select ?? identity) as (value: T) => R;
+      return useSyncExternalStore(
+        subscribeDocs,
+        () => sel(get(activeGetter())),
+        () => sel(initialFor(null)),
+      );
+    },
+  } as DocSlice<T>;
+  return slice;
+}
+
+const NO_DOC = null;
+
+/** React: the whole per-document record (or a selection of it). */
+export function useDoc(sessionId: string | null | undefined): DocState | null;
+export function useDoc<R>(sessionId: string | null | undefined, select: (doc: DocState | null) => R): R;
+export function useDoc<R>(sessionId: string | null | undefined, select?: (doc: DocState | null) => R) {
+  const sel = select ?? ((d: DocState | null) => d as unknown as R);
+  return useSyncExternalStore(
+    subscribeDocs,
+    () => sel(sessionId ? docs[sessionId] ?? NO_DOC : NO_DOC),
+    () => sel(NO_DOC),
+  );
+}
+
+/** React: the active document's id and record. `sessionId` is null on the Start tab. */
+export function useActiveDoc(): { sessionId: string | null; doc: DocState | null };
+export function useActiveDoc<R>(select: (sessionId: string | null, doc: DocState | null) => R): R;
+export function useActiveDoc<R>(select?: (sessionId: string | null, doc: DocState | null) => R) {
+  const id = useSyncExternalStore(subscribeDocs, activeGetter, activeGetter);
+  const doc = useSyncExternalStore(
+    subscribeDocs,
+    () => (id ? docs[id] ?? NO_DOC : NO_DOC),
+    () => NO_DOC,
+  );
+  return select ? select(id, doc) : { sessionId: id, doc };
+}
+
+/** Test support. */
+export function _resetDocsForTest(): void {
+  docs = {};
+  sliceInitials.clear();
+  emitDocs();
+}
