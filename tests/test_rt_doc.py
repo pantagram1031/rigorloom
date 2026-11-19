@@ -212,6 +212,30 @@ def test_text_edits_without_engine(no_engine, tmp_path):
     assert {"p1", "p2", "t0/r0/c0", "t5/r13/c2"} <= {c["at"] for c in ch} and len(ch) == 5
 
 
+
+def test_expect_on_a_cell_names_where_the_expected_text_is(no_engine, tmp_path):
+    # P7 round 3: an agent counted rows from 1 (t1/r3/c2 for the row at r2).
+    # The document had not changed, so the refusal says where the expected
+    # text is when exactly one other cell of the same table holds it.
+    src = tmp_path / "a.hwpx"
+    shutil.copyfile(REPO / "tests" / "fixtures" / "doc_core" / "addressing.hwpx", src)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def refused(op):
+        e = D.edit(src, [op], base=rev, out=out)["error"]
+        assert e["code"] == "expect_mismatch" and not out.exists()
+        return e
+    e = refused({"op": "set", "at": "t0/r2/c0", "text": "주소지", "expect": "주소"})
+    assert (e["at"], e["actual"], e["found_at"]) == ("t0/r2/c0", "연락", "t0/r1/c0")
+    e = refused({"op": "delete", "at": "t0/r0/c2", "expect": "끝"})
+    assert e["found_at"] == "t0/r2/c2"
+    e = refused({"op": "char_shape", "at": "t0/r0/c0", "set": {"bold": True}, "expect": "연락"})
+    assert e["found_at"] == "t0/r2/c0"      # checked before the engine is needed
+    # Nowhere in the table, or in more than one cell (the empty ones): no guess.
+    assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": "없는 글"})
+    assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": ""})
+
+
 def test_edit_refusals(no_engine, tmp_path):
     src = _copy(GUARD, tmp_path)
     rev = D.rev_of(src)
@@ -969,6 +993,54 @@ def test_render_and_geometry_of_a_preview_copy_skip_the_form_analysis(kit, tmp_p
     with patch.object(D._Engine, "call", spy):
         D.read(r["out"])                        # an address-resolving call still loads the form analysis
     assert "analyze" in calls
+
+
+# ============================================================================ engine results of style and insert_picture
+def _png(path, w=40, h=20):
+    """A small solid PNG written with the standard library."""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    raw = b"".join(b"\x00" + b"\x30\x60\x90" * w for _ in range(h))
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    return path
+
+
+@engine
+def test_engine_style_apply_changes_the_paragraph_style(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    rev = D.rev_of(f)
+    text = D.read(f, "p3")["blocks"][0]["text"]
+    assert D.read(f, "p3")["blocks"][0]["style"] == "바탕글"
+    out = tmp_path / "st.hwpx"
+    r = D.edit(f, [{"op": "style", "at": "p3", "style": "개요 1"}], base=rev, out=out)
+    assert r["ok"], r
+    b = D.read(out, "p3")["blocks"][0]
+    assert b["style"] == "개요 1" and b["text"] == text
+    assert D.read(out, "p4")["blocks"][0]["style"] == "바탕글"
+    assert r["remap"] == []
+
+
+@engine
+def test_engine_insert_picture_adds_a_picture_and_its_image(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    rev = D.rev_of(f)
+    img = _png(tmp_path / "fig.png")
+    out = tmp_path / "pic.hwpx"
+    r = D.edit(f, [{"op": "insert_picture", "at": "p2", "path": str(img), "width_mm": 30}], base=rev, out=out)
+    assert r["ok"], r
+    with zipfile.ZipFile(f) as z0, zipfile.ZipFile(out) as z:
+        before = z0.read("Contents/section0.xml").decode("utf-8").count("<hp:pic ")
+        sec = z.read("Contents/section0.xml").decode("utf-8")
+        assert sec.count("<hp:pic ") == before + 1
+        bins = [n for n in z.namelist() if n.startswith("BinData/")]
+        assert any(z.read(n) == img.read_bytes() for n in bins), bins
+        # 30 mm wide in HWPUNIT (7200 per inch), the 2:1 image's height kept in proportion
+        m = re.findall(r'<hp:pic [^>]*>.*?<hp:orgSz width="(\d+)" height="(\d+)"', sec, re.S)
+        assert any(abs(int(w) - 30 * 7200 / 25.4) < 5 and abs(int(w) - 2 * int(h)) < 5 for w, h in m), m
 
 
 # ============================================================================ 글자 모양 / 문단 모양
