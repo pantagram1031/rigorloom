@@ -132,6 +132,42 @@ def test_extension_post_body_is_capped_like_core_routes(server):
     assert calls == []
 
 
+def test_extension_and_confirmation_bodies_have_their_own_small_cap(server):
+    """Finding 15: routes that take a few ids answer 413 above 16 KiB, not 64 MiB."""
+    srv, calls = server
+    for path in ("/api/wp2-fake/echo", "/api/approval/confirmation"):
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+        try:
+            conn.putrequest("POST", path)
+            conn.putheader("X-Rigorloom-Token", srv.token)
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", str(rt_ui.SMALL_JSON_BODY_BYTES + 1))
+            conn.endheaders()
+            resp = conn.getresponse()
+            assert resp.status == 413, path
+        finally:
+            conn.close()
+    assert calls == []
+    # A small body is served as before.
+    status, payload = _request(srv, "POST", "/api/wp2-fake/echo", body={"a": "x" * 1000})
+    assert status == 200 and payload["echo"] == {"a": "x" * 1000}
+
+
+def test_bridge_responses_refuse_framing(server):
+    """Finding 19: every bridge answer says no page may frame it."""
+    srv, _ = server
+    for path in ("/api/wp2-fake/ping", "/api/prefs"):
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+        try:
+            conn.request("GET", path, headers={"X-Rigorloom-Token": srv.token})
+            resp = conn.getresponse()
+            resp.read()
+            assert resp.getheader("Content-Security-Policy") == "frame-ancestors 'none'", path
+            assert resp.getheader("X-Content-Type-Options") == "nosniff", path
+        finally:
+            conn.close()
+
+
 def test_extension_errors_keep_the_server_alive(server):
     srv, _ = server
     status, payload = _request(srv, "GET", "/api/wp2-fake/refuse")

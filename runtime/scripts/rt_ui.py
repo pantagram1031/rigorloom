@@ -62,6 +62,11 @@ VALID_UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 SECTION_MEMBER_RE = re.compile(r"^Contents/section(\d+)\.xml$")
 
 MAX_JSON_BODY_BYTES = max(64 * 1024 * 1024, MAX_SOURCE_BYTES * 2)
+# Extension routes (workspace, page, style) and the confirmation route take a
+# few ids and flags, never a document: their bodies are under 1 KiB, so they
+# get their own cap instead of the upload-sized one.
+SMALL_JSON_BODY_BYTES = 16 * 1024
+_SMALL_BODY_CORE_POST_PATHS = frozenset({"/api/approval/confirmation"})
 SSE_KEEPALIVE_SECONDS = 15.0
 
 AGENTHOST_CONFIG_KEYS = frozenset({
@@ -2270,6 +2275,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        # The page carries the per-run token: no other page may frame it.
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         if extra_headers:
             for k, v in extra_headers.items():
                 self.send_header(k, v)
@@ -2319,7 +2326,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _read_json_body(self) -> dict[str, Any]:
+    def _read_json_body(self, limit: int = MAX_JSON_BODY_BYTES) -> dict[str, Any]:
         raw_len = self.headers.get("Content-Length")
         if raw_len is None or not raw_len.strip():
             return {}
@@ -2327,7 +2334,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             length = int(raw_len)
         except ValueError as exc:
             raise BridgeError("invalid_params", "invalid Content-Length") from exc
-        if length < 0 or length > MAX_JSON_BODY_BYTES:
+        if length < 0 or length > limit:
             raise BridgeError("body_too_large", "request body exceeds maximum allowed size", status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
         if length == 0:
             return {}
@@ -2481,7 +2488,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            body = self._read_json_body()
+            small = path in _SMALL_BODY_CORE_POST_PATHS or path in self.server.extensions.post_routes
+            body = self._read_json_body(SMALL_JSON_BODY_BYTES if small else MAX_JSON_BODY_BYTES)
             if path == "/rpc":
                 method = body.get("method")
                 params = body.get("params")
