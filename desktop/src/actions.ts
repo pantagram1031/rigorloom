@@ -2259,7 +2259,10 @@ export async function revalidateActiveDraft(): Promise<{ ok: boolean; stale: boo
   try {
     const validation = await rt.validatePlan(plan.planId);
     const current = getState();
-    if (current.draft !== draft || current.draft.plan?.planId !== plan.planId) {
+    // Another validation of the same plan (the one the dialog starts when it
+    // opens) may land first and replace the draft object; only a different
+    // plan makes this answer moot.
+    if (current.draft.plan !== plan || current.draft.sessionId !== draft.sessionId) {
       return { ok: false, stale: false };
     }
     const currentSha =
