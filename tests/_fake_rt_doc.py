@@ -774,8 +774,13 @@ def _check_expect(op: dict, t: _Target, step: int, done: list[int]) -> None:
         raise _Refusal("bad_input", "expect는 글자열입니다", step=step)
     actual = _target_text(t)
     if actual != want:
+        data = {"actual": actual}
+        if t.kind == "cell":     # the one other cell of the table that holds the expected text
+            found = [(r, c) for r, row in enumerate(t.block.rows) for c, x in enumerate(row) if x == want]
+            if len(found) == 1:
+                data["found_at"] = "%s/r%d/c%d" % (t.addr.rsplit("/r", 1)[0], *found[0])
         raise _Refusal("expect_mismatch", f"{t.addr}의 글이 예상과 다릅니다", at=t.addr, step=step,
-                       done=list(done), data={"actual": actual})
+                       done=list(done), data=data)
 
 
 def _parse_markdown(md: str, step: int) -> list[Block]:

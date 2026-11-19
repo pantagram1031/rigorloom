@@ -2702,10 +2702,15 @@ def _shape_hint(kind):
             "spacing": "a percent 50-500 or {type: FIXED|BETWEEN_LINES|AT_LEAST|PERCENT, value}"}[t]
 
 
-def _check_expect(op, i, at, actual):
+def _check_expect(op, i, at, actual, table=None):
+    """``expect`` must be the text at ``at``. For a cell, a mismatch names the
+    one other cell of the same table that holds exactly the expected text
+    (``found_at``): an agent that counted rows from 1 gets told where it meant."""
     if op.get("expect") is not None and op["expect"] != actual:
+        found = [c for c in table.cells if _cell_text(c) == op["expect"]] if table is not None else []
         raise DocError("expect_mismatch", "the text at %s is not what the op expected" % at, at=at, i=i,
-                       expected=op["expect"], actual=actual[:500])
+                       expected=op["expect"], actual=actual[:500],
+                       found_at=cell_address(table, found[0]) if len(found) == 1 else None)
 
 
 def _cell_text(c):
@@ -2887,7 +2892,7 @@ def _plan_op(doc, cl, i, name, op, at):
         text = _clean(op.get("text"), "set: text", i, at)
         r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
         if r.get("cell") is not None and r["kind"] in ("cell", "place"):
-            _check_expect(op, i, at, _cell_text(r["cell"]))
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
             set_cell(r["cell"], text, at)
         else:
             p = r["para"]
@@ -2991,7 +2996,7 @@ def _plan_op(doc, cl, i, name, op, at):
             a.tbl_dels = _tables_within(doc, t.si, t.start, t.end)
             acts.append(a)
         elif r.get("cell") is not None and r["kind"] in ("cell", "place"):
-            _check_expect(op, i, at, _cell_text(r["cell"]))
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
             set_cell(r["cell"], "", at)
         else:
             p = r["para"]
@@ -3163,7 +3168,7 @@ def _plan_op(doc, cl, i, name, op, at):
         if r["kind"] == "table":
             _check_expect(op, i, at, _table_text(r["table"]))
         elif r.get("cell") is not None and r["kind"] in ("cell", "place"):
-            _check_expect(op, i, at, _cell_text(r["cell"]))
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
         elif len(paras) == 1:
             p0 = paras[0]
             _check_expect(op, i, at, p0.text[rng[0]:rng[1]] if rng else p0.text)
