@@ -195,16 +195,16 @@ def _fonts_line(fonts: dict) -> str | None:
     if not subs:
         return None
     pairs = ", ".join(f"{s.get('want')}→{s.get('got')}" for s in subs[:6])
-    return f"글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)"
+    return f"fonts substituted: {pairs} (page breaks may differ from Hancom)"
 
 
 def _open_text(r: dict) -> str:
     lines = [f"{r['path']}  rev {r['rev']}  {r.get('format') or ''}"
-             + (f"  {r['pages']}쪽" if r.get("pages") else "")
-             + (f"  [초안 수정본 {r['revision']}]" if r["source"] == "draft" else "")]
+             + (f"  {r['pages']} pages" if r.get("pages") else "")
+             + (f"  [draft revision {r['revision']}]" if r["source"] == "draft" else "")]
     draft = r.get("draft")
-    if r["source"] == "disk" and draft and draft.get("revision"):
-        lines.append(f"초안 있음: 수정본 {draft['revision']} (저장 안 됨)")
+    if r["source"] == "disk" and draft and draft.get("unsaved"):
+        lines.append(f"draft exists: revision {draft['revision']}, not saved")
     fl = _fonts_line(r.get("fonts") or {})
     if fl:
         lines.append(fl)
@@ -373,7 +373,7 @@ def _run_read(ctx: Context, args: dict) -> dict:
 
 def _read_text(r: dict) -> str:
     head = f"{r['path']}  rev {r['rev']}" + (
-        f"  [초안 수정본 {r['revision']}]" if r["source"] == "draft" else "")
+        f"  [draft revision {r['revision']}]" if r["source"] == "draft" else "")
     lines = [head]
     for b in r["blocks"]:
         part = ""
@@ -421,15 +421,55 @@ def _run_find(ctx: Context, args: dict) -> dict:
                     regex=bool(args.get("regex", False)), scope=args.get("scope"))
     hits = data.get("hits", [])
     limit = args.get("limit", FIND_DEFAULT_LIMIT)
+    shown = [dict(h) for h in hits[:limit]]
+    _add_context(ctx, inp.path, shown)
     return {**_docref(ref, inp), "query": args["query"], "total": len(hits),
-            "hits": hits[:limit], "truncated": len(hits) > limit}
+            "hits": shown, "truncated": len(hits) > limit}
+
+
+FIND_CONTEXT_CHARS = 30
+FIND_CONTEXT_LOOKUPS = 20
+
+
+def _add_context(ctx: Context, path: Path, hits: list[dict]) -> None:
+    """Give each hit the words around it, so nobody has to read to know which.
+
+    One whole-document read covers top-level paragraphs; addresses inside
+    tables are read one by one, up to FIND_CONTEXT_LOOKUPS of them.
+    """
+    if not hits:
+        return
+    texts: dict[str, str] = {}
+    try:
+        for block in doc_call(ctx.doc.read, str(path)).get("blocks", []):
+            if block.get("kind") != "table":
+                texts[str(block.get("at"))] = str(block.get("text") or "")
+    except ToolError:
+        return
+    lookups = 0
+    for hit in hits:
+        at = str(hit.get("at"))
+        if at not in texts and lookups < FIND_CONTEXT_LOOKUPS:
+            lookups += 1
+            try:
+                blocks = doc_call(ctx.doc.read, str(path), at).get("blocks", [])
+                texts[at] = str(blocks[0].get("text") or "") if blocks else ""
+            except ToolError:
+                texts[at] = ""
+        text = texts.get(at) or ""
+        start, end = hit.get("start"), hit.get("end")
+        if not text or not isinstance(start, int) or not isinstance(end, int):
+            continue
+        lo, hi = max(0, start - FIND_CONTEXT_CHARS), min(len(text), end + FIND_CONTEXT_CHARS)
+        hit["context"] = ("…" if lo else "") + one_line(text[lo:hi]) + ("…" if hi < len(text) else "")
 
 
 def _find_text(r: dict) -> str:
     lines = [f"{r['total']} hits for {r['query']!r} in {r['path']} rev {r['rev']}"]
     for h in r["hits"]:
         page = f" p.{h['page']}" if h.get("page") else ""
-        lines.append(f"  {h['at']}{page}  {one_line(str(h.get('text', '')))[:120]}")
+        lines.append(f"  {h['at']}{page}  "
+                     f"{one_line(str(h.get('context') or h.get('text', '')))[:120]}")
     if r.get("truncated"):
         lines.append(f"  … {r['total'] - len(r['hits'])} more (raise limit or narrow scope)")
     return "\n".join(lines)
@@ -843,7 +883,8 @@ def _tri(fn) -> tuple[str, Any]:
         return "ran", fn()
     except ToolError as exc:
         if exc.code in ("capability_unavailable", "unsupported_format"):
-            return "unavailable", exc.message
+            why = (exc.data or {}).get("reason")
+            return "unavailable", {"reason": exc.message, **({"why": why} if why else {})}
         raise
 
 
@@ -857,7 +898,7 @@ def _run_check(ctx: Context, args: dict) -> dict:
     if "style" in only:
         state, data = _tri(lambda: _style_findings(ctx, inp.path, args.get("pack")))
         if state == "unavailable":
-            checks["style"] = {"state": "unavailable", "reason": data}
+            checks["style"] = {"state": "unavailable", **data}
         else:
             items = data
             errors = [f for f in items if f.get("severity") == "error"]
@@ -869,7 +910,7 @@ def _run_check(ctx: Context, args: dict) -> dict:
     if "layout" in only:
         state, data = _tri(lambda: doc_call(ctx.doc.pages, str(inp.path)))
         if state == "unavailable":
-            checks["layout"] = {"state": "unavailable", "reason": data}
+            checks["layout"] = {"state": "unavailable", **data}
         else:
             sig = [(p.get("n"), s) for p in data.get("pages", [])
                    for s in (p.get("signals") or [])]
@@ -886,7 +927,7 @@ def _run_check(ctx: Context, args: dict) -> dict:
     if "fonts" in only:
         state, data = _tri(lambda: doc_call(ctx.doc.open, str(inp.path)))
         if state == "unavailable":
-            checks["fonts"] = {"state": "unavailable", "reason": data}
+            checks["fonts"] = {"state": "unavailable", **data}
         else:
             subs = (data.get("fonts") or {}).get("substituted") or []
             checks["fonts"] = {"state": "failed" if subs else "passed",
@@ -903,7 +944,7 @@ def _run_check(ctx: Context, args: dict) -> dict:
                      else ref.source)
         state, data = _tri(lambda: _guard(ctx, base_path, inp.path))
         if state == "unavailable":
-            checks["guard"] = {"state": "unavailable", "reason": data}
+            checks["guard"] = {"state": "unavailable", **data}
         else:
             changes = data.get("changes", [])
             checks["guard"] = {"state": "passed" if data.get("pass") else "failed",
@@ -1069,8 +1110,9 @@ def _run_save(ctx: Context, args: dict) -> dict:
     if target.exists() and sha256_file(target) == digest:
         raise ToolError("no_draft", "파일이 이미 이 내용입니다. 저장할 변경이 없습니다.",
                         at=str(target))
+    # A change set the person made at the terminal is reviewed by definition.
     unreviewed = sum(1 for c in (record or {}).get("changesets", [])
-                     if c.get("status") == "proposed")
+                     if c.get("status") == "proposed" and c.get("author") != "cli")
     declines = (record or {}).get("declines", [])
     if any(d.get("sha256") == digest and d.get("target") == str(target) for d in declines):
         raise ToolError("declined_by_person",
@@ -1102,10 +1144,13 @@ def _run_save(ctx: Context, args: dict) -> dict:
                 record.setdefault("declines", []).append(
                     {"sha256": digest, "target": str(target)})
                 ctx.drafts.write(ref, record)
-            raise ToolError("declined_by_person" if answer is False else "needs_person",
-                            "덮어쓰지 않았습니다." if answer is False
-                            else "확인을 받지 못해 덮어쓰지 않았습니다.",
-                            hint="다른 이름(to)으로 저장할 수 있습니다.", at=str(target))
+            if answer is False:
+                raise ToolError("declined_by_person", "덮어쓰지 않았습니다.",
+                                hint="다른 이름(to)으로 저장할 수 있습니다.", at=str(target))
+            raise ToolError("needs_person", "확인을 받지 못해 덮어쓰지 않았습니다.",
+                            hint=f"사람이 터미널에서 실행: {_person_line(ref, target)} "
+                                 "또는 다른 이름(to)으로 저장하세요.",
+                            at=str(target), data=detail)
         policy = "person:" + ("tty" if ctx.client == "cli" else "elicitation")
 
     receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,

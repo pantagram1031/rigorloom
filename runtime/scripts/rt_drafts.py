@@ -399,4 +399,6 @@ def summary(record: dict) -> dict[str, Any]:
                        if c.get("status") == "proposed"),
         "updated": record.get("updated"),
         "saved": len(record.get("saves", [])),
+        # The head differs from the person's file: there is work not in it yet.
+        "unsaved": bool(head) and head.get("sha256") != source.get("sha256"),
     }

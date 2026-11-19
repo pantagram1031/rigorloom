@@ -243,7 +243,7 @@ def test_edit_stages_and_leaves_the_file_alone(env):
     assert "다시" in seen["blocks"][0]["text"] and seen["rev"] == r["rev"]
     disk = ok(call(env.ctx(source="disk"), "open", {"path": str(path)}))
     assert disk["rev"] == rev0 and disk["draft"]["revision"] == 1
-    assert "초안 있음: 수정본 1" in rt_tools.render_text(REGISTRY["open"], disk)
+    assert "draft exists: revision 1, not saved" in rt_tools.render_text(REGISTRY["open"], disk)
     # a second edit builds on the first
     r2 = ok(call(env.ctx(), "edit", {"path": str(path), "base": r["rev"], "ops": [
         {"op": "replace", "find": "450,000원", "with": "480,000원"}]}))
@@ -499,7 +499,8 @@ def test_cli_fill_with_out_saves_a_new_file(env, monkeypatch):
     assert code == 0, errs
     assert "홍길동" in out.read_text(encoding="utf-8")
     assert path.read_text(encoding="utf-8") == FORM
-    assert "saved (created)" in stdout
+    assert stdout.startswith("저장했습니다: ") and "새로 만들었습니다" in stdout
+    assert "검토하지 않은" not in stdout  # the person made this change themselves
 
 
 def test_cli_errors_are_two_short_korean_lines(env, monkeypatch):
@@ -600,3 +601,23 @@ def test_changes_clear_removes_only_our_folders(env, monkeypatch):
     code, out, _ = _cli(["changes", "clear", "--yes", "--json"], monkeypatch)
     assert code == 0 and not (env.home / "drafts").exists()
     assert keep.read_text(encoding="utf-8") == "not ours"
+
+
+def test_people_read_korean_and_agents_read_english(env, monkeypatch):
+    """Every verb prints Korean to a person; the agent text never leaks into it."""
+    path = str(env.doc())
+    runs = [
+        ["open", path], ["read", path, "--max-chars", "500"], ["find", path, "출장"],
+        ["fill", path, "--set", "성명=홍길동"], ["check", path, "--source", "draft"],
+        ["preview", path, "--page", "1"], ["changes"], ["changes", "show", path],
+        ["save", path, "--to", str(env.work / "사본.fdoc")],
+    ]
+    agent_words = ("staged in draft", "when done", "saved (", "headings:", "hits for",
+                   "change set(s)", "layout signals")
+    for argv in runs:
+        code, out, errs = _cli(argv, monkeypatch)
+        assert code in (0, 3), (argv, errs)
+        assert out.strip(), argv
+        assert any("가" <= ch <= "힣" for ch in out), (argv, out)
+        for word in agent_words:
+            assert word not in out, (argv, word, out)

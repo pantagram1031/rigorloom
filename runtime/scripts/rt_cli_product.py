@@ -29,14 +29,16 @@ from pathlib import Path
 
 try:  # installed as rigorloom_runtime
     from . import rt_commit, rt_toolset  # rt_toolset registers the tools
+    from .rt_cli_render import SHOW
     from .rt_paths import PathRefused, canonical, state_home
-    from .rt_term import Term, confirm, prepare_stdio
+    from .rt_term import Term, confirm, is_console, prepare_stdio
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
     import rt_toolset
+    from rt_cli_render import SHOW
     from rt_paths import PathRefused, canonical, state_home
-    from rt_term import Term, confirm, prepare_stdio
+    from rt_term import Term, confirm, is_console, prepare_stdio
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
@@ -162,7 +164,10 @@ def _parser() -> argparse.ArgumentParser:
     _common(p)
 
     p = sub.add_parser("save", help="초안 저장")
-    p.add_argument("path"); p.add_argument("--to"); _common(p)
+    p.add_argument("path"); p.add_argument("--to")
+    p.add_argument("--force", action="store_true",
+                   help="있는 파일을 묻지 않고 덮어씀 (이전 판은 이력에 남음)")
+    _common(p)
 
     p = sub.add_parser("changes", help="초안과 변경 기록")
     p.add_argument("action", nargs="?", default="list",
@@ -304,6 +309,10 @@ def request_for(args) -> tuple[str, dict]:
 
 def _context(args) -> Context:
     def ask(question: str, detail: dict) -> bool | None:
+        if getattr(args, "force", False):
+            return True  # the person named this target and typed --force
+        if not (is_console(sys.stdin) and is_console(sys.stderr)):
+            return None
         pages = detail.get("changedPages") or []
         lines = [question]
         if pages:
@@ -333,8 +342,12 @@ def _emit(term: Term, args, verb: str, envelope: dict) -> int:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
         return code
     if envelope["ok"]:
-        tool = get(_TOOL_OF.get(verb, verb) if verb != "convert" else "save")
-        term.line(render_text(tool, envelope["result"]))
+        tool = _TOOL_OF.get(verb, verb)
+        show = SHOW.get(tool)
+        if show is not None:
+            show(term, envelope["result"])
+        else:
+            term.line(render_text(get(tool), envelope["result"]))
         return code
     err = envelope["error"]
     sys.stderr.write(f"{err['message']}\n")
@@ -347,15 +360,13 @@ def _emit(term: Term, args, verb: str, envelope: dict) -> int:
     return code
 
 
-_TOOL_OF = {"outline": "open"}
+_TOOL_OF = {"outline": "open", "convert": "save"}
 
 
 def _save_after(ctx: Context, args, path: str) -> dict:
     """``-o OUT`` on edit/fill/new: stage in a private draft, save to OUT, and
     drop that draft; the shared draft of the same file is never touched."""
     req = {"path": path, "to": args.out}
-    if getattr(args, "force", False):
-        ctx.ask = lambda q, d: True  # the person typed --force for this target
     try:
         return call(ctx, "save", req)
     finally:
@@ -394,8 +405,6 @@ def _undo(term: Term, args) -> int:
 
 def _convert(term: Term, args) -> int:
     ctx = _context(args)
-    if args.force:
-        ctx.ask = lambda q, d: True  # the person typed --force for this target
     envelope = call(ctx, "save", {"path": args.path, "to": args.out})
     # Converting a file with no draft: save treats a format change as an export.
     return _emit(term, args, "convert", envelope)
@@ -447,6 +456,19 @@ def _clear(term: Term, args) -> int:
 
 
 def main(argv: list[str]) -> int:
+    try:
+        return _main(argv)
+    except BrokenPipeError:
+        # `rigorloom read big.hwpx | head`: the reader left; that is not an error.
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+        return EXIT_OK
+
+
+def _main(argv: list[str]) -> int:
     prepare_stdio()
     if wants_product_help(argv):
         sys.stdout.write(HELP)
