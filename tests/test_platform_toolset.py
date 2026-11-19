@@ -645,8 +645,13 @@ def test_changes_clean_keeps_recent_state_and_unsaved_work(env, monkeypatch):
     code, out, _ = _cli(["changes", "clean", "--yes", "--json"], monkeypatch)
     assert code == 0 and json.loads(out)["result"]["removed"] == []  # all recent
     old = time.time() - 40 * 86400
+    # Windows has no utime(follow_symlinks=False); there are no links here to skip.
+    nofollow = os.utime in os.supports_follow_symlinks
     for entry in env.home.rglob("*"):
-        os.utime(entry, (old, old), follow_symlinks=False)
+        if nofollow:
+            os.utime(entry, (old, old), follow_symlinks=False)
+        elif not entry.is_symlink():
+            os.utime(entry, (old, old))
     code, out, _ = _cli(["changes", "clean", "--yes", "--json"], monkeypatch)
     r = json.loads(out)["result"]
     assert code == 0 and r["keptUnsaved"] == 1
