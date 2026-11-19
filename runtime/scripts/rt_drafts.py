@@ -272,13 +272,19 @@ class DraftStore:
                     "headPath": str(out_path), "engine": result}
 
     def create_virtual(self, *, name: str | None, author: str, provenance: dict,
-                       build: Callable[[Path], dict]) -> tuple[Ref, dict]:
-        """A draft with no source file (``new``). ``build(out_path)`` makes rev 1."""
+                       build: Callable[[Path], dict],
+                       suffix: str = ".hwpx") -> tuple[Ref, dict]:
+        """A draft with no source file (``new``). ``build(out_path)`` makes rev 1.
+
+        ``suffix`` is the engine's native working format (``.hwpx`` for the
+        real engine).
+        """
         key = f"new-{secrets.token_hex(5)}"
         ref = Ref(key, None)
         with self.lock(ref):
-            record = new_record(source=None, sha256=None, name=name)
-            out_name = "rev-0001.hwpx"
+            record = new_record(source=None, sha256=None, name=name,
+                                fmt=suffix.lstrip("."))
+            out_name = f"rev-0001{suffix}"
             out_path = self.dir_for(ref) / out_name
             result = build(out_path)
             if not out_path.exists():
@@ -347,13 +353,13 @@ def _work_suffix(path: Path) -> str:
 
 
 def new_record(*, source: Path | None, sha256: str | None,
-               name: str | None = None) -> dict:
+               name: str | None = None, fmt: str = "hwpx") -> dict:
     return {
         "schema": DRAFT_SCHEMA,
         "source": ({"path": str(source), "sha256": sha256, "rev": rev_of(sha256),
                     "format": source.suffix.lower().lstrip(".")}
                    if source is not None else
-                   {"path": None, "sha256": None, "rev": None, "format": "hwpx",
+                   {"path": None, "sha256": None, "rev": None, "format": fmt,
                     "name": name}),
         "head": None,
         "changesets": [],

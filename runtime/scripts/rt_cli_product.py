@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -317,9 +318,6 @@ def _emit(term: Term, args, verb: str, envelope: dict) -> int:
         payload = {"ok": envelope["ok"], "command": verb}
         payload["result" if envelope["ok"] else "error"] = (
             envelope["result"] if envelope["ok"] else envelope["error"])
-        data = payload.get("error", {}).get("data") or {}
-        if "trace" in data and not getattr(args, "debug", False):
-            data.pop("trace")
         sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
         return code
     if envelope["ok"]:
@@ -356,8 +354,12 @@ def _save_after(ctx: Context, args, path: str) -> dict:
 
 def _undo(term: Term, args) -> int:
     import rt_commit
-    from rt_paths import canonical
-    target = canonical(args.path)
+    from rt_paths import PathRefused, canonical
+    try:
+        target = canonical(args.path)
+    except PathRefused as exc:
+        return _emit(term, args, "undo", {"ok": False, "error": ToolError(
+            exc.code, exc.message, at=exc.path).to_dict()})
     answer = confirm(f"{target}을(를) 마지막 저장 전으로 되돌릴까요?")
     if answer is None:
         envelope = {"ok": False, "error": ToolError(
@@ -381,6 +383,8 @@ def _undo(term: Term, args) -> int:
 
 def _convert(term: Term, args) -> int:
     ctx = _context(args)
+    if args.force:
+        ctx.ask = lambda q, d: True  # the person typed --force for this target
     envelope = call(ctx, "save", {"path": args.path, "to": args.out})
     # Converting a file with no draft: save treats a format change as an export.
     return _emit(term, args, "convert", envelope)
@@ -410,6 +414,8 @@ def main(argv: list[str]) -> int:
     except SystemExit as exc:
         return int(exc.code or 0) and EXIT_USAGE
     term = Term.detect(getattr(args, "color", "auto"))
+    if getattr(args, "debug", False):
+        os.environ["RIGORLOOM_DEBUG"] = "1"
     try:
         if args.verb == "undo":
             return _undo(term, args)

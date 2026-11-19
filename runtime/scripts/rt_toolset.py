@@ -23,17 +23,10 @@ from pathlib import Path
 from typing import Any
 
 import rt_commit
-from rt_drafts import Input, Ref, is_virtual, rev_of
-from rt_paths import PathRefused, canonical, check_readable, private_dir
-from rt_term import safe_text
-from rt_tools import (
-    Context,
-    Tool,
-    ToolError,
-    compact_json,
-    doc_call,
-    register,
-)
+from rt_drafts import Input, Ref, is_virtual, rev_of, summary
+from rt_paths import PathRefused, canonical, check_readable, private_dir, sha256_file
+from rt_term import one_line, safe_text
+from rt_tools import Context, Tool, ToolError, doc_call, register
 
 READ_DEFAULT_CHARS = 6000
 READ_MAX_CHARS = 20000
@@ -213,18 +206,18 @@ def _open_text(r: dict) -> str:
         for h in r["headings"]:
             page = f"  p.{h['page']}" if h.get("page") else ""
             lines.append(f"  {h['at']}  L{h.get('level', '?')}  "
-                         f"{safe_text(str(h.get('text', '')))[:80]}{page}")
+                         f"{one_line(str(h.get('text', '')))[:80]}{page}")
     if r.get("tables"):
         lines.append("tables:")
         for t in r["tables"]:
-            cap = f"  {safe_text(str(t['caption']))[:60]}" if t.get("caption") else ""
+            cap = f"  {one_line(str(t['caption']))[:60]}" if t.get("caption") else ""
             page = f"  p.{t['page']}" if t.get("page") else ""
             lines.append(f"  {t['at']}  {t.get('rows')}x{t.get('cols')}{page}{cap}")
     if r.get("places"):
         lines.append("places (fill these by id):")
         for p in r["places"]:
             lines.append(f"  place:{p['id']}  {p.get('at', '')}  "
-                         f"{safe_text(str(p.get('label', '')))[:50]}")
+                         f"{one_line(str(p.get('label', '')))[:50]}")
     if r.get("personOnly"):
         lines.append("person-only seats (never fill): " + ", ".join(
             f"place:{p['id']}" for p in r["personOnly"]))
@@ -276,7 +269,13 @@ def capability_row(ctx: Context, fmt: str) -> dict[str, str]:
                         for verb, cells in verbs.items() if isinstance(cells, dict)}
         except Exception:  # noqa: BLE001 - fall back to the static table
             pass
-    engine = bool(getattr(ctx.doc, "ENGINE_AVAILABLE", False))
+    engine = False
+    status = getattr(ctx.doc, "engine_status", None)
+    if callable(status):
+        try:
+            engine = bool((status() or {}).get("available"))
+        except Exception:  # noqa: BLE001 - unknown means not available
+            engine = False
     return {verb: ("engine" if engine else
                    ("builtin" if fmt in fmts else "unavailable"))
             for verb, fmts in _BUILTIN.items()}
@@ -299,9 +298,14 @@ def _grid_markdown(grid: list) -> str:
 
 
 def _block_text(block: dict) -> str:
-    if block.get("kind") == "table" and isinstance(block.get("grid"), list):
-        return _grid_markdown(block["grid"])
+    grid = block.get("cells", block.get("grid"))
+    if block.get("kind") == "table" and isinstance(grid, list):
+        return _grid_markdown(grid)
     return safe_text(str(block.get("text") or ""))
+
+
+#: Block fields the read budget replaces with ``text`` (and ``part``).
+_BULKY = frozenset({"text", "grid", "cells", "runs"})
 
 
 def _parse_cursor(cursor: str, rev: str) -> tuple[int, int]:
@@ -340,13 +344,13 @@ def _run_read(ctx: Context, args: dict) -> dict:
                 next_cursor = f"{inp.rev}:{index}:{offset}"
                 break
             take = max(room, 1)
-            item = {k: v for k, v in block.items() if k not in ("text", "grid", "runs")}
+            item = {k: v for k, v in block.items() if k not in _BULKY}
             item.update(text=piece[:take], part={"from": offset, "to": offset + take,
                                                  "of": len(text)})
             out.append(item)
             next_cursor = f"{inp.rev}:{index}:{offset + take}"
             break
-        item = {k: v for k, v in block.items() if k not in ("text", "grid")}
+        item = {k: v for k, v in block.items() if k not in _BULKY - {"runs"}}
         item["text"] = piece
         if offset:
             item["part"] = {"from": offset, "to": len(text), "of": len(text)}
@@ -418,7 +422,7 @@ def _find_text(r: dict) -> str:
     lines = [f"{r['total']} hits for {r['query']!r} in {r['path']} rev {r['rev']}"]
     for h in r["hits"]:
         page = f" p.{h['page']}" if h.get("page") else ""
-        lines.append(f"  {h['at']}{page}  {safe_text(str(h.get('text', '')))[:120]}")
+        lines.append(f"  {h['at']}{page}  {one_line(str(h.get('text', '')))[:120]}")
     if r.get("truncated"):
         lines.append(f"  … {r['total'] - len(r['hits'])} more (raise limit or narrow scope)")
     return "\n".join(lines)
@@ -633,8 +637,9 @@ def _run_new(ctx: Context, args: dict) -> dict:
     def build(out_path: Path) -> dict:
         return doc_call(ctx.doc.new, markdown, str(out_path),
                         form=str(form_path) if form_path else None)
-    ref, staged = ctx.drafts.create_virtual(name=args.get("name"), author=ctx.client,
-                                            provenance=_provenance(ctx), build=build)
+    ref, staged = ctx.drafts.create_virtual(
+        name=args.get("name"), author=ctx.client, provenance=_provenance(ctx),
+        build=build, suffix=getattr(ctx.doc, "NATIVE_SUFFIX", ".hwpx"))
     cs = staged["changeset"]
     return {"path": ref.label, "source": "draft", "revision": 1, "rev": cs["rev"],
             "changeset": cs["id"], "saved": False,
@@ -740,6 +745,91 @@ register(Tool(
 # check
 # ---------------------------------------------------------------------------
 
+def _units(ctx: Context, path: Path) -> list[tuple[str, str]]:
+    """(address, text) for every block, in document order, from rt_doc.read."""
+    data = doc_call(ctx.doc.read, str(path))
+    units = []
+    for block in data.get("blocks", []):
+        grid = block.get("cells", block.get("grid"))
+        if block.get("kind") == "table" and isinstance(grid, list):
+            text = "\n".join("\t".join(str(c) for c in row) for row in grid)
+        else:
+            text = str(block.get("text") or "")
+        units.append((str(block.get("at")), text))
+    return units
+
+
+def _style_findings(ctx: Context, path: Path, pack: str | None) -> list[dict]:
+    """Korean style findings with document addresses.
+
+    rt_doc.style when the document layer has one; otherwise the rule set in
+    rt_style, run over rt_doc's own blocks so every finding has an ``at``.
+    """
+    own = getattr(ctx.doc, "style", None)
+    if callable(own):
+        return doc_call(own, str(path), **({"pack": pack} if pack else {})).get("findings", [])
+    import rt_style
+    try:
+        rules = rt_style.rules_for("any")
+        if pack:
+            loaded = rt_style.load_pack(pack)
+            rules = rt_style.rules_for(loaded.base_doc_type) + list(loaded.rules)
+    except rt_style.StyleInputError as exc:
+        raise ToolError("capability_unavailable", f"문체 규칙을 불러오지 못했습니다: {exc}") from exc
+    units = _units(ctx, path)
+    out = []
+    for f in rt_style.check_text([text for _, text in units], rules):
+        at = units[f["line"] - 1][0]
+        out.append({"rule": f["rule"], "severity": f["severity"], "at": at,
+                    "start": f["col"] - 1, "end": f["col"] - 1 + len(f["match"]),
+                    "match": f["match"], "message": f["why"], "suggest": f["suggest"]})
+    return out
+
+
+def _guard(ctx: Context, before: Path, after: Path) -> dict:
+    """Did the edit change a protected fact (number, date, quote, negation...)?
+
+    Blocks are aligned by text (difflib), so inserting a paragraph does not
+    shift every later comparison. A changed block is audited by rt_fidelity;
+    a removed block fails only if it carried a protected fact; an added block
+    is reported for the person to read but does not fail the check.
+    """
+    own = getattr(ctx.doc, "guard", None)
+    if callable(own):
+        return doc_call(own, str(before), str(after))
+    import difflib
+
+    from rt_guard import fidelity
+    a, b = _units(ctx, before), _units(ctx, after)
+    matcher = difflib.SequenceMatcher(a=[t for _, t in a], b=[t for _, t in b],
+                                      autojunk=False)
+    changes: list[dict] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        pairs = min(i2 - i1, j2 - j1) if tag == "replace" else 0
+        for k in range(pairs):
+            (_, x), (at, y) = a[i1 + k], b[j1 + k]
+            audit = fidelity.audit_text(x, y)
+            if not audit["pass"]:
+                changes.append({"at": at, "kind": "changed",
+                                "kinds": [c["kind"] for c in audit["changes"]],
+                                "before": x, "after": y})
+        for k in range(i1 + pairs, i2):
+            at, x = a[k]
+            audit = fidelity.audit_text(x, "")
+            if not audit["pass"]:
+                changes.append({"at": at, "kind": "removed",
+                                "kinds": [c["kind"] for c in audit["changes"]],
+                                "before": x, "after": None})
+        for k in range(j1 + pairs, j2):
+            at, y = b[k]
+            if not fidelity.audit_text("", y)["pass"]:
+                changes.append({"at": at, "kind": "added", "notice": True,
+                                "before": None, "after": y})
+    return {"pass": not any(not c.get("notice") for c in changes), "changes": changes}
+
+
 def _tri(fn) -> tuple[str, Any]:
     """passed | failed | unavailable — unavailable is never shown as a pass."""
     try:
@@ -758,12 +848,11 @@ def _run_check(ctx: Context, args: dict) -> dict:
     findings: list[dict] = []
 
     if "style" in only:
-        state, data = _tri(lambda: doc_call(ctx.doc.style, str(inp.path),
-                                            **({"pack": args["pack"]} if args.get("pack") else {})))
+        state, data = _tri(lambda: _style_findings(ctx, inp.path, args.get("pack")))
         if state == "unavailable":
             checks["style"] = {"state": "unavailable", "reason": data}
         else:
-            items = data.get("findings", [])
+            items = data
             errors = [f for f in items if f.get("severity") == "error"]
             checks["style"] = {"state": "failed" if errors else "passed",
                                "count": len(items)}
@@ -805,7 +894,7 @@ def _run_check(ctx: Context, args: dict) -> dict:
     if "guard" in only and (against or (inp.source == "draft" and ref.source)):
         base_path = (resolve(ctx, against).source if against and not is_virtual(against)
                      else ref.source)
-        state, data = _tri(lambda: doc_call(ctx.doc.guard, str(base_path), str(inp.path)))
+        state, data = _tri(lambda: _guard(ctx, base_path, inp.path))
         if state == "unavailable":
             checks["guard"] = {"state": "unavailable", "reason": data}
         else:
@@ -813,8 +902,12 @@ def _run_check(ctx: Context, args: dict) -> dict:
             checks["guard"] = {"state": "passed" if data.get("pass") else "failed",
                                "count": len(changes), "against": str(base_path)}
             for c in changes:
-                findings.append({"check": "guard", "rule": "guard.fact_changed",
-                                 "severity": "warning", **c})
+                notice = c.get("notice")
+                findings.append({"check": "guard", "rule": "guard.fact_" + (
+                    "added" if notice else "changed"),
+                    "severity": "notice" if notice else "warning",
+                    "message": _guard_message(c),
+                    **{k: v for k, v in c.items() if k != "notice"}})
 
     total = len(findings)
     result = {**_docref(ref, inp), "checks": checks,
@@ -823,6 +916,42 @@ def _run_check(ctx: Context, args: dict) -> dict:
     if total > CHECK_MAX_FINDINGS:
         result["truncated"] = total - CHECK_MAX_FINDINGS
     return result
+
+
+#: rt_fidelity's protected kinds, in the words a person reads.
+_FACT_KO = {
+    "numbers": "숫자", "dates": "날짜", "source_ids": "출처 번호", "citations": "인용 출처",
+    "tags": "문서 표시", "inline_math": "수식", "direct_quotes": "인용문", "urls": "주소",
+    "markdown_links": "링크", "headings": "제목", "qualifiers": "부정·한정 표현",
+    "quantifiers": "수량 표현", "causal_markers": "인과 표현", "direction_words": "방향 표현",
+    "protected_spans": "보호 구간",
+}
+
+
+def _clip(text, size: int = 40) -> str:
+    text = one_line(str(text or ""))
+    return text if len(text) <= size else text[:size - 1] + "…"
+
+
+def _subject(word: str) -> str:
+    """``word`` with 이/가 chosen by its last syllable."""
+    last = word[-1:] or "가"
+    if "가" <= last <= "힣":
+        return word + ("이" if (ord(last) - 0xAC00) % 28 else "가")
+    return word + "이(가)"
+
+
+def _guard_message(change: dict) -> str:
+    kinds = [_FACT_KO.get(k, k) for k in change.get("kinds") or []]
+    what = "·".join(dict.fromkeys(kinds)) or "내용"
+    if change.get("kind") == "removed":
+        return f"{_subject(what)} 든 문단이 빠졌습니다: {_clip(change.get('before'))}"
+    if change.get("kind") == "added":
+        return f"새로 쓴 문단에 사실 표현이 있습니다. 근거를 확인하세요: {_clip(change.get('after'))}"
+    if change.get("before") is not None and change.get("after") is not None:
+        return (f"{_subject(what)} 바뀌었습니다: {_clip(change['before'])} → "
+                f"{_clip(change['after'])}")
+    return f"{_subject(what)} 바뀌었습니다."
 
 
 _LAYOUT_MSG = {
@@ -842,7 +971,7 @@ def _check_text(r: dict) -> str:
             fix = f"  ({f['wrong']} → {f['right']})"
         src = f"  [{f['source']}]" if f.get("source") else ""
         lines.append(f"  {f.get('severity', '')} {f.get('rule', '')} {where}: "
-                     f"{safe_text(str(f.get('message', '')))[:160]}{fix}{src}")
+                     f"{one_line(str(f.get('message', '')))[:160]}{fix}{src}")
     if r.get("truncated"):
         lines.append(f"  … {r['truncated']} more")
     return "\n".join(lines)
@@ -886,6 +1015,8 @@ def _target(ctx: Context, raw: str) -> Path:
 
 
 def _person_line(ref: Ref, target: Path) -> str:
+    if ref.source is not None and _same_path(target, ref.source):
+        return f'rigorloom save "{ref.label}"'
     return f'rigorloom save "{ref.label}" --to "{target}"'
 
 
@@ -920,8 +1051,10 @@ def _run_save(ctx: Context, args: dict) -> dict:
     else:
         lossy = []
 
-    from rt_paths import sha256_file
     digest = sha256_file(candidate)
+    if target.exists() and sha256_file(target) == digest:
+        raise ToolError("no_draft", "파일이 이미 이 내용입니다. 저장할 변경이 없습니다.",
+                        at=str(target))
     unreviewed = sum(1 for c in (record or {}).get("changesets", [])
                      if c.get("status") == "proposed")
     declines = (record or {}).get("declines", [])
@@ -971,12 +1104,22 @@ def _run_save(ctx: Context, args: dict) -> dict:
         for cs in record.get("changesets", []):
             if cs.get("status") == "proposed":
                 cs["status"] = "applied"
+        if ref.source is not None and _same_path(target, ref.source):
+            # The person's file now holds the head, so the draft is based on
+            # these bytes; without this the next read would call the file
+            # "changed since the draft started".
+            record["source"]["sha256"] = receipt["sha256"]
+            record["source"]["rev"] = rev_of(receipt["sha256"])
         ctx.drafts.write(ref, record)
     return {"path": ref.label, "saved": str(target), "sha256": receipt["sha256"],
             "format": fmt, "replaced": receipt["replaced"] is not None,
             "acceptedVia": policy, "unreviewed": unreviewed, "lossy": lossy,
             "undo": f'rigorloom undo "{target}"' if receipt["undo"] or
             receipt["replaced"] is None else None}
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    return os.path.normcase(str(a)) == os.path.normcase(str(b))
 
 
 def _save_text(r: dict) -> str:
@@ -1029,7 +1172,6 @@ def _run_changes(ctx: Context, args: dict) -> dict:
         if not sets:
             raise ToolError("not_found", f"그런 변경 묶음이 없습니다: {args['id']}",
                             candidates=[c["id"] for c in record.get("changesets", [])][-10:])
-    from rt_drafts import summary
     slim = [{k: c.get(k) for k in ("id", "kind", "revision", "rev", "status", "author",
                                    "changedPages", "created", "items", "notes")}
             | {"ops": len(c.get("ops", []))} for c in sets]
@@ -1110,10 +1252,3 @@ register(Tool(
     budget_chars=12000,
 ))
 
-
-def _unused(*_: Any) -> None:  # keep linters quiet about helpers used by surfaces
-    return None
-
-
-__all__ = ["resolve", "current", "is_person_only", "capability_row", "rev_of",
-           "compact_json", "os"]

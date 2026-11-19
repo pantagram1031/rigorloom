@@ -22,6 +22,7 @@ applied), ``candidates`` (nearby addresses or names) and ``retryable``.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -33,6 +34,9 @@ ERROR_EXIT: dict[str, int] = {
     "not_found": 2,
     "unknown_tool": 2,
     "ambiguous_match": 2,
+    "page_out_of_range": 2,
+    "bad_address": 2,
+    "conflict": 2,
     "expect_mismatch": 3,
     "no_roots": 3,
     "outside_roots": 3,
@@ -49,6 +53,8 @@ ERROR_EXIT: dict[str, int] = {
     "unsupported_format": 3,
     "too_large": 3,
     "engine_refused": 3,
+    "source_rejected": 3,
+    "engine_unavailable": 3,
     "internal": 4,
 }
 
@@ -308,11 +314,15 @@ def call(ctx: Context, name: str, args: dict | None) -> dict:
     except ToolError as exc:
         return {"ok": False, "error": exc.to_dict()}
     except Exception as exc:  # noqa: BLE001 - a bug must not look like a verdict
-        import traceback
+        # The trace names local paths; it goes out only when a person asked.
+        trace = None
+        if os.environ.get("RIGORLOOM_DEBUG"):
+            import traceback
+            trace = {"trace": traceback.format_exc(limit=6)}
         return {"ok": False, "error": ToolError(
             "internal", f"{name}: 내부 오류 ({type(exc).__name__}).",
             hint="--debug로 다시 실행하면 자세한 내용이 나옵니다.",
-            data={"trace": traceback.format_exc(limit=6)}).to_dict()}
+            data=trace).to_dict()}
 
 
 def doc_call(fn: Callable, *args, **kwargs) -> dict:
@@ -339,7 +349,14 @@ def doc_call(fn: Callable, *args, **kwargs) -> dict:
         "capability_unavailable": "capability_unavailable",
         "unsupported": "capability_unavailable",
         "refused": "engine_refused",
+        "source_rejected": "source_rejected",
+        "page_out_of_range": "page_out_of_range",
+        "bad_address": "bad_address",
+        "conflict": "conflict",
+        "engine_timeout": "engine_unavailable",
+        "engine_unavailable": "engine_unavailable",
         "internal": "internal",
+        "internal_error": "internal",
     }.get(code, "engine_refused")
     raise ToolError(
         mapped, err.get("message") or "문서 처리 중 거절되었습니다.",
