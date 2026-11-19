@@ -21,6 +21,7 @@ import {
   hardReason,
   historyProvenanceLine,
   isReturnedOp,
+  opSignature,
   isSupersededApproval,
   planOpsPayload,
   proposerKind,
@@ -75,7 +76,8 @@ test("an approval the runtime superseded reads as superseded, not as a person's 
 // --- 2. no silent mock -------------------------------------------------------------
 
 test("a test agent's proposal is labelled as a test proposal everywhere", () => {
-  assert.equal(proposerKind("agenthost-mock"), "mock");
+  // The runtime's provenance decides it; a proposer name is only a label.
+  assert.equal(proposerKind("agenthost-mock"), "agent");
   assert.equal(proposerKind("anything", "mock"), "mock");
   assert.equal(proposerKind("rigorloom-desktop"), "user");
   assert.equal(proposerKind("claude-agent"), "agent");
@@ -336,7 +338,7 @@ test("a returned change is recognised in a later proposal and blocks approval un
   const returnedOp = { opId: "x1", kind: "fill_cell", table: 0, row: 1, col: 4, text: "AGENT-HOST-0001", origin: "agent" };
   const again = { ...returnedOp, opId: "other-id" };
   const typed = { opId: "u1", kind: "fill_cell", table: 0, row: 5, col: 1, text: "기획조정실", origin: "user" };
-  const sigs = ["c:0:1:4=AGENT-HOST-0001"];
+  const sigs = [opSignature(returnedOp)];
   assert.equal(isReturnedOp(again, sigs), true);
   assert.equal(isReturnedOp(typed, sigs), false);
   assert.deepEqual(withoutSignatures(sigs, [again]), [], "다시 넣기 clears it");

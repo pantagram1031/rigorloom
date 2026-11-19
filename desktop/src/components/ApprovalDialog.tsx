@@ -22,10 +22,13 @@ import {
   applyStepLabel,
   baseLabel,
   behindHeadFinding,
+  captureConfirmation,
   draftProposerKind,
+  guardWarningFullLines,
   guardWarningLines,
   guardWarningSummary,
   proposerLabel,
+  requiredGuardAcks,
   shortHash,
 } from "../workspace/trust";
 import { buildRegionTextMap } from "../workspace/externalPlan";
@@ -166,13 +169,24 @@ export function ApprovalDialog() {
     : [];
   const changedFactCount = changedFactItems.length;
 
-  const requiresChangedFactAck = changedFactCount > 0;
+  // From the WHOLE guard result: changed facts on rows, plus failing
+  // paragraphs no row could be tied to. Either one needs the acknowledgement.
+  const guardAcks = guardMatchesPlan
+    ? requiredGuardAcks(guardSummary)
+    : { changedFacts: 0, unattributed: 0, total: 0 };
+  const requiresChangedFactAck = guardAcks.total > 0;
+  const unattributedParas = guardMatchesPlan ? guardSummary.unattributedFailing ?? [] : [];
 
-  // Every failing guard paragraph, with the values that moved, in one or two
-  // lines — the same rows the review list tags.
-  const warningLines = guardMatchesPlan
-    ? guardWarningLines(guardWarningSummary(changes, guardSummary.rowAudits, language), language)
-    : [];
+  // Every failing guard paragraph, with the values that moved: one or two
+  // lines to scan, and the complete list one click away.
+  const warningSummary = guardMatchesPlan
+    ? guardWarningSummary(changes, guardSummary.rowAudits, language, {
+        paragraphsByOp: guardSummary.paragraphsByOp,
+        unattributedFailing: guardSummary.unattributedFailing,
+      })
+    : null;
+  const warningLines = warningSummary ? guardWarningLines(warningSummary, language) : [];
+  const warningFullLines = warningSummary ? guardWarningFullLines(warningSummary, language) : [];
 
   const proposerKind = draftProposerKind(draft);
   const requiresMockAck = proposerKind === "mock";
@@ -217,16 +231,30 @@ export function ApprovalDialog() {
 
   const handleConfirm = async () => {
     if (!canConfirm) return;
+    // The binding is taken from the sheet AS RENDERED — this plan, this
+    // document, these boxes — not from whatever the store holds after the
+    // waits that follow.
+    const acknowledgements = [
+      ...(requiresChangedFactAck && ackChecked ? ["changed_facts"] : []),
+      ...(requiresMockAck && mockAckChecked ? ["mock"] : []),
+    ];
+    const confirmed = captureConfirmation(
+      { activeSessionId: activeSessionId ?? null, draft },
+      acknowledgements,
+    );
+    if (!confirmed) return;
     setSubmitting(true);
-    if (plan && guardMatchesPlan) {
+    if (plan && warningSummary) {
       // Kept past the queue, so the applied state still names what was flagged.
-      rememberApprovedGuard(
-        plan.planId,
-        guardWarningSummary(changes, guardSummary.rowAudits, language),
-      );
+      rememberApprovedGuard(plan.planId, warningSummary);
     }
     try {
-      await approveAndApplyFromDialog("host-operator");
+      const done = await approveAndApplyFromDialog(confirmed, "host-operator");
+      if (!done) {
+        // A broken binding asks for a fresh confirmation: the boxes clear.
+        setAckChecked(false);
+        setMockAckChecked(false);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -363,14 +391,16 @@ export function ApprovalDialog() {
               >
                 {t("approve_dialog_guard_skipped", language)}
               </p>
-            ) : changedFactCount > 0 ? (
+            ) : requiresChangedFactAck ? (
               <div
                 className="approval-changed-facts-box"
                 data-testid="approval-changed-facts"
               >
-                <p className="approval-changed-facts-title">
-                  {t("review_changed_facts_header", language, [changedFactCount])}
-                </p>
+                {changedFactCount > 0 ? (
+                  <p className="approval-changed-facts-title">
+                    {t("review_changed_facts_header", language, [changedFactCount])}
+                  </p>
+                ) : null}
                 {changedFactItems.length > 0 ? (
                   <ul className="approval-changed-facts-list">
                     {changedFactItems.map((item) => (
@@ -379,6 +409,23 @@ export function ApprovalDialog() {
                       </li>
                     ))}
                   </ul>
+                ) : null}
+                {unattributedParas.length > 0 ? (
+                  <>
+                    <p className="approval-changed-facts-title">
+                      {t("approval_warn_unattributed", language, [unattributedParas.length])}
+                    </p>
+                    <ul
+                      className="approval-changed-facts-list"
+                      data-testid="approval-unattributed"
+                    >
+                      {unattributedParas.map((para) => (
+                        <li key={para.paragraph}>
+                          <span>{t("addr_paragraph", language, [para.paragraph])}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 ) : null}
               </div>
             ) : null}
@@ -389,6 +436,17 @@ export function ApprovalDialog() {
                   <li key={idx}>{line}</li>
                 ))}
               </ul>
+            ) : null}
+
+            {warningFullLines.length > 0 ? (
+              <details className="approval-warn-all" data-testid="approval-guard-warnings-all">
+                <summary>{t("approval_warn_show_all", language, [warningFullLines.length])}</summary>
+                <ul className="approval-warn-lines">
+                  {warningFullLines.map((line, idx) => (
+                    <li key={idx}>{line}</li>
+                  ))}
+                </ul>
+              </details>
             ) : null}
 
             <p className="approval-effect-note" data-testid="approval-effect-note">

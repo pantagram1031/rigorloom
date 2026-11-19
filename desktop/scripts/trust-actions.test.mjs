@@ -132,7 +132,7 @@ test("돌려보내기 stores the reason as the reason, keeps the approver, and e
   await ctx.returnDraft("수신을 기획조정실로 고쳐 주세요");
   assert.deepEqual(resolves, [["rejected", "host-operator", "수신을 기획조정실로 고쳐 주세요"]]);
   assert.equal(cleared, 1, "the returned proposal leaves the queue");
-  assert.deepEqual(JSON.parse(JSON.stringify(s.read().returnedOps.S)), ["c:0:1:4=AGENT-HOST-0001"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(s.read().returnedOps.S)), ["c:0:1:4#*~fill=AGENT-HOST-0001"]);
   assert.deepEqual(dismissed, [["S", "p1"]]);
 });
 

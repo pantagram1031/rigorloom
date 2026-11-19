@@ -82,7 +82,12 @@ export function isSupersededApproval(approval: ApprovalRecord | null | undefined
 
 export type ProposerKind = "agent" | "user" | "mock";
 
-/** The proposer names of the bundled test agents (`rt_plan.MOCK_PROPOSERS`). */
+/**
+ * The proposer names the bundled test agents use. Shown under 자세히 only: a
+ * name is a label any caller can write, so it never decides the 시험용 제안
+ * tag. That comes from the plan's `provenance`, which the runtime sets from
+ * the identity of the provider it launched.
+ */
 export const MOCK_PROPOSERS: ReadonlySet<string> = new Set([
   "agenthost-mock",
   "rigorloom-mock-agent",
@@ -95,7 +100,7 @@ export function proposerKind(
   proposer: string | null | undefined,
   provenance?: string | null,
 ): ProposerKind {
-  if (provenance === "mock" || (proposer && MOCK_PROPOSERS.has(proposer))) return "mock";
+  if (provenance === "mock") return "mock";
   if (!proposer || proposer === DESKTOP_PROPOSER) return "user";
   return "agent";
 }
@@ -119,7 +124,10 @@ export function opProposerKind(op: QueuedOp): ProposerKind {
  * Any test op makes the queue a test proposal: approving it is approving a
  * test value, and that must be the first thing the line says.
  */
-export function draftProposerKind(draft: Pick<Draft, "ops">): ProposerKind {
+export function draftProposerKind(draft: Pick<Draft, "ops"> & { plan?: Draft["plan"] }): ProposerKind {
+  // The runtime's own answer first: a rebuilt plan that repeats a test
+  // agent's op keeps provenance "mock" even if the client lost the flag.
+  if (draft.plan?.provenance === "mock") return "mock";
   const kinds = draft.ops.map(opProposerKind);
   if (kinds.includes("mock")) return "mock";
   if (kinds.includes("agent")) return "agent";
@@ -390,51 +398,122 @@ function describeDeltas(
   deltas: readonly GuardValueDelta[],
   pick: "added" | "removed" | "both",
   lang: UiLanguage,
+  max = 2,
 ): string {
   const parts: string[] = [];
   for (const d of deltas) {
     const label = guardNoun(d.category, lang);
     if (pick === "both") {
       if (d.removed.length > 0 && d.added.length > 0) {
-        parts.push(`${label} ${quoteValues(d.removed)} → ${quoteValues(d.added)}`);
+        parts.push(`${label} ${quoteValues(d.removed, max)} → ${quoteValues(d.added, max)}`);
       } else if (d.removed.length > 0) {
-        parts.push(`${label} ${quoteValues(d.removed)} → ${t("guard_value_gone", lang)}`);
+        parts.push(`${label} ${quoteValues(d.removed, max)} → ${t("guard_value_gone", lang)}`);
       } else if (d.added.length > 0) {
-        parts.push(`${label} ${quoteValues(d.added)}`);
+        parts.push(`${label} ${quoteValues(d.added, max)}`);
       }
     } else {
       const values = pick === "added" ? d.added : d.removed;
-      if (values.length > 0) parts.push(`${label} ${quoteValues(values)}`);
+      if (values.length > 0) parts.push(`${label} ${quoteValues(values, max)}`);
     }
   }
   return parts.join(", ");
 }
 
-export interface GuardWarningSummary {
-  changed: Array<{ ordinal: number; field: string; detail: string }>;
-  removed: Array<{ ordinal: number; field: string; detail: string }>;
-  added: Array<{ ordinal: number; field: string; detail: string }>;
+/** Every value delta of several paragraphs, merged per category. */
+function mergedDeltas(paras: readonly (GuardDiffParagraph | null | undefined)[]): GuardValueDelta[] {
+  const byCategory = new Map<string, GuardValueDelta>();
+  for (const para of paras) {
+    for (const d of guardValueDeltas(para)) {
+      const into = byCategory.get(d.category) ?? { category: d.category, added: [], removed: [] };
+      for (const v of d.added) if (!into.added.includes(v)) into.added.push(v);
+      for (const v of d.removed) if (!into.removed.includes(v)) into.removed.push(v);
+      byCategory.set(d.category, into);
+    }
+  }
+  return [...byCategory.values()];
 }
 
-/** Every failing row, grouped by tag kind, with the values that moved. */
+export interface GuardWarningItem {
+  ordinal: number;
+  field: string;
+  /** The short form for the two-line summary (at most two values per side). */
+  detail: string;
+  /** Every value, for the full list under the summary. */
+  fullDetail?: string;
+}
+
+export interface GuardWarningSummary {
+  changed: GuardWarningItem[];
+  removed: GuardWarningItem[];
+  added: GuardWarningItem[];
+  /** Failing paragraphs the checker reported that no row could be tied to. */
+  unattributed?: Array<{ paragraph: number; detail: string }>;
+}
+
+/** The guard facts the sheet needs beyond the per-row audits. */
+export interface GuardCoverage {
+  /** Every paragraph each op was tied to, not just the first one. */
+  paragraphsByOp?: Record<string, GuardDiffParagraph[]>;
+  /** Failing paragraphs no op could be tied to. */
+  unattributedFailing?: GuardDiffParagraph[];
+}
+
+/**
+ * Every failing row, grouped by tag kind, with the values that moved.
+ *
+ * A row's values come from EVERY paragraph its op was tied to (one fill can
+ * touch several), and failing paragraphs no row claims are listed by
+ * paragraph number rather than dropped.
+ */
 export function guardWarningSummary(
   changes: readonly Pick<IndexedChange, "op" | "opId" | "ordinal" | "fieldLabel">[],
   audits: Record<string, Pick<RowGuardAudit, "status" | "paragraph">>,
   lang: UiLanguage,
+  coverage: GuardCoverage = {},
 ): GuardWarningSummary {
-  const out: GuardWarningSummary = { changed: [], removed: [], added: [] };
+  const out: GuardWarningSummary = { changed: [], removed: [], added: [], unattributed: [] };
   for (const ch of changes) {
-    const tag = guardTagFor(ch, audits[ch.opId]);
+    const audit = audits[ch.opId];
+    const extra = (coverage.paragraphsByOp?.[ch.opId] ?? []).filter((p) => p.pass === false);
+    const primary = audit?.paragraph && audit.paragraph.pass === false ? audit.paragraph : extra[0] ?? null;
+    const tag = guardTagFor(ch, primary ? { status: audit?.status ?? "kept", paragraph: primary } : audit);
     if (!tag) continue;
-    if (tag.kind === "changed") {
-      out.changed.push({ ordinal: ch.ordinal, field: ch.fieldLabel, detail: describeDeltas(tag.deltas, "both", lang) });
-    } else if (tag.kind === "removed_with_guide") {
-      out.removed.push({ ordinal: ch.ordinal, field: ch.fieldLabel, detail: describeDeltas(tag.deltas, "removed", lang) });
-    } else {
-      out.added.push({ ordinal: ch.ordinal, field: ch.fieldLabel, detail: describeDeltas(tag.deltas, "added", lang) });
-    }
+    const all = [primary, ...extra.filter((p) => p.paragraph !== primary?.paragraph)];
+    const deltas = mergedDeltas(all);
+    const pick = tag.kind === "changed" ? "both" : tag.kind === "removed_with_guide" ? "removed" : "added";
+    const item: GuardWarningItem = {
+      ordinal: ch.ordinal,
+      field: ch.fieldLabel,
+      detail: describeDeltas(deltas, pick, lang),
+      fullDetail: describeDeltas(deltas, pick, lang, Number.POSITIVE_INFINITY),
+    };
+    if (tag.kind === "changed") out.changed.push(item);
+    else if (tag.kind === "removed_with_guide") out.removed.push(item);
+    else out.added.push(item);
+  }
+  for (const para of coverage.unattributedFailing ?? []) {
+    out.unattributed!.push({
+      paragraph: para.paragraph,
+      detail: describeDeltas(guardValueDeltas(para), "both", lang, Number.POSITIVE_INFINITY),
+    });
   }
   return out;
+}
+
+/**
+ * Which acknowledgements the sheet must collect, from the WHOLE guard result.
+ *
+ * A changed fact on a row, and any failing paragraph no row could be tied to:
+ * the person cannot be told it is an expected fill, so they confirm it like a
+ * changed fact. Before, an unattributed failing paragraph produced no
+ * acknowledgement at all.
+ */
+export function requiredGuardAcks(
+  summary: { changedFactOpIds: readonly string[] } & GuardCoverage,
+): { changedFacts: number; unattributed: number; total: number } {
+  const changedFacts = summary.changedFactOpIds.length;
+  const unattributed = (summary.unattributedFailing ?? []).length;
+  return { changedFacts, unattributed, total: changedFacts + unattributed };
 }
 
 function joinItems(items: GuardWarningSummary["changed"], max = 2): string {
@@ -442,6 +521,26 @@ function joinItems(items: GuardWarningSummary["changed"], max = 2): string {
     .slice(0, max)
     .map((it) => (it.detail ? `[${it.ordinal}] ${it.field} ${it.detail}` : `[${it.ordinal}] ${it.field}`));
   return items.length > max ? `${shown.join("; ")} …` : shown.join("; ");
+}
+
+/**
+ * Every warning, one line each, nothing cut: the expandable list under the
+ * two-line summary. What the person approves must be readable in full from
+ * the sheet itself.
+ */
+export function guardWarningFullLines(summary: GuardWarningSummary, lang: UiLanguage): string[] {
+  const item = (it: GuardWarningItem) => {
+    const detail = it.fullDetail ?? it.detail;
+    return detail ? `[${it.ordinal}] ${it.field} ${detail}` : `[${it.ordinal}] ${it.field}`;
+  };
+  const lines: string[] = [];
+  for (const it of summary.changed) lines.push(t("approval_warn_full_changed", lang, [item(it)]));
+  for (const it of summary.removed) lines.push(t("approval_warn_full_removed", lang, [item(it)]));
+  for (const it of summary.added) lines.push(t("approval_warn_full_added", lang, [item(it)]));
+  for (const row of summary.unattributed ?? []) {
+    lines.push(t("approval_warn_full_unattributed", lang, [row.paragraph, row.detail]));
+  }
+  return lines;
 }
 
 /**
@@ -463,12 +562,20 @@ export function guardWarningLines(summary: GuardWarningSummary, lang: UiLanguage
   if (summary.added.length > 0) {
     lines.push(t("approval_warn_added", lang, [summary.added.length, joinItems(summary.added)]));
   }
+  // Unattributed differences outrank the expected kinds: nobody can say
+  // which change made them.
+  const loose = summary.unattributed ?? [];
+  if (loose.length > 0) {
+    lines.splice(summary.changed.length > 0 ? 1 : 0, 0,
+      t("approval_warn_unattributed", lang, [loose.length]));
+  }
   return lines.slice(0, 2);
 }
 
 /** How many failing paragraphs a summary counts, for the applied-state line. */
 export function guardWarningCount(summary: GuardWarningSummary): number {
-  return summary.changed.length + summary.removed.length + summary.added.length;
+  return summary.changed.length + summary.removed.length + summary.added.length
+    + (summary.unattributed?.length ?? 0);
 }
 
 // --- 6. the approval dialog ---------------------------------------------------------
@@ -508,8 +615,30 @@ export function applyStepLabel(step: ApplyStep, lang: UiLanguage): string | null
 // --- 7. typed entries survive a reload ------------------------------------------------
 
 export interface SavedDraft {
+  /** 2: bound to the session and its source digest. Absent on older entries. */
+  version?: 2;
+  sessionId?: string;
+  sourceSha256?: string;
   ops: QueuedOp[];
   savedUtc: string;
+}
+
+export const SAVED_DRAFT_VERSION = 2 as const;
+
+/** The envelope a typed queue is saved in: its session, its source, its ops. */
+export function savedDraftEnvelope(
+  sessionId: string,
+  sourceSha256: string | null,
+  ops: readonly QueuedOp[],
+  savedUtc: string,
+): SavedDraft {
+  return {
+    version: SAVED_DRAFT_VERSION,
+    sessionId,
+    ...(sourceSha256 ? { sourceSha256 } : {}),
+    ops: ops.map((op) => ({ ...op, sessionId })),
+    savedUtc,
+  };
 }
 
 /**
@@ -523,19 +652,110 @@ export function savableOps(draft: Pick<Draft, "ops">): QueuedOp[] {
   return draft.ops.filter((op) => op.origin === "user");
 }
 
-export function restorableOps(saved: unknown): QueuedOp[] {
+/**
+ * The saved entries that may come back into THIS document's queue.
+ *
+ * All or nothing. The envelope must name this session and, when the caller
+ * knows it, this source digest; every op must be well formed, typed by the
+ * person and owned by this session. An older entry without an envelope is
+ * migrated only when each op already names this session — missing ownership
+ * is not read as "probably mine". Anything else restores nothing, so a
+ * mislabelled or edited prefs entry never reaches `plan/propose`.
+ */
+export function restorableOps(
+  saved: unknown,
+  expect?: { sessionId: string; sourceSha256?: string | null },
+): QueuedOp[] {
   if (!saved || typeof saved !== "object") return [];
-  const ops = (saved as { ops?: unknown }).ops;
-  if (!Array.isArray(ops)) return [];
-  return ops.filter(
+  const envelope = saved as SavedDraft;
+  const ops = (envelope as { ops?: unknown }).ops;
+  if (!Array.isArray(ops) || ops.length === 0) return [];
+  if (expect) {
+    if (envelope.version === SAVED_DRAFT_VERSION) {
+      if (envelope.sessionId !== expect.sessionId) return [];
+      if (expect.sourceSha256 && envelope.sourceSha256 !== expect.sourceSha256) return [];
+    } else if (envelope.version !== undefined) {
+      return [];
+    }
+  }
+  const owner = expect?.sessionId ?? null;
+  const admitted = ops.filter(
     (op): op is QueuedOp =>
-      Boolean(op) &&
-      typeof op === "object" &&
-      typeof (op as QueuedOp).opId === "string" &&
-      typeof (op as QueuedOp).kind === "string" &&
-      typeof (op as QueuedOp).text === "string" &&
-      (op as QueuedOp).origin === "user",
+      isWellFormedOp(op) &&
+      (op as QueuedOp).origin === "user" &&
+      (owner === null || (op as QueuedOp).sessionId === owner),
   );
+  return admitted.length === ops.length ? admitted : [];
+}
+
+/** Integer-valued and non-negative, as every address the engine returns is. */
+function isIndex(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+/** The shape `planOpsPayload` relies on, per kind. Nothing else is proposed. */
+export function isWellFormedOp(op: unknown): op is QueuedOp {
+  if (!op || typeof op !== "object") return false;
+  const o = op as Record<string, unknown>;
+  if (typeof o.opId !== "string" || o.opId.length === 0) return false;
+  if (typeof o.text !== "string") return false;
+  if (o.origin !== "user" && o.origin !== "agent") return false;
+  if (o.sessionId !== undefined && typeof o.sessionId !== "string") return false;
+  switch (o.kind) {
+    case "fill_cell":
+      return (
+        isIndex(o.table) && isIndex(o.row) && isIndex(o.col) &&
+        (o.lines === undefined || (Array.isArray(o.lines) && o.lines.every((l) => typeof l === "string")))
+      );
+    case "replace_at_cell":
+      return (
+        isIndex(o.table) && isIndex(o.row) && isIndex(o.col) &&
+        (o.run === undefined || isIndex(o.run)) &&
+        (o.mode === undefined || o.mode === "replace" || o.mode === "append")
+      );
+    case "set_run":
+      return isIndex(o.atPara) && isIndex(o.run);
+    case "delete_guides":
+      return (
+        (o.color === undefined || typeof o.color === "string") &&
+        (o.charPrIds === undefined || (Array.isArray(o.charPrIds) && o.charPrIds.every((c) => typeof c === "string")))
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * Why a queue may not be proposed for `sessionId`, or null when it may.
+ *
+ * The one admission check every path into the queue goes through (`setQueue`,
+ * restore, re-propose, adoption): an op that is not well formed, or that
+ * names another document, stops the whole queue before anything is proposed
+ * or saved. An op that names no document is stamped with this one by the
+ * caller; that is the explicit migration, not a guess.
+ */
+export function queueAdmission(
+  ops: readonly unknown[],
+  sessionId: string | null,
+): { code: "invalid_queue_ops" | "foreign_session_ops"; opIds: string[] } | null {
+  const malformed = ops.filter((op) => !isWellFormedOp(op));
+  if (malformed.length > 0) {
+    return {
+      code: "invalid_queue_ops",
+      opIds: malformed.map((op) =>
+        op && typeof op === "object" && typeof (op as QueuedOp).opId === "string" ? (op as QueuedOp).opId : "?",
+      ),
+    };
+  }
+  // No open document: nothing will be proposed, the caller empties the queue.
+  if (!sessionId) return null;
+  const foreign = (ops as QueuedOp[]).filter(
+    (op) => op.sessionId !== undefined && op.sessionId !== sessionId,
+  );
+  if (foreign.length > 0) {
+    return { code: "foreign_session_ops", opIds: foreign.map((op) => op.opId) };
+  }
+  return null;
 }
 
 // --- 8. the character shape of a typed blank ------------------------------------------
@@ -580,6 +800,18 @@ export { opSignature };
 
 export function returnedSignatures(ops: readonly QueuedOp[]): string[] {
   return ops.map(opSignature);
+}
+
+/** The returned-change memory as prefs hold it, cleaned: session → signatures. */
+export function returnedFromPrefs(value: unknown): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  for (const [sessionId, sigs] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(sigs)) continue;
+    const clean = sigs.filter((x): x is string => typeof x === "string");
+    if (clean.length > 0) out[sessionId] = clean;
+  }
+  return out;
 }
 
 export function isReturnedOp(op: QueuedOp, returned: readonly string[] | undefined): boolean {
@@ -684,4 +916,96 @@ export function approvalModeLabel(lang: UiLanguage): string {
 /** Re-export for callers that only need the plan's own provenance. */
 export function planProposerKind(plan: Pick<OperationPlan, "proposer" | "provenance"> | null | undefined): ProposerKind {
   return proposerKind(plan?.proposer ?? null, plan?.provenance ?? null);
+}
+
+// --- T2-1. the approval click binds what the person saw ---------------------------
+
+/**
+ * What a person confirmed in the approval sheet, captured at the click.
+ *
+ * Every wait after the click — revalidation, the approval request, the
+ * decision, the apply — ends by checking this against the live state. If the
+ * queue was replaced (an agent's proposal adopted), the document switched,
+ * validation failed or the acknowledgements the plan needs changed, the flow
+ * stops and the sheet asks again. Re-reading "the current draft" after an
+ * await is how a confirmation used to move to a plan nobody had seen.
+ */
+export interface ConfirmationBinding {
+  sessionId: string;
+  planId: string;
+  planHash: string;
+  /** The digest of the document the plan was computed against. */
+  baseDigest: string;
+  baseRunId: string | null;
+  /** The acknowledgement boxes ticked, by key (`changed_facts`, `mock`). */
+  acknowledgements: string[];
+}
+
+export function captureConfirmation(
+  state: { activeSessionId: string | null; draft: Pick<Draft, "plan" | "sessionId"> },
+  acknowledgements: readonly string[],
+): ConfirmationBinding | null {
+  const plan = state.draft.plan;
+  const sessionId = state.activeSessionId;
+  if (!plan || !sessionId || state.draft.sessionId !== sessionId || plan.sessionId !== sessionId) return null;
+  return {
+    sessionId,
+    planId: plan.planId,
+    planHash: plan.planHash,
+    baseDigest: plan.boundSha256,
+    baseRunId: plan.base?.runId ?? null,
+    acknowledgements: [...acknowledgements].sort(),
+  };
+}
+
+/** The acknowledgement keys a draft requires, given the guard's full answer. */
+export function requiredAcknowledgements(
+  draft: Pick<Draft, "ops"> & { plan?: Draft["plan"] },
+  guardAckCount: number,
+): string[] {
+  const keys: string[] = [];
+  if (guardAckCount > 0) keys.push("changed_facts");
+  if (draftProposerKind(draft) === "mock") keys.push("mock");
+  return keys;
+}
+
+export type ConfirmationBreak =
+  | "document_switched"
+  | "plan_replaced"
+  | "base_changed"
+  | "acknowledgements_changed"
+  | "validation_failed";
+
+/**
+ * Why the live state no longer matches the confirmation, or null if it does.
+ *
+ * `requiredAcks`, when given, are the acknowledgements the CURRENT draft
+ * needs; one the person did not tick breaks the binding.
+ */
+export function confirmationBreak(
+  binding: ConfirmationBinding,
+  state: { activeSessionId: string | null; draft: Pick<Draft, "plan" | "sessionId" | "validation"> },
+  requiredAcks?: readonly string[],
+): ConfirmationBreak | null {
+  if (state.activeSessionId !== binding.sessionId || state.draft.sessionId !== binding.sessionId) {
+    return "document_switched";
+  }
+  const plan = state.draft.plan;
+  if (!plan || plan.planId !== binding.planId || plan.planHash !== binding.planHash) return "plan_replaced";
+  if (plan.boundSha256 !== binding.baseDigest || (plan.base?.runId ?? null) !== binding.baseRunId) {
+    return "base_changed";
+  }
+  if (requiredAcks && requiredAcks.some((key) => !binding.acknowledgements.includes(key))) {
+    return "acknowledgements_changed";
+  }
+  if (state.draft.validation && state.draft.validation.ok !== true) return "validation_failed";
+  return null;
+}
+
+/** Does an approval record bind exactly the confirmed plan? */
+export function approvalBindsConfirmation(
+  approval: Pick<ApprovalRecord, "planId" | "planHash"> | null | undefined,
+  binding: ConfirmationBinding,
+): boolean {
+  return Boolean(approval && approval.planId === binding.planId && approval.planHash === binding.planHash);
 }

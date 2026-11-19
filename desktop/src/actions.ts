@@ -67,17 +67,27 @@ import {
 } from "./revision";
 import { errorCodeMessage, opKindLabel, t, type VocabularyKey } from "./i18n/vocabulary";
 import {
+  approvalBindsConfirmation,
   autoCharPrFor,
+  confirmationBreak,
   foreignOps,
   headTextsKey,
   planOpsPayload,
+  queueAdmission,
+  requiredAcknowledgements,
+  requiredGuardAcks,
   restorableOps,
+  returnedFromPrefs,
   savableOps,
+  savedDraftEnvelope,
   swapSessionDrafts,
   undoBlockReason,
   withoutSignatures,
+  type ConfirmationBinding,
+  type ConfirmationBreak,
   type GuardWarningSummary,
 } from "./workspace/trust";
+import { getReviewGuardSummary } from "./workspace/guardHelper";
 import type {
   AppliedCandidate,
   ApprovalRecord,
@@ -425,14 +435,24 @@ export function toggleShowOriginal(explicit?: boolean): void {
  * the `rigorloom ui` process.
  */
 function persistDraft(sessionId: string, draft: Draft | null): void {
-  const ops = draft && !draft.reverses ? savableOps(draft) : [];
+  // Only a queue this session owns is saved under it.
+  const ops = draft && !draft.reverses && (draft.sessionId ?? sessionId) === sessionId
+    ? savableOps(draft).filter((op) => (op.sessionId ?? sessionId) === sessionId)
+    : [];
   const current = getState().savedDrafts ?? {};
   if (ops.length === 0 && !current[sessionId]) return;
   const next = { ...current };
   if (ops.length === 0) {
     delete next[sessionId];
   } else {
-    next[sessionId] = { ops, savedUtc: new Date().toISOString().replace(/\.\d+Z$/, "Z") };
+    // Versioned envelope: the session and the source digest it was typed on.
+    // Restore refuses an entry whose envelope names anything else.
+    next[sessionId] = savedDraftEnvelope(
+      sessionId,
+      sessionSourceDigest(sessionId),
+      ops,
+      new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+    );
   }
   setState({ savedDrafts: next });
   void rt.savePrefs({ drafts: next }).catch(() => undefined);
@@ -453,13 +473,27 @@ async function restoreSavedDraft(sessionId: string): Promise<void> {
     }
     return;
   }
-  const ops = restorableOps(state.savedDrafts?.[sessionId]);
+  const ops = restorableOps(state.savedDrafts?.[sessionId], {
+    sessionId,
+    sourceSha256: sessionSourceDigest(sessionId),
+  });
   if (ops.length === 0) return;
   await setQueue(ops, { baseRunId: headCandidate(getState())?.runId ?? null, reverses: null });
   const after = getState();
   if (after.activeSessionId === sessionId && after.draft.ops === ops) {
     setState({ restoredDraft: { sessionId, count: ops.length } });
   }
+}
+
+/** The session source's digest, when the session list knows it. */
+function sessionSourceDigest(sessionId: string): string | null {
+  const row = (getState().sessions ?? []).find((x) => x.sessionId === sessionId);
+  return row?.source?.sha256 ?? null;
+}
+
+/** Returned changes outlive a reload: they are kept in prefs, per document. */
+function persistReturned(next: Record<string, string[]>): void {
+  void rt.savePrefs({ returned: next }).catch(() => undefined);
 }
 
 /** Remember changes the person returned, so a re-proposal cannot slip them back in. */
@@ -470,7 +504,9 @@ function markReturned(ops: readonly QueuedOp[]): void {
   const current = state.returnedOps?.[sessionId] ?? [];
   const add = ops.map(opSignature).filter((sig) => !current.includes(sig));
   if (add.length === 0) return;
-  setState({ returnedOps: { ...state.returnedOps, [sessionId]: [...current, ...add] } });
+  const next = { ...state.returnedOps, [sessionId]: [...current, ...add] };
+  setState({ returnedOps: next });
+  if (typeof persistReturned === "function") persistReturned(next);
 }
 
 /** The person put these back themselves: they are no longer returned. */
@@ -480,9 +516,11 @@ function clearReturned(ops: readonly QueuedOp[]): void {
   if (!sessionId) return;
   const current = state.returnedOps?.[sessionId];
   if (!current || current.length === 0) return;
-  const next = withoutSignatures(current, ops);
-  if (next.length === current.length) return;
-  setState({ returnedOps: { ...state.returnedOps, [sessionId]: next } });
+  const remaining = withoutSignatures(current, ops);
+  if (remaining.length === current.length) return;
+  const next = { ...state.returnedOps, [sessionId]: remaining };
+  setState({ returnedOps: next });
+  if (typeof persistReturned === "function") persistReturned(next);
 }
 
 /** 다시 넣기: keep a returned change that came back in a proposal. */
@@ -1249,6 +1287,41 @@ async function setQueue(
 ): Promise<void> {
   const state = getState();
   const sessionId = state.activeSessionId;
+  // ADMISSION, for every path into the queue. A malformed op, or one made
+  // for another document, stops the whole queue here: nothing is proposed
+  // and nothing is saved. An op that names no document is stamped with this
+  // one — the explicit migration, never a silent rebinding of a foreign op.
+  const refused = typeof queueAdmission === "function" ? queueAdmission(ops, sessionId) : null;
+  if (refused) {
+    bumpPlanGeneration();
+    setState({
+      approval: null,
+      approvalPhase: "idle",
+      approvalError: null,
+      draft: {
+        ...state.draft,
+        plan: null,
+        validation: null,
+        boundSha256: null,
+        phase: "failed",
+        error: {
+          code: refused.code,
+          message: errorCodeMessage(refused.code, state.language),
+          data: { opIds: refused.opIds, sessionId },
+        },
+      },
+    });
+    return;
+  }
+  if (sessionId && ops.some((op) => op.sessionId === undefined)) {
+    ops = ops.map((op) => (op.sessionId === undefined ? { ...op, sessionId } : op));
+  }
+  // The plan this queue replaces, when it is this document's: the runtime
+  // revokes its open approval in the same step as the new proposal.
+  const replaces =
+    state.draft.sessionId === sessionId && state.draft.plan?.planId && state.draft.plan.sessionId === sessionId
+      ? state.draft.plan.planId
+      : null;
   if (
     typeof markExternalPlanDismissed === "function" &&
     state.draft.sessionId &&
@@ -1363,7 +1436,7 @@ async function setQueue(
                   text: op.text,
                 },
       ),
-      { baseRunId, reverses },
+      { baseRunId, reverses, replaces },
     );
     if (typeof markExternalPlanDismissed === "function") {
       markExternalPlanDismissed(sessionId, plan.planId);
@@ -1537,10 +1610,65 @@ export async function proposeUndoOf(runId: string): Promise<number> {
     );
     if (!ownsDraftFence(fence)) return 0;
 
+    // What the inverse would overwrite. The reversed candidate's own value at
+    // each target, and the value the HEAD holds there now. If a later 수정본
+    // edited the same target, the two differ and the inverse would erase that
+    // later edit while showing the reversed edit's value as "before". Refused
+    // by name instead (S-WP0 finding 9).
+    const undoBase = headCandidate(getState())?.runId ?? null;
+    const reversedAnswer = await rt.readRegion(
+      sessionId,
+      addresses.map((row) => row.address),
+      runId,
+    );
+    if (!ownsDraftFence(fence)) return 0;
+    const headAnswer =
+      undoBase === runId
+        ? reversedAnswer
+        : await rt.readRegion(sessionId, addresses.map((row) => row.address), undoBase);
+    if (!ownsDraftFence(fence)) return 0;
+
+    const lang0 = getState().language;
+    const conflicts: string[] = [];
+    const nowAt = new Map<string, string>();
+    for (const { op, address } of addresses) {
+      const reversedValue = targetTextOf(op, regionMatchAt(reversedAnswer.regions, address));
+      const headValue = targetTextOf(op, regionMatchAt(headAnswer.regions, address));
+      if (reversedValue === null || headValue === null) {
+        setState({
+          undoPhase: "failed",
+          undoError: {
+            code: "previous_value_unreadable",
+            message: t("err_undo_previous_unreadable", lang0),
+            data: { address, subject: headValue === null ? headAnswer.subject : reversedAnswer.subject },
+          },
+        });
+        return 0;
+      }
+      if (headValue !== reversedValue) {
+        conflicts.push(t("undo_conflict_item", lang0, [undoAddressLabel(address, lang0), headValue, reversedValue]));
+      }
+      nowAt.set(op.opId, headValue);
+    }
+    if (conflicts.length > 0) {
+      setState({
+        undoPhase: "failed",
+        undoError: {
+          code: "undo_conflict",
+          message: `${errorCodeMessage("undo_conflict", lang0)} ${conflicts.join("; ")}`,
+          data: { runId, headRunId: undoBase, conflicts },
+        },
+      });
+      return 0;
+    }
+
     const ops: QueuedOp[] = [];
     for (const { op, address } of addresses) {
       const regionMatch = regionMatchAt(answer.regions, address);
       const previous = regionMatch?.text ?? null;
+      // The actual value the inverse replaces: read off the head, which the
+      // check above proved still equals what the reversed edit wrote.
+      const current = nowAt.get(op.opId) ?? "";
       if (previous === null) {
         // The runtime did not return this address in the parent. That is not
         // an empty string and it must not be filled in as one: the inverse
@@ -1571,9 +1699,10 @@ export async function proposeUndoOf(runId: string): Promise<number> {
           // into an occupied cell, which is the correct default and the
           // wrong one here.
           overwrite: true,
-          before: afterVal,
+          before: current,
           origin: "user",
         });
+        void afterVal;
       } else if (op.kind === "replace_at_cell") {
         const hasRun = op.params.run !== undefined && op.params.run !== null;
         const runIdx = hasRun ? Number(op.params.run) : undefined;
@@ -1590,7 +1719,7 @@ export async function proposeUndoOf(runId: string): Promise<number> {
           ...(runIdx !== undefined ? { run: runIdx } : {}),
           text: prevForTarget,
           mode: "replace",
-          before: String(op.params.text ?? ""),
+          before: current,
           origin: "user",
         });
       } else {
@@ -1602,7 +1731,7 @@ export async function proposeUndoOf(runId: string): Promise<number> {
           atPara: Number(op.params.atPara),
           run: runIdx,
           text: runPrev,
-          before: String(op.params.text ?? ""),
+          before: current,
           origin: "user",
         });
       }
@@ -1611,7 +1740,6 @@ export async function proposeUndoOf(runId: string): Promise<number> {
     // Chained onto the HEAD, not onto the candidate being reversed: undoing an
     // older edit must not throw away the newer ones on top of it.
     if (!ownsDraftFence(fence)) return 0;
-    const undoBase = headCandidate(getState())?.runId ?? null;
     // A 되돌리기 제안 that would land in the queue already unfixable is not a
     // proposal anybody can act on (GPT review finding 10). Validate it first;
     // if it fails, say why and leave the queue alone.
@@ -1647,6 +1775,27 @@ export async function proposeUndoOf(runId: string): Promise<number> {
     setState({ undoPhase: "failed", undoError: rt.asRuntimeError(e) });
     return 0;
   }
+}
+
+/**
+ * The text one op targets inside a region record: the run it names, or the
+ * whole cell. Null when the runtime did not return it.
+ */
+function targetTextOf(op: PlanOp, region: RegionText | undefined): string | null {
+  if (!region) return null;
+  const hasRun = op.params.run !== undefined && op.params.run !== null;
+  if ((op.kind === "replace_at_cell" && hasRun) || op.kind === "set_run") {
+    const idx = Number(op.params.run);
+    const run = region.runs?.find((r) => r.index === idx);
+    return run ? run.text : (region.text ?? null);
+  }
+  return region.text ?? null;
+}
+
+function undoAddressLabel(address: Record<string, number>, lang: UiLanguage): string {
+  return address.atPara !== undefined
+    ? t("addr_paragraph", lang, [address.atPara])
+    : t("addr_table_cell", lang, [address.table ?? 0, address.row, address.col]);
 }
 
 /** The region record the runtime returned for one address, if any. */
@@ -1703,7 +1852,13 @@ export async function verifyReversal(
     const compare = await rt.compareCandidate(sessionId, runId, against, regions);
     if (getState().activeSessionId !== sessionId || getState().head !== expectedHead) return false;
     setState({ inverseProof: { runId, reversedRunId, compare } });
-    return compare.regionsEqual === true;
+    // A proof covers every address that was asked about: one unreadable
+    // region and it is not a proof, whatever the readable ones say.
+    const complete =
+      compare.regions.length === regions.length &&
+      (compare.regionsUnreadable ?? []).length === 0 &&
+      compare.regions.every((row) => row.equal === true);
+    return compare.regionsEqual === true && complete;
   } catch (e) {
     if (getState().activeSessionId === sessionId && getState().head === expectedHead) {
       setState({ undoError: rt.asRuntimeError(e) });
@@ -1843,11 +1998,15 @@ export async function resolveApprovalDecision(
   decision: "approved" | "rejected",
   approver = "host-operator",
   reason: string | null = null,
+  options: { confirmed?: ConfirmationBinding; autoApply?: boolean } = {},
 ): Promise<void> {
   const state = getState();
   const approval = state.approval;
   const binding = activeApprovalBinding(state);
   if (!approval || approval.state !== "pending" || !binding) return;
+  // From the approval sheet: the decision is recorded only for the plan the
+  // person confirmed, never for whatever the queue holds by now.
+  if (options.confirmed && !approvalBindsConfirmation(approval, options.confirmed)) return;
   setState({ approvalPhase: "resolving", approvalError: null });
   try {
     const resolved = await rt.resolveApproval(
@@ -1866,8 +2025,14 @@ export async function resolveApprovalDecision(
     setState({ approval: resolved, approvalPhase: "resolved" });
     // A resolved approval remains an honest Runtime fact on its preserved
     // queue, but only the still-active exact binding may auto-apply it.
-    if (decision === "approved" && current.draft === state.draft && current.head === state.head && approvalBindingIsCurrent(getState(), binding)) {
-      await applyApproved();
+    if (
+      decision === "approved" &&
+      options.autoApply !== false &&
+      current.draft === state.draft &&
+      current.head === state.head &&
+      approvalBindingIsCurrent(getState(), binding)
+    ) {
+      await applyApproved(options.confirmed);
     } else if (decision === "rejected" && approvalBindingIsCurrent(getState(), binding)) {
       showToast(t("toast_proposal_returned", getState().language), 2000);
     }
@@ -1895,12 +2060,20 @@ function applyPresentation(sessionId: string | null) {
   };
 }
 
-export async function applyApproved(): Promise<void> {
+export async function applyApproved(confirmed?: ConfirmationBinding): Promise<void> {
   const state = getState();
   const plan = state.draft.plan;
   const approval = state.approval;
   const sessionId = state.activeSessionId;
   if (!plan || !approval || approval.state !== "approved" || !sessionId || state.applyPhase === "starting" || applyInFlight) return;
+  // The last gate before bytes move: the plan and approval about to be sent
+  // are the ones the person confirmed, on the document they confirmed them on.
+  if (
+    confirmed &&
+    (confirmationBreak(confirmed, state) !== null || !approvalBindsConfirmation(approval, confirmed))
+  ) {
+    return;
+  }
   const draft = state.draft;
   const driftMsg = t("reapproval_prompt", state.language);
   const sameDraftApproval =
@@ -2151,23 +2324,76 @@ export async function revalidateAndResolveApproval(
   await resolveApprovalDecision(decision, approver);
 }
 
+/**
+ * The approval sheet's 승인. Bound to what the person confirmed.
+ *
+ * `confirmed` is captured in the click handler from the sheet as rendered:
+ * session, plan id, plan hash, base digest and the acknowledgements ticked.
+ * After every wait — revalidation, the approval request, the decision — the
+ * live state is checked against it. An adopted agent proposal, a document
+ * switch, a failed validation or a new acknowledgement requirement stops the
+ * flow before the next step, and the sheet asks for a fresh confirmation.
+ * Re-reading "the current draft" after an await is how a confirmation could
+ * reach a plan nobody saw (S-WP0 finding 1).
+ */
 export async function approveAndApplyFromDialog(
+  confirmed: ConfirmationBinding | null,
   approver = "host-operator",
-): Promise<void> {
+): Promise<boolean> {
+  if (!confirmed) return false;
+  const broken = (): ConfirmationBreak | null => {
+    const state = getState();
+    const guard = typeof getReviewGuardSummary === "function" ? getReviewGuardSummary() : null;
+    const guardAcks = guard && guard.planId === confirmed.planId ? requiredGuardAcks(guard).total : 0;
+    return confirmationBreak(confirmed, state, requiredAcknowledgements(state.draft, guardAcks));
+  };
+  const stop = (why: ConfirmationBreak): false => {
+    const lang = getState().language;
+    // The sheet that is open now asks again. After a document switch the open
+    // sheet belongs to another document, so only the toast speaks.
+    if (why !== "document_switched") {
+      setState({
+        approvalError: {
+          code: "confirmation_changed",
+          message: errorCodeMessage("confirmation_changed", lang),
+          data: { reason: why, planId: confirmed.planId, sessionId: confirmed.sessionId },
+        },
+      });
+    }
+    showToast(errorCodeMessage("confirmation_changed", lang), 3600);
+    return false;
+  };
+
+  let why = broken();
+  if (why) return stop(why);
+
+  // Wait 1: revalidation.
   const check = await revalidateActiveDraft();
-  if (check.stale) return;
-  const current = getState();
-  if (!current.approval) {
+  if (check.stale) return false;
+  why = broken();
+  if (why) return stop(why);
+  if (!check.ok) return stop("validation_failed");
+
+  // Wait 2: the approval request.
+  if (!getState().approval) {
     await requestApprovalForDraft();
+    why = broken();
+    if (why) return stop(why);
   }
-  const afterReq = getState();
-  if (afterReq.approval?.state === "pending") {
-    await revalidateAndResolveApproval("approved", approver);
-    return;
+  const requested = getState().approval;
+  if (!approvalBindsConfirmation(requested, confirmed)) return stop("plan_replaced");
+
+  // Wait 3: the decision. Apply is NOT chained inside it; it runs below,
+  // after one more check.
+  if (requested!.state === "pending") {
+    await resolveApprovalDecision("approved", approver, null, { confirmed, autoApply: false });
+    why = broken();
+    if (why) return stop(why);
   }
-  if (afterReq.approval?.state === "approved") {
-    await verifyAndApplyApproved();
-  }
+  const decided = getState().approval;
+  if (!approvalBindsConfirmation(decided, confirmed) || decided!.state !== "approved") return false;
+  await applyApproved(confirmed);
+  return true;
 }
 
 export function openApprovalDialog(): void {
@@ -3741,6 +3967,8 @@ export async function boot(): Promise<void> {
     if (prefs.drafts && typeof prefs.drafts === "object" && !Array.isArray(prefs.drafts)) {
       setState({ savedDrafts: prefs.drafts as WorkspaceState["savedDrafts"] });
     }
+    // Returned changes survive a reload (S-WP0 finding 8).
+    if (prefs.returned !== undefined) setState({ returnedOps: returnedFromPrefs(prefs.returned) });
 
     const { status } = await rt.start(root);
     setState({
@@ -4096,11 +4324,10 @@ async function adoptAgentPlan(
   } else {
     ops = projectAgentPlan(authoritative, beforeCell) as QueuedOp[];
   }
-  // A bundled test agent's ops say so on every surface that shows them.
-  const fromTestAgent =
-    authoritative.provenance === "mock" ||
-    authoritative.proposer === "agenthost-mock" ||
-    authoritative.proposer === "rigorloom-mock-agent";
+  // A bundled test agent's ops say so on every surface that shows them. The
+  // runtime's provenance decides it — set from the launched provider's
+  // identity — never the proposer name, which any caller can write.
+  const fromTestAgent = authoritative.provenance === "mock";
   if (fromTestAgent) {
     ops = ops.map((op) => ({ ...op, provenance: "mock" as const }));
   }

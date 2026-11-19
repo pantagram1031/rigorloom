@@ -334,7 +334,7 @@ export const compareCandidate = (
 export const proposePlan = (
   sessionId: string,
   ops: Array<Record<string, unknown>>,
-  options: { baseRunId?: string | null; reverses?: string | null } = {},
+  options: { baseRunId?: string | null; reverses?: string | null; replaces?: string | null } = {},
   proposer = "rigorloom-desktop",
 ) =>
   call<{ plan: OperationPlan }>("plan/propose", {
@@ -344,6 +344,9 @@ export const proposePlan = (
     proposer,
     ...(options.baseRunId ? { baseRunId: options.baseRunId } : {}),
     ...(options.reverses ? { reverses: { runId: options.reverses } } : {}),
+    // An explicit replacement: the runtime revokes the replaced plan's open
+    // approval in the same step (superseded_by_newer_candidate).
+    ...(options.replaces ? { replaces: options.replaces } : {}),
   }).then((r) => r.plan);
 
 export const validatePlan = (planId: string) =>

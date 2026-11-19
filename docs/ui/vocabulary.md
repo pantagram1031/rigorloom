@@ -198,6 +198,9 @@
 | `superseded_by_newer_candidate` | 더 새 수정본이 생겨 이 변경 제안을 돌려보냈습니다. | Returned because a newer revision exists. |
 | `foreign_session_ops` | 다른 문서에서 만든 변경이 섞여 있어 이 문서에 다시 제안할 수 없습니다. | Changes made for another document are mixed in, so they cannot be proposed for this document. |
 | `undo_unfixable` | 되돌리기 제안을 만들지 않았습니다. 그대로 만들면 승인할 수 없는 항목이 생깁니다. | No undo proposal was created. It would contain items that cannot be approved. |
+| `confirmation_changed` | 승인을 누른 뒤 변경 제안이 바뀌어 적용하지 않았습니다. 바뀐 내용을 보고 다시 승인해야 합니다. | The proposal changed after you approved it, so nothing was applied. Review the new proposal and approve again. |
+| `invalid_queue_ops` | 형식이 맞지 않는 변경이 섞여 있어 제안하지 않았습니다. | Some changes are malformed, so nothing was proposed. |
+| `undo_conflict` | 되돌리기 제안을 만들지 않았습니다. 이후 수정본에서 같은 자리를 다시 고쳐서, 되돌리면 그 변경이 지워집니다. | No undo proposal was created. A later revision changed the same place, and undoing would erase that change. |
 
 ## 5. 화면 일반 문구 (`VOCABULARY`)
 
@@ -712,6 +715,14 @@
 | `approval_warn_changed` | 바뀐 사실 {0}곳: {1}. | {0} changed facts: {1}. |
 | `approval_warn_removed` | 안내문과 함께 빠지는 표현 {0}곳: {1}. | {0} expressions removed with guide text: {1}. |
 | `approval_warn_added` | 새로 넣은 숫자·날짜 {0}곳: {1}. | {0} new numbers or dates: {1}. |
+| `approval_warn_unattributed` | 어느 변경에서 생겼는지 알 수 없는 차이 {0}곳. | {0} differences not tied to any change. |
+| `approval_warn_show_all` | 경고 {0}건 모두 보기 | Show all {0} warnings |
+| `approval_warn_full_changed` | 바뀐 사실 · {0} | Changed fact · {0} |
+| `approval_warn_full_removed` | 안내문과 함께 빠지는 표현 · {0} | Removed with guide text · {0} |
+| `approval_warn_full_added` | 새로 넣은 숫자·날짜 · {0} | New number or date · {0} |
+| `approval_warn_full_unattributed` | 변경과 연결되지 않은 차이 · 문단 {0} {1} | Untied difference · Paragraph {0} {1} |
+| `undo_conflict_item` | {0}: 지금 ‘{1}’, 되돌릴 변경이 넣은 값 ‘{2}’ | {0}: now ‘{1}’, the reversed change wrote ‘{2}’ |
+| `undo_before_after` | {0}: ‘{1}’ → ‘{2}’ | {0}: ‘{1}’ → ‘{2}’ |
 | `base_source` | 원본 | Original |
 | `base_revision` | 수정본 {0} | Revision {0} |
 | `base_revision_unknown` | 이전 수정본 | Earlier revision |

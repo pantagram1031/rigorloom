@@ -75,6 +75,10 @@ export interface ReviewGuardSummary {
   changedFactOpIds: string[];
   needsFixesOpIds: string[];
   errorCode: string | null;
+  /** Every paragraph each op was tied to (a guide removal can span several). */
+  paragraphsByOp?: Record<string, GuardDiffParagraph[]>;
+  /** Failing paragraphs the checker reported that no op could be tied to. */
+  unattributedFailing?: GuardDiffParagraph[];
 }
 
 export function emptyReviewGuardSummary(
@@ -906,6 +910,27 @@ export async function runAuthoritativeGuardDiff(
       .filter((c) => rowAudits[c.opId]?.status === "changed")
       .map((c) => c.opId);
 
+    // The full answer, not just one paragraph per row: every paragraph an op
+    // was tied to, and every failing paragraph nothing was tied to. The sheet
+    // computes its acknowledgements from these (trust.requiredGuardAcks).
+    const byNum = new Map<number, GuardDiffParagraph>();
+    for (const para of [...allParas, ...changedParas]) byNum.set(para.paragraph, para);
+    const paragraphsByOp: Record<string, GuardDiffParagraph[]> = {};
+    const attributed = new Set<number>(nonAuditableParaNums);
+    for (const ch of changes) {
+      const nums = new Set<number>(attributedParaNums.get(ch.opId) ?? []);
+      const own = rowAudits[ch.opId]?.paragraph?.paragraph;
+      if (typeof own === "number") nums.add(own);
+      const paras = [...nums]
+        .map((n) => byNum.get(n))
+        .filter((para): para is GuardDiffParagraph => Boolean(para));
+      if (paras.length > 0) paragraphsByOp[ch.opId] = paras;
+      for (const n of nums) attributed.add(n);
+    }
+    const unattributedFailing = changedParas.filter(
+      (p) => p.pass === false && !attributed.has(p.paragraph),
+    );
+
     return {
       state: "ready",
       planId,
@@ -914,6 +939,8 @@ export async function runAuthoritativeGuardDiff(
       changedFactOpIds,
       needsFixesOpIds: [],
       errorCode: null,
+      paragraphsByOp,
+      unattributedFailing,
     };
   } catch (err) {
     const rtErr = rt.asRuntimeError(err);

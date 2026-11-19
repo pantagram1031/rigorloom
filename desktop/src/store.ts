@@ -200,11 +200,19 @@ export function opTargetId(op: QueuedOp): string {
  * agent proposes it again (GPT review finding 1).
  */
 export function opSignature(op: QueuedOp): string {
-  if (op.kind === "fill_cell" || op.kind === "replace_at_cell") {
-    return `c:${op.table}:${op.row}:${op.col}=${op.text}`;
+  // Target down to the run, plus what the op does there. A value appended to
+  // run 2 is not the value that replaced run 0, and a whole-cell fill is
+  // neither; the selector of a guide removal is order- and case-free.
+  if (op.kind === "fill_cell") {
+    const value = op.lines !== undefined ? op.lines.join("\n") : op.text;
+    return `c:${op.table}:${op.row}:${op.col}#*~fill=${value}`;
   }
-  if (op.kind === "set_run") return `p:${op.atPara}#${op.run}=${op.text}`;
-  return `guides:${op.color ?? ""}|${(op.charPrIds ?? []).join(",")}`;
+  if (op.kind === "replace_at_cell") {
+    return `c:${op.table}:${op.row}:${op.col}#${op.run ?? "*"}~${op.mode ?? "replace"}=${op.text}`;
+  }
+  if (op.kind === "set_run") return `p:${op.atPara}#${op.run}~replace=${op.text}`;
+  const ids = [...(op.charPrIds ?? [])].map(String).sort();
+  return `guides:${(op.color ?? "").toLowerCase()}|${ids.join(",")}`;
 }
 
 const NO_OPS: QueuedOp[] = [];

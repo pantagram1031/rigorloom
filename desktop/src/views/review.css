@@ -1476,6 +1476,27 @@
   list-style: none;
 }
 
+.approval-warn-all {
+  font-size: var(--text-sm);
+}
+
+.approval-warn-all > summary {
+  cursor: pointer;
+  color: var(--fg-secondary);
+  padding: 2px 0;
+}
+
+.approval-warn-all > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.approval-warn-all .approval-warn-lines {
+  margin-top: 4px;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
 .approval-hash-copy {
   margin-left: 6px;
 }
