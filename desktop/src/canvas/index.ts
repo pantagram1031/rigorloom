@@ -6,5 +6,6 @@ export * from "./DocumentStrip";
 export * from "./MarginMarks";
 export * from "./MarkToolbar";
 export * from "./PageSheet";
+export { registerCanvasModule, unregisterCanvasModule } from "./register";
 export * from "./ScrollMap";
 export * from "./SeatEditor";

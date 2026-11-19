@@ -164,6 +164,24 @@ function loadWp3Stack() {
     "../workspace/fieldLabels": fieldLabels,
     "./controller": controller,
   });
+  const noopComp = () => null;
+  const registerMod = loadTsModule("src/canvas/register.ts", {
+    "../i18n/v2/wp3": wp3,
+    "../workspace/externalPlan": { buildRegionTextMap: () => ({}) },
+    "../store": h.storeStub,
+    "../panes/BlanksPane": { BlanksPane: noopComp },
+    "../panes/FindPane": { FindPane: noopComp },
+    "../panes/OutlinePane": { OutlinePane: noopComp },
+    "./_shim": shim,
+    "./actions": actions,
+    "./controller": controller,
+    "./CanvasPane": {
+      CanvasPane: noopComp,
+      CanvasStatusLeft: noopComp,
+      CanvasStatusRight: noopComp,
+    },
+  });
+
   return {
     ...h,
     wp3,
@@ -173,6 +191,7 @@ function loadWp3Stack() {
     shim,
     controller,
     actions,
+    registerMod,
   };
 }
 
@@ -420,6 +439,104 @@ test("replaceFindMatch enqueues origin:'user' (내 입력) edit op", async () =>
   assert.equal(stack.queuedOps.length, 1);
   assert.equal(stack.queuedOps[0].origin, "user");
   assert.equal(stack.queuedOps[0].text, "한울공공기록원");
+});
+
+test("IME composition & editable-target guard block Y/N/E/U/J/K/V during Hangul composition", () => {
+  const stack = loadWp3Stack();
+  stack.controller.publishCanvasContext(
+    [
+      {
+        id: "op-1",
+        n: 1,
+        at: "t0/r1/c0",
+        kind: "replace_at_cell",
+        opKind: "replace_at_cell",
+        label: "기관명",
+        before: "행 정 기 관 명",
+        after: "가온공공기록원",
+        page: 1,
+        source: "agent",
+        decision: "pending",
+        guard: "none",
+        hard: false,
+        isFactChanged: false,
+        isStale: false,
+      },
+      {
+        id: "op-2",
+        n: 2,
+        at: "t0/r2/c0",
+        kind: "fill_cell",
+        opKind: "fill_cell",
+        label: "본문",
+        before: "",
+        after: "내용",
+        page: 1,
+        source: "agent",
+        decision: "pending",
+        guard: "none",
+        hard: false,
+        isFactChanged: false,
+        isStale: false,
+      },
+    ],
+    null,
+  );
+  stack.controller.canvas.select("op-1");
+
+  // During IME composition (isComposing: true or keyCode: 229), all shortcuts must return null
+  for (const code of ["KeyY", "KeyN", "KeyE", "KeyU", "KeyJ", "KeyK", "KeyV"]) {
+    assert.equal(
+      stack.shim.dispatchCanvasKeyEvent({ code, isComposing: true }),
+      null,
+      `Expected ${code} blocked when isComposing=true`,
+    );
+    assert.equal(
+      stack.shim.dispatchCanvasKeyEvent({ code, keyCode: 229 }),
+      null,
+      `Expected ${code} blocked when keyCode=229`,
+    );
+  }
+  assert.equal(stack.controller.getCanvasSlice().view, "marks");
+
+  // Single keys must be blocked inside TEXTAREA/INPUT while Ctrl+F still works
+  assert.equal(
+    stack.shim.dispatchCanvasKeyEvent({ code: "KeyV", target: { tagName: "TEXTAREA" } }),
+    null,
+  );
+  assert.equal(
+    stack.shim.dispatchCanvasKeyEvent({
+      code: "KeyF",
+      ctrlKey: true,
+      target: { tagName: "TEXTAREA" },
+    }),
+    "canvas.find",
+  );
+
+  // Physical KeyV (even with Korean key:"ㅍ") cycles view marks -> clean -> base
+  assert.equal(
+    stack.shim.dispatchCanvasKeyEvent({ code: "KeyV", key: "ㅍ" }),
+    "canvas.cycleView",
+  );
+  assert.equal(stack.controller.getCanvasSlice().view, "clean");
+  stack.shim.dispatchCanvasKeyEvent({ code: "KeyV" });
+  assert.equal(stack.controller.getCanvasSlice().view, "base");
+
+  // KeyY accepts op-1 & advances to op-2; Ctrl+Z undoes decision back to pending on op-1
+  assert.equal(
+    stack.shim.dispatchCanvasKeyEvent({ code: "KeyY", key: "ㅛ" }),
+    "canvas.acceptSelected",
+  );
+  assert.equal(stack.controller.getCanvasSlice().decisions["op-1"], "accepted");
+  assert.equal(stack.controller.getCanvasSlice().selectedChangeId, "op-2");
+  assert.equal(
+    stack.shim.dispatchCanvasKeyEvent({ code: "KeyZ", ctrlKey: true }),
+    "canvas.undoDecision",
+  );
+  assert.equal(stack.controller.getCanvasSlice().decisions["op-1"], "pending");
+  assert.equal(stack.controller.getCanvasSlice().selectedChangeId, "op-1");
+
+  stack.registerMod.unregisterCanvasModule();
 });
 
 test("WP3 static hygiene: zero hex literals in canvas/ & panes/, zero 결재 in wp3.ts", () => {
