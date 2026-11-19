@@ -816,6 +816,17 @@ def test_a_long_run_of_unclosed_openers_is_scanned_in_linear_time(env):
     assert time.perf_counter() - started < 5
 
 
+def test_many_pictures_and_one_the_converter_cannot_open_are_scanned_in_linear_time(env):
+    # Fable's review of #396: each opener was looked up in the list of matches
+    # from its start, so 40,000 pictures on one line took 40 s.
+    text = "![a](b) " * 40_000 + "![z](그림(1).png)\n"
+    started = time.perf_counter()
+    spans = list(rt_toolset._picture_spans(text, commonmark=True))
+    assert time.perf_counter() - started < 5
+    assert [kind for *_, kind in spans].count("unread") == 1
+    assert [kind for *_, kind in spans].count("image") == 40_000
+
+
 def test_a_picture_line_the_converter_would_not_read_is_refused(env):
     # Sol's re-check (with N5): "[그림 1] 캡션 (sample (a).png)" and
     # "![표지](sample (a).png)" are text to the converter, so the document got

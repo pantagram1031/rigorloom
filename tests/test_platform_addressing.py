@@ -174,3 +174,43 @@ def test_a_signature_seat_filled_elsewhere_is_still_left_for_the_person(env, tmp
             "person_only_seat")
     assert e["candidates"] == [f"place:{first}"]
     assert read_text(env, "t0/r0/c1") == "홍길동 (인)"
+
+
+def test_a_seat_filled_by_hand_with_a_seal_mark_is_left_for_the_person(env, tmp_path, monkeypatch):
+    # Fable's review of #396: the words beside it are neutral (성명), but the
+    # cell itself holds (인), so the person filled it and it stays theirs.
+    first = {p["at"]: p["id"] for p in WANT["cell_places"]}["t0/r0/c1"]
+    _filled_elsewhere(env, tmp_path, monkeypatch, [{"op": "set", "at": "t0/r0/c1", "text": "홍길동 (인)"}])
+    e = err(call(env.ctx(), "fill", {"path": str(env.doc), "values": {f"place:{first}": "김영희"}}),
+            "person_only_seat")
+    assert e["candidates"] == [f"place:{first}"]
+    assert read_text(env, "t0/r0/c1") == "홍길동 (인)"
+
+
+def test_a_seat_the_source_classed_as_a_signature_is_left_for_the_person(env, tmp_path, monkeypatch):
+    # Fable's review of #396: a 결재란 seat under a 팀장 header has a neutral
+    # label, but the document the draft started from classed it a signature.
+    # Filled elsewhere, it drops off the draft's list, and its kind must still
+    # keep an agent out.
+    first = {p["at"]: p["id"] for p in WANT["cell_places"]}["t0/r0/c1"]
+    second = {p["at"]: p["id"] for p in WANT["cell_places"]}["t2/r0/c1"]
+    _filled_elsewhere(env, tmp_path, monkeypatch, [{"op": "set", "at": "t0/r0/c1", "text": "김부장"}])
+    source = str(env.doc)
+
+    class Layer:
+        def __getattr__(self, name):
+            return getattr(RT_DOC, name)
+
+        def outline(self, path, *a, **kw):
+            out = RT_DOC.outline(path, *a, **kw)
+            if str(path) == source:
+                out = {**out, "places": list(out.get("places") or []) + [
+                    {"id": first, "at": "t0/r0/c1", "label": "팀장", "kind": "signature"}]}
+            return out
+
+    ctx = lambda: env.ctx(_doc=Layer())  # noqa: E731
+    ok(call(ctx(), "fill", {"path": source, "values": {f"place:{second}": "김철수"}}))
+    e = err(call(ctx(), "fill", {"path": source, "values": {f"place:{first}": "김영희"}}),
+            "person_only_seat")
+    assert e["candidates"] == [f"place:{first}"]
+    assert read_text(env, "t0/r0/c1") == "김부장"

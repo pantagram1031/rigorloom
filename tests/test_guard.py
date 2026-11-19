@@ -214,6 +214,18 @@ def test_an_article_before_a_word_that_starts_with_won_is_not_trillions(tmp_path
     assert _changed(b, a, tmp_path) == [4, 5]
 
 
+def test_an_amount_in_the_range_of_trillions_keeps_its_won(tmp_path):
+    # Fable's review of #396: 대 after 원 (1조원대, 3억 원대) is a counting
+    # suffix, so the 조 is a trillion and a space before 원대 changes nothing.
+    b = ["1조원대 사업을 맡았다.", "3억원대 아파트를 샀다.", "1조원대 사업을 맡았다."]
+    a = ["1조 원대 사업을 맡았다.", "3억 원대 아파트를 샀다.", "2조원대 사업을 맡았다."]
+    assert _changed(b, a, tmp_path) == [3]
+    sys.path.insert(0, str(REPO / "runtime" / "scripts"))
+    import rt_fidelity
+    assert rt_fidelity._number_change(b[2], a[2]) == {
+        "kind": "numbers", "before": {"1조원": 1}, "after": {"2조원": 1}}
+
+
 def test_a_number_and_its_unit_on_a_line_of_their_own_are_not_a_heading(tmp_path):
     assert _changed(["3,500원"], ["3500 원"], tmp_path) == []
 

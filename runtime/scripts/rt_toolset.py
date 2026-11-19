@@ -228,10 +228,21 @@ _DRIVE = re.compile(r"^[a-z]:[\\/]", re.IGNORECASE)
 _IMAGE_OPEN = re.compile(r"!\[[^\]\n]{0,%d}\]\(" % _CM_SPAN)
 
 
+def _unread_opener(found, openers) -> bool:
+    """Whether an opener starts outside every match. Both come in order and
+    the matches do not overlap, so one pass over each is enough."""
+    i = 0
+    for o in openers:
+        while i < len(found) and found[i].end() <= o.start():
+            i += 1
+        if i == len(found) or found[i].start() > o.start():
+            return True
+    return False
+
+
 def _inline_pictures(text: str, offset: int):
     found = list(_CM_INLINE.finditer(text))
-    taken = [(m.start(), m.end()) for m in found]
-    if any(not any(a <= o.start() < b for a, b in taken) for o in _IMAGE_OPEN.finditer(text)):
+    if _unread_opener(found, _IMAGE_OPEN.finditer(text)):
         yield offset, offset + len(text), "unread"
     for m in found:
         if m.group(5) is not None:
@@ -1090,10 +1101,11 @@ def _unlisted_seat(ctx: Context, ref: Ref, inp, pid: str, places: dict) -> dict:
     A filled cell and a text cell are the same bytes, so a cell filled
     elsewhere drops off the list, yet ``place:<id>`` still resolves against
     every cell (doc-core amendment 2026-11-19 05:50Z). It is filled by its id
-    like a listed seat, but only after the words that would label it, the
-    cell to its left and the one above, and its label in the document the
-    draft started from, show it is not a signature, seal or approval-date
-    seat: one the person filled is still theirs to change.
+    like a listed seat, but only after the words that would label it (the
+    cell's own text, the cell to its left and the one above, and its label in
+    the document the draft started from) and the kind that document gave it
+    show it is not a signature, seal or approval-date seat: one the person
+    filled is still theirs to change.
     """
     try:
         blocks = doc_call(ctx.doc.read, str(inp.path), f"place:{pid}").get("blocks") or []
@@ -1105,13 +1117,19 @@ def _unlisted_seat(ctx: Context, ref: Ref, inp, pid: str, places: dict) -> dict:
         raise ToolError("bad_address", f"'{pid}' 칸을 찾지 못했습니다.",
                         hint="open 결과에서 채울 칸의 주소를 확인하세요.",
                         at=f"place:{pid}", candidates=near) from None
-    words = []
+    # What the cell holds now counts too: a seat filled by hand usually
+    # carries (인) or a seal mark.
+    words = [str(b.get("text") or "") for b in blocks]
+    kind = None
     if inp.source == "draft" and ref.source is not None:
         try:
             first = doc_call(ctx.doc.outline, str(ref.source)).get("places") or []
         except ToolError:
             first = []
-        words += [p.get("label") or "" for p in first if p.get("id") == pid]
+        for p in first:
+            if p.get("id") == pid:
+                words.append(p.get("label") or "")
+                kind = kind or p.get("kind")
     at = str(blocks[0].get("at") or "") if blocks else ""
     cell = _CELL_AT.match(at.rsplit("/p", 1)[0]) if "/r" in at else None
     if cell:
@@ -1122,7 +1140,8 @@ def _unlisted_seat(ctx: Context, ref: Ref, inp, pid: str, places: dict) -> dict:
             words.append(str(grid[r][c - 1]))
         if r and r - 1 < len(grid) and c < len(grid[r - 1]):
             words.append(str(grid[r - 1][c]))
-    return {"id": pid, "at": at.rsplit("/p", 1)[0] or f"place:{pid}", "label": " ".join(words)}
+    return {"id": pid, "at": at.rsplit("/p", 1)[0] or f"place:{pid}", "label": " ".join(words),
+            "kind": kind}
 
 
 register(Tool(
