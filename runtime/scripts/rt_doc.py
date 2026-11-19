@@ -3252,6 +3252,9 @@ def _carry_places(doc, newdoc, res):
 def _signals(pl, doc=None, pages=None):
     """The engine's per-page layout findings as [{page, kind, at?, ...}]."""
     out = []
+    # a heading on the last page has nothing after its body to be cut off from: a short final section ("## 4.
+    # 향후 계획" and one bullet) is short because the document ends there, not because the page breaks
+    last = max((e.get("page") for e in pl or [] if isinstance(e.get("page"), int)), default=None)
     for e in pl or []:
         n = e.get("page")
         if pages is not None and n not in pages:
@@ -3263,7 +3266,7 @@ def _signals(pl, doc=None, pages=None):
             h = e["lone_heading"]
             out.append({"page": n, "kind": "lone_heading", "at": at(h.get("para")), "text": h.get("text")})
         bh = e.get("bottom_heading")
-        if bh and not e.get("lone_heading") and 0 < (bh.get("lines_after") or 0) <= 3:
+        if bh and not e.get("lone_heading") and n != last and 0 < (bh.get("lines_after") or 0) <= 3:
             out.append({"page": n, "kind": "bottom_heading", "at": at(bh.get("chain_para", bh.get("para"))),
                         "text": bh.get("text"), "lines_after": bh.get("lines_after")})
         for ts in e.get("table_split") or []:

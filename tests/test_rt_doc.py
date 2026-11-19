@@ -841,3 +841,15 @@ def test_outline_known_is_feature_detected(no_engine, tmp_path, known_ok):
         assert doc.engine_outline is not None
     else:
         assert doc.engine_outline is None and doc.engine_places == []      # today's analyze() path
+
+
+def test_bottom_heading_is_not_a_finding_on_the_last_page():
+    # a short final section ("## 4. 향후 계획" and one bullet) is short because the document ends, not because the
+    # page breaks: the same heading on an earlier page, with the text continuing overleaf, is still reported
+    bh = {"para": 7, "chain_para": 7, "text": "4. 향후 계획", "kind": "outline", "lines_after": 1}
+    one = D._signals([{"page": 1, "bottom_heading": dict(bh)}])
+    assert [s for s in one if s["kind"] == "bottom_heading"] == []
+    two = D._signals([{"page": 1, "bottom_heading": dict(bh)}, {"page": 2}])
+    assert [(s["page"], s["at"], s["lines_after"]) for s in two if s["kind"] == "bottom_heading"] == [(1, "p7", 1)]
+    last = D._signals([{"page": 1}, {"page": 2, "bottom_heading": dict(bh)}], pages={2})
+    assert [s for s in last if s["kind"] == "bottom_heading"] == []
