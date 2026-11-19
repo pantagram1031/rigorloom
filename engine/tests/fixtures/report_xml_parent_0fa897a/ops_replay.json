@@ -1,0 +1,269 @@
+{
+  "error": null,
+  "exit_code": 0,
+  "ops": [
+    {
+      "mode": "submit",
+      "op": "page_binding"
+    },
+    {
+      "find": "TITLE_PLACEHOLDER",
+      "op": "replace_all",
+      "replace": "Synthetic Frozen Report"
+    },
+    {
+      "next_para": true,
+      "op": "goto_text",
+      "text": "I. Intro"
+    },
+    {
+      "op": "insert_text",
+      "pt": 10,
+      "segments": [
+        {
+          "bold": false,
+          "text": "Intro "
+        },
+        {
+          "bold": true,
+          "text": "bold span"
+        },
+        {
+          "bold": false,
+          "text": " with inline math "
+        }
+      ],
+      "text": "Intro bold span with inline math "
+    },
+    {
+      "base_pt": 10,
+      "display": false,
+      "hwpeqn": "x^{2}+ alpha",
+      "op": "insert_equation"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": " here."
+    },
+    {
+      "base_pt": 10,
+      "display": true,
+      "hwpeqn": "{a} over {b}",
+      "op": "insert_equation"
+    },
+    {
+      "op": "insert_blank_before",
+      "text": "II. Results"
+    },
+    {
+      "next_para": true,
+      "op": "goto_text",
+      "text": "II. Results"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": ""
+    },
+    {
+      "col_ratios": [
+        0.3,
+        0.7
+      ],
+      "data": [
+        [
+          "Metric",
+          "Value"
+        ],
+        [
+          "Speed",
+          "42"
+        ]
+      ],
+      "font_pt": 9,
+      "op": "insert_table",
+      "treat_as_char": true
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 9,
+      "text": "Table 1. Summary"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": ""
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": ""
+    },
+    {
+      "op": "insert_picture",
+      "own_paragraph": true,
+      "path": "<workspace>/bundle/figures/plot.png",
+      "width_mm": 80.0
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 9,
+      "text": "Figure 1. Plot"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": ""
+    },
+    {
+      "op": "set_line_spacing",
+      "percent": 160
+    }
+  ],
+  "receipt": {
+    "evidence_class": "structural_only",
+    "execution": {
+      "backend": "xml_only",
+      "exit_code": 0,
+      "input": {
+        "bytes": 3974,
+        "path": "output/form_copy.hwpx",
+        "role": "source_form",
+        "sha256": "<VERIFIED_INPUT_HWPX_SHA256>"
+      },
+      "output": {
+        "bytes": "<VERIFIED_OUT_HWPX_BYTES>",
+        "path": "results/out.hwpx",
+        "role": "assembled_hwpx",
+        "sha256": "<VERIFIED_OUT_HWPX_SHA256>"
+      },
+      "reason_code": "xml_assembly_succeeded",
+      "state": "succeeded"
+    },
+    "proof_grade": "none",
+    "proof_unavailable": true,
+    "schema": "rigorloom/document-evidence/v1"
+  },
+  "replay_exit_code": 0,
+  "replay_result": {
+    "anchors_missing": [],
+    "applied": 18,
+    "ok": true,
+    "partial": [
+      "document-wide line spacing applied only to paragraphs inserted by xml_backend this run; form-owned paragraphs were preserved"
+    ],
+    "results": [
+      {
+        "binding": "submit",
+        "gutter": 0,
+        "left": 5000,
+        "note": "applied to section page definition",
+        "op": "page_binding",
+        "right": 5000,
+        "sections": 1
+      },
+      {
+        "op": "replace_all",
+        "replaced": 1
+      },
+      {
+        "anchor": "I. Intro",
+        "op": "goto_text"
+      },
+      {
+        "op": "insert_text"
+      },
+      {
+        "op": "insert_equation"
+      },
+      {
+        "op": "insert_text"
+      },
+      {
+        "op": "insert_equation"
+      },
+      {
+        "blank_before": "II. Results",
+        "inserted": false,
+        "op": "insert_blank_before"
+      },
+      {
+        "anchor": "II. Results",
+        "op": "goto_text"
+      },
+      {
+        "op": "insert_text"
+      },
+      {
+        "op": "insert_table"
+      },
+      {
+        "op": "insert_text"
+      },
+      {
+        "op": "insert_text"
+      },
+      {
+        "op": "insert_text"
+      },
+      {
+        "binary_item": "image2",
+        "height_hwpunit": 11338,
+        "member": "BinData/image2.png",
+        "op": "insert_picture",
+        "own_paragraph": true,
+        "picture": "<workspace>/bundle/figures/plot.png",
+        "pixel_size": [
+          8,
+          4
+        ],
+        "registrations": [
+          "header.xml",
+          "content.hpf",
+          "META-INF/manifest.xml"
+        ],
+        "width_hwpunit": 22677,
+        "width_mm": 80.0
+      },
+      {
+        "op": "insert_text"
+      },
+      {
+        "op": "insert_text"
+      },
+      {
+        "line_spacing_percent": 160,
+        "note": "document-wide line spacing applied only to paragraphs inserted by xml_backend this run; form-owned paragraphs were preserved",
+        "op": "set_line_spacing",
+        "paragraphs": 6,
+        "partial": true
+      }
+    ],
+    "unsupported": []
+  },
+  "result": {
+    "checks": {},
+    "converged": true,
+    "engine": "xml",
+    "hwpx": "<workspace>/results/out.hwpx",
+    "iterations": 1,
+    "needs": [],
+    "pdf": null,
+    "phase": "xml",
+    "preview_pdf": null,
+    "proof_grade": "none",
+    "proof_unavailable": true,
+    "reason": "XML-level verification complete; PDF proof unavailable",
+    "status": "xml_verified_no_proof",
+    "style_anomalies": []
+  },
+  "source_changed": false
+}

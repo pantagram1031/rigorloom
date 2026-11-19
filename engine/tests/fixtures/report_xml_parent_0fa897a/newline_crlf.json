@@ -1,0 +1,58 @@
+{
+  "error": null,
+  "exit_code": 0,
+  "ops": [
+    {
+      "next_para": true,
+      "op": "goto_text",
+      "text": "I. Intro"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 12,
+      "text": "Body."
+    }
+  ],
+  "receipt": {
+    "evidence_class": "structural_only",
+    "execution": {
+      "backend": "xml_only",
+      "exit_code": 0,
+      "input": {
+        "bytes": 3974,
+        "path": "output/form_copy.hwpx",
+        "role": "source_form",
+        "sha256": "<VERIFIED_INPUT_HWPX_SHA256>"
+      },
+      "output": {
+        "bytes": "<VERIFIED_OUT_HWPX_BYTES>",
+        "path": "results/out.hwpx",
+        "role": "assembled_hwpx",
+        "sha256": "<VERIFIED_OUT_HWPX_SHA256>"
+      },
+      "reason_code": "xml_assembly_succeeded",
+      "state": "succeeded"
+    },
+    "proof_grade": "none",
+    "proof_unavailable": true,
+    "schema": "rigorloom/document-evidence/v1"
+  },
+  "result": {
+    "checks": {},
+    "converged": true,
+    "engine": "xml",
+    "hwpx": "<workspace>/results/out.hwpx",
+    "iterations": 1,
+    "needs": [],
+    "pdf": null,
+    "phase": "xml",
+    "preview_pdf": null,
+    "proof_grade": "none",
+    "proof_unavailable": true,
+    "reason": "XML-level verification complete; PDF proof unavailable",
+    "status": "xml_verified_no_proof",
+    "style_anomalies": []
+  },
+  "source_changed": false
+}

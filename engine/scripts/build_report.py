@@ -20,6 +20,8 @@ content.md를 결정론적으로 파싱해 com_backend.py edit에 그대로 줄 
 """
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import sys
@@ -245,16 +247,9 @@ BUILD_YAML_BLOCK_LIST_KEYS = {
 }
 
 
-def parse_build_yaml(path):
-    """build.yaml(플랫 + fill: 블록)을 stdlib로 파싱. pyyaml 미사용.
-
-    반환: {meta_knobs..., 'fill': {min_figures,target_pages,bottom_white_max,
-    max_gap_lines}}. fill 하위는 들여쓰기 2칸으로 인식한다.
-
-    BUILD_YAML_BLOCK_LIST_KEYS(예: delete_texts)는 flat `[a, b]` 대신
-    들여쓰기된 `- "item"` 블록 리스트로만 파싱한다(항목에 콤마가 흔함).
-    """
-    text = Path(path).read_text(encoding="utf-8")
+def parse_build_yaml_text(text: str) -> dict:
+    """Parse flat build.yaml (with optional fill: block) from text using stdlib."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     result, fill = {}, {}
     in_fill = False
     in_block_list = None  # 현재 수집 중인 BUILD_YAML_BLOCK_LIST_KEYS 키 이름
@@ -309,6 +304,18 @@ def parse_build_yaml(path):
     if fill:
         result["fill"] = fill
     return result
+
+
+def parse_build_yaml(path):
+    """build.yaml(플랫 + fill: 블록)을 stdlib로 파싱. pyyaml 미사용.
+
+    반환: {meta_knobs..., 'fill': {min_figures,target_pages,bottom_white_max,
+    max_gap_lines}}. fill 하위는 들여쓰기 2칸으로 인식한다.
+
+    BUILD_YAML_BLOCK_LIST_KEYS(예: delete_texts)는 flat `[a, b]` 대신
+    들여쓰기된 `- "item"` 블록 리스트로만 파싱한다(항목에 콤마가 흔함).
+    """
+    return parse_build_yaml_text(Path(path).read_text(encoding="utf-8"))
 
 
 def find_build_yaml(content_path):
@@ -472,6 +479,17 @@ def _is_true(v, default=True):
     return str(v).strip().lower() not in ("false", "0", "no", "off")
 
 
+def load_form_profile_text(text: str | None) -> dict | None:
+    """Parse optional form_profile JSON text; return None when absent or invalid."""
+    if text is None:
+        return None
+    try:
+        loaded = json.loads(text)
+    except Exception:
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
 def load_form_profile(path):
     """form_inspect.py profile JSON을 읽는다. 없거나 파싱 실패면 None(무음 스킵) —
     --form-profile은 선택 입력이라 부재를 에러로 취급하지 않는다."""
@@ -481,7 +499,7 @@ def load_form_profile(path):
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        return load_form_profile_text(p.read_text(encoding="utf-8"))
     except Exception:
         return None
 
@@ -702,6 +720,78 @@ def build_ops(meta, sections, bundle_dir, warnings=None, label_cell_anchors=None
     if str(meta.get("collapse_blank_runs", "")).strip().lower() in ("true", "1", "yes"):
         ops.append({"op": "collapse_empty_paragraphs"})
     return ops
+
+
+class CompileReportError(Exception):
+    """Raised when compiling a report bundle fails without exiting."""
+
+    def __init__(self, message: str, exit_code: int = 2):
+        self.message = message
+        self.exit_code = exit_code
+        super().__init__(message)
+
+
+def compile_bundle_text(
+    content_text: str,
+    *,
+    build_yaml_text: str | None = None,
+    form_profile_obj: dict | None = None,
+    bundle_dir: str | Path = ".",
+) -> dict:
+    """Compile report content text and optional build/profile inputs into backend ops."""
+    if not isinstance(content_text, str):
+        raise CompileReportError("content_text must be a string", exit_code=2)
+    content_text = content_text.replace("\r\n", "\n").replace("\r", "\n")
+    if build_yaml_text is not None:
+        if not isinstance(build_yaml_text, str):
+            raise CompileReportError("build_yaml_text must be a string", exit_code=2)
+        build_yaml_text = build_yaml_text.replace("\r\n", "\n").replace("\r", "\n")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            meta, sections = parse_content(content_text)
+            if build_yaml_text is not None:
+                meta = merge_meta(meta, parse_build_yaml_text(build_yaml_text))
+            if not sections:
+                die("SECTION이 하나도 없음")
+            label_cell_anchors = find_label_cell_anchors(form_profile_obj)
+            warnings = []
+            ops = build_ops(
+                meta,
+                sections,
+                bundle_dir,
+                warnings=warnings,
+                label_cell_anchors=label_cell_anchors,
+            )
+        except SystemExit as exc:
+            raw_out = buf.getvalue().strip()
+            msg = None
+            if raw_out:
+                try:
+                    err_payload = json.loads(raw_out.splitlines()[-1])
+                    if isinstance(err_payload, dict) and err_payload.get("error"):
+                        msg = str(err_payload["error"])
+                except Exception:
+                    msg = raw_out
+            if not msg:
+                msg = str(exc) or "compile_report failed"
+            code = exc.code if isinstance(exc.code, int) else 2
+            raise CompileReportError(msg, exit_code=code) from exc
+    counts = {
+        "sections": len(sections),
+        "eq": sum(1 for o in ops if o["op"] == "insert_equation"),
+        "fig": sum(1 for o in ops if o["op"] == "insert_picture"),
+        "table": sum(1 for o in ops if o["op"] == "insert_table"),
+    }
+    return {
+        "ok": True,
+        "meta": meta,
+        "sections": sections,
+        "counts": counts,
+        "anchors": [s["anchor"] for s in sections],
+        "ops": ops,
+        "warnings": warnings,
+    }
 
 
 def check_form_anchors(form, sections):

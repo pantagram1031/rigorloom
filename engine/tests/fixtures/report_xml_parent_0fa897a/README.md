@@ -1,0 +1,1 @@
+Captured from parent commit 0fa897a with: `TMPDIR=/home/ubuntu/hub/ax/rl-swarm-run/out/phase3/wp4b/scratch PYTHONDONTWRITEBYTECODE=1 /home/ubuntu/hub/ax/rl-swarm-run/venv/bin/python engine/tests/fixtures/report_xml_parent_0fa897a/capture.py`.

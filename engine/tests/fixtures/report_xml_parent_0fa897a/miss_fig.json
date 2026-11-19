@@ -1,0 +1,28 @@
+{
+  "error": "xml_backend edit failed: unsupported=['insert_picture:path'] anchors_missing=[]",
+  "exit_code": 2,
+  "ops": [
+    {
+      "next_para": true,
+      "op": "goto_text",
+      "text": "I. Intro"
+    },
+    {
+      "break_after": true,
+      "op": "insert_text",
+      "pt": 10,
+      "text": ""
+    },
+    {
+      "op": "insert_picture",
+      "own_paragraph": true,
+      "path": "<workspace>/bundle/figures/missing.png",
+      "width_mm": 80.0
+    }
+  ],
+  "result": {
+    "error": "xml_backend edit failed: unsupported=['insert_picture:path'] anchors_missing=[]",
+    "ok": false
+  },
+  "source_changed": false
+}

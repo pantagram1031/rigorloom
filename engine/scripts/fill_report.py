@@ -101,6 +101,7 @@ import build_report  # noqa: E402
 import tidy_hwpx  # noqa: E402
 import document_evidence  # noqa: E402
 import render_quality  # noqa: E402
+import report_xml_worker  # noqa: E402
 
 # fill 기본값: build.yaml에 fill 블록이 없을 때만 사용(임계는 인자/파일로만).
 FILL_DEFAULTS = {
@@ -399,6 +400,9 @@ def run_build_report(content, form, build_yaml, ops_out, form_profile=None):
     return payload
 
 
+_DEFAULT_RUN_BUILD_REPORT = run_build_report
+
+
 def run_com_edit(form, ops_path, out_hwpx, out_pdf, kill_stale):
     """com_backend.py edit를 서브프로세스로 실행(양식은 비파괴, save-as로 복사).
 
@@ -540,14 +544,7 @@ def _anchor_is_filled_section(anchor, section_anchors):
     tidy_hwpx._is_heading와 동일 관례(§ apply_typeset_defaults가 제목 문단을
     판정하는 방식 그대로 재사용) — whitespace 정규화 후 SECTION 텍스트가
     anchor 문자열과 정확히 같거나 그 문자열로 시작하면 매치."""
-    a_stripped = (anchor or "").strip()
-    if not a_stripped:
-        return False
-    for sec_anchor in section_anchors:
-        norm = tidy_hwpx._normalize_ws(sec_anchor or "")
-        if norm and (norm == a_stripped or norm.startswith(a_stripped)):
-            return True
-    return False
+    return report_xml_worker._anchor_is_filled_section(anchor, section_anchors)
 
 
 def _derive_keep_map(anchors, blanks_before, section_anchors):
@@ -565,14 +562,7 @@ def _derive_keep_map(anchors, blanks_before, section_anchors):
     문단을 순회하며 append하므로 이미 정렬돼 있음).
     section_anchors: content.md SECTION 텍스트 리스트(문서 순서 무관, 매치만
     본다) — None/빈 리스트면 이전 동작과 동일(전부 baseline)."""
-    if not section_anchors:
-        return {a: blanks_before.get(a, 1) for a in anchors}
-    keep_map = {}
-    filled_prev = False  # 가장 가까운 '이전' form anchor가 채워질 섹션인지.
-    for a in anchors:
-        keep_map[a] = 1 if filled_prev else blanks_before.get(a, 1)
-        filled_prev = _anchor_is_filled_section(a, section_anchors)
-    return keep_map
+    return report_xml_worker.derive_keep_map(anchors, blanks_before, section_anchors)
 
 
 def read_tidy_anchors_with_source(build_yaml, form_profile=None, content_path=None):
@@ -1326,36 +1316,342 @@ def match_trouble(verdict, checks, style_anomalies, trouble_map):
     return None
 
 
-def mode_loop(args):
-    for req, name in ((args.form, "--form"), (args.content, "--content"),
-                      (args.out_dir, "--out-dir")):
-        if not req:
-            die(f"--loop에 {name} 필요")
-    form = Path(args.form)
-    content = Path(args.content)
-    if not form.exists():
-        die(f"양식 없음: {form}")
-    if not content.exists():
-        die(f"content.md 없음: {content}")
+def _paths_alias_same_target(src, dst):
+    """Return True when two paths resolve to the same target or existing file."""
+    return report_xml_worker._paths_alias_same_target(src, dst)
+
+
+def _guard_xml_output_paths(form, ops_path, out_hwpx):
+    """Refuse before staging/writing when form aliases ops_path or out_hwpx."""
+    if form is not None and (
+        _paths_alias_same_target(form, ops_path)
+        or _paths_alias_same_target(form, out_hwpx)
+    ):
+        die("xml_backend edit failed: unsupported=[] anchors_missing=[]")
+
+
+def _write_ops_json(ops_path, ops):
+    target = Path(ops_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(ops, ensure_ascii=False), encoding="utf-8")
+
+
+def _resolve_legacy_xml_postprocess_settings(
+    *, build_yaml, form_profile, content, baseline
+):
+    """Resolve post-processing settings once before legacy XML loop/assemble."""
+    tidy_before, tidy_after, derived_tidy_anchors, tidy_keep_map = (
+        read_tidy_anchors_with_source(build_yaml, form_profile, content)
+    )
+    keep_with_next = read_keep_with_next(build_yaml)
+    use_restore = baseline_has_para_formats(baseline)
+    baseline_bytes = None
+    if use_restore and baseline:
+        try:
+            baseline_bytes = Path(baseline).read_bytes()
+        except OSError:
+            use_restore = False
+            baseline_bytes = None
+    use_typeset_defaults = bool(form_profile)
+    profile_anchors = (
+        read_profile_anchors(form_profile) if use_typeset_defaults else []
+    )
+    return {
+        "tidy_before": tidy_before,
+        "tidy_after": tidy_after,
+        "derived_tidy_anchors": derived_tidy_anchors,
+        "tidy_keep_map": tidy_keep_map,
+        "tidy_soft": bool(derived_tidy_anchors),
+        "keep_with_next": keep_with_next,
+        "use_restore": use_restore,
+        "baseline_bytes": baseline_bytes,
+        "use_typeset_defaults": use_typeset_defaults,
+        "profile_anchors": profile_anchors,
+    }
+
+
+def _xml_worker_runners():
+    """Return XmlWorkerRunners bound dynamically to fill_report module hooks."""
+    return report_xml_worker.XmlWorkerRunners(
+        xml_edit=lambda form_p, ops_p, out_p: run_xml_edit(form_p, ops_p, out_p),
+        tidy_hwpx=lambda hwpx_p, before, after, soft=False, keep_map=None: run_tidy_hwpx(
+            hwpx_p, before, after, soft=soft, keep_map=keep_map
+        ),
+        restore_para_formats=lambda hwpx_p, baseline_p: run_restore_para_formats(
+            hwpx_p, baseline_p
+        ),
+        keep_with_next=lambda hwpx_p, prefixes: run_keep_with_next(hwpx_p, prefixes),
+        typeset_defaults=lambda hwpx_p, anchors: run_typeset_defaults(hwpx_p, anchors),
+        para_format_check=lambda hwpx_p, form_p: run_para_format_check(hwpx_p, form_p),
+    )
+
+
+def _make_compile_override(form, content, build_yaml, form_profile, ops_path):
+    """Delegate compilation to monkeypatched run_build_report in spy tests."""
+    def _override(*, content_text, build_yaml_text, form_profile_obj, bundle_dir):
+        payload = run_build_report(
+            content, form, build_yaml, ops_path, form_profile=form_profile
+        )
+        if isinstance(payload, dict) and "ops" in payload:
+            ops = payload["ops"]
+        else:
+            ops = json.loads(Path(ops_path).read_text(encoding="utf-8"))
+        return {
+            "ok": True,
+            "ops": ops,
+            "warnings": list((payload or {}).get("warnings") or []),
+            "anchors": list((payload or {}).get("anchors") or []),
+            "counts": dict((payload or {}).get("counts") or {}),
+            "sections": None,
+        }
+
+    return _override
+
+
+def _run_xml_worker_step(
+    *,
+    form,
+    content,
+    build_yaml,
+    form_profile,
+    baseline,
+    ops_path,
+    out_hwpx,
+    frozen_request=None,
+    postprocess_settings=None,
+):
+    """Run one XML assembly pass via frozen worker (freeze once if needed)."""
+    _guard_xml_output_paths(form, ops_path, out_hwpx)
+    runners = _xml_worker_runners()
+    if frozen_request is not None:
+        _write_ops_json(ops_path, frozen_request["operation"]["params"]["ops"])
+        try:
+            worker_res = report_xml_worker.execute_frozen_xml_worker(
+                frozen_request,
+                out_hwpx,
+                form_path=(form if form is not None else None),
+                runners=runners,
+            )
+        except report_xml_worker.FrozenReportError as exc:
+            die(exc.message)
+        settings = frozen_request["operation"]["params"]["settings"]
+        return worker_res, settings["derived_tidy_anchors"], settings["tidy_keep_map"]
+
+    if postprocess_settings is None:
+        postprocess_settings = _resolve_legacy_xml_postprocess_settings(
+            build_yaml=build_yaml,
+            form_profile=form_profile,
+            content=content,
+            baseline=baseline,
+        )
+
+    compile_override = (
+        _make_compile_override(form, content, build_yaml, form_profile, ops_path)
+        if run_build_report is not _DEFAULT_RUN_BUILD_REPORT
+        else None
+    )
+    with tempfile.TemporaryDirectory(prefix="fill-report-xml-") as snap_dir:
+        try:
+            req, legacy_ops = report_xml_worker.prepare_legacy_xml_request(
+                form,
+                content,
+                snap_dir,
+                build_yaml_path=build_yaml,
+                form_profile_path=form_profile,
+                baseline_path=baseline,
+                postprocess_settings=postprocess_settings,
+                compile_override=compile_override,
+            )
+        except build_report.CompileReportError as exc:
+            die(f"build_report 실패: {exc.message}", code=exc.exit_code)
+        except report_xml_worker.LegacyOpsRefusal as exc:
+            _write_ops_json(ops_path, exc.legacy_ops)
+            die(exc.message)
+        except report_xml_worker.LegacyAssetMissingError as exc:
+            _write_ops_json(ops_path, exc.legacy_ops)
+            run_xml_edit(form, ops_path, out_hwpx)
+            die(exc.message)
+        except report_xml_worker.FrozenReportError as exc:
+            die(exc.message)
+
+        _write_ops_json(ops_path, legacy_ops)
+        try:
+            worker_res = report_xml_worker.execute_frozen_xml_worker(
+                req,
+                out_hwpx,
+                form_path=form,
+                runners=runners,
+            )
+        except report_xml_worker.FrozenReportError as exc:
+            die(exc.message)
+        settings = req["operation"]["params"]["settings"]
+        return worker_res, settings["derived_tidy_anchors"], settings["tidy_keep_map"]
+
+
+def _build_xml_measurement_settings(args, *, guide_strings=None,
+                                    spacing_skip_pages=None,
+                                    gap_skip_pages=None,
+                                    bottom_skip_pages=None,
+                                    strict_inputs=True):
+    """Capture XML measurement/render config separately from report_assemble."""
+    pdf_cmd = getattr(args, "pdf_cmd", None)
+    renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
+    calibration = load_calibration(getattr(args, "calibration", None))
+    pdf_timeout = float(getattr(args, "pdf_timeout", 120.0) or 120.0)
+    try:
+        return report_xml_worker.freeze_report_measurement_settings(
+            build_yaml_path=getattr(args, "build_yaml", None),
+            baseline_path=getattr(args, "baseline", None),
+            pdf_cmd=pdf_cmd,
+            renderer_id=renderer_id,
+            pdf_timeout=pdf_timeout,
+            calibration=calibration,
+            fig_count=getattr(args, "fig_count", None),
+            guide_strings=guide_strings,
+            spacing_skip_pages=spacing_skip_pages,
+            gap_skip_pages=gap_skip_pages,
+            bottom_skip_pages=bottom_skip_pages,
+            strict_inputs=strict_inputs,
+        )
+    except report_xml_worker.FrozenReportError as exc:
+        die(exc.message)
+
+
+def _emit_xml_loop_terminal_verdict(
+    *,
+    verdict,
+    events_path,
+    form,
+    out_dir,
+    out_hwpx,
+    out_pdf,
+    renderer_id,
+    terminal_state,
+    exit_code,
+    reason_code,
+    capability_facts,
+    out_path,
+):
+    event = {"iter": verdict["iterations"], "ts": time.time(), "verdict": verdict}
+    with open(events_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    if form is not None or out_pdf is not None:
+        _write_evidence_receipt(
+            form if form is not None else out_dir,
+            out_dir,
+            out_hwpx,
+            out_pdf,
+            engine="xml",
+            renderer_id=renderer_id,
+            terminal_state=terminal_state,
+            exit_code=exit_code,
+            reason_code=reason_code,
+            capability_facts=capability_facts,
+        )
+    _emit(verdict, out_path)
+
+
+def _attach_tidy_metadata(verdict, derived_tidy_anchors, tidy_keep_map, tidy_warnings=None):
+    if derived_tidy_anchors:
+        verdict["derived_tidy_anchors"] = derived_tidy_anchors
+    if tidy_keep_map:
+        verdict["derived_keep_map"] = tidy_keep_map
+    if tidy_warnings:
+        verdict["tidy_warnings"] = tidy_warnings
+
+
+def _finalize_assemble_evidence_and_emit(
+    *,
+    args,
+    verdicts,
+    iters,
+    engine,
+    pdf_cmd,
+    renderer_id,
+    quality,
+    form,
+    out_dir,
+    out_hwpx,
+    out_pdf,
+):
+    result = verdicts[-1]
+    if iters > 1:
+        # 멱등성 증명: 동일 입력 재조립 시 verdict 핵심 필드 동일해야 함.
+        keys = (("converged", "style_anomalies") if engine == "xml" and not pdf_cmd
+                else ("converged", "page_count", "fig_count", "state"))
+        sigs = [tuple(v[k] for k in keys) for v in verdicts]
+        result["idempotent"] = all(s == sigs[0] for s in sigs)
+        result["iterations"] = iters
+    if pdf_cmd and result.get("renderer_attempted"):
+        terminal_state = "failed"
+        reason_code = "renderer_failed"
+    elif pdf_cmd and not result.get("pdf"):
+        terminal_state = "failed"
+        reason_code = "renderer_output_missing"
+    else:
+        terminal_state = "succeeded"
+        reason_code = (
+            quality.get("reason_code")
+            if quality and quality.get("state") != "passed"
+            else ("assembly_render_succeeded" if pdf_cmd or engine != "xml"
+                  else "xml_assembly_succeeded")
+        )
+    receipt_output = out_pdf if pdf_cmd or engine != "xml" else None
+    if form is not None or receipt_output is not None:
+        _write_evidence_receipt(
+            form if form is not None else out_dir,
+            out_dir,
+            out_hwpx,
+            receipt_output,
+            engine=engine,
+            renderer_id=renderer_id,
+            terminal_state=terminal_state,
+            reason_code=reason_code,
+            exit_code=(0 if terminal_state == "succeeded" else None),
+            capability_facts=getattr(args, "capability_facts", None),
+            quality=quality,
+        )
+    _emit(result, getattr(args, "out", None) or str(out_dir / "verdict_v06.json"))
+
+
+def mode_loop(args, *, frozen_request=None):
+    engine = getattr(args, "engine", "com") or "com"
+    if frozen_request is not None and engine != "xml":
+        die("frozen_request는 --engine xml에서만 지원됨")
+    if frozen_request is None:
+        for req, name in ((args.form, "--form"), (args.content, "--content"),
+                          (args.out_dir, "--out-dir")):
+            if not req:
+                die(f"--loop에 {name} 필요")
+    else:
+        if not getattr(args, "out_dir", None):
+            die("--loop에 --out-dir 필요")
+        try:
+            report_xml_worker.validate_frozen_xml_request(frozen_request)
+        except report_xml_worker.FrozenReportError as exc:
+            die(exc.message)
+
+    form = Path(args.form) if getattr(args, "form", None) else None
+    content = Path(args.content) if getattr(args, "content", None) else None
+    if frozen_request is None:
+        if not form.exists():
+            die(f"양식 없음: {form}")
+        if not content.exists():
+            die(f"content.md 없음: {content}")
+
     out_dir = Path(args.out_dir)
+    ops_path = out_dir / "ops.json"
+    out_hwpx = out_dir / "out.hwpx"
+    if engine == "xml":
+        _guard_xml_output_paths(form, ops_path, out_hwpx)
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    _invalidate_evidence_receipt(form, out_dir)
+    _invalidate_evidence_receipt(form if form is not None else out_dir, out_dir)
     preview_dir = out_dir / "preview"
     preview_dir.mkdir(parents=True, exist_ok=True)
 
-    ops_path = out_dir / "ops.json"
-    out_hwpx = out_dir / "out.hwpx"
     out_pdf = out_dir / "out.pdf"
     events_path = out_dir / "fill_events.jsonl"
-    engine = getattr(args, "engine", "com") or "com"
-    pdf_cmd = getattr(args, "pdf_cmd", None)
-    renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
-    proof_grade = "advisory" if engine == "xml" else "hancom"
-    calibration = (load_calibration(getattr(args, "calibration", None))
-                   if proof_grade == "advisory" else None)
-    pdf_timeout = float(getattr(args, "pdf_timeout", 120.0) or 120.0)
-
-    fill = read_fill(args.build_yaml)
     max_loops = max(1, int(args.max_loops or 4))
     trouble_map = parse_trouble_table(args.trouble_table)
     guide_strings = load_guide_strings(args.guide_file)
@@ -1364,13 +1660,50 @@ def mode_loop(args):
     bottom_skip_pages = layout_qa.parse_skip_pages(
         getattr(args, "bottom_skip_pages", None))
     form_profile = getattr(args, "form_profile", None)
-    tidy_before, tidy_after, derived_tidy_anchors, tidy_keep_map = read_tidy_anchors_with_source(
-        args.build_yaml, form_profile, content)
-    keep_with_next = read_keep_with_next(args.build_yaml)
-    use_restore = baseline_has_para_formats(args.baseline)
-    use_tidy = (bool(tidy_before or tidy_after) or use_restore
-                or bool(keep_with_next) or bool(form_profile))
-    tidy_soft = bool(derived_tidy_anchors)  # 유도 앵커는 모호/없음을 fatal 대신 skip.
+
+    legacy_postprocess = None
+    if engine == "xml":
+        measurement = _build_xml_measurement_settings(
+            args,
+            guide_strings=guide_strings,
+            spacing_skip_pages=spacing_skip_pages,
+            gap_skip_pages=gap_skip_pages,
+            bottom_skip_pages=bottom_skip_pages,
+            strict_inputs=(frozen_request is not None),
+        )
+        pdf_cmd = measurement["pdf_cmd"]
+        renderer_id = measurement["renderer_id"]
+        proof_grade = "advisory"
+        calibration = measurement["calibration"]
+        pdf_timeout = measurement["pdf_timeout"]
+        fill = measurement["fill"]
+        tidy_before = tidy_after = None
+        derived_tidy_anchors = tidy_keep_map = None
+        keep_with_next = None
+        use_restore = False
+        use_tidy = False
+        tidy_soft = False
+        if frozen_request is None:
+            legacy_postprocess = _resolve_legacy_xml_postprocess_settings(
+                build_yaml=args.build_yaml,
+                form_profile=form_profile,
+                content=content,
+                baseline=getattr(args, "baseline", None),
+            )
+    else:
+        pdf_cmd = getattr(args, "pdf_cmd", None)
+        renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
+        proof_grade = "hancom"
+        calibration = None
+        pdf_timeout = float(getattr(args, "pdf_timeout", 120.0) or 120.0)
+        fill = read_fill(args.build_yaml)
+        tidy_before, tidy_after, derived_tidy_anchors, tidy_keep_map = read_tidy_anchors_with_source(
+            args.build_yaml, form_profile, content)
+        keep_with_next = read_keep_with_next(args.build_yaml)
+        use_restore = baseline_has_para_formats(args.baseline)
+        use_tidy = (bool(tidy_before or tidy_after) or use_restore
+                    or bool(keep_with_next) or bool(form_profile))
+        tidy_soft = bool(derived_tidy_anchors)  # 유도 앵커는 모호/없음을 fatal 대신 skip.
 
     result = None
     quality = None
@@ -1378,62 +1711,67 @@ def mode_loop(args):
     trouble_retried = False
     for i in range(1, max_loops + 1):
         # 매 반복 pristine FORM에서 시작(FORM 제자리 편집 금지).
-        run_build_report(content, form, args.build_yaml, ops_path,
-                         form_profile=form_profile)
         tidy_warnings = []
         xml_para_verification = None
         if engine == "xml":
-            run_xml_edit(form, ops_path, out_hwpx)
-            tidy_result = run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
-                                        keep_map=tidy_keep_map)
-            tidy_warnings = (tidy_result or {}).get("warnings", [])
-            if use_restore:
-                run_restore_para_formats(out_hwpx, args.baseline)
-            if keep_with_next:
-                run_keep_with_next(out_hwpx, keep_with_next)
-            if form_profile:
-                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
-            xml_para_verification = run_para_format_check(out_hwpx, form)
+            worker_res, derived_tidy_anchors, tidy_keep_map = _run_xml_worker_step(
+                form=form,
+                content=content,
+                build_yaml=args.build_yaml,
+                form_profile=form_profile,
+                baseline=getattr(args, "baseline", None),
+                ops_path=ops_path,
+                out_hwpx=out_hwpx,
+                frozen_request=frozen_request,
+                postprocess_settings=legacy_postprocess,
+            )
+            tidy_warnings = worker_res.tidy_warnings
+            xml_para_verification = worker_res.para_verification
             if not pdf_cmd:
                 verdict = xml_only_verdict(out_hwpx, xml_para_verification, i)
-                if derived_tidy_anchors:
-                    verdict["derived_tidy_anchors"] = derived_tidy_anchors
-                if tidy_keep_map:
-                    verdict["derived_keep_map"] = tidy_keep_map
-                if tidy_warnings:
-                    verdict["tidy_warnings"] = tidy_warnings
-                event = {"iter": i, "ts": time.time(), "verdict": verdict}
-                with open(events_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(event, ensure_ascii=False) + "\n")
-                _write_evidence_receipt(
-                    form, out_dir, out_hwpx, engine=engine,
-                    renderer_id=renderer_id, exit_code=0,
+                _attach_tidy_metadata(
+                    verdict, derived_tidy_anchors, tidy_keep_map, tidy_warnings
+                )
+                _emit_xml_loop_terminal_verdict(
+                    verdict=verdict,
+                    events_path=events_path,
+                    form=form,
+                    out_dir=out_dir,
+                    out_hwpx=out_hwpx,
+                    out_pdf=None,
+                    renderer_id=renderer_id,
+                    terminal_state="succeeded",
+                    exit_code=0,
                     reason_code="xml_verified_no_proof",
-                    capability_facts=getattr(args, "capability_facts", None))
-                _emit(verdict, args.out or str(out_dir / "verdict_v06.json"))
+                    capability_facts=getattr(args, "capability_facts", None),
+                    out_path=args.out or str(out_dir / "verdict_v06.json"),
+                )
                 return
             render_result = run_pdf_command(
                 pdf_cmd, out_hwpx, out_pdf, timeout=pdf_timeout)
             if not render_result.get("ok"):
                 failed = renderer_failed_verdict(out_hwpx, i, render_result)
-                if derived_tidy_anchors:
-                    failed["derived_tidy_anchors"] = derived_tidy_anchors
-                if tidy_keep_map:
-                    failed["derived_keep_map"] = tidy_keep_map
-                if tidy_warnings:
-                    failed["tidy_warnings"] = tidy_warnings
-                event = {"iter": i, "ts": time.time(), "verdict": failed}
-                with open(events_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(event, ensure_ascii=False) + "\n")
-                _write_evidence_receipt(
-                    form, out_dir, out_hwpx, out_pdf,
-                    engine=engine, renderer_id=renderer_id,
-                    terminal_state="failed", exit_code=render_result.get("returncode"),
+                _attach_tidy_metadata(
+                    failed, derived_tidy_anchors, tidy_keep_map, tidy_warnings
+                )
+                _emit_xml_loop_terminal_verdict(
+                    verdict=failed,
+                    events_path=events_path,
+                    form=form,
+                    out_dir=out_dir,
+                    out_hwpx=out_hwpx,
+                    out_pdf=out_pdf,
+                    renderer_id=renderer_id,
+                    terminal_state="failed",
+                    exit_code=render_result.get("returncode"),
                     reason_code="renderer_failed",
-                    capability_facts=getattr(args, "capability_facts", None))
-                _emit(failed, args.out or str(out_dir / "verdict_v06.json"))
+                    capability_facts=getattr(args, "capability_facts", None),
+                    out_path=args.out or str(out_dir / "verdict_v06.json"),
+                )
                 return
         elif use_tidy:
+            run_build_report(content, form, args.build_yaml, ops_path,
+                             form_profile=form_profile)
             # edit(save hwpx만, PDF 아직 아님) -> tidy_hwpx(오프라인) ->
             # restore_para_formats(오프라인) -> keep_with_next(오프라인) ->
             # typeset-defaults(오프라인, form_profile 있을 때) -> convert.
@@ -1450,6 +1788,8 @@ def mode_loop(args):
                 run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
             run_com_convert(out_hwpx, out_pdf)
         else:
+            run_build_report(content, form, args.build_yaml, ops_path,
+                             form_profile=form_profile)
             # 기존 경로: edit 한 방에 save-as + export-pdf.
             run_com_edit(form, ops_path, out_hwpx, out_pdf, args.kill_stale)
 
@@ -1468,27 +1808,29 @@ def mode_loop(args):
                 "error": f"renderer output could not be measured: {exc}",
             }
             failed = renderer_failed_verdict(out_hwpx, i, render_result)
-            event = {"iter": i, "ts": time.time(), "verdict": failed}
-            with open(events_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(event, ensure_ascii=False) + "\n")
-            _write_evidence_receipt(
-                form, out_dir, out_hwpx, out_pdf,
-                engine=engine, renderer_id=renderer_id,
-                terminal_state="failed", reason_code="renderer_output_unmeasurable",
-                capability_facts=getattr(args, "capability_facts", None))
-            _emit(failed, args.out or str(out_dir / "verdict_v06.json"))
+            _emit_xml_loop_terminal_verdict(
+                verdict=failed,
+                events_path=events_path,
+                form=form,
+                out_dir=out_dir,
+                out_hwpx=out_hwpx,
+                out_pdf=out_pdf,
+                renderer_id=renderer_id,
+                terminal_state="failed",
+                exit_code=None,
+                reason_code="renderer_output_unmeasurable",
+                capability_facts=getattr(args, "capability_facts", None),
+                out_path=args.out or str(out_dir / "verdict_v06.json"),
+            )
             return
 
         style_anomalies = run_style_diff(out_hwpx, args.baseline, args.build_yaml)
         if xml_para_verification is not None:
             style_anomalies = style_anomalies + xml_para_verification.get("anomalies", [])
         verdict["style_anomalies"] = style_anomalies
-        if derived_tidy_anchors:
-            verdict["derived_tidy_anchors"] = derived_tidy_anchors
-        if tidy_keep_map:
-            verdict["derived_keep_map"] = tidy_keep_map
-        if tidy_warnings:
-            verdict["tidy_warnings"] = tidy_warnings
+        _attach_tidy_metadata(
+            verdict, derived_tidy_anchors, tidy_keep_map, tidy_warnings
+        )
 
         quality = _apply_render_quality(verdict, out_hwpx, out_pdf)
 
@@ -1569,7 +1911,8 @@ def mode_loop(args):
             out_obj["proof_skipped_reason"] = "phase-1 not converged — resolve needs first"
 
     _write_evidence_receipt(
-        form, out_dir, out_hwpx, out_pdf,
+        form if form is not None else out_dir,
+        out_dir, out_hwpx, out_pdf,
         engine=engine, renderer_id=renderer_id,
         exit_code=0,
         reason_code=("fill_loop_complete" if out_obj.get("converged")
@@ -1604,60 +1947,101 @@ def mode_measure(args):
     _emit(verdict, args.out)
 
 
-def mode_assemble(args):
-    for req, name in ((args.form, "--form"), (args.content, "--content"),
-                      (args.out_dir, "--out-dir")):
-        if not req:
-            die(f"--assemble에 {name} 필요")
-    form = Path(args.form)
-    content = Path(args.content)
-    if not form.exists():
-        die(f"양식 없음: {form}")
-    if not content.exists():
-        die(f"content.md 없음: {content}")
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    _invalidate_evidence_receipt(form, out_dir)
+def mode_assemble(args, *, frozen_request=None):
+    engine = getattr(args, "engine", "com") or "com"
+    if frozen_request is not None and engine != "xml":
+        die("frozen_request는 --engine xml에서만 지원됨")
+    if frozen_request is None:
+        for req, name in ((args.form, "--form"), (args.content, "--content"),
+                          (args.out_dir, "--out-dir")):
+            if not req:
+                die(f"--assemble에 {name} 필요")
+    else:
+        if not getattr(args, "out_dir", None):
+            die("--assemble에 --out-dir 필요")
+        try:
+            report_xml_worker.validate_frozen_xml_request(frozen_request)
+        except report_xml_worker.FrozenReportError as exc:
+            die(exc.message)
 
+    form = Path(args.form) if getattr(args, "form", None) else None
+    content = Path(args.content) if getattr(args, "content", None) else None
+    if frozen_request is None:
+        if not form.exists():
+            die(f"양식 없음: {form}")
+        if not content.exists():
+            die(f"content.md 없음: {content}")
+
+    out_dir = Path(args.out_dir)
     ops_path = out_dir / "ops.json"
     out_hwpx = out_dir / "out.hwpx"   # 단일 정규 이름(버전 누적 금지, 항상 덮어씀).
-    out_pdf = out_dir / "out.pdf"
-    engine = getattr(args, "engine", "com") or "com"
-    pdf_cmd = getattr(args, "pdf_cmd", None)
-    renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
-    proof_grade = "advisory" if engine == "xml" else "hancom"
-    calibration = (load_calibration(getattr(args, "calibration", None))
-                   if proof_grade == "advisory" else None)
-    pdf_timeout = float(getattr(args, "pdf_timeout", 120.0) or 120.0)
+    if engine == "xml":
+        _guard_xml_output_paths(form, ops_path, out_hwpx)
 
-    fill = read_fill(args.build_yaml)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _invalidate_evidence_receipt(form if form is not None else out_dir, out_dir)
+
+    out_pdf = out_dir / "out.pdf"
     iters = max(1, int(args.max_iters or 1))
     form_profile = getattr(args, "form_profile", None)
-    tidy_before, tidy_after, derived_tidy_anchors, tidy_keep_map = read_tidy_anchors_with_source(
-        args.build_yaml, form_profile, content)
-    tidy_soft = bool(derived_tidy_anchors)
-    keep_with_next = read_keep_with_next(args.build_yaml)
-    use_restore = baseline_has_para_formats(getattr(args, "baseline", None))
-    use_tidy = (bool(tidy_before or tidy_after) or use_restore
-                or bool(keep_with_next) or bool(form_profile))
+
+    legacy_postprocess = None
+    if engine == "xml":
+        measurement = _build_xml_measurement_settings(
+            args, strict_inputs=(frozen_request is not None)
+        )
+        pdf_cmd = measurement["pdf_cmd"]
+        renderer_id = measurement["renderer_id"]
+        proof_grade = "advisory"
+        calibration = measurement["calibration"]
+        pdf_timeout = measurement["pdf_timeout"]
+        fill = measurement["fill"]
+        tidy_before = tidy_after = None
+        derived_tidy_anchors = tidy_keep_map = None
+        tidy_soft = False
+        keep_with_next = None
+        use_restore = False
+        use_tidy = False
+        if frozen_request is None:
+            legacy_postprocess = _resolve_legacy_xml_postprocess_settings(
+                build_yaml=args.build_yaml,
+                form_profile=form_profile,
+                content=content,
+                baseline=getattr(args, "baseline", None),
+            )
+    else:
+        pdf_cmd = getattr(args, "pdf_cmd", None)
+        renderer_id = _infer_renderer_id(pdf_cmd, getattr(args, "renderer_id", None))
+        proof_grade = "hancom"
+        calibration = None
+        pdf_timeout = float(getattr(args, "pdf_timeout", 120.0) or 120.0)
+        fill = read_fill(args.build_yaml)
+        tidy_before, tidy_after, derived_tidy_anchors, tidy_keep_map = read_tidy_anchors_with_source(
+            args.build_yaml, form_profile, content)
+        tidy_soft = bool(derived_tidy_anchors)
+        keep_with_next = read_keep_with_next(args.build_yaml)
+        use_restore = baseline_has_para_formats(getattr(args, "baseline", None))
+        use_tidy = (bool(tidy_before or tidy_after) or use_restore
+                    or bool(keep_with_next) or bool(form_profile))
+
     verdicts = []
     quality = None
     for _ in range(iters):
         # 매 반복 pristine FORM에서 시작(FORM 제자리 편집 금지; save-as≠file 가드).
-        run_build_report(content, form, args.build_yaml, ops_path,
-                         form_profile=form_profile)
         xml_para_verification = None
         if engine == "xml":
-            run_xml_edit(form, ops_path, out_hwpx)
-            run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
-                          keep_map=tidy_keep_map)
-            if use_restore:
-                run_restore_para_formats(out_hwpx, args.baseline)
-            if keep_with_next:
-                run_keep_with_next(out_hwpx, keep_with_next)
-            if form_profile:
-                run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
-            xml_para_verification = run_para_format_check(out_hwpx, form)
+            worker_res, derived_tidy_anchors, tidy_keep_map = _run_xml_worker_step(
+                form=form,
+                content=content,
+                build_yaml=args.build_yaml,
+                form_profile=form_profile,
+                baseline=getattr(args, "baseline", None),
+                ops_path=ops_path,
+                out_hwpx=out_hwpx,
+                frozen_request=frozen_request,
+                postprocess_settings=legacy_postprocess,
+            )
+            xml_para_verification = worker_res.para_verification
             if not pdf_cmd:
                 verdicts.append(xml_only_verdict(out_hwpx, xml_para_verification,
                                                   len(verdicts) + 1))
@@ -1678,6 +2062,8 @@ def mode_assemble(args):
                 verdicts.append(failed)
                 break
         elif use_tidy:
+            run_build_report(content, form, args.build_yaml, ops_path,
+                             form_profile=form_profile)
             run_com_edit(form, ops_path, out_hwpx, None, args.kill_stale)
             run_tidy_hwpx(out_hwpx, tidy_before, tidy_after, soft=tidy_soft,
                           keep_map=tidy_keep_map)
@@ -1690,6 +2076,8 @@ def mode_assemble(args):
                 run_typeset_defaults(out_hwpx, read_profile_anchors(form_profile))
             run_com_convert(out_hwpx, out_pdf)
         else:
+            run_build_report(content, form, args.build_yaml, ops_path,
+                             form_profile=form_profile)
             run_com_edit(form, ops_path, out_hwpx, out_pdf, args.kill_stale)
         try:
             v = measure_rendered_pdf(
@@ -1725,37 +2113,19 @@ def mode_assemble(args):
         quality = _apply_render_quality(v, out_hwpx, out_pdf)
         verdicts.append(v)
 
-    result = verdicts[-1]
-    if iters > 1:
-        # 멱등성 증명: 동일 입력 재조립 시 verdict 핵심 필드 동일해야 함.
-        keys = (("converged", "style_anomalies") if engine == "xml" and not pdf_cmd
-                else ("converged", "page_count", "fig_count", "state"))
-        sigs = [tuple(v[k] for k in keys) for v in verdicts]
-        result["idempotent"] = all(s == sigs[0] for s in sigs)
-        result["iterations"] = iters
-    if pdf_cmd and result.get("renderer_attempted"):
-        terminal_state = "failed"
-        reason_code = "renderer_failed"
-    elif pdf_cmd and not result.get("pdf"):
-        terminal_state = "failed"
-        reason_code = "renderer_output_missing"
-    else:
-        terminal_state = "succeeded"
-        reason_code = (
-            quality.get("reason_code")
-            if quality and quality.get("state") != "passed"
-            else ("assembly_render_succeeded" if pdf_cmd or engine != "xml"
-                  else "xml_assembly_succeeded")
-        )
-    receipt_output = out_pdf if pdf_cmd or engine != "xml" else None
-    _write_evidence_receipt(
-        form, out_dir, out_hwpx, receipt_output,
-        engine=engine, renderer_id=renderer_id,
-        terminal_state=terminal_state, reason_code=reason_code,
-        exit_code=(0 if terminal_state == "succeeded" else None),
-        capability_facts=getattr(args, "capability_facts", None),
-        quality=quality)
-    _emit(result, args.out or str(out_dir / "verdict_v06.json"))
+    _finalize_assemble_evidence_and_emit(
+        args=args,
+        verdicts=verdicts,
+        iters=iters,
+        engine=engine,
+        pdf_cmd=pdf_cmd,
+        renderer_id=renderer_id,
+        quality=quality,
+        form=form,
+        out_dir=out_dir,
+        out_hwpx=out_hwpx,
+        out_pdf=out_pdf,
+    )
 
 
 def main():
