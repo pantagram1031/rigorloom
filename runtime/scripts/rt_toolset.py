@@ -1032,14 +1032,7 @@ def _run_fill(ctx: Context, args: dict) -> dict:
     ops = []
     for key, text in values.items():
         pid = _place_id(key)
-        place = places.get(pid)
-        if place is None:
-            _refuse_filled_place(ctx, ref, inp, pid)
-            near = [f"place:{p}" for p in places if pid in p or p in pid][:5] or \
-                [f"place:{p}" for p in list(places)[:5]]
-            raise ToolError("bad_address", f"'{pid}' 칸을 찾지 못했습니다.",
-                            hint="open 결과에서 채울 칸의 주소를 확인하세요.",
-                            at=f"place:{pid}", candidates=near)
+        place = places.get(pid) or _unlisted_seat(ctx, ref, inp, pid, places)
         if is_person_only(place):
             blocked.append(f"place:{pid}")
             continue
@@ -1070,29 +1063,57 @@ def _run_fill(ctx: Context, args: dict) -> dict:
     return result
 
 
-def _refuse_filled_place(ctx: Context, ref: Ref, inp, pid: str) -> None:
-    """A seat the draft already filled is no longer a place; say where it went."""
-    if inp.source != "draft" or ref.source is None:
-        return
+_CELL_AT = re.compile(r"^(?P<table>.+)/r(?P<row>\d+)/c(?P<col>\d+)$")
+
+
+def _unlisted_seat(ctx: Context, ref: Ref, inp, pid: str, places: dict) -> dict:
+    """The seat ``place:<id>`` names when the outline does not list it.
+
+    A filled cell and a text cell are the same bytes, so a cell filled
+    elsewhere drops off the list, yet ``place:<id>`` still resolves against
+    every cell (doc-core amendment 2026-11-19 05:50Z). It is filled by its id
+    like a listed seat, but only after the words that would label it, the
+    cell to its left and the one above, and its label in the document the
+    draft started from, show it is not a signature, seal or approval-date
+    seat: one the person filled is still theirs to change.
+    """
     try:
-        original = doc_call(ctx.doc.outline, str(ref.source))
-    except ToolError:
-        return
-    for p in original.get("places", []):
-        if p.get("id") == pid:
-            at = p.get("at") or f"place:{pid}"
-            raise ToolError("not_found", f"place:{pid} 칸은 초안에서 이미 채웠습니다({at}).",
-                            hint=f"값을 바꾸려면 edit로 해당 셀의 값을 바꾸세요: "
-                                 f'{{"op":"set","at":"{at}","text":"새 값"}}',
-                            at=at)
+        blocks = doc_call(ctx.doc.read, str(inp.path), f"place:{pid}").get("blocks") or []
+    except ToolError as exc:
+        if exc.code != "bad_address":
+            raise
+        near = [f"place:{p}" for p in places if pid in p or p in pid][:5] or \
+            [f"place:{p}" for p in list(places)[:5]] or (exc.candidates or [])[:5]
+        raise ToolError("bad_address", f"'{pid}' 칸을 찾지 못했습니다.",
+                        hint="open 결과에서 채울 칸의 주소를 확인하세요.",
+                        at=f"place:{pid}", candidates=near) from None
+    words = []
+    if inp.source == "draft" and ref.source is not None:
+        try:
+            first = doc_call(ctx.doc.outline, str(ref.source)).get("places") or []
+        except ToolError:
+            first = []
+        words += [p.get("label") or "" for p in first if p.get("id") == pid]
+    at = str(blocks[0].get("at") or "") if blocks else ""
+    cell = _CELL_AT.match(at.rsplit("/p", 1)[0]) if "/r" in at else None
+    if cell:
+        table = doc_call(ctx.doc.read, str(inp.path), cell["table"]).get("blocks") or [{}]
+        grid = table[0].get("cells") or []
+        r, c = int(cell["row"]), int(cell["col"])
+        if c and r < len(grid) and c - 1 < len(grid[r]):
+            words.append(str(grid[r][c - 1]))
+        if r and r - 1 < len(grid) and c < len(grid[r - 1]):
+            words.append(str(grid[r - 1][c]))
+    return {"id": pid, "at": at.rsplit("/p", 1)[0] or f"place:{pid}", "label": " ".join(words)}
 
 
 register(Tool(
     name="fill", title="양식 채우기",
     description="Fill form places by id (from `open` → places): {\"values\": "
-                "{\"place:성명\": \"홍길동\"}}. Staged into the draft. Signature, "
-                "seal and approval-date seats are skipped and listed in `skipped`; "
-                "tell the person to fill them.",
+                "{\"place:성명\": \"홍길동\"}}. Staged into the draft. A table cell "
+                "someone already filled is no longer listed, but its id still fills it. "
+                "Signature, seal and approval-date seats are skipped and listed in "
+                "`skipped`; tell the person to fill them.",
     group="write", read_only=False, idempotent=False,
     input_schema=_obj({
         "path": S_PATH, "base": S_REV,

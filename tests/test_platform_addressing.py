@@ -140,3 +140,37 @@ def test_fill_by_id_moves_no_other_id_and_reaches_the_right_form(env):
     ok(call(env.ctx(), "fill", {"path": str(env.doc), "values": {f"place:{second}": "김철수"}}))
     assert read_text(env, "t0/r0/c1") == "홍길동" and read_text(env, "t2/r0/c1") == "김철수"
     assert cell_ids(env) == before
+
+
+def _filled_elsewhere(env, tmp_path, monkeypatch, ops):
+    """Fill the file as another program would: no lineage knows the seats."""
+    monkeypatch.setenv("RIGORLOOM_DOC_CACHE", str(tmp_path / "elsewhere"))
+    rev = RT_DOC.outline(str(env.doc))["rev"]
+    assert RT_DOC.edit(str(env.doc), ops, base=rev, in_place=True)["ok"]
+    monkeypatch.setenv("RIGORLOOM_DOC_CACHE", str(tmp_path / "here"))
+    monkeypatch.setattr(RT_DOC, "_LINEAGE", {})
+
+
+def test_fill_reaches_a_seat_filled_elsewhere_by_its_id(env, tmp_path, monkeypatch):
+    # Amendment 05:50Z: a filled cell is a text cell, so it drops off the list,
+    # but place:<id> still names it and fill passes the id on.
+    first = {p["at"]: p["id"] for p in WANT["cell_places"]}["t0/r0/c1"]
+    _filled_elsewhere(env, tmp_path, monkeypatch, [{"op": "set", "at": "t0/r0/c1", "text": "홍길동"}])
+    assert first not in cell_ids(env).values()
+    r = ok(call(env.ctx(), "fill", {"path": str(env.doc), "values": {f"place:{first}": "김영희"}}))
+    assert r["filled"] == [{"place": f"place:{first}", "text": "김영희"}]
+    assert read_text(env, "t0/r0/c1") == "김영희"
+    e = err(call(env.ctx(), "fill", {"path": str(env.doc), "values": {"place:000000000000": "x"}}),
+            "bad_address")
+    assert e["at"] == "place:000000000000" and e["candidates"], e
+
+
+def test_a_signature_seat_filled_elsewhere_is_still_left_for_the_person(env, tmp_path, monkeypatch):
+    # The words beside an unlisted cell label it as they would a blank one.
+    first = {p["at"]: p["id"] for p in WANT["cell_places"]}["t0/r0/c1"]
+    _filled_elsewhere(env, tmp_path, monkeypatch, [{"op": "set", "at": "t0/r0/c0", "text": "신청인 서명"},
+                                                   {"op": "set", "at": "t0/r0/c1", "text": "홍길동 (인)"}])
+    e = err(call(env.ctx(), "fill", {"path": str(env.doc), "values": {f"place:{first}": "김영희"}}),
+            "person_only_seat")
+    assert e["candidates"] == [f"place:{first}"]
+    assert read_text(env, "t0/r0/c1") == "홍길동 (인)"
