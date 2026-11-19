@@ -10,15 +10,16 @@ default UI. This module captures what a person sees on the five v1 screens
   (custom properties left out: they show only through the properties that
   read them).
 
-`tests/fixtures/ui_v1_identity.json` holds main dbc1b18's capture.
-`tests/test_ui_v1_identity.py` captures the current bundle, at the default URL
-and at `?ui=v1`, and compares.
+`tests/fixtures/v1_main_ui_dist/` is main dbc1b18's committed bundle, copied
+unchanged. `tests/test_ui_v1_identity.py` captures that bundle and the current
+one with the same runtime, browser and fonts, at the default URL and at
+`?ui=v1`, and compares. Capturing both on the same machine keeps what depends
+on the machine (a preview that cannot render, font metrics) out of the result.
 
-Re-record only from main's bundle (the fixture is main's v1, not the branch's):
+To look at one capture by hand:
 
-    git archive dbc1b18 runtime/scripts/ui_dist | tar -x -C /tmp/main-ui
-    python tests/_v1_identity.py --ui-dist /tmp/main-ui/runtime/scripts/ui_dist \
-        --out tests/fixtures/ui_v1_identity.json
+    python tests/_v1_identity.py --ui-dist tests/fixtures/v1_main_ui_dist \
+        --out /tmp/main-v1.json
 """
 from __future__ import annotations
 
@@ -34,7 +35,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO_ROOT / "runtime" / "scripts"
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "ui_v1_identity.json"
+MAIN_UI_DIST = Path(__file__).resolve().parent / "fixtures" / "v1_main_ui_dist"
 SAMPLE = "gianmun-byeolji-1ho.hwpx"
 SCREENS = ("open", "review", "fill", "history", "settings")
 THEMES = ("light", "dark")
@@ -166,9 +167,6 @@ def start_bridge(tmp: Path, ui_dist: Path | None = None):
         sys.path.insert(0, str(SCRIPTS))
     import rt_ui  # noqa: PLC0415
 
-    if ui_dist is not None:
-        dist = ui_dist.resolve()
-        rt_ui.BridgeApplication._ui_dist_dir = lambda self: dist  # type: ignore[method-assign]
     server = rt_ui.create_bridge_server(
         root=tmp / "rt-root",
         engine_root=REPO_ROOT,
@@ -177,6 +175,10 @@ def start_bridge(tmp: Path, ui_dist: Path | None = None):
         prefs_path=tmp / "prefs.json",
         auto_start=True,
     )
+    if ui_dist is not None:
+        # Only this server's bridge serves the other bundle.
+        dist = ui_dist.resolve()
+        server.bridge._ui_dist_dir = lambda: dist  # type: ignore[method-assign]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -293,7 +295,7 @@ def compare(expected: dict[str, Any], actual: dict[str, Any], *, limit: int = 12
 
 
 def pack(screens: dict[str, Any]) -> dict[str, Any]:
-    """Fixture form: each distinct style digest's key properties are stored once."""
+    """File form: each distinct style digest's key properties are stored once."""
     styles: dict[str, Any] = {}
     packed: dict[str, Any] = {}
     for name, entries in screens.items():
@@ -303,16 +305,6 @@ def pack(screens: dict[str, Any]) -> dict[str, Any]:
             rows.append({k: v for k, v in entry.items() if k != "key"})
         packed[name] = rows
     return {"screens": packed, "styles": styles}
-
-
-def load_fixture(path: Path = FIXTURE) -> dict[str, Any]:
-    """The fixture's screens, with each element's key properties restored."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    styles = data["styles"]
-    return {
-        name: [{**row, "key": styles.get(row["style"], {})} for row in rows]
-        for name, rows in data["screens"].items()
-    }
 
 
 def record(ui_dist: Path | None, out: Path, query: str = "") -> None:
@@ -333,13 +325,13 @@ def record(ui_dist: Path | None, out: Path, query: str = "") -> None:
             server.shutdown_bridge()
             thread.join(timeout=5)
     payload = {
-        "about": "main dbc1b18 v1 screens; written by tests/_v1_identity.py",
+        "about": "v1 screens written by tests/_v1_identity.py",
         "viewport": [WIDTH, HEIGHT],
         **pack(screens),
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     lines = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    # One element per line keeps a re-recorded fixture reviewable as a diff.
+    # One element per line keeps two captures comparable with diff.
     lines = lines.replace('},{"attrs"', '},\n{"attrs"')
     out.write_text(lines + "\n", encoding="utf-8")
     print(f"wrote {out} ({sum(len(v) for v in screens.values())} elements)")
@@ -348,7 +340,7 @@ def record(ui_dist: Path | None, out: Path, query: str = "") -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ui-dist", type=Path, help="bundle to capture (default: runtime/scripts/ui_dist)")
-    parser.add_argument("--out", type=Path, default=FIXTURE)
+    parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--query", default="", help="URL query to open, e.g. ?ui=v1")
     args = parser.parse_args()
     record(args.ui_dist, args.out, args.query)

@@ -2,12 +2,12 @@
 """The v1 review UI is still main's v1, at the default URL and at `?ui=v1`.
 
 Editor v2 reaches main in several pull requests while v1 stays the default.
-`tests/fixtures/ui_v1_identity.json` records main dbc1b18's five v1 screens
-(열기, 검토, 채우기, 기록, 설정) and its toast, 1440 px in light and dark: the
-normalized DOM and a digest of every element's computed style. This test
-captures the committed bundle the same way and requires both captures to match,
-so a v2 token, stylesheet or component that changes what a v1 user sees fails
-here. `tests/_v1_identity.py` explains how the fixture was recorded.
+`tests/fixtures/v1_main_ui_dist/` is main dbc1b18's bundle, copied unchanged.
+This test drives main's bundle and the committed bundle through the five v1
+screens (열기, 검토, 채우기, 기록, 설정) and the toast, 1440 px in light and
+dark, with the same runtime and browser, and requires the normalized DOM and
+every element's computed style to match. A v2 token, stylesheet or component
+that changes what a v1 user sees fails here.
 """
 from __future__ import annotations
 
@@ -41,10 +41,14 @@ def captures(tmp_path_factory):
             try:
                 # A fresh bridge per URL: the v1 UI reopens a session the
                 # bridge already holds, so the second run would skip 열기.
-                for label, query in (("default", ""), ("?ui=v1", "?ui=v1")):
+                for label, query, dist in (
+                    ("main", "", v1.MAIN_UI_DIST),
+                    ("default", "", None),
+                    ("?ui=v1", "?ui=v1", None),
+                ):
                     tmp = tmp_path_factory.mktemp("v1-identity")
                     mp.setenv("XDG_DATA_HOME", str(tmp / "xdg"))
-                    server, thread = v1.start_bridge(tmp)
+                    server, thread = v1.start_bridge(tmp, dist)
                     try:
                         out[label] = v1.capture_v1(browser, server.url, query=query)
                     finally:
@@ -58,12 +62,12 @@ def captures(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def expected():
-    screens = v1.load_fixture()
-    # The fixture covers every screen in both themes, plus the toast.
+def expected(captures):
+    screens = captures["main"]
+    # Main's capture covers every screen in both themes, plus the toast.
     for name in (*v1.SCREENS, "toast"):
         for theme in v1.THEMES:
-            assert screens.get(f"{name}-{theme}"), f"fixture lacks {name}-{theme}"
+            assert screens.get(f"{name}-{theme}"), f"main's capture lacks {name}-{theme}"
     return screens
 
 
