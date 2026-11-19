@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from _browser_gate import no_browser  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_SRC = REPO_ROOT / "desktop" / "src"
 TOKENS_CSS = DESKTOP_SRC / "tokens.css"
@@ -989,7 +991,7 @@ def test_tokens_resolve_in_chromium_without_cycles_and_meet_contrast() -> None:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
-        pytest.skip(f"playwright unavailable: {exc}")
+        no_browser(f"playwright unavailable: {exc}")
 
     tokens_text = TOKENS_CSS.read_text(encoding="utf-8")
     styles_text = STYLES_CSS.read_text(encoding="utf-8")
@@ -1015,7 +1017,7 @@ def test_tokens_resolve_in_chromium_without_cycles_and_meet_contrast() -> None:
         try:
             browser = pw.chromium.launch(headless=True)
         except Exception as exc:
-            pytest.skip(f"headless Chromium unavailable: {exc}")
+            no_browser(f"headless Chromium unavailable: {exc}")
         try:
             for include_styles in (False, True):
                 mode_label = "tokens+styles" if include_styles else "tokens-only"
