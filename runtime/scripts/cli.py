@@ -529,9 +529,23 @@ def _top_level_command(argv: list[str]) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    # Product verbs (open FILE, read, edit, save, ...) and the top-level help
+    # go to the registry-backed front end. Everything else, including every
+    # command that takes a global --root, stays on the parser below, byte for
+    # byte. ``rigorloom protocol ...`` is an explicit way into that parser.
+    try:
+        from .rt_cli_product import is_product, main as product_main, \
+            wants_product_help
+    except ImportError:
+        from rt_cli_product import is_product, main as product_main, \
+            wants_product_help
+    if raw_argv[:1] == ["protocol"]:
+        raw_argv = raw_argv[1:]
+    elif wants_product_help(raw_argv) or is_product(raw_argv):
+        return product_main(raw_argv)
     utf8_stdio()
     parser = build_parser()
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
     try:
         args = parser.parse_args(raw_argv)
     except SystemExit as exc:
