@@ -188,25 +188,33 @@ _ALMOST_FIGURE = re.compile(r"^\s*\[그림\s*\d+\].*\.(?:png|jpe?g|gif|bmp)>?\s*
                             re.IGNORECASE)
 #: md2spec.CM_INLINE_RE, copied so a picture is found exactly where the
 #: converter finds one: group 5 is a picture's destination, groups 19 and 20
-#: (**bold**) are read again for what is inside them.
+#: (**bold**) are read again for what is inside them. No span reaches past
+#: _CM_SPAN characters or the next opener of its own kind, and no target past
+#: _CM_URL, so an unclosed opener costs only the text up to the next one: a
+#: paragraph of a million "[a" is scanned in linear time.
+_CM_SPAN = 1000
+_CM_URL = 2048
 _CM_INLINE = re.compile(
     r"\\([\\`*_{}\[\]()#+\-.!~|<>])"
-    r"|(`+)(.+?)\2"
-    r"|!\[([^\]]*)\]\(([^)]+)\)"
-    r"|==(.+?)=="
-    r"|~~(.+?)~~"
-    r"|\{\{찾아보기:([^}|]+)(?:\|([^}]+))?\}\}"
-    r"|\{\{덧말:([^}|]+)\|([^}]+)\}\}"
-    r"|\[([^\]]+)\]\(([^)\s]+(?:\s+(?:\"[^\"]*\"|'[^']*'))?)\)"
-    r"|\[([^\]]+)\]\[([^\]]*)\]"
-    r"|<((?:https?://|mailto:)[^>\s]+)>"
-    r"|\*\*\*(.+?)\*\*\*|___(.+?)___"
-    r"|\*\*(.+?)\*\*|(?<![\w])__(.+?)__(?![\w])"
-    r"|(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)"
-    r"|(?<![\w])_(?!\s)(.+?)(?<!\s)_(?![\w])"
-    r"|(<br\s*/?>)"
-    r"|<sup>(.*?)</sup>|<sub>(.*?)</sub>"
-    r"|<(/?[A-Za-z][A-Za-z0-9]*(?:\s+[^>]*)?/?)>"
+    r"|(`{1,32})(.{1,%(S)d}?)\2"
+    r"|!\[([^\[\]\n]{0,%(S)d})\]\(([^()\n]{1,%(U)d})\)"
+    r"|(?!)(=)"
+    r"|~~(.{1,%(S)d}?)~~"
+    r"|(?!)(\{)(\{)"
+    r"|(?!)(\{)(\{)"
+    r"|\[([^\[\]\n]{1,%(S)d})\]\((%(URL)s(?:\s{1,8}(?:\"[^\"\n]{0,%(S)d}\"|'[^'\n]{0,%(S)d}'))?)\)"
+    r"|\[([^\[\]\n]{1,%(S)d})\]\[([^\[\]\n]{0,%(S)d})\]"
+    r"|<((?:https?://|mailto:)[^>\s]{1,%(U)d})>"
+    r"|\*\*\*(.{1,%(S)d}?)\*\*\*|___(.{1,%(S)d}?)___"
+    r"|\*\*(.{1,%(S)d}?)\*\*|(?<![\w])__((?:[^_\n]|_(?!_)){1,%(S)d}?)__(?![\w])"
+    r"|(?<!\*)\*(?!\s)([^*\n]{1,%(S)d}?)(?<!\s)\*(?!\*)"
+    r"|(?<![\w])_(?!\s)([^_\n]{1,%(S)d}?)(?<!\s)_(?![\w])"
+    r"|(<br\s{0,8}/?>)"
+    r"|<sup>([^<\n]{0,%(S)d})</sup>|<sub>([^<\n]{0,%(S)d})</sub>"
+    r"|<(/?[A-Za-z][A-Za-z0-9]{0,32}(?:\s[^<>\n]{0,%(S)d})?/?)>"
+    % {"S": _CM_SPAN, "U": _CM_URL,
+       "URL": r"(?=[^)\s])[^()\s]{0,%d}(?:\([^()\s]{0,%d}\)[^()\s]{0,%d}){0,4}"
+              % (_CM_URL, _CM_URL, _CM_URL)}
 )
 _TITLE = re.compile(r'^(\S+)\s+(?:"[^"]*"|\'[^\']*\')$')
 _REMOTE = re.compile(r"^(?:https?://|data:)", re.IGNORECASE)
@@ -214,8 +222,29 @@ _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 _DRIVE = re.compile(r"^[a-z]:[\\/]", re.IGNORECASE)
 
 
+#: The start of an inline picture. One that no match of the converter's
+#: pattern takes (a name with brackets in it, ![a](그림(1).png)) is written
+#: into the document as text, and the picture is missing without a word.
+_IMAGE_OPEN = re.compile(r"!\[[^\]\n]{0,%d}\]\(" % _CM_SPAN)
+
+
+def _unread_opener(found, openers) -> bool:
+    """Whether an opener starts outside every match. Both come in order and
+    the matches do not overlap, so one pass over each is enough."""
+    i = 0
+    for o in openers:
+        while i < len(found) and found[i].end() <= o.start():
+            i += 1
+        if i == len(found) or found[i].start() > o.start():
+            return True
+    return False
+
+
 def _inline_pictures(text: str, offset: int):
-    for m in _CM_INLINE.finditer(text):
+    found = list(_CM_INLINE.finditer(text))
+    if _unread_opener(found, _IMAGE_OPEN.finditer(text)):
+        yield offset, offset + len(text), "unread"
+    for m in found:
         if m.group(5) is not None:
             yield offset + m.start(5), offset + m.end(5), "image"
         elif m.group(19) is not None or m.group(20) is not None:
@@ -1032,14 +1061,7 @@ def _run_fill(ctx: Context, args: dict) -> dict:
     ops = []
     for key, text in values.items():
         pid = _place_id(key)
-        place = places.get(pid)
-        if place is None:
-            _refuse_filled_place(ctx, ref, inp, pid)
-            near = [f"place:{p}" for p in places if pid in p or p in pid][:5] or \
-                [f"place:{p}" for p in list(places)[:5]]
-            raise ToolError("bad_address", f"'{pid}' 칸을 찾지 못했습니다.",
-                            hint="open 결과에서 채울 칸의 주소를 확인하세요.",
-                            at=f"place:{pid}", candidates=near)
+        place = places.get(pid) or _unlisted_seat(ctx, ref, inp, pid, places)
         if is_person_only(place):
             blocked.append(f"place:{pid}")
             continue
@@ -1070,29 +1092,65 @@ def _run_fill(ctx: Context, args: dict) -> dict:
     return result
 
 
-def _refuse_filled_place(ctx: Context, ref: Ref, inp, pid: str) -> None:
-    """A seat the draft already filled is no longer a place; say where it went."""
-    if inp.source != "draft" or ref.source is None:
-        return
+_CELL_AT = re.compile(r"^(?P<table>.+)/r(?P<row>\d+)/c(?P<col>\d+)$")
+
+
+def _unlisted_seat(ctx: Context, ref: Ref, inp, pid: str, places: dict) -> dict:
+    """The seat ``place:<id>`` names when the outline does not list it.
+
+    A filled cell and a text cell are the same bytes, so a cell filled
+    elsewhere drops off the list, yet ``place:<id>`` still resolves against
+    every cell (doc-core amendment 2026-11-19 05:50Z). It is filled by its id
+    like a listed seat, but only after the words that would label it (the
+    cell's own text, the cell to its left and the one above, and its label in
+    the document the draft started from) and the kind that document gave it
+    show it is not a signature, seal or approval-date seat: one the person
+    filled is still theirs to change.
+    """
     try:
-        original = doc_call(ctx.doc.outline, str(ref.source))
-    except ToolError:
-        return
-    for p in original.get("places", []):
-        if p.get("id") == pid:
-            at = p.get("at") or f"place:{pid}"
-            raise ToolError("not_found", f"place:{pid} 칸은 초안에서 이미 채웠습니다({at}).",
-                            hint=f"값을 바꾸려면 edit로 해당 셀의 값을 바꾸세요: "
-                                 f'{{"op":"set","at":"{at}","text":"새 값"}}',
-                            at=at)
+        blocks = doc_call(ctx.doc.read, str(inp.path), f"place:{pid}").get("blocks") or []
+    except ToolError as exc:
+        if exc.code != "bad_address":
+            raise
+        near = [f"place:{p}" for p in places if pid in p or p in pid][:5] or \
+            [f"place:{p}" for p in list(places)[:5]] or (exc.candidates or [])[:5]
+        raise ToolError("bad_address", f"'{pid}' 칸을 찾지 못했습니다.",
+                        hint="open 결과에서 채울 칸의 주소를 확인하세요.",
+                        at=f"place:{pid}", candidates=near) from None
+    # What the cell holds now counts too: a seat filled by hand usually
+    # carries (인) or a seal mark.
+    words = [str(b.get("text") or "") for b in blocks]
+    kind = None
+    if inp.source == "draft" and ref.source is not None:
+        try:
+            first = doc_call(ctx.doc.outline, str(ref.source)).get("places") or []
+        except ToolError:
+            first = []
+        for p in first:
+            if p.get("id") == pid:
+                words.append(p.get("label") or "")
+                kind = kind or p.get("kind")
+    at = str(blocks[0].get("at") or "") if blocks else ""
+    cell = _CELL_AT.match(at.rsplit("/p", 1)[0]) if "/r" in at else None
+    if cell:
+        table = doc_call(ctx.doc.read, str(inp.path), cell["table"]).get("blocks") or [{}]
+        grid = table[0].get("cells") or []
+        r, c = int(cell["row"]), int(cell["col"])
+        if c and r < len(grid) and c - 1 < len(grid[r]):
+            words.append(str(grid[r][c - 1]))
+        if r and r - 1 < len(grid) and c < len(grid[r - 1]):
+            words.append(str(grid[r - 1][c]))
+    return {"id": pid, "at": at.rsplit("/p", 1)[0] or f"place:{pid}", "label": " ".join(words),
+            "kind": kind}
 
 
 register(Tool(
     name="fill", title="양식 채우기",
     description="Fill form places by id (from `open` → places): {\"values\": "
-                "{\"place:성명\": \"홍길동\"}}. Staged into the draft. Signature, "
-                "seal and approval-date seats are skipped and listed in `skipped`; "
-                "tell the person to fill them.",
+                "{\"place:성명\": \"홍길동\"}}. Staged into the draft. A table cell "
+                "someone already filled is no longer listed, but its id still fills it. "
+                "Signature, seal and approval-date seats are skipped and listed in "
+                "`skipped`; tell the person to fill them.",
     group="write", read_only=False, idempotent=False,
     input_schema=_obj({
         "path": S_PATH, "base": S_REV,
@@ -1334,9 +1392,16 @@ def _guard(ctx: Context, before: Path, after: Path) -> dict:
             (_, x), (at, y) = a[i1 + k], b[j1 + k]
             audit = fidelity.audit_text(x, y)
             if not audit["pass"]:
-                changes.append({"at": at, "kind": "changed",
-                                "kinds": [c["kind"] for c in audit["changes"]],
-                                "before": x, "after": y})
+                change = {"at": at, "kind": "changed",
+                          "kinds": [c["kind"] for c in audit["changes"]],
+                          "before": x, "after": y}
+                # The same numbers, traded between their words: say so, with
+                # the words that name each one, or an agent reads it as a
+                # changed number and "fixes" the wrong one.
+                for c in audit["changes"]:
+                    if c.get("order"):
+                        change["swapped"] = {"before": c["before"], "after": c["after"]}
+                changes.append(change)
         for k in range(i1 + pairs, i2):
             at, x = a[k]
             audit = fidelity.audit_text(x, "")
@@ -1709,6 +1774,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
                                    policy=policy, home=ctx.drafts.home,
                                    provenance=provenance, candidate_sha256=digest,
                                    draft=writer, honour_declines=honour)
+        _published(ctx)
     else:
         with ctx.drafts.lock(ref):
             # Re-read under the lock: an edit or another save may have landed
@@ -1730,6 +1796,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
                                        policy=policy, home=ctx.drafts.home,
                                        provenance=provenance, candidate_sha256=digest,
                                        draft=writer, honour_declines=honour)
+            _published(ctx)
             record.setdefault("saves", []).append({
                 "target": str(target), "sha256": receipt["sha256"],
                 "revision": head_input.revision, "policy": policy,
@@ -1750,6 +1817,12 @@ def _run_save(ctx: Context, args: dict) -> dict:
             "provenance": provenance,
             "undo": _undo_command(target) if receipt["undo"] or
             receipt["replaced"] is None else None}
+
+
+def _published(ctx: Context) -> None:
+    """The file is written: tell the surface, so the response is not lost."""
+    if ctx.published is not None:
+        ctx.published()
 
 
 def _undo_command(target: Path) -> str | None:

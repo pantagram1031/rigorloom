@@ -900,6 +900,40 @@ def test_cancelling_the_running_save_withdraws_the_question_and_writes_nothing(e
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize("asked", [True, False], ids=["over-the-file", "new-file"])
+def test_a_cancel_that_comes_after_the_write_still_gets_the_response(env, monkeypatch, asked):
+    """The file is written, so the cancel cannot take anything back; MCP lets
+    the server ignore it, and the agent has to learn the file was written."""
+    path = env.doc()
+    target = path if asked else env.work / "신청서-새파일.fdoc"
+    s = env.session()
+    s.handshake(caps=ELICIT)
+    _edited(s, path)
+    box = {}
+    real = rt_toolset.rt_commit.commit
+
+    def commit_then_cancel(*args, **kwargs):
+        receipt = real(*args, **kwargs)
+        # The cancel is taken in here, after the write and before the reply,
+        # as it would be by any wait that follows the write.
+        s.server._notification("notifications/cancelled",
+                               {"requestId": box["rid"], "reason": "user"})
+        assert s.server._cancelled
+        return receipt
+
+    monkeypatch.setattr(rt_toolset.rt_commit, "commit", commit_then_cancel)
+    args = {"path": str(path)} if asked else {"path": str(path), "to": str(target)}
+    box["rid"] = s.request("tools/call", {"name": "save", "arguments": args})
+    if asked:
+        s.reply(s.server_request("elicitation/create")["id"],
+                {"action": "accept", "content": {"overwrite": True}})
+    r = s.response(box["rid"])["result"]
+    assert r["isError"] is False, text_of(r)
+    assert r["structuredContent"]["saved"] == str(target)
+    assert "480,000원" in target.read_text(encoding="utf-8")
+    assert s.server._published is False and s.server._cancelled is False
+
+
 @pytest.mark.parametrize("reply", [
     {"result": {"action": "accept", "content": {"overwrite": True, "extra": {}}}},
     {"result": {"action": "accept", "content": {"overwrite": True, "note": "x"}}},
