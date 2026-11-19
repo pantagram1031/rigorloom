@@ -153,6 +153,18 @@
 | `convert_failed` | 파일을 변환할 수 없습니다. 한글에서 지원하는 형식으로 다시 저장한 뒤 열어야 합니다. | Could not convert the file. Save it as .hwpx in Hancom Office, then open it again. |
 | `not_convertible` | 지원하지 않거나 변환할 수 없는 파일입니다. 지원하는 형식의 문서를 선택해야 합니다. | This file is unsupported or cannot be converted. Choose a supported document. |
 | `ambiguous_fill_keys` | 이름이 같은 빈칸이 여러 개 있습니다. 입력할 칸을 구분해야 합니다. | Multiple blanks have the same label. Identify the blank to fill. |
+| `bad_input` | 입력한 변경 내용을 확인해야 합니다. | Check the change details. |
+| `bad_address` | 문서에서 지정한 위치를 찾을 수 없습니다. | Could not find the specified location in the document. |
+| `not_found` | 문서 파일을 찾을 수 없습니다. 문서를 다시 열어야 합니다. | Could not find the document file. Reopen the document. |
+| `stale` | 처음 읽은 뒤 문서가 바뀌었습니다. 문서를 다시 읽어야 합니다. | The document has changed since it was read. Read it again. |
+| `busy` | 다른 작업이 이 문서를 쓰고 있습니다. 잠시 후 다시 시도할 수 있습니다. | Another task is writing this document. Try again shortly. |
+| `expect_mismatch` | 바꾸려는 문구가 예상한 내용과 다릅니다. | The text to change differs from what was expected. |
+| `ambiguous_match` | 같은 문구가 여러 곳에 있어 바꿀 위치를 정할 수 없습니다. | The same text appears in more than one place. Could not tell which one to change. |
+| `conflict` | 같은 곳을 고치는 변경이 서로 겹칩니다. 변경을 나눠야 합니다. | Some changes overlap at the same place. Split the changes. |
+| `engine_timeout` | 작업 공간 연결에 문제가 있습니다. 자세히에서 원인을 확인할 수 있습니다. | There is a problem with the workspace connection. See details for the cause. |
+| `engine_unavailable` | 작업 공간 연결에 문제가 있습니다. 자세히에서 원인을 확인할 수 있습니다. | There is a problem with the workspace connection. See details for the cause. |
+| `engine_protocol` | 작업 공간 연결에 문제가 있습니다. 자세히에서 원인을 확인할 수 있습니다. | There is a problem with the workspace connection. See details for the cause. |
+| `internal` | 작업을 처리하지 못했습니다. 자세히에서 원인을 확인할 수 있습니다. | Could not complete the task. See details for the cause. |
 | `cell_not_fill_target` | 이 칸은 입력용 빈칸이 아닙니다. | This cell is not a fillable blank. |
 | `cell_address_unknown` | 양식에서 해당 칸을 찾을 수 없습니다. | Could not find this cell in the form. |
 | `fill_charpr_color_anomaly` | 빈칸의 기본 글자색이 본문과 다릅니다. 확인이 필요합니다. | The blank’s default text colour differs from the body text. Check the colour. |
