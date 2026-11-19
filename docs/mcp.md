@@ -37,7 +37,7 @@ A client configured with JSON takes the same command and arguments:
 | `fill` | fill form places; signature, seal and approval-date places are left for the person |
 | `new` | a new document from markdown, as `draft:<id>` |
 | `preview` | page images of the draft |
-| `check` | style, layout, font and changed-number checks |
+| `check` | style, layout, font and changed-number checks; numbers that traded places come with `swapped`, each side's numbers with the words that name them |
 | `save` | write the draft to a file |
 | `changes` | drafts and save history |
 | `guide` | writing guides for official letters, reports and forms |
@@ -79,6 +79,8 @@ client that cannot ask gets `needs_person` with the command a person can run.
   told not to ask again.
 - Cancelling the call (`notifications/cancelled`) withdraws the question and
   writes nothing. So does a malformed answer, or no answer in ten minutes.
+  A cancel that arrives after the file is written is too late to take it
+  back, so the call still answers, and the agent learns the file was saved.
 - If the client takes the folder away while the person decides, nothing is
   written.
 - The replaced bytes go to the save history; `rigorloom undo FILE` puts them

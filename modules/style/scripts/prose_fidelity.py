@@ -14,9 +14,16 @@ from pathlib import Path
 
 
 _NUM = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+# Where a unit word ends: a counting suffix, then a particle, may follow it,
+# but no other syllable (5 명이, 3 개월간, 8 차분, 1조원대이다, 30평대의; not
+# 18 인원, 원장, 원칙).
+_WORD_END = (r"(?=(?:씩|간|째|당|분|차|대|가량|어치|짜리)?"
+             r"(?:은|는|이[가-힣]*|을|를|의|에서|에게|에|으로|로|과|와|도|만|까지|부터)?"
+             r"(?![가-힣]))")
 # Korean magnitudes: 500만, 2천만, 1억 2천만. 조 is one only when an amount goes
-# on (1조원, 1조 2천억); in 제1조 it is an article.
-_MAG = r"(?:[십백천만억]|조(?=\s?원|\s?\d[\d,.]*[십백천만억]))+"
+# on (1조원, 1조 2천억); in 제1조 it is an article, and so it is in 제12조 원장은
+# and 제5조 원칙, where the 원 starts another word.
+_MAG = r"(?:[십백천만억]|조(?=\s?원" + _WORD_END + r"|\s?\d[\d,.]*[십백천만억]))+"
 # Spaces between the groups of one amount: 1억 2천만원, -3억   6,200만 410원.
 _GAP = r"[ \t\u00a0]*"
 # A minus sign covers the whole amount; − (U+2212) and 마이너스 are minus too.
@@ -29,9 +36,7 @@ _SIGN = r"(?:[+\-\u2212]|마이너스[ \t\u00a0]?)?"
 _UNITS_KO = ("개월", "원", "명", "인치", "인", "개", "건", "회", "일", "년", "달", "평",
              "분기", "차", "제곱미터")
 _UNIT_KO = r"(?:개월|원|명|인치|인(?!원)|개|건|회|일|년|달|평(?!가|균)|분기(?!점)|차(?!량)|제곱미터)"
-_UNIT_KO_SPACED = (r"(?:" + "|".join(_UNITS_KO) + r")"
-                   r"(?=(?:은|는|이[가-힣]*|을|를|의|에서|에게|에|으로|로|과|와|도|만|까지|부터"
-                   r"|씩|간|째|당|분|차|가량|어치|짜리)?(?![가-힣]))")
+_UNIT_KO_SPACED = r"(?:" + "|".join(_UNITS_KO) + r")" + _WORD_END
 _UNIT_OTHER = (r"(?:%(?:p(?![A-Za-z])|포인트)?|‰|℃|°[CF]?|[\u3380-\u33df]|[kcm]?m[23²³](?!\d)"
                r"|[a-zA-ZμµΩ]+[²³]?(?:/[a-zA-Z0-9²³μµ]+)?)")
 

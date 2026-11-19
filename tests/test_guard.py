@@ -203,6 +203,33 @@ def test_a_unit_is_not_the_first_letter_of_another_word(tmp_path):
     assert _changed(b, a, tmp_path) == [1]
 
 
+def test_an_article_before_a_word_that_starts_with_won_is_not_trillions(tmp_path):
+    # Fable's review of T183: 조 is a trillion only before a won that stands
+    # alone (1조원이다, 1조 원으로); in 제12조 원장은 and 제5조 원칙 it is an
+    # article, so respacing or rewording around it changes nothing.
+    b = ["제12조 원장은 회의를 소집한다.", "제5조 원칙에 따라 처리한다.", "예산은 1조원이다.",
+         "예산은 1조원이다.", "제3조 원인 분석을 첨부했다."]
+    a = ["제12조 위원장은 회의를 소집한다.", "제5조원칙에 따라 처리한다.", "예산은 1조 원이다.",
+         "예산은 1조 2천억원이다.", "제4조 원인 분석을 첨부했다."]
+    assert _changed(b, a, tmp_path) == [4, 5]
+
+
+def test_an_amount_in_the_range_of_trillions_keeps_its_won(tmp_path):
+    # Fable's review of #396: 대 after 원 (1조원대, 3억 원대) is a counting
+    # suffix, and a particle or 이다 may follow it, so the 조 is a trillion and
+    # a space before 원대 changes nothing.
+    b = ["1조원대 사업을 맡았다.", "3억원대 아파트를 샀다.", "예산은 1조원대이다.", "예산은 3억원대이다.",
+         "1조원대의 사업이다.", "30평대의 집이다.", "1조원대 사업을 맡았다.", "예산은 1조원대이다."]
+    a = ["1조 원대 사업을 맡았다.", "3억 원대 아파트를 샀다.", "예산은 1조 원대이다.", "예산은 3억 원대이다.",
+         "1조 원대의 사업이다.", "30 평대의 집이다.", "2조원대 사업을 맡았다.", "예산은 2조원대이다."]
+    assert _changed(b, a, tmp_path) == [7, 8]
+    sys.path.insert(0, str(REPO / "runtime" / "scripts"))
+    import rt_fidelity
+    for x, y in zip(b[6:], a[6:]):
+        assert rt_fidelity._number_change(x, y) == {
+            "kind": "numbers", "before": {"1조원": 1}, "after": {"2조원": 1}}
+
+
 def test_a_number_and_its_unit_on_a_line_of_their_own_are_not_a_heading(tmp_path):
     assert _changed(["3,500원"], ["3500 원"], tmp_path) == []
 

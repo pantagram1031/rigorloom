@@ -296,6 +296,11 @@ class Context:
     #: ``save`` checks again with this before it writes. ``None``: ``roots``
     #: cannot change while a call runs.
     current_roots: Callable[[], Any] | None = None
+    #: Called once ``save`` has written the file. From then on the call can no
+    #: longer be taken back, so a surface that drops the response to a
+    #: cancelled call (MCP) still sends this one: the agent must learn that a
+    #: file was written. ``None``: nobody needs to know.
+    published: Callable[[], None] | None = None
     #: Lazily resolved document layer (rt_doc) and draft store.
     _doc: Any = None
     _drafts: Any = None
