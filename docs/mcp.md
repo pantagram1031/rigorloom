@@ -51,7 +51,18 @@ filesystem root; with no folder at all, every tool answers `no_roots` with the
 `--allow` line to add. When the client announces a change, its old folders stop
 counting at once. A folder that is replaced by a link, or by another folder of
 the same name, stops counting too. A `draft:<id>` of a file is confined like
-the file. Pictures that markdown names are checked against the same roots.
+the file.
+
+Pictures that markdown names are checked against the same roots, in the places
+the converter reads a picture: in `new`, a line that is only `![설명](경로)`
+or a `[그림 1] 설명 (그림.png)` line; in a `.md` file saved to another format,
+also `![설명](경로)` anywhere outside code. Each must be an existing file inside
+the roots. The converter reads a private copy of it, so a folder name with
+brackets in it works and the person's path does not end up in the document.
+Everything else, a link or a file name in brackets, stays text exactly as
+written, and `edit`'s `insert_after` adds text only. If the built document
+still holds a picture that was not checked, the call stops with
+`invalid_params` and nothing is kept.
 
 ## Saving over a file
 

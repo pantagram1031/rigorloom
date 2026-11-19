@@ -1056,7 +1056,7 @@ def test_a_draft_id_is_confined_like_its_file(env):
 @pytest.mark.parametrize("markdown", [
     "[그림 1] 시험 ({img})",
     "![그림]({img})",
-    "[그림 1] 시험 (<{img}>)",
+    '![그림](<{img}> "제목")',
 ])
 def test_new_checks_every_picture_path_it_can_find(env, markdown):
     picture = env.outside / "그림.png"
