@@ -79,6 +79,8 @@ client that cannot ask gets `needs_person` with the command a person can run.
   told not to ask again.
 - Cancelling the call (`notifications/cancelled`) withdraws the question and
   writes nothing. So does a malformed answer, or no answer in ten minutes.
+  A cancel that arrives after the file is written is too late to take it
+  back, so the call still answers, and the agent learns the file was saved.
 - If the client takes the folder away while the person decides, nothing is
   written.
 - The replaced bytes go to the save history; `rigorloom undo FILE` puts them

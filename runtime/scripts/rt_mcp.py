@@ -32,7 +32,10 @@ Requests are handled one at a time. While a call waits (for the roots answer
 or a person's answer) pings are still answered, other requests queue in
 order, and ``notifications/cancelled`` drops a queued request. Cancelling the
 call that is running withdraws its question to the person, writes nothing,
-and gets no response, as MCP asks.
+and gets no response, as MCP asks. A cancel that comes after ``save`` has
+written the file is too late to undo anything, so that response is still
+sent (MCP lets a server ignore such a cancel): the agent learns the file
+was written.
 """
 from __future__ import annotations
 
@@ -397,10 +400,12 @@ class McpServer:
         self._roots_pending: str | None = None
         self._roots_gave_up = False
         self._drafts = None
-        #: The id of the request being handled, and whether the client has
-        #: cancelled it since it started.
+        #: The id of the request being handled, whether the client has
+        #: cancelled it since it started, and whether it has written a file
+        #: (after which a cancel no longer drops its response).
         self._active: Any = _IDLE
         self._cancelled = False
+        self._published = False
         self._dropped_roots: set[str] = set()
 
     # -- outbound -------------------------------------------------------------
@@ -756,7 +761,7 @@ class McpServer:
             if not self._backlog or self._out_closed:
                 return 0
             message = self._backlog.pop(0)
-            self._active, self._cancelled = message["id"], False
+            self._active, self._cancelled, self._published = message["id"], False, False
             try:
                 reply = self._dispatch(message)
             except Exception as exc:  # noqa: BLE001 - keep serving
@@ -765,11 +770,15 @@ class McpServer:
                 reply = _error(message["id"], INTERNAL_ERROR,
                                f"internal error ({type(exc).__name__})")
             finally:
-                cancelled = self._cancelled
-                self._active, self._cancelled = _IDLE, False
-            if cancelled:
+                cancelled, published = self._cancelled, self._published
+                self._active, self._cancelled, self._published = _IDLE, False, False
+            if cancelled and published:
+                log(f"rigorloom mcp: request {message['id']!r} was cancelled after it "
+                    "wrote a file; the response is sent anyway")
+            elif cancelled:
                 log(f"rigorloom mcp: request {message['id']!r} was cancelled; no response sent")
-            elif reply is not None:
+                continue
+            if reply is not None:
                 self._send(reply)
 
     def _dispatch(self, message: dict) -> dict | None:
@@ -832,7 +841,11 @@ class McpServer:
             client=self.client, roots=self.roots(), write_mode="draft",
             source="draft", provenance=dict(self.provenance),
             ask=self._ask_person if self.can_elicit else None,
-            current_roots=self._roots_now, _drafts=self._drafts)
+            current_roots=self._roots_now, published=self._mark_published,
+            _drafts=self._drafts)
+
+    def _mark_published(self) -> None:
+        self._published = True
 
     def _tools_call(self, mid, params: dict) -> dict | None:
         name = params.get("name")

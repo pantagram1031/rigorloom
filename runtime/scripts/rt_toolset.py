@@ -1709,6 +1709,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
                                    policy=policy, home=ctx.drafts.home,
                                    provenance=provenance, candidate_sha256=digest,
                                    draft=writer, honour_declines=honour)
+        _published(ctx)
     else:
         with ctx.drafts.lock(ref):
             # Re-read under the lock: an edit or another save may have landed
@@ -1730,6 +1731,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
                                        policy=policy, home=ctx.drafts.home,
                                        provenance=provenance, candidate_sha256=digest,
                                        draft=writer, honour_declines=honour)
+            _published(ctx)
             record.setdefault("saves", []).append({
                 "target": str(target), "sha256": receipt["sha256"],
                 "revision": head_input.revision, "policy": policy,
@@ -1750,6 +1752,12 @@ def _run_save(ctx: Context, args: dict) -> dict:
             "provenance": provenance,
             "undo": _undo_command(target) if receipt["undo"] or
             receipt["replaced"] is None else None}
+
+
+def _published(ctx: Context) -> None:
+    """The file is written: tell the surface, so the response is not lost."""
+    if ctx.published is not None:
+        ctx.published()
 
 
 def _undo_command(target: Path) -> str | None:
