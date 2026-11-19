@@ -252,6 +252,9 @@ def test_check_names_the_anchor_of_a_merged_cell_that_changed(env, tmp_path, mon
     assert found == [("t0/r0/c2", "changed", "warning")], found
 
 
+@pytest.mark.skipif(not (RT_DOC and RT_DOC.engine_status()["available"]),
+                    reason="table.add_row needs the HWP engine; the fake layer covers the same rule "
+                           "in test_platform_toolset.py")
 def test_check_compares_a_table_with_a_new_row_as_a_whole(env):
     rev = ok(call(env.ctx(), "open", {"path": str(env.doc)}))["rev"]
     ok(call(env.ctx(), "edit", {"path": str(env.doc), "base": rev, "ops": [
