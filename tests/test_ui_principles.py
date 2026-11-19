@@ -34,6 +34,8 @@ from typing import Any
 
 import pytest
 
+from _browser_gate import no_browser  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 M_OPUS_WORKSPACE = Path("/home/ubuntu/hub/ax/ui2/out/M-opus/workspace-1440.html")
 PRETENDARD_FONT = REPO_ROOT / "desktop" / "src" / "assets" / "fonts" / "PretendardVariable.woff2"
@@ -844,7 +846,7 @@ def _import_playwright():
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
-        pytest.skip(f"playwright unavailable: {exc}")
+        no_browser(f"playwright unavailable: {exc}")
     return sync_playwright
 
 
@@ -855,7 +857,7 @@ def browser_instance():
         try:
             browser = pw.chromium.launch(headless=True)
         except Exception as exc:  # pragma: no cover
-            pytest.skip(f"headless Chromium unavailable: {exc}")
+            no_browser(f"headless Chromium unavailable: {exc}")
         try:
             yield browser
         finally:
