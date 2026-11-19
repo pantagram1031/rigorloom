@@ -87,6 +87,74 @@ def test_the_same_number_spelled_another_way_is_not_a_change(tmp_path):
     assert json.loads(proc.stdout)["result"]["changed"] == []
 
 
+def test_a_korean_magnitude_or_unit_is_part_of_the_number(tmp_path):
+    # 500만원 and 500원 share their digits; the magnitude and the unit are the fact.
+    b = _write(tmp_path / "b.md", "금500만원을 지급한다.", "사업비는 2천만원이다.",
+               "3일 이내에 제출한다.", "면적은 10 m²이다.")
+    a = _write(tmp_path / "a.md", "금500원을 지급한다.", "사업비는 2백만원이다.",
+               "3개월 이내에 제출한다.", "면적은 10 m³이다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    changed = json.loads(proc.stdout)["result"]["changed"]
+    assert [(c["paragraph"], c["kinds"]) for c in changed] == [
+        (1, ["numbers"]), (2, ["numbers"]), (3, ["numbers"]), (4, ["numbers"])]
+
+
+def test_the_same_amount_written_with_or_without_a_magnitude_is_not_a_change(tmp_path):
+    b = _write(tmp_path / "b.md", "금500만원을 지급한다.", "총 1억 2천만원이다.", "총 2천3백만 원이다.",
+               "면적은 10㎡이다.", "기간은 1달이다.", "제1조 2항을 따른다.")
+    a = _write(tmp_path / "a.md", "금5,000,000원을 지급한다.", "총 120,000,000원이다.",
+               "총 23,000,000원이다.", "면적은 10 m²이다.", "기간은 1개월이다.", "제1조 제2항을 따른다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(proc.stdout)["result"]["changed"] == []
+
+
+def test_numbers_that_trade_places_are_a_change(tmp_path):
+    # Every number is still there, so counting them saw nothing.
+    b = _write(tmp_path / "b.md", "기본급은 300만원, 수당은 50만원이다.")
+    a = _write(tmp_path / "a.md", "기본급은 50만원, 수당은 300만원이다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    (change,) = json.loads(proc.stdout)["result"]["changed"]
+    assert change["kinds"] == ["numbers"]
+    assert change["changes"] == [{"kind": "numbers", "order": True,
+                                  "before": ["기본급 300만원", "수당 50만원"],
+                                  "after": ["기본급 50만원", "수당 300만원"]}]
+    text = _guard(b, a, "--format", "text").stdout
+    assert "swapped numbers" in text and "기본급 300만원, 수당 50만원  ->  기본급 50만원, 수당 300만원" in text
+
+
+def test_a_reordered_sentence_keeps_its_numbers_with_their_words(tmp_path):
+    b = _write(tmp_path / "b.md", "기본급은 300만원, 수당은 50만원이다.", "제17조 및 제18조를 따른다.",
+               "응답률은 18.6%였고 참가자는 30명이었다.")
+    a = _write(tmp_path / "a.md", "수당은 50만원, 기본급은 300만원이다.", "제18조 및 제17조를 따른다.",
+               "참가자는 30명, 응답률은 18.6%였다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(proc.stdout)["result"]["changed"] == []
+
+
+def test_changed_numbers_are_shown_as_the_document_writes_them(tmp_path):
+    # Compared in one spelling, shown in the document's: 1,000만원 stays 1,000만원
+    # on both sides instead of turning into 10000000원, and is not reported as
+    # lost and added just because the edit dropped its comma.
+    b = _write(tmp_path / "b.md", "금1,000만원과 금5만원을 지급한다.")
+    a = _write(tmp_path / "a.md", "금1000만원과 금6만원을 지급한다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    (change,) = json.loads(proc.stdout)["result"]["changed"][0]["changes"]
+    assert change == {"kind": "numbers", "before": {"1,000만원": 1, "5만원": 1},
+                      "after": {"1,000만원": 1, "6만원": 1}}
+
+
+def test_a_full_width_latin_letter_glues_like_an_ascii_one(tmp_path):
+    b = _write(tmp_path / "b.md", "내부 초안 표시는 ｖ２다.")
+    a = _write(tmp_path / "a.md", "내부 초안 표시는 ｖ３다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
 def test_added_or_removed_paragraphs_are_refused_not_guessed(tmp_path):
     b = _write(tmp_path / "b.txt", "하나.", "둘.")
     a = _write(tmp_path / "a.txt", "하나.")

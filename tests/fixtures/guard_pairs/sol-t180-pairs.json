@@ -2,7 +2,7 @@
  "_about": [
   "Sol's 55 before/after pairs from the T180 guard review, kept so every guard rule is measured on the same pairs.",
   "fact: did the edit change a fact the person would care about. scope 'out': a Latin-glued token (v2, x86, A4), which the guard leaves alone on purpose; the guard must pass it.",
-  "gap: the guard misses this today; the name is the T181 rule meant to close it. tests/test_guard_pairs.py runs these as strict xfails, so a rule that closes one must also delete its gap."
+  "gap: the guard misses this today; the name is the follow-up rule meant to close it. tests/test_guard_pairs.py runs these as strict xfails, so a rule that closes one must also delete its gap."
  ],
  "pairs": [
   {"case": "article", "before": "근로기준법 제17조를 따른다.", "after": "근로기준법 제18조를 따른다.", "fact": "changed"},
@@ -12,8 +12,8 @@
   {"case": "fullwidth", "before": "제１７조를 따른다.", "after": "제１８조를 따른다.", "fact": "changed"},
   {"case": "sino", "before": "제십칠조를 따른다.", "after": "제십팔조를 따른다.", "fact": "changed", "gap": "numbers-in-words"},
   {"case": "native", "before": "위원 두 명을 위촉한다.", "after": "위원 세 명을 위촉한다.", "fact": "changed", "gap": "numbers-in-words"},
-  {"case": "unit", "before": "금500만원을 지급한다.", "after": "금500원을 지급한다.", "fact": "changed", "gap": "magnitude-unit"},
-  {"case": "magnitude", "before": "사업비는 2천만원이다.", "after": "사업비는 2백만원이다.", "fact": "changed", "gap": "magnitude-unit"},
+  {"case": "unit", "before": "금500만원을 지급한다.", "after": "금500원을 지급한다.", "fact": "changed"},
+  {"case": "magnitude", "before": "사업비는 2천만원이다.", "after": "사업비는 2백만원이다.", "fact": "changed"},
   {"case": "fraction-numerator", "before": "재적위원 3분의 1이 동의해야 한다.", "after": "재적위원 3분의 2가 동의해야 한다.", "fact": "changed"},
   {"case": "fraction-denominator", "before": "재적위원 3분의1이 동의해야 한다.", "after": "재적위원 4분의1이 동의해야 한다.", "fact": "changed"},
   {"case": "fraction-swap", "before": "정족수는 3분의 1이다.", "after": "정족수는 1분의 3이다.", "fact": "changed", "gap": "fractions"},
@@ -54,11 +54,11 @@
   {"case": "version-width-first", "before": "배포 버전은 v１２다.", "after": "배포 버전은 v２２다.", "fact": "changed", "scope": "out"},
   {"case": "identical", "before": "제17조에 따라 금500만원을 지급한다. 내부 초안 표시는 버전1.2다.", "after": "제17조에 따라 금500만원을 지급한다. 내부 초안 표시는 버전1.2다.", "fact": "same"},
   {"case": "same-number-reworded", "before": "제17조에 따라 지급한다.", "after": "제17조를 근거로 지급한다.", "fact": "same"},
-  {"case": "swapped-values-regression", "before": "기본급은 300만원, 수당50만원을 지급한다.", "after": "기본급은 50만원, 수당300만원을 지급한다.", "fact": "changed", "gap": "order"},
+  {"case": "swapped-values-regression", "before": "기본급은 300만원, 수당50만원을 지급한다.", "after": "기본급은 50만원, 수당300만원을 지급한다.", "fact": "changed"},
   {"case": "unit-space", "before": "온도는 약20 ℃이다.", "after": "온도는 약20℃이다.", "fact": "same"},
   {"case": "plain-year", "before": "사업은 25년부터 시행한다.", "after": "사업은 26년부터 시행한다.", "fact": "changed"},
   {"case": "quoted-year", "before": "사업은 ’25년부터 시행한다.", "after": "사업은 ’26년부터 시행한다.", "fact": "changed"},
   {"case": "plain-parens", "before": "납부 기한은 공고일로부터 (17일)이다.", "after": "납부 기한은 공고일로부터 (18일)이다.", "fact": "changed"},
-  {"case": "swapped-values", "before": "기본급은 300만원, 수당은 50만원이다.", "after": "기본급은 50만원, 수당은 300만원이다.", "fact": "changed", "gap": "order"}
+  {"case": "swapped-values", "before": "기본급은 300만원, 수당은 50만원이다.", "after": "기본급은 50만원, 수당은 300만원이다.", "fact": "changed"}
  ]
 }

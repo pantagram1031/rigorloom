@@ -3,7 +3,7 @@
 Every guard rule is measured on the same pairs instead of examples written for
 the rule. A pair whose fact is unchanged, or whose token the guard leaves alone
 on purpose, must pass: a new false alarm fails this file. A pair the guard
-still misses carries the name of the T181 rule meant to catch it and runs as a
+still misses carries the name of the follow-up rule meant to catch it and runs as a
 strict xfail, so the PR that closes it has to delete the gap as well.
 """
 from __future__ import annotations
@@ -52,7 +52,7 @@ def test_the_pairs_are_well_formed():
 
 
 CASES = [pytest.param(i, p, id=p["case"],
-                      marks=[pytest.mark.xfail(strict=True, reason=f"T181 {p['gap']}")] if p.get("gap") else [])
+                      marks=[pytest.mark.xfail(strict=True, reason=f"not caught yet: {p['gap']}")] if p.get("gap") else [])
          for i, p in enumerate(PAIRS, start=1)]
 
 

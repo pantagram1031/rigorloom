@@ -61,6 +61,10 @@ Rules:
    appear more times. An expression that appears more than once is shown as
    `text×count`, where the count is how many fewer (lost) or how many more
    (added). A kind with nothing lost (or nothing added) omits that line.
+   When every number is still there but two numbers traded the words they
+   follow (`기본급은 300만원, 수당은 50만원` → `기본급은 50만원, 수당은 300만원`), the
+   label is `swapped numbers` and each value is shown with its word:
+   `lost   swapped numbers  기본급 300만원, 수당 50만원`.
 5. Blocks are separated by one blank line. The closing line is the same as
    the default text output's last line: `OK: every protected fact is
    unchanged.` or `CHANGED: restore or review the paragraphs above.`
