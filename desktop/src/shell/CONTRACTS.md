@@ -31,3 +31,5 @@ WP3 (`canvas/_shim.ts`) and WP4 (`panel/_shim.ts`) coded against local stand-ins
 | WP3/WP4 `registerSlot(name, C)` | same, plus options `{order, title, when, owner}` | None. `settings:agent` needs `{title: (lang) => ...}` for its nav label. |
 
 Known overlap to settle between WP3 and WP4: both bind `J`/`K`/`Y`/`N`/`E`/`U` (and WP3 `Ctrl+Z`). Keep the predicates exclusive (`review` while the 변경 pane has focus, the mark toolbar otherwise) or let one package own the keys; `keys.activeConflicts()` in a test catches a state where both answer.
+
+The desktop app's `docFolder` pref (set by 폴더 열기 and 설정 through `savePrefs`) is display-only. The runtime never reads it as the 문서 폴더, and nothing lists from it; a desktop listing must set the folder through `POST /api/doc-folder`, which checks it, as the browser build does.
