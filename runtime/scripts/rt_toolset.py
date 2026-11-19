@@ -921,6 +921,8 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "page_setup": (("at", "set"), ()),
     "columns": (("at", "set"), ()),
     "break": (("at", "kind"), ("expect",)),
+    "header": (("at", "text"), ("kind", "apply", "expect")),
+    "page_number": (("at",), ("pos", "format", "side_char")),
 }
 
 
@@ -946,6 +948,8 @@ OP_EXAMPLES = {
     "page_setup": '{"op":"page_setup","at":"p0","set":{"paper":"A4","margins":{"left":20,"right":20}}}',
     "columns": '{"op":"columns","at":"p0","set":{"count":2,"gap_mm":8,"line":true}}',
     "break": '{"op":"break","at":"p12","kind":"page"}',
+    "header": '{"op":"header","at":"p0","kind":"footer","text":"2027년 업무계획"}',
+    "page_number": '{"op":"page_number","at":"p0","pos":"BOTTOM_CENTER","format":"DIGIT"}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
