@@ -53,6 +53,29 @@ def test_a_changed_number_or_dropped_negation_is_named_by_paragraph(tmp_path):
     assert [(c["paragraph"], c["kinds"]) for c in changed] == [(1, ["numbers"]), (2, ["qualifiers"])]
 
 
+def test_a_number_right_after_hangul_is_still_a_number(tmp_path):
+    # Python's \w includes Hangul, so a lookbehind on \w hid 17 in 제17조.
+    b = _write(tmp_path / "b.md", "근로기준법 제17조를 따른다.", "금500만원을 지급한다.",
+               "2025년 1월부터 시행한다.", "버전 v2와 x86은 그대로다.")
+    a = _write(tmp_path / "a.md", "근로기준법 제18조를 따른다.", "금50만원을 지급한다.",
+               "2026년 1월부터 시행한다.", "버전 v2와 x86은 그대로다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    changed = json.loads(proc.stdout)["result"]["changed"]
+    assert [(c["paragraph"], c["kinds"]) for c in changed] == [
+        (1, ["numbers"]), (2, ["numbers"]), (3, ["numbers"])]
+
+
+
+def test_the_same_number_spelled_another_way_is_not_a_change(tmp_path):
+    # Reading numbers after Hangul (T180) must not start flagging digit width,
+    # thousands commas or the space before a unit.
+    b = _write(tmp_path / "b.md", "제１７조를 따른다.", "금1,000만원을 지급한다.", "온도는 약20 ℃이다.")
+    a = _write(tmp_path / "a.md", "제17조를 따른다.", "금1000만원을 지급한다.", "온도는 약20℃이다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(proc.stdout)["result"]["changed"] == []
+
 def test_added_or_removed_paragraphs_are_refused_not_guessed(tmp_path):
     b = _write(tmp_path / "b.txt", "하나.", "둘.")
     a = _write(tmp_path / "a.txt", "하나.")
