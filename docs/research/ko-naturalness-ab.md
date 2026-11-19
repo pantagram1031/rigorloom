@@ -2,7 +2,7 @@
 
 This protocol describes the 2026-11-16 pilot. Its results are reported separately in [the pilot results](ko-naturalness-ab-pilot-results-2026-11-16.md).
 
-The purpose is to establish a measured basis for considering future claims about human-like Korean. Until results exist, the product makes no such claim. Even a successful study below establishes model preferences on these materials, not human authorship, detector evasion, or equivalence to human writing.
+The purpose is to establish a measured basis for considering future claims about human-like Korean. Until results exist, the product makes no such claim. Even a successful study below establishes model preferences on these materials, not human authorship, nor how any detector would classify the text, nor equivalence to human writing.
 
 All sample sizes, cutoffs, model assignments, generation settings, the seed, and procedural limits below are design choices, not measured quantities or guarantees of how many eligible outputs the run will produce. Freeze this protocol and a run lock before acquiring documents. Record their SHA-256 hashes. Any later change requires a dated amendment and a separately identified run; do not pool runs silently.
 
