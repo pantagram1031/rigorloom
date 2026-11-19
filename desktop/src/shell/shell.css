@@ -228,7 +228,7 @@
   flex: 1 1 auto;
 }
 
-.sh-tab-count {
+.sh-tab-count[data-accent] {
   flex: none;
   min-width: 18px;
   height: 16px;
