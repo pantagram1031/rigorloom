@@ -428,3 +428,17 @@ def test_engine_new_and_convert(kit, tmp_path):
     assert any("본문 문단" in b["text"] for b in D.read(tmp_path / "n.hwpx")["blocks"])
     c = D.convert(tmp_path / "n.hwpx", tmp_path / "n.pdf", to="pdf")
     assert c["ok"] and (tmp_path / "n.pdf").read_bytes()[:5] == b"%PDF-"
+
+
+@engine
+def test_engine_reads_and_edits_hwp(kit, tmp_path):
+    f = _copy(kit / "tests" / "hwp5" / "written" / "kit_feat_lists.hwp", tmp_path)
+    before = f.read_bytes()
+    o = D.open(f)
+    assert o["ok"] and o["format"] == "hwp"
+    first = D.read(f, "p0")["blocks"][0]
+    assert first["text"]
+    r = D.edit(f, [{"op": "set", "at": "p0", "text": "바뀜", "expect": first["text"]}], base=D.rev_of(f))
+    assert r["ok"] and r["out"].endswith("kit_feat_lists.edited.hwpx")
+    assert D.read(r["out"], "p0")["blocks"][0]["text"] == "바뀜"
+    assert f.read_bytes() == before

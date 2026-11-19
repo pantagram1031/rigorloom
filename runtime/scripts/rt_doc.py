@@ -239,8 +239,12 @@ class _Engine:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": {"code": "engine_unavailable",
                                            "message": "the engine worker did not start: %s" % exc}}
+        args = [os.fspath(a) if isinstance(a, os.PathLike) else a for a in args]
+        kwargs = {k: os.fspath(v) if isinstance(v, os.PathLike) else v for k, v in kwargs.items()}
         try:
             return c.call(fn, *args, **kwargs)
+        except (TypeError, ValueError) as exc:     # an argument JSON cannot carry: the worker is fine
+            return {"ok": False, "error": {"code": "bad_input", "message": str(exc)}}
         except Exception as exc:  # noqa: BLE001 - KitError: timeout or closed pipe
             self.reset(kill=True)
             code = "engine_timeout" if "no answer" in str(exc) else "engine_unavailable"
