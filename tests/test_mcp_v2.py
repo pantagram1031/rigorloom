@@ -762,9 +762,10 @@ def test_elicitation_accept_overwrites(env):
     message = params["message"].splitlines()
     assert message[0] == f'"{path.resolve()}" 파일을 덮어쓸까요?'
     assert "바뀐 쪽: 1" in message
-    assert "에이전트가 고치고 아직 아무도 확인하지 않은 변경: 1건" in message
+    assert "에이전트가 고친 내용 중 아직 아무도 확인하지 않은 항목: 1건" in message
     assert not any(line.startswith("변환하면 빠지는 항목") for line in message)
-    assert message[-1] == f'이전 내용은 저장 기록에 남습니다. 되돌리기: rigorloom undo "{path.resolve()}"'
+    assert message[-2:] == ["이전 내용은 저장 기록에 남습니다.",
+                            f'되돌리기: rigorloom undo "{path.resolve()}"']
     s.reply(ask["id"], {"action": "accept", "content": {"overwrite": True}})
     r = s.response(rid)["result"]
     assert r["isError"] is False

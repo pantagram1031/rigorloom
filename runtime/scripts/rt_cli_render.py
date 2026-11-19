@@ -81,7 +81,7 @@ _DOC_ERRORS = {
                         'at에 고칠 곳의 주소를 지정하거나 "all": true를 추가하세요.'),
     "expect_mismatch": ("읽은 뒤 내용이 바뀌어 고치지 않았습니다.", "다시 읽고 고치세요."),
     "page_out_of_range": ("문서에 없는 쪽입니다.", "open 결과에서 쪽 수를 확인하세요."),
-    "locked": ("다른 프로그램이 이 파일을 열고 있습니다.", "한글에서 파일을 닫은 뒤 다시 실행하세요."),
+    "locked": ("다른 프로그램에서 이 파일을 열어 두었습니다.", "파일을 열어 둔 프로그램에서 닫은 뒤 다시 실행하세요."),
     "source_rejected": ("이 파일은 문서로 열 수 없습니다.", "hwpx 또는 docx 파일을 지정하세요."),
     "invalid_params": ("입력이 맞지 않습니다.", None),
     "engine_refused": ("문서를 처리하지 못했습니다.", None),
@@ -117,7 +117,7 @@ def person_error(err: dict, path: str | None = None) -> tuple[str, str | None]:
         if str(err.get("at") or "").startswith("page:"):
             base, default_hint = "문서에 없는 쪽입니다.", f"{span[0]}쪽부터 {span[1]}쪽까지 있습니다."
         else:
-            base, default_hint = "범위를 벗어난 위치입니다.", f"{span[0]}부터 {span[1]}까지 쓸 수 있습니다."
+            base, default_hint = "범위를 벗어난 위치입니다.", f"위치는 {span[0]}부터 {span[1]}까지 지정할 수 있습니다."
         hint = None
     if err.get("at") and err.get("code") in ("bad_address", "not_found"):
         base = f"{err['at']}: {base}"

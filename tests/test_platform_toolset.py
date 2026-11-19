@@ -1025,9 +1025,9 @@ def test_document_layer_english_becomes_korean_for_people():
         "page:9: 문서에 없는 쪽입니다.", "1쪽부터 3쪽까지 있습니다.")
     assert person_error({"code": "bad_address", "at": "p2:40", "range": [0, 12],
                          "message": "offset 40 is out of range"}) == (
-        "p2:40: 범위를 벗어난 위치입니다.", "0부터 12까지 쓸 수 있습니다.")
+        "p2:40: 범위를 벗어난 위치입니다.", "위치는 0부터 12까지 지정할 수 있습니다.")
     assert person_error({"code": "locked", "message": "file is locked", "retryable": True}) == (
-        "다른 프로그램이 이 파일을 열고 있습니다.", "한글에서 파일을 닫은 뒤 다시 실행하세요.")
+        "다른 프로그램에서 이 파일을 열어 두었습니다.", "파일을 열어 둔 프로그램에서 닫은 뒤 다시 실행하세요.")
 
 
 def test_a_narrow_find_keeps_the_word_in_view():

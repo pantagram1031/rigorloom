@@ -276,7 +276,7 @@ class McpServer:
         self.cwd = Path(cwd)
         self.cwd_root = cwd_fallback(self.cwd, home_path)
         self.no_roots_hint = (
-            "사람이 MCP 클라이언트 설정의 서버 명령에 폴더를 더해야 합니다: "
+            "사용자에게 다음 예처럼 MCP 클라이언트 설정의 서버 명령에 폴더를 추가해 달라고 요청하세요. "
             + allow_line(self.cwd_root))
 
         self.version: str | None = None
@@ -709,10 +709,10 @@ def _error(mid, code: int, message: str, data: Any = None) -> dict:
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="rigorloom mcp",
-        description="MCP 서버 (stdio). MCP 클라이언트 설정에 이 명령을 적습니다. "
+        description="stdio로 통신하는 MCP 서버를 실행합니다. MCP 클라이언트 설정에 이 명령을 등록하세요. "
                     "예: claude mcp add rigorloom -- rigorloom mcp --allow \"$HOME/문서\"")
     p.add_argument("--allow", action="append", default=[], metavar="DIR",
-                   help="에이전트가 읽고 쓸 수 있는 폴더 (여러 번 줄 수 있음)")
+                   help="에이전트가 읽고 쓸 수 있는 폴더 (폴더마다 --allow 지정)")
     return p
 
 

@@ -323,7 +323,7 @@ def _load_test_doc(path: str):
         spec = importlib.util.spec_from_file_location("_rigorloom_test_doc", path)
         if spec is None or spec.loader is None:
             raise ToolError("capability_unavailable",
-                            f"{TEST_DOC_ENV}가 가리키는 파일을 불러오지 못했습니다.",
+                            f"환경 변수 {TEST_DOC_ENV}에 지정된 파일을 불러오지 못했습니다.",
                             data={"path": path})
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
