@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "--root",
+    "<ROOT>",
+    "open",
+    "--path",
+    "<TMP>/gianmun-byeolji-1ho.hwpx"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"open\",\n  \"ok\": true,\n  \"result\": {\n    \"openedUtc\": \"<TS>\",\n    \"sessionId\": \"<ID>\",\n    \"source\": {\n      \"bytes\": 30304,\n      \"documentKind\": \"hwpx\",\n      \"name\": \"gianmun-byeolji-1ho.hwpx\",\n      \"sha256\": \"52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf\"\n    }\n  }\n}\n"
+}

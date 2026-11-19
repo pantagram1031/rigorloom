@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "style",
+    "check",
+    "--help"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "usage: runtime/scripts/cli.py style check [-h]\n                                          [--doc-type {report,gongmun,grant,minwon,contract,any}]\n                                          [--pack {gongmun,minwon,hr,grant}]\n                                          [--format {json,text}]\n                                          file\n\npositional arguments:\n  file                  the document to check\n\noptions:\n  -h, --help            show this help message and exit\n  --doc-type {report,gongmun,grant,minwon,contract,any}\n                        apply only the rules for this document type (default:\n                        pack baseDocType, or all rules)\n  --pack {gongmun,minwon,hr,grant}\n                        apply a document-type rule pack in addition to ko-\n                        style/1\n  --format {json,text}  json (default, one document on stdout) or one line per\n                        match\n"
+}

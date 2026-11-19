@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "style",
+    "check",
+    "tests/fixtures/style_packs/with_findings.txt",
+    "--format",
+    "text"
+  ],
+  "exit": 3,
+  "stderr_is_empty": true,
+  "stdout_normalized": "tests/fixtures/style_packs/with_findings.txt:1:20: error ko.double-passive: 되어지고 -- 이중 피동입니다. '되다'가 이미 피동이라 '-어지다'를 겹칠 필요가 없습니다. (되어진 → 된, 되어집니다 → 됩니다)\ntests/fixtures/style_packs/with_findings.txt:2:1: notice ko.para-opener-summary: 결론적으로 -- 문단을 정리 문구로 여는 형태입니다. 앞 내용을 되풀이하는 문단이 아닌지 확인하십시오. (되풀이라면 문단을 줄이거나 새 근거로 시작)\ntests/fixtures/style_packs/with_findings.txt:3:6: notice ko.e-isseoseo: 에 있어서는 -- 일본어 '~において'를 옮긴 말투로 자주 쓰입니다. (~에서, ~할 때, ~에 대해)\ntests/fixtures/style_packs/with_findings.txt:4:4: notice ko.hayeogeum: 로 하여금 -- 사동을 겹쳐 쓰는 번역 투입니다. 누가 무엇을 하는지 바로 쓰면 짧아집니다. (A로 하여금 B하게 하다 → A가 B하도록 하다)\ntests/fixtures/style_packs/with_findings.txt:5:7: notice ko.md-bold: **반드시** -- 본문 굵게 표시입니다. 한글 양식 문서에서는 대개 서식으로 강조하지 않습니다. (강조가 필요하면 문장으로)\ntests/fixtures/style_packs/with_findings.txt:6:15: notice ko.exclamation: 다! -- 공식 문서 본문의 느낌표입니다. (마침표)\nko-style/1 (any, per line): 1 error, 5 notice\n"
+}

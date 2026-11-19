@@ -339,8 +339,8 @@ def _rev(data: bytes) -> str:
 
 
 def _path(value, what: str = "path") -> Path:
-    if not isinstance(value, (str, Path)) or not str(value):
-        raise _Refusal("invalid_params", f"{what}가 비었거나 경로가 아닙니다")
+    if not isinstance(value, (str, Path)) or not str(value) or "\x00" in str(value):
+        raise _Refusal("invalid_params", f"{what}: 경로가 아닙니다")
     return Path(value)
 
 

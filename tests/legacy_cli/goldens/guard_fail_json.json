@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "guard",
+    "examples/guard/before.hwpx",
+    "examples/guard/after.hwpx"
+  ],
+  "exit": 3,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"guard\",\n  \"ok\": false,\n  \"result\": {\n    \"after\": \"after.hwpx\",\n    \"before\": \"before.hwpx\",\n    \"changed\": [\n      {\n        \"after\": \"2. 근로계약기간 :      년   월   일부터      년   월   일까지\",\n        \"before\": \"1. 근로계약기간 :      년   월   일부터      년   월   일까지\",\n        \"changes\": [\n          {\n            \"after\": {\n              \"2\": 1\n            },\n            \"before\": {\n              \"1\": 1\n            },\n            \"kind\": \"numbers\"\n          }\n        ],\n        \"kinds\": [\n          \"numbers\"\n        ],\n        \"paragraph\": 4\n      },\n      {\n        \"after\": \"  ※ 근로계약기간을 정한 경우에는 “근로개시일”만 기재\",\n        \"before\": \"  ※ 근로계약기간을 정하지 않는 경우에는 “근로개시일”만 기재\",\n        \"changes\": [\n          {\n            \"after\": {},\n            \"before\": {\n              \"않\": 1\n            },\n            \"kind\": \"qualifiers\"\n          }\n        ],\n        \"kinds\": [\n          \"qualifiers\"\n        ],\n        \"paragraph\": 5\n      }\n    ],\n    \"edited\": 3,\n    \"paragraphs\": {\n      \"after\": 295,\n      \"before\": 295\n    },\n    \"pass\": false,\n    \"reason\": \"protected_change\",\n    \"schema\": \"rigorloom/guard-v1\"\n  }\n}\n"
+}

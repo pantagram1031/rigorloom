@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "--root",
+    "<ROOT>",
+    "propose",
+    "--session",
+    "<SESSION_ID>",
+    "--op",
+    "{\"kind\":\"fill_cell\",\"table\":0,\"row\":5,\"col\":1,\"text\":\"한빛\"}"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"propose\",\n  \"ok\": true,\n  \"result\": {\n    \"plan\": {\n      \"backend\": \"preedit\",\n      \"base\": null,\n      \"boundSha256\": \"52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf\",\n      \"createdUtc\": \"<TS>\",\n      \"declares\": null,\n      \"implVersion\": \"0.1.0\",\n      \"ops\": [\n        {\n          \"kind\": \"fill_cell\",\n          \"opId\": \"op-1\",\n          \"params\": {\n            \"col\": 1,\n            \"row\": 5,\n            \"table\": 0,\n            \"text\": \"한빛\"\n          }\n        }\n      ],\n      \"opsHash\": \"3201bd037371a5854056bdc099d7ab01afbce3fb92434f31679b11e484db92b4\",\n      \"planHash\": \"<SHA256>\",\n      \"planId\": \"<ID>\",\n      \"proposer\": \"cli-client\",\n      \"reverses\": null,\n      \"schema\": \"rigorloom/runtime-plan/v0\",\n      \"sessionId\": \"<ID>\",\n      \"state\": \"proposed\"\n    }\n  }\n}\n"
+}

@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "--root",
+    "<ROOT>",
+    "read-region",
+    "--session",
+    "<SESSION_ID>",
+    "--region",
+    "0:5,1"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"read-region\",\n  \"ok\": true,\n  \"result\": {\n    \"documentHash\": \"52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf\",\n    \"regions\": [\n      {\n        \"addr\": {\n          \"col\": 1,\n          \"row\": 5\n        },\n        \"runs\": [],\n        \"table\": 0,\n        \"text\": \"\",\n        \"truncated_preview\": false\n      }\n    ],\n    \"sessionId\": \"<ID>\",\n    \"subject\": {\n      \"kind\": \"session_source\",\n      \"sha256\": \"52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf\"\n    }\n  }\n}\n"
+}
