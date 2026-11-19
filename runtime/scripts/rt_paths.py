@@ -22,6 +22,7 @@ Stdlib only.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import secrets
@@ -175,8 +176,14 @@ def create_new(target: Path, data: bytes) -> None:
             # os.rename refuses to replace an existing file on Windows.
             os.rename(temp, target)
         else:
-            os.link(temp, target)  # fails with EEXIST instead of replacing
-            os.unlink(temp)
+            try:
+                os.link(temp, target)  # fails with EEXIST instead of replacing
+            except OSError as exc:
+                if exc.errno not in _NO_HARDLINKS:
+                    raise
+                _publish_without_link(temp, target)
+            else:
+                os.unlink(temp)
     except FileExistsError as exc:
         _quiet_unlink(temp)
         raise PathRefused("target_exists", f"이미 있는 파일입니다: {target}",
@@ -188,6 +195,26 @@ def create_new(target: Path, data: bytes) -> None:
     except OSError:
         _quiet_unlink(temp)
         raise
+
+
+#: errno values for "this filesystem has no hard links" (exFAT and FAT USB
+#: drives, some network shares). Not a refusal: publish another way.
+_NO_HARDLINKS = frozenset(
+    getattr(errno, name) for name in ("EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EMLINK")
+    if hasattr(errno, name))
+
+
+def _publish_without_link(temp: Path, target: Path) -> None:
+    """No-replace publish where hard links are unavailable.
+
+    Reserve the name with an exclusive create (a file that got there first
+    makes this fail with FileExistsError), then swap our bytes in. Only a
+    program that replaces our empty placeholder in the instant between the
+    two calls could lose its write.
+    """
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    os.close(fd)
+    os.replace(temp, target)
 
 
 def replace_checked(target: Path, data: bytes, expected_sha256: str) -> None:

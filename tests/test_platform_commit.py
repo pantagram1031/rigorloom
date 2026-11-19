@@ -217,3 +217,64 @@ def test_empty_roots_allow_nothing(tmp_path):
     with pytest.raises(PathRefused) as err:
         Roots.of([]).check(str(tmp_path / "a.hwpx"))
     assert err.value.code == "outside_roots"
+
+
+# -- faults ---------------------------------------------------------------------
+
+def test_a_crash_before_publish_leaves_the_target_and_the_candidate(tmp_path, home, monkeypatch):
+    target = tmp_path / "a.hwpx"
+    target.write_bytes(b"person")
+    candidate = _candidate(tmp_path, b"agent")
+
+    real_replace = os.replace
+
+    def killed(src, dst, *args, **kw):
+        if Path(dst) == target:
+            raise OSError("simulated power loss")
+        return real_replace(src, dst, *args, **kw)
+
+    monkeypatch.setattr(os, "replace", killed)
+    with pytest.raises(OSError):
+        rt_commit.commit(candidate, target, expected=sha256_file(target),
+                         by="test", policy="person:tty")
+    assert target.read_bytes() == b"person"
+    assert candidate.read_bytes() == b"agent"
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_a_file_held_open_is_locked_not_half_written(tmp_path, home, monkeypatch):
+    target = tmp_path / "a.hwpx"
+    target.write_bytes(b"person")
+    candidate = _candidate(tmp_path, b"agent")
+
+    real_replace = os.replace
+
+    def sharing_violation(src, dst, *args, **kw):
+        if Path(dst) == target:
+            raise PermissionError(13, "The process cannot access the file")
+        return real_replace(src, dst, *args, **kw)
+
+    monkeypatch.setattr(os, "replace", sharing_violation)
+    with pytest.raises(ToolError) as err:
+        rt_commit.commit(candidate, target, expected=sha256_file(target),
+                         by="test", policy="person:tty")
+    assert err.value.code == "locked"
+    assert target.read_bytes() == b"person" and candidate.exists()
+
+
+def test_create_new_on_a_filesystem_without_hard_links(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("Windows publishes with rename")
+    import errno
+
+    def no_links(*_args, **_kw):
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, "link", no_links)
+    target = tmp_path / KOREAN
+    create_new(target, b"x")
+    assert target.read_bytes() == b"x"
+    with pytest.raises(PathRefused) as err:
+        create_new(target, b"y")
+    assert err.value.code == "target_exists" and target.read_bytes() == b"x"
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]

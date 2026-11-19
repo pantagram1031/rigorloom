@@ -101,7 +101,7 @@ def resolve(ctx: Context, raw: str) -> Ref:
         raise ToolError("unsupported_format",
                         f"'{path.suffix or '(확장자 없음)'}' 파일은 열 수 없습니다.",
                         hint="지원 형식: .hwpx .hwp .docx .md", at=str(path))
-    return ctx.drafts.ref(path)
+    return ctx.drafts.ref(path, scope=ctx.draft_scope)
 
 
 def current(ctx: Context, ref: Ref) -> Input:

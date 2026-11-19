@@ -138,7 +138,8 @@ def _parser() -> argparse.ArgumentParser:
     p = sub.add_parser("new", help="새 문서")
     p.add_argument("markdown", help="마크다운 파일 (- 이면 표준 입력)")
     p.add_argument("--form"); p.add_argument("--name")
-    p.add_argument("-o", "--out"); _common(p)
+    p.add_argument("-o", "--out"); p.add_argument("--force", action="store_true")
+    _common(p)
 
     p = sub.add_parser("preview", help="쪽 그림")
     p.add_argument("path"); p.add_argument("--page", type=int, action="append")
@@ -156,8 +157,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("path"); p.add_argument("--to"); _common(p)
 
     p = sub.add_parser("changes", help="초안과 변경 기록")
-    p.add_argument("action", nargs="?", default="list", choices=("list", "show", "discard"))
-    p.add_argument("path", nargs="?"); p.add_argument("--id"); _common(p)
+    p.add_argument("action", nargs="?", default="list",
+                   choices=("list", "show", "discard", "clear"))
+    p.add_argument("path", nargs="?"); p.add_argument("--id")
+    p.add_argument("--yes", action="store_true", help="clear: 묻지 않고 지움")
+    _common(p)
 
     p = sub.add_parser("undo", help="마지막 저장 되돌리기")
     p.add_argument("path"); _common(p)
@@ -344,12 +348,18 @@ def _codes():
 
 
 def _save_after(ctx: Context, args, path: str) -> dict:
-    """``-o OUT`` on edit/fill/new: stage, then save to OUT."""
-    from rt_tools import call as _call
+    """``-o OUT`` on edit/fill/new: stage in a private draft, save to OUT, and
+    drop that draft; the shared draft of the same file is never touched."""
     req = {"path": path, "to": args.out}
     if getattr(args, "force", False):
         ctx.ask = lambda q, d: True  # the person typed --force for this target
-    return _call(ctx, "save", req)
+    try:
+        return call(ctx, "save", req)
+    finally:
+        try:
+            ctx.drafts.remove(rt_toolset.resolve(ctx, path))
+        except ToolError:
+            pass
 
 
 def _undo(term: Term, args) -> int:
@@ -403,6 +413,40 @@ def _discard(term: Term, args) -> int:
     return _emit(term, args, "changes", envelope)
 
 
+#: What ``changes clear`` removes: only folders Rigorloom made inside its state
+#: directory, never the directory itself (RIGORLOOM_HOME may point anywhere).
+STATE_PARTS = ("drafts", "drafts-discarded", "previews", "exports", "history")
+
+
+def _clear(term: Term, args) -> int:
+    import shutil
+
+    from rt_paths import state_home
+    home = state_home()
+    present = [home / part for part in STATE_PARTS if (home / part).exists()]
+    if not present:
+        if args.json:
+            return _emit(term, args, "changes", {"ok": True, "result": {"cleared": []}})
+        term.line("지울 것이 없습니다.")
+        return EXIT_OK
+    if not args.yes:
+        sys.stderr.write(f"  위치: {home}\n  저장 이력도 지워져 undo를 할 수 없게 됩니다.\n")
+        answer = confirm("초안, 미리보기, 저장 이력을 모두 지울까요?")
+        if answer is not True:
+            code = "declined_by_person" if answer is False else "needs_person"
+            return _emit(term, args, "changes", {"ok": False, "error": ToolError(
+                code, "지우지 않았습니다.",
+                hint="터미널에서 확인하거나 --yes를 붙이세요." if answer is None else None,
+            ).to_dict()})
+    for folder in present:
+        shutil.rmtree(folder)
+    if args.json:
+        return _emit(term, args, "changes",
+                     {"ok": True, "result": {"cleared": [str(p) for p in present]}})
+    term.line(f"지웠습니다: {', '.join(p.name for p in present)} ({home})")
+    return EXIT_OK
+
+
 def main(argv: list[str]) -> int:
     prepare_stdio()
     if wants_product_help(argv):
@@ -421,6 +465,8 @@ def main(argv: list[str]) -> int:
             return _undo(term, args)
         if args.verb == "convert":
             return _convert(term, args)
+        if args.verb == "changes" and args.action == "clear":
+            return _clear(term, args)
         if args.verb == "changes" and args.action == "discard":
             if not args.path:
                 raise _Usage("버릴 초안의 파일을 적어 주세요.")
@@ -430,17 +476,36 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(f"{exc}\n  도움말: rigorloom {argv[0]} --help\n")
         return EXIT_USAGE
     ctx = _context(args)
+    out = getattr(args, "out", None)
+    if out and not getattr(args, "force", False):
+        # -o names a file to create; replacing one takes --force (the old
+        # bytes still go to history first).
+        from rt_paths import PathRefused, canonical
+        try:
+            exists = canonical(out).exists()
+        except PathRefused as exc:
+            return _emit(term, args, args.verb, {"ok": False, "error": ToolError(
+                exc.code, exc.message, at=exc.path).to_dict()})
+        if exists:
+            return _emit(term, args, args.verb, {"ok": False, "error": ToolError(
+                "target_exists", f"이미 있는 파일입니다: {out}",
+                hint="덮어쓰려면 --force를 붙이세요. 이전 판은 이력에 남아 undo로 되돌릴 수 있습니다.",
+                at=out).to_dict()})
+    if out and tool in ("edit", "fill", "new"):
+        import secrets
+        ctx.draft_scope = "cli-" + secrets.token_hex(4)
     if tool in ("edit", "fill") and "base" not in req:
         # A person on the CLI edits what is there now; staleness protects
         # agents that read earlier, not a person typing one command.
-        ctx_read = Context(client="cli", source="draft", _drafts=ctx.drafts)
+        ctx_read = Context(client="cli", source="draft", _drafts=ctx.drafts,
+                           draft_scope=ctx.draft_scope)
         try:
             ref = rt_toolset.resolve(ctx_read, req["path"])
             req["base"] = ctx_read.drafts.input_for(ref).rev
         except ToolError as exc:
             return _emit(term, args, args.verb, {"ok": False, "error": exc.to_dict()})
     envelope = call(ctx, tool, req)
-    if envelope["ok"] and getattr(args, "out", None) and tool in ("edit", "fill", "new"):
+    if envelope["ok"] and out and tool in ("edit", "fill", "new"):
         envelope = _save_after(ctx, args, envelope["result"]["path"])
         return _emit(term, args, "save", envelope)
     return _emit(term, args, args.verb, envelope)

@@ -135,8 +135,13 @@ class DraftStore:
         self.home = Path(home) if home else state_home()
 
     # -- refs and paths ----------------------------------------------------
-    def ref(self, target: str | os.PathLike) -> Ref:
-        """A Ref for a canonical file path or a ``draft:<key>`` string."""
+    def ref(self, target: str | os.PathLike, *, scope: str = "") -> Ref:
+        """A Ref for a canonical file path or a ``draft:<key>`` string.
+
+        ``scope`` gives a file a private draft beside the shared one (a
+        one-shot ``rigorloom edit ... -o OUT`` must not build on, or leave
+        behind, the draft an agent is working on).
+        """
         if is_virtual(target):
             key = str(target)[len(VIRTUAL_PREFIX):]
             if not key or not all(c.isalnum() or c == "-" for c in key):
@@ -146,7 +151,8 @@ class DraftStore:
                                 hint="초안 목록: rigorloom changes")
             return Ref(key, None)
         path = Path(target)
-        return Ref(key_for_path(path), path)
+        key = key_for_path(path)
+        return Ref(f"{key}-{scope}" if scope else key, path)
 
     def dir_for(self, ref: Ref) -> Path:
         return self.home / "drafts" / ref.key
@@ -326,6 +332,12 @@ class DraftStore:
         record["head"] = {"revision": revision, "file": out_name,
                           "sha256": out_sha, "rev": rev_of(out_sha)}
         return changeset
+
+    def remove(self, ref: Ref) -> None:
+        """Delete a draft outright (a one-shot draft whose result was saved)."""
+        folder = self.dir_for(ref)
+        if folder.is_dir():
+            shutil.rmtree(folder, ignore_errors=True)
 
     def discard(self, ref: Ref) -> dict:
         record = self.load(ref)

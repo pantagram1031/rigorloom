@@ -554,3 +554,49 @@ def test_check_without_the_layers_own_style_and_guard(env, monkeypatch):
         {"op": "insert_after", "at": "p1", "markdown": "2026년 11월에 시작한다."}]}))
     r = ok(call(env.ctx(), "check", {"path": str(path2), "only": ["guard"]}))
     assert r["checks"]["guard"]["state"] == "passed" and r["findings"]
+
+
+def test_cli_dash_o_is_one_shot_and_never_replaces_without_force(env, monkeypatch):
+    path = env.doc()
+    # an agent has a draft in progress on the same file
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    agent = ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "에이전트가 고친 문장"}]}))
+    out = env.work / "사람.fdoc"
+    op = json.dumps({"op": "replace", "find": "450,000원", "with": "500,000원"},
+                    ensure_ascii=False)
+    code, _, errs = _cli(["edit", str(path), "--op", op, "-o", str(out)], monkeypatch)
+    assert code == 0, errs
+    made = out.read_text(encoding="utf-8")
+    assert "500,000원" in made and "에이전트가 고친 문장" not in made  # built on the file
+    drafts = ok(call(env.ctx(), "changes", {}))["drafts"]
+    assert len(drafts) == 1 and drafts[0]["rev"] == agent["rev"]  # agent's draft intact
+    # -o onto an existing file: refused, nothing written, no draft left behind
+    code, stdout, errs = _cli(["edit", str(path), "--op", op, "-o", str(out), "--json"],
+                              monkeypatch)
+    assert code == 3 and json.loads(stdout)["error"]["code"] == "target_exists"
+    assert out.read_text(encoding="utf-8") == made
+    assert len(ok(call(env.ctx(), "changes", {}))["drafts"]) == 1
+    # --force replaces (the old bytes go to history), still built on the file
+    code, _, errs = _cli(["edit", str(path), "--op", json.dumps(
+        {"op": "replace", "find": "450,000원", "with": "520,000원"}, ensure_ascii=False),
+        "-o", str(out), "--force"], monkeypatch)
+    assert code == 0, errs
+    assert "520,000원" in out.read_text(encoding="utf-8")
+    kept = list((env.home / "history").rglob("*.fdoc"))
+    assert any(k.read_text(encoding="utf-8") == made for k in kept)
+
+
+def test_changes_clear_removes_only_our_folders(env, monkeypatch):
+    path = env.doc()
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "x"}]}))
+    keep = env.home / "notes.txt"
+    keep.write_text("not ours", encoding="utf-8")
+    code, out, _ = _cli(["changes", "clear", "--json"], monkeypatch)
+    assert code == 3 and json.loads(out)["error"]["code"] == "needs_person"
+    assert (env.home / "drafts").exists()
+    code, out, _ = _cli(["changes", "clear", "--yes", "--json"], monkeypatch)
+    assert code == 0 and not (env.home / "drafts").exists()
+    assert keep.read_text(encoding="utf-8") == "not ours"
