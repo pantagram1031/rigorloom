@@ -8,8 +8,48 @@ HWP engine or to `rt_kit` themselves. The contract is
 behaves.
 
 Every function returns `{"ok": true, ...}` or
-`{"ok": false, "error": {"code", "message", "at"?, "i"?, "step"?, "done"?,
-"candidates"?, "retryable"}}` and never raises.
+`{"ok": false, "error": {"code", "message", "retryable", ...}}` and never
+raises. A wrong argument type (a path that is not a string, ops that are not a
+list, text that is not text) is `bad_input`, never `internal`.
+
+## Errors
+
+| Key | When | Meaning |
+|---|---|---|
+| `code`, `message`, `retryable` | always | see the table below |
+| `at` | when an address or file is involved | the address (or output path) the error is about |
+| `i` | edit | the index of the op in `ops` that failed or was refused |
+| `step` | edit, engine | the index of the failing step in the engine's edit script (not the op) |
+| `done` | edit, engine | the op indexes whose steps had all run before the failing step; nothing was written |
+| `engine_done` | edit, engine | the engine's own record of the steps that ran |
+| `written` | edit | `false`: no file was changed |
+| `candidates` | `bad_address`, `ambiguous_match`, unknown style | addresses (`p3`, `t1/r2/c0`, `h:"..."`, `place:<id>`) to try instead; never empty while the document has paragraphs |
+| `rev` | `stale` | the file's current rev |
+| `total` | `ambiguous_match` | how many matches there were |
+| `expected`, `actual` | `expect_mismatch` | what `expect` said and what is there (text, or a match count) |
+| `reason` | `capability_unavailable` | why: `engine_not_configured`, `engine_path_missing`, `engine_function_missing`, `structural_edit_unsupported`, `hwp_binary_unsupported`, `rasterizer_missing`, `page_layout_unavailable`, ... |
+| `fn`, `engine_fn` | engine errors | the engine function involved |
+
+| Code | Retryable | Means |
+|---|---|---|
+| `bad_input` | no | the request is malformed: wrong types, unknown op, bad regex, an output that is the input (or a link to it), a precondition on an op that has none |
+| `bad_address` | no | an address that is malformed or does not resolve; see `candidates` |
+| `not_found` | no | a missing file, a missing output folder, `replace` text that does not occur, a missing picture |
+| `stale` | yes | `base` is not the file's current rev (also when another writer replaced the file during an in-place edit); read again |
+| `busy` | yes | another writer holds the destination's lock, or Windows refused the replace because the file is open elsewhere; retry |
+| `expect_mismatch` | no | `expect` did not hold |
+| `ambiguous_match` | no | `replace` without `all: true` matched more than once |
+| `conflict` | no | two ops in one edit touch overlapping text or something another op removes |
+| `capability_unavailable` | no | this installation cannot do it; see `reason` |
+| `engine_timeout` | yes | the engine did not answer within `RIGORLOOM_DOC_ENGINE_TIMEOUT` seconds (start, send and wait all count); the worker is restarted |
+| `engine_unavailable` | yes | the engine worker could not start or stopped |
+| `engine_protocol` | no | the engine answered something that does not have the doc_core shape |
+| `internal` | no | a bug; nothing was written |
+
+The codes are declared in `runtime/scripts/rt_codes.py` (`DOC_CORE_CODES`,
+plus `capability_unavailable` in `DOMAIN_CODES`). `bad_input` and
+`bad_address` are usage errors for the CLI (exit 2). An adapter that frames a
+doc_core `internal` for the runtime transport reports `internal_error`.
 
 ## With and without the engine
 
@@ -46,10 +86,51 @@ it does.
 | `place:<id>` | a fill seat from `outline()` |
 | `page:4` | page 4, counted from 1 (engine only) |
 
+Edit results carry `remap`: `{"from", "to"}` for every top-level paragraph,
+table, table row and cell paragraph whose address changed (`to` is `null`
+when it was deleted). An address below a listed one follows its longest listed
+prefix (`t1 -> t2` makes `t1/r0/c3` `t2/r0/c3`); `rt_doc.follow_remap(remap,
+at)` does that. The map is computed from the ops, not guessed, and checked
+against the written document; if the document does not confirm it, the result
+says `remap_approx: true` and the map is a text alignment. When typed text has
+line breaks, the paragraph keeps its address (it holds the first line) and the
+new paragraphs follow it.
+
 The numbering is the engine's own (`hnc_edit`): a test checks paragraph counts,
 paragraph text and cell paragraphs against the engine on every engine fixture.
 An address that does not resolve gives `bad_address` with `candidates`: the
 nearest headings, place ids or valid addresses.
+
+## Fill places
+
+`outline()` lists `places: [{id, at, label, kind, value, filled, page?}]`, and
+`place:<id>` addresses one. Without the engine they are:
+
+- click-here fields (누름틀, `fieldBegin type="CLICK_HERE"`): id = the field's
+  `name`, label = its `Direction` text, kind `field`, at = the paragraph that
+  holds it; `fill` types inside the field;
+- an empty table cell labelled by the cell to its left (else above): id = the
+  label without numbering, spaces and punctuation, kind `cell`;
+- a blank paragraph right under a heading: kind `body`.
+
+With the engine they are its form analysis (`analyze`), plus click-here
+fields it does not list. When two seats would get one id, each is listed as
+`<id>@<at>` and `place:<id>` alone is refused with both as candidates.
+
+`places_complete` says whether the list covers every kind of seat in the
+document; when it is `false`, `places_reason` says what is missing (form
+controls such as check boxes without the engine, a field across paragraphs, a
+failed engine analysis). An id stays with its seat: when rt_doc writes a
+document (`edit`, `fill`), the seats of the document it started from are
+carried into the result through the exact remap and kept in a small cache
+(`RIGORLOOM_DOC_CACHE`, default `~/.cache/rigorloom/doc-core`, keyed by the
+output's sha256). So a filled seat keeps its id and shows its `value` with
+`filled: true`, and relabelling another cell never moves an id. A document
+changed outside rt_doc starts again from what can be discovered.
+
+`outline()` also gives `paragraphs` (the count of top-level paragraphs),
+`paragraph_range` (`"p0..pN"`) and, per table, `title`: the first cell's text,
+at most 40 characters.
 
 ## Reading
 
@@ -75,8 +156,17 @@ rt_doc.edit("보고서.hwpx", [
 ```
 
 - `base` must be the file's current rev, otherwise `stale` and nothing happens.
-- Every op is checked before anything is written: addresses, `expect`
-  (`expect_mismatch`), two ops changing the same text (`conflict`).
+  The file is read once; the rev, the plan and the engine all use those bytes.
+- Every op is checked before anything is written: address kinds, ranges
+  (`p3:2-5` only for `set` and `replace`), `expect` (`expect_mismatch`; only
+  `set`, `replace`, `delete`, `fill` and `table.delete_row` take one, others
+  refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
+  and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
+  or an op on something another op deletes (a paragraph, table or row; one
+  row deleted twice).
+- `replace` with `at` on a paragraph searches that paragraph's own text, not
+  the cells of a table inside it; address the table or cell for those. A text
+  `expect` on `replace` needs `at`.
 - `replace` without `all: true` that matches more than once refuses with
   `ambiguous_match` and lists every match (`p3:10-14`, ...) in `candidates`;
   pass one of them as `at`. An integer `expect` on `replace` is the number of
@@ -102,17 +192,36 @@ rt_doc.edit("보고서.hwpx", [
   after it), `table_split`, `caption_split`, `widow`, `orphan`, `top_blank`,
   plus one `approx` entry naming the fonts the layout substituted.
 - The input is never overwritten unless `in_place=True`; by default the
-  result goes next to it as `<name>.edited.hwpx`. Files are written to a temp
-  file in the target folder and moved into place.
+  result goes next to it as `<name>.edited.hwpx`. An `out` that is the input
+  under another name (a hard or symbolic link) is refused, and an existing
+  symbolic link is never written through; the same holds for `render`,
+  `convert` and `new`.
+- Writing: the whole result (remap, signals, preview data) is built and the
+  output parsed back before anything is published. The file is staged as a
+  unique temp file in the target folder, flushed, and moved into place with
+  `os.replace` under the destination's lock (a thread lock and a
+  `.~<name>.rtdoc-lock` file, held only for the final check and move; a lock
+  older than two minutes is taken as left by a crashed writer). An in-place
+  edit checks the rev again under that lock right before the move, so of two
+  edits from the same base one wins and the other gets `stale`. Writers that
+  do not use rt_doc (Hancom saving the file) are only detected by that check.
+  If something optional fails after the output was built (layout signals),
+  the edit still succeeds and says so in `warnings`.
 - `preview=True` writes to a temp copy and adds `changed: [{i, page, rect}]`.
   `rect` stays `null` until the engine has `geometry`.
 
 ## Rendering and pages
 
-`render(path, pages, scale=2.0, fmt="png")` uses the engine's `png` when it
-has one; otherwise it asks the engine for a PDF of those pages and rasterizes
-it with pypdfium2 (optional; without it PNG rendering is
-`capability_unavailable`). `fmt="pdf"` writes one PDF. `pages(path)` gives the
+`render(path, pages, scale=2.0, fmt="png")` asks the engine for a PDF of
+those pages and rasterizes it with pypdfium2 (optional; without it PNG
+rendering is `capability_unavailable`). Pages come back in the order asked
+for and each is the page it names; a page asked twice or outside the
+document is refused before anything is drawn, and nothing is written unless
+every page drew. `fmt="pdf"` writes one PDF (pages in ascending order; each
+page record has `file` and `index`). `convert(to="png")` with an `out` ending
+in `.png` writes a one-page document to `out` and a longer one to
+`<stem>.p<N>.png` beside it; any other `out` is a folder. Every path returned
+exists. `pages(path)` gives the
 page count, the paragraph each page starts with and that page's signals.
 
 ## Tests
