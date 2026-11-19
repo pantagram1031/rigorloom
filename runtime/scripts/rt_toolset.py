@@ -1392,18 +1392,51 @@ register(Tool(
 # check
 # ---------------------------------------------------------------------------
 
-def _units(ctx: Context, path: Path) -> list[tuple[str, str]]:
-    """(address, text) for every block, in document order, from rt_doc.read."""
+def _units(ctx: Context, path: Path, grids: dict | None = None) -> list[tuple[str, str]]:
+    """(address, text) for every block, in document order, from rt_doc.read.
+    A table's cells also go into ``grids`` by its address when one is given."""
     data = doc_call(ctx.doc.read, str(path))
     units = []
     for block in data.get("blocks", []):
         grid = block.get("cells", block.get("grid"))
         if block.get("kind") == "table" and isinstance(grid, list):
             text = "\n".join("\t".join(str(c) for c in row) for row in grid)
+            if grids is not None:
+                grids[str(block.get("at"))] = grid
         else:
             text = str(block.get("text") or "")
         units.append((str(block.get("at")), text))
     return units
+
+
+def _cell_changes(fidelity, at: str, before: list, after: list) -> list[dict] | None:
+    """A table compared cell by cell, or None when its shape changed.
+
+    A value written into a cell that was empty is a fact added, as a new
+    paragraph is: the person reads it, and it fails nothing. Filling a form
+    therefore no longer reads as every number in the table having changed."""
+    if len(before) != len(after) or any(
+            not isinstance(x, list) or not isinstance(y, list) or len(x) != len(y)
+            for x, y in zip(before, after)):
+        return None
+    out = []
+    for r, (row_b, row_a) in enumerate(zip(before, after)):
+        for c, (x, y) in enumerate(zip(row_b, row_a)):
+            x, y = str(x), str(y)
+            if x == y:
+                continue
+            cell = f"{at}/r{r}/c{c}"
+            if not x.strip():
+                if not fidelity.audit_text("", y)["pass"]:
+                    out.append({"at": cell, "kind": "added", "notice": True,
+                                "before": None, "after": y})
+                continue
+            audit = fidelity.audit_text(x, y)
+            if not audit["pass"]:
+                out.append({"at": cell, "kind": "changed",
+                            "kinds": [ch["kind"] for ch in audit["changes"]],
+                            "before": x, "after": y})
+    return out
 
 
 def _style_findings(ctx: Context, path: Path, pack: str | None) -> list[dict]:
@@ -1447,7 +1480,9 @@ def _guard(ctx: Context, before: Path, after: Path) -> dict:
     import difflib
 
     fidelity = sibling("rt_fidelity")
-    a, b = _units(ctx, before), _units(ctx, after)
+    grids_a: dict = {}
+    grids_b: dict = {}
+    a, b = _units(ctx, before, grids_a), _units(ctx, after, grids_b)
     matcher = difflib.SequenceMatcher(a=[t for _, t in a], b=[t for _, t in b],
                                       autojunk=False)
     changes: list[dict] = []
@@ -1456,7 +1491,12 @@ def _guard(ctx: Context, before: Path, after: Path) -> dict:
             continue
         pairs = min(i2 - i1, j2 - j1) if tag == "replace" else 0
         for k in range(pairs):
-            (_, x), (at, y) = a[i1 + k], b[j1 + k]
+            (at_x, x), (at, y) = a[i1 + k], b[j1 + k]
+            if at_x in grids_a and at in grids_b:
+                cells = _cell_changes(fidelity, at, grids_a[at_x], grids_b[at])
+                if cells is not None:
+                    changes.extend(cells)
+                    continue
             audit = fidelity.audit_text(x, y)
             if not audit["pass"]:
                 change = {"at": at, "kind": "changed",
@@ -1616,6 +1656,8 @@ def _guard_message(change: dict) -> str:
     if change.get("kind") == "removed":
         return f"{_subject(what)} 든 문단이 빠졌습니다: {_clip(change.get('before'))}"
     if change.get("kind") == "added":
+        if _CELL_AT.match(str(change.get("at") or "")):
+            return f"비어 있던 칸에 입력한 값이 맞는지 확인하세요: {_clip(change.get('after'))}"
         return f"새로 쓴 문단에 사실 표현이 있습니다. 근거를 확인하세요: {_clip(change.get('after'))}"
     if change.get("before") is not None and change.get("after") is not None:
         return (f"{_subject(what)} 바뀌었습니다: {_clip(change['before'])} → "

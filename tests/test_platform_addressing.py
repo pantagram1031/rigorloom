@@ -214,3 +214,28 @@ def test_a_seat_the_source_classed_as_a_signature_is_left_for_the_person(env, tm
             "person_only_seat")
     assert e["candidates"] == [f"place:{first}"]
     assert read_text(env, "t0/r0/c1") == "김부장"
+
+
+def test_check_reads_a_value_filled_into_an_empty_seat_as_added(env):
+    # P7 round 1: after a fill, check reported the whole table as "숫자·날짜가
+    # 바뀌었습니다" and the agent had to argue the warning away. A value in a
+    # cell that was empty is a fact added, which the person reads.
+    want = {p["at"]: p["id"] for p in WANT["cell_places"]}
+    ok(call(env.ctx(), "fill", {"path": str(env.doc), "values": {
+        f"place:{want['t0/r0/c1']}": "홍길동", f"place:{want['t0/r1/c1']}": "세종대로 110"}}))
+    r = ok(call(env.ctx(), "check", {"path": str(env.doc), "only": ["guard"]}))
+    assert r["checks"]["guard"]["state"] == "passed", r
+    found = [(f["at"], f["kind"], f["severity"]) for f in r["findings"]]
+    assert found == [("t0/r1/c1", "added", "notice")], found
+    assert r["findings"][0]["message"].startswith("비어 있던 칸에 입력한 값이 맞는지 확인하세요: ")
+
+
+def test_check_still_warns_when_a_filled_value_changes(env, tmp_path, monkeypatch):
+    _filled_elsewhere(env, tmp_path, monkeypatch, [{"op": "set", "at": "t0/r1/c1", "text": "세종대로 110"}])
+    rev = ok(call(env.ctx(), "open", {"path": str(env.doc)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(env.doc), "base": rev, "ops": [
+        {"op": "set", "at": "t0/r1/c1", "text": "세종대로 111"}]}))
+    r = ok(call(env.ctx(), "check", {"path": str(env.doc), "only": ["guard"]}))
+    assert r["checks"]["guard"]["state"] == "failed", r
+    found = [(f["at"], f["kind"], f["severity"]) for f in r["findings"]]
+    assert found == [("t0/r1/c1", "changed", "warning")], found
