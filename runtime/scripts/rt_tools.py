@@ -308,8 +308,36 @@ class Context:
         return self._drafts
 
 
+#: TEST-ONLY. A path to a Python file that stands in for ``rt_doc`` in a
+#: subprocess (the MCP stdio tests run a fake document layer through it). It
+#: is not configuration: nothing in the product sets it, and a warning goes to
+#: stderr whenever it is used.
+TEST_DOC_ENV = "RIGORLOOM_TEST_DOC_MODULE"
+_test_docs: dict[str, Any] = {}
+
+
+def _load_test_doc(path: str):
+    if path not in _test_docs:
+        import importlib.util
+        import sys
+        spec = importlib.util.spec_from_file_location("_rigorloom_test_doc", path)
+        if spec is None or spec.loader is None:
+            raise ToolError("capability_unavailable",
+                            f"{TEST_DOC_ENV}가 가리키는 파일을 불러오지 못했습니다.",
+                            data={"path": path})
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        print(f"rigorloom: {TEST_DOC_ENV} is set (test only): "
+              f"document layer from {path}", file=sys.stderr, flush=True)
+        _test_docs[path] = module
+    return _test_docs[path]
+
+
 def load_doc():
     """The document layer, or a refusal that says what is missing."""
+    seam = os.environ.get(TEST_DOC_ENV)
+    if seam:
+        return _load_test_doc(seam)
     try:
         rt_doc = sibling("rt_doc")
     except ImportError as exc:

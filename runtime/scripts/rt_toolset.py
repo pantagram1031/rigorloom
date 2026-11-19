@@ -101,11 +101,10 @@ def resolve(ctx: Context, raw: str) -> Ref:
         path = ctx.roots.check(raw) if ctx.roots is not None else canonical(raw)
         check_readable(path)
     except PathRefused as exc:
-        hint = None
-        if exc.code == "outside_roots":
-            hint = "이 폴더를 허용하려면 사용자가 MCP 설정에 --allow <폴더>를 추가해야 합니다."
-        elif exc.code == "not_found":
-            hint = "경로를 확인하세요. 상대 경로는 작업 폴더 기준입니다."
+        hint = exc.hint or {
+            "outside_roots": "이 폴더를 허용하려면 사용자가 MCP 설정에 --allow <폴더>를 추가해야 합니다.",
+            "not_found": "경로를 확인하세요. 상대 경로는 작업 폴더 기준입니다.",
+        }.get(exc.code)
         raise ToolError(exc.code, exc.message, hint=hint, at=exc.path) from exc
     fmt = path.suffix.lower().lstrip(".")
     if fmt not in FORMATS_IN:
@@ -165,7 +164,7 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None) -> str
                     else canonical(target, base=base))
         except PathRefused as exc:
             raise ToolError(exc.code, f"이 그림 경로는 사용할 수 없습니다({target}).",
-                            hint="허용한 폴더 안에 있는 그림 파일의 경로를 입력하세요.",
+                            hint=exc.hint or "허용한 폴더 안에 있는 그림 파일의 경로를 입력하세요.",
                             at=exc.path) from exc
         text = str(path).replace("\\", "/")
         if " " in text and not match.group(1).lower().startswith("<img"):
@@ -1210,7 +1209,7 @@ def _target(ctx: Context, raw: str) -> Path:
     try:
         path = ctx.roots.check(raw) if ctx.roots is not None else canonical(raw)
     except PathRefused as exc:
-        raise ToolError(exc.code, exc.message, at=exc.path) from exc
+        raise ToolError(exc.code, exc.message, hint=exc.hint, at=exc.path) from exc
     fmt = path.suffix.lower().lstrip(".")
     if fmt not in FORMATS_OUT:
         raise ToolError("unsupported_format",

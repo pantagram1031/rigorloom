@@ -40,11 +40,15 @@ _WINDOWS_RESERVED = frozenset(
 class PathRefused(Exception):
     """A path the caller may not use. ``code`` is from the tool error set."""
 
-    def __init__(self, code: str, message: str, path: str | None = None):
+    def __init__(self, code: str, message: str, path: str | None = None, *,
+                 hint: str | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.path = path
+        #: What the person can do about it, when the refuser knows better than
+        #: the caller (``no_roots`` names the exact ``--allow`` line).
+        self.hint = hint
 
 
 def sha256_file(path: Path) -> str:

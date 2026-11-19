@@ -48,7 +48,8 @@ except ImportError:  # a checkout, runtime/scripts on sys.path
 #: cli.main sends ``open`` here only when no global --root/--engine-root
 #: precedes it (every legacy ``open`` has one).
 PRODUCT_VERBS = ("open", "outline", "read", "find", "edit", "fill", "new",
-                 "preview", "check", "save", "changes", "undo", "convert", "guide")
+                 "preview", "check", "save", "changes", "undo", "convert", "guide",
+                 "mcp")
 
 LEGACY_GLOBALS = ("--root", "--engine-root")
 LEGACY_ALWAYS = ("install", "doctor", "guard", "style", "engine", "ui", "demo")
@@ -76,6 +77,9 @@ HELP_SECTIONS = (
         ("changes [FILE]", "초안과 저장 기록"),
         ("undo FILE", "마지막 저장 되돌리기"),
         ("guide [주제]", "공문·보고서·양식 작성 안내"),
+    )),
+    ("에이전트", (
+        ("mcp [--allow 폴더]", "MCP 서버(stdio): 에이전트가 이 명령들을 도구로 사용"),
     )),
 )
 HELP_TAIL = """\
@@ -762,6 +766,13 @@ def _clean(term: Term, args) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["mcp"]:
+        # stdio belongs to the protocol: no reconfiguring, no human output.
+        try:
+            from . import rt_mcp
+        except ImportError:
+            import rt_mcp
+        return rt_mcp.main(argv[1:])
     try:
         return _main(argv)
     except BrokenPipeError:
