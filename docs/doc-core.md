@@ -131,7 +131,18 @@ nearest headings, place ids or valid addresses.
   replaces the rest (`성명: ` becomes `성명: 둘째`).
 
 With the engine, a cell whose paragraphs hold a table or picture is not
-listed (fill cannot type there).
+listed (fill cannot type there). An engine whose `outline` takes
+`known=[ids]` is asked for its places that way, with the ids from the lineage
+cache below; an engine without it (or that rejects the argument) is asked for
+`analyze()` as before.
+
+A filled cell and a text cell are the same bytes (amendment 2026-11-19
+05:50Z), so `outline().places` lists a text cell only when its id is known
+(rt_doc filled it; it is then labelled as when it was blank). A label comes
+from the cell to the left, else the one above, never from an empty cell or a
+known filled one. `place:<id>` resolves against the identity hash of every
+cell, listed or not, so a seat filled elsewhere can still be read and filled
+again by its id.
 
 With the engine they are its form analysis (`analyze`), plus click-here
 fields it does not list.

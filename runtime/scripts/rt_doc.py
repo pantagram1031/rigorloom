@@ -1399,6 +1399,7 @@ class Doc:
         self.layout = None
         self.engine_headings = None     # None: no engine analysis (not run, or it failed); [] : it found none
         self.engine_places = None
+        self.engine_outline = None      # places of the engine's outline(known=...), when it has that
         self.page_starts = None         # [flow para index of page n's first paragraph]
         self._efile = None
 
@@ -1542,6 +1543,11 @@ def _ensure_meta(d, e):
                 transient |= bool((r.get("error") or {}).get("retryable"))
                 d.meta_errors.append({"fn": "pages", **(r.get("error") or {})})
         if d.engine_places is None:
+            # an engine whose outline takes known=[ids] (doc-core-api.md, amendment 2026-11-19 05:50Z) lists the
+            # seats this module filled; one without it (or without outline) is asked for analyze() as before
+            o = e.call("outline", f, known=sorted(_known_ids(d)))
+            if o.get("ok") and isinstance(o.get("places"), list):
+                d.engine_outline = [x for x in o["places"] if isinstance(x, dict) and isinstance(x.get("at"), str)]
             a = e.call("analyze", f)
             if a.get("ok") and isinstance(a.get("places", []), list):
                 d.engine_places = [x for x in a.get("places") or [] if isinstance(x, dict)]
@@ -1691,6 +1697,28 @@ def _heading_key(text):
     return "".join(ch for ch in rest if ch.isalnum())
 
 
+def _cell_pid(t, c):
+    return place_id("cell", t.id or t.addr, c.row, c.col)
+
+
+def _known_ids(doc):
+    """The place ids this module carried into these exact bytes (its lineage cache)."""
+    return {x["id"] for x in (_lineage_get(doc.sha) or [])}
+
+
+def _cell_label(t, c, known=()):
+    """A cell seat's label: the text of the cell to its left, else of the cell above, never a seat's (an empty
+    cell, or a filled one whose id is known); at most 40 characters."""
+    for rr, cc in ((c.row, c.col - 1), (c.row - 1, c.col)):
+        lab = t.at(rr, cc) if rr >= 0 and cc >= 0 else None
+        if lab is None or lab is c or _cell_pid(t, lab) in known:
+            continue
+        text = _cell_text(lab).strip()
+        if text:
+            return text if len(text) <= 40 else None
+    return None
+
+
 def _discover(doc):
     """Fill seats found in this document: [{id, at, label, kind, para, cell?, table?}].
 
@@ -1698,7 +1726,24 @@ def _discover(doc):
     and the blank paragraph right under a heading. Seats that share an id (the same label twice) are all kept,
     each as ``<id>@<at>``; the bare id then names no seat (resolve() refuses it with the candidates)."""
     out = []
-    if doc.engine_places is not None:
+    known = _known_ids(doc)
+    if doc.engine_outline is not None:
+        for pl in doc.engine_outline:
+            try:
+                r = _resolve(doc, pl["at"], ("para", "cell", "cellpara"))
+            except DocError:
+                continue
+            rec = {"id": pl.get("id"), "at": pl["at"], "label": pl.get("label"), "kind": pl.get("kind"),
+                   "para": r.get("para") or (r.get("paras") or [None])[0]}
+            if r["kind"] == "cell":
+                c = r["cell"]
+                if not c.paras or any(q.objs for q in c.paras):
+                    continue
+                rec.update(table=r["table"], cell=c, para=c.paras[0], at=cell_address(r["table"], c))
+            elif rec["para"] is None:
+                continue
+            out.append(rec)
+    elif doc.engine_places is not None:
         for pl in doc.engine_places:
             si = doc.section_names.index(pl["section"]) if pl.get("section") in doc.section_names else 0
             if not isinstance(pl.get("id"), str) or not pl["id"]:
@@ -1730,22 +1775,16 @@ def _discover(doc):
         for t in doc.tables:
             if t.addr is None:
                 continue
-            texts = {(c.row, c.col): "\n".join(p.text for p in c.paras).strip() for c in t.cells}
             for c in t.cells:
-                if texts[(c.row, c.col)] or any(p.objs for p in c.paras) or not c.paras:
+                if any(p.objs for p in c.paras) or not c.paras:
                     continue
-                label = None
-                for rr, cc in ((c.row, c.col - 1), (c.row - 1, c.col)):
-                    lab = t.at(rr, cc) if rr >= 0 and cc >= 0 else None
-                    if lab is not None and lab is not c and texts.get((lab.row, lab.col)):
-                        label = texts[(lab.row, lab.col)]
-                        break
-                if not label or len(label) > 40:
+                if _cell_text(c).strip() and _cell_pid(t, c) not in known:
+                    continue            # a text cell: a seat only when this module filled it
+                label = _cell_label(t, c, known)
+                if not label or not _heading_key(label):
                     continue
-                pid = _heading_key(label)
-                if pid:
-                    out.append({"id": pid, "at": cell_address(t, c), "label": label,
-                                "kind": "cell", "table": t, "cell": c, "para": c.paras[0]})
+                out.append({"id": None, "at": cell_address(t, c), "label": label,
+                            "kind": "cell", "table": t, "cell": c, "para": c.paras[0]})
         heads = _headings(doc)
         hk = {h["para"].gp for h in heads}
         for h in heads:
@@ -2120,6 +2159,16 @@ def _resolve(doc, addr, allow):
                 if pl.get("cell") is not None and pl.get("kind") == "cell":
                     out.update(cell=pl["cell"], table=pl["table"], paras=list(pl["cell"].paras))
                 return out
+        for t in doc.tables:                # place:<id> resolves for every cell, listed or not (amendment 05:50Z)
+            if t.addr is None:
+                continue
+            for c in t.cells:
+                if c.paras and c.row is not None and _cell_pid(t, c) == a["id"]:
+                    pl = {"id": a["id"], "at": cell_address(t, c), "label": _cell_label(t, c, _known_ids(doc)),
+                          "kind": "cell", "table": t, "cell": c, "para": c.paras[0], "value": _cell_text(c)}
+                    pl["filled"] = bool(pl["value"].strip())
+                    return {"kind": "place", "place": pl, "para": c.paras[0], "paras": list(c.paras),
+                            "cell": c, "table": t}
         shared = [pl["id"] for pl in pls if pl.get("shared") == a["id"]]
         if shared:
             raise DocError("bad_address", "%d fill places are labelled %r; name one" % (len(shared), a["id"]),

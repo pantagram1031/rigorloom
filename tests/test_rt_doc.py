@@ -730,3 +730,82 @@ def test_unverified_removal_is_refused(no_engine, op):
     with patch.object(D, "_verify", return_value=False):        # without a removal: a flagged guess, as before
         _remap, approx = D._remap_result(doc, doc, D._plan(doc, [{"op": "set", "at": "p3", "text": "x"}]))
     assert approx is True
+
+
+# ---------------------------------------------------------------------------- amendment 2026-11-19 05:50Z
+def test_place_id_resolves_for_every_cell_listed_or_not(no_engine):
+    listed = {p["id"] for p in D.outline(FX_DOC)["places"]}
+    label_cell = D.place_id("cell", "5001", 0, 0)                # a text cell: no seat, still addressable
+    assert label_cell not in listed
+    r = D.read(FX_DOC, "place:%s" % label_cell)
+    assert r["ok"] and r["blocks"][0]["text"] == "성명"
+
+
+def test_a_cell_filled_elsewhere_is_unlisted_but_still_fillable_by_id(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    pid = D.place_id("cell", "5005", 0, 1)
+    out = tmp_path / "filled.hwpx"
+    assert D.edit(src, [{"op": "fill", "place": pid, "text": "홍길동"}], base=D.rev_of(src), out=out)["ok"]
+    listed = {p["id"]: p for p in D.outline(out)["places"]}
+    assert listed[pid]["filled"] is True and listed[pid]["label"] == "성명"     # known: this module filled it
+    D._LINEAGE.clear()
+    os.environ[D.CACHE_ENV] = str(tmp_path / "fresh-cache")              # another machine: nothing is known
+    listed = {p["id"]: p for p in D.outline(out)["places"]}
+    assert pid not in listed                                            # without lineage only empty seats
+    assert _fx_text(out, "place:%s" % pid) == "홍길동"
+    r = D.edit(out, [{"op": "fill", "place": pid, "text": "김철수"}], base=D.rev_of(out),
+               out=tmp_path / "again.hwpx")
+    assert r["ok"] and _fx_text(r["out"], "t2/r0/c1") == "김철수"
+
+
+def test_a_known_filled_cell_is_never_a_label(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    out = tmp_path / "out.hwpx"
+    # empty t2/r1/c0 (주소) so that t2/r1/c1 could only be labelled from above, the filled 성명 seat
+    r = D.edit(src, [{"op": "fill", "place": D.place_id("cell", "5005", 0, 1), "text": "홍길동"},
+                     {"op": "table.set_cells", "at": "t2/r1/c0", "grid": [[""]]}], base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    places = D.outline(out)["places"]
+    assert all(p["label"] != "홍길동" for p in places), places
+    seat = next(p for p in places if p["at"] == "t2/r1/c1")         # carried: labelled as when it was blank
+    assert seat["label"] == "주소"
+
+
+class _OutlineEngine:
+    """A stub engine: outline(known=...) when `known_ok`, else it rejects the argument."""
+
+    def __init__(self, known_ok):
+        self.known_ok, self.seen = known_ok, []
+
+    def call(self, fn, *args, **kw):
+        self.seen.append((fn, kw))
+        if fn == "pages":
+            return {"ok": True, "page_starts": [{"para": 0}], "pages": 1}
+        if fn == "outline":
+            if not self.known_ok:
+                return {"ok": False, "error": {"code": "bad_input", "message": "unexpected keyword 'known'",
+                                               "retryable": False}}
+            return {"ok": True, "places": [
+                {"id": D.place_id("cell", "5005", 0, 1), "at": "t2/r0/c1", "label": "성명", "kind": "cell",
+                 "value": "홍길동", "filled": True},
+                {"id": "x", "at": "t0/r2/c1", "label": "연락", "kind": "cell"},          # holds a table: dropped
+                {"id": "y", "at": "t9/r0/c0", "label": "?", "kind": "cell"}]}            # does not resolve
+        if fn == "analyze":
+            return {"ok": True, "places": [], "headings": []}
+        return {"ok": False, "error": {"code": "capability_unavailable", "message": fn, "retryable": False}}
+
+
+@pytest.mark.parametrize("known_ok", [True, False])
+def test_outline_known_is_feature_detected(no_engine, tmp_path, known_ok):
+    src = _fx_copy(tmp_path)
+    doc = D._load(src, meta=False)
+    D._lineage_put(doc.sha, [{"id": "abc", "at": "t2/r0/c1"}, {"id": "def", "at": "p5"}])
+    e = _OutlineEngine(known_ok)
+    D._ensure_meta(doc, e)
+    assert ("outline", {"known": ["abc", "def"]}) in e.seen               # the lineage ids are passed
+    pls = D._places(doc)
+    if known_ok:
+        assert [p["at"] for p in pls if p["kind"] == "cell"] == ["t2/r0/c1"]     # from the engine's outline
+        assert doc.engine_outline is not None
+    else:
+        assert doc.engine_outline is None and doc.engine_places == []      # today's analyze() path
