@@ -823,3 +823,70 @@ def test_bottom_heading_is_not_a_finding_on_the_last_page():
     assert [(s["page"], s["at"], s["lines_after"]) for s in two if s["kind"] == "bottom_heading"] == [(1, "p7", 1)]
     last = D._signals([{"page": 1}, {"page": 2, "bottom_heading": dict(bh)}], pages={2})
     assert [s for s in last if s["kind"] == "bottom_heading"] == []
+
+
+def _prv(path):
+    with zipfile.ZipFile(path) as z:
+        names = [n for n in z.namelist() if n.lower().startswith("preview/prvimage")]
+        return z.read(names[0]) if names else None
+
+
+def test_preview_edits_are_drafts_and_older_engines_are_asked_without(kit, tmp_path, monkeypatch):
+    # a preview copy is never handed to the user: an engine with edit(draft=True) keeps the source's thumbnail
+    # there instead of drawing page 1 again; one without the option answers bad_input and is asked again without it
+    src = tmp_path / "a.hwpx"
+    shutil.copy(FX_DOC, src)
+    rev = D.open(str(src))["rev"]
+    monkeypatch.setattr(D, "_NO_DRAFT", set())
+    calls = []
+    real = D._Engine.call
+
+    def spy(self, fn, *a, **kw):
+        if fn == "edit":
+            calls.append("draft" in kw)
+        return real(self, fn, *a, **kw)
+    with patch.object(D._Engine, "call", spy):
+        r = D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서 양식 (안)"}], base=rev, preview=True)
+    assert r.get("ok", True) is not False and Path(r["out"]).exists()
+    assert calls[0] is True and calls[-1] in (True, False)
+    if calls == [True]:                         # the engine took draft: the source's thumbnail, not redrawn
+        assert _prv(r["out"]) == _prv(src)
+    else:                                       # an older engine: asked again without draft, once per engine
+        assert calls == [True, False] and D._ENGINE_KEY in D._NO_DRAFT
+    calls.clear()
+    with patch.object(D._Engine, "call", spy):
+        D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서"}], base=rev, out=str(tmp_path / "b.hwpx"))
+    assert calls == [False]                     # a real edit is never a draft
+
+
+def test_older_engine_without_draft_is_asked_once(kit, tmp_path, monkeypatch):
+    src = tmp_path / "a.hwpx"
+    shutil.copy(FX_DOC, src)
+    rev = D.open(str(src))["rev"]
+    monkeypatch.setattr(D, "_NO_DRAFT", set())
+    real, calls = D._Engine.call, []
+
+    def old_engine(self, fn, *a, **kw):
+        if fn == "edit":
+            calls.append("draft" in kw)
+            if "draft" in kw:
+                return {"ok": False, "error": {"code": "bad_input", "message": "edit: unknown option(s) draft; "
+                                                "options: path, script, out, pdf, pdf_pages, since, layout, page_hash"}}
+        return real(self, fn, *a, **kw)
+    with patch.object(D._Engine, "call", old_engine):
+        for t in ("가", "나"):
+            D.edit(str(src), [{"op": "set", "at": "p0", "text": t}], base=rev, preview=True)
+    assert calls == [True, False, False]
+
+
+def test_render_png_through_the_engine_matches_the_pdf_path_pixel_for_pixel(kit, tmp_path):
+    PIL = pytest.importorskip("PIL.Image")
+    src = shutil.copyfile(FX_DOC, tmp_path / "doc.hwpx")
+    a = D.render(str(src), [1], out_dir=str(tmp_path / "a"))
+    with patch.object(D, "_engine_png", lambda *a_, **k: None):
+        b = D.render(str(src), [1], out_dir=str(tmp_path / "b"))
+    pa, pb = a["pages"][0], b["pages"][0]
+    assert {k: pa[k] for k in ("n", "width_pt", "height_pt", "px_w", "px_h")} == \
+        {k: pb[k] for k in ("n", "width_pt", "height_pt", "px_w", "px_h")}
+    ia, ib = PIL.open(pa["file"]).convert("RGB"), PIL.open(pb["file"]).convert("RGB")
+    assert ia.size == ib.size and ia.tobytes() == ib.tobytes()

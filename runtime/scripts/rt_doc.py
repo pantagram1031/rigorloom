@@ -3362,7 +3362,7 @@ def _edit_build(doc, acts, target, preview):
                                "structural_edit_unsupported", at=a.at, i=a.i)
         data = _fallback_apply(doc, order)
     else:
-        data, lay, before = _engine_apply(e, doc, order, target)
+        data, lay, before = _engine_apply(e, doc, order, target, draft=preview)
     newdoc = None
     if target.suffix.lower() == ".hwpx":
         try:
@@ -3405,8 +3405,13 @@ def _edit_build(doc, acts, target, preview):
     return res, data, newdoc
 
 
-def _engine_apply(e, doc, order, target):
-    """Run the ops as one engine script on the Doc's own bytes; (output bytes, layout, pages before)."""
+_NO_DRAFT = set()    # engine folders whose edit() has no draft option (older than hwp-engine #20)
+
+
+def _engine_apply(e, doc, order, target, draft=False):
+    """Run the ops as one engine script on the Doc's own bytes; (output bytes, layout, pages before).
+    draft: a preview copy, never handed to the user: the engine may keep the source's thumbnail instead of drawing
+    page 1 again (edit(draft=True) inside its serve worker). An engine without that option is asked without it."""
     script, owner = [], []
     for a in order:
         for st in a.steps:
@@ -3417,7 +3422,17 @@ def _engine_apply(e, doc, order, target):
     try:
         staged = stage / ("out" + target.suffix.lower())
         before = e.call("pages", f, page_hash=True)
-        r = e.call("edit", f, script, out=str(staged), layout=True, page_hash=True)
+        kw = {"out": str(staged), "layout": True, "page_hash": True}
+        key = _ENGINE_KEY or ""
+        if draft and key not in _NO_DRAFT:
+            r = e.call("edit", f, script, draft=True, **kw)
+            err = r.get("error") or {}
+            if (not r.get("ok") and err.get("code") == "bad_input"
+                    and "unknown option(s) draft" in str(err.get("message"))):
+                _NO_DRAFT.add(key)
+                r = e.call("edit", f, script, **kw)
+        else:
+            r = e.call("edit", f, script, **kw)
         if not r.get("ok"):
             err = r.get("error") or {}
             step = err.get("step")
@@ -3702,6 +3717,10 @@ def _render(doc, sel, scale, fmt, names, pdf_name=None):
     want = sorted(sel)
     stage = Path(tempfile.mkdtemp(prefix="render-", dir=str(_scratch())))
     try:
+        if fmt == "png":
+            got = _engine_png(e, f, sel, want, scale, names, stage)
+            if got is not None:
+                return got
         spdf = stage / "pages.pdf"
         r = e.call("pdf", f, str(spdf), pages=want)
         if not r.get("ok"):
@@ -3749,6 +3768,38 @@ def _render(doc, sel, scale, fmt, names, pdf_name=None):
         return {"pages": res, "via": "engine_pdf+pypdfium2"}
     finally:
         shutil.rmtree(stage, True)
+
+
+def _engine_png(e, f, sel, want, scale, names, stage):
+    """The engine's own png(): the same PDF rasterised by the same pypdfium2, written by the engine's PNG writer
+    (hwp-engine #20: same pixels, faster; inside its worker it reuses the layout an edit just made). None when the
+    engine has no png or it fails, so the caller draws through pdf() + pypdfium2 here as before."""
+    pdir = stage / "png"
+    pdir.mkdir()
+    try:
+        r = e.call("png", f, str(pdir), pages=want, scale=float(scale))
+    except DocError:
+        return None
+    pages_ = r.get("pages") if r.get("ok") else None
+    if not isinstance(pages_, list):
+        return None
+    got = {}
+    for p in pages_:
+        if not isinstance(p, dict) or not isinstance(p.get("file"), str):
+            return None
+        fp = Path(p["file"])
+        if fp.parent.resolve() != pdir.resolve() or not fp.is_file():
+            return None
+        got[p.get("n")] = p
+    if sorted(n for n in got if isinstance(n, int)) != want:
+        return None
+    items, res = [], []
+    for n in sel:
+        p = got[n]
+        items.append((names[n], None, Path(p["file"])))
+        res.append({"n": n, "file": str(names[n]), **{k: p.get(k) for k in ("width_pt", "height_pt", "px_w", "px_h")}})
+    _publish_many(items)
+    return {"pages": res, "via": "engine_png"}
 
 
 def _render_args(doc, pages_, scale, fmt):
