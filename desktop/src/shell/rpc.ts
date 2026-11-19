@@ -26,15 +26,20 @@ export async function listWorkspace(path = ""): Promise<WorkspaceListing | null>
     const url = `/api/workspace/list${path ? `?path=${encodeURIComponent(path)}` : ""}`;
     const res = await fetch(url, { headers: rt.tokenHeaders() });
     if (!res.ok) return null;
-    const body = (await res.json()) as Partial<WorkspaceListing> & { ok?: boolean };
+    // rt_workspace (WPS) answers `rootName` and per-entry `relPath`.
+    type Raw = { name?: unknown; path?: unknown; relPath?: unknown; kind?: unknown };
+    const body = (await res.json()) as { ok?: boolean; root?: unknown; rootName?: unknown; path?: unknown; entries?: Raw[] };
     if (body.ok === false || !Array.isArray(body.entries)) return null;
+    const entries: WorkspaceEntry[] = [];
+    for (const e of body.entries) {
+      const rel = typeof e?.path === "string" ? e.path : typeof e?.relPath === "string" ? e.relPath : null;
+      if (!e || typeof e.name !== "string" || rel === null || (e.kind !== "dir" && e.kind !== "file")) continue;
+      entries.push({ name: e.name, path: rel, kind: e.kind });
+    }
     return {
-      root: String(body.root ?? ""),
+      root: String(body.root ?? body.rootName ?? ""),
       path: String(body.path ?? path),
-      entries: body.entries.filter(
-        (e): e is WorkspaceEntry =>
-          Boolean(e) && typeof e.name === "string" && typeof e.path === "string" && (e.kind === "dir" || e.kind === "file"),
-      ),
+      entries,
     };
   } catch {
     return null;
