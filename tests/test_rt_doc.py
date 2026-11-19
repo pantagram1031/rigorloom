@@ -212,6 +212,30 @@ def test_text_edits_without_engine(no_engine, tmp_path):
     assert {"p1", "p2", "t0/r0/c0", "t5/r13/c2"} <= {c["at"] for c in ch} and len(ch) == 5
 
 
+
+def test_expect_on_a_cell_names_where_the_expected_text_is(no_engine, tmp_path):
+    # P7 round 3: an agent counted rows from 1 (t1/r3/c2 for the row at r2).
+    # The document had not changed, so the refusal says where the expected
+    # text is when exactly one other cell of the same table holds it.
+    src = tmp_path / "a.hwpx"
+    shutil.copyfile(REPO / "tests" / "fixtures" / "doc_core" / "addressing.hwpx", src)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def refused(op):
+        e = D.edit(src, [op], base=rev, out=out)["error"]
+        assert e["code"] == "expect_mismatch" and not out.exists()
+        return e
+    e = refused({"op": "set", "at": "t0/r2/c0", "text": "주소지", "expect": "주소"})
+    assert (e["at"], e["actual"], e["found_at"]) == ("t0/r2/c0", "연락", "t0/r1/c0")
+    e = refused({"op": "delete", "at": "t0/r0/c2", "expect": "끝"})
+    assert e["found_at"] == "t0/r2/c2"
+    e = refused({"op": "char_shape", "at": "t0/r0/c0", "set": {"bold": True}, "expect": "연락"})
+    assert e["found_at"] == "t0/r2/c0"      # checked before the engine is needed
+    # Nowhere in the table, or in more than one cell (the empty ones): no guess.
+    assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": "없는 글"})
+    assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": ""})
+
+
 def test_edit_refusals(no_engine, tmp_path):
     src = _copy(GUARD, tmp_path)
     rev = D.rev_of(src)

@@ -1161,6 +1161,22 @@ def test_ops_that_change_the_same_place_are_named_in_korean():
     assert other["data"]["detail"] == "row 2 is deleted twice"
 
 
+
+def test_an_expect_that_does_not_hold_is_not_called_a_change():
+    # P7 round 3: "읽은 뒤 내용이 바뀌어…" when the base still matched; the row
+    # was off by one. A changed document is `stale`, not this.
+    off = rt_mcp.agent_error({"code": "expect_mismatch", "at": "t1/r3/c2", "i": 0, "retryable": False,
+                              "message": "the text at t1/r3/c2 is not what the op expected",
+                              "expected": "15,200", "actual": "10,800", "found_at": "t1/r2/c2"})
+    assert off["message"] == "t1/r3/c2: 바꾸려는 문구가 예상한 내용과 다릅니다."
+    assert off["hint"] == "예상한 문구는 t1/r2/c2에 있습니다. 그 칸을 바꾸려면 주소를 고쳐 다시 보내세요."
+    plain = rt_mcp.agent_error({"code": "expect_mismatch", "at": "p2", "i": 0, "retryable": False,
+                                "message": "the text at p2 is not what the op expected",
+                                "expected": "nope", "actual": "근로계약기간"})
+    assert plain["message"] == "p2: 바꾸려는 문구가 예상한 내용과 다릅니다."
+    assert plain["hint"] == "아무것도 바꾸지 않았으니 read로 해당 주소의 내용을 확인한 뒤 편집 요청을 다시 보내세요."
+    assert "바뀌" not in plain["message"] + plain["hint"]
+
 def test_document_layer_refusals_reach_the_agent_in_korean():
     error = rt_mcp.agent_error({"code": "bad_address", "message": "p0 is 5 characters long",
                                 "retryable": False, "at": "p0:999-1000",
