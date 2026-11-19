@@ -28,6 +28,7 @@ principles on any Playwright `Page`:
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,9 @@ import pytest
 from _browser_gate import no_browser  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-M_OPUS_WORKSPACE = Path("/home/ubuntu/hub/ax/ui2/out/M-opus/workspace-1440.html")
+# The base mockup the J1 §1 rules were written against is not in the repo.
+# Point RL_BASE_MOCKUP_HTML at its 1440px workspace page to run the self-check.
+BASE_MOCKUP_WORKSPACE = Path(os.environ.get("RL_BASE_MOCKUP_HTML") or "/nonexistent")
 PRETENDARD_FONT = REPO_ROOT / "desktop" / "src" / "assets" / "fonts" / "PretendardVariable.woff2"
 NANUM_FONT = REPO_ROOT / "engine" / "references" / "fonts" / "family-map" / "NanumMyeongjo-Regular.ttf"
 
@@ -1051,16 +1054,16 @@ def test_principle_harness_allows_fact_crimson_and_expanded_details_hash(browser
         page.close()
 
 
-def test_principle_harness_flags_documented_m_opus_defects(browser_instance) -> None:
-    """Run the harness against the raw M-opus mockup HTML and confirm it catches J1 §1 defects."""
-    if not M_OPUS_WORKSPACE.is_file():
-        pytest.skip("M-opus mockup HTML not present")
+def test_principle_harness_flags_documented_base_mockup_defects(browser_instance) -> None:
+    """Run the harness against the raw base mockup HTML and confirm it catches J1 §1 defects."""
+    if not BASE_MOCKUP_WORKSPACE.is_file():
+        pytest.skip("base mockup HTML not present (set RL_BASE_MOCKUP_HTML)")
     page = browser_instance.new_page(viewport={"width": 1440, "height": 900})
     try:
-        page.goto(M_OPUS_WORKSPACE.as_uri(), wait_until="load")
+        page.goto(BASE_MOCKUP_WORKSPACE.as_uri(), wait_until="load")
         report = check_ui_principles(page, mode="workspace", check_paper=False, check_contrast=True)
         rules = report.rules()
-        # M-opus has documented J1 §1 defects: indigo primary button, red strike & green dot,
+        # The base mockup has documented J1 §1 defects: indigo primary button, red strike & green dot,
         # 12.5px / weight 500 typography, 9px pill radius, low-contrast --ink-4, guard sentence.
         for expected in (
             "single_primary_button",
@@ -1071,7 +1074,7 @@ def test_principle_harness_flags_documented_m_opus_defects(browser_instance) -> 
             "text_contrast",
         ):
             assert expected in rules, (
-                f"Expected harness to catch M-opus defect {expected!r}, found rules={rules}"
+                f"Expected harness to catch base mockup defect {expected!r}, found rules={rules}"
             )
     finally:
         page.close()
