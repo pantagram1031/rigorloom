@@ -538,9 +538,8 @@ class McpServer:
             return
         has_id = "id" in message
         mid = message.get("id")
-        reply_id = mid if has_id and _valid_id(mid) else None
         if message.get("jsonrpc") != "2.0":
-            self._send(_error(reply_id, INVALID_REQUEST, 'jsonrpc must be "2.0"'))
+            self._send(_error(None, INVALID_REQUEST, 'jsonrpc must be "2.0"'))
             return
         if has_id and not _valid_id(mid):
             self._send(_error(None, INVALID_REQUEST,
@@ -555,22 +554,22 @@ class McpServer:
                 else:
                     handler(message)
             else:
-                self._send(_error(reply_id, INVALID_REQUEST,
+                self._send(_error(None, INVALID_REQUEST,
                                   "not a request, a notification or a reply"))
             return
         method = message["method"]
         if not isinstance(method, str):
-            self._send(_error(reply_id, INVALID_REQUEST, "method must be a string"))
+            self._send(_error(None, INVALID_REQUEST, "method must be a string"))
             return
         if not has_id:
             self._notification(method, message.get("params"))
             return
+        if "params" in message and not isinstance(message["params"], dict):
+            # MCP params are always an object; null is not "no params".
+            self._send(_error(mid, INVALID_PARAMS, "params must be an object"))
+            return
         if method == "ping":
-            params = message.get("params")
-            if params is not None and not isinstance(params, dict):
-                self._send(_error(mid, INVALID_PARAMS, "params must be an object"))
-            else:
-                self._send(_result(mid, {}))
+            self._send(_result(mid, {}))
             return
         self._backlog.append(message)
 

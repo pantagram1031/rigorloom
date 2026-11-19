@@ -259,8 +259,15 @@ def test_frames_are_newline_delimited_json_rpc(env):
     assert s.wait_for(lambda f: f.get("error", {}).get("code") == -32700)["id"] is None
     s.cin.write(b"[1, 2]\n")
     assert s.wait_for(lambda f: f.get("error", {}).get("code") == -32600)["id"] is None
+    # A malformed envelope is answered with id null (JSON-RPC 2.0, 5.1),
+    # even when an id can be read from it.
     s.send({"jsonrpc": "1.0", "id": 77, "method": "tools/list"})
-    assert s.response(77)["error"]["code"] == -32600
+    bad = s.wait_for(lambda f: f.get("error", {}).get("code") == -32600)
+    assert bad["id"] is None
+    s.send({"jsonrpc": "2.0", "id": 78})
+    assert s.wait_for(lambda f: f.get("error", {}).get("code") == -32600)["id"] is None
+    s.send({"jsonrpc": "2.0", "id": 79, "method": "ping", "params": None})
+    assert s.response(79)["error"]["code"] == -32602
     s.cin.write(b'{"jsonrpc":"2.0","id":5,"method":"tools/list"}\n')
     assert "tools" in s.response(5)["result"]
     s.send({"jsonrpc": "2.0", "id": [1], "result": {}})  # a reply nobody asked for
