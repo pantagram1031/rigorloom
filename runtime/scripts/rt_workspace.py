@@ -524,14 +524,16 @@ def _service_from_bridge(bridge: Any) -> WorkspaceService:
         prefs_fn = getattr(bridge, "get_prefs", None)
         if callable(prefs_fn):
             prefs = prefs_fn() or {}
-            docs_root = prefs.get("documentsRoot")
-            if isinstance(docs_root, str) and docs_root.strip():
-                p = Path(docs_root).expanduser()
-                if p.is_dir():
-                    return p
-        current_fn = getattr(bridge, "current_root", None)
-        if callable(current_fn):
-            return Path(current_fn())
+            # `docFolder` is the key the shell's 문서 폴더 setting writes;
+            # `documentsRoot` is accepted as the earlier name.
+            for key in ("docFolder", "documentsRoot"):
+                docs_root = prefs.get(key)
+                if isinstance(docs_root, str) and docs_root.strip():
+                    p = Path(docs_root).expanduser()
+                    if p.is_dir():
+                        return p
+        # No 문서 폴더 chosen: nothing is listed. The runtime's own store (the
+        # bridge root, with sessions and candidates) is never offered as one.
         raise _uniform_not_found()
 
     return WorkspaceService(resolve_bridge_root)
@@ -636,8 +638,43 @@ def handle_post(
     raise WorkspaceError("not_found", f"unknown workspace endpoint {path}", status=HTTPStatus.NOT_FOUND)
 
 
-def register_routes(bridge: Any) -> dict[str, dict[str, Callable[..., Any]]]:
-    """Optional route registration dictionary for `rt_ui.py`'s extension hook."""
+def _register_on_router(router: Any) -> None:
+    """Register on `rt_ui.ExtensionRouter`: handlers are `handler(bridge, query|body)`.
+
+    A WorkspaceError becomes the router's BridgeError with the same status and
+    code, so a path outside the root and a missing one still answer the same
+    404 body through `rigorloom ui`.
+    """
+    bridge_error = router.BridgeError
+
+    def wrap(fn: Callable[..., Any], route: str) -> Callable[[Any, Any], Any]:
+        def handler(bridge: Any, arg: Any) -> Any:
+            try:
+                status, payload = fn(_service_from_bridge(bridge), route, arg)
+            except WorkspaceError as exc:
+                raise bridge_error(exc.code, exc.message, status=exc.status) from None
+            if not isinstance(payload, dict):
+                # Raw bytes are the standalone server's; the bridge answers JSON only.
+                raise bridge_error("invalid_params", "use format=json through the bridge", status=HTTPStatus.BAD_REQUEST)
+            return payload
+
+        return handler
+
+    for route in ("/api/workspace/list", "/api/workspace/stat", "/api/workspace/read"):
+        router.get(route, wrap(handle_get, route))
+        router.post(route, wrap(handle_post, route))
+
+
+def register_routes(bridge: Any) -> dict[str, dict[str, Callable[..., Any]]] | None:
+    """Route registration for `rt_ui.py`'s extension hook.
+
+    `rigorloom ui` passes its ExtensionRouter (`router.get/post(path, handler)`),
+    and the routes are registered on it. Given a bridge instead, the route
+    table is returned (the standalone server and the module's own tests).
+    """
+    if hasattr(bridge, "get_routes") and hasattr(bridge, "post_routes") and hasattr(bridge, "BridgeError"):
+        _register_on_router(bridge)
+        return None
     service = _service_from_bridge(bridge)
     return {
         "get": {

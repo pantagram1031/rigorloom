@@ -494,3 +494,50 @@ def test_extension_hook_integrates_with_bridge_application(tmp_path: Path):
     # Non-workspace path returns None so rt_ui continues routing normally
     assert rt_workspace.handle_get(app, "/api/prefs", {}) is None
     assert rt_workspace.handle_post(app, "/api/prefs", {}) is None
+
+
+def test_workspace_routes_through_the_rigorloom_ui_extension_hook(tmp_path: Path):
+    """The same routes, registered by rt_ui's own hook (`register_routes(router)`)."""
+    import http.client
+    import threading
+
+    docs_dir = tmp_path / "문서"
+    docs_dir.mkdir()
+    (docs_dir / "공문.hwpx").write_bytes(b"PK\x03\x04demo")
+    (docs_dir / "메모.txt").write_text("x", encoding="utf-8")
+    prefs = tmp_path / "prefs.json"
+    srv = rt_ui.create_bridge_server(root=tmp_path / "rt-root", port=0, prefs_path=prefs)
+    assert "rt_workspace" in srv.extensions.modules
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+
+    def get(path: str, token: object = ...):
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+        headers = {} if token is None else {"X-Rigorloom-Token": srv.token if token is ... else str(token)}
+        try:
+            conn.request("GET", path, headers=headers)
+            resp = conn.getresponse()
+            return resp.status, json.loads(resp.read().decode("utf-8") or "{}")
+        finally:
+            conn.close()
+
+    try:
+        # No 문서 폴더 chosen: nothing is listed, and the runtime store is never offered.
+        status, body = get("/api/workspace/list")
+        assert status == 404, body
+        # The shell's setting writes `docFolder`.
+        srv.bridge.patch_prefs({"patch": {"docFolder": str(docs_dir)}})
+        status, body = get("/api/workspace/list")
+        assert status == 200, body
+        assert [e["name"] for e in body["entries"]] == ["공문.hwpx"]
+        assert body["entries"][0]["relPath"] == "공문.hwpx"
+        # Same token rule as every route.
+        assert get("/api/workspace/list", token=None)[0] == 403
+        assert get("/api/workspace/list", token="wrong")[0] == 403
+        # Outside the root and missing answer the same 404 body.
+        outside = get("/api/workspace/stat?path=..%2F..%2Fetc%2Fpasswd")
+        missing = get("/api/workspace/stat?path=%EC%97%86%EC%9D%8C.hwpx")
+        assert outside[0] == missing[0] == 404
+        assert outside[1] == missing[1]
+    finally:
+        srv.shutdown_bridge()
