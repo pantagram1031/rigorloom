@@ -1510,7 +1510,8 @@ def _hwp_to_hwpx(e, data: bytes, sha: str) -> bytes:
 def _load(path, *, meta=True):
     """The Doc of a file's current bytes (cached by path, content and engine). The rev it carries is the rev of
     exactly the bytes it parsed. With meta, the engine's layout and form analysis are loaded once per Doc, so
-    every function resolves addresses against the same metadata whatever ran before."""
+    every function resolves addresses against the same metadata whatever ran before. meta="layout" loads only
+    the layout (render and geometry take page numbers, not addresses: no outline/analyze for a preview copy)."""
     p = _need_file(path)
     data = _read_bytes(p)
     fmt = _format_of_bytes(data[:8], p)
@@ -1534,18 +1535,19 @@ def _load(path, *, meta=True):
             while len(_DOCS) > _DOCS_MAX:
                 _DOCS.pop(next(iter(_DOCS)))
     if meta and e is not None:
-        _ensure_meta(d, e)
+        _ensure_meta(d, e, places=meta != "layout")
     return d
 
 
-def _ensure_meta(d, e):
+def _ensure_meta(d, e, places=True):
     """Layout (pages) and form analysis (headings, places) from the engine, once per Doc. A transient failure
     (timeout, worker gone) is retried by the next call; any other failure is kept, and the Doc then uses the
-    built-in analysis, the same for every caller."""
-    if d.meta_done:
+    built-in analysis, the same for every caller. places=False: the layout only (the rest waits for a caller
+    that resolves addresses)."""
+    if d.meta_done or (not places and d.layout is not None):
         return
     with d.meta_lock:
-        if d.meta_done:
+        if d.meta_done or (not places and d.layout is not None):
             return
         f = str(d.engine_file())
         transient = False
@@ -1557,7 +1559,10 @@ def _ensure_meta(d, e):
                                  if isinstance(s, dict) and isinstance(s.get("para"), int) and s["para"] >= 0] or [0]
             else:
                 transient |= bool((r.get("error") or {}).get("retryable"))
-                d.meta_errors.append({"fn": "pages", **(r.get("error") or {})})
+                if places:
+                    d.meta_errors.append({"fn": "pages", **(r.get("error") or {})})
+        if not places:
+            return
         if d.engine_places is None:
             # an engine whose outline takes known=[ids] (doc-core-api.md, amendment 2026-11-19 05:50Z) lists the
             # seats this module filled; one without it (or without outline) is asked for analyze() as before
@@ -3405,7 +3410,23 @@ def _edit_build(doc, acts, target, preview):
     return res, data, newdoc
 
 
-_NO_DRAFT = set()    # engine folders whose edit() has no draft option (older than hwp-engine #20)
+_NO_OPT = set()      # (engine folder, fn, option): options an older engine does not take (before hwp-engine #20)
+
+
+def _call_opt(e, fn, args, kw, opt):
+    """e.call(fn, *args, **kw, **opt) when the engine takes those options, else without them: an engine that
+    answers bad_input "unknown option(s) <name>" is asked again without, and not offered them again."""
+    key = _ENGINE_KEY or ""
+    names = tuple(sorted(opt))
+    if not opt or (key, fn, names) in _NO_OPT:
+        return e.call(fn, *args, **kw)
+    r = e.call(fn, *args, **kw, **opt)
+    err = r.get("error") or {}
+    if (not r.get("ok") and err.get("code") == "bad_input"
+            and any("unknown option(s) %s" % n in str(err.get("message")) for n in names)):
+        _NO_OPT.add((key, fn, names))
+        r = e.call(fn, *args, **kw)
+    return r
 
 
 def _engine_apply(e, doc, order, target, draft=False):
@@ -3422,17 +3443,8 @@ def _engine_apply(e, doc, order, target, draft=False):
     try:
         staged = stage / ("out" + target.suffix.lower())
         before = e.call("pages", f, page_hash=True)
-        kw = {"out": str(staged), "layout": True, "page_hash": True}
-        key = _ENGINE_KEY or ""
-        if draft and key not in _NO_DRAFT:
-            r = e.call("edit", f, script, draft=True, **kw)
-            err = r.get("error") or {}
-            if (not r.get("ok") and err.get("code") == "bad_input"
-                    and "unknown option(s) draft" in str(err.get("message"))):
-                _NO_DRAFT.add(key)
-                r = e.call("edit", f, script, **kw)
-        else:
-            r = e.call("edit", f, script, **kw)
+        r = _call_opt(e, "edit", (f, script), {"out": str(staged), "layout": True, "page_hash": True},
+                      {"draft": True} if draft else {})
         if not r.get("ok"):
             err = r.get("error") or {}
             step = err.get("step")
@@ -3777,7 +3789,9 @@ def _engine_png(e, f, sel, want, scale, names, stage):
     pdir = stage / "png"
     pdir.mkdir()
     try:
-        r = e.call("png", f, str(pdir), pages=want, scale=float(scale))
+        # notes="layout": only the chosen pages are drawn (render reports no approx; open()/pages() give the
+        # document's own)
+        r = _call_opt(e, "png", (f, str(pdir)), {"pages": want, "scale": float(scale)}, {"notes": "layout"})
     except DocError:
         return None
     pages_ = r.get("pages") if r.get("ok") else None
@@ -3824,7 +3838,7 @@ def render(path, pages, *, scale=2.0, fmt="png", out_dir=None):  # noqa: A002 - 
     """{rev, pages: [{n, file, width_pt, height_pt, px_w, px_h}]} in the order asked for; fmt="pdf" writes one
     PDF ({rev, file, pages: [{n, file, index, width_pt, height_pt}]}, pages in the PDF's ascending order).
     Files are ``<stem>.p<N>.png`` / ``<stem>.pdf`` in out_dir (default: a private scratch folder)."""
-    doc = _load(path)
+    doc = _load(path, meta="layout")
     _need_engine("render")
     sel = _render_args(doc, pages, scale, fmt)
     rdir = _scratch_sub("render")
@@ -3880,7 +3894,7 @@ def _one_page(doc, page):
 @_api
 def geometry(path, page):
     """{rev, page, width_pt, height_pt, boxes: [{at, kind, rect, text?, baseline?, xs?}]} (engine)."""
-    doc = _load(path)
+    doc = _load(path, meta="layout")
     _need_engine("geometry")
     return _passthrough("geometry", doc, _one_page(doc, page))
 

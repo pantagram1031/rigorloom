@@ -837,7 +837,7 @@ def test_preview_edits_are_drafts_and_older_engines_are_asked_without(kit, tmp_p
     src = tmp_path / "a.hwpx"
     shutil.copy(FX_DOC, src)
     rev = D.open(str(src))["rev"]
-    monkeypatch.setattr(D, "_NO_DRAFT", set())
+    monkeypatch.setattr(D, "_NO_OPT", set())
     calls = []
     real = D._Engine.call
 
@@ -853,7 +853,7 @@ def test_preview_edits_are_drafts_and_older_engines_are_asked_without(kit, tmp_p
     if not old_engine:                          # the engine took draft: the source's thumbnail, not redrawn
         assert calls == [True] and _prv(r["out"]) == _prv(src)
     else:                                       # an older engine: asked again without draft, once per engine
-        assert (D._ENGINE_KEY or "") in D._NO_DRAFT
+        assert ((D._ENGINE_KEY or ""), "edit", ("draft",)) in D._NO_OPT
     calls.clear()
     with patch.object(D._Engine, "call", spy):
         b = D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서 양식 (안)"}], base=rev,
@@ -871,7 +871,7 @@ def test_older_engine_without_draft_is_asked_once(kit, tmp_path, monkeypatch):
     src = tmp_path / "a.hwpx"
     shutil.copy(FX_DOC, src)
     rev = D.open(str(src))["rev"]
-    monkeypatch.setattr(D, "_NO_DRAFT", set())
+    monkeypatch.setattr(D, "_NO_OPT", set())
     real, calls = D._Engine.call, []
 
     def old_engine(self, fn, *a, **kw):
@@ -901,3 +901,40 @@ def test_render_png_through_the_engine_matches_the_pdf_path_pixel_for_pixel(kit,
         {k: pb[k] for k in ("n", "width_pt", "height_pt", "px_w", "px_h")}
     ia, ib = PIL.open(pa["file"]).convert("RGB"), PIL.open(pb["file"]).convert("RGB")
     assert ia.size == ib.size and ia.tobytes() == ib.tobytes()
+
+
+def test_older_engine_png_without_notes_is_asked_once(kit, tmp_path, monkeypatch):
+    src = shutil.copyfile(FX_DOC, tmp_path / "doc.hwpx")
+    monkeypatch.setattr(D, "_NO_OPT", set())
+    real, calls = D._Engine.call, []
+
+    def old_engine(self, fn, *a, **kw):
+        if fn == "png":
+            calls.append(kw.get("notes"))
+            if "notes" in kw:
+                return {"ok": False, "error": {"code": "bad_input", "message": "png: unknown option(s) notes; "
+                                                "options: hwpx, out_dir, pages, scale"}}
+        return real(self, fn, *a, **kw)
+    with patch.object(D._Engine, "call", old_engine):
+        a = D.render(str(src), [1], out_dir=str(tmp_path / "a"))
+        b = D.render(str(src), [1], out_dir=str(tmp_path / "b"))
+    assert calls == ["layout", None, None] and a["via"] == b["via"] == "engine_png"
+
+
+def test_render_and_geometry_of_a_preview_copy_skip_the_form_analysis(kit, tmp_path):
+    # render/geometry take page numbers, not addresses: a fresh preview copy is not sent through outline/analyze
+    src = shutil.copyfile(FX_DOC, tmp_path / "doc.hwpx")
+    rev = D.open(str(src))["rev"]
+    r = D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서 (안)"}], base=rev, preview=True)
+    real, calls = D._Engine.call, []
+
+    def spy(self, fn, *a, **kw):
+        calls.append(fn)
+        return real(self, fn, *a, **kw)
+    with patch.object(D._Engine, "call", spy):
+        D.render(r["out"], [1])
+        D.geometry(r["out"], 1)
+    assert "analyze" not in calls and "outline" not in calls
+    with patch.object(D._Engine, "call", spy):
+        D.read(r["out"])                        # an address-resolving call still loads the form analysis
+    assert "analyze" in calls
