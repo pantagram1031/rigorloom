@@ -47,6 +47,7 @@ ERROR_EXIT: dict[str, int] = {
     "target_exists": 3,
     "target_changed": 3,
     "locked": 3,
+    "draft_busy": 3,
     "needs_person": 3,
     "no_draft": 3,
     "capability_unavailable": 3,
@@ -313,6 +314,22 @@ def load_doc():
     return rt_doc
 
 
+def _safe(value: Any) -> Any:
+    """Every string in a result or error, without escape, control or bidi characters.
+
+    Document text reaches results in many places (blocks, find context, error
+    candidates, check findings, labels); cleaning the whole envelope here means
+    no tool can forget to.
+    """
+    if isinstance(value, str):
+        return sibling("rt_term").safe_text(value)
+    if isinstance(value, dict):
+        return {k: _safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_safe(v) for v in value]
+    return value
+
+
 def call(ctx: Context, name: str, args: dict | None) -> dict:
     """Validate, run, and wrap. Never raises; returns the envelope.
 
@@ -325,9 +342,9 @@ def call(ctx: Context, name: str, args: dict | None) -> dict:
         result = tool.run(ctx, args)
         if not isinstance(result, dict):
             raise ToolError("internal", f"{name}: 도구가 잘못된 형식으로 결과를 보냈습니다.")
-        return {"ok": True, "result": result}
+        return {"ok": True, "result": _safe(result)}
     except ToolError as exc:
-        return {"ok": False, "error": exc.to_dict()}
+        return {"ok": False, "error": _safe(exc.to_dict())}
     except Exception as exc:  # noqa: BLE001 - a bug must not look like a verdict
         # The trace names local paths; it goes out only when a person asked.
         trace = None

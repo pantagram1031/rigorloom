@@ -48,7 +48,9 @@ except ImportError:  # a checkout, runtime/scripts on sys.path
 
 DRAFT_SCHEMA = "rigorloom/draft/1"
 VIRTUAL_PREFIX = "draft:"
-LOCK_TIMEOUT_S = 30.0
+LOCK_TIMEOUT_S = 2.0
+#: runtime/schemas/changeset.schema.json; the UI thread codes against it.
+CHANGESET_SCHEMA = "rigorloom.changeset/1"
 LOCK_STALE_S = 300.0
 
 
@@ -122,7 +124,7 @@ class _Lock:
                         pass
                     continue
                 if time.monotonic() > deadline:
-                    raise ToolError("locked", "다른 작업이 이 초안을 고치는 중입니다.",
+                    raise ToolError("draft_busy", "다른 작업이 이 초안을 고치는 중입니다.",
                                     hint="잠시 뒤 다시 시도하세요.", retryable=True)
                 time.sleep(0.05)
 
@@ -258,17 +260,18 @@ class DraftStore:
             head = record.get("head")
             if head:
                 in_path, in_rev, revision = folder / head["file"], head["rev"], head["revision"]
-                base_kind = "candidate"
+                base_kind, base_sha = "candidate", head["sha256"]
             else:
                 assert ref.source is not None and source_sha is not None
                 in_path, in_rev, revision = ref.source, rev_of(source_sha), 0
-                base_kind = "source"
+                base_kind, base_sha = "source", source_sha
             if base is not None and base != in_rev:
                 raise ToolError(
                     "stale",
                     f"읽은 판({base})과 현재 판({in_rev})이 다릅니다.",
                     hint="고칠 문서를 다시 읽고 그때 나온 판을 입력하세요.",
-                    retryable=True, data={"base": base, "current": in_rev})
+                    retryable=True, data={"base": base, "current": in_rev,
+                                          "reason": "superseded_by_newer_candidate"})
             out_name = f"rev-{revision + 1:04d}{_work_suffix(in_path)}"
             out_path = folder / out_name
             result = apply(in_path, in_rev, out_path)
@@ -277,7 +280,7 @@ class DraftStore:
             changeset = self._append(record, kind=kind, ops=ops, author=author,
                                      provenance=provenance, base_kind=base_kind,
                                      base_revision=revision, base_rev=in_rev,
-                                     out_name=out_name, out_path=out_path,
+                                     base_sha=base_sha, out_name=out_name, out_path=out_path,
                                      result=result)
             self.write(ref, record)
             return {"changeset": changeset, "draft": summary(record),
@@ -303,7 +306,7 @@ class DraftStore:
                 raise ToolError("internal", "새 문서 파일을 만들지 못했습니다.")
             changeset = self._append(record, kind="new", ops=[], author=author,
                                      provenance=provenance, base_kind="empty",
-                                     base_revision=0, base_rev=None,
+                                     base_revision=0, base_rev=None, base_sha=None,
                                      out_name=out_name, out_path=out_path,
                                      result=result)
             self.write(ref, record)
@@ -313,17 +316,19 @@ class DraftStore:
     @staticmethod
     def _append(record: dict, *, kind: str, ops: list, author: str,
                 provenance: dict, base_kind: str, base_revision: int,
-                base_rev: str | None, out_name: str, out_path: Path,
-                result: dict) -> dict:
+                base_rev: str | None, base_sha: str | None, out_name: str,
+                out_path: Path, result: dict) -> dict:
         out_sha = sha256_file(out_path)
         revision = base_revision + 1
         changeset = {
+            "schema": CHANGESET_SCHEMA,
             "id": f"cs-{revision:04d}-{secrets.token_hex(3)}",
             "kind": kind,
             "created": _now(),
             "author": author,
             "provenance": provenance,
-            "base": {"kind": base_kind, "revision": base_revision, "rev": base_rev},
+            "base": {"kind": base_kind, "revision": base_revision, "rev": base_rev,
+                     "sha256": base_sha},
             "ops": ops,
             "revision": revision,
             "rev": rev_of(out_sha),

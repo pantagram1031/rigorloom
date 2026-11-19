@@ -70,18 +70,22 @@ def _refusal(exc: PathRefused) -> ToolError:
 
 
 def commit(candidate: Path, target: Path, *, expected: str, by: str,
-           policy: str, home: Path | None = None) -> dict:
+           policy: str, home: Path | None = None,
+           provenance: dict | None = None) -> dict:
     """Publish ``candidate``'s bytes at ``target``.
 
     ``expected`` is ``"absent"`` (create only) or the full sha256 the target
     must still have. Returns a receipt; raises ToolError and writes nothing
-    when the binding does not hold.
+    when the binding does not hold. ``provenance`` (``{"mock": bool, ...}``)
+    goes into the history entry and the receipt unchanged, so a test-only
+    proposal stays labelled wherever its bytes end up.
     """
     home = Path(home) if home else state_home()
     data = candidate.read_bytes()
     new_sha = sha256_bytes(data)
     entry = {"at": _now(), "target": str(target), "newSha256": new_sha,
-             "by": by, "policy": policy, "oldSha256": None, "kept": None}
+             "by": by, "policy": policy, "oldSha256": None, "kept": None,
+             "provenance": provenance or {"mock": False}}
     try:
         if expected == ABSENT:
             create_new(target, data)
@@ -108,7 +112,7 @@ def commit(candidate: Path, target: Path, *, expected: str, by: str,
     _save_index(folder, entries)
     return {"target": str(target), "sha256": new_sha, "replaced": entry["oldSha256"],
             "policy": policy, "by": by, "at": entry["at"],
-            "undo": entry["oldSha256"] is not None}
+            "provenance": entry["provenance"], "undo": entry["oldSha256"] is not None}
 
 
 def last_commit(target: Path, home: Path | None = None) -> dict | None:

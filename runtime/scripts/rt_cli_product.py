@@ -187,9 +187,13 @@ def _parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("changes", help="초안과 변경 기록")
     p.add_argument("action", nargs="?", default="list",
-                   choices=("list", "show", "discard", "clear"))
+                   choices=("list", "show", "discard", "clean"))
     p.add_argument("path", nargs="?"); p.add_argument("--id")
-    p.add_argument("--yes", action="store_true", help="clear: 묻지 않고 지움")
+    p.add_argument("--older-than", type=int, metavar="일", default=RETENTION_DAYS,
+                   help=f"clean: 이 날수보다 오래된 것만 지움 (기본 {RETENTION_DAYS}일)")
+    p.add_argument("--all", action="store_true",
+                   help="clean: 저장 안 한 초안까지 모두 지움")
+    p.add_argument("--yes", action="store_true", help="clean: 묻지 않고 지움")
     _common(p)
 
     p = sub.add_parser("undo", help="마지막 저장 되돌리기")
@@ -349,6 +353,10 @@ def _context(args) -> Context:
             lines.append(f"  사람이 아직 검토하지 않은 변경 묶음: {detail['unreviewed']}개")
         if detail.get("lossy"):
             lines.append("  변환하며 빠지는 것: " + ", ".join(detail["lossy"]))
+        if detail.get("fontsSubstituted"):
+            pairs = ", ".join(f"{s.get('want')} → {s.get('got')}"
+                              for s in detail["fontsSubstituted"])
+            lines.append(f"  글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)")
         lines.append(f"  되돌리기: {detail.get('undo')}")
         sys.stderr.write("\n".join(lines[1:]) + "\n")
         return confirm(lines[0])
@@ -451,35 +459,92 @@ def _discard(term: Term, args) -> int:
     return _emit(term, args, "changes", envelope)
 
 
-#: What ``changes clear`` removes: only folders Rigorloom made inside its state
-#: directory, never the directory itself (RIGORLOOM_HOME may point anywhere).
+#: What ``changes clean`` looks in: only folders Rigorloom made inside its
+#: state directory, never the directory itself (RIGORLOOM_HOME may point anywhere).
 STATE_PARTS = ("drafts", "drafts-discarded", "previews", "exports", "history")
+#: The state directory's retention limit: ``changes clean`` removes what has
+#: not changed for this many days, except drafts with unsaved work.
+RETENTION_DAYS = 30
 
 
-def _clear(term: Term, args) -> int:
+def _newest_mtime(path: Path) -> float:
+    newest = path.lstat().st_mtime
+    if path.is_dir() and not path.is_symlink():
+        for child in path.rglob("*"):
+            try:
+                newest = max(newest, child.lstat().st_mtime)
+            except OSError:
+                continue
+    return newest
+
+
+def _has_unsaved_work(folder: Path) -> bool:
+    try:
+        record = json.loads((folder / "draft.json").read_text(encoding="utf-8"))
+        head = record.get("head") or {}
+        return bool(head) and head.get("sha256") != (record.get("source") or {}).get("sha256")
+    except (OSError, ValueError, AttributeError):
+        return True  # cannot tell: keep it
+
+
+def _clean_plan(home: Path, older_than: int, everything: bool) -> tuple[list[Path], int]:
+    """(entries to remove, unsaved drafts kept). Entries are children of STATE_PARTS."""
+    import time
+    if everything:
+        return [home / part for part in STATE_PARTS if (home / part).exists()], 0
+    cutoff = time.time() - older_than * 86400
+    remove, kept = [], 0
+    for part in STATE_PARTS:
+        root = home / part
+        if not root.is_dir():
+            continue
+        for entry in sorted(root.iterdir()):
+            try:
+                if _newest_mtime(entry) >= cutoff:
+                    continue
+            except OSError:
+                continue
+            if part == "drafts" and _has_unsaved_work(entry):
+                kept += 1
+                continue
+            remove.append(entry)
+    return remove, kept
+
+
+def _clean(term: Term, args) -> int:
     import shutil
+    if args.older_than < 0:
+        raise _Usage("--older-than에는 0 이상의 날수를 입력해야 합니다.", "예: --older-than 30")
     home = state_home()
-    present = [home / part for part in STATE_PARTS if (home / part).exists()]
-    if not present:
+    remove, kept = _clean_plan(home, args.older_than, args.all)
+    scope = "모두" if args.all else f"{args.older_than}일 넘게 쓰지 않은 것"
+    if not remove:
         if args.json:
-            return _emit(term, args, "changes", {"ok": True, "result": {"cleared": []}})
-        term.line("지울 것이 없습니다.")
+            return _emit(term, args, "changes", {"ok": True, "result": {
+                "action": "clean", "removed": [], "keptUnsaved": kept}})
+        term.line(f"지울 것이 없습니다 ({scope})."
+                  + (f" 저장 안 한 초안 {kept}개는 남겼습니다." if kept else ""))
         return EXIT_OK
     if not args.yes:
-        sys.stderr.write(f"  위치: {home}\n  저장 기록도 지워져 undo를 할 수 없게 됩니다.\n")
-        answer = confirm("초안, 미리보기, 저장 기록을 모두 지울까요?")
+        sys.stderr.write(f"  위치: {home}\n  지울 항목: {len(remove)}개 ({scope})\n"
+                         "  지운 저장 기록은 undo로 되돌릴 수 없습니다.\n")
+        answer = confirm("초안, 미리보기, 저장 기록을 지울까요?")
         if answer is not True:
             code = "declined_by_person" if answer is False else "needs_person"
             return _emit(term, args, "changes", {"ok": False, "error": ToolError(
-                code, "초안, 미리보기, 저장 기록을 지우지 않았습니다.",
-                hint="모두 지우려면 같은 명령에 --yes를 붙이세요." if answer is None else None,
+                code, "아무것도 지우지 않았습니다.",
+                hint="묻지 않고 지우려면 같은 명령에 --yes를 붙이세요." if answer is None else None,
             ).to_dict()})
-    for folder in present:
-        shutil.rmtree(folder)
+    for entry in remove:
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
     if args.json:
-        return _emit(term, args, "changes",
-                     {"ok": True, "result": {"cleared": [str(p) for p in present]}})
-    term.line(f"지웠습니다: {', '.join(p.name for p in present)} ({home})")
+        return _emit(term, args, "changes", {"ok": True, "result": {
+            "action": "clean", "removed": [str(p) for p in remove], "keptUnsaved": kept}})
+    term.line(f"{len(remove)}개를 지웠습니다 ({scope}). 위치: {home}"
+              + (f"\n저장 안 한 초안 {kept}개는 남겼습니다. 모두 지우려면 --all" if kept else ""))
     return EXIT_OK
 
 
@@ -514,8 +579,8 @@ def _main(argv: list[str]) -> int:
             return _undo(term, args)
         if args.verb == "convert":
             return _convert(term, args)
-        if args.verb == "changes" and args.action == "clear":
-            return _clear(term, args)
+        if args.verb == "changes" and args.action == "clean":
+            return _clean(term, args)
         if args.verb == "changes" and args.action == "discard":
             if not args.path:
                 raise _Usage("어느 초안을 버릴지 지정하지 않았습니다.",

@@ -292,16 +292,24 @@ def test_ambiguous_replace_keeps_the_candidates(env):
 
 # -- fill -------------------------------------------------------------------------
 
-def test_fill_refuses_signature_seats_and_reports_what_is_left(env):
+def test_fill_skips_signature_seats_and_reports_what_is_left(env):
     path = env.doc()
-    e = err(call(env.ctx(), "fill", {"path": str(path), "values": {
-        "place:성명": "홍길동", "place:서명": "홍길동"}}), "person_only_seat")
+    # Ruling F: the person's seats are skipped and listed; the rest is filled.
+    r = ok(call(env.ctx(), "fill", {"path": str(path), "values": {
+        "place:성명": "김철수", "place:서명": "홍길동"}}))
+    assert r["skipped"] == ["place:서명"] and r["personOnly"] == ["place:서명"]
+    seat = ok(call(env.ctx(), "read", {"path": str(path), "at": "place:서명"}))
+    assert "홍길동" not in seat["blocks"][0]["text"]
+    # Only the person's seats asked for: nothing to do, so a refusal.
+    e = err(call(env.ctx(), "fill", {"path": str(path), "values": {"place:서명": "홍"}}),
+            "person_only_seat")
     assert e["candidates"] == ["place:서명"]
     e = err(call(env.ctx(), "fill", {"path": str(path), "values": {"place:셩명": "x"}}),
             "not_found")
     assert "place:성명" in e["candidates"]
     r = ok(call(env.ctx(), "fill", {"path": str(path), "values": {"성명": "홍길동"}}))
     assert r["personOnly"] == ["place:서명"] and r["unfilled"] == ["place:소속"]
+    assert r["skipped"] == []
     seen = ok(call(env.ctx(), "read", {"path": str(path), "at": "place:성명"}))
     assert seen["blocks"][0]["text"] == "홍길동"
 
@@ -588,19 +596,86 @@ def test_cli_dash_o_is_one_shot_and_never_replaces_without_force(env, monkeypatc
     assert any(k.read_text(encoding="utf-8") == made for k in kept)
 
 
-def test_changes_clear_removes_only_our_folders(env, monkeypatch):
+def test_changes_clean_all_removes_only_our_folders(env, monkeypatch):
     path = env.doc()
     rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
     ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
         {"op": "set", "at": "p1", "text": "x"}]}))
     keep = env.home / "notes.txt"
     keep.write_text("not ours", encoding="utf-8")
-    code, out, _ = _cli(["changes", "clear", "--json"], monkeypatch)
+    code, out, _ = _cli(["changes", "clean", "--all", "--json"], monkeypatch)
     assert code == 3 and json.loads(out)["error"]["code"] == "needs_person"
     assert (env.home / "drafts").exists()
-    code, out, _ = _cli(["changes", "clear", "--yes", "--json"], monkeypatch)
+    code, out, _ = _cli(["changes", "clean", "--all", "--yes", "--json"], monkeypatch)
     assert code == 0 and not (env.home / "drafts").exists()
     assert keep.read_text(encoding="utf-8") == "not ours"
+
+
+def test_changes_clean_keeps_recent_state_and_unsaved_work(env, monkeypatch):
+    import os
+    import time
+    unsaved, saved = env.doc("남김.fdoc"), env.doc("저장함.fdoc")
+    for path in (unsaved, saved):
+        rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+        ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+            {"op": "set", "at": "p1", "text": "고친 문장"}]}))
+    ok(call(env.ctx(ask=lambda q, d: True), "save", {"path": str(saved)}))
+    code, out, _ = _cli(["changes", "clean", "--yes", "--json"], monkeypatch)
+    assert code == 0 and json.loads(out)["result"]["removed"] == []  # all recent
+    old = time.time() - 40 * 86400
+    for entry in env.home.rglob("*"):
+        os.utime(entry, (old, old), follow_symlinks=False)
+    code, out, _ = _cli(["changes", "clean", "--yes", "--json"], monkeypatch)
+    r = json.loads(out)["result"]
+    assert code == 0 and r["keptUnsaved"] == 1
+    drafts = [p.name for p in (env.home / "drafts").iterdir()]
+    assert len(drafts) == 1  # the unsaved one
+    assert not (env.home / "history").exists() or not any((env.home / "history").iterdir())
+
+
+def test_a_mock_proposal_stays_mock_in_the_receipt_and_history(env):
+    import rt_commit
+    path = env.doc()
+    rev0 = ok(call(env.ctx(provenance={"agent": "replay", "mock": True}), "open",
+                   {"path": str(path)}))["rev"]
+    staged = ok(call(env.ctx(provenance={"agent": "replay", "mock": True}), "edit", {
+        "path": str(path), "base": rev0, "ops": [{"op": "set", "at": "p1", "text": "x"}]}))
+    shown = ok(call(env.ctx(), "changes", {"action": "show", "path": str(path)}))
+    assert [c["provenance"]["mock"] for c in shown["changesets"]] == [True]
+    s = ok(call(env.ctx(ask=lambda q, d: True), "save", {"path": str(path)}))
+    assert s["provenance"]["mock"] is True and s["provenance"]["agents"] == ["replay"]
+    assert rt_commit.last_commit(path, env.home)["provenance"]["mock"] is True
+    assert staged["changeset"]
+
+
+def test_a_second_writer_gets_draft_busy_not_a_fork(env):
+    import time
+
+    import rt_drafts
+    path = env.doc()
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    store = DraftStore(env.home)
+    ref = store.ref(path)
+    lock = store.lock(ref)
+    lock.path.parent.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    with lock:
+        e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+            {"op": "set", "at": "p1", "text": "x"}]}), "draft_busy")
+    assert e["retryable"] is True
+    assert time.monotonic() - started < rt_drafts.LOCK_TIMEOUT_S + 1.5
+
+
+def test_document_text_is_clean_in_errors_and_findings(env):
+    path = env.doc("더러움.fdoc", "같은\x1b[31m 말\u202e\n\n같은\x1b[31m 말\u202e\n")
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "replace", "find": "말", "with": "다른 말"}]}), "ambiguous_match")
+    blob = json.dumps(e, ensure_ascii=False)
+    assert "\x1b" not in blob and "\u202e" not in blob
+    found = call(env.ctx(), "check", {"path": str(path)})
+    blob = json.dumps(found, ensure_ascii=False)
+    assert "\x1b" not in blob and "\u202e" not in blob
 
 
 def test_people_read_korean_and_agents_read_english(env, monkeypatch):

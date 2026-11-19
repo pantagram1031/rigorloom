@@ -163,8 +163,10 @@ def show_staged(term: Term, r: dict) -> None:
     _signals(term, r.get("signals") or [])
     if r.get("unfilled"):
         term.line("아직 빈 칸: " + ", ".join(r["unfilled"][:12]))
-    if r.get("personOnly"):
-        term.line("서명·날인 칸(직접): " + ", ".join(r["personOnly"]))
+    if r.get("skipped"):
+        term.line(term.style("채우지 않음(직접 채울 칸): " + ", ".join(r["skipped"]), "yellow"))
+    elif r.get("personOnly"):
+        term.line("직접 채울 칸: " + ", ".join(r["personOnly"]))
     path = r["path"]
     save = (f"rigorloom save {_q(path)} --to 새이름.hwpx" if path.startswith("draft:")
             else f"rigorloom save {_q(path)}")

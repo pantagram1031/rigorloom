@@ -48,7 +48,9 @@ FORMATS_OUT = ("hwpx", "hwp", "pdf", "png", "md", "docx")
 
 #: Labels a person signs, seals or stamps. Agents never fill these; they are
 #: listed so the person knows what is left for them.
-PERSON_ONLY = re.compile(r"(서명|날인|직인|도장|\(인\)|（인）|인\s*\)|sign(ature)?\b)",
+#: Seats only the person fills: signature, seal, and the date of approval.
+PERSON_ONLY = re.compile(r"(서명|날인|직인|도장|\(인\)|（인）|인\s*\)|sign(ature)?\b"
+                         r"|(결재|승인)\s*(일|일자|날짜|일시)|approv(al|ed)\s*date)",
                          re.IGNORECASE)
 
 REV_PATTERN = "^[0-9a-f]{12}$"
@@ -147,7 +149,8 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None) -> Non
 
 def is_person_only(place: dict) -> bool:
     label = f"{place.get('label') or ''} {place.get('id') or ''}"
-    return bool(PERSON_ONLY.search(label)) or place.get("kind") in ("signature", "seal")
+    return bool(PERSON_ONLY.search(label)) or place.get("kind") in ("signature", "seal",
+                                                                    "approval_date")
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +577,8 @@ def _edit_text(r: dict) -> str:
     if r.get("signals"):
         lines.append("layout signals: " + ", ".join(
             f"p.{s.get('page')} {s.get('kind')}" for s in r["signals"][:12]))
+    if r.get("skipped"):
+        lines.append("not filled, the person's to fill: " + ", ".join(r["skipped"]))
     if r.get("personOnly"):
         lines.append("left for the person: " + ", ".join(r["personOnly"]))
     if r.get("unfilled"):
@@ -644,16 +649,17 @@ def _run_fill(ctx: Context, args: dict) -> dict:
                             hint="칸에 넣을 값을 큰따옴표로 감싸서 입력하세요.",
                             at=f"place:{pid}")
         ops.append({"op": "fill", "place": pid, "text": text})
-    if blocked:
+    if blocked and not ops:
         raise ToolError("person_only_seat",
-                        "다음 서명·날인 칸은 사람이 직접 채워야 합니다: " + ", ".join(blocked),
-                        hint="나열한 칸을 빼고 나머지 칸만 채우세요.", candidates=blocked)
+                        "서명·날인·결재일 칸은 사람이 직접 채워야 합니다: " + ", ".join(blocked),
+                        hint="이 칸들은 비워 두고 사람에게 알리세요.", candidates=blocked)
     if not ops:
         raise ToolError("invalid_params", "채울 값이 없습니다.", hint="채울 칸과 값을 한 쌍 이상 입력하세요.")
     result = _stage(ctx, ref, args.get("base") or inp.rev, ops, "fill")
     filled = {op["place"] for op in ops}
     result["personOnly"] = [f"place:{p['id']}" for p in places.values()
                             if is_person_only(p)]
+    result["skipped"] = blocked
     result["unfilled"] = [f"place:{pid}" for pid, p in places.items()
                           if pid not in filled and not is_person_only(p)
                           and not str(p.get("value") or "").strip()]
@@ -663,15 +669,17 @@ def _run_fill(ctx: Context, args: dict) -> dict:
 register(Tool(
     name="fill", title="양식 채우기",
     description="Fill form places by id (from `open` → places): {\"values\": "
-                "{\"place:성명\": \"홍길동\"}}. Staged into the draft. Signature and "
-                "seal seats are refused and listed for the person.",
+                "{\"place:성명\": \"홍길동\"}}. Staged into the draft. Signature, "
+                "seal and approval-date seats are skipped and listed in `skipped`; "
+                "tell the person to fill them.",
     group="write", read_only=False, idempotent=False,
     input_schema=_obj({
         "path": S_PATH, "base": S_REV,
         "values": {"type": "object", "description": "place id → text"},
     }, ["path", "values"]),
     output_schema=_out({**O_DOCREF, "changeset": {"type": "string"},
-                        "personOnly": {"type": "array"}, "unfilled": {"type": "array"}}),
+                        "personOnly": {"type": "array"}, "unfilled": {"type": "array"},
+                        "skipped": {"type": "array"}}),
     run=_run_fill, text=_edit_text,
 ))
 
@@ -1141,6 +1149,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
                   "changedPages": sorted({p for c in (record or {}).get("changesets", [])
                                           for p in c.get("changedPages", [])}),
                   "unreviewed": unreviewed, "lossy": lossy,
+                  "fontsSubstituted": _substituted_fonts(ctx, head_input.path),
                   "undo": f'rigorloom undo "{target}"'}
         if ctx.ask is None:
             raise ToolError("needs_person",
@@ -1163,13 +1172,14 @@ def _run_save(ctx: Context, args: dict) -> dict:
                             at=str(target), data=detail)
         policy = "person:" + ("tty" if ctx.client == "cli" else "elicitation")
 
+    provenance = _saved_provenance(record)
     receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
-                               policy=policy, home=ctx.drafts.home)
+                               policy=policy, home=ctx.drafts.home, provenance=provenance)
     if record is not None:
         record.setdefault("saves", []).append({
             "target": str(target), "sha256": receipt["sha256"],
             "revision": head_input.revision, "policy": policy,
-            "unreviewed": unreviewed, "at": receipt["at"]})
+            "unreviewed": unreviewed, "at": receipt["at"], "provenance": provenance})
         for cs in record.get("changesets", []):
             if cs.get("status") == "proposed":
                 cs["status"] = "applied"
@@ -1183,8 +1193,31 @@ def _run_save(ctx: Context, args: dict) -> dict:
     return {"path": ref.label, "saved": str(target), "sha256": receipt["sha256"],
             "format": fmt, "replaced": receipt["replaced"] is not None,
             "acceptedVia": policy, "unreviewed": unreviewed, "lossy": lossy,
+            "provenance": provenance,
             "undo": f'rigorloom undo "{target}"' if receipt["undo"] or
             receipt["replaced"] is None else None}
+
+
+def _substituted_fonts(ctx: Context, path: Path) -> list[dict]:
+    """Fonts the saved file will show with a stand-in, for the overwrite question.
+    Unknown (the layer cannot tell) is an empty list, never a guess."""
+    try:
+        info = doc_call(ctx.doc.open, str(path))
+    except ToolError:
+        return []
+    return [s for s in ((info.get("fonts") or {}).get("substituted") or [])
+            if isinstance(s, dict)][:6]
+
+
+def _saved_provenance(record: dict | None) -> dict:
+    """Who wrote the bytes being saved. Any test-only (mock) change set in the
+    head marks the whole save as mock, so the UI's 시험용 label cannot be lost."""
+    sets = [c for c in (record or {}).get("changesets", [])
+            if c.get("status") not in ("rejected", "withdrawn")]
+    provs = [c.get("provenance") or {} for c in sets]
+    return {"mock": any(p.get("mock") for p in provs),
+            "agents": sorted({str(p["agent"]) for p in provs if p.get("agent")}),
+            "providers": sorted({str(p["provider"]) for p in provs if p.get("provider")})}
 
 
 def _same_path(a: Path, b: Path) -> bool:
@@ -1216,7 +1249,8 @@ register(Tool(
                       ["path"]),
     output_schema=_out({"path": {"type": "string"}, "saved": {"type": "string"},
                         "sha256": {"type": "string"}, "replaced": {"type": "boolean"},
-                        "acceptedVia": {"type": "string"}}),
+                        "acceptedVia": {"type": "string"},
+                        "provenance": {"type": "object"}}),
     run=_run_save, text=_save_text,
 ))
 
@@ -1243,7 +1277,8 @@ def _run_changes(ctx: Context, args: dict) -> dict:
                             hint="이 문서의 변경 기록에서 변경 묶음 번호를 확인하세요.",
                             candidates=[c["id"] for c in record.get("changesets", [])][-10:])
     slim = [{k: c.get(k) for k in ("id", "kind", "revision", "rev", "status", "author",
-                                   "changedPages", "created", "items", "notes")}
+                                   "provenance", "base", "changedPages", "created",
+                                   "items", "notes")}
             | {"ops": len(c.get("ops", []))} for c in sets]
     return {"action": action, "path": ref.label, "draft": summary(record),
             "changesets": slim, "saves": record.get("saves", [])}
