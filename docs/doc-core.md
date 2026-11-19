@@ -73,7 +73,10 @@ pages, rendering, conversion) answers `capability_unavailable` with a
 conversion need engine functions that are still being added; until the engine
 has them they answer `capability_unavailable` with reason
 `engine_function_missing`, and they start working without a change here once
-it does.
+it does. The same holds for an edit op whose engine step the installed engine
+predates (the engine answers "unknown hnc_edit operation"): the edit answers
+`capability_unavailable`, reason `engine_function_missing`, `fn` naming the
+step, and nothing is written.
 
 ## Addresses
 
@@ -209,7 +212,8 @@ rt_doc.edit("보고서.hwpx", [
 - Every op is checked before anything is written: address kinds, ranges
   (`p3:2-5` only for `set`, `replace` and `char_shape`), `expect`
   (`expect_mismatch`; only `set`, `replace`, `delete`, `fill`,
-  `table.delete_row`, `char_shape`, `para_shape` and `numbering` take one,
+  `table.delete_row`, `table.delete_col`, `char_shape`, `para_shape` and
+  `numbering` take one,
   others refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
   and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
   or an op on something another op deletes (a paragraph, table or row; one
@@ -259,6 +263,36 @@ rt_doc.edit("보고서.hwpx", [
   bullet and moves a 개요 paragraph back to 바탕글. A `style` and a
   `numbering` op on one paragraph in one edit are a `conflict`; send them
   separately. Needs the engine; addresses do not change.
+- Table shape ops (표 > 셀 합치기, 셀 나누기, 칸 넣기·지우기, 셀 크기) need the
+  engine. Each owns its whole table for the edit: any other op on that table,
+  its cells or what they hold, including a second shape op, is a `conflict`;
+  send them in separate edits.
+  - `table.merge` at a cell with `to`, the cell at the block's other corner.
+    The block grows until no merged cell crosses its edge. The top-left cell
+    takes the block and the paragraphs of every merged cell that hold
+    anything, in reading order. Cells that hold a table cannot be merged
+    away. The remap sends the merged-away cells to null and each of their
+    paragraphs to its place in the merged cell.
+  - `table.split` at a cell with `rows` and `cols` (1 to 20, not both 1). A
+    cell that spans several rows or columns splits along its grid lines, so
+    the count must divide the span; a single cell adds grid rows or columns
+    and the cells across them span them. The cell keeps its text; the new
+    cells are empty; the cells after them move in the remap.
+  - `table.add_col` with `after` (a column) and `like` (the column before or
+    after the new one, default `after`), as `table.add_row`; `at` a cell
+    defaults `after` to its last column. `table.delete_col` with `col` or `at`
+    a cell; `expect` is the column's cells by `\n`. Both need a cell that
+    sits in that column alone. A deleted column's cells map to null in the
+    remap and the cells after it move left.
+  - `table.size` sets grid column widths and row heights in millimetres (1 to
+    1000): `width_mm` / `height_mm` for the column or row of the cell at (or
+    `height_mm` at a row), or `col_widths_mm` / `row_heights_mm` lists, which
+    go on the table address only (`bad_address` at a row or cell), null
+    keeping one. Merged cells across a column or row change with it. No
+    address changes.
+  - A column added or deleted inside a merged cell widens or narrows that
+    cell; its address and text stay.
+  - 셀 너비·높이 같게 (distribute) has no op yet.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is
