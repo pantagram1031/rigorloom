@@ -1,0 +1,147 @@
+{
+ "_doc": "What rt_doc and the engine must both answer on addressing.hwpx (doc-core-api.md, ruling 2026-11-19 04:30Z). place ids: place_id(*parts) = sha256('\\0'.join(parts))[:12].",
+ "tables": [
+  {
+   "at": "t0",
+   "id": "5001",
+   "rows": 3,
+   "cols": 3
+  },
+  {
+   "at": "t0/r2/c1/t0",
+   "id": "5002",
+   "rows": 2,
+   "cols": 2
+  },
+  {
+   "at": "t1",
+   "id": "5003",
+   "rows": 1,
+   "cols": 2
+  },
+  {
+   "at": "t2",
+   "id": "5005",
+   "rows": 2,
+   "cols": 2
+  }
+ ],
+ "text": {
+  "t0/r0/c0": "성명",
+  "t0/r2/c1/t0/r0/c0": "전화",
+  "t0/r2/c1/t0/r1/c0/p0": "메일",
+  "t1/r0/c0": "분류",
+  "t2/r1/c0": "주소",
+  "t0/r0/c2": "비고",
+  "p3": "두 번째 양식"
+ },
+ "covered": {
+  "t0/r1/c2": "t0/r0/c2"
+ },
+ "bad_address": [
+  "t3",
+  "t0/r2/c1/t1",
+  "t0/r9/c0",
+  "t0/r0/c1/t0",
+  "p99"
+ ],
+ "cell_places": [
+  {
+   "at": "t0/r0/c1",
+   "id": "4ce405370501",
+   "label": "성명",
+   "parts": [
+    "cell",
+    "5001",
+    0,
+    1
+   ]
+  },
+  {
+   "at": "t0/r1/c1",
+   "id": "266ae6738db1",
+   "label": "주소",
+   "parts": [
+    "cell",
+    "5001",
+    1,
+    1
+   ]
+  },
+  {
+   "at": "t0/r2/c1/t0/r0/c1",
+   "id": "e414bd72d837",
+   "label": "전화",
+   "parts": [
+    "cell",
+    "5002",
+    0,
+    1
+   ]
+  },
+  {
+   "at": "t0/r2/c1/t0/r1/c1",
+   "id": "6647915fa34b",
+   "label": "메일",
+   "parts": [
+    "cell",
+    "5002",
+    1,
+    1
+   ]
+  },
+  {
+   "at": "t1/r0/c1",
+   "id": "5ddae373be17",
+   "label": "분류",
+   "parts": [
+    "cell",
+    "5003",
+    0,
+    1
+   ]
+  },
+  {
+   "at": "t2/r0/c1",
+   "id": "72a80a779bd2",
+   "label": "성명",
+   "parts": [
+    "cell",
+    "5005",
+    0,
+    1
+   ]
+  },
+  {
+   "at": "t2/r1/c1",
+   "id": "9086a893193a",
+   "label": "주소",
+   "parts": [
+    "cell",
+    "5005",
+    1,
+    1
+   ]
+  }
+ ],
+ "label_lines": [
+  {
+   "at": "p5",
+   "id": "4d156db6d085",
+   "parts": [
+    "field",
+    "성명",
+    0
+   ]
+  },
+  {
+   "at": "p6",
+   "id": "266103a24a9b",
+   "parts": [
+    "field",
+    "성명",
+    1
+   ]
+  }
+ ]
+}
