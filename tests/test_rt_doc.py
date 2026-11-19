@@ -39,6 +39,8 @@ def _private_cache(tmp_path_factory, monkeypatch):
     """Place ids carried across edits live in a cache; keep the tests' own out of the user's."""
     monkeypatch.setenv(D.CACHE_ENV, str(tmp_path_factory.mktemp("doc-cache")))
     D._LINEAGE.clear()
+    yield
+    D._LINEAGE.clear()                  # nor leave them in memory for the next test module
 
 
 @pytest.fixture
@@ -626,8 +628,8 @@ def test_engine_agrees_on_tables_and_place_ids(kit):
     assert [t["at"] for t in ol["tables"]] == [t["at"] for t in FX_WANT["tables"]]
     want = {p["at"]: p["id"] for p in FX_WANT["cell_places"] + FX_WANT["label_lines"]}
     got = {p["at"]: p["id"] for p in ol["places"]}
-    # the engine's analysis does not look inside nested tables; everything else it must list, with these ids
-    assert set(got) == set(want) - {"t0/r2/c1/t0/r0/c1", "t0/r2/c1/t0/r1/c1"}, got
+    # the engine's outline (hwp-engine #7) lists seats inside nested tables too, addressed through their cell
+    assert set(got) == set(want), got
     for at, pid in got.items():
         assert pid == want[at], (at, pid)
     assert "t0/r2/c1" not in got                    # a cell holding a table is no seat
