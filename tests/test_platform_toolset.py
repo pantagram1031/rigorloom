@@ -281,6 +281,13 @@ def test_bad_ops_are_named(env):
     e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0,
                                      "ops": [{"op": "set", "at": "p1"}]}), "invalid_params")
     assert e["at"] == "ops[0].text"
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0,
+                                     "ops": [{"op": "char_shape", "at": "p1"}]}), "invalid_params")
+    assert e["at"] == "ops[0].set" and "char_shape" in e["hint"]
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0,
+                                     "ops": [{"op": "para_shape", "at": "p1", "set": {}, "style": "x"}]}),
+            "invalid_params")
+    assert "set" in e["candidates"]
 
 
 def test_ambiguous_replace_keeps_the_candidates(env):
