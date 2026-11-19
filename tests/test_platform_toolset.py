@@ -1038,3 +1038,111 @@ def test_long_findings_wrap_instead_of_losing_the_end():
     joined = " ".join(line.strip() for line in out.getvalue().splitlines())
     assert tail in joined and "…" not in out.getvalue()
 
+
+
+# -- Sol re-check of the save path (83005c8..d9caf52) -----------------------------
+
+def _edited(env, name="신청서.fdoc"):
+    path = env.doc(name)
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "고친 문장"}]}))
+    return path
+
+
+def test_force_is_recorded_as_force_not_as_a_terminal_yes(env, monkeypatch):
+    # F1: --force without a terminal used to land in history as person:tty.
+    path = _edited(env)
+    code, out, errs = _cli(["save", str(path), "--force", "--json"], monkeypatch)
+    assert code == 0, errs
+    assert json.loads(out)["result"]["acceptedVia"] == "person:force"
+
+
+def test_force_does_not_override_a_no(env, monkeypatch):
+    # F1: a "no" given for these bytes is undone only by answering again.
+    path = _edited(env)
+    before = path.read_bytes()
+    err(call(env.ctx(ask=lambda q, d: False), "save", {"path": str(path)}),
+        "declined_by_person")
+    code, out, errs = _cli(["save", str(path), "--force", "--json"], monkeypatch)
+    assert code == 3 and json.loads(out)["error"]["code"] == "declined_by_person"
+    assert path.read_bytes() == before
+
+
+def test_a_new_draft_on_the_same_path_does_not_own_the_old_drafts_file(env, monkeypatch):
+    # F2: discard, edit again, save --to the file the old draft created: ask.
+    path = _edited(env)
+    copy = env.work / "사본.fdoc"
+    assert ok(call(env.ctx(), "save", {"path": str(path), "to": str(copy)}))[
+        "acceptedVia"] == "policy:new-file"
+    code, _, errs = _cli(["changes", "discard", str(path)], monkeypatch)
+    assert code == 0, errs
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "다시 고친 문장"}]}))
+    asked = []
+    err(call(env.ctx(ask=lambda q, d: asked.append(q) or None), "save",
+             {"path": str(path), "to": str(copy)}), "needs_person")
+    assert len(asked) == 1
+
+
+def test_undo_reverses_only_the_save_the_person_was_shown(env, monkeypatch):
+    # F3: a save that lands while the question is open is not the one undone.
+    import rt_commit
+    path = _edited(env)
+    ok(call(env.ctx(ask=lambda q, d: True), "save", {"path": str(path)}))
+
+    def meanwhile(*a, **k):
+        rev = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+        ok(call(env.ctx(), "edit", {"path": str(path), "base": rev, "ops": [
+            {"op": "set", "at": "p1", "text": "그사이 고친 문장"}]}))
+        ok(call(env.ctx(ask=lambda q, d: True), "save", {"path": str(path)}))
+        return True
+
+    monkeypatch.setattr(rt_cli_product, "confirm", meanwhile)
+    code, out, errs = _cli(["undo", str(path), "--json"], monkeypatch)
+    assert code != 0 and json.loads(out)["error"]["code"] == "stale"
+    assert "그사이 고친 문장" in path.read_text(encoding="utf-8")
+    assert not rt_commit.last_commit(path).get("undone")
+
+
+def test_undo_of_a_created_file_puts_back_bytes_that_are_not_ours(env, monkeypatch):
+    # F3: the removal branch checks what it moved and puts foreign bytes back.
+    import rt_commit
+    path = _edited(env)
+    new = env.work / "새파일.fdoc"
+    ok(call(env.ctx(), "save", {"path": str(path), "to": str(new)}))
+    real = rt_commit._last_undoable
+
+    def check_then_someone_writes(*a, **k):
+        entry = real(*a, **k)
+        new.write_bytes(b"someone else")
+        return entry
+
+    monkeypatch.setattr(rt_commit, "_last_undoable", check_then_someone_writes)
+    with pytest.raises(rt_tools.ToolError) as caught:
+        rt_commit.undo(new, by="test")
+    assert caught.value.code == "target_changed"
+    assert new.read_bytes() == b"someone else"
+
+
+def test_the_undo_question_shows_the_name_exactly(env, monkeypatch):
+    # F5: "review  copy" must not be shown as "review copy".
+    path = _edited(env, "검토  사본.fdoc")
+    ok(call(env.ctx(ask=lambda q, d: True), "save", {"path": str(path)}))
+    asked = []
+    monkeypatch.setattr(rt_cli_product, "confirm", lambda q, **k: asked.append(q) or False)
+    monkeypatch.chdir(env.work)
+    _cli(["undo", str(path)], monkeypatch)
+    assert asked and '"검토  사본.fdoc"' in asked[0]
+
+
+def test_an_empty_save_path_is_refused_not_read_as_the_source(env, monkeypatch):
+    # F6: --to '' used to drop the argument and save over the source.
+    path = _edited(env)
+    before = path.read_bytes()
+    for argv in (["save", str(path), "--to", "", "--force"],
+                 ["edit", str(path), "--op", '{"op":"set","at":"p1","text":"x"}', "-o", ""]):
+        code, _, errs = _cli(argv, monkeypatch)
+        assert code == 2 and "저장할 경로가 비어 있습니다" in errs, argv
+    assert path.read_bytes() == before

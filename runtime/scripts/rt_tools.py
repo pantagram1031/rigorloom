@@ -283,6 +283,10 @@ class Context:
     #: save may only create (CLI ``-o OUT`` without --force): an existing
     #: target is refused, never asked about.
     create_only: bool = False
+    #: The person typed --force on the CLI: replace without asking, recorded
+    #: as ``person:force``. Never set by an agent surface, and never enough
+    #: to override a "no" already given for the same bytes (Sol re-check F1).
+    force: bool = False
     provenance: dict = field(default_factory=dict)
     #: ask(question, detail) -> bool. A person answers: MCP elicitation, a TTY
     #: prompt, or the UI. ``None`` = nobody can be asked.

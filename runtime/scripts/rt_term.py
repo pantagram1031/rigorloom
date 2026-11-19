@@ -203,6 +203,16 @@ def safe_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n").translate(_UNSAFE)
 
 
+def path_text(path: str) -> str:
+    """A path for a person to read: exact, with invisible characters escaped.
+
+    Unlike one_line, runs of spaces stay as they are, so two names that differ
+    only in spacing never look alike in a question the person answers.
+    """
+    return "".join(f"\\u{ord(ch):04x}" if ch in "\t\r\n" or not ch.translate(_UNSAFE) else ch
+                   for ch in str(path))
+
+
 def one_line(text: str) -> str:
     """Collapse line breaks and tabs so a preview stays on one row."""
     return " ".join(safe_text(text).replace("\t", " ").split())

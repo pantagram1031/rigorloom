@@ -460,7 +460,7 @@ def request_for(args) -> tuple[str, dict]:
         return "check", req
     if v == "save":
         req = {"path": args.path}
-        if args.to: req["to"] = args.to
+        if args.to is not None: req["to"] = args.to  # '' is refused, not dropped
         return "save", req
     if v == "changes":
         req: dict = {"action": "show" if args.path and args.action == "list" else args.action}
@@ -478,8 +478,6 @@ def request_for(args) -> tuple[str, dict]:
 
 def _context(args) -> Context:
     def ask(question: str, detail: dict) -> bool | None:
-        if getattr(args, "force", False):
-            return True  # the person named this target and typed --force
         if not (is_console(sys.stdin) and is_console(sys.stderr)):
             return None
         # The question first, then what the person needs to answer it, then y/N.
@@ -503,7 +501,7 @@ def _context(args) -> Context:
         sys.stderr.write(safe_text(lines[0] + " [y/N]\n" + "\n".join(lines[1:])) + "\n")
         return confirm("", prompt="> ")
     return Context(client="cli", roots=None, source=getattr(args, "source", "disk"),
-                   ask=ask)
+                   ask=ask, force=bool(getattr(args, "force", False)))
 
 
 def _emit(term: Term, args, verb: str, envelope: dict) -> int:
@@ -611,7 +609,8 @@ def _undo(term: Term, args) -> int:
             "declined_by_person", "되돌리지 않았습니다.").to_dict()}
     else:
         try:
-            envelope = {"ok": True, "result": rt_commit.undo(target, by="cli")}
+            envelope = {"ok": True, "result": rt_commit.undo(
+                target, by="cli", expect=rt_commit.entry_id(entry))}
         except ToolError as exc:
             envelope = {"ok": False, "error": exc.to_dict()}
     if envelope["ok"] and not args.json:
@@ -789,6 +788,10 @@ def _main(argv: list[str]) -> int:
         return int(exc.code or 0) and EXIT_USAGE
     except _Usage as exc:
         return _usage(exc, argv)
+    if getattr(args, "out", None) == "" or (args.verb == "save" and args.to == ""):
+        # An empty name must not quietly mean "the source" (Sol re-check F6).
+        return _usage(_Usage("저장할 경로가 비어 있습니다.",
+                             "보고서.hwpx처럼 파일 이름을 포함한 경로를 입력하세요."), argv)
     term = Term.detect(getattr(args, "color", "auto"))
     if getattr(args, "debug", False):
         os.environ["RIGORLOOM_DEBUG"] = "1"

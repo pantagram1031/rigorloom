@@ -120,7 +120,8 @@ def commit(candidate: Path, target: Path, *, expected: str, by: str,
     folder = private_dir(_history_dir(home, target))
     with _lock(folder):
         entries = _settled(_load_index(folder), target)
-        entry = {"at": _now(), "target": str(target), "newSha256": new_sha,
+        entry = {"id": secrets.token_hex(8), "at": _now(), "target": str(target),
+                 "newSha256": new_sha,
                  "by": by, "policy": policy, "draft": draft, "oldSha256": None,
                  "kept": None, "provenance": provenance or {"mock": False},
                  "state": "pending"}
@@ -264,6 +265,32 @@ def _last_undoable(entries: list[dict], target: Path, folder: Path) -> dict:
     return entry
 
 
+def entry_id(entry: dict) -> str:
+    """Which save a history entry is; ``undo(expect=...)`` binds to it."""
+    return entry.get("id") or f"{entry.get('at')}:{entry.get('newSha256')}"
+
+
+def _put_back(kept: Path, target: Path) -> bool:
+    """Move ``kept`` back to ``target`` without replacing whatever is there now."""
+    try:
+        os.link(kept, target)
+    except FileExistsError:
+        return False
+    except OSError:
+        if os.name != "nt":
+            return False  # a POSIX rename would replace: leave it in history
+        try:
+            os.rename(kept, target)  # never replaces on Windows
+            return True
+        except OSError:
+            return False
+    try:
+        os.unlink(kept)
+    except OSError:
+        pass
+    return True
+
+
 def undoable(target: Path, home: Path | None = None) -> dict:
     """The history entry ``undo`` would reverse now, or the ToolError it would raise.
 
@@ -274,24 +301,41 @@ def undoable(target: Path, home: Path | None = None) -> dict:
     return _last_undoable(_settled(_load_index(folder), target), target, folder)
 
 
-def undo(target: Path, *, by: str, home: Path | None = None) -> dict:
+def undo(target: Path, *, by: str, home: Path | None = None,
+         expect: str | None = None) -> dict:
     """Put back what the last commit replaced, if the file is still ours.
 
-    The bytes undo displaces go to history too, so undo itself can be undone
-    by hand from the history folder.
+    ``expect`` is the ``entry_id`` the person was shown: a save that landed
+    after the question is not the one they agreed to reverse. Every check is
+    against the digest in history, never a fresh hash of the target. The
+    bytes undo displaces go to history too, so undo itself can be undone by
+    hand from the history folder.
     """
     home = Path(home) if home else state_home()
     folder = private_dir(_history_dir(home, target))
     with _lock(folder):
         entries = _settled(_load_index(folder), target)
         entry = _last_undoable(entries, target, folder)
-        current = sha256_file(target) if target.exists() else None
+        if expect is not None and entry_id(entry) != expect:
+            raise ToolError("stale", "확인하는 사이에 저장 기록이 바뀌어 되돌리지 않았습니다.",
+                            hint="저장 기록을 다시 확인한 뒤 실행하세요.", retryable=True,
+                            at=str(target), data={"history": str(folder)})
+        mine = entry["newSha256"]
+        changed = ToolError("target_changed", "확인하는 사이에 파일이 바뀌어 되돌리지 않았습니다.",
+                            hint="현재 파일은 그대로 두었습니다.", at=str(target),
+                            data={"history": str(folder)})
         stamp = f"{_now().replace(':', '')}-{secrets.token_hex(3)}"
         try:
             if entry["oldSha256"] is None:
-                # We created this file; undo removes it by moving it into history.
-                kept = folder / f"{stamp}-created-{current[:12]}{target.suffix}"
+                # We created this file; undo removes it by moving it into
+                # history. The move is one rename; what moved is checked after
+                # it and put back, never replacing, if it was not ours.
+                kept = folder / f"{stamp}-created-{mine[:12]}{target.suffix}"
                 os.replace(target, kept)
+                if sha256_file(kept) != mine:
+                    if not _put_back(kept, target):
+                        changed.hint = f"바뀐 파일은 저장 기록 폴더에 보관했습니다: {kept}"
+                    raise changed
                 restored = None
             else:
                 old = (folder / entry["kept"]).read_bytes()
@@ -299,9 +343,11 @@ def undo(target: Path, *, by: str, home: Path | None = None) -> dict:
                     raise ToolError("internal",
                                     "보관한 파일 내용이 저장 기록과 달라 되돌릴 수 없습니다.",
                                     at=str(folder / entry["kept"]))
-                _write_durable(folder / f"{stamp}-undone-{current[:12]}{target.suffix}",
-                               target.read_bytes())
-                replace_checked(target, old, current)
+                displaced = target.read_bytes()
+                if sha256_bytes(displaced) != mine:
+                    raise changed
+                _write_durable(folder / f"{stamp}-undone-{mine[:12]}{target.suffix}", displaced)
+                replace_checked(target, old, mine)
                 restored = entry["oldSha256"]
         except PathRefused as exc:
             raise _refusal(exc) from exc

@@ -13,9 +13,9 @@ import re
 from typing import Callable
 
 try:  # installed as rigorloom_runtime
-    from .rt_term import Term, one_line, safe_text, truncate, width
+    from .rt_term import Term, one_line, path_text, safe_text, truncate, width
 except ImportError:  # a checkout, runtime/scripts on sys.path
-    from rt_term import Term, one_line, safe_text, truncate, width
+    from rt_term import Term, one_line, path_text, safe_text, truncate, width
 
 VERB_KO = {
     "open": "열기", "read": "읽기", "find": "찾기", "edit": "고치기", "fill": "채우기",
@@ -45,16 +45,20 @@ WHY_KO = {
 
 
 def shown(path: str) -> str:
-    """A path as a person typed it: relative to the current folder when inside it."""
+    """A path as a person typed it: relative to the current folder when inside it.
+
+    Spaces are kept exactly (Sol re-check F5): a prompt must not show
+    "review copy" for "review  copy".
+    """
     import os
-    text = one_line(str(path))
-    if text.startswith("draft:"):
-        return text
+    raw = str(path)
+    if raw.startswith("draft:"):
+        return path_text(raw)
     try:
-        rel = os.path.relpath(text)
+        rel = os.path.relpath(raw)
     except ValueError:  # another drive on Windows
-        return text
-    return text if rel.startswith("..") else rel
+        return path_text(raw)
+    return path_text(raw if rel.startswith("..") else rel)
 
 
 def _q(path: str) -> str:
