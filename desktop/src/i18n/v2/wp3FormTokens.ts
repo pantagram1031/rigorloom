@@ -66,6 +66,7 @@ export const SANS_FONT_TOKENS = [
   "Gulim",
 ] as const;
 
+/** Faces the repository ships (engine/references/fonts: NanumGothic, NanumMyeongjo). */
 export const BUNDLED_FACE_NAMES = new Set<string>([
   "나눔명조",
   "나눔고딕",
@@ -77,6 +78,4 @@ export const BUNDLED_FACE_NAMES = new Set<string>([
   "NanumGothic-Bold",
   "Nanum Myeongjo",
   "Nanum Gothic",
-  "Noto Serif CJK KR",
-  "Noto Sans CJK KR",
 ]);

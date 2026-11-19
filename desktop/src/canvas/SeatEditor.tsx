@@ -70,7 +70,11 @@ export function SeatEditor({
   const currentField = (): HTMLInputElement | HTMLTextAreaElement | null =>
     isMultiline ? textareaRef.current : inputRef.current;
 
+  // A new value from outside (a proposal landing) refreshes the field only
+  // while the person has not typed in it; their text is never replaced.
+  const dirtyRef = useRef(false);
   useEffect(() => {
+    if (dirtyRef.current) return;
     setText(value);
     setIsMultiline(Boolean(initialMultiline || value.includes("\n")));
   }, [initialMultiline, value]);
@@ -202,7 +206,10 @@ export function SeatEditor({
         rows={Math.max(2, Math.min(10, text.split(/\r?\n/).length + 1))}
         placeholder={placeholder}
         aria-label={resolvedAriaLabel}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          dirtyRef.current = true;
+          setText(e.target.value);
+        }}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         onKeyDown={handleKeyDown}
@@ -221,7 +228,10 @@ export function SeatEditor({
       style={mergedStyle}
       placeholder={placeholder}
       aria-label={resolvedAriaLabel}
-      onChange={(e) => setText(e.target.value)}
+      onChange={(e) => {
+          dirtyRef.current = true;
+          setText(e.target.value);
+        }}
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onKeyDown={handleKeyDown}

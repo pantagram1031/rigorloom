@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import vm from "node:vm";
 import React from "react";
 import ts from "typescript";
 
 const require = createRequire(import.meta.url);
-const DESKTOP_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const DESKTOP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function loadTsModule(relPath, stubs = {}) {
   const fullPath = path.join(DESKTOP_ROOT, relPath);

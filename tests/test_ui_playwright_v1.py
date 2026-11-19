@@ -351,6 +351,27 @@ def test_ui_v1_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> 
             # 3) Korean IME safety + Ruling H shortcut guard on SeatEditor & composer
             page.click('[data-testid="page-cell-0-5-1"]')
             page.wait_for_selector('[data-testid="seat-input"]', timeout=5000)
+            # The v1 seat input keeps its own class and look (main's values).
+            seat_look = page.evaluate(
+                """() => {
+                    const el = document.querySelector('[data-testid="seat-input"]');
+                    const cs = getComputedStyle(el);
+                    return {
+                        classes: [...el.classList],
+                        aria: el.getAttribute('aria-label'),
+                        borderStyle: cs.borderTopStyle,
+                        padding: cs.padding,
+                        background: cs.backgroundColor,
+                        letterSpacing: cs.letterSpacing,
+                    };
+                }"""
+            )
+            assert "seat-input" in seat_look["classes"], seat_look
+            assert seat_look["aria"] == "이 자리에 넣을 값", seat_look
+            assert seat_look["borderStyle"] == "none", seat_look
+            assert seat_look["padding"] == "5px 7px", seat_look
+            assert seat_look["background"] == "rgb(255, 255, 255)", seat_look
+            assert seat_look["letterSpacing"] == "normal", seat_look
             page.evaluate(
                 """() => {
                     const el = document.querySelector('[data-testid="seat-input"]');
