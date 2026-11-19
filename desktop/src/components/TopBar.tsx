@@ -49,6 +49,8 @@ export function TopBar() {
       }
     };
     const onKeyDown = (e: KeyboardEvent) => {
+      // A Korean IME cancel is not a request to close the menu.
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Escape") {
         setMenuOpen(false);
       }
