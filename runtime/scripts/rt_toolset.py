@@ -1334,9 +1334,16 @@ def _guard(ctx: Context, before: Path, after: Path) -> dict:
             (_, x), (at, y) = a[i1 + k], b[j1 + k]
             audit = fidelity.audit_text(x, y)
             if not audit["pass"]:
-                changes.append({"at": at, "kind": "changed",
-                                "kinds": [c["kind"] for c in audit["changes"]],
-                                "before": x, "after": y})
+                change = {"at": at, "kind": "changed",
+                          "kinds": [c["kind"] for c in audit["changes"]],
+                          "before": x, "after": y}
+                # The same numbers, traded between their words: say so, with
+                # the words that name each one, or an agent reads it as a
+                # changed number and "fixes" the wrong one.
+                for c in audit["changes"]:
+                    if c.get("order"):
+                        change["swapped"] = {"before": c["before"], "after": c["after"]}
+                changes.append(change)
         for k in range(i1 + pairs, i2):
             at, x = a[k]
             audit = fidelity.audit_text(x, "")

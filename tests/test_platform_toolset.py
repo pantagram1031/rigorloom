@@ -587,6 +587,23 @@ def test_check_without_the_layers_own_style_and_guard(env, monkeypatch):
     assert r["checks"]["guard"]["state"] == "passed" and r["findings"]
 
 
+def test_check_tells_numbers_that_traded_places_from_a_changed_number(env, monkeypatch):
+    """A swap carries the words that name each number on both sides, so an
+    agent does not take it for one changed number and "fix" the wrong one."""
+    monkeypatch.delattr(fake, "guard")
+    path = env.doc("수당.fdoc", "# 보고\n\n기본급은 300만원, 수당은 50만원이다.\n\n교통비는 7만원이다.\n")
+    rev = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev, "ops": [
+        {"op": "replace", "find": "기본급은 300만원, 수당은 50만원",
+         "with": "기본급은 50만원, 수당은 300만원"},
+        {"op": "replace", "find": "7만원", "with": "8만원"}]}))
+    r = ok(call(env.ctx(), "check", {"path": str(path), "only": ["guard"]}))
+    found = {f["at"]: f for f in r["findings"] if f["rule"] == "guard.fact_changed"}
+    assert found["p1"]["swapped"] == {"before": ["기본급은 300만원", "수당은 50만원"],
+                                      "after": ["기본급은 50만원", "수당은 300만원"]}
+    assert "swapped" not in found["p2"]
+
+
 def test_cli_dash_o_is_one_shot_and_never_replaces_without_force(env, monkeypatch):
     path = env.doc()
     # an agent has a draft in progress on the same file
