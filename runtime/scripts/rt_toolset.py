@@ -910,6 +910,8 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "table.delete_row": (("at",), ()),
     "fill": (("place", "text"), ()),
     "style": (("at", "style"), ()),
+    "char_shape": (("at", "set"), ("expect",)),
+    "para_shape": (("at", "set"), ("expect",)),
 }
 
 
@@ -924,6 +926,8 @@ OP_EXAMPLES = {
     "table.delete_row": '{"op":"table.delete_row","at":"t0/r2"}',
     "fill": '{"op":"fill","place":"성명","text":"홍길동"}',
     "style": '{"op":"style","at":"p1","style":"개요 1"}',
+    "char_shape": '{"op":"char_shape","at":"p1:0-6","set":{"bold":true,"size":12}}',
+    "para_shape": '{"op":"para_shape","at":"p1","set":{"align":"CENTER","after":6}}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -943,7 +947,14 @@ OP_NOTES = {
                      "it copies, that row or the next",
     "fill": "`place` is a place id from open (the fill tool takes several at once)",
     "style": "`style` is a paragraph style name this document has",
+    "char_shape": "`at` is a paragraph, a range in one (p3:5-9), a cell, a row or a table; "
+                  "`set` holds only what changes; size is in pt, ratio (장평), spacing (자간), "
+                  "rel_size and offset in %",
+    "para_shape": "`at` is a paragraph, a cell, a row or a table, never a range; `set` holds "
+                  "only what changes; lengths are in pt and an indent below 0 is 내어쓰기",
 }
+#: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
+OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
 #: The ops the edit description spells out: what agents send nearly every time.
 #: The rest are named there, with their fields in the `ops` guide topic.
 OPS_SPELLED = ("set", "replace", "insert_after", "delete")
@@ -956,6 +967,17 @@ def _op_signature(name: str) -> str:
     return name + "{" + ",".join([*required, *(k + "?" for k in optional)]) + "}"
 
 
+def _set_keys(name: str) -> str:
+    """The `set` keys of a shape op with the values each takes, read from the
+    document layer that checks them, so the topic and the check cannot drift."""
+    try:
+        doc = sibling("rt_doc")
+        table, hint = getattr(doc, OP_SET_KEYS[name]), doc._shape_hint
+    except (ImportError, AttributeError):          # no document layer in this install
+        return ""
+    return "; `set` keys: " + ", ".join(f"{k} ({hint(v)})" for k, v in table.items())
+
+
 def _ops_guide() -> str:
     lines = ["Ops for `edit`; `?` marks an optional field.",
              "Addresses count from 0: p0 is the first paragraph, t0/r0/c0 the first cell "
@@ -964,7 +986,10 @@ def _ops_guide() -> str:
              "nothing changes and the error says what is there.",
              "Pass the `rev` you read as `base`.", ""]
     for name in OP_FIELDS:
-        lines.append(_op_signature(name) + (": " + OP_NOTES[name] if name in OP_NOTES else ""))
+        note = (": " + OP_NOTES[name]) if name in OP_NOTES else ""
+        if name in OP_SET_KEYS:
+            note += _set_keys(name)
+        lines.append(_op_signature(name) + note)
         lines.append("  " + OP_EXAMPLES[name])
     return "\n".join(lines) + "\n"
 

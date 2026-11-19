@@ -282,6 +282,13 @@ def test_bad_ops_are_named(env):
     e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0,
                                      "ops": [{"op": "set", "at": "p1"}]}), "invalid_params")
     assert e["at"] == "ops[0].text"
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0,
+                                     "ops": [{"op": "char_shape", "at": "p1"}]}), "invalid_params")
+    assert e["at"] == "ops[0].set" and "char_shape" in e["hint"]
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0,
+                                     "ops": [{"op": "para_shape", "at": "p1", "set": {}, "style": "x"}]}),
+            "invalid_params")
+    assert "set" in e["candidates"]
 
 
 def test_ambiguous_replace_keeps_the_candidates(env):
@@ -1671,6 +1678,10 @@ def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeyp
         rt_toolset._check_ops([json.loads(example)])   # each example passes the op check
     assert set(rt_toolset.OP_EXAMPLES) == set(rt_toolset.OP_FIELDS)
     assert "t0/r0/c0 the first cell" in text
+    doc = rt_tools.sibling("rt_doc")
+    for name, table in rt_toolset.OP_SET_KEYS.items():   # the keys the layer checks, not a copy
+        line = next(x for x in text.splitlines() if x.startswith(name + "{"))
+        assert all(f" {key} (" in line for key in getattr(doc, table)), name
     err(call(env.ctx(), "guide", {"topic": "gongmun"}), "capability_unavailable")
 
     (empty / "gongmun.md").write_text("# 공문\n", encoding="utf-8")
