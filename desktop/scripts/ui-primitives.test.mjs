@@ -233,18 +233,18 @@ test("ui/index.ts exports all 11 J1 §5 primitives, Icon, Mark, and principle he
   }
 });
 
-test("public/favicon.ico uses the current shipped mark and index.html links it", () => {
+test("public/favicon.ico is the generated 리을R favicon and index.html links it", () => {
   const desktopRoot = path.resolve(SRC_DIR, "..");
   const publicFav = path.join(desktopRoot, "public/favicon.ico");
-  const shippedIco = path.join(desktopRoot, "src-tauri/icons/icon.ico");
   const indexHtml = fs.readFileSync(path.join(desktopRoot, "index.html"), "utf8");
 
   assert.equal(fs.existsSync(publicFav), true, "desktop/public/favicon.ico must exist");
-  assert.equal(
-    fs.readFileSync(publicFav).equals(fs.readFileSync(shippedIco)),
-    true,
-    "public/favicon.ico must match the current shipped src-tauri/icons/icon.ico until logo pick",
-  );
+  // scripts/make_icons.py writes an ICO with the 16, 24, 32 and 48 px tiles.
+  const ico = fs.readFileSync(publicFav);
+  assert.equal(ico.readUInt16LE(0), 0, "ICO reserved field");
+  assert.equal(ico.readUInt16LE(2), 1, "ICO type");
+  const sizes = Array.from({ length: ico.readUInt16LE(4) }, (_, i) => ico[6 + i * 16] || 256).sort((a, b) => a - b);
+  assert.deepEqual(sizes, [16, 24, 32, 48]);
   assert.match(indexHtml, /rel="icon"[^>]+favicon\.ico/);
 });
 
