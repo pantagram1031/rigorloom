@@ -1,12 +1,12 @@
 # Agent authority, continuity and quota handover protocol
 
-Owner: planning owner. Execution owner: separate Sol High task. User authorized autonomous delegation, bounded agent creation, quota-aware replacement and return after reset. This is a product-development operations protocol, not a permission to widen provider/account access or edit unrelated work.
+Owner: planning owner. Execution owner: separate coordinator task (high reasoning). User authorized autonomous delegation, bounded agent creation, quota-aware replacement and return after reset. This is a product-development operations protocol, not a permission to widen provider/account access or edit unrelated work.
 
 ## Authority and communication
 
 1. User decides product priorities, protected boundaries, purchases/publishing and major changes.
 2. The planning owner owns product planning and acceptance disputes. It is normally reserved, not a routine polling target.
-3. Sol is operational coordinator: task queue, leases, provider routing, worker creation, verification, local integration and usage checks. One active coordinator lease exists.
+3. The coordinator runs operations: task queue, leases, provider routing, worker creation, verification, local integration and usage checks. One active coordinator lease exists.
 4. A designated deputy can acquire an expired/relinquished coordinator lease after verifying the prior process/task is terminal or a signed handoff explicitly releases it. Quota unavailability alone is not proof that the prior worker stopped.
 5. Implementers own named files/worktrees and tasks; reviewers remain read-only. Workers may request dependencies, ask peers factual questions, and propose a subtask. Coordinator authorizes bounded spawning from the allowed provider/model registry and available budget. No recursive unlimited spawning or self-granted authority.
 

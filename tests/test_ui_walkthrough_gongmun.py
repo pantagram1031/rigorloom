@@ -91,13 +91,12 @@ FORBIDDEN_UI_STRINGS = (
     "Claude \uae30\ubc18",
     "AI \ud0d0\uc9c0 \ud68c\ud53c",
     "AI \ud2f0 \uc81c\uac70",
-    "Astra",
-    "Herdr",
-    "F:/",
 )
 
 SURFACE_LEAK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("raw_path", re.compile(r"(?:/home/|/Users/|/tmp/|[A-Za-z]:\\\\|F:/)")),
+    # A drive path: one letter, a colon and a backslash, or one letter, a colon
+    # and a single slash, so a URL scheme (http://) is not one.
+    ("raw_path", re.compile(r"(?:/home/|/Users/|/tmp/|[A-Za-z]:\\|(?<![A-Za-z0-9])[A-Za-z]:/(?!/))")),
     (
         "raw_event",
         re.compile(
@@ -114,6 +113,14 @@ SURFACE_LEAK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
 ]
 
+
+
+def test_a_drive_path_is_a_leak_and_a_url_is_not() -> None:
+    raw_path = dict(SURFACE_LEAK_PATTERNS)["raw_path"]
+    for leak in ("C:\\Users\\kim", "F:/", "c:/Users/x", "저장 위치 D:/작업"):
+        assert raw_path.search(leak), leak
+    for url in ("http://example.com", "https://a.b/c", "file:///x"):
+        assert not raw_path.search(url), url
 
 def _import_playwright():
     try:

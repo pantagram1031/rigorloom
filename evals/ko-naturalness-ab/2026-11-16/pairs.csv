@@ -1,4 +1,4 @@
-paragraph_id,stratum,condition,input_status,guard_reference_to_final,guard_draft_to_final,unchanged,eligible,astra_choice,astra_reason_codes,sol_choice,sol_reason_codes
+paragraph_id,stratum,condition,input_status,guard_reference_to_final,guard_draft_to_final,unchanged,eligible,judge_a_choice,judge_a_reason_codes,judge_b_choice,judge_b_reason_codes
 25cd7eb9e15ab26009c0a1e81e772830f445068bc2ac7d8e32dbccea03f884b0,정책 보도,A,valid,fail,pass,false,false,,,,
 25cd7eb9e15ab26009c0a1e81e772830f445068bc2ac7d8e32dbccea03f884b0,정책 보도,B,valid,fail,pass,true,false,,,,
 c0fcab5f0dc9a5edfd72e89eb109aa633cfee93a6d3f24e71eacdc33a8dc0b2f,공개 문답,A,valid,fail,pass,true,false,,,,

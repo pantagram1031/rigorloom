@@ -17,6 +17,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T200:** Comments, fixture descriptions and docs (research, release notes, the model-routing reference, archived plans and older CHANGELOG entries) no longer use internal model aliases: the naturalness pilot's judges are A and B (its column and file names too) with the exact models in the run record kept outside the repository, the v0.17 clean-room tiers are A, B and C, and the plans name roles. The UI tests' forbidden-phrase lists drop three internal entries, and their path-leak check now catches a drive path written with one `\` (it needed two) or with `/`. Two pipeline tests are renamed (`test_tier_c_*`). No behaviour change; guard pair ids and goldens are as before.
 - **T189:** The app icon, the favicon and the editor v2 mark are now the 리을R mark, one line that reads as R or as ㄹ. The v1 screens keep their weave mark until the switch to editor v2. `desktop/scripts/make_icons.py` regenerates the icon set and favicon from `src/assets/logo-16.svg`. The v1 identity test's baseline (`tests/fixtures/v1_main_ui_dist`) is refreshed to this bundle.
 - **T191:** The engine's layout check no longer flags a heading near the bottom of the last page: a short final section is short because the document ends there, not because the page breaks (it had failed `check` on every short one-page report). A preview edit is an engine draft that keeps the source's thumbnail instead of drawing page 1 again, and page images come from the engine's own `png()` with the same pixels, falling back to the engine's PDF rasterized with pypdfium2. Drawing or measuring a page no longer runs the form analysis, and the engine draws only the page asked for. An older engine that does not know an option is asked again without it, once per engine folder.
 - **T188:** `new` reads CommonMark by default: tables, lists and a number written in a heading come out as written, and pictures are taken from the markdown file's own folder. `dialect: "report"` (`rigorloom new --dialect report`) reads the report dialect (□/○ markers, numbered headings), the only one a `form` takes; `dialect` is a new input of the `new` tool. `check` compares a table cell by cell when its shape is unchanged, so a value written into an empty cell is reported as an added fact, a notice that fails nothing, and a changed value in a filled cell is a warning at that cell. `edit` refuses a markdown table sent to `insert_after` and says where a table goes, an op written without `op` is named with an example, and two ops that change the same place are named in Korean. A substituted font is named with the face drawn instead. `guide` lists only the topics this install has.
@@ -1340,7 +1341,7 @@ The ledger, and the honest limits of what those runs prove, is
 - **#75 — T36: acceptance now requires the safety set, and no path exits 1.**
   Two P0 correctness-of-VERDICT defects found by the independent Codex
   clean-room harness. First, **`acceptance: true` while safety checks sat in
-  `skipped[]`**: the luna tier supplied a CLI `--fill-map` and still got
+  `skipped[]`**: tier C supplied a CLI `--fill-map` and still got
   `empty_cell_expected_fill`, `fill_charpr_script_mismatch` AND page parity
   into `deterministic.skipped[]`, then exit 0 with `acceptance: true`, because
   acceptance was computed as "no HARD finding" and never read the skip list.
@@ -1365,7 +1366,7 @@ The ledger, and the honest limits of what those runs prove, is
   artifact's own `<hp:lineseg vertpos>` layout cache (`derive_pages_document`,
   excluding cell-relative linesegs inside `hp:tc`/`hp:subList`), records
   `pages_document_source`, and skips only when all three fail. Fourth, the
-  **exit-code contract, all six rows**: sol and terra both saw exit **1** for
+  **exit-code contract, all six rows**: tiers A and B both saw exit **1** for
   `vision_pending` where the contract says **3**. 1 was not a code at all but
   an unhandled path — `emit_verdict` sat outside every guard in `main`, so an
   unwritable `--out` escaped as a traceback after a perfectly good verdict.
@@ -1441,7 +1442,7 @@ The ledger, and the honest limits of what those runs prove, is
   release preparation that last limit was corrected rather than left standing:
   the non-Claude axis now has **exactly one** data point (the independent Codex
   harness of #75), recorded in the document with what it does and does not
-  support — luna produced an accepted document, so a second vendor *can* drive
+  support — tier C produced an accepted document, so a second vendor *can* drive
   the shipped surface, but it needed more retries and an auditing harness to
   get there, and its numbers are not comparable with the table's.
 

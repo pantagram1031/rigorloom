@@ -2331,7 +2331,7 @@ def test_rubric_document_and_code_vocabulary_agree():
 # --------------------------------------------------------------------------
 # (h) P0-A — acceptance may not claim more than the run checked
 #
-# The v0.17 clean-room harness, luna tier: a CLI --fill-map was supplied and
+# The v0.17 clean-room harness, tier C: a CLI --fill-map was supplied and
 # the verdict STILL carried empty_cell_expected_fill, fill_charpr_script_
 # mismatch AND page_parity in deterministic.skipped[] — and returned
 # acceptance: true with exit 0. Two root causes, both fixed here: acceptance
@@ -2339,11 +2339,11 @@ def test_rubric_document_and_code_vocabulary_agree():
 # inputs with materially different effects.
 # --------------------------------------------------------------------------
 
-def _luna_shape(tmp_path, *, value_charpr=7):
-    """luna's exact invocation shape: a CLI --fill-map, and an expectations
+def _tier_c_shape(tmp_path, *, value_charpr=7):
+    """Tier C's exact invocation shape: a CLI --fill-map, and an expectations
     file that does NOT carry a fill_map member."""
-    artifact = make_form_hwpx(tmp_path / "luna.hwpx", value_charpr=value_charpr)
-    pdf = _fill_pdf(tmp_path / "luna.pdf")
+    artifact = make_form_hwpx(tmp_path / "tier-c.hwpx", value_charpr=value_charpr)
+    pdf = _fill_pdf(tmp_path / "tier-c.pdf")
     profile = write_form_profile(tmp_path / "profile.json")
     fill_map = tmp_path / "map.json"
     fill_map.write_text(json.dumps({"20101": _FILL_VALUE}, ensure_ascii=False),
@@ -2362,11 +2362,11 @@ def _reviewed(tmp_path, pages=(1,)):
     return path
 
 
-def test_luna_cli_fill_map_no_longer_leaves_the_t30_post_flight_inactive(
+def test_tier_c_cli_fill_map_no_longer_leaves_the_t30_post_flight_inactive(
         tmp_path):
     """The CLI map seeds expectations.fill_map, so ALL of its consumers run —
     and the T30 trap this artifact carries is caught instead of skipped."""
-    artifact, pdf, profile, fill_map, expectations = _luna_shape(tmp_path)
+    artifact, pdf, profile, fill_map, expectations = _tier_c_shape(tmp_path)
 
     code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
                            "--expectations", expectations,
@@ -2382,10 +2382,10 @@ def test_luna_cli_fill_map_no_longer_leaves_the_t30_post_flight_inactive(
     assert code == 3
 
 
-def test_luna_shape_a_skipped_safety_check_is_never_an_acceptance(tmp_path):
-    """luna's other half: with page parity still unobtainable and no residue
+def test_tier_c_shape_a_skipped_safety_check_is_never_an_acceptance(tmp_path):
+    """Tier C's other half: with page parity still unobtainable and no residue
     gate, the run must NOT report acceptance — it must name what it skipped."""
-    artifact, pdf, _, fill_map, expectations = _luna_shape(
+    artifact, pdf, _, fill_map, expectations = _tier_c_shape(
         tmp_path, value_charpr=0)          # clean artifact: nothing FAILS
 
     code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
@@ -2413,7 +2413,7 @@ def test_luna_shape_a_skipped_safety_check_is_never_an_acceptance(tmp_path):
 
 def test_a_waiver_flips_acceptance_back_and_is_recorded(tmp_path):
     """Same run, same skips, plus an explicit per-check opt-out."""
-    artifact, pdf, _, fill_map, expectations = _luna_shape(
+    artifact, pdf, _, fill_map, expectations = _tier_c_shape(
         tmp_path, value_charpr=0)
     code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
                            "--expectations", expectations,
@@ -2434,7 +2434,7 @@ def test_a_waiver_flips_acceptance_back_and_is_recorded(tmp_path):
 def test_a_partial_waiver_still_blocks_on_the_rest(tmp_path):
     """Still-catches: waiving one skipped SAFETY check does not waive the
     others. Per-check, never a blanket switch."""
-    artifact, pdf, _, fill_map, expectations = _luna_shape(
+    artifact, pdf, _, fill_map, expectations = _tier_c_shape(
         tmp_path, value_charpr=0)
     code, verdict, _ = run("--artifact", artifact, "--pdf", pdf,
                            "--expectations", expectations,
@@ -2475,7 +2475,7 @@ def test_the_safety_set_lives_in_exactly_one_place():
 # --------------------------------------------------------------------------
 # (i) P0-A — page parity must not need a hand-declared page count
 #
-# The sol tier only got page parity because it hand-declared
+# Tier A only got page parity because it hand-declared
 # expectations.pages_document: on the --pdf path there was no conversion JSON,
 # so parity skipped by default. It is now derived from the artifact's own
 # layout cache, and the verdict names which source it used.
@@ -3180,7 +3180,7 @@ def test_t82_cli_fill_inputs_conflict(tmp_path, extra):
 # --------------------------------------------------------------------------
 # (k) P0-B — the exit-code contract, every terminal state
 #
-# The clean-room sol and terra tiers both received process exit 1 for
+# The clean-room tiers A and B both received process exit 1 for
 # vision_pending, where the docs and the verdict contract say 3. 3 is right
 # (it is checker_base.EXIT_HARD, the finding/pending code every checker uses);
 # 1 was an UNHANDLED path — emit_verdict sat outside every guard, so an

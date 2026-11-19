@@ -143,7 +143,7 @@ def _changed(b_paras, a_paras, tmp_path) -> list[int]:
 
 
 def test_the_sign_scale_and_spelling_of_an_amount(tmp_path):
-    # From Sol's T183 review: the sign covers the whole amount, the won after
+    # From the reviewer's T183 review: the sign covers the whole amount, the won after
     # the last group belongs to it, and spacing, a trailing zero or a plus
     # sign change nothing.
     same = [("-1억 4천만원", "-140,000,000원"), ("1억 2,000만 3,500원", "120,003,500원"),
@@ -158,7 +158,7 @@ def test_the_sign_scale_and_spelling_of_an_amount(tmp_path):
 
 
 def test_a_minus_written_as_a_word_or_a_math_sign_and_every_digit_count(tmp_path):
-    # Sol's re-check of the T183 fixes: 마이너스 and − (U+2212) are minus
+    # The reviewer's re-check of the T183 fixes: 마이너스 and − (U+2212) are minus
     # signs, groups may be several spaces apart, and a long decimal is
     # compared digit by digit, not rounded to 28 places.
     same = [("마이너스 3천 200원", "-3,200원"), ("-3억   6,200만 410원", "-362,000,410원"),
@@ -204,7 +204,7 @@ def test_a_unit_is_not_the_first_letter_of_another_word(tmp_path):
 
 
 def test_an_article_before_a_word_that_starts_with_won_is_not_trillions(tmp_path):
-    # Fable's review of T183: 조 is a trillion only before a won that stands
+    # The advisor's review of T183: 조 is a trillion only before a won that stands
     # alone (1조원이다, 1조 원으로); in 제12조 원장은 and 제5조 원칙 it is an
     # article, so respacing or rewording around it changes nothing.
     b = ["제12조 원장은 회의를 소집한다.", "제5조 원칙에 따라 처리한다.", "예산은 1조원이다.",
@@ -215,7 +215,7 @@ def test_an_article_before_a_word_that_starts_with_won_is_not_trillions(tmp_path
 
 
 def test_an_amount_in_the_range_of_trillions_keeps_its_won(tmp_path):
-    # Fable's review of #396: 대 after 원 (1조원대, 3억 원대) is a counting
+    # The advisor's review of #396: 대 after 원 (1조원대, 3억 원대) is a counting
     # suffix, and a particle or 이다 may follow it, so the 조 is a trillion and
     # a space before 원대 changes nothing.
     b = ["1조원대 사업을 맡았다.", "3억원대 아파트를 샀다.", "예산은 1조원대이다.", "예산은 3억원대이다.",
@@ -235,7 +235,7 @@ def test_a_number_and_its_unit_on_a_line_of_their_own_are_not_a_heading(tmp_path
 
 
 def test_a_spaced_amount_on_a_line_of_its_own_is_not_a_heading(tmp_path):
-    # Fable's review of #396: a line with no dot that starts with an amount
+    # The advisor's review of #396: a line with no dot that starts with an amount
     # written with a space (30 평대의 집, 5 명이 참석) is an amount, by the same
     # word-end rule a number uses, not a numbered heading. A dotted number and
     # a number before a word that only starts like a unit still head a line.
@@ -245,7 +245,7 @@ def test_a_spaced_amount_on_a_line_of_its_own_is_not_a_heading(tmp_path):
 
 
 def test_a_number_whose_only_label_is_another_number(tmp_path):
-    # Fable's pairs from the review of T183: in 1차 3명, 2025년에는 120명 and
+    # The advisor's pairs from the review of T183: in 1차 3명, 2025년에는 120명 and
     # 제1항은 3일 the number before names the one after, so trading them is a
     # swap; a reordered sentence keeps each with its label. Numbers that a
     # particle joins (3명과 5명, 1일부터 3일) do not label each other.
@@ -265,7 +265,7 @@ def test_a_number_whose_only_label_is_another_number(tmp_path):
 
 
 def test_numbers_paired_by_the_words_between_them_keep_their_roles(tmp_path):
-    # Fable's and Sol's label-words pairs: 3%에서 5%로 is a source and a goal
+    # The advisor's and the reviewer's label-words pairs: 3%에서 5%로 is a source and a goal
     # (so is a date written in parts, 3월 1일부터 3월 31일까지), 총 3건 중 1건
     # a whole and a part, and 각각 2회, 5회 reads the numbers against 현장
     # 심사 and 서면 심사 in order. Trading the numbers between roles is a swap,
@@ -362,7 +362,7 @@ def test_which_words_a_number_belongs_to(tmp_path):
 
 
 def test_a_swap_is_found_past_edited_words_and_repeated_predicates(tmp_path):
-    # Sol's re-check: a word edited next to an untouched number does not hide
+    # The reviewer's re-check: a word edited next to an untouched number does not hide
     # a swap; a predicate every number shares does not veto one; a sentence
     # that gained words at its start still names its number; words after a
     # list end at the noun they mark, so a reordered list stays quiet.

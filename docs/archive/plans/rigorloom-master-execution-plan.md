@@ -3,7 +3,7 @@
 Status: **ACTIVE BY USER — coordinator resume and live-state reconciliation authorized**
 Updated: 2026-09-13 KST
 Planning owner: product planning
-Routine execution coordinator: existing terminal session agent `rigorloom-sol-coordinator` in named
+Routine execution coordinator: the existing coordinator agent in the named terminal
 session `rigorloom`; do not create a replacement session while it remains usable.
 
 This is the top-level plan for the whole Rigorloom product, not only its CLI.

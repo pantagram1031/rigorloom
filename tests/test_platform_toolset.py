@@ -342,7 +342,7 @@ def test_new_then_save_creates_and_then_resaves_its_own_file(env):
 
 
 def test_a_foreign_write_after_the_ownership_check_is_not_replaced(env, monkeypatch):
-    # Fable #389 item 1: own-file must compare against the bytes the ownership
+    # Advisor review of #389, item 1: own-file must compare against the bytes the ownership
     # check matched, so a write that lands just after it fails as target_changed.
     import rt_commit
     draft = ok(call(env.ctx(), "new", {"markdown": "# 회의록\n\n안건은 둘입니다.\n"}))["path"]
@@ -750,10 +750,10 @@ def test_people_read_korean_and_agents_read_english(env, monkeypatch):
             assert word not in out, (argv, word, out)
 
 
-# -- attack review (Sol, P0) ---------------------------------------------------------
+# -- attack review (P0) ---------------------------------------------------------------
 
 def test_new_never_reads_a_file_named_by_a_one_line_body(env):
-    # Sol H6: a one-line body naming a file is text, not that file.
+    # Review H6: a one-line body naming a file is text, not that file.
     secret = env.work / "비밀.md"
     secret.write_text("# 비밀 내용\n", encoding="utf-8")
     r = ok(call(env.ctx(), "new", {"markdown": str(secret)}))
@@ -790,7 +790,7 @@ def test_new_checks_the_pictures_the_converter_reads(env, tmp_path):
 
 
 def test_a_picture_the_converter_cannot_open_is_refused_not_dropped(env):
-    # Sol's re-check (with N5): a picture the converter would not embed must
+    # The reviewer's re-check (with N5): a picture the converter would not embed must
     # not go missing without a word. In a .md file, ![a](그림(1).png) is text
     # to the converter (a destination holds no brackets), and a folder named
     # as a picture cannot be opened; the agent is told either way.
@@ -824,7 +824,7 @@ def test_a_long_run_of_unclosed_openers_is_scanned_in_linear_time(env):
 
 
 def test_many_pictures_and_one_the_converter_cannot_open_are_scanned_in_linear_time(env):
-    # Fable's review of #396: each opener was looked up in the list of matches
+    # The advisor's review of #396: each opener was looked up in the list of matches
     # from its start, so 40,000 pictures on one line took 40 s.
     text = "![a](b) " * 40_000 + "![z](그림(1).png)\n"
     started = time.perf_counter()
@@ -835,7 +835,7 @@ def test_many_pictures_and_one_the_converter_cannot_open_are_scanned_in_linear_t
 
 
 def test_a_picture_line_the_converter_would_not_read_is_refused(env):
-    # Sol's re-check (with N5): "[그림 1] 캡션 (sample (a).png)" and
+    # The reviewer's re-check (with N5): "[그림 1] 캡션 (sample (a).png)" and
     # "![표지](sample (a).png)" are text to the converter, so the document got
     # the markdown instead of the picture and nobody was told.
     (env.work / "sample (a).png").write_bytes(b"x")
@@ -854,7 +854,7 @@ def test_a_picture_line_the_converter_would_not_read_is_refused(env):
 
 
 def test_text_that_is_not_a_picture_is_passed_on_as_written(env, tmp_path, monkeypatch):
-    # Sol's re-check N4: the check rewrote every image-like name in brackets,
+    # The reviewer's re-check N4: the check rewrote every image-like name in brackets,
     # prose and links included. Only what the converter reads as a picture is
     # checked; everything else reaches the layer unchanged.
     seen = _layer_sees(monkeypatch, "new")
@@ -898,7 +898,7 @@ def test_a_state_folder_with_brackets_still_takes_pictures(env, tmp_path, monkey
 
 
 def test_a_picture_the_check_did_not_see_stops_the_build(env, tmp_path, monkeypatch):
-    # Sol's re-check N3: a syntax the converter reads and this check does not
+    # The reviewer's re-check N3: a syntax the converter reads and this check does not
     # (here the layer reads <img src>) cannot put an unchecked file in the
     # document: the package's pictures must be the checked bytes.
     import re
@@ -967,7 +967,7 @@ def _pictures_in(package):
 
 
 def test_a_replaced_picture_is_converted_again(env, monkeypatch):
-    # Sol's re-check N5: the converted file was kept per revision of the
+    # The reviewer's re-check N5: the converted file was kept per revision of the
     # markdown alone, so a picture replaced on disk was saved stale.
     calls = _markdown_converter(monkeypatch)
     picture = env.work / "그림.png"
@@ -1005,7 +1005,7 @@ def test_saving_markdown_converts_through_a_checked_package(env, tmp_path, monke
 
 
 def test_edit_cannot_write_a_signature_seat(env):
-    # Sol M14: what fill may not do, edit may not either.
+    # Review M14: what fill may not do, edit may not either.
     path = env.doc()
     rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
     for op in ({"op": "fill", "place": "서명", "text": "홍길동"},
@@ -1016,7 +1016,7 @@ def test_edit_cannot_write_a_signature_seat(env):
 
 
 def test_a_cursor_only_resumes_the_read_it_came_from(env):
-    # Sol M8: a cursor from a whole-document read does not resume a read of one block.
+    # Review M8: a cursor from a whole-document read does not resume a read of one block.
     path = env.doc("긴글.fdoc", "\n\n".join(f"문단 {i} " + "가" * 300 for i in range(40)))
     first = ok(call(env.ctx(), "read", {"path": str(path), "max_chars": 1000}))
     err(call(env.ctx(), "read", {"path": str(path), "at": "p3", "cursor": first["next"]}),
@@ -1027,7 +1027,7 @@ def test_a_cursor_only_resumes_the_read_it_came_from(env):
 
 
 def test_layout_without_pages_is_not_a_pass(env, monkeypatch):
-    # Sol M6: no page list is no evidence.
+    # Review M6: no page list is no evidence.
     path = env.doc()
     monkeypatch.setattr(fake, "pages", lambda p: {"ok": True, "pages": []})
     r = ok(call(env.ctx(), "check", {"path": str(path), "only": ["layout"]}))
@@ -1035,7 +1035,7 @@ def test_layout_without_pages_is_not_a_pass(env, monkeypatch):
 
 
 def test_guard_against_a_draft_compares_with_that_draft(env):
-    # Sol M7: `against: draft:<id>` is that draft's head, not this file's source.
+    # Review M7: `against: draft:<id>` is that draft's head, not this file's source.
     path = env.doc()
     other = ok(call(env.ctx(), "new", {"markdown": "# 전혀 다른 문서\n\n금액 1원\n"}))
     rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
@@ -1047,14 +1047,14 @@ def test_guard_against_a_draft_compares_with_that_draft(env):
 
 
 def test_cli_usage_errors_are_json_when_asked(env, monkeypatch):
-    # Sol L1: --json means stdout is one JSON document, even for a bad command line.
+    # Review L1: --json means stdout is one JSON document, even for a bad command line.
     for argv in (["open", "--json"], ["edit", str(env.doc()), "--json"]):
         code, out, _ = _cli(argv, monkeypatch)
         assert code == 2 and json.loads(out)["error"]["code"] == "invalid_params"
 
 
 def test_cli_convert_checks_the_format_against_the_name(env, monkeypatch):
-    # Sol M10: --to pdf -o x.hwpx is a mistake, said as one.
+    # Review M10: --to pdf -o x.hwpx is a mistake, said as one.
     path = env.doc()
     code, out, _ = _cli(["convert", str(path), "--to", "pdf", "-o",
                          str(env.work / "x.fdoc"), "--json"], monkeypatch)
@@ -1062,7 +1062,7 @@ def test_cli_convert_checks_the_format_against_the_name(env, monkeypatch):
 
 
 def test_cli_dash_o_keeps_the_edit_when_the_save_fails(env, monkeypatch):
-    # Sol M12: a failed save does not throw away the one-shot edit.
+    # Review M12: a failed save does not throw away the one-shot edit.
     path = env.doc()
     blocked = env.work / "없는폴더" / "out.fdoc"
     code, out, _ = _cli(["edit", str(path), "--op",
@@ -1073,7 +1073,7 @@ def test_cli_dash_o_keeps_the_edit_when_the_save_fails(env, monkeypatch):
 
 
 def test_dash_o_is_create_only_all_the_way_to_the_commit(env):
-    # Sol M3: the CLI checks OUT is absent, then sets create_only; a file
+    # Review M3: the CLI checks OUT is absent, then sets create_only; a file
     # that appears in between is refused, not asked about.
     path = env.doc()
     target = env.work / "나중.fdoc"
@@ -1088,7 +1088,7 @@ def test_dash_o_is_create_only_all_the_way_to_the_commit(env):
 
 
 def test_save_rechecks_the_draft_after_asking(env):
-    # Sol H4: an edit that lands while the person decides is not lost or saved unseen.
+    # Review H4: an edit that lands while the person decides is not lost or saved unseen.
     path = env.doc()
     rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
     ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
@@ -1109,7 +1109,7 @@ def test_save_rechecks_the_draft_after_asking(env):
 
 
 def test_clean_refuses_a_folder_that_is_not_ours(env, monkeypatch, tmp_path):
-    # Sol M13: RIGORLOOM_HOME pointed at the wrong folder must not lose its "drafts".
+    # Review M13: RIGORLOOM_HOME pointed at the wrong folder must not lose its "drafts".
     other = tmp_path / "someone"
     (other / "drafts").mkdir(parents=True)
     (other / "drafts" / "keep.txt").write_text("x", encoding="utf-8")
@@ -1119,7 +1119,7 @@ def test_clean_refuses_a_folder_that_is_not_ours(env, monkeypatch, tmp_path):
 
 
 def test_a_client_lists_only_drafts_inside_its_roots(env, tmp_path):
-    # Sol M5: one state folder, two differently scoped clients.
+    # Review M5: one state folder, two differently scoped clients.
     mine = env.doc()
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -1135,7 +1135,7 @@ def test_a_client_lists_only_drafts_inside_its_roots(env, tmp_path):
 
 
 def test_disk_view_says_when_the_file_moved_under_the_draft(env):
-    # Sol M9: status comes from the file as it is now.
+    # Review M9: status comes from the file as it is now.
     path = env.doc()
     rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
     ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
@@ -1309,7 +1309,7 @@ def test_long_findings_wrap_instead_of_losing_the_end():
 
 
 
-# -- Sol re-check of the save path (83005c8..d9caf52) -----------------------------
+# -- Re-check of the save path (83005c8..d9caf52) -----------------------------
 
 def _edited(env, name="신청서.fdoc"):
     path = env.doc(name)
@@ -1661,7 +1661,7 @@ def test_a_substituted_font_is_named_or_called_another_font():
 
 
 def test_a_table_of_the_same_shape_is_compared_cell_by_cell():
-    # Fable's review of the P7 round-2 change: an empty cell given a value is
+    # The advisor's review of the P7 round-2 change: an empty cell given a value is
     # a fact added (a notice), a filled cell whose value changed is a warning
     # at that cell, and an unchanged cell says nothing.
     fidelity = rt_tools.sibling("rt_fidelity")

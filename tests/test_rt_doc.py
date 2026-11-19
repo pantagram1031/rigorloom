@@ -732,7 +732,7 @@ def test_heading_key_rule():
 
 @engine
 def test_engine_unverified_removal_is_refused_not_reported(kit, tmp_path):
-    """review fable-388 #2: removing the hp:switch table must be done or refused, never reported done."""
+    """advisor review of #388, item 2: removing the hp:switch table must be done or refused, never reported done."""
     D.close()
     src = _fx_copy(tmp_path)
     for i, op in enumerate([{"op": "delete", "at": "t1"}, {"op": "table.delete_row", "at": "t1/r0"}]):

@@ -1820,7 +1820,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
     elif not said_no and (
             ours := rt_commit.owned_sha256(target, ctx.drafts.home, draft=writer)) is not None:
         # A "no" on record for these bytes means the person is asked, even
-        # over a file this draft created (Sol re-check F1, round 2).
+        # over a file this draft created (review re-check F1, round 2).
         # The digest the ownership check matched, not a fresh hash: a foreign
         # write after the check fails the commit as target_changed.
         expected, policy = ours, "policy:own-file"
