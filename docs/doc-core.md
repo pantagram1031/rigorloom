@@ -259,13 +259,22 @@ rt_doc.edit("보고서.hwpx", [
   If something optional fails after the output was built (layout signals),
   the edit still succeeds and says so in `warnings`.
 - `preview=True` writes to a temp copy and adds `changed: [{i, page, rect}]`.
-  `rect` stays `null` until the engine has `geometry`.
+  `rect` stays `null` until the engine has `geometry`. The copy is an engine
+  draft (`edit(draft=True)`): it keeps the source's thumbnail
+  (`Preview/PrvImage.png`) instead of drawing page 1 again, so it is never
+  the file to hand on; applying the same ops without `preview` writes the real
+  one.
 
 ## Rendering and pages
 
-`render(path, pages, scale=2.0, fmt="png")` asks the engine for a PDF of
-those pages and rasterizes it with pypdfium2 (optional; without it PNG
-rendering is `capability_unavailable`). Pages come back in the order asked
+`render(path, pages, scale=2.0, fmt="png")` asks the engine's own `png()`
+first: the engine draws its PDF of those pages, rasterizes it with
+pypdfium2 and writes the PNGs itself (`via: "engine_png"`). When the engine
+has no `png()` or its answer is not exactly the pages asked for, rt_doc asks
+the engine for a PDF of those pages and rasterizes it with pypdfium2 itself
+(`via: "engine_pdf+pypdfium2"`, same pixels; optional; without pypdfium2 PNG
+rendering is `capability_unavailable`). `render` and `geometry` load only the
+layout, not the form analysis, so a fresh preview copy draws quickly. Pages come back in the order asked
 for and each is the page it names; a page asked twice or outside the
 document is refused before anything is drawn, and nothing is written unless
 every page drew. `fmt="pdf"` writes one PDF (pages in ascending order; each
