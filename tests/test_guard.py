@@ -156,6 +156,38 @@ def test_the_sign_scale_and_spelling_of_an_amount(tmp_path):
                     tmp_path) == list(range(1, len(changed) + 1))
 
 
+def test_a_minus_written_as_a_word_or_a_math_sign_and_every_digit_count(tmp_path):
+    # Sol's re-check of the T183 fixes: 마이너스 and − (U+2212) are minus
+    # signs, groups may be several spaces apart, and a long decimal is
+    # compared digit by digit, not rounded to 28 places.
+    same = [("마이너스 3천 200원", "-3,200원"), ("-3억   6,200만 410원", "-362,000,410원"),
+            ("−52,800원", "-52,800원")]
+    assert _changed([f"잔액은 {x}이다." for x, _ in same], [f"잔액은 {y}이다." for _, y in same],
+                    tmp_path) == []
+    changed = [("마이너스 8,500원", "8,500원"), ("−52,800원", "52,800원"),
+               ("0.12345678901234567890123456781", "0.12345678901234567890123456782")]
+    assert _changed([f"잔액은 {x}이다." for x, _ in changed], [f"잔액은 {y}이다." for _, y in changed],
+                    tmp_path) == [1, 2, 3]
+
+
+def test_a_unit_is_not_the_first_letter_of_another_word(tmp_path):
+    # 24인치 is not 24인, 제12차량 holds no 차, and after a space a unit has
+    # to end the word: 18 인원, 38 평가 and 68 분기점 are bare numbers.
+    b = ["최소 사양은 화면 폭 24인치다.", "제12차량 정비 이력을 첨부했다.",
+         "명부의 항목 18 인원 확인을 끝냈다.", "과제 38 평가 결과를 첨부했다.",
+         "노선 68 분기점 주변을 조사했다.", "정산율 12%project라는 표기를 확인했다.",
+         "목록은 8차분 납품서다.", "참석자는 5 명이다."]
+    a = ["최소 사양은 운영 인력 24명이다.", "차량 제12호의 정비 이력을 첨부했다.",
+         "명부의 항목 18에 대한 인원 확인을 끝냈다.", "과제 38의 평가 결과를 첨부했다.",
+         "노선 68의 분기점 주변을 조사했다.", "정산율 12% project라는 표기를 확인했다.",
+         "목록은 8 차분 납품서다.", "참석자는 5명이다."]
+    assert _changed(b, a, tmp_path) == [1]
+
+
+def test_a_number_and_its_unit_on_a_line_of_their_own_are_not_a_heading(tmp_path):
+    assert _changed(["3,500원"], ["3500 원"], tmp_path) == []
+
+
 def test_a_unit_declared_in_the_header_applies_to_the_bare_amounts(tmp_path):
     b = ["| 비목 | 금액 |\n|---|---|\n| 재료비 | 7,000천원 |",
          "| 비목 | 금액(천원) |\n|---|---|\n| 외주비 | 7,000 |",
@@ -164,6 +196,36 @@ def test_a_unit_declared_in_the_header_applies_to_the_bare_amounts(tmp_path):
          "| 비목 | 금액(원) |\n|---|---|\n| 외주비 | 7,000,000 |",
          "| 비목 | 금액(백만원) |\n|---|---|\n| 재료비 | 7,000 |"]
     assert _changed(b, a, tmp_path) == [3]
+
+
+def test_a_declared_unit_holds_only_where_it_is_declared(tmp_path):
+    # A header cell's unit is that column's, a field's unit is the next
+    # number's, 단위: and 천원 단위 cover the amounts after them, and a word
+    # that merely contains 원 declares nothing.
+    b = ["| 순번 | 지출(천원) |\n|---|---|\n| 17 | 84 |",
+         "| 순번 | 지출(천원) |\n|---|---|\n| 2 | 84 |",
+         "참가 규모는 19로 유지하며 식비(천원)는 62로 책정했다.",
+         "연구비(천원)는 75, 시설비(백만원)는 6으로 책정했다.",
+         "연구비(천원)는 75, 시설비(백만원)는 6으로 책정했다.",
+         "예산은 천원 단위로 표기하여 84로 확정했다.",
+         "정산액(원가) 항목의 코드 48을 복사했다.",
+         "국내 예산(천원)은 47로 잡았다. 해외 지출 81은 달러 기준이다."]
+    a = ["| 순번 | 지출(원) |\n|---|---|\n| 17 | 84,000 |",
+         "| 순번 | 지출(원) |\n|---|---|\n| 2,000 | 84,000 |",      # the row number changed
+         "참가 규모는 19로 유지하며 식비는 62,000원으로 책정했다.",
+         "연구비는 75,000원, 시설비는 6,000,000원으로 책정했다.",
+         "연구비(원)는 75, 시설비(백만원)는 6으로 책정했다.",         # 75천원 became 75원
+         "예산은 84,000원으로 확정했다.",
+         "정산액의 원가 항목 코드는 48이다.",
+         "국내 예산은 47,000원으로 잡았다. 해외 지출 81은 달러 기준이다."]
+    assert _changed(b, a, tmp_path) == [2, 5]
+
+
+def test_a_bare_amount_is_shown_with_the_unit_it_inherits(tmp_path):
+    b = _write(tmp_path / "b.md", "검수비(천원)는 93으로 확정했다.")
+    a = _write(tmp_path / "a.md", "검수비(백만원)는 93으로 확정했다.")
+    (change,) = json.loads(_guard(b, a).stdout)["result"]["changed"][0]["changes"]
+    assert change == {"kind": "numbers", "before": {"93(천원)": 1}, "after": {"93(백만원)": 1}}
 
 
 def test_which_words_a_number_belongs_to(tmp_path):
@@ -178,6 +240,40 @@ def test_which_words_a_number_belongs_to(tmp_path):
          "1. 재료비 70만원을 청구한다.\n2. 인쇄비 30만원을 청구한다.",
          "A반 학생은 25명, B반 학생은 20명이다."]
     assert _changed(b, a, tmp_path) == [2, 3, 4, 5]
+
+
+def test_a_swap_is_found_past_edited_words_and_repeated_predicates(tmp_path):
+    # Sol's re-check: a word edited next to an untouched number does not hide
+    # a swap; a predicate every number shares does not veto one; a sentence
+    # that gained words at its start still names its number; words after a
+    # list end at the noun they mark, so a reordered list stays quiet.
+    b = ["북관 조명은 12개, 남관 진열장은 28개, 별관 공용 창고는 36개로 계획했다.",
+         "설계비는 38만원을 심사 후 확정했다. 감리비는 47만원을 심사 후 확정했다.",
+         "총무팀은 32건을 심사했다. 운영팀은 47건을 심사했다.",
+         "명단은 19명, 27건 승인 확인, 44건 보류 확인, 68건 승인 확인을 기록했다.",
+         "신청 14건을 승인하고 6건을 반려했다.",
+         "지원금 35만원을 반환하고 60만원을 집행했다."]
+    a = ["북관 조명은 28개, 남관 진열장은 12개, 별관 공동 창고는 36개로 계획했다.",
+         "설계비는 47만원을 심사 후 확정했다. 감리비는 38만원을 심사 후 확정했다.",
+         "지난 회의에서 총무팀은 47건을 심사했다. 운영팀은 32건을 심사했다.",
+         "명단은 19명, 68건 승인 확인, 44건 보류 확인, 27건 승인 확인을 기록했다.",  # reordered
+         "신청 14건을 반려하고 6건을 승인했다.",
+         "지원금 60만원을 집행하고 35만원을 반환했다."]                              # reordered
+    assert _changed(b, a, tmp_path) == [1, 2, 3, 5]
+
+
+def test_a_swap_is_shown_with_the_words_that_name_each_number(tmp_path):
+    b = _write(tmp_path / "b.md", "기획팀은 11명, 집행팀은 17명으로 편성했다.",
+               "동관에서 근무하는 야간 순찰 담당 직원은 8명, 서관에서 근무하는 야간 순찰 담당 직원은 24명이다.")
+    a = _write(tmp_path / "a.md", "기획 부서는 17명, 집행팀은 11명으로 편성했다.",
+               "동관에서 근무하는 야간 순찰 담당 직원은 24명, 서관에서 근무하는 야간 순찰 담당 직원은 8명이다.")
+    rows = json.loads(_guard(b, a).stdout)["result"]["changed"]
+    assert [r["changes"] for r in rows] == [
+        [{"kind": "numbers", "order": True,
+          "before": ["기획팀은 11명", "집행팀은 17명"], "after": ["기획 부서는 17명", "집행팀은 11명"]}],
+        [{"kind": "numbers", "order": True,
+          "before": ["동관에서 근무하는 야간 순찰 담당 직원은 8명", "서관에서 근무하는 야간 순찰 담당 직원은 24명"],
+          "after": ["동관에서 근무하는 야간 순찰 담당 직원은 24명", "서관에서 근무하는 야간 순찰 담당 직원은 8명"]}]]
 
 
 def test_a_swap_is_shown_in_each_sides_own_words_and_spelling(tmp_path):

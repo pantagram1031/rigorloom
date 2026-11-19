@@ -1,4 +1,5 @@
-"""The guard on Sol's before/after pairs from the T180 and T183 reviews.
+"""The guard on Sol's before/after pairs from the T180 and T183 reviews and
+the re-check of the T183 fixes.
 
 Every guard rule is measured on the same pairs instead of examples written for
 the rule. A pair whose fact is unchanged, or whose token the guard leaves alone
@@ -20,7 +21,7 @@ CLI = REPO / "runtime" / "scripts" / "cli.py"
 FIXTURES = REPO / "tests" / "fixtures" / "guard_pairs"
 #: fixture -> how many pairs it holds; T180's pairs are one line each, T183's
 #: may hold a table or a list on several lines (one paragraph still).
-SETS = {"sol-t180-pairs.json": 55, "sol-t183-pairs.json": 92}
+SETS = {"sol-t180-pairs.json": 55, "sol-t183-pairs.json": 92, "sol-t183b-pairs.json": 79}
 PAIRS = {name: json.loads((FIXTURES / name).read_text(encoding="utf-8"))["pairs"] for name in SETS}
 GAPS = {"numbers-in-words", "fractions", "ranges", "phone-account-id", "list-labels",
         "leading-decimal", "year-month", "time-units", "date-forms", "clock-times",

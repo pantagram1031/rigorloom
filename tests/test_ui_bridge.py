@@ -502,6 +502,28 @@ def test_guard_diff_text_and_hwpx_plan_preview_and_export_safety(started_bridge,
     spans = same_row["beforeProtected"] + same_row["afterProtected"]
     assert spans and all(sp["status"] == "kept" for sp in spans), spans
 
+    # A bare amount is compared in the unit its field declares, as the guard
+    # does: 43 under 운송비(천원) is 43,000원, 93 under (천원) is not 93 under
+    # (백만원) (Sol's re-check of T183).
+    s_decl, g_decl = client.post_json(
+        "/api/guard/diff",
+        {"beforeText": "운송비(천원)는 43으로 확정했다.", "afterText": "운송비는 43,000원으로 확정했다."},
+    )
+    assert s_decl == 200 and g_decl["pass"] is True, (s_decl, g_decl)
+    decl_row = g_decl["changed"][0]
+    spans = [sp for sp in decl_row["beforeProtected"] + decl_row["afterProtected"]
+             if sp["kind"] == "numbers"]
+    assert spans and all(sp["status"] == "kept" for sp in spans), spans
+
+    s_unit, g_unit = client.post_json(
+        "/api/guard/diff",
+        {"beforeText": "검수비(천원)는 93으로 확정했다.", "afterText": "검수비(백만원)는 93으로 확정했다."},
+    )
+    assert s_unit == 200 and g_unit["pass"] is False, (s_unit, g_unit)
+    unit_row = g_unit["changed"][0]
+    assert [sp["status"] for sp in unit_row["beforeProtected"] if sp["kind"] == "numbers"] == ["removed"]
+    assert [sp["status"] for sp in unit_row["afterProtected"] if sp["kind"] == "numbers"] == ["added"]
+
     # 2) Real HWPX open-upload + planId preview via preedit BEFORE plan/apply.
     b64 = base64.b64encode(CORPUS_FORM.read_bytes()).decode("ascii")
     s_up, opened = client.post_json("/api/open-upload", {"filename": "한글 양식 (테스트).hwpx", "bytesBase64": b64})

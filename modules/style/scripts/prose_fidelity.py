@@ -9,7 +9,7 @@ import re
 import sys
 import unicodedata
 from collections import Counter
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from pathlib import Path
 
 
@@ -17,12 +17,22 @@ _NUM = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
 # Korean magnitudes: 500만, 2천만, 1억 2천만. 조 is one only when an amount goes
 # on (1조원, 1조 2천억); in 제1조 it is an article.
 _MAG = r"(?:[십백천만억]|조(?=\s?원|\s?\d[\d,.]*[십백천만억]))+"
-# Spaces between the groups of one amount: 1억 2천만원, 2억  7천만원.
-_GAP = r"[ \t\u00a0]{0,2}"
+# Spaces between the groups of one amount: 1억 2천만원, -3억   6,200만 410원.
+_GAP = r"[ \t\u00a0]*"
+# A minus sign covers the whole amount; − (U+2212) and 마이너스 are minus too.
+_SIGN = r"(?:[+\-\u2212]|마이너스[ \t\u00a0]?)?"
 # Units a Korean amount or count is written with. 달 is the same unit as 개월,
-# 인 as 명, 제곱미터 as m².
-_UNIT_KO = r"(?:개월|원|명|인|개|건|회|일|년|달|평|분기|차|제곱미터)"
-_UNIT_OTHER = (r"(?:%(?:p|포인트)?|‰|℃|°[CF]?|[\u3380-\u33df]|[kcm]?m[23²³](?!\d)"
+# 인 as 명, 제곱미터 as m². A unit is not the start of another word: 24인치,
+# 제12차량, 38 평가, 18 인원 and 68 분기점 hold no 인, 차, 평 or 분기. After a
+# space the unit must end the word, but for a particle or a counting suffix
+# (5 명이, 3 개월간, 8 차분), so 8차분 and 8 차분 read the same.
+_UNITS_KO = ("개월", "원", "명", "인치", "인", "개", "건", "회", "일", "년", "달", "평",
+             "분기", "차", "제곱미터")
+_UNIT_KO = r"(?:개월|원|명|인치|인(?!원)|개|건|회|일|년|달|평(?!가|균)|분기(?!점)|차(?!량)|제곱미터)"
+_UNIT_KO_SPACED = (r"(?:" + "|".join(_UNITS_KO) + r")"
+                   r"(?=(?:은|는|이[가-힣]*|을|를|의|에서|에게|에|으로|로|과|와|도|만|까지|부터"
+                   r"|씩|간|째|당|분|차|가량|어치|짜리)?(?![가-힣]))")
+_UNIT_OTHER = (r"(?:%(?:p(?![A-Za-z])|포인트)?|‰|℃|°[CF]?|[\u3380-\u33df]|[kcm]?m[23²³](?!\d)"
                r"|[a-zA-ZμµΩ]+[²³]?(?:/[a-zA-Z0-9²³μµ]+)?)")
 
 PATTERNS = {
@@ -32,10 +42,11 @@ PATTERNS = {
     # written right after a Korean syllable and a "제17조 → 제18조" edit passed.
     # The token takes its Korean magnitude and its unit, so 500만원 and 500원
     # are different numbers and 500만원 and 5,000,000원 the same one.
-    "numbers": re.compile(r"(?<![\dA-Za-zＡ-Ｚａ-ｚ_.])[+-]?" + _NUM
+    "numbers": re.compile(r"(?<![\dA-Za-zＡ-Ｚａ-ｚ_.])" + _SIGN + _NUM
                           + r"(?:" + _MAG + r"(?:" + _GAP + _NUM + _MAG + r")*"
                           + r"(?:" + _GAP + _NUM + r"(?=\s?원))?)?"
-                          + r"(?:\s?(?:" + _UNIT_KO + r"|" + _UNIT_OTHER + r"))?"),
+                          + r"(?:" + _UNIT_KO + r"|\s" + _UNIT_KO_SPACED
+                          + r"|\s?" + _UNIT_OTHER + r")?"),
     "dates": re.compile(r"(?<!\d)(?:\d{4}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}일?)(?!\d)"),
     "source_ids": re.compile(r"(?<![\w-])(?:SRC|SOURCE|REF|S|R)[-_]?\d+(?![\w-])", re.I),
     "citations": re.compile(r"(?:\[\d+(?:\s*[-,]\s*\d+)*\]|\([A-Z][A-Za-z-]+(?:\s+et\s+al\.)?,\s*\d{4}\))"),
@@ -87,7 +98,8 @@ _EN_RE = re.compile(r"(?<![A-Za-z])(" + "|".join(DIRECTION_EN) + r")(?![A-Za-z])
 
 # A short line such as "3. 실험 방법" or "II. 결과" is a numbered heading. Lines
 # ending in sentence punctuation are list items, not headings.
-_NUMBERED_HEADING = re.compile(r"^\s*(?:\d+(?:\.\d+)*\.?|[IVX]+\.|[가-하]\.)\s+\S")
+_NUMBERED_HEADING = re.compile(r"^\s*(?:\d+(?:\.\d+)*\.?|[IVX]+\.|[가-하]\.)\s+"
+                               r"(?!(?:" + "|".join(_UNITS_KO) + r")(?![가-힣]))\S")
 
 
 def _sha256(text: str) -> str:
@@ -166,29 +178,29 @@ def _number_key(token: str) -> str:
     changes."""
     text = re.sub(r"(?<=\d),(?=\d{3})|\s+", "", unicodedata.normalize("NFKC", token))
     # The sign belongs to the whole amount: -1억 2천만 is -120,000,000.
-    sign = "-" if text.startswith("-") else ""
-    text = text.lstrip("+-")
+    sign = "-" if text.startswith(("-", "\u2212", "마이너스")) else ""
+    text = re.sub(r"^(?:[+\-\u2212]|마이너스)", "", text)
     total, block, end = Decimal(0), Decimal(0), 0
-    for group in _GROUP.finditer(text):
-        if group.start() != end:
-            break
-        mags = group.group(2)
-        block += Decimal(group.group(1)).scaleb(sum(_SMALL.get(c, 0) for c in mags))
-        large = sum(_LARGE.get(c, 0) for c in mags)
-        if large:                       # 2천3백만: (2천 + 3백) × 만
-            total += block.scaleb(large)
-            block = Decimal(0)
-        end = group.end()
-    rest = re.match(r"\d+(?:\.\d+)?", text[end:])
-    if rest and (not end or text[end + rest.end():].startswith("원")):
-        block += Decimal(rest.group(0))  # 1억 2,000만 3,500원: the won after the last group
-        end += rest.end()
-    number = format((total + block).normalize(), "f") if end else ""
+    with localcontext() as exact:
+        # Every digit counts: 0.1234…781 and 0.1234…782 are different numbers.
+        exact.prec = len(text) + 40
+        for group in _GROUP.finditer(text):
+            if group.start() != end:
+                break
+            mags = group.group(2)
+            block += Decimal(group.group(1)).scaleb(sum(_SMALL.get(c, 0) for c in mags))
+            large = sum(_LARGE.get(c, 0) for c in mags)
+            if large:                       # 2천3백만: (2천 + 3백) × 만
+                total += block.scaleb(large)
+                block = Decimal(0)
+            end = group.end()
+        rest = re.match(r"\d+(?:\.\d+)?", text[end:])
+        if rest and (not end or text[end + rest.end():].startswith("원")):
+            block += Decimal(rest.group(0))  # 1억 2,000만 3,500원: the won after the last group
+            end += rest.end()
+        number = format((total + block).normalize(), "f") if end else ""
     unit = text[end:]
-    for spelling, same in _SAME_UNIT:
-        if unit.startswith(spelling):
-            unit = same + unit[len(spelling):]
-            break
+    unit = dict(_SAME_UNIT).get(unit, unit)   # 인치 stays 인치
     return (sign if number.strip("0.") else "") + number + unit
 
 
@@ -202,8 +214,15 @@ def _number_tokens(text: str) -> list[re.Match[str]]:
 # it, up to the next number (3건 승인, 5건 보류 pairs 3건 with 승인). A word
 # glued to a number (조 in 제17조) belongs to that number; particles are
 # dropped so 수당은 and 수당 are one label; words that carry no subject are
-# skipped (a single Latin letter is a label: A반, B동); up to three words
-# make a label, so 서부권 지원금 and 동부권 지원금 differ.
+# skipped (a single Latin letter is a label: A반, B동). A label stays in its
+# own clause: the words before a number start after the last comma or full
+# stop (설계비는 38만원을 심사 후 확정했다. 감리비는 47만원 labels 47만원 감리비),
+# up to six of them, so 동관에서 근무하는 … 직원 and 서관에서 근무하는 … 직원
+# differ; the words after a number stop after the first word with a particle
+# or a verb ending (68건 승인 확인을 기록했다 labels 68건 승인 확인, not the
+# 기록했다 the whole list shares). 승인하고 and 승인했다 are both 승인, and a
+# label that only gained words at its far end (지난 회의에서 총무팀은 for
+# 총무팀은) is still the same label.
 _WORD = re.compile(r"[가-힣]+|[A-Za-z]+")
 _PARTICLES = sorted((
     "은", "는", "이", "가", "을", "를", "의", "에", "에서", "에게", "께서", "로", "으로",
@@ -215,11 +234,24 @@ _NOT_A_LABEL = {
     "an", "the", "is", "was", "were", "are", "be", "been", "of", "to", "in", "on",
     "at", "by", "for", "and", "or", "with", "about", "around", "approximately", "than", "as",
 }
-_LABEL_WORDS = 3
+_LABEL_WORDS = 6
+_AFTER_WORDS = 3
+# A full stop right after a digit is part of a date or list number (2026. 3. 1.).
+_CLAUSE_END = re.compile(r"[,;!?\n]|(?<!\d)\.(?!\d)")
+
+
+#: Verb endings: 승인하고, 승인했다 and 승인한다 all say 승인.
+_VERB_ENDINGS = sorted((
+    "하였다", "하였으며", "하였고", "했으며", "했다", "했고", "하고", "하며", "한다", "하여",
+    "해서", "하는", "하면", "된다", "되었다", "됐다", "되고", "되며", "되어",
+), key=len, reverse=True)
 
 
 def _stem(word: str) -> str:
     word = word.lower()
+    for ending in _VERB_ENDINGS:
+        if word.endswith(ending) and len(word) - len(ending) >= 2:
+            return word[: -len(ending)]
     for particle in _PARTICLES:
         # 평가 is a word, not 평 + 가: keep at least two letters.
         if word.endswith(particle) and len(word) - len(particle) >= 2:
@@ -227,50 +259,154 @@ def _stem(word: str) -> str:
     return word
 
 
-def _label(segment: str, glued: bool, *, after: bool = False) -> tuple[str, str]:
-    """(label, the words as written) for the number before or after ``segment``."""
-    words = [m for m in _WORD.finditer(segment)]
-    if glued and words and words[0].start() == 0 and "가" <= segment[:1] <= "힣":
+def _label(text: str, lo: int, hi: int, glued: bool, *,
+           after: bool = False) -> tuple[str, str]:
+    """(label, the words as written) for the number before or after
+    ``text[lo:hi]``, the words between it and its neighbour."""
+    start = lo
+    if not after:
+        cuts = list(_CLAUSE_END.finditer(text, lo, hi))
+        lo = cuts[-1].end() if cuts else lo
+    words = [m for m in _WORD.finditer(text, lo, hi)]
+    if glued and words and words[0].start() == start and "가" <= text[start:start + 1] <= "힣":
         words = words[1:]
     kept = [w for w in words if _stem(w.group(0)) not in _NOT_A_LABEL
             and w.group(0) not in _PARTICLES]
-    kept = kept[:_LABEL_WORDS] if after else kept[-_LABEL_WORDS:]
+    if after:
+        for n, w in enumerate(kept):
+            if _stem(w.group(0)) != w.group(0).lower():   # 확인을: the phrase ends here
+                kept = kept[:n + 1]
+                break
+        kept = kept[:_AFTER_WORDS]
+    else:
+        kept = kept[-_LABEL_WORDS:]
     if not kept:
         return "", ""
     return (" ".join(_stem(w.group(0)) for w in kept),
-            segment[kept[0].start():kept[-1].end()])
+            text[kept[0].start():kept[-1].end()])
 
 
-#: A unit declared for a whole table or paragraph: 금액(천원), (단위: 백만원).
-_DECLARED = re.compile(r"(?:\(\s*|단위\s*[:：]\s*)((?:천|백만|천만|만|억|십억)?원)\s*\)?")
+# A unit declared once for amounts written without one. 연구비(천원)는 75:
+# the field's unit, for the next number only. 단위: 백만원 and 천원 단위로:
+# for every bare amount after it, up to the next declaration. In a table, a
+# header cell's unit (금액(천원)) holds for that column alone, so a row number
+# or a year beside it keeps no unit. 정산액(원가) and (만원권) declare nothing.
+_WON = r"((?:천|백만|천만|만|억|십억)?원)"
+_DECLARED = re.compile(r"\(\s*" + _WON + r"\s*\)"
+                       r"|단위\s*[:：]\s*" + _WON + r"(?![가-힣])"
+                       r"|(?<![가-힣])" + _WON + r"\s*단위")
+_TABLE_RULE = re.compile(r"\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?")
 
 
-def _declared_unit(text: str) -> str:
-    units = {m.group(1) for m in _DECLARED.finditer(text)}
-    return units.pop() if len(units) == 1 else ""
+def _bare(key: str) -> bool:
+    return bool(re.fullmatch(r"-?[\d.]+", key))
+
+
+def _inherited(text: str, tokens: list[re.Match[str]]) -> list[str]:
+    """The declared unit each number takes, "" where none applies."""
+    out = [""] * len(tokens)
+    running, columns, at = "", None, 0
+    for line in text.split("\n"):
+        start, end, at = at, at + len(line), at + len(line) + 1
+        mine = [i for i, m in enumerate(tokens) if start <= m.start() < end]
+        cells = line.strip()
+        if cells.startswith("|"):
+            if _TABLE_RULE.fullmatch(cells):
+                continue
+            bars = [start + k for k, c in enumerate(line) if c == "|"]
+            spans = list(zip(bars, bars[1:]))
+            if columns is None:                 # the header row
+                columns = {}
+                for j, (a, b) in enumerate(spans):
+                    found = [next(g for g in d.groups() if g) for d in _DECLARED.finditer(text, a, b)]
+                    if found:
+                        columns[j] = found[-1]
+                continue
+            for i in mine:
+                j = next((j for j, (a, b) in enumerate(spans) if a < tokens[i].start() < b), None)
+                out[i] = columns.get(j, running) if j is not None else running
+            continue
+        columns = None
+        events = [(d.start(), "field" if d.group(1) else "running", next(g for g in d.groups() if g))
+                  for d in _DECLARED.finditer(text, start, end)]
+        events += [(tokens[i].start(), "number", i) for i in mine]
+        field = ""
+        for _pos, kind, value in sorted(events, key=lambda e: e[0]):
+            if kind == "field":
+                field = value
+            elif kind == "running":
+                running, field = value, ""
+            else:
+                out[value] = field or running
+                field = ""
+    return out
+
+
+def _keys(text: str, tokens: list[re.Match[str]]) -> tuple[list[str], list[str]]:
+    """Each number's key, with the unit it inherits from a declaration, and
+    how to show it: 7,000 under 금액(천원) is 7,000(천원)."""
+    keys, shown = [], []
+    for m, unit in zip(tokens, _inherited(text, tokens)):
+        key = _number_key(m.group(0))
+        if unit and _bare(key):
+            keys.append(_number_key(m.group(0) + unit))
+            shown.append(f"{m.group(0)}({unit})")
+        else:
+            keys.append(key)
+            shown.append(m.group(0))
+    return keys, shown
+
+
+def number_keys(text: str) -> dict[tuple[int, int], str]:
+    """The key of every number in ``text`` by its (start, end): the review
+    screen compares spans on these, so it agrees with the guard."""
+    tokens = _number_tokens(text)
+    return {(m.start(), m.end()): k for m, k in zip(tokens, _keys(text, tokens)[0])}
 
 
 def _pairs(side: list[tuple], at: int, keys: set[str] | None = None) -> Counter:
     return Counter((t[at], t[1]) for t in side if t[at] and (keys is None or t[1] in keys))
 
 
+def _aligned(b: list[tuple], a: list[tuple], at: int) -> list[tuple]:
+    """``a`` with a label that only gained or lost words at its far end
+    (지난 회의에서 총무팀은 for 총무팀은) renamed to the label it was."""
+    lb = {t[at] for t in b if t[at]}
+    la = {t[at] for t in a if t[at]}
+    rename = {}
+    for label in la - lb:
+        words = label.split()
+        near = [old for old in lb - la
+                for short, long in ((old.split(), words), (words, old.split()))
+                if len(short) < len(long)
+                and (long[-len(short):] == short if at == 0 else long[:len(short)] == short)]
+        if len(near) == 1:
+            rename[label] = near[0]
+    if not rename:
+        return a
+    return [t[:at] + (rename.get(t[at], t[at]),) + t[at + 1:] for t in a]
+
+
 def _swapped(b: list[tuple], a: list[tuple], at: int) -> set[str]:
-    """The numbers one reading (``at`` picks it) sees trade words: the same
-    labels and the same numbers on both sides, paired differently."""
-    pb, pa = _pairs(b, at), _pairs(a, at)
-    if (pb == pa
-            or Counter(lab for lab, _ in pb.elements()) != Counter(lab for lab, _ in pa.elements())
-            or Counter(k for _, k in pb.elements()) != Counter(k for _, k in pa.elements())):
+    """The numbers one reading (``at`` picks it) sees trade words: among the
+    labels both sides have (an edited word elsewhere does not hide a swap),
+    the same numbers paired differently."""
+    common = Counter(t[at] for t in b if t[at]) & Counter(t[at] for t in a if t[at])
+    pb = Counter((t[at], t[1]) for t in b if common[t[at]])
+    pa = Counter((t[at], t[1]) for t in a if common[t[at]])
+    if pb == pa or (Counter(k for _, k in pb.elements())
+                    != Counter(k for _, k in pa.elements())):
         return set()
     return {k for _, k in (pb - pa).elements()}
 
 
 def _kept(b: list[tuple], a: list[tuple], at: int, keys: set[str]) -> bool:
     """Does the other reading keep those numbers with their words? Only a
-    reading that tells them apart counts: 30만원을 청구한다 and 70만원을
-    청구한다 share their words after the number, so that reading says nothing."""
+    reading that tells every one of them apart counts: 30만원을 청구한다 and
+    70만원을 청구한다 share their words after the number, so that reading
+    says nothing about them."""
     labels = [t[at] for t in b if t[1] in keys]
-    if not all(labels) or len(set(labels)) < 2:
+    if not all(labels) or len(set(labels)) < len(labels):
         return False
     return _pairs(b, at, keys) == _pairs(a, at, keys)
 
@@ -288,22 +424,19 @@ def _number_change(before: str, after: str) -> dict[str, object] | None:
     does not keep them with their words: a sentence that is merely reordered
     (기본급은 300만원 ↔ 수당은 50만원, or 3건 승인 ↔ 5건 보류) stays quiet.
 
-    A bare number in a text that declares its unit once (금액(천원)) is read
+    A bare number under a declared unit (금액(천원), 단위: 백만원) is read
     in that unit, so moving 천원 from the cell to the header is no change and
     changing the header is."""
     sides = []
     for text in (before, after):
-        declared, tokens = _declared_unit(text), _number_tokens(text)
+        tokens = _number_tokens(text)
         found = []
-        for i, m in enumerate(tokens):
-            key = _number_key(m.group(0))
-            if declared and re.fullmatch(r"-?[\d.]+", key):
-                key = _number_key(m.group(0) + declared)
+        for i, (m, key, raw) in enumerate(zip(tokens, *_keys(text, tokens))):
             prev_end = tokens[i - 1].end() if i else 0
             next_start = tokens[i + 1].start() if i + 1 < len(tokens) else len(text)
-            pre, pre_shown = _label(text[prev_end:m.start()], i > 0)
-            post, post_shown = _label(text[m.end():next_start], True, after=True)
-            found.append((pre, key, post, m.group(0), pre_shown, post_shown))
+            pre, pre_shown = _label(text, prev_end, m.start(), i > 0)
+            post, post_shown = _label(text, m.end(), next_start, True, after=True)
+            found.append((pre, key, post, raw, pre_shown, post_shown))
         sides.append(found)
     b, a = sides
     keys_b, keys_a = Counter(t[1] for t in b), Counter(t[1] for t in a)
@@ -316,14 +449,21 @@ def _number_change(before: str, after: str) -> dict[str, object] | None:
         return {"kind": "numbers",
                 "before": dict(Counter(shown[t[1]] for t in b)),
                 "after": dict(Counter(shown[t[1]] for t in a))}
-    pre, post = _swapped(b, a, 0), _swapped(b, a, 2)
-    if pre and not _kept(b, a, 2, pre):
-        at, show = 0, lambda t: f"{t[4]} {t[3]}"
-    elif post and not _kept(b, a, 0, post):
-        at, show = 2, lambda t: f"{t[3]} {t[5]}"
+    a0, a2 = _aligned(b, a, 0), _aligned(b, a, 2)
+    pre, post = _swapped(b, a0, 0), _swapped(b, a2, 2)
+    if pre and not _kept(b, a2, 2, pre):
+        at, keys = 0, pre
+    elif post and not _kept(b, a0, 0, post):
+        at, keys = 2, post
+        # Shown with the words before each number where those name them all
+        # (기획팀은 11명), not with the next clause's words (11명 집행팀은).
+        if all(t[0] for t in b + a0 if t[1] in keys) and _pairs(b, 0, keys) != _pairs(a0, 0, keys):
+            at = 0
     else:
         return None
-    pb, pa = _pairs(b, at), _pairs(a, at)
+    a = a0 if at == 0 else a2
+    show = (lambda t: f"{t[4]} {t[3]}") if at == 0 else (lambda t: f"{t[3]} {t[5]}")
+    pb, pa = _pairs(b, at, keys), _pairs(a, at, keys)
 
     def only(side: list[tuple], extra: Counter) -> list[str]:
         out = []
