@@ -103,8 +103,10 @@ function dialogHarness({ initial, onValidate, onRequest, onResolve, validation }
       s.setState({ approval: { approvalId: `a-${plan.planId}`, planId: plan.planId, planHash: plan.planHash, state: "pending" } });
       onRequest?.(s);
     },
+    takeSheetConfirmation: async (binding) => `token-${binding.planId}`,
     resolveApprovalDecision: async (decision, approver, reason, options) => {
       calls.resolve.push({ planId: s.read().approval?.planId, confirmed: options?.confirmed?.planId, autoApply: options?.autoApply });
+      calls.tokens = [...(calls.tokens ?? []), options?.confirmationToken ?? null];
       s.setState({ approval: { ...s.read().approval, state: "approved" } });
       onResolve?.(s);
     },

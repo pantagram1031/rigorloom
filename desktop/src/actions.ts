@@ -88,6 +88,7 @@ import {
   type GuardWarningSummary,
 } from "./workspace/trust";
 import { getReviewGuardSummary } from "./workspace/guardHelper";
+import { takeSheetConfirmation } from "./workspace/sheetConfirmation";
 import type {
   AppliedCandidate,
   ApprovalRecord,
@@ -1998,7 +1999,7 @@ export async function resolveApprovalDecision(
   decision: "approved" | "rejected",
   approver = "host-operator",
   reason: string | null = null,
-  options: { confirmed?: ConfirmationBinding; autoApply?: boolean } = {},
+  options: { confirmed?: ConfirmationBinding; autoApply?: boolean; confirmationToken?: string | null } = {},
 ): Promise<void> {
   const state = getState();
   const approval = state.approval;
@@ -2016,6 +2017,7 @@ export async function resolveApprovalDecision(
       decision,
       approver,
       reason,
+      options.confirmationToken ?? null,
     );
     // The decision belongs only to the captured draft/approval. Its resolved
     // record may remain on that exact preserved queue after a session switch,
@@ -2384,9 +2386,13 @@ export async function approveAndApplyFromDialog(
   if (!approvalBindsConfirmation(requested, confirmed)) return stop("plan_replaced");
 
   // Wait 3: the decision. Apply is NOT chained inside it; it runs below,
-  // after one more check.
+  // after one more check. Through the browser bridge the decision carries
+  // the sheet's single-use confirmation token for exactly this plan.
   if (requested!.state === "pending") {
-    await resolveApprovalDecision("approved", approver, null, { confirmed, autoApply: false });
+    const confirmationToken = await takeSheetConfirmation(confirmed);
+    why = broken();
+    if (why) return stop(why);
+    await resolveApprovalDecision("approved", approver, null, { confirmed, autoApply: false, confirmationToken });
     why = broken();
     if (why) return stop(why);
   }

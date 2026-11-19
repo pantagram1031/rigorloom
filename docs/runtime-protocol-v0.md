@@ -693,6 +693,21 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
    (`runtime/scripts/rt_ui.py`, `docs/web-ui.md`), a loopback HTTP/SSE bridge
    that forwards JSON-RPC to `serve.py --entry host` with `Host`,
    `Sec-Fetch-Site`, and `X-Rigorloom-Token` guards.
+   The bridge credential alone does not record an approval. When the
+   approval sheet renders a plan, the client asks
+   `POST /api/approval/confirmation` with `{sessionId, planId, planHash,
+   baseDigest}`; the bridge checks that binding against the runtime's plan
+   record (`plan/get`: session, plan hash, `boundSha256`) and returns a random
+   `confirmationToken`, kept only in the bridge's memory, single-use and valid
+   for 120 s. An `approval/resolve` over `/rpc` whose `decision` is anything
+   but `rejected` must carry that token as `params.confirmationToken`; the
+   bridge removes it before forwarding, spends it before checking it, and
+   refuses with 403 `confirmation_required`, `confirmation_invalid` (unknown
+   or already used), `confirmation_expired` or
+   `confirmation_binding_mismatch` (another plan or hash, or the plan no
+   longer matches the binding). Returning a proposal needs no token. The
+   native shell calls the runtime directly, not through this bridge, and has
+   no token.
 8. **Event ordering across a restart.** `events.jsonl` is append-only and
    pipeline events have no global sequence number across restarts. Runtime
    document logs carry session-scoped sequence numbers; whether pipeline

@@ -91,6 +91,13 @@ AGENTHOST_PROVIDERS = ("mock", "anthropic", "router")
 #: It runs only when a developer turned it on, through this environment
 #: variable or the ``devMockAgent`` preference; otherwise a request with no
 #: real provider is refused as "not connected" instead of silently proposing.
+# An approval recorded through this bridge needs a confirmation token the
+# client asked for when the approval sheet rendered (see
+# BridgeApplication.approval_confirmation). One use, short life, kept here.
+CONFIRMATION_TTL_SECONDS = 120.0
+MAX_OPEN_CONFIRMATIONS = 64
+SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+
 DEV_MOCK_AGENT_ENV = "RIGORLOOM_DEV_MOCK_AGENT"
 DEV_MOCK_AGENT_PREF = "devMockAgent"
 
@@ -903,6 +910,9 @@ class BridgeApplication:
         self._agent_proc: subprocess.Popen[str] | None = None
         self._prose_fidelity_mod: Any = None
         self._pipeline_ctl_mod: Any = None
+        self._confirm_lock = threading.Lock()
+        # token -> {"binding": {...}, "expires": monotonic seconds}. RAM only.
+        self._confirmations: dict[str, dict[str, Any]] = {}
 
     def current_root(self) -> Path:
         return self.sidecar.active_root() or self.default_root
@@ -1652,6 +1662,95 @@ class BridgeApplication:
             raise BridgeError("candidate_not_found", f"missing candidate artifact {artifact}", status=HTTPStatus.NOT_FOUND)
         return artifact
 
+    # --- Approval confirmation --------------------------------------------------
+
+    def _plan_binding_break(self, binding: dict[str, str]) -> str | None:
+        """Why the runtime's plan does not match `binding`, or None if it does."""
+        ok, payload = self.sidecar.rpc("plan/get", {"planId": binding["planId"]})
+        if not ok:
+            code = payload.get("code") if isinstance(payload, dict) else None
+            return str(code or "plan_not_found")
+        plan = payload.get("plan") if isinstance(payload, dict) else None
+        if not isinstance(plan, dict):
+            return "plan_not_found"
+        if plan.get("sessionId") != binding["sessionId"]:
+            return "session"
+        if plan.get("planHash") != binding["planHash"]:
+            return "planHash"
+        if plan.get("boundSha256") != binding["baseDigest"]:
+            return "baseDigest"
+        return None
+
+    def approval_confirmation(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Issue a single-use token for the approval sheet the client rendered.
+
+        Bound to (session id, plan id, plan hash, base digest), checked against
+        the runtime's own plan record before it is issued, valid for
+        CONFIRMATION_TTL_SECONDS and kept only in this process.
+        """
+        binding: dict[str, str] = {}
+        for key in ("sessionId", "planId"):
+            binding[key] = _require_bare_component(body.get(key), key)
+        for key in ("planHash", "baseDigest"):
+            value = body.get(key)
+            if not isinstance(value, str) or not SHA256_HEX_RE.match(value):
+                raise BridgeError("invalid_params", f"{key} must be a sha256 hex digest")
+            binding[key] = value
+        why = self._plan_binding_break(binding)
+        if why is not None:
+            raise BridgeError(
+                "confirmation_binding_mismatch",
+                f"the plan does not match the confirmation ({why})",
+                status=HTTPStatus.CONFLICT,
+            )
+        token = secrets.token_urlsafe(32)
+        now = time.monotonic()
+        with self._confirm_lock:
+            for key in [k for k, v in self._confirmations.items() if v["expires"] <= now]:
+                del self._confirmations[key]
+            while len(self._confirmations) >= MAX_OPEN_CONFIRMATIONS:
+                oldest = min(self._confirmations, key=lambda k: self._confirmations[k]["expires"])
+                del self._confirmations[oldest]
+            self._confirmations[token] = {"binding": binding, "expires": now + CONFIRMATION_TTL_SECONDS}
+        return {"confirmationToken": token, "expiresInMs": int(CONFIRMATION_TTL_SECONDS * 1000)}
+
+    def consume_confirmation(self, token: Any, params: dict[str, Any]) -> None:
+        """Spend `token` on an approval/resolve call, or refuse with 403.
+
+        The token is removed before any check, so it never works twice, not
+        even after a refused attempt.
+        """
+        if not isinstance(token, str) or not token:
+            raise BridgeError(
+                "confirmation_required",
+                "approving needs the confirmation token of the approval sheet",
+                status=HTTPStatus.FORBIDDEN,
+            )
+        with self._confirm_lock:
+            entry = self._confirmations.pop(token, None)
+        if entry is None:
+            raise BridgeError(
+                "confirmation_invalid",
+                "unknown or already used confirmation token",
+                status=HTTPStatus.FORBIDDEN,
+            )
+        if entry["expires"] <= time.monotonic():
+            raise BridgeError("confirmation_expired", "the confirmation token expired", status=HTTPStatus.FORBIDDEN)
+        binding = entry["binding"]
+        if params.get("planId") != binding["planId"] or params.get("planHash") != binding["planHash"]:
+            raise BridgeError(
+                "confirmation_binding_mismatch",
+                "the confirmation token was issued for another plan",
+                status=HTTPStatus.FORBIDDEN,
+            )
+        why = self._plan_binding_break(binding)
+        if why is not None:
+            raise BridgeError(
+                "confirmation_binding_mismatch",
+                f"the plan no longer matches the confirmation ({why})",
+                status=HTTPStatus.FORBIDDEN,
+            )
+
     def guard_diff(self, body: dict[str, Any]) -> dict[str, Any]:
         rt_guard = _try_import_rt_guard()
         if rt_guard is not None and callable(getattr(rt_guard, "guard_diff", None)):
@@ -2011,6 +2110,7 @@ _CORE_POST_API_PATHS = frozenset({
     "/api/credential/set",
     "/api/credential/delete",
     "/api/guard/diff",
+    "/api/approval/confirmation",
     "/api/pipeline/gate-resolve",
 })
 _EXTENSION_PATH_RE = re.compile(r"^/api/[a-z0-9][a-z0-9/_-]*$")
@@ -2334,6 +2434,13 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 tag = body.get("tag")
                 if tag is not None and not isinstance(tag, str):
                     raise BridgeError("invalid_params", "tag must be a string")
+                if method == "approval/resolve" and isinstance(params, dict):
+                    # The token is the bridge's, never the runtime's.
+                    params = dict(params)
+                    token = params.pop("confirmationToken", None)
+                    # Anything but a return needs the sheet's single-use token.
+                    if params.get("decision") != "rejected":
+                        self.server.bridge.consume_confirmation(token, params)
                 ok, payload = self.server.bridge.sidecar.rpc(method, params, tag=tag)
                 if ok:
                     self._send_json(HTTPStatus.OK, {"ok": True, "result": payload})
@@ -2358,6 +2465,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 "/api/credential/set": self.server.bridge.credential_set,
                 "/api/credential/delete": self.server.bridge.credential_delete,
                 "/api/guard/diff": self.server.bridge.guard_diff,
+                "/api/approval/confirmation": self.server.bridge.approval_confirmation,
                 "/api/pipeline/gate-resolve": self.server.bridge.pipeline_gate_resolve,
             }
             handler = routes.get(path)

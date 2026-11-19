@@ -404,6 +404,22 @@ export const ERROR_CODE_VOCAB = {
     ko: "승인을 누른 뒤 변경 제안이 바뀌어 적용하지 않았습니다. 바뀐 내용을 보고 다시 승인해야 합니다.",
     en: "The proposal changed after you approved it, so nothing was applied. Review the new proposal and approve again.",
   },
+  confirmation_required: {
+    ko: "승인 화면에서 확인한 승인만 기록합니다. 승인 화면을 다시 열어 승인해야 합니다.",
+    en: "Only an approval confirmed on the approval sheet is recorded. Open the sheet and approve again.",
+  },
+  confirmation_invalid: {
+    ko: "이미 쓴 승인 확인이라 기록하지 않았습니다. 다시 승인해야 합니다.",
+    en: "That approval confirmation was already used, so nothing was recorded. Approve again.",
+  },
+  confirmation_expired: {
+    ko: "승인 확인 시간이 지나 기록하지 않았습니다. 다시 승인해야 합니다.",
+    en: "The approval confirmation expired, so nothing was recorded. Approve again.",
+  },
+  confirmation_binding_mismatch: {
+    ko: "다른 제안의 승인 확인이라 기록하지 않았습니다. 다시 승인해야 합니다.",
+    en: "The approval confirmation belongs to another proposal, so nothing was recorded. Approve again.",
+  },
   invalid_queue_ops: {
     ko: "형식이 맞지 않는 변경이 섞여 있어 제안하지 않았습니다.",
     en: "Some changes are malformed, so nothing was proposed.",

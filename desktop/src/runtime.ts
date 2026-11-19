@@ -382,6 +382,7 @@ export const resolveApproval = (
   decision: "approved" | "rejected",
   approver: string,
   reason: string | null = null,
+  confirmationToken: string | null = null,
 ) =>
   call<{ approval: ApprovalRecord }>("approval/resolve", {
     approvalId,
@@ -391,7 +392,29 @@ export const resolveApproval = (
     approver,
     // The person's words when returning. Its own field, never the approver.
     ...(reason ? { reason } : {}),
+    // The browser bridge's single-use token from the approval sheet. The
+    // bridge takes it off before the runtime sees the call.
+    ...(confirmationToken ? { confirmationToken } : {}),
   }).then((r) => r.approval);
+
+/**
+ * Ask the browser bridge for the approval sheet's single-use confirmation
+ * token, bound to (session, plan id, plan hash, base digest). Without it the
+ * bridge refuses to record an approval. The native shell does not go through
+ * the bridge and has no token: null.
+ */
+export const approvalConfirmation = (binding: {
+  sessionId: string;
+  planId: string;
+  planHash: string;
+  baseDigest: string;
+}): Promise<{ token: string; expiresInMs: number } | null> => {
+  if (isTauri()) return Promise.resolve(null);
+  return apiPost<{ confirmationToken: string; expiresInMs: number }>("/api/approval/confirmation", binding).then((r) => ({
+    token: r.confirmationToken,
+    expiresInMs: r.expiresInMs,
+  }));
+};
 
 /** HOST ONLY. Cancellable between ops; see `callCancellable`. */
 export const applyPlan = (planId: string, approvalId: string, tag: string) =>
