@@ -489,6 +489,18 @@
       "provenance": "Rigorloom-authored synthetic",
       "license": "Rigorloom-authored; no third-party content",
       "notes": "Deterministic example output produced by `rigorloom demo gongmun --deterministic` from converted/gianmun-byeolji-1ho.hwpx and examples/gongmun/brief.json; contains synthetic fictional institution data only."
+    },
+    {
+      "slug": "doc-core-addressing",
+      "family": "doc-core-fixture",
+      "path": "../../fixtures/doc_core/addressing.hwpx",
+      "format": "hwpx",
+      "bytes": 8296,
+      "sha256": "e31f301044c4e9a11517be9110364eba9ac7e81108929eeec67cc1c29bf5c4e8",
+      "kind": "test_fixture",
+      "provenance": "Rigorloom-authored synthetic, built by tests/fixtures/doc_core/build_addressing.py",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Shared doc_core addressing fixture (doc-core-api.md, ruling 2026-11-19): a nested table, a merged cell, an hp:switch and two forms with the same labels; synthetic labels only, no personal data. Package members other than the section come from a blank A4 document; authoring metadata in content.hpf is blank."
     }
   ],
   "skipped": [
