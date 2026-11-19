@@ -430,3 +430,8 @@ def test_names_show_every_invisible_character():
     assert path_text("a​b\tc  d") == "a\\u200bb\\u0009c  d"
     assert invisible_in("a​b\tc ") == ["U+200B", "U+0009", "U+00A0"]
     assert path_text("a\\u0009") == "a\\u0009" and invisible_in("a\\u0009") == []
+    # Round 3: a tab and the text "\u0009" swapped are still two different names,
+    # and default-ignorable letters (U+034F, the Hangul filler) count as invisible.
+    assert path_text("x\t\\u0009") != path_text("x\\u0009\t")
+    assert invisible_in("a\u034fb\u3164") == ["U+034F", "U+3164"]
+    assert path_text("a\U000e0100") == "a\\U000e0100"

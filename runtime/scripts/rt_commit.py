@@ -360,12 +360,20 @@ def undo(target: Path, *, by: str, home: Path | None = None,
                 displaced = target.read_bytes()
                 if sha256_bytes(displaced) != mine:
                     raise changed
-                _write_durable(folder / f"{stamp}-undone-{mine[:12]}{target.suffix}", displaced)
+                kept = folder / f"{stamp}-undone-{mine[:12]}{target.suffix}"
+                _write_durable(kept, displaced)
                 replace_checked(target, old, mine)
                 restored = entry["oldSha256"]
         except PathRefused as exc:
             raise _refusal(exc) from exc
         entry["undone"] = {"at": _now(), "by": by}
-        _save_index(folder, entries)
+        try:
+            _save_index(folder, entries)
+        except OSError as exc:
+            # The file is already back; only the record failed. Say so, and
+            # where the bytes undo moved aside are (Sol re-check F3, round 3).
+            raise ToolError("internal", "되돌렸지만 저장 기록에 남기지 못했습니다.",
+                            hint=f"되돌리기 전 파일은 여기에 보관했습니다: {kept}",
+                            at=str(target), data={"kept": str(kept), "error": exc.strerror}) from exc
     return {"target": str(target), "restored": restored,
             "removed": entry["oldSha256"] is None}

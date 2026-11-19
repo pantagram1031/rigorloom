@@ -1367,7 +1367,12 @@ def _run_save(ctx: Context, args: dict) -> dict:
             # Re-read under the lock: an edit or another save may have landed
             # while we asked. Writing the old record back would lose it.
             first = record
-            record = ctx.drafts.load(ref) or record
+            record = ctx.drafts.load(ref)
+            if record is None:
+                # Discarded while we asked: there is nothing the person agreed to.
+                raise ToolError("stale", "확인하는 사이에 초안을 버려 저장하지 않았습니다.",
+                                hint="초안을 다시 만든 뒤 저장하세요.", retryable=False,
+                                data={"reason": "superseded_by_newer_candidate"})
             head = record.get("head") or {}
             if record.get("instance") != first.get("instance") or (
                     has_edits and head.get("sha256") != head_input.sha256):

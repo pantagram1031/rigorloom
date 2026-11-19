@@ -1224,3 +1224,57 @@ def test_undo_reports_a_file_error_as_json(env, monkeypatch):
     monkeypatch.setattr(rt_commit, "undo", denied)
     code, out, _ = _cli(["undo", str(path), "--json"], monkeypatch)
     assert code == 4 and json.loads(out)["error"]["code"] == "internal"
+
+
+def test_a_draft_discarded_while_saving_is_not_saved(env, monkeypatch):
+    # F2, round 3: a discard during the question leaves nothing to publish and
+    # must not bring the draft record back.
+    path = _edited(env)
+    copy = env.work / "사본.fdoc"
+    copy.write_bytes(b"theirs")
+    ctx = env.ctx(client="cli")
+
+    def person(question, detail):
+        ref = rt_toolset.resolve(ctx, str(path))
+        ctx.drafts.remove(ref)
+        return True
+
+    ctx.ask = person
+    err(call(ctx, "save", {"path": str(path), "to": str(copy)}), "stale")
+    assert copy.read_bytes() == b"theirs"
+    assert ctx.drafts.load(rt_toolset.resolve(ctx, str(path))) is None
+
+
+def test_undo_says_where_the_file_is_when_the_record_cannot_be_written(env, monkeypatch):
+    # F3, round 3: undo finished; only the history write failed.
+    import rt_commit
+    path = _edited(env)
+    new = env.work / "새파일.fdoc"
+    ok(call(env.ctx(), "save", {"path": str(path), "to": str(new)}))
+    real = rt_commit._save_index
+
+    def full(folder, entries):
+        if any(e.get("undone") for e in entries):
+            raise OSError(28, "No space left on device")
+        return real(folder, entries)
+
+    monkeypatch.setattr(rt_commit, "_save_index", full)
+    with pytest.raises(rt_tools.ToolError) as caught:
+        rt_commit.undo(new, by="test")
+    kept = Path(caught.value.data["kept"])
+    assert not new.exists() and kept.exists()
+    assert str(kept) in caught.value.hint
+
+
+def test_undo_reports_an_unreadable_file_before_asking(env, monkeypatch):
+    # F3, round 3: a read error before the question is a JSON error too.
+    import rt_commit
+    path = _edited(env)
+    ok(call(env.ctx(ask=lambda q, d: True), "save", {"path": str(path)}))
+
+    def unreadable(*a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(rt_commit, "undoable", unreadable)
+    code, out, _ = _cli(["undo", str(path), "--json"], monkeypatch)
+    assert code == 4 and json.loads(out)["error"]["code"] == "internal"

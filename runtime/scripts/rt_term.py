@@ -203,12 +203,21 @@ def safe_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n").translate(_UNSAFE)
 
 
+#: Default-ignorable code points that are not format characters: the
+#: combining grapheme joiner, Hangul fillers (drawn as nothing), variation
+#: selectors and the like.
+_IGNORABLE = ({0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x3164, 0xFFA0}
+              | set(range(0x180B, 0x1810)) | set(range(0xFE00, 0xFE10))
+              | set(range(0xE0100, 0xE01F0)))
+
+
 def _invisible(ch: str) -> bool:
     """Not drawn, or drawn like a plain space: control, format (zero-width,
-    bidi), separators other than ASCII space, private use, unassigned."""
+    bidi), separators other than ASCII space, private use, unassigned, and
+    the default-ignorable letters above."""
     if ch == " ":
         return False
-    return (ch.isspace() or not ch.translate(_UNSAFE)
+    return (ch.isspace() or not ch.translate(_UNSAFE) or ord(ch) in _IGNORABLE
             or unicodedata.category(ch) in ("Cc", "Cf", "Zs", "Zl", "Zp", "Co", "Cs", "Cn"))
 
 
@@ -216,11 +225,16 @@ def path_text(path: str) -> str:
     """A path for a person to read: exact, with invisible characters escaped.
 
     Unlike one_line, runs of spaces stay as they are, so two names that differ
-    only in spacing never look alike in a question the person answers. A name
-    with escapes also gets an ``invisible_in`` line, so a name that really
-    contains the text ``\\u0009`` is not mistaken for one with a tab.
+    only in spacing never look alike in a question the person answers. When a
+    name has anything to escape, its backslashes are doubled too, so the text
+    is reversible; such a name also gets an ``invisible_in`` line, so it is
+    never mistaken for a plain name that happens to read the same.
     """
-    return "".join(f"\\u{ord(ch):04x}" if _invisible(ch) else ch for ch in str(path))
+    text = str(path)
+    if not any(_invisible(ch) for ch in text):
+        return text
+    return "".join((f"\\u{ord(ch):04x}" if ord(ch) <= 0xFFFF else f"\\U{ord(ch):08x}")
+                   if _invisible(ch) else ("\\\\" if ch == "\\" else ch) for ch in text)
 
 
 def invisible_in(path: str) -> list[str]:

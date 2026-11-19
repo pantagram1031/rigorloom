@@ -597,6 +597,10 @@ def _undo(term: Term, args) -> int:
     except PathRefused as exc:
         return _emit(term, args, "undo", {"ok": False, "error": ToolError(
             exc.code, exc.message, at=exc.path).to_dict()})
+    except OSError as exc:
+        return _emit(term, args, "undo", {"ok": False, "error": ToolError(
+            "internal", "파일을 읽지 못해 되돌리지 않았습니다.",
+            hint=safe_text(exc.strerror or type(exc).__name__), at=str(args.path)).to_dict()})
     except ToolError as exc:
         return _emit(term, args, "undo", {"ok": False, "error": exc.to_dict()})
     name = shown(str(target))
