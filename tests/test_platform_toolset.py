@@ -880,7 +880,7 @@ def test_changes_with_just_a_file_shows_that_file(env, monkeypatch):
     _cli(["fill", str(path), "--set", "성명=홍길동"], monkeypatch)
     code, out, errs = _cli(["changes", str(path)], monkeypatch)
     assert code == 0, errs
-    assert "초안 1판" in out and "고친 기록" in out
+    assert "초안 1판" in out and "초안 편집 기록" in out
 
 
 def test_a_mistyped_command_gets_a_korean_line_not_the_protocol_parser(monkeypatch):

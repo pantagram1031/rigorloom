@@ -153,10 +153,10 @@ class DraftStore:
         if is_virtual(target):
             key = str(target)[len(VIRTUAL_PREFIX):]
             if not key or not all(c.isalnum() or c == "-" for c in key):
-                raise ToolError("invalid_params", f"초안 주소의 형식이 맞지 않습니다({target}).",
-                                hint="new 결과에 나온 초안 주소를 그대로 입력하세요.")
+                raise ToolError("invalid_params", f"초안 식별자의 형식이 맞지 않습니다({target}).",
+                                hint="new 결과에 나온 초안 식별자를 그대로 입력하세요.")
             if self.load(Ref(key, None)) is None:
-                raise ToolError("not_found", f"이 주소에서 초안을 찾을 수 없습니다({target}).",
+                raise ToolError("not_found", f"이 식별자의 초안을 찾을 수 없습니다({target}).",
                                 hint="rigorloom changes 명령으로 초안 목록을 확인하세요.")
             return Ref(key, None)
         path = Path(target)
@@ -211,8 +211,8 @@ class DraftStore:
         record = self.load(ref)
         if ref.source is None:
             if record is None or not record.get("head"):
-                raise ToolError("not_found", f"이 주소에서 초안을 찾을 수 없습니다({ref.label}).",
-                                hint="new 결과에 나온 초안 주소를 확인하세요.")
+                raise ToolError("not_found", f"이 식별자의 초안을 찾을 수 없습니다({ref.label}).",
+                                hint="new 결과에 나온 초안 식별자를 확인하세요.")
             return self._head_input(ref, record)
         source_sha = sha256_file(ref.source)
         if use_draft and record and record.get("head"):
@@ -249,8 +249,8 @@ class DraftStore:
         never edits bytes it has not seen.
         """
         if ref.source is None and self.load(ref) is None:
-            raise ToolError("not_found", f"이 주소에서 초안을 찾을 수 없습니다({ref.label}).",
-                            hint="new 결과에 나온 초안 주소를 확인하세요.")
+            raise ToolError("not_found", f"이 식별자의 초안을 찾을 수 없습니다({ref.label}).",
+                            hint="new 결과에 나온 초안 식별자를 확인하세요.")
         with self.lock(ref):
             folder = self.dir_for(ref)
             record = self.load(ref)
@@ -271,8 +271,8 @@ class DraftStore:
             if base is not None and base != in_rev:
                 raise ToolError(
                     "stale",
-                    f"읽은 판({base})과 현재 판({in_rev})이 다릅니다.",
-                    hint="고칠 문서를 다시 읽고 그때 나온 판을 입력하세요.",
+                    f"읽은 rev({base})와 현재 rev({in_rev})가 다릅니다.",
+                    hint="문서를 다시 읽고 결과에 나온 해시값(rev)을 입력하세요.",
                     retryable=True, data={"base": base, "current": in_rev,
                                           "reason": "superseded_by_newer_candidate"})
             out_name = f"rev-{revision + 1:04d}{_work_suffix(in_path)}"

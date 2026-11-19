@@ -59,19 +59,19 @@ HELP_SECTIONS = (
     ("읽기", (
         ("open FILE", "문서 구조: 쪽, 글꼴, 제목, 표, 채울 칸과 주소"),
         ("read FILE [--at 주소]", "본문 읽기 (긴 글은 --cursor로 이어 읽기)"),
-        ("find FILE 찾을말", "찾은 곳마다 주소"),
-        ("preview FILE", "쪽 미리보기 그림 (PNG)"),
+        ("find FILE 찾을말", "찾은 곳의 주소 표시"),
+        ("preview FILE", "쪽 미리보기(PNG)"),
     )),
     ("쓰기 (원본은 save 전까지 그대로)", (
         ("edit FILE --op JSON", "고치기: set, replace, insert_after, delete, table.*"),
         ("fill FILE --set 칸=값", "양식 채우기 (서명·날인 칸은 건너뜀)"),
-        ("new 내용.md", "마크다운으로 새 문서"),
-        ("save FILE [--to 경로]", "초안을 파일로 저장 (덮어쓰기는 물어봄, undo 가능)"),
+        ("new 내용.md", "마크다운으로 새 문서 만들기"),
+        ("save FILE [--to 경로]", "초안을 파일로 저장 (덮어쓰기 전 확인, undo로 되돌리기)"),
         ("convert FILE -o OUT", "다른 형식으로 내보내기 (pdf, docx, md, png)"),
     )),
     ("점검과 기록", (
-        ("check FILE", "문체·쪽 배치·글꼴·숫자 바뀜 점검"),
-        ("changes [FILE]", "초안과 변경 기록"),
+        ("check FILE", "문체·쪽 배치·글꼴 점검, 숫자 변경 확인"),
+        ("changes [FILE]", "초안과 저장 기록"),
         ("undo FILE", "마지막 저장 되돌리기"),
         ("guide [주제]", "공문·보고서·양식 작성 안내"),
     )),
@@ -90,7 +90,7 @@ HELP_USAGE_COLUMNS = 22
 
 
 def help_text() -> str:
-    lines = ["rigorloom — 한글·워드·마크다운 문서를 사람과 에이전트가 같이 고치는 도구", ""]
+    lines = ["rigorloom — 에이전트와 함께 한글·워드·마크다운 문서를 편집하는 도구", ""]
     for title, rows in HELP_SECTIONS:
         lines.append(title)
         for usage, what in rows:
@@ -101,31 +101,31 @@ def help_text() -> str:
 
 #: Each verb's own --help: what it does, then two command lines to copy.
 VERB_HELP = {
-    "open": ("문서 구조를 봅니다: 쪽, 글꼴, 제목, 표, 채울 칸과 그 주소.",
+    "open": ("쪽, 글꼴, 제목, 표, 채울 칸과 그 주소를 확인합니다.",
              ("rigorloom open 보고서.hwpx",
               "rigorloom open 신청서.hwpx --source draft")),
     "outline": ("open과 같습니다.", ("rigorloom outline 보고서.hwpx",)),
     "read": ("본문을 주소와 함께 읽습니다. 긴 글은 마지막 줄에 나오는 명령으로 이어 읽습니다.",
              ("rigorloom read 보고서.hwpx --at p12",
               "rigorloom read 보고서.hwpx --at t3")),
-    "find": ("말을 찾아 찾은 곳마다 주소를 붙여 보여 줍니다.",
+    "find": ("찾는 말이 나온 곳마다 주소를 표시합니다.",
              ("rigorloom find 보고서.hwpx 예산",
               'rigorloom find 계약서.hwpx "제[0-9]+조" --regex')),
-    "edit": ("초안에서 고칩니다. 원래 파일은 save 전까지 그대로입니다.\n"
+    "edit": ("초안을 고칩니다. 원본 파일은 save 전까지 그대로입니다.\n"
              "작업: set, replace, insert_after, delete, table.set_cells, table.add_row, "
              "table.delete_row, style",
              ("""rigorloom edit 보고서.hwpx --op '{"op":"replace","at":"p3","find":"사본하여","with":"복사하여"}'""",
               """rigorloom edit 보고서.hwpx --op '{"op":"set","at":"p0","text":"2027년 업무계획"}' -o 보고서-수정.hwpx""")),
-    "fill": ("양식의 빈칸을 채웁니다. 서명·날인·결재일 칸은 채우지 않고 알려 줍니다.",
+    "fill": ("양식의 빈칸을 채웁니다. 서명·날인·결재일 칸은 비워 두고 어떤 칸인지 알려 줍니다.",
              ("rigorloom fill 신청서.hwpx --set 성명=홍길동 --set 소속=총무과",
               "rigorloom fill 신청서.hwpx --values 값.json -o 신청서-작성.hwpx")),
-    "new": ("마크다운 글로 새 문서를 만듭니다. 양식 파일을 주면 그 위에 씁니다.",
+    "new": ("마크다운으로 새 문서를 만듭니다. 양식 파일을 지정하면 그 양식에 내용을 채웁니다.",
             ("rigorloom new 초안.md -o 보고서.hwpx",
              "rigorloom new 초안.md --form 기안문양식.hwpx -o 기안문.hwpx")),
     "preview": ("쪽을 그림(PNG)으로 만듭니다. 한글 엔진이 있어야 합니다.",
                 ("rigorloom preview 보고서.hwpx --page 1",
                  "rigorloom preview 보고서.hwpx --source draft --changed")),
-    "check": ("문체, 쪽 배치, 글꼴, 숫자·사실이 바뀌었는지 점검합니다.",
+    "check": ("문체, 쪽 배치, 글꼴을 점검하고 숫자·사실이 바뀌었는지 확인합니다.",
               ("rigorloom check 보고서.hwpx --source draft",
                "rigorloom check 보고서-수정.hwpx --against 보고서.hwpx --pack gongmun")),
     "save": ("초안을 파일로 저장합니다. 있는 파일을 덮어쓸 때는 먼저 묻고, "
@@ -138,7 +138,7 @@ VERB_HELP = {
                  "rigorloom changes clean --older-than 30")),
     "undo": ("마지막 저장을 되돌립니다. 그 뒤에 파일이 바뀌었으면 되돌리지 않습니다.",
              ("rigorloom undo 보고서.hwpx",)),
-    "convert": ("다른 형식으로 내보냅니다. 형식은 -o 파일의 확장자와 --to가 같아야 합니다.",
+    "convert": ("다른 형식으로 내보냅니다. -o로 지정한 파일의 확장자는 --to로 지정한 형식과 일치해야 합니다.",
                 ("rigorloom convert 보고서.hwpx --to pdf -o 보고서.pdf",
                  "rigorloom convert 보고서.hwpx --to docx -o 보고서.docx")),
     "guide": ("공문·보고서·양식 작성 안내를 봅니다. 주제 없이 실행하면 주제 목록이 나옵니다.",
@@ -226,9 +226,9 @@ def _common(p: argparse.ArgumentParser, *, source: bool = False) -> None:
     p.add_argument("--json", action="store_true", help="결과를 JSON으로 출력 (프로그램·에이전트용)")
     if source:
         p.add_argument("--source", choices=("disk", "draft"), default="disk",
-                       help="읽을 것: 파일(disk, 기본) 또는 저장 안 한 초안(draft)")
+                       help="저장된 파일(disk, 기본값) 또는 초안(draft) 읽기")
     p.add_argument("--color", choices=("auto", "always", "never"), default="auto",
-                   help="색 쓰기 (기본 auto: 터미널일 때만)")
+                   help="색상 표시 (기본값 auto는 터미널에서만 색을 사용)")
     p.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
 
 
@@ -252,9 +252,9 @@ def _parser() -> argparse.ArgumentParser:
     p = _verb(sub, "read", "본문 읽기")
     p.add_argument("path", metavar="FILE", help="읽을 문서")
     p.add_argument("--at", metavar="주소", help="이 주소만 읽기 (p12, t3, t3/r2/c1, place:성명)")
-    p.add_argument("--cursor", help="이어 읽기 위치 (앞 화면 마지막 줄에 나옴)")
+    p.add_argument("--cursor", help="이어 읽을 위치 (이전 출력의 마지막 줄에 표시)")
     p.add_argument("--max-chars", type=int, metavar="글자수", help="한 번에 읽을 최대 글자 수")
-    p.add_argument("--runs", action="store_true", help="글자 모양(굵게, 글꼴 등)도 함께")
+    p.add_argument("--runs", action="store_true", help="글자 모양(굵게, 글꼴 등)도 표시")
     _common(p, source=True)
 
     p = _verb(sub, "find", "찾기")
@@ -269,31 +269,31 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("path", metavar="FILE", help="고칠 문서")
     p.add_argument("--op", action="append", default=[], metavar="JSON",
                    help="작업 하나 (여러 번 쓸 수 있음, 아래 예 참고)")
-    p.add_argument("--ops-file", metavar="파일", help="작업 목록 JSON 파일 (- 이면 표준 입력)")
+    p.add_argument("--ops-file", metavar="파일", help="작업 목록 JSON 파일 (파일 대신 -를 쓰면 표준 입력)")
     p.add_argument("--base", metavar="REV", help=argparse.SUPPRESS)
     p.add_argument("-o", "--out", metavar="OUT", help="고친 결과를 이 새 파일로 바로 저장")
-    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에)")
+    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에 보관)")
     _common(p)
 
     p = _verb(sub, "fill", "양식 채우기")
     p.add_argument("path", metavar="FILE", help="채울 양식")
     p.add_argument("--set", action="append", default=[], metavar="칸=값",
                    help="채울 칸과 값 (여러 번 쓸 수 있음). 칸 이름은 open에 나옴")
-    p.add_argument("--values", metavar="파일", help="칸→값 JSON 파일 (- 이면 표준 입력)")
+    p.add_argument("--values", metavar="파일", help="칸 이름과 값을 짝지은 JSON 파일 (파일 대신 -를 쓰면 표준 입력)")
     p.add_argument("--base", metavar="REV", help=argparse.SUPPRESS)
     p.add_argument("-o", "--out", metavar="OUT", help="채운 결과를 이 새 파일로 바로 저장")
-    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에)")
+    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에 보관)")
     _common(p)
 
     p = _verb(sub, "new", "새 문서")
-    p.add_argument("markdown", metavar="내용.md", help="마크다운 파일 (- 이면 표준 입력)")
-    p.add_argument("--form", metavar="양식", help="이 양식 문서 위에 쓰기")
+    p.add_argument("markdown", metavar="내용.md", help="마크다운 파일 (파일 대신 -를 쓰면 표준 입력)")
+    p.add_argument("--form", metavar="양식", help="새 문서 작성에 사용할 양식")
     p.add_argument("--name", metavar="이름", help="초안 이름 (changes 목록에 보임)")
     p.add_argument("-o", "--out", metavar="OUT", help="만든 문서를 이 새 파일로 바로 저장")
-    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에)")
+    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에 보관)")
     _common(p)
 
-    p = _verb(sub, "preview", "쪽 그림")
+    p = _verb(sub, "preview", "쪽 미리보기")
     p.add_argument("path", metavar="FILE", help="볼 문서")
     p.add_argument("--page", type=int, action="append", metavar="쪽", help="볼 쪽 (여러 번 쓸 수 있음)")
     p.add_argument("--changed", action="store_true", help="초안에서 바뀐 쪽만")
@@ -316,11 +316,11 @@ def _parser() -> argparse.ArgumentParser:
                    help="있는 파일을 묻지 않고 덮어씀 (이전 내용은 저장 기록에 남음)")
     _common(p)
 
-    p = _verb(sub, "changes", "초안과 변경 기록")
+    p = _verb(sub, "changes", "초안과 저장 기록")
     p.add_argument("action", nargs="?", default="list",
                    choices=("list", "show", "discard", "clean"), metavar="list|show|discard|clean",
                    help="list(기본): 초안 목록, show: 한 문서의 기록, discard: 초안 버리기, "
-                        "clean: 오래된 것 지우기")
+                        "clean: 오래된 초안·미리보기·저장 기록 지우기")
     p.add_argument("path", nargs="?", metavar="FILE", help="문서 (show, discard)")
     p.add_argument("--id", help=argparse.SUPPRESS)
     p.add_argument("--older-than", type=int, metavar="일", default=RETENTION_DAYS,
@@ -338,7 +338,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--to", required=True, choices=("hwpx", "hwp", "pdf", "png", "md", "docx"),
                    help="만들 형식")
     p.add_argument("-o", "--out", required=True, metavar="OUT", help="만들 파일")
-    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에)")
+    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에 보관)")
     _common(p)
 
     p = _verb(sub, "guide", "작성 안내")
@@ -362,7 +362,7 @@ def _read_text_arg(value: str) -> str:
         return Path(value).read_text(encoding="utf-8-sig")
     except OSError as exc:
         raise _Usage(f"입력 파일을 읽을 수 없습니다({value}, {exc.strerror or exc}).",
-                     "파일 이름과 위치를 확인하세요.") from exc
+                     "파일 이름과 경로를 확인하세요.") from exc
 
 
 def _ops(args) -> list:
@@ -386,7 +386,7 @@ def _ops(args) -> list:
                          """예: --op '{"op":"set","at":"p1","text":"제목"}'""") from exc
     if not ops:
         raise _Usage("고칠 내용을 지정하지 않았습니다.",
-                     """--op '{"op":"set","at":"p1","text":"…"}' 또는 --ops-file 파일로 주세요.""")
+                     """--op '{"op":"set","at":"p1","text":"…"}' 또는 --ops-file 파일로 고칠 내용을 지정하세요.""")
     return ops
 
 
@@ -409,7 +409,7 @@ def _values(args) -> dict:
                          "예: --set 성명=홍길동")
         values[key.strip()] = value
     if not values:
-        raise _Usage("채울 값이 없습니다.", "--set 성명=홍길동처럼 칸과 값을 주세요.")
+        raise _Usage("채울 값이 없습니다.", "--set 성명=홍길동처럼 칸 이름과 값을 입력하세요.")
     return values
 
 
@@ -493,7 +493,7 @@ def _context(args) -> Context:
             lines.append(f"  에이전트가 고치고 아직 아무도 확인하지 않은 변경: "
                          f"{detail['unreviewed']}건")
         if detail.get("lossy"):
-            lines.append("  변환하며 빠지는 것: " + ", ".join(detail["lossy"]))
+            lines.append("  변환하면 빠지는 항목: " + ", ".join(detail["lossy"]))
         if detail.get("fontsSubstituted"):
             pairs = ", ".join(f"{s.get('want')} → {s.get('got')}"
                               for s in detail["fontsSubstituted"])
@@ -557,7 +557,7 @@ def _draft_note(ctx: Context, path: str) -> str | None:
                 f'rigorloom changes discard "{path}"')
     if draft.get("unsaved"):
         return (f"저장 안 한 초안({draft.get('revision')}판)이 있습니다. 지금 본 것은 파일입니다. "
-                "초안을 보려면 --source draft")
+                "초안을 보려면 --source draft를 붙이세요.")
     return None
 
 
@@ -599,7 +599,7 @@ def _undo(term: Term, args) -> int:
     name = shown(str(target))
     if entry.get("oldSha256") is None:
         sys.stderr.write(f"{name} 파일은 Rigorloom이 새로 만든 파일입니다. "
-                         "되돌리면 파일을 치우고 저장 기록에 보관합니다.\n")
+                         "되돌리면 파일을 저장 기록에 보관하고 현재 경로에서 삭제합니다.\n")
     when = (entry.get("at") or "").replace("T", " ").replace("Z", " UTC")
     answer = confirm(f'"{name}" 파일을 마지막 저장({when}) 전으로 되돌릴까요?')
     if answer is None:
@@ -707,7 +707,7 @@ def _clean_plan(home: Path, older_than: int, everything: bool) -> tuple[list[Pat
 def _clean(term: Term, args) -> int:
     import shutil
     if args.older_than < 0:
-        raise _Usage("--older-than에는 0 이상의 날수를 입력해야 합니다.", "예: --older-than 30")
+        raise _Usage("--older-than에 0 이상의 일수를 입력하세요.", "예: --older-than 30")
     home = state_home()
     if any((home / part).exists() for part in STATE_PARTS) and \
             not (home / STATE_MARKER).exists():
@@ -821,7 +821,7 @@ def _main(argv: list[str]) -> int:
         if exists:
             return _emit(term, args, args.verb, {"ok": False, "error": ToolError(
                 "target_exists", f"저장하려는 이름의 파일이나 폴더가 이미 있습니다({out}).",
-                hint="덮어쓰려면 --force를 붙이세요. 이전 판은 저장 기록에 남아 undo로 되돌릴 수 있습니다.",
+                hint="덮어쓰려면 --force를 붙이세요. 이전 내용은 저장 기록에 남습니다. undo로 되돌릴 수 있습니다.",
                 at=out).to_dict()})
     if out and tool in ("edit", "fill", "new"):
         import secrets

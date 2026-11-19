@@ -103,7 +103,7 @@ def resolve(ctx: Context, raw: str) -> Ref:
     except PathRefused as exc:
         hint = None
         if exc.code == "outside_roots":
-            hint = "이 폴더를 쓰게 하려면 사람이 MCP 설정에 --allow <폴더>를 더해야 합니다."
+            hint = "이 폴더를 허용하려면 사용자가 MCP 설정에 --allow <폴더>를 추가해야 합니다."
         elif exc.code == "not_found":
             hint = "경로를 확인하세요. 상대 경로는 작업 폴더 기준입니다."
         raise ToolError(exc.code, exc.message, hint=hint, at=exc.path) from exc
@@ -356,7 +356,7 @@ def _scope(at: str | None) -> str:
 
 def _parse_cursor(cursor: str, rev: str, at: str | None, blocks: list) -> tuple[int, int]:
     bad = ToolError("invalid_params", "이어 읽을 위치의 형식이 맞지 않습니다.",
-                    hint="이전 read 결과에 나온 다음 위치를 같은 주소(at)로 그대로 입력하세요.")
+                    hint="이전 read 결과의 이어 읽기 값을 그대로 입력하세요. 주소(at)도 이전과 같아야 합니다.")
     try:
         crev, scope, index, offset = cursor.split(":")
         index_i, offset_i = int(index), int(offset)
@@ -364,7 +364,7 @@ def _parse_cursor(cursor: str, rev: str, at: str | None, blocks: list) -> tuple[
         raise bad from None
     if crev != rev:
         raise ToolError("stale", "읽던 사이 문서가 바뀌었습니다.",
-                        hint="이어 읽을 위치를 지정하지 말고 처음부터 다시 읽으세요.", retryable=True,
+                        hint="이어 읽기 값을 빼고 처음부터 다시 읽으세요.", retryable=True,
                         data={"reason": "superseded_by_newer_candidate"})
     if scope != _scope(at) or not 0 <= index_i < len(blocks) \
             or not 0 <= offset_i <= len(_block_text(blocks[index_i])):
@@ -680,8 +680,8 @@ def _refuse_person_seats(ctx: Context, ref: Ref, ops: list) -> None:
                      if p.get("id") in named and is_person_only(p))
     if blocked:
         raise ToolError("person_only_seat",
-                        "서명·날인·결재일 칸은 사람이 직접 채워야 합니다: " + ", ".join(blocked),
-                        hint="이 칸들은 비워 두고 사람에게 알리세요.", candidates=blocked)
+                        "직접 작성해야 하는 서명·날인·결재일 칸: " + ", ".join(blocked),
+                        hint="이 칸은 비워 두고 작성자에게 알리세요.", candidates=blocked)
 
 
 register(Tool(
@@ -740,8 +740,8 @@ def _run_fill(ctx: Context, args: dict) -> dict:
         ops.append({"op": "fill", "place": pid, "text": text})
     if blocked and not ops:
         raise ToolError("person_only_seat",
-                        "서명·날인·결재일 칸은 사람이 직접 채워야 합니다: " + ", ".join(blocked),
-                        hint="이 칸들은 비워 두고 사람에게 알리세요.", candidates=blocked)
+                        "직접 작성해야 하는 서명·날인·결재일 칸: " + ", ".join(blocked),
+                        hint="이 칸은 비워 두고 작성자에게 알리세요.", candidates=blocked)
     if not ops:
         raise ToolError("invalid_params", "채울 값이 없습니다.", hint="채울 칸과 값을 한 쌍 이상 입력하세요.")
     result = _stage(ctx, ref, args.get("base") or inp.rev, ops, "fill")
@@ -772,7 +772,7 @@ def _refuse_filled_place(ctx: Context, ref: Ref, inp, pid: str) -> None:
         if p.get("id") == pid:
             at = p.get("at") or f"place:{pid}"
             raise ToolError("not_found", f"place:{pid} 칸은 초안에서 이미 채웠습니다({at}).",
-                            hint=f"값을 바꾸려면 edit로 그 주소를 고치세요: "
+                            hint=f"값을 바꾸려면 edit로 해당 셀의 값을 바꾸세요: "
                                  f'{{"op":"set","at":"{at}","text":"새 값"}}',
                             at=at)
 
@@ -911,7 +911,7 @@ def _preview_text(r: dict) -> str:
 
 
 register(Tool(
-    name="preview", title="쪽 보기",
+    name="preview", title="쪽 미리보기",
     description="See pages as images (max 3 per call) with layout signals "
                 "(heading alone at page bottom, table split, font substitution). "
                 "pages=\"changed\" shows what the last edit touched. Look before "
@@ -1158,7 +1158,7 @@ def _guard_message(change: dict) -> str:
 
 _LAYOUT_MSG = {
     "lone_heading": "제목이 쪽 끝에 홀로 남았습니다. 다음 쪽으로 넘기거나 앞 내용을 줄이세요.",
-    "bottom_heading": "제목 뒤 본문이 쪽 끝에 너무 적게 붙었습니다.",
+    "bottom_heading": "쪽 끝에서 제목 뒤에 본문이 몇 줄 남지 않았습니다.",
     "table_split": "표가 두 쪽에 걸쳐 나뉘었습니다. 머리행 반복이나 쪽 나눔을 확인하세요.",
 }
 
@@ -1236,7 +1236,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
         target = ref.source
     else:
         raise ToolError("invalid_params", "새 문서를 저장할 경로가 빠졌습니다.",
-                        hint="저장할 파일의 경로를 보고서.hwpx처럼 파일 이름까지 입력하세요.")
+                        hint="보고서.hwpx처럼 파일 이름을 포함한 저장 경로를 입력하세요.")
     fmt = target.suffix.lower().lstrip(".")
     has_edits = head_input.source == "draft"
     if not has_edits and fmt == (ref.source.suffix.lower().lstrip(".") if ref.source else ""):
@@ -1268,8 +1268,8 @@ def _run_save(ctx: Context, args: dict) -> dict:
     # again. A person at the terminal who runs save again is asking themself.
     if ctx.client != "cli" and rt_commit.declined(target, digest, ctx.drafts.home):
         raise ToolError("declined_by_person",
-                        "사람이 이 내용으로 이 파일을 덮어쓰지 않기로 했습니다.",
-                        hint="다시 묻지 마세요. 저장이 필요하면 사람에게 새 파일 이름을 받으세요.",
+                        "이 내용으로 파일을 덮어쓰지 않기로 했습니다.",
+                        hint="덮어쓸지 다시 묻지 마세요. 저장하려면 새 파일 이름을 먼저 받으세요.",
                         at=str(target))
 
     if not target.exists():
@@ -1278,7 +1278,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
         # `-o OUT` without --force: the CLI checked OUT was absent; a file
         # that appeared since is not ours to replace.
         raise ToolError("target_exists", f"같은 이름이 이미 있어 저장하지 않았습니다({target}).",
-                        hint="덮어쓰려면 --force를 붙이세요. 이전 판은 저장 기록에 남습니다.",
+                        hint="덮어쓰려면 --force를 붙이세요. 이전 내용은 저장 기록에 남습니다.",
                         at=str(target))
     elif rt_commit.owned(target, ctx.drafts.home, draft=ref.key):
         expected, policy = sha256_file(target), "policy:own-file"
@@ -1292,10 +1292,10 @@ def _run_save(ctx: Context, args: dict) -> dict:
                   "fontsSubstituted": _substituted_fonts(ctx, head_input.path),
                   "undo": f'rigorloom undo "{target}"'}
         other = ("다른 이름으로 저장: --to 새이름" if ctx.client == "cli"
-                 else "다른 이름으로 저장하려면 to에 새 경로를 주세요.")
+                 else "다른 이름으로 저장하려면 to에 새 경로를 입력하세요.")
         if ctx.ask is None:
             raise ToolError("needs_person",
-                            "있는 파일을 덮어쓰려면 사람의 확인이 필요합니다.",
+                            "기존 파일을 덮어쓰려면 사용자 확인이 필요합니다.",
                             hint=f"사람이 터미널에서 실행: {_person_line(ref, target)}. {other}",
                             at=str(target), data=detail)
         answer = ctx.ask(question, detail)
@@ -1308,7 +1308,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
                                 hint=other, at=str(target))
             if ctx.client == "cli":
                 raise ToolError("needs_person",
-                                "터미널이 아니어서 덮어쓸지 묻지 못했습니다. 저장하지 않았습니다.",
+                                "덮어쓰기 확인에 터미널이 필요해 저장하지 않았습니다.",
                                 hint=f"터미널에서 다시 실행하거나 --force를 붙이세요. {other}",
                                 at=str(target), data=detail)
             raise ToolError("needs_person", "확인을 받지 못해 덮어쓰지 않았습니다.",
@@ -1318,7 +1318,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
         # The answer may have taken minutes: the path must still name the same place.
         again = _target(ctx, args["to"]) if args.get("to") else canonical(ref.source)
         if not _same_path(again, target):
-            raise ToolError("target_changed", "확인하는 사이에 저장 위치가 바뀌었습니다.",
+            raise ToolError("target_changed", "확인하는 사이에 저장 경로가 바뀌었습니다.",
                             hint="경로를 확인하고 다시 저장하세요.", at=str(target))
 
     provenance = _saved_provenance(record)
@@ -1441,7 +1441,7 @@ def _run_changes(ctx: Context, args: dict) -> dict:
             drafts = [d for d in drafts if visible(d)]
         return {"action": "list", "drafts": drafts}
     if not args.get("path"):
-        raise ToolError("invalid_params", "변경 기록을 볼 문서의 경로가 빠졌습니다.", hint="문서 경로를 입력하세요.")
+        raise ToolError("invalid_params", "기록을 볼 문서의 경로가 빠졌습니다.", hint="문서 경로를 입력하세요.")
     ref = resolve(ctx, args["path"])
     record = ctx.drafts.load(ref)
     if record is None:
@@ -1451,7 +1451,7 @@ def _run_changes(ctx: Context, args: dict) -> dict:
         sets = [c for c in sets if c["id"] == args["id"]]
         if not sets:
             raise ToolError("not_found", f"번호가 {args['id']}인 변경 묶음을 찾을 수 없습니다.",
-                            hint="이 문서의 변경 기록에서 변경 묶음 번호를 확인하세요.",
+                            hint="이 문서의 초안 편집 기록에서 변경 묶음 번호를 확인하세요.",
                             candidates=[c["id"] for c in record.get("changesets", [])][-10:])
     slim = [{k: c.get(k) for k in ("id", "kind", "revision", "rev", "status", "author",
                                    "provenance", "base", "changedPages", "created",
@@ -1481,7 +1481,7 @@ def _changes_text(r: dict) -> str:
 
 
 register(Tool(
-    name="changes", title="변경 기록",
+    name="changes", title="초안과 저장 기록",
     description="List drafts, or show a document's change sets with their status "
                 "and any notes a person left when rejecting an item. Read this "
                 "before re-proposing something.",

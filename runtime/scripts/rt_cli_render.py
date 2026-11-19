@@ -23,24 +23,24 @@ VERB_KO = {
     "convert": "형식 바꾸기",
 }
 CHECK_KO = {"style": "문체", "layout": "쪽 배치", "fonts": "글꼴", "guard": "숫자·사실"}
-STATE_KO = {"passed": "통과", "failed": "걸림", "unavailable": "건너뜀"}
+STATE_KO = {"passed": "통과", "failed": "문제 발견", "unavailable": "건너뜀"}
 SEVERITY_KO = {"error": "오류", "warning": "주의", "notice": "참고"}
 SIGNAL_KO = {
     "lone_heading": "쪽 끝에 홀로 남은 제목", "bottom_heading": "쪽 끝에 붙은 제목",
     "table_split": "두 쪽에 걸친 표", "caption_split": "표·그림과 떨어진 설명",
-    "widow": "다음 쪽 첫 줄에 남은 한 줄", "orphan": "쪽 끝에 남은 한 줄",
+    "widow": "다음 쪽에 홀로 남은 문단의 마지막 줄", "orphan": "쪽 끝에 홀로 남은 문단의 첫 줄",
     "top_blank": "쪽 위 빈 줄", "approx": "글꼴 대체",
 }
 KIND_KO = {"heading": "제목", "para": "문단", "table": "표", "place": "칸",
-           "cell": "칸", "page": "쪽"}
+           "cell": "셀", "page": "쪽"}
 
 
 #: Why a check or verb could not run, as rt_doc names it, in a person's words.
 WHY_KO = {
     "engine_not_configured": "한글 엔진이 없어 건너뛰었습니다 (상태 확인: rigorloom doctor)",
-    "engine_function_missing": "설치된 엔진에 아직 없는 기능입니다",
-    "rasterizer_missing": "쪽 그림에는 pypdfium2가 필요합니다 (pip install pypdfium2)",
-    "page_layout_unavailable": "쪽 배치는 한글 엔진이 있어야 계산합니다",
+    "engine_function_missing": "설치된 엔진은 이 기능을 지원하지 않습니다",
+    "rasterizer_missing": "쪽 미리보기를 만들려면 pypdfium2가 필요합니다. 설치: pip install pypdfium2",
+    "page_layout_unavailable": "쪽 배치를 계산하려면 한글 엔진이 필요합니다",
 }
 
 
@@ -73,11 +73,11 @@ _DOC_ERRORS = {
     "engine_unavailable": ("한글 엔진이 응답하지 않았습니다.", "잠시 뒤 다시 실행하세요."),
     "bad_address": ("주소를 찾지 못했습니다.", "open이나 find 결과에 나온 주소를 쓰세요."),
     "not_found": ("찾지 못했습니다.", "open이나 find 결과에 나온 주소를 쓰세요."),
-    "ambiguous_match": ("찾는 말이 여러 곳에 있어 어디를 고칠지 정하지 못했습니다.",
-                        'at으로 위치를 정하거나 "all": true를 붙이세요.'),
+    "ambiguous_match": ("찾는 말이 여러 곳에 있어 고칠 곳을 정할 수 없습니다.",
+                        'at에 고칠 곳의 주소를 지정하거나 "all": true를 추가하세요.'),
     "expect_mismatch": ("읽은 뒤 내용이 바뀌어 고치지 않았습니다.", "다시 읽고 고치세요."),
     "page_out_of_range": ("문서에 없는 쪽입니다.", "open 결과에서 쪽 수를 확인하세요."),
-    "source_rejected": ("이 파일은 문서로 열 수 없습니다.", "hwpx, docx 파일을 주세요."),
+    "source_rejected": ("이 파일은 문서로 열 수 없습니다.", "hwpx 또는 docx 파일을 지정하세요."),
     "invalid_params": ("입력이 맞지 않습니다.", None),
     "engine_refused": ("문서를 처리하지 못했습니다.", None),
 }
@@ -177,7 +177,7 @@ def show_open(term: Term, r: dict) -> None:
                      safe_text(str(t.get("caption") or ""))] for t in r["tables"]
                     if t["at"] not in boxes], shrink=3)
         if boxes:
-            term.line(term.dim(f"한 칸짜리 표(제목 상자 등) {len(boxes)}개: " + ", ".join(boxes)))
+            term.line(term.dim(f"셀이 하나인 표(제목 상자 등) {len(boxes)}개: " + ", ".join(boxes)))
     if r.get("places"):
         term.line()
         term.line(term.bold("채울 칸"))
@@ -185,18 +185,18 @@ def show_open(term: Term, r: dict) -> None:
                     for p in r["places"]], shrink=2)
     if r.get("personOnly"):
         term.line()
-        term.line(term.bold("서명·날인 칸") + term.dim("  fill이 채우지 않습니다. 저장한 뒤 직접 채우세요"))
+        term.line(term.bold("서명·날인 칸") + term.dim("  fill에서는 이 칸을 비워 둡니다. 저장한 뒤 직접 채우세요."))
         term.table([[f"place:{p['id']}", p.get("at", ""), safe_text(str(p.get("label", "")))]
                     for p in r["personOnly"]], shrink=2)
     if r.get("omitted"):
         parts = {"headings": "제목", "tables": "표", "places": "칸"}
-        term.line(term.dim("목록이 길어 줄인 것: " + ", ".join(
+        term.line(term.dim("일부만 표시한 항목: " + ", ".join(
             f"{parts.get(k, k)} {v}개" for k, v in r["omitted"].items())
             + f" (전부 보기: rigorloom read {_q(r['path'])})"))
     missing = [VERB_KO.get(v, v) for v, src in (r.get("capabilities") or {}).items()
                if src == "unavailable"]
     if missing:
-        term.line(term.dim("한글 엔진이 있어야 하는 것: " + ", ".join(missing)))
+        term.line(term.dim("한글 엔진이 필요한 기능: " + ", ".join(missing)))
 
 
 def show_read(term: Term, r: dict) -> None:
@@ -275,7 +275,7 @@ def show_find(term: Term, r: dict) -> None:
 
 def show_staged(term: Term, r: dict) -> None:
     term.line(f"초안 {r['revision']}판에 반영했습니다."
-              + term.dim("  파일은 save 전까지 그대로입니다."))
+              + term.dim("  원본 파일은 save 전까지 그대로입니다."))
     if r.get("filled"):
         term.line("채운 칸: " + ", ".join(
             f"{f['place']} ← \"{truncate(one_line(str(f['text'])), 24)}\"" for f in r["filled"][:8]))
@@ -294,7 +294,7 @@ def show_staged(term: Term, r: dict) -> None:
         term.line(term.dim("주소가 바뀐 곳: " + ", ".join(moved)))
     _signals(term, r.get("signals") or [])
     if r.get("unfilled"):
-        term.line("아직 빈 칸: " + ", ".join(r["unfilled"][:12]))
+        term.line("아직 비어 있는 칸: " + ", ".join(r["unfilled"][:12]))
     if r.get("skipped"):
         term.line(term.style("채우지 않은 서명·날인 칸 (직접 채우세요): "
                              + ", ".join(r["skipped"]), "yellow"))
@@ -355,7 +355,7 @@ def show_check(term: Term, r: dict) -> None:
         if reason:
             term.line(term.dim(f"{CHECK_KO.get(name, name)}: {one_line(str(reason))}"))
     if r.get("pass") is None:
-        term.line(term.style("실행한 점검이 없습니다. 통과로 보지 마세요.", "yellow"))
+        term.line(term.style("실행한 점검이 없어 통과 여부를 판단할 수 없습니다.", "yellow"))
 
 
 def show_save(term: Term, r: dict) -> None:
@@ -364,7 +364,7 @@ def show_save(term: Term, r: dict) -> None:
     else:
         term.line(f"새 파일로 저장했습니다: {shown(r['saved'])}")
     if r.get("lossy"):
-        term.line(term.style("형식을 바꾸며 빠진 것: ", "yellow") + ", ".join(r["lossy"]))
+        term.line(term.style("변환하면서 빠진 항목: ", "yellow") + ", ".join(r["lossy"]))
     if r.get("unreviewed"):
         term.line(term.dim(f"에이전트가 고치고 아직 아무도 확인하지 않은 변경 {r['unreviewed']}건도 "
                            "함께 저장했습니다."))
@@ -394,7 +394,7 @@ def show_changes(term: Term, r: dict) -> None:
               "withdrawn": "철회됨"}
     if r["changesets"]:
         term.line()
-        term.line(term.bold("고친 기록"))
+        term.line(term.bold("초안 편집 기록"))
         term.table([[f"{c.get('revision')}판", VERB_KO.get(c["kind"], c["kind"]),
                      status.get(c["status"], c["status"]),
                      _when(c.get("created")), _who(c),

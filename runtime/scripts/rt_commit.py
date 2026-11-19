@@ -60,8 +60,8 @@ def _save_index(folder: Path, entries: list[dict]) -> None:
 
 def _refusal(exc: PathRefused) -> ToolError:
     hints = {
-        "target_exists": "다른 이름을 고르거나, 덮어쓰려면 사람이 확인해야 합니다.",
-        "target_changed": "파일을 다시 열어 최신 내용으로 확인한 뒤 저장하세요.",
+        "target_exists": "다른 파일 이름을 지정하세요. 기존 파일을 덮어쓰려면 사용자 확인이 필요합니다.",
+        "target_changed": "파일을 다시 열어 최신 내용을 확인한 뒤 저장하세요.",
         "locked": "한글에서 파일을 닫은 뒤 다시 저장하거나, 다른 이름으로 저장하세요.",
         "not_found": "저장할 폴더가 있는지 확인하세요.",
     }
@@ -73,7 +73,7 @@ def _refusal(exc: PathRefused) -> ToolError:
 def _lock(folder: Path):
     """One commit or undo per target at a time, across processes."""
     return _Lock(private_dir(folder) / ".lock", code="locked",
-                 message="다른 저장이 이 파일에 쓰는 중입니다.")
+                 message="다른 작업이 이 파일을 저장하고 있습니다.")
 
 
 def _settled(entries: list[dict], target: Path) -> list[dict]:
@@ -114,7 +114,7 @@ def commit(candidate: Path, target: Path, *, expected: str, by: str,
     data = candidate.read_bytes()
     new_sha = sha256_bytes(data)
     if candidate_sha256 is not None and new_sha != candidate_sha256:
-        raise ToolError("stale", "확인받은 뒤 초안이 바뀌어 저장하지 않았습니다.",
+        raise ToolError("stale", "덮어쓰기를 확인한 뒤 초안이 바뀌어 저장하지 않았습니다.",
                         hint="초안을 다시 확인하고 저장하세요.", retryable=True,
                         data={"reason": "superseded_by_newer_candidate"})
     folder = private_dir(_history_dir(home, target))
@@ -144,7 +144,7 @@ def commit(candidate: Path, target: Path, *, expected: str, by: str,
                                 f"-{expected[:12]}{target.suffix}"
                 _write_durable(kept, target.read_bytes())
                 if sha256_file(kept) != expected:
-                    raise ToolError("internal", "저장 기록에 이전 판을 보관하지 못했습니다.")
+                    raise ToolError("internal", "이전 파일 내용을 저장 기록에 보관하지 못했습니다.")
                 entry["oldSha256"] = expected
                 entry["kept"] = kept.name
                 entries.append(entry)
@@ -247,7 +247,7 @@ def _last_undoable(entries: list[dict], target: Path, folder: Path) -> dict:
     if current != entry["newSha256"]:
         raise ToolError("target_changed",
                         "마지막으로 저장한 뒤 파일이 바뀌어 되돌리지 않았습니다.",
-                        hint="지금 내용을 지키려면 그대로 두세요. 이전 판은 저장 기록에 남아 있습니다.",
+                        hint="현재 파일 내용을 유지하려면 파일을 그대로 두세요. 이전 내용은 저장 기록에 남아 있습니다.",
                         at=str(target), data={"history": str(folder)})
     return entry
 
@@ -285,7 +285,7 @@ def undo(target: Path, *, by: str, home: Path | None = None) -> dict:
                 old = (folder / entry["kept"]).read_bytes()
                 if sha256_bytes(old) != entry["oldSha256"]:
                     raise ToolError("internal",
-                                    "보관한 이전 판이 저장 기록과 달라 되돌릴 수 없습니다.",
+                                    "보관한 파일 내용이 저장 기록과 달라 되돌릴 수 없습니다.",
                                     at=str(folder / entry["kept"]))
                 _write_durable(folder / f"{stamp}-undone-{current[:12]}{target.suffix}",
                                target.read_bytes())
