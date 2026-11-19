@@ -995,6 +995,54 @@ def test_render_and_geometry_of_a_preview_copy_skip_the_form_analysis(kit, tmp_p
     assert "analyze" in calls
 
 
+# ============================================================================ engine results of style and insert_picture
+def _png(path, w=40, h=20):
+    """A small solid PNG written with the standard library."""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    raw = b"".join(b"\x00" + b"\x30\x60\x90" * w for _ in range(h))
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    return path
+
+
+@engine
+def test_engine_style_apply_changes_the_paragraph_style(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    rev = D.rev_of(f)
+    text = D.read(f, "p3")["blocks"][0]["text"]
+    assert D.read(f, "p3")["blocks"][0]["style"] == "바탕글"
+    out = tmp_path / "st.hwpx"
+    r = D.edit(f, [{"op": "style", "at": "p3", "style": "개요 1"}], base=rev, out=out)
+    assert r["ok"], r
+    b = D.read(out, "p3")["blocks"][0]
+    assert b["style"] == "개요 1" and b["text"] == text
+    assert D.read(out, "p4")["blocks"][0]["style"] == "바탕글"
+    assert r["remap"] == []
+
+
+@engine
+def test_engine_insert_picture_adds_a_picture_and_its_image(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    rev = D.rev_of(f)
+    img = _png(tmp_path / "fig.png")
+    out = tmp_path / "pic.hwpx"
+    r = D.edit(f, [{"op": "insert_picture", "at": "p2", "path": str(img), "width_mm": 30}], base=rev, out=out)
+    assert r["ok"], r
+    with zipfile.ZipFile(f) as z0, zipfile.ZipFile(out) as z:
+        before = z0.read("Contents/section0.xml").decode("utf-8").count("<hp:pic ")
+        sec = z.read("Contents/section0.xml").decode("utf-8")
+        assert sec.count("<hp:pic ") == before + 1
+        bins = [n for n in z.namelist() if n.startswith("BinData/")]
+        assert any(z.read(n) == img.read_bytes() for n in bins), bins
+        # 30 mm wide in HWPUNIT (7200 per inch), the 2:1 image's height kept in proportion
+        m = re.findall(r'<hp:pic [^>]*>.*?<hp:orgSz width="(\d+)" height="(\d+)"', sec, re.S)
+        assert any(abs(int(w) - 30 * 7200 / 25.4) < 5 and abs(int(w) - 2 * int(h)) < 5 for w, h in m), m
+
+
 # ============================================================================ 글자 모양 / 문단 모양
 def test_shape_ops_are_checked_before_anything_runs(no_engine, tmp_path):
     src = _copy(GUARD, tmp_path)
