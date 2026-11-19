@@ -994,6 +994,22 @@ OP_NOTES = {
                   "the cell `at` names (`height_mm` also at a row); the `col_widths_mm` / "
                   "`row_heights_mm` lists go on the table address only, null keeping one"
                   + _OWNS_TABLE,
+    "page_setup": "`at` is a body paragraph; its section's 편집 용지 changes. `set` keys: "
+                  "paper (A3, A4, A5, B4, B5, LETTER, LEGAL) or width_mm / height_mm (50 to "
+                  "1000), landscape, margins {left, right, top, bottom, header, footer, gutter} "
+                  "in mm (0 to 500; left out keeps the value), gutter_type (LEFT_ONLY, "
+                  "LEFT_RIGHT, TOP_BOTTOM); margins must leave room on the page; one page_setup "
+                  "per section per edit, and none on the section of a section break",
+    "columns": "`at` is a body paragraph; the 다단 definition that governs it changes, and with "
+               "it every paragraph under it. `set` keys: count (1 to 255), gap_mm (0 to 100), "
+               "line (구분선), kind (NEWSPAPER, BALANCED_NEWSPAPER, PARALLEL), layout (LEFT, "
+               "RIGHT, MIRROR); one columns per section per edit, and none on the section of a "
+               "section break",
+    "break": "`at` is a body paragraph that starts a page, a column or a section (`kind` page, "
+             "column or section); `expect` is that paragraph's text. A section break goes in "
+             "the last section, not on its first paragraph, one per edit; any other op on a "
+             "paragraph it moves is a conflict; a text op and a page or column break on one "
+             "paragraph both apply",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
