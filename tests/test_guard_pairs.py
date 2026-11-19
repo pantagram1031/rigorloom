@@ -27,7 +27,7 @@ SETS = {"sol-t180-pairs.json": 55, "sol-t183-pairs.json": 92, "sol-t183b-pairs.j
 PAIRS = {name: json.loads((FIXTURES / name).read_text(encoding="utf-8"))["pairs"] for name in SETS}
 GAPS = {"numbers-in-words", "fractions", "ranges", "phone-account-id", "list-labels",
         "leading-decimal", "year-month", "time-units", "date-forms", "clock-times",
-        "article-branches", "spaced-version", "table-columns", "label-words", "number-labels"}
+        "article-branches", "spaced-version", "table-columns", "label-words"}
 
 
 @pytest.fixture(scope="module")

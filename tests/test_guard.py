@@ -234,6 +234,35 @@ def test_a_number_and_its_unit_on_a_line_of_their_own_are_not_a_heading(tmp_path
     assert _changed(["3,500원"], ["3500 원"], tmp_path) == []
 
 
+def test_a_spaced_amount_on_a_line_of_its_own_is_not_a_heading(tmp_path):
+    # Fable's review of #396: a line with no dot that starts with an amount
+    # written with a space (30 평대의 집, 5 명이 참석) is an amount, by the same
+    # word-end rule a number uses, not a numbered heading. A dotted number and
+    # a number before a word that only starts like a unit still head a line.
+    b = ["30평대의 집", "5명이 참석", "3개월간 운영", "3. 회의 결과", "2 연구 방법", "1 일반 현황"]
+    a = ["30 평대의 집", "5 명이 참석", "3 개월간 운영", "3. 회의 결론", "2 연구 방향", "1 일반 개요"]
+    assert _changed(b, a, tmp_path) == [4, 5, 6]
+
+
+def test_a_number_whose_only_label_is_another_number(tmp_path):
+    # Fable's pairs from the review of T183: in 1차 3명, 2025년에는 120명 and
+    # 제1항은 3일 the number before names the one after, so trading them is a
+    # swap; a reordered sentence keeps each with its label. Numbers that a
+    # particle joins (3명과 5명, 1일부터 3일) do not label each other.
+    b = ["선발 인원은 1차 3명, 2차 5명이다.", "제1항은 3일, 제2항은 5일 이내에 처리한다.",
+         "연구비는 1차년도 300만원, 2차년도 500만원이다.", "선발 인원은 1차 3명, 2차 5명이다.",
+         "2025년에는 120명, 2026년에는 150명을 모집한다.", "3명과 5명이 참석했다."]
+    a = ["선발 인원은 1차 5명, 2차 3명이다.", "제1항은 5일, 제2항은 3일 이내에 처리한다.",
+         "연구비는 1차년도 500만원, 2차년도 300만원이다.", "선발 인원은 2차 5명, 1차 3명이다.",
+         "2026년에는 150명, 2025년에는 120명을 모집한다.", "5명과 3명이 참석했다."]
+    assert _changed(b, a, tmp_path) == [1, 2, 3]
+    sys.path.insert(0, str(REPO / "runtime" / "scripts"))
+    import rt_fidelity
+    assert rt_fidelity._number_change(b[1], a[1]) == {
+        "kind": "numbers", "order": True,
+        "before": ["제1항은 3일", "제2항은 5일"], "after": ["제1항은 5일", "제2항은 3일"]}
+
+
 def test_a_unit_declared_in_the_header_applies_to_the_bare_amounts(tmp_path):
     b = ["| 비목 | 금액 |\n|---|---|\n| 재료비 | 7,000천원 |",
          "| 비목 | 금액(천원) |\n|---|---|\n| 외주비 | 7,000 |",
