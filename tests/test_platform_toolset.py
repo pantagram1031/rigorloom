@@ -780,6 +780,25 @@ def test_a_picture_the_converter_cannot_open_is_refused_not_dropped(env):
         assert not (env.work / "a.hwpx").exists()
 
 
+def test_a_picture_line_the_converter_would_not_read_is_refused(env):
+    # Sol's re-check (with N5): "[그림 1] 캡션 (sample (a).png)" and
+    # "![표지](sample (a).png)" are text to the converter, so the document got
+    # the markdown instead of the picture and nobody was told.
+    (env.work / "sample (a).png").write_bytes(b"x")
+    (env.work / "사진.PNG").write_bytes(b"x")
+    for line in ("![표지](sample (a).png)", "[그림 1] 캡션 (sample (a).png)",
+                 "[그림 2] 캡션 (사진.PNG)", "[그림 3] 캡션 (<사진.png>)",
+                 "![가](사진.PNG) ![나](사진.PNG)"):
+        e = err(call(env.ctx(), "new", {"markdown": f"# 제목\n\n{line}\n",
+                                        "base_dir": str(env.work)}), "invalid_params")
+        assert e["message"] == f"그림 줄을 읽지 못했습니다({line})."
+    # in a code block it is code, and from the command line it stays text
+    ok(call(env.ctx(), "new", {"markdown": "```\n![표지](sample (a).png)\n```\n",
+                               "base_dir": str(env.work)}))
+    ok(call(env.ctx(roots=None), "new", {"markdown": "![표지](sample (a).png)\n",
+                                         "base_dir": str(env.work)}))
+
+
 def test_text_that_is_not_a_picture_is_passed_on_as_written(env, tmp_path, monkeypatch):
     # Sol's re-check N4: the check rewrote every image-like name in brackets,
     # prose and links included. Only what the converter reads as a picture is
@@ -792,7 +811,6 @@ def test_text_that_is_not_a_picture_is_passed_on_as_written(env, tmp_path, monke
                  f"참고 그림은 ![a]({outside})에 있습니다.\n",  # mid-sentence: text in plain mode
                  f"```\n![a]({outside})\n```\n",
                  f"출처는 부록입니다 (부록 {outside})\n",
-                 f"[그림 1] 시험 (<{outside}>)\n",  # <> is not part of the figure line
                  "[링크](../../밖.png)\n"):
         ok(call(env.ctx(), "new", {"markdown": body}))
         assert seen[-1] == body

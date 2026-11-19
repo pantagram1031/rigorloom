@@ -179,6 +179,13 @@ _LINK_DEF = re.compile(r'^\s*\[([^\^\]]+)\]:\s*<?(\S+?)>?'
                        r'(?:\s+(?:"[^"]*"|\'[^\']*\'|\([^)]*\)))?\s*$')
 _PICTURE_LINE = re.compile(r"^(\s*!\[[^\]]*\]\()([^)]+)\)\s*$")
 _FIGURE_LINE = re.compile(r"^(\s*\[그림\s*\d+\].*\()([^)]+\.(?:png|jpe?g))\)\s*$")
+#: Lines meant as a picture that the converter does not read as one: a name
+#: with brackets in it (그림 (1).png), two pictures on one line, an upper-case
+#: or <>-wrapped name on a figure line. Written into the document as text,
+#: they would look like a picture went missing without a word.
+_ALMOST_PICTURE = re.compile(r"^\s*!\[[^\]]*\]\(.*\)\s*$")
+_ALMOST_FIGURE = re.compile(r"^\s*\[그림\s*\d+\].*\.(?:png|jpe?g|gif|bmp)>?\s*\)\s*$",
+                            re.IGNORECASE)
 #: md2spec.CM_INLINE_RE, copied so a picture is found exactly where the
 #: converter finds one: group 5 is a picture's destination, groups 19 and 20
 #: (**bold**) are read again for what is inside them.
@@ -252,6 +259,9 @@ def _picture_spans(markdown: str, *, commonmark: bool):
         m = _FIGURE_LINE.match(line)
         if m:
             yield start + m.start(2), start + m.end(2), "figure"
+            continue
+        if _ALMOST_FIGURE.match(line) or (not commonmark and _ALMOST_PICTURE.match(line)):
+            yield start, start + len(line), "unread"
             continue
         if commonmark:
             yield from _inline_pictures(line, start)
@@ -350,6 +360,10 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None, *,
     try:
         for start, end, kind in _picture_spans(markdown, commonmark=commonmark):
             raw = markdown[start:end]
+            if kind == "unread":
+                if confined:
+                    raise _unread_picture_line(raw.strip())
+                continue
             target = _picture_target(raw, kind)
             if not target.strip():
                 continue  # the converter reads the base folder, which is not a picture
@@ -390,6 +404,8 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None, *,
         # Read the result the way the converter will. Every destination in it
         # must be one this pass wrote (or, from the command line, one it left).
         for start, end, kind in _picture_spans(out, commonmark=commonmark):
+            if kind == "unread":
+                continue  # refused above for a confined caller; text otherwise
             target = _picture_target(out[start:end], kind)
             if target in written or target in left or not target.strip():
                 continue
@@ -418,6 +434,13 @@ def _representable(text: str, kind: str) -> bool:
     if ")" in text or "\n" in text or "\r" in text or _picture_target(text, kind) != text:
         return False
     return kind != "figure" or bool(_FIGURE_LINE.match(f"[그림 1] ({text})"))
+
+
+def _unread_picture_line(line: str) -> ToolError:
+    shown = line if len(line) <= 80 else line[:79] + "…"
+    return ToolError("invalid_params", f"그림 줄을 읽지 못했습니다({shown}).",
+                     hint="그림은 한 줄에 하나씩 ![설명](그림 파일 경로) 형식으로 적으세요. "
+                          "파일 이름이나 경로에 괄호가 있으면 이름을 바꿔 달라고 사용자에게 요청하세요.")
 
 
 def _unusable_picture(target: str) -> ToolError:
