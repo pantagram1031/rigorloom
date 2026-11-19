@@ -453,6 +453,28 @@ class WorkspaceService:
             return {"ok": True, "entry": meta}
         raise _uniform_not_found()
 
+    def resolve_entry(self, rel_path: str | None) -> dict[str, Any]:
+        """The absolute path of one openable file under the 문서 폴더.
+
+        The 파일 pane opens a document by this answer, never by a path it
+        composed itself: the confinement is decided here, by the same walk as
+        every other route, and a path outside the folder or a file that is not
+        a document answers the same 404 as a missing one.
+        """
+        resolved_root = self.active_root()
+        target = resolve_confined_path(resolved_root, rel_path, allow_root=False)
+        try:
+            st = target.stat()
+        except OSError as exc:
+            raise _uniform_not_found() from exc
+        if not stat.S_ISREG(st.st_mode) or not _is_supported_file_name(target.name):
+            raise _uniform_not_found()
+        return {
+            "ok": True,
+            "path": str(target),
+            "entry": self._entry_metadata(resolved_root, target, st, is_dir=False),
+        }
+
     def read_file_bytes(self, rel_path: str | None) -> tuple[dict[str, Any], bytes]:
         resolved_root = self.active_root()
         target = resolve_confined_path(resolved_root, rel_path, allow_root=False)
@@ -628,6 +650,10 @@ def handle_post(
         _reject_unknown_keys(body, _ALLOWED_STAT_KEYS)
         return HTTPStatus.OK, service.stat_entry(body.get("path"))
 
+    if path == "/api/workspace/resolve":
+        _reject_unknown_keys(body, _ALLOWED_STAT_KEYS)
+        return HTTPStatus.OK, service.resolve_entry(body.get("path"))
+
     if path == "/api/workspace/read":
         _reject_unknown_keys(body, _ALLOWED_READ_KEYS)
         fmt = str(body.get("format") or "json").strip().lower()
@@ -663,6 +689,7 @@ def _register_on_router(router: Any) -> None:
     for route in ("/api/workspace/list", "/api/workspace/stat", "/api/workspace/read"):
         router.get(route, wrap(handle_get, route))
         router.post(route, wrap(handle_post, route))
+    router.post("/api/workspace/resolve", wrap(handle_post, "/api/workspace/resolve"))
 
 
 def register_routes(bridge: Any) -> dict[str, dict[str, Callable[..., Any]]] | None:
@@ -686,6 +713,7 @@ def register_routes(bridge: Any) -> dict[str, dict[str, Callable[..., Any]]] | N
             "/api/workspace/list": lambda body: handle_post(service, "/api/workspace/list", body)[1],
             "/api/workspace/stat": lambda body: handle_post(service, "/api/workspace/stat", body)[1],
             "/api/workspace/read": lambda body: handle_post(service, "/api/workspace/read", body)[1],
+            "/api/workspace/resolve": lambda body: handle_post(service, "/api/workspace/resolve", body)[1],
         },
     }
 

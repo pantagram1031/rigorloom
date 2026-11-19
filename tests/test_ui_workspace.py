@@ -482,7 +482,9 @@ def test_extension_hook_integrates_with_bridge_application(tmp_path: Path):
 
     routes = rt_workspace.register_routes(app)
     assert set(routes["get"].keys()) == {"/api/workspace/list", "/api/workspace/stat", "/api/workspace/read"}
-    assert set(routes["post"].keys()) == {"/api/workspace/list", "/api/workspace/stat", "/api/workspace/read"}
+    assert set(routes["post"].keys()) == {
+        "/api/workspace/list", "/api/workspace/stat", "/api/workspace/read", "/api/workspace/resolve",
+    }
 
     listed = routes["get"]["/api/workspace/list"]({})
     assert listed["ok"] is True
@@ -539,5 +541,48 @@ def test_workspace_routes_through_the_rigorloom_ui_extension_hook(tmp_path: Path
         missing = get("/api/workspace/stat?path=%EC%97%86%EC%9D%8C.hwpx")
         assert outside[0] == missing[0] == 404
         assert outside[1] == missing[1]
+    finally:
+        srv.shutdown_bridge()
+
+
+def test_a_folder_file_is_opened_by_the_path_the_bridge_resolves(tmp_path: Path):
+    """Finding 3: the 파일 pane opens a 문서 폴더 file by the absolute path the
+    bridge resolves inside the folder, never by one it composed from the
+    folder's bare name."""
+    import http.client
+    import threading
+
+    docs_dir = tmp_path / "내 문서"
+    docs_dir.mkdir()
+    (docs_dir / "기안문.hwpx").write_bytes(b"PK\x03\x04demo")
+    (docs_dir / "메모.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "밖.hwpx").write_bytes(b"PK\x03\x04demo")
+    srv = rt_ui.create_bridge_server(root=tmp_path / "rt-root", port=0, prefs_path=tmp_path / "prefs.json")
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+
+    def resolve(rel: object) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+        try:
+            conn.request("POST", "/api/workspace/resolve", body=json.dumps({"path": rel}).encode("utf-8"),
+                         headers={"X-Rigorloom-Token": srv.token, "Content-Type": "application/json"})
+            resp = conn.getresponse()
+            return resp.status, json.loads(resp.read().decode("utf-8") or "{}")
+        finally:
+            conn.close()
+
+    try:
+        assert resolve("기안문.hwpx")[0] == 404, "no 문서 폴더 chosen yet"
+        srv.bridge.patch_prefs({"patch": {"docFolder": str(docs_dir)}})
+        status, body = resolve("기안문.hwpx")
+        assert status == 200, body
+        assert body["path"] == str((docs_dir / "기안문.hwpx").resolve())
+        assert Path(body["path"]).is_absolute()
+        # Outside the folder, missing, and not a document all answer the same 404.
+        answers = [resolve(p) for p in ("../밖.hwpx", "없음.hwpx", "메모.txt", "", "/etc/passwd")]
+        assert {a[0] for a in answers} == {404}, answers
+        assert len({json.dumps(a[1], sort_keys=True) for a in answers}) == 1, answers
+        status, body = resolve(["기안문.hwpx"])
+        assert status == 404, body
     finally:
         srv.shutdown_bridge()
