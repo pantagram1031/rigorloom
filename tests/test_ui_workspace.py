@@ -478,7 +478,7 @@ def test_extension_hook_integrates_with_bridge_application(tmp_path: Path):
         explicit_root=True,
         prefs_path=tmp_path / "prefs.json",
     )
-    app.patch_prefs({"patch": {"documentsRoot": str(docs_dir)}})
+    app.set_doc_folder({"path": str(docs_dir)})
 
     routes = rt_workspace.register_routes(app)
     assert set(routes["get"].keys()) == {"/api/workspace/list", "/api/workspace/stat", "/api/workspace/read"}
@@ -527,8 +527,8 @@ def test_workspace_routes_through_the_rigorloom_ui_extension_hook(tmp_path: Path
         # No 문서 폴더 chosen: nothing is listed, and the runtime store is never offered.
         status, body = get("/api/workspace/list")
         assert status == 404, body
-        # The shell's setting writes `docFolder`.
-        srv.bridge.patch_prefs({"patch": {"docFolder": str(docs_dir)}})
+        # The 문서 폴더 is set through its own route.
+        srv.bridge.set_doc_folder({"path": str(docs_dir)})
         status, body = get("/api/workspace/list")
         assert status == 200, body
         assert [e["name"] for e in body["entries"]] == ["공문.hwpx"]
@@ -573,7 +573,7 @@ def test_a_folder_file_is_opened_by_the_path_the_bridge_resolves(tmp_path: Path)
 
     try:
         assert resolve("기안문.hwpx")[0] == 404, "no 문서 폴더 chosen yet"
-        srv.bridge.patch_prefs({"patch": {"docFolder": str(docs_dir)}})
+        srv.bridge.set_doc_folder({"path": str(docs_dir)})
         status, body = resolve("기안문.hwpx")
         assert status == 200, body
         assert body["path"] == str((docs_dir / "기안문.hwpx").resolve())
@@ -606,7 +606,7 @@ def test_format_raw_through_the_bridge_is_refused_before_reading(tmp_path: Path,
 
     monkeypatch.setattr(rt_workspace.WorkspaceService, "read_file_bytes", counting)
     srv = rt_ui.create_bridge_server(root=tmp_path / "rt-root", port=0, prefs_path=tmp_path / "prefs.json")
-    srv.bridge.patch_prefs({"patch": {"docFolder": str(docs_dir)}})
+    srv.bridge.set_doc_folder({"path": str(docs_dir)})
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
 
@@ -627,5 +627,78 @@ def test_format_raw_through_the_bridge_is_refused_before_reading(tmp_path: Path,
         status, body = get("/api/workspace/read?path=a.md")
         assert status == 200 and body["ok"] is True
         assert reads == ["a.md"]
+    finally:
+        srv.shutdown_bridge()
+
+
+def test_the_doc_folder_is_set_through_its_own_checked_route(tmp_path: Path, monkeypatch):
+    """Finding 13: the 문서 폴더 bounds what the workspace routes read, so a
+    token holder cannot point it at `/`, the whole home folder or the
+    runtime's own store, and it is not a free-form pref."""
+    import http.client
+    import threading
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    docs = home / "문서"
+    docs.mkdir()
+    (docs / "공문.hwpx").write_bytes(b"PK\x03\x04demo")
+    (docs / "메모.txt").write_text("x", encoding="utf-8")
+    rt_root = tmp_path / "rt-root"
+    srv = rt_ui.create_bridge_server(root=rt_root, port=0, prefs_path=tmp_path / "prefs.json")
+    rt_root.mkdir(parents=True, exist_ok=True)
+    (rt_root / "sessions").mkdir(exist_ok=True)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+
+    def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+        try:
+            raw = json.dumps(body).encode("utf-8") if body is not None else None
+            conn.request(method, path, body=raw, headers={"X-Rigorloom-Token": srv.token, "Content-Type": "application/json"})
+            resp = conn.getresponse()
+            return resp.status, json.loads(resp.read().decode("utf-8") or "{}")
+        finally:
+            conn.close()
+
+    try:
+        # Not through the general prefs patch, under either name.
+        for key in ("docFolder", "documentsRoot"):
+            status, body = call("POST", "/api/prefs", {"patch": {key: str(docs)}})
+            assert status == 400 and body["error"]["code"] == "invalid_doc_folder", (key, body)
+        assert call("GET", "/api/workspace/list")[0] == 404
+
+        refused = [
+            "/",
+            str(home),
+            "문서",
+            str(home / "없음"),
+            str(docs / "메모.txt"),
+            str(rt_root),
+            str(rt_root / "sessions"),
+            "",
+            ["/"],
+        ]
+        for value in refused:
+            status, body = call("POST", "/api/doc-folder", {"path": value})
+            assert status == 400 and body["error"]["code"] == "invalid_doc_folder", (value, body)
+        assert call("GET", "/api/workspace/list")[0] == 404
+
+        status, body = call("POST", "/api/doc-folder", {"path": str(docs)})
+        assert status == 200 and body["docFolder"] == str(docs.resolve()), body
+        status, body = call("GET", "/api/workspace/list")
+        assert status == 200 and [e["name"] for e in body["entries"]] == ["공문.hwpx"]
+
+        # A prefs file edited by hand is checked again on use.
+        prefs = json.loads((tmp_path / "prefs.json").read_text(encoding="utf-8"))
+        prefs["docFolder"] = "/"
+        (tmp_path / "prefs.json").write_text(json.dumps(prefs), encoding="utf-8")
+        assert call("GET", "/api/workspace/list")[0] == 404
+
+        # null clears it.
+        status, body = call("POST", "/api/doc-folder", {"path": None})
+        assert status == 200 and body["docFolder"] is None
+        assert call("GET", "/api/workspace/list")[0] == 404
     finally:
         srv.shutdown_bridge()

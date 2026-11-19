@@ -538,6 +538,14 @@ def _service_from_bridge(bridge: Any) -> WorkspaceService:
         return existing
 
     def resolve_bridge_root() -> Path:
+        # `rigorloom ui` checks its 문서 폴더 on every use (absolute, a real
+        # directory, not a drive root, the home folder or the runtime store).
+        doc_folder_fn = getattr(bridge, "doc_folder", None)
+        if callable(doc_folder_fn):
+            folder = doc_folder_fn()
+            if folder is None:
+                raise _uniform_not_found()
+            return Path(folder)
         root_fn = getattr(bridge, "workspace_root", None)
         if callable(root_fn):
             candidate = root_fn()
