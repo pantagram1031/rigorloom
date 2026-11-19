@@ -1,0 +1,813 @@
+# -*- coding: utf-8 -*-
+"""doc_core (runtime/scripts/rt_doc.py).
+
+Two worlds. Without an engine (CI): the built-in .hwpx path reads, finds and
+edits text on rigorloom's own fixtures, and everything else is a structured
+``capability_unavailable``. With an engine (``RIGORLOOM_HWP_ENGINE`` pointing
+at a kit_api folder): the same calls go through one long-lived worker, and the
+numbering is checked against the engine's own ``hnc_edit`` paragraphs. Engine
+fixtures are read from the engine folder at test time and never copied here.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "runtime" / "scripts"))
+
+import rt_doc as D  # noqa: E402
+
+GUARD = REPO / "examples" / "guard" / "before.hwpx"          # 154 paragraphs, 7 tables, form cells
+JUMIN = REPO / "tests" / "corpus" / "forms" / "converted" / "jumin-deungchobon-sinchengseo.hwpx"
+REPORT = REPO / "tests" / "corpus" / "forms" / "converted" / "nrf-gyeolgwa-bogoseo-yangsik.hwpx"
+ENGINE_DIR = os.environ.get("RIGORLOOM_HWP_ENGINE", "").strip()
+HAS_ENGINE = bool(ENGINE_DIR) and (Path(ENGINE_DIR) / "kit_api.py").is_file()
+
+
+@pytest.fixture(autouse=True)
+def _private_cache(tmp_path_factory, monkeypatch):
+    """Place ids carried across edits live in a cache; keep the tests' own out of the user's."""
+    monkeypatch.setenv(D.CACHE_ENV, str(tmp_path_factory.mktemp("doc-cache")))
+    D._LINEAGE.clear()
+    yield
+    D._LINEAGE.clear()                  # nor leave them in memory for the next test module
+
+
+@pytest.fixture
+def no_engine(monkeypatch):
+    """The built-in path, whatever the environment says."""
+    D.close()
+    monkeypatch.delenv(D.ENGINE_ENV, raising=False)
+    monkeypatch.setattr(D, "_engine_dir", lambda env=None: (None, "engine_not_configured"))
+    yield
+    D.close()
+
+
+def _copy(src, tmp_path, name=None):
+    dst = tmp_path / (name or src.name)
+    shutil.copyfile(src, dst)
+    return dst
+
+
+# ============================================================================ addresses
+@pytest.mark.parametrize("addr,want", [
+    ("p12", {"kind": "para", "p": 12}),
+    ("t3", {"kind": "table", "t": 3}),
+    ("t3/r2", {"kind": "row", "t": 3, "r": 2}),
+    ("t3/r2/c1", {"kind": "cell", "t": 3, "r": 2, "c": 1}),
+    ("t3/r2/c1/p0", {"kind": "cellpara", "t": 3, "r": 2, "c": 1, "k": 0}),
+    ('h:"추진 배경"', {"kind": "heading", "text": "추진 배경"}),
+    ("h:추진 배경", {"kind": "heading", "text": "추진 배경"}),
+    ("place:성명", {"kind": "place", "id": "성명"}),
+    ("page:4", {"kind": "page", "page": 4}),
+    ("p12:5-18", {"kind": "para", "p": 12, "range": (5, 18)}),
+])
+def test_parse_address(addr, want):
+    assert D.parse_address(addr) == want
+
+
+@pytest.mark.parametrize("addr", ["", "q1", "p", "t1/c2", "p1:9-2", "page:x", None, 3])
+def test_parse_address_refuses(addr):
+    with pytest.raises(D.DocError) as exc:
+        D.parse_address(addr)
+    assert exc.value.code == "bad_address"
+
+
+def test_rev_is_sha256_prefix():
+    assert D.rev_of(GUARD) == hashlib.sha256(GUARD.read_bytes()).hexdigest()[:12]
+
+
+def place_of(src, key):
+    """The outline place whose label reads `key` (numbering and spaces aside)."""
+    pls = [p for p in D.outline(src)["places"] if D._heading_key(p["label"] or "") == key]
+    assert len(pls) == 1, pls
+    return pls[0]
+
+
+# ============================================================================ built-in read path
+def test_open_outline_without_engine(no_engine):
+    o = D.open(GUARD)
+    assert o["ok"] and o["format"] == "hwpx" and o["sections"] == 1
+    assert o["paragraphs"] == 154 and o["tables"] == 7
+    assert o["rev"] == D.rev_of(GUARD)
+    assert o["engine"] == {"available": False, "reason": "engine_not_configured"}
+    assert "pages" not in o and "바탕" in o["fonts"]["used"]
+    ol = D.outline(GUARD)
+    assert [t["at"] for t in ol["tables"]] == ["t%d" % i for i in range(7)]
+    assert ol["tables"][5] == {"at": "t5", "rows": 20, "cols": 6, "in": "p152"}
+    t5 = D._load(GUARD).by_addr["t5"]
+    assert {"id": D.place_id("cell", t5.id, 13, 2), "at": "t5/r13/c2", "label": "2. 취업 장소", "kind": "cell",
+            "value": "", "filled": False} in ol["places"]
+
+
+def test_outline_headings_and_heading_address(no_engine):
+    ol = D.outline(REPORT)
+    texts = [h["text"] for h in ol["headings"]]
+    assert "Ⅰ. 연구 목적 및 방법" in texts
+    h1 = next(h for h in ol["headings"] if h["text"] == "Ⅰ. 연구 목적 및 방법")
+    assert h1["level"] == 1
+    r = D.read(REPORT, 'h:"Ⅰ. 연구 목적"')          # unique prefix
+    assert r["ok"] and r["blocks"][0]["at"] == h1["at"]
+    nxt = next(h for h in ol["headings"] if h["level"] <= 1 and h["at"] != h1["at"]
+               and int(h["at"][1:]) > int(h1["at"][1:]))
+    assert r["blocks"][-1]["at"] == "p%d" % (int(nxt["at"][1:]) - 1)     # up to the next heading
+
+
+def test_read_blocks_and_tables(no_engine):
+    r = D.read(GUARD)
+    assert r["ok"] and r["rev"] == D.rev_of(GUARD)
+    assert r["blocks"][0] == {"at": "p0", "kind": "para", "text": "", "style": "바탕글", "objects": ["hp:tbl"]}
+    assert r["blocks"][1]["at"] == "t0" and r["blocks"][1]["cells"] == [["표준근로계약서"]]
+    p2 = D.read(GUARD, "p2", with_runs=True)["blocks"]
+    assert p2[0]["text"].startswith("1. 근로계약기간") and p2[0]["runs"][0]["text"]
+    cell = D.read(GUARD, "t5/r13/c1")["blocks"]
+    assert cell[0]["at"].startswith("t5/r13/c")
+    assert D.read(GUARD, "t0/r0/c0/p0")["blocks"][0]["text"] == "표준근로계약서"
+
+
+def test_unresolved_addresses_give_candidates(no_engine):
+    e = D.read(GUARD, "p999")["error"]
+    assert e["code"] == "bad_address" and e["candidates"][0] == "p153" and e["retryable"] is False
+    e = D.read(GUARD, "t9")["error"]
+    assert e["code"] == "bad_address" and "t0" in e["candidates"]
+    e = D.read(GUARD, "place:취업장")["error"]       # a label is not an id; the label's place is offered
+    assert e["code"] == "bad_address" and "place:%s" % place_of(GUARD, "취업장소")["id"] in e["candidates"]
+    e = D.read(REPORT, 'h:"연구 목적"')["error"]
+    assert e["code"] == "bad_address" and any("연구 목적" in c for c in e["candidates"])
+    assert D.read(GUARD, "page:1")["error"]["code"] == "capability_unavailable"
+
+
+def test_find(no_engine):
+    r = D.find(GUARD, "근로계약기간")
+    assert r["ok"] and r["hits"][0] == {"at": "p2", "start": 3, "end": 9, "text": "근로계약기간"}
+    assert all(h["text"] == "근로계약기간" for h in r["hits"])
+    rx = D.find(GUARD, r"\d+\. 근로", regex=True)
+    assert rx["hits"] and rx["hits"][0]["at"] == "p2"
+    sc = D.find(GUARD, "표준근로계약서", scope="t0")
+    assert [h["at"] for h in sc["hits"]] == ["t0/r0/c0/p0"]
+    assert D.find(GUARD, "(", regex=True)["error"]["code"] == "bad_input"
+
+
+def test_missing_and_foreign_files(no_engine, tmp_path):
+    assert D.open(tmp_path / "nope.hwpx")["error"]["code"] == "not_found"
+    junk = tmp_path / "x.hwpx"
+    junk.write_bytes(b"hello")
+    assert D.open(junk)["error"]["code"] == "bad_input"
+    hwp = tmp_path / "x.hwp"
+    hwp.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 64)
+    e = D.open(hwp)["error"]
+    assert e["code"] == "capability_unavailable" and e["reason"] == "hwp_binary_unsupported"
+
+
+# ============================================================================ built-in edits
+def test_text_edits_without_engine(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    before = src.read_bytes()
+    rev = D.rev_of(src)
+    out = tmp_path / "out.hwpx"
+    r = D.edit(src, [
+        {"op": "set", "at": "p2", "text": "새 문장 & <b>", "expect": D.read(src, "p2")["blocks"][0]["text"]},
+        {"op": "replace", "at": "t0/r0/c0/p0:0-7", "find": "표준근로계약서", "with": "계약서"},
+        {"op": "replace", "at": "p1", "find": "근로", "with": "N", "all": True},
+        {"op": "table.set_cells", "at": "t5/r13/c2", "grid": [["강남구"]]},
+        {"op": "fill", "place": place_of(src, "근로자Worker")["id"], "text": "홍길동"},
+    ], base=rev, out=out)
+    assert r["ok"], r
+    assert src.read_bytes() == before                       # input untouched
+    assert r["rev_before"] == rev and r["rev"] == D.rev_of(out) and r["out"] == str(out)
+    assert [a["i"] for a in r["applied"]] == [0, 1, 2, 3, 4]
+    assert r["remap"] == [] and r["changed_pages"] == [] and r["signals"] == [] and r["engine"] is False
+    assert D.read(out, "p2")["blocks"][0]["text"] == "새 문장 & <b>"
+    assert D.read(out, "t0")["blocks"][0]["cells"] == [["계약서"]]
+    p1 = D.read(out, "p1")["blocks"][0]["text"]
+    assert "근로" not in p1 and "N계약" in p1
+    assert D.read(out, "t5/r13/c2")["blocks"][0]["text"] == "강남구"
+    worker = place_of(src, "근로자Worker")
+    seat = worker["at"]
+    assert D.read(out, seat)["blocks"][0]["text"] == "홍길동"
+    filled = {p["id"]: p for p in D.outline(out)["places"]}[worker["id"]]    # a filled seat keeps its id
+    assert filled["at"] == seat and filled["value"] == "홍길동" and filled["filled"] is True
+    # the package: same members in the same order, mimetype first and stored, XML well-formed
+    with zipfile.ZipFile(src) as a, zipfile.ZipFile(out) as b:
+        assert [i.filename for i in a.infolist()] == [i.filename for i in b.infolist()]
+        assert b.infolist()[0].filename == "mimetype" and b.infolist()[0].compress_type == zipfile.ZIP_STORED
+        changed = [n for n in a.namelist() if a.read(n) != b.read(n)]
+        assert changed == ["Contents/section0.xml"]
+    # the edited paragraph lost its cached line layout; untouched ones kept theirs
+    doc = D._load(out)
+    assert doc.top[2].lineseg is None and doc.top[3].lineseg is not None
+    # diff names exactly what changed
+    ch = D.diff(src, out)["changes"]
+    assert {"p1", "p2", "t0/r0/c0", "t5/r13/c2"} <= {c["at"] for c in ch} and len(ch) == 5
+
+
+def test_edit_refusals(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev = D.rev_of(src)
+    out = tmp_path / "o.hwpx"
+    e = D.edit(src, [{"op": "set", "at": "p2", "text": "x"}], base="0" * 12, out=out)["error"]
+    assert e["code"] == "stale" and e["rev"] == rev
+    e = D.edit(src, [{"op": "set", "at": "p2", "text": "x", "expect": "nope"}], base=rev, out=out)["error"]
+    assert e["code"] == "expect_mismatch" and e["at"] == "p2" and e["i"] == 0
+    e = D.edit(src, [{"op": "replace", "find": "근로계약기간", "with": "x"}], base=rev, out=out)["error"]
+    assert e["code"] == "ambiguous_match" and len(e["candidates"]) == e["total"] > 1
+    assert e["candidates"][0] == "p2:3-9"
+    e = D.edit(src, [{"op": "replace", "find": "없는 말", "with": "x"}], base=rev, out=out)["error"]
+    assert e["code"] == "not_found"
+    e = D.edit(src, [{"op": "set", "at": "p2", "text": "a"}, {"op": "set", "at": "p2", "text": "b"}],
+               base=rev, out=out)["error"]
+    assert e["code"] == "conflict"
+    e = D.edit(src, [{"op": "set", "at": "p0", "text": "x"}], base=rev, out=out)["error"]
+    assert e["code"] == "bad_input" and "object" in e["message"]
+    e = D.edit(src, [{"op": "frobnicate"}], base=rev, out=out)["error"]
+    assert e["code"] == "bad_input"
+    e = D.edit(src, [{"op": "insert_after", "at": "p2", "markdown": "새 문단"}], base=rev, out=out)["error"]
+    assert e["code"] == "capability_unavailable" and e["reason"] == "structural_edit_unsupported"
+    e = D.edit(src, [{"op": "set", "at": "p2", "text": "두\n줄"}], base=rev, out=out)["error"]
+    assert e["code"] == "capability_unavailable"
+    e = D.edit(src, [{"op": "set", "at": "p2", "text": "x"}], base=rev, out=src)["error"]
+    assert e["code"] == "bad_input"
+    e = D.edit(src, [{"op": "table.set_cells", "at": "t5/r13/c1", "grid": [[None, "x", "y"]]}],
+               base=rev, out=out)["error"]
+    assert e["code"] == "bad_address"
+    assert not out.exists()
+
+
+def test_in_place_and_default_out(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    r = D.edit(src, [{"op": "set", "at": "p2", "text": "하나"}], base=D.rev_of(src))
+    assert r["ok"] and r["out"] == str(tmp_path / "before.edited.hwpx")
+    r = D.edit(src, [{"op": "set", "at": "p2", "text": "둘"}], base=D.rev_of(src), in_place=True)
+    assert r["ok"] and r["out"] == str(src.resolve()) and D.read(src, "p2")["blocks"][0]["text"] == "둘"
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".rtdoc-")]
+
+
+def test_engine_only_functions_without_engine(no_engine, tmp_path):
+    for res in (D.render(GUARD, 1), D.pages(GUARD), D.geometry(GUARD, 1), D.hit_test(GUARD, 1, 10, 10),
+                D.caret_rect(GUARD, "p2", 0), D.new("# 제목", tmp_path / "n.hwpx"),
+                D.convert(GUARD, tmp_path / "x.pdf", to="pdf"), D.convert(GUARD, tmp_path / "x.md", to="md")):
+        assert res["ok"] is False
+        assert res["error"]["code"] == "capability_unavailable" and res["error"]["retryable"] is False
+    c = D.convert(GUARD, tmp_path / "copy.hwpx", to="hwpx")
+    assert c["ok"] and (tmp_path / "copy.hwpx").read_bytes() == GUARD.read_bytes()
+
+
+def test_engine_error_keeps_fields():
+    env = {"ok": False, "error": {"code": "bad_input", "message": "step 3 (goto): IndexError: x", "step": 3,
+                                  "done": [{"op": "goto", "result": None}]}}
+    e = D._engine_error(env, "edit", at="p4", i=1).to_error()
+    assert e["code"] == "bad_input" and e["message"].startswith("step 3") and e["step"] == 3
+    assert e["done"] and e["at"] == "p4" and e["i"] == 1 and e["retryable"] is False
+    miss = D._engine_error({"ok": False, "error": {"code": "unsupported", "message": "no such function: png"}},
+                           "png").to_error()
+    assert miss["code"] == "capability_unavailable" and miss["reason"] == "engine_function_missing"
+
+
+def test_equation_op_converts_latex(no_engine):
+    doc = D._load(GUARD)
+    acts = D._plan(doc, [{"op": "insert_equation", "at": "p2", "latex": r"\frac{a}{b}", "base_pt": 11}])
+    step = acts[0].steps[-1]
+    assert step[0] == "insert_equation" and step[1] == "{a}over{b}"
+    assert any(w.startswith("base_pt_ignored") for w in acts[0].info["warnings"])
+    with pytest.raises(D.DocError) as exc:
+        D._plan(doc, [{"op": "insert_equation", "at": "p2", "latex": "x", "hwpeqn": "x"}])
+    assert exc.value.code == "bad_input"
+
+
+# ============================================================================ with the engine
+engine = pytest.mark.skipif(not HAS_ENGINE, reason="RIGORLOOM_HWP_ENGINE is not set to an engine")
+
+
+def _standin_fonts(root: Path):
+    """Without Hancom's fonts the engine's layout stops; a box-glyph stand-in named 함초롬바탕/돋움 keeps it
+    running (approximate geometry: these tests check structure, not positions)."""
+    ft = pytest.importorskip("fontTools.fontBuilder")
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    root.mkdir(parents=True, exist_ok=True)
+    for fam, fn in (("함초롬바탕", "a.ttf"), ("함초롬돋움", "b.ttf")):
+        fb = ft.FontBuilder(1000, isTTF=True)
+        fb.setupGlyphOrder([".notdef", "space", "box"])
+        cmap = {0x20: "space"}
+        for cp in list(range(0x21, 0x7F)) + list(range(0xAC00, 0xD7A4)) + list(range(0x3131, 0x318F)):
+            cmap[cp] = "box"
+        fb.setupCharacterMap(cmap)
+
+        def box():
+            p = TTGlyphPen(None)
+            p.moveTo((50, 0)), p.lineTo((50, 700)), p.lineTo((450, 700)), p.lineTo((450, 0)), p.closePath()
+            return p.glyph()
+        fb.setupGlyf({".notdef": box(), "space": TTGlyphPen(None).glyph(), "box": box()})
+        fb.setupHorizontalMetrics({".notdef": (500, 50), "space": (250, 0), "box": (500, 50)})
+        fb.setupHorizontalHeader(ascent=880, descent=-120)
+        fb.setupNameTable({"familyName": fam, "styleName": "Regular"})
+        fb.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWinAscent=880, usWinDescent=120)
+        fb.setupPost()
+        fb.save(str(root / fn))
+    conf = root / "fonts.conf"
+    conf.write_text('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig>'
+                    '<include ignore_missing="yes">/etc/fonts/fonts.conf</include><dir>%s</dir>'
+                    '<cachedir>%s</cachedir></fontconfig>' % (root, root / "cache"), encoding="utf-8")
+    return conf
+
+
+@pytest.fixture(scope="module")
+def kit(tmp_path_factory):
+    D.close()
+    old = os.environ.get("FONTCONFIG_FILE")
+    try:
+        fams = subprocess.run(["fc-list", ":", "family"], capture_output=True, text=True).stdout
+    except OSError:
+        fams = ""
+    if "함초롬바탕" not in fams:
+        os.environ["FONTCONFIG_FILE"] = str(_standin_fonts(tmp_path_factory.mktemp("fonts")))
+    yield Path(ENGINE_DIR)
+    D.close()
+    if old is None:
+        os.environ.pop("FONTCONFIG_FILE", None)
+    else:
+        os.environ["FONTCONFIG_FILE"] = old
+
+
+def _features(kit):
+    return sorted((kit / "tests" / "features").glob("*.hwpx")) + [kit / "forms" / "blank_a4.hwpx"]
+
+
+@engine
+def test_numbering_matches_engine_paragraphs(kit):
+    """pN / tN / cell paragraphs and their text are what hnc_edit.Doc sees, document by document."""
+    e = D._engine()
+    for f in _features(kit):
+        doc = D._load(f)
+        r = e.call("edit", str(f), [["paragraphs", si] for si in range(len(doc.secs))])
+        assert r["ok"], r
+        assert [len(s["result"]) for s in r["steps"]] == [len(ps) for ps in doc.sec_paras], f.name
+        steps = [["text", p.k, p.si] for p in doc.paras]
+        t = e.call("edit", str(f), steps)
+        assert [s["result"] for s in t["steps"]] == [p.text for p in doc.paras], f.name
+        cells = [["cell_paragraphs", t.lt, c.row, c.col, t.si] for t in doc.tables for c in t.cells]
+        if cells:
+            c = e.call("edit", str(f), cells)
+            assert [s["result"] for s in c["steps"]] == [[p.k for p in cc.paras] for t in doc.tables
+                                                         for cc in t.cells], f.name
+
+
+@engine
+def test_engine_open_outline_pages(kit):
+    f = kit / "tests" / "features" / "feat_tables.hwpx"
+    o = D.open(f)
+    assert o["ok"] and o["engine"]["available"] and o["pages"] >= 1
+    ol = D.outline(f)
+    assert [t["at"] for t in ol["tables"]] == ["t0", "t1"] and all("page" in t for t in ol["tables"])
+    pg = D.pages(f)
+    assert pg["ok"] and pg["count"] == len(pg["pages"]) and pg["pages"][0]["starts_with"] == "p0"
+    for p in pg["pages"]:
+        for s in p["signals"]:
+            assert s["kind"] in ("lone_heading", "bottom_heading", "table_split", "caption_split", "widow",
+                                 "orphan", "top_blank")
+    r = D.read(f, "page:1")
+    assert r["ok"] and r["blocks"][0]["at"] == "p0"
+
+
+@engine
+def test_engine_structural_edit(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    rev = D.rev_of(f)
+    third = D.read(f, "p3")["blocks"][0]["text"]
+    out = tmp_path / "e.hwpx"
+    r = D.edit(f, [
+        {"op": "set", "at": "p0", "text": "첫 문단"},
+        {"op": "insert_after", "at": "p0", "markdown": "- 하나\n- 둘"},
+        {"op": "table.set_cells", "at": "t1/r1/c0", "grid": [["A", "B"]]},
+        {"op": "table.add_row", "at": "t0", "after": 1, "values": ["n1", "n2"]},
+        {"op": "table.delete_row", "at": "t1/r3"},
+        {"op": "delete", "at": "p7"},
+        {"op": "insert_table", "at": "p2", "data": [["h1", "h2"], ["v1", "v2"]]},
+    ], base=rev, out=out)
+    assert r["ok"], r
+    assert r["changed_pages"] and all(isinstance(n, int) for n in r["changed_pages"])
+    assert "remap_approx" not in r
+    moved = {m["from"]: m["to"] for m in r["remap"]}
+    assert moved["p3"] == "p7" and moved["p7"] is None and moved["t1"] == "t2"
+    assert moved["t0/r2"] == "t0/r3" and moved["t1/r3"] is None
+    assert D.read(out, moved["p3"])["blocks"][0]["text"] == third
+    assert [b["text"] for b in D.read(out)["blocks"][:3]] == ["첫 문단", "하나", "둘"]
+    assert D.read(out, "t1")["blocks"][0]["cells"] == [["h1", "h2"], ["v1", "v2"]]
+    assert D.read(out, "t0/r2/c0")["blocks"][0]["text"] == "n1"
+    assert D.read(out, "t2/r1/c0")["blocks"][0]["text"] == "A"
+    assert D.read(out, "t2")["blocks"][0]["rows"] == 29
+    assert f.read_bytes() and D.rev_of(f) == rev
+
+
+@engine
+def test_engine_preview_signals_and_errors(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    rev = D.rev_of(f)
+    r = D.edit(f, [{"op": "set", "at": "p3", "text": "짧게"}], base=rev, preview=True)
+    assert r["ok"] and r["changed"] == [{"i": 0, "page": 1, "rect": None}]
+    assert not (tmp_path / "feat_tables.edited.hwpx").exists()
+    assert any(s["kind"] == "table_split" for s in r["signals"]) or r["signals"] == []
+    e = D.edit(f, [{"op": "style", "at": "p3", "style": "없는 스타일"}], base=rev, out=tmp_path / "x.hwpx")
+    assert e["error"]["code"] == "bad_input" and e["error"]["candidates"]
+
+
+@engine
+def test_engine_render_png(kit, tmp_path):
+    pytest.importorskip("pypdfium2")
+    f = kit / "tests" / "features" / "feat_paragraphs.hwpx"
+    r = D.render(f, [1], scale=1.0, out_dir=tmp_path)
+    assert r["ok"], r
+    pg = r["pages"][0]
+    assert pg["n"] == 1 and Path(pg["file"]).is_file() and pg["px_w"] > 100
+    assert 590 < pg["width_pt"] < 600                     # A4
+    assert Path(pg["file"]).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+@engine
+def test_engine_missing_functions_light_up_later(kit):
+    f = kit / "tests" / "features" / "feat_paragraphs.hwpx"
+    for res in (D.geometry(f, 1), D.hit_test(f, 1, 100, 100), D.caret_rect(f, "p0", 0)):
+        if not res["ok"]:
+            assert res["error"]["code"] == "capability_unavailable"
+            assert res["error"]["reason"] == "engine_function_missing"
+
+
+@engine
+def test_engine_new_and_convert(kit, tmp_path):
+    md = tmp_path / "a.md"
+    md.write_text("# 제목\n\n## 배경\n\n본문 문단입니다.\n", encoding="utf-8")
+    r = D.new(md, tmp_path / "n.hwpx")
+    assert r["ok"], r
+    assert any("본문 문단" in b["text"] for b in D.read(tmp_path / "n.hwpx")["blocks"])
+    c = D.convert(tmp_path / "n.hwpx", tmp_path / "n.pdf", to="pdf")
+    assert c["ok"] and (tmp_path / "n.pdf").read_bytes()[:5] == b"%PDF-"
+
+
+@engine
+def test_engine_reads_and_edits_hwp(kit, tmp_path):
+    f = _copy(kit / "tests" / "hwp5" / "written" / "kit_feat_lists.hwp", tmp_path)
+    before = f.read_bytes()
+    o = D.open(f)
+    assert o["ok"] and o["format"] == "hwp"
+    first = D.read(f, "p0")["blocks"][0]
+    assert first["text"]
+    r = D.edit(f, [{"op": "set", "at": "p0", "text": "바뀜", "expect": first["text"]}], base=D.rev_of(f))
+    assert r["ok"] and r["out"].endswith("kit_feat_lists.edited.hwpx")
+    assert D.read(r["out"], "p0")["blocks"][0]["text"] == "바뀜"
+    assert f.read_bytes() == before
+
+# ============================================================================ shared addressing fixture
+# tests/fixtures/doc_core/addressing.{hwpx,json} (doc-core-api.md, ruling 2026-11-19 04:30Z), the fixture
+# rt_doc and the engine both run: only top-level tables count as t<N>, a nested table goes through its cell, a
+# covered cell answers at its anchor, the unused hp:switch branch has no address, place ids hash an identity
+# filling cannot change, unresolved addresses are bad_address with at and candidates, ranges count code points,
+# and a locked file is `locked`.
+FX_DIR = REPO / "tests" / "fixtures" / "doc_core"
+FX_DOC = FX_DIR / "addressing.hwpx"
+FX_WANT = json.loads((FX_DIR / "addressing.json").read_text("utf-8"))
+
+
+def _fx_copy(tmp_path, name="doc.hwpx"):
+    return shutil.copyfile(FX_DOC, tmp_path / name)
+
+
+def _fx_text(f, at):
+    r = D.read(f, at)
+    assert r["ok"], r
+    return r["blocks"][0]["text"]
+
+
+def _fx_cells(f):
+    return {p["at"]: p for p in D.outline(f)["places"] if p["kind"] == "cell"}
+
+
+# ---------------------------------------------------------------------------- the addressing fixture
+def test_addressing_fixture_matches_its_builder():
+    sys.path.insert(0, str(FX_DIR))
+    try:
+        import build_addressing as B
+    finally:
+        sys.path.remove(str(FX_DIR))
+    assert B.expected() == FX_WANT, "addressing.json is stale; run tests/fixtures/doc_core/build_addressing.py"
+    for p in FX_WANT["cell_places"] + FX_WANT["label_lines"]:
+        assert D.place_id(*p["parts"]) == p["id"]
+
+
+# ============================================================================ tables
+def test_only_top_level_tables_count_and_nested_ones_go_through_their_cell(no_engine):
+    ol = D.outline(FX_DOC)
+    assert [(t["at"], t["rows"], t["cols"]) for t in ol["tables"]] == \
+        [(t["at"], t["rows"], t["cols"]) for t in FX_WANT["tables"]]
+    doc = D._load(FX_DOC)
+    assert {a: t.id for a, t in doc.by_addr.items()} == {t["at"]: t["id"] for t in FX_WANT["tables"]}
+    assert [t.id for t in doc.tables if t.addr is None] == ["5004"]        # the hp:default branch
+
+
+@pytest.mark.parametrize("at", sorted(FX_WANT["text"]))
+def test_addresses_read_back(no_engine, at):
+    assert _fx_text(FX_DOC, at) == FX_WANT["text"][at]
+
+
+def test_a_covered_cell_answers_at_its_anchor(no_engine):
+    for at, anchor in FX_WANT["covered"].items():
+        r = D.read(FX_DOC, at)
+        assert r["ok"] and r["blocks"][0]["at"].startswith(anchor + "/"), r
+
+
+@pytest.mark.parametrize("at", FX_WANT["bad_address"])
+def test_unresolved_addresses_are_bad_address_with_at_and_candidates(no_engine, at):
+    e = D.read(FX_DOC, at)["error"]
+    assert e["code"] == "bad_address" and e["at"] == at and e["candidates"], e
+    for c in e["candidates"]:
+        assert D.read(FX_DOC, c)["ok"], c                                   # every candidate resolves
+
+
+def test_full_read_blocks_read_back_alone(no_engine):
+    for b in D.read(FX_DOC)["blocks"]:
+        assert D.read(FX_DOC, b["at"])["ok"], b
+
+
+def test_edit_a_nested_cell(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    out = tmp_path / "out.hwpx"
+    r = D.edit(src, [{"op": "set", "at": "t0/r2/c1/t0/r0/c1", "text": "010-0000-0000"},
+                     {"op": "table.set_cells", "at": "t2/r1/c1", "grid": [["서울"]]}],
+               base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    assert r["remap"] == []
+    assert _fx_text(out, "t0/r2/c1/t0/r0/c1") == "010-0000-0000" and _fx_text(out, "t2/r1/c1") == "서울"
+    assert _fx_text(out, "t0/r1/c1") == "" and _fx_text(out, "t1/r0/c0") == "분류"
+
+
+# ============================================================================ place ids
+def test_cell_place_ids_hash_table_id_row_and_column(no_engine):
+    got = _fx_cells(FX_DOC)
+    for p in FX_WANT["cell_places"]:
+        assert got[p["at"]]["id"] == p["id"] and got[p["at"]]["label"] == p["label"], (p, got.get(p["at"]))
+    assert len({p["id"] for p in got.values()}) == len(got)               # the two 성명 cells differ
+
+
+def test_filling_one_form_moves_no_id_of_the_other(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    before = _fx_cells(src)
+    first = before["t0/r0/c1"]["id"]
+    out = tmp_path / "filled.hwpx"
+    r = D.edit(src, [{"op": "fill", "place": first, "text": "홍길동"}], base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    after = _fx_cells(out)
+    assert {a: p["id"] for a, p in after.items()} == {a: p["id"] for a, p in before.items()}
+    assert after["t0/r0/c1"]["value"] == "홍길동" and after["t0/r0/c1"]["filled"] is True
+    assert after["t0/r1/c1"]["label"] == "주소"                            # not relabelled by the typed value
+    assert after["t2/r0/c1"]["filled"] is False
+    # an outside copy (no lineage): every seat still empty there keeps the same id
+    D._LINEAGE.clear()
+    os.environ[D.CACHE_ENV] = str(tmp_path / "fresh-cache")
+    outside = {a: p["id"] for a, p in _fx_cells(out).items()}
+    assert outside == {a: p["id"] for a, p in before.items() if a != "t0/r0/c1"}
+    # filling the second form's 성명 by its id writes there, not into the first
+    r2 = D.edit(out, [{"op": "fill", "place": before["t2/r0/c1"]["id"], "text": "김철수"}], base=D.rev_of(out),
+                out=tmp_path / "again.hwpx")
+    assert r2["ok"] and _fx_text(r2["out"], "t2/r0/c1") == "김철수" and _fx_text(r2["out"], "t0/r0/c1") == "홍길동"
+
+
+# ============================================================================ errors and offsets
+@pytest.fixture(params=["builtin", pytest.param("engine", marks=pytest.mark.skipif(
+    not HAS_ENGINE, reason="RIGORLOOM_HWP_ENGINE is not set to an engine"))])
+def either(request):
+    """Run the test on the built-in path and, when an engine is set, on the engine."""
+    if request.param == "engine":
+        request.getfixturevalue("kit")
+        D.close()
+    else:
+        request.getfixturevalue("no_engine")
+    return request.param
+
+
+def test_offsets_count_code_points(either, tmp_path):
+    src = _fx_copy(tmp_path)
+    out = tmp_path / "cp.hwpx"
+    r = D.edit(src, [{"op": "set", "at": "p3", "text": "a😀b한c"}], base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    hit = D.find(out, "b한")["hits"][0]
+    assert (hit["at"], hit["start"], hit["end"]) == ("p3", 2, 4)
+    r = D.edit(out, [{"op": "replace", "at": "p3:1-2", "find": "😀", "with": "X"}], base=D.rev_of(out),
+               out=tmp_path / "cp2.hwpx")
+    assert r["ok"] and _fx_text(r["out"], "p3") == "aXb한c"
+    e = D.read(out, "p3:0-9")["error"]
+    assert e["code"] == "bad_address" and e["range"] == [0, 5]
+
+
+def test_a_locked_file_is_locked_and_retryable(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    real = D._bopen
+
+    def deny(path, *a, **k):
+        if Path(path) == Path(src):
+            raise PermissionError(13, "The process cannot access the file because it is being used")
+        return real(path, *a, **k)
+    with patch.object(D, "_bopen", side_effect=deny):
+        e = D.outline(src)["error"]
+    assert e["code"] == "locked" and e["retryable"] is True
+
+
+# ============================================================================ with the engine
+@engine
+def test_engine_agrees_on_tables_and_place_ids(kit):
+    D.close()
+    ol = D.outline(FX_DOC)
+    assert ol["ok"], ol
+    assert [t["at"] for t in ol["tables"]] == [t["at"] for t in FX_WANT["tables"]]
+    want = {p["at"]: p["id"] for p in FX_WANT["cell_places"] + FX_WANT["label_lines"]}
+    got = {p["at"]: p["id"] for p in ol["places"]}
+    # the engine's outline (hwp-engine #7) lists seats inside nested tables too, addressed through their cell
+    assert set(got) == set(want), got
+    for at, pid in got.items():
+        assert pid == want[at], (at, pid)
+    assert "t0/r2/c1" not in got                    # a cell holding a table is no seat
+
+
+@engine
+def test_engine_edit_of_a_nested_cell_and_remap_through_it(kit, tmp_path):
+    D.close()
+    src = _fx_copy(tmp_path)
+    out = tmp_path / "ins.hwpx"
+    r = D.edit(src, [{"op": "insert_table", "at": "p0", "data": [["새", "표"]]},
+                     {"op": "set", "at": "t0/r2/c1/t0/r1/c1", "text": "a@b"}], base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    assert not r.get("remap_approx"), r
+    assert D.follow_remap(r["remap"], "t0") == "t1"
+    assert D.follow_remap(r["remap"], "t0/r2/c1/t0/r1/c1") == "t1/r2/c1/t0/r1/c1"
+    assert _fx_text(out, "t1/r2/c1/t0/r1/c1") == "a@b" and _fx_text(out, "t1/r2/c1/t0/r0/c0") == "전화"
+    assert _fx_text(out, "t3/r0/c0") == "성명"
+
+
+@engine
+def test_engine_page_out_of_range_is_bad_address_with_range(kit):
+    D.close()
+    n = D.pages(FX_DOC)
+    assert n["ok"], n
+    e = D.render(FX_DOC, [n["count"] + 1])["error"]
+    assert e["code"] == "bad_address" and e["range"] == [1, n["count"]]
+
+
+def test_builtin_lists_blank_label_lines(no_engine):
+    ol = D.outline(FX_DOC)
+    got = {p["at"]: p for p in ol["places"]}
+    for p in FX_WANT["label_lines"]:
+        assert got[p["at"]]["id"] == p["id"] and got[p["at"]]["label"] == "성명", got.get(p["at"])
+    assert ol["places_complete"] is True
+
+
+@pytest.mark.parametrize("line, filled", [("성명: ", "성명: 둘째"), ("성명:", "성명: 둘째"), ("성명:  ___", "성명:  둘째"),
+                                          ("성명: 첫째", "성명: 둘째")])
+def test_label_line_fill_types_after_the_blank(either, tmp_path, line, filled):
+    src = _fx_copy(tmp_path)
+    mid = tmp_path / "mid.hwpx"
+    r = D.edit(src, [{"op": "set", "at": "p5", "text": line}], base=D.rev_of(src), out=mid)
+    assert r["ok"], r
+    pid = D.place_id("field", "성명", 0)        # the line's id does not depend on what it holds
+    assert pid in {p["id"] for p in D.outline(mid)["places"]}
+    out = tmp_path / "out.hwpx"
+    r = D.edit(mid, [{"op": "fill", "place": pid, "text": "둘째"}], base=D.rev_of(mid), out=out)
+    assert r["ok"], r
+    assert _fx_text(out, "p5") == filled
+
+
+def test_label_line_rule():
+    ll = D.label_line
+    assert ll("  성 명 : 홍길동 ") == {"label": "성 명", "key": "성명", "at": 8, "value": "홍길동", "blank": False}
+    assert ll("성명：")["blank"] is True and ll("Name: __")["blank"] is True
+    assert ll("주민등록번호: 1")["key"] == "주민등록번호"
+    for no in ("1. 성명: x", ": x", "아주아주아주아주아주아주아주아주: x", "성명 x", "(성명): x", "성명-1: x"):
+        assert ll(no) is None, no
+
+
+def test_heading_key_rule():
+    hk = D._heading_key
+    assert hk("Ⅰ. 연구 목적 및 방법") == "연구목적및방법"
+    assert hk("1.2. 추진 배경") == hk("가. 추진 배경") == hk("(3) 추진 배경") == "추진배경"
+    assert hk("IV. 결론: 요약") == "결론요약"
+    assert hk("Item 1") == "Item1"
+
+
+@engine
+def test_engine_unverified_removal_is_refused_not_reported(kit, tmp_path):
+    """review fable-388 #2: removing the hp:switch table must be done or refused, never reported done."""
+    D.close()
+    src = _fx_copy(tmp_path)
+    for i, op in enumerate([{"op": "delete", "at": "t1"}, {"op": "table.delete_row", "at": "t1/r0"}]):
+        out = tmp_path / ("del%d.hwpx" % i)
+        r = D.edit(src, [op], base=D.rev_of(src), out=out)
+        if r["ok"]:                     # an engine that does remove it: the output shows exactly that
+            assert not r.get("remap_approx"), r
+            assert len(D.outline(out)["tables"]) == (3 if op["op"] == "delete" else 4), r
+        else:
+            assert r["error"]["code"] == "internal" and r["error"]["written"] is False, r
+            assert not out.exists()
+    out = tmp_path / "del-t2.hwpx"     # an ordinary removal still goes through, with its exact remap
+    r = D.edit(src, [{"op": "delete", "at": "t2"}], base=D.rev_of(src), out=out)
+    assert r["ok"] and r["remap"] == [{"from": "t2", "to": None}] and not r.get("remap_approx"), r
+    assert [t["at"] for t in D.outline(out)["tables"]] == ["t0", "t0/r2/c1/t0", "t1"]
+
+
+@pytest.mark.parametrize("op", [{"op": "delete", "at": "t1"}, {"op": "table.delete_row", "at": "t2/r0"},
+                                {"op": "delete", "at": "p3"}])
+def test_unverified_removal_is_refused(no_engine, op):
+    """An output that does not show a planned removal is refused, never published as done."""
+    doc = D._load(FX_DOC)
+    acts = D._plan(doc, [op])
+    with patch.object(D, "_verify", return_value=False):
+        with pytest.raises(D.DocError) as exc:
+            D._remap_result(doc, doc, acts)
+    assert exc.value.code == "internal" and exc.value.extra["written"] is False
+    with patch.object(D, "_verify", return_value=False):        # without a removal: a flagged guess, as before
+        _remap, approx = D._remap_result(doc, doc, D._plan(doc, [{"op": "set", "at": "p3", "text": "x"}]))
+    assert approx is True
+
+
+# ---------------------------------------------------------------------------- amendment 2026-11-19 05:50Z
+def test_place_id_resolves_for_every_cell_listed_or_not(no_engine):
+    listed = {p["id"] for p in D.outline(FX_DOC)["places"]}
+    label_cell = D.place_id("cell", "5001", 0, 0)                # a text cell: no seat, still addressable
+    assert label_cell not in listed
+    r = D.read(FX_DOC, "place:%s" % label_cell)
+    assert r["ok"] and r["blocks"][0]["text"] == "성명"
+
+
+def test_a_cell_filled_elsewhere_is_unlisted_but_still_fillable_by_id(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    pid = D.place_id("cell", "5005", 0, 1)
+    out = tmp_path / "filled.hwpx"
+    assert D.edit(src, [{"op": "fill", "place": pid, "text": "홍길동"}], base=D.rev_of(src), out=out)["ok"]
+    listed = {p["id"]: p for p in D.outline(out)["places"]}
+    assert listed[pid]["filled"] is True and listed[pid]["label"] == "성명"     # known: this module filled it
+    D._LINEAGE.clear()
+    os.environ[D.CACHE_ENV] = str(tmp_path / "fresh-cache")              # another machine: nothing is known
+    listed = {p["id"]: p for p in D.outline(out)["places"]}
+    assert pid not in listed                                            # without lineage only empty seats
+    assert _fx_text(out, "place:%s" % pid) == "홍길동"
+    r = D.edit(out, [{"op": "fill", "place": pid, "text": "김철수"}], base=D.rev_of(out),
+               out=tmp_path / "again.hwpx")
+    assert r["ok"] and _fx_text(r["out"], "t2/r0/c1") == "김철수"
+
+
+def test_a_known_filled_cell_is_never_a_label(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    out = tmp_path / "out.hwpx"
+    # empty t2/r1/c0 (주소) so that t2/r1/c1 could only be labelled from above, the filled 성명 seat
+    r = D.edit(src, [{"op": "fill", "place": D.place_id("cell", "5005", 0, 1), "text": "홍길동"},
+                     {"op": "table.set_cells", "at": "t2/r1/c0", "grid": [[""]]}], base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    places = D.outline(out)["places"]
+    assert all(p["label"] != "홍길동" for p in places), places
+    seat = next(p for p in places if p["at"] == "t2/r1/c1")         # carried: labelled as when it was blank
+    assert seat["label"] == "주소"
+
+
+class _OutlineEngine:
+    """A stub engine: outline(known=...) when `known_ok`, else it rejects the argument."""
+
+    def __init__(self, known_ok):
+        self.known_ok, self.seen = known_ok, []
+
+    def call(self, fn, *args, **kw):
+        self.seen.append((fn, kw))
+        if fn == "pages":
+            return {"ok": True, "page_starts": [{"para": 0}], "pages": 1}
+        if fn == "outline":
+            if not self.known_ok:
+                return {"ok": False, "error": {"code": "bad_input", "message": "unexpected keyword 'known'",
+                                               "retryable": False}}
+            return {"ok": True, "places": [
+                {"id": D.place_id("cell", "5005", 0, 1), "at": "t2/r0/c1", "label": "성명", "kind": "cell",
+                 "value": "홍길동", "filled": True},
+                {"id": "x", "at": "t0/r2/c1", "label": "연락", "kind": "cell"},          # holds a table: dropped
+                {"id": "y", "at": "t9/r0/c0", "label": "?", "kind": "cell"}]}            # does not resolve
+        if fn == "analyze":
+            return {"ok": True, "places": [], "headings": []}
+        return {"ok": False, "error": {"code": "capability_unavailable", "message": fn, "retryable": False}}
+
+
+@pytest.mark.parametrize("known_ok", [True, False])
+def test_outline_known_is_feature_detected(no_engine, tmp_path, known_ok):
+    src = _fx_copy(tmp_path)
+    doc = D._load(src, meta=False)
+    D._lineage_put(doc.sha, [{"id": "abc", "at": "t2/r0/c1"}, {"id": "def", "at": "p5"}])
+    e = _OutlineEngine(known_ok)
+    D._ensure_meta(doc, e)
+    assert ("outline", {"known": ["abc", "def"]}) in e.seen               # the lineage ids are passed
+    pls = D._places(doc)
+    if known_ok:
+        assert [p["at"] for p in pls if p["kind"] == "cell"] == ["t2/r0/c1"]     # from the engine's outline
+        assert doc.engine_outline is not None
+    else:
+        assert doc.engine_outline is None and doc.engine_places == []      # today's analyze() path

@@ -318,6 +318,42 @@ export const ERROR_CODE_VOCAB = {
     en: "Multiple blanks have the same label. Identify the blank to fill.",
   },
 
+  // Document core codes (rt_codes.py DOC_CORE_CODES)
+  bad_input: MSG_OP_INVALID,
+  bad_address: {
+    ko: "문서에서 지정한 위치를 찾을 수 없습니다.",
+    en: "Could not find the specified location in the document.",
+  },
+  not_found: MSG_ARTIFACT_MISSING,
+  stale: {
+    ko: "처음 읽은 뒤 문서가 바뀌었습니다. 문서를 다시 읽어야 합니다.",
+    en: "The document has changed since it was read. Read it again.",
+  },
+  busy: {
+    ko: "다른 작업이 이 문서를 쓰고 있습니다. 잠시 후 다시 시도할 수 있습니다.",
+    en: "Another task is writing this document. Try again shortly.",
+  },
+  locked: {
+    ko: "다른 프로그램에서 이 문서를 열고 있습니다. 그 프로그램에서 닫은 뒤 다시 시도할 수 있습니다.",
+    en: "Another program has this document open. Close it there, then try again.",
+  },
+  expect_mismatch: {
+    ko: "바꾸려는 문구가 예상한 내용과 다릅니다.",
+    en: "The text to change differs from what was expected.",
+  },
+  ambiguous_match: {
+    ko: "같은 문구가 여러 곳에 있어 바꿀 위치를 정할 수 없습니다.",
+    en: "The same text appears in more than one place. Could not tell which one to change.",
+  },
+  conflict: {
+    ko: "같은 곳을 고치는 변경이 서로 겹칩니다. 변경을 나눠야 합니다.",
+    en: "Some changes overlap at the same place. Split the changes.",
+  },
+  engine_timeout: MSG_CONNECTION_PROBLEM,
+  engine_unavailable: MSG_CONNECTION_PROBLEM,
+  engine_protocol: MSG_CONNECTION_PROBLEM,
+  internal: MSG_INTERNAL_ERROR,
+
   // Plan validation findings & UI refusal codes
   cell_not_fill_target: MSG_CELL_NOT_FILL_TARGET,
   cell_address_unknown: {
