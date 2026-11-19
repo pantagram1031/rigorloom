@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -1642,13 +1643,65 @@ def test_guide_names_only_the_topics_it_has(monkeypatch, tmp_path):
     empty.mkdir()
     monkeypatch.setattr(rt_toolset, "KNOWLEDGE_DIR", empty)
     assert rt_toolset._guide_description() == (
-        "Korean document conventions. This build has no guides installed, "
-        "so there is nothing to read here.")
+        "Topic `ops`: each `edit` op's fields with an example. "
+        "This build has no Korean writing guides.")
     (empty / "gongmun.md").write_text("# 공문\n", encoding="utf-8")
     (empty / "extra.md").write_text("# 기타\n", encoding="utf-8")
     assert rt_toolset._guide_description() == (
         "Korean document conventions with sources: extra, gongmun (공문 항목 기호, 날짜 표기, "
-        "‘끝.’ 표시, 붙임). Read the one that fits before writing.")
+        "‘끝.’ 표시, 붙임). Read the one that fits before writing. "
+        "Topic `ops`: each `edit` op's fields with an example.")
+
+
+def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeypatch, tmp_path):
+    # The edit description holds at most 700 characters and every new op
+    # would add its fields there; it spells out only the text ops and names
+    # the rest, a family once. The guide topic `ops`, built from
+    # the same tables, has every op's fields and a working example, in every
+    # install, with or without the knowledge pack.
+    description = rt_tools.REGISTRY["edit"].description
+    assert len(description) < 700
+    named = set()                                   # table.{set_cells,add_row} -> both names
+    for family, rest in re.findall(r"(\w+)\.\{([^}]*)\}", description):
+        named |= {f"{family}.{r}" for r in rest.split(",")}
+    named |= set(re.findall(r"(?<![\w.{,])[a-z_]+(?:\.[a-z_]+)?(?![\w{])",
+                            re.sub(r"\w+\.\{[^}]*\}", "", description)))
+    for name in rt_toolset.OPS_SPELLED:
+        assert rt_toolset._op_signature(name) in description
+    assert set(rt_toolset.OP_FIELDS) - {"fill"} - set(rt_toolset.OPS_SPELLED) <= named
+    assert "count from 0" in description
+    assert rt_toolset._op_names(["table.a", "style", "table.b", "x.y"]) == "table.{a,b}, style, x.y"
+
+    empty = tmp_path / "none"
+    empty.mkdir()
+    monkeypatch.setattr(rt_toolset, "KNOWLEDGE_DIR", empty)
+    listed = ok(call(env.ctx(), "guide", {}))
+    assert listed["topics"] == ["ops"] and listed["text"] == ""
+    text = ok(call(env.ctx(), "guide", {"topic": "ops"}))["text"]
+    for name, example in rt_toolset.OP_EXAMPLES.items():
+        assert rt_toolset._op_signature(name) in text and example in text, name
+        rt_toolset._check_ops([json.loads(example)])   # each example passes the op check
+    # Every op the document layer checks `expect` on takes it here too.
+    doc = rt_tools.sibling("rt_doc")
+    for name in doc.EXPECT_OPS:
+        assert "expect" in rt_toolset.OP_FIELDS[name][1], name
+    rt_toolset._check_ops([{"op": "table.delete_row", "at": "t0/r2", "expect": "합계\t120"}])
+    assert set(rt_toolset.OP_EXAMPLES) == set(rt_toolset.OP_FIELDS)
+    assert "t0/r0/c0 the first cell" in text
+    for name, table in rt_toolset.OP_SET_KEYS.items():   # the keys the layer checks, not a copy
+        line = next(x for x in text.splitlines() if x.startswith(name + "{"))
+        assert all(f" {key} (" in line for key in getattr(doc, table)), name
+    line = next(x for x in text.splitlines() if x.startswith("numbering{"))
+    assert all(kind in line for kind in doc.NUMBERING_KINDS)
+    assert set(rt_toolset.OP_NOTES) == set(rt_toolset.OP_FIELDS)   # every op says what its fields hold
+    for name in doc.TABLE_SHAPE_OPS:
+        assert rt_toolset.OP_NOTES[name].endswith(rt_toolset._OWNS_TABLE), name
+    err(call(env.ctx(), "guide", {"topic": "gongmun"}), "capability_unavailable")
+
+    (empty / "gongmun.md").write_text("# 공문\n", encoding="utf-8")
+    assert ok(call(env.ctx(), "guide", {}))["topics"] == ["gongmun", "ops"]
+    assert err(call(env.ctx(), "guide", {"topic": "없는주제"}), "not_found")["candidates"] \
+        == ["gongmun", "ops"]
 
 
 def test_a_substituted_font_is_named_or_called_another_font():

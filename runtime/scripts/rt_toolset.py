@@ -907,8 +907,8 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "delete": (("at",), ("expect",)),
     "table.set_cells": (("at", "grid"), ()),
     "table.add_row": (("at", "after"), ("like",)),
-    "table.delete_row": (("at",), ()),
-    "fill": (("place", "text"), ()),
+    "table.delete_row": (("at",), ("expect",)),
+    "fill": (("place", "text"), ("expect",)),
     "style": (("at", "style"), ()),
     "char_shape": (("at", "set"), ("expect",)),
     "para_shape": (("at", "set"), ("expect",)),
@@ -945,6 +945,113 @@ OP_EXAMPLES = {
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
               "to": "with", "replace": "with", "replacement": "with", "value": "text",
               "content": "text", "address": "at", "where": "at", "md": "markdown"}
+#: A table shape op owns its table for the edit (rt_doc.TABLE_SHAPE_OPS).
+_OWNS_TABLE = "; any other op on that table in the same edit is a conflict"
+#: What an op's fields mean where their names do not say: the `ops` guide topic.
+OP_NOTES = {
+    "set": "the new text of a paragraph, a range in one (p3:2-5) or a cell",
+    "replace": "`find` is plain text; without `all: true` it must match once, otherwise "
+               "ambiguous_match lists every match to pass as `at`",
+    "insert_after": "one plain paragraph per line; list markers and # are dropped and tables "
+                    "are refused; `like` copies another paragraph's style",
+    "delete": "removes a paragraph or a table, or empties a cell",
+    "table.set_cells": "`grid` is rows of cell texts written from the cell `at` names (from "
+                       "r0/c0 for a whole table); null leaves a cell as it is",
+    "table.add_row": "`after` is the row the new one goes under; `like` is the row whose look "
+                     "it copies, that row or the next",
+    "table.delete_row": "`at` is the row (t0/r2); `expect` is that row's text, its cells "
+                        "joined by a tab",
+    "fill": "`place` is a place id from open (the fill tool takes several at once); "
+            "`expect` is the value the place holds now",
+    "style": "`style` is a paragraph style name this document has",
+    "char_shape": "`at` is a paragraph, a range in one (p3:5-9), a cell, a row or a table; "
+                  "`set` holds only what changes; size is in pt, ratio (장평), spacing (자간), "
+                  "rel_size and offset in %",
+    "para_shape": "`at` is a paragraph, a cell, a row or a table, never a range; `set` holds "
+                  "only what changes; lengths are in pt and an indent below 0 is 내어쓰기",
+    "numbering": "`at` is a paragraph or a cell (all its paragraphs), never a range; `set` "
+                 "keys: kind (outline, number, bullet or none), level (1 to 7; outline "
+                 "defaults to 1), char (bullet: one character), start (number: 1 to 9999) "
+                 "or restart (number: true); style and numbering on one paragraph in one "
+                 "edit are a conflict",
+    "table.merge": "`at` is a cell and `to` the cell at the block's other corner; the top-left "
+                   "cell takes the block and the text of every merged cell" + _OWNS_TABLE,
+    "table.split": "`at` is a cell; `rows` and `cols` are 1 to 20, not both 1; a cell that "
+                   "spans several rows or columns splits along its grid lines, so the count "
+                   "must divide the span" + _OWNS_TABLE,
+    "table.add_col": "`after` is the column the new one goes after and `like` the column whose "
+                     "look it copies (default `after`), as in table.add_row; `at` a cell puts "
+                     "it after that cell's last column" + _OWNS_TABLE,
+    "table.delete_col": "`col`, or `at` a cell, names the column; `expect` is the column's "
+                        "cells joined by a newline" + _OWNS_TABLE,
+    "table.size": "millimetres, 1 to 1000: `width_mm` / `height_mm` for the column or row of "
+                  "the cell `at` names (`height_mm` also at a row); the `col_widths_mm` / "
+                  "`row_heights_mm` lists go on the table address only, null keeping one"
+                  + _OWNS_TABLE,
+}
+#: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
+OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
+#: The ops the edit description spells out: the text ops (P7 agents sent set,
+#: insert_after and delete; replace is the other one).
+#: The rest are named there, with their fields in the `ops` guide topic.
+OPS_SPELLED = ("set", "replace", "insert_after", "delete")
+#: The guide topic built from OP_FIELDS, OP_NOTES and OP_EXAMPLES, in every install.
+OPS_TOPIC = "ops"
+
+
+def _op_signature(name: str) -> str:
+    required, optional = OP_FIELDS[name]
+    return name + "{" + ",".join([*required, *(k + "?" for k in optional)]) + "}"
+
+
+def _set_keys(name: str) -> str:
+    """The `set` keys of a shape op with the values each takes, read from the
+    document layer that checks them, so the topic and the check cannot drift."""
+    try:
+        doc = sibling("rt_doc")
+        table, hint = getattr(doc, OP_SET_KEYS[name]), doc._shape_hint
+    except (ImportError, AttributeError):          # no document layer in this install
+        return ""
+    return "; `set` keys: " + ", ".join(f"{k} ({hint(v)})" for k, v in table.items())
+
+
+def _ops_guide() -> str:
+    lines = ["Ops for `edit`; `?` marks an optional field.",
+             "Addresses count from 0: p0 is the first paragraph, t0/r0/c0 the first cell "
+             "of the first table.",
+             "`expect` is the text you read at that address: if the text there differs, "
+             "nothing changes and the error says what is there.",
+             "Pass the `rev` you read as `base`.", ""]
+    for name in OP_FIELDS:
+        note = (": " + OP_NOTES[name]) if name in OP_NOTES else ""
+        if name in OP_SET_KEYS:
+            note += _set_keys(name)
+        lines.append(_op_signature(name) + note)
+        lines.append("  " + OP_EXAMPLES[name])
+    return "\n".join(lines) + "\n"
+
+
+def _op_names(names: list[str]) -> str:
+    """Op names with a shared family written once: table.{set_cells,add_row}.
+    Every op the engine work adds is one more name, so the description has
+    to stay short as the list grows."""
+    families: dict[str, list[str]] = {}
+    for name in names:
+        family, dot, rest = name.partition(".")
+        families.setdefault(family if dot else name, []).append(rest if dot else "")
+    return ", ".join(f"{f}.{{{','.join(r)}}}" if r != [""] and len(r) > 1
+                     else (f"{f}.{r[0]}" if r != [""] else f) for f, r in families.items())
+
+
+def _edit_description() -> str:
+    spelled = ", ".join(_op_signature(n) + (" (one plain paragraph per line, no tables)"
+                                            if n == "insert_after" else "") for n in OPS_SPELLED)
+    named = _op_names([n for n in OP_FIELDS if n not in OPS_SPELLED and n != "fill"])
+    return ("Change the document with declarative ops, staged into a draft; the person's "
+            "file changes only on `save`. Ops: " + spelled + "; also " + named + ". Each "
+            "op's fields and an example: guide topic `ops`. Addresses count from 0 "
+            "(t0/r0/c0 is the first cell). Pass the `rev` you read as `base`; `expect` "
+            "guards the text you change. Returns changed pages: preview them.")
 
 
 #: A GFM table's delimiter row: | --- | :---: |
@@ -1075,17 +1182,7 @@ def _refuse_person_seats(ctx: Context, ref: Ref, ops: list) -> None:
 
 register(Tool(
     name="edit", title="고치기",
-    description="Change the document with declarative ops, staged into its draft "
-                "(the person's file is not touched until `save`). Ops: set{at,text,"
-                "expect?}, replace{find,with,at?,all?,expect?}, insert_after{at,"
-                "markdown,like?} (one plain paragraph per line, no tables), "
-                "delete{at,expect?}, table.set_cells{at,grid}, "
-                "table.add_row{at,after,like?}, table.delete_row{at}, style{at,style}, "
-                "char_shape{at,set} (at: paragraph, range p3:5-9, cell, table; set: {bold,size,color,...}), "
-                "para_shape{at,set} (set: {align,before,after,...}), "
-                "numbering{at,set} (set: {kind: outline|number|bullet|none, level}). "
-                "Pass the `rev` you read as `base`; `expect` guards the text you change. "
-                "Returns changed pages: preview them.",
+    description=_edit_description(),
     group="write", read_only=False, idempotent=False,
     input_schema=_obj({
         "path": S_PATH, "base": S_REV,
@@ -2188,16 +2285,20 @@ def _topics() -> dict[str, Path]:
 
 def _run_guide(ctx: Context, args: dict) -> dict:
     topics = _topics()
-    if not topics:
-        raise ToolError("capability_unavailable", "설치한 프로그램에 문서 작성 안내가 없습니다.")
     topic = args.get("topic")
     if not topic:
+        # The pack's index, when there is a pack: the placeholder says no topic is installed.
         index = KNOWLEDGE_DIR / "_index.md"
-        return {"topics": sorted(topics),
-                "text": index.read_text(encoding="utf-8") if index.exists() else ""}
+        return {"topics": sorted([*topics, OPS_TOPIC]),
+                "text": index.read_text(encoding="utf-8") if topics and index.exists() else ""}
+    if topic == OPS_TOPIC:
+        return {"topic": OPS_TOPIC, "text": _ops_guide()}
+    if not topics:
+        raise ToolError("capability_unavailable", "설치한 프로그램에 문서 작성 안내가 없습니다.")
     if topic not in topics:
         raise ToolError("not_found", f"'{topic}' 주제의 작성 안내가 없습니다.",
-                        hint="주제를 빼고 guide를 실행해 주제 목록을 확인하세요.", candidates=sorted(topics))
+                        hint="주제를 빼고 guide를 실행해 주제 목록을 확인하세요.",
+                        candidates=sorted([*topics, OPS_TOPIC]))
     return {"topic": topic, "text": topics[topic].read_text(encoding="utf-8")}
 
 
@@ -2216,13 +2317,13 @@ def _guide_description() -> str:
     """Name only the topics this install has: an agent that reads of a topic
     asks for it, and a build without the guides would answer every such call
     with a refusal."""
+    ops = "Topic `ops`: each `edit` op's fields with an example."
     topics = _topics()
     if not topics:
-        return ("Korean document conventions. This build has no guides installed, "
-                "so there is nothing to read here.")
+        return ops + " This build has no Korean writing guides."
     named = ", ".join(f"{t} ({GUIDE_TOPICS[t]})" if t in GUIDE_TOPICS else t for t in topics)
     return ("Korean document conventions with sources: " + named
-            + ". Read the one that fits before writing.")
+            + ". Read the one that fits before writing. " + ops)
 
 
 register(Tool(
