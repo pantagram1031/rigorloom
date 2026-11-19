@@ -167,6 +167,13 @@ LABELS = {
 }
 
 
+def _label(change: dict) -> str:
+    # Every number still there, but two of them now sit by each other's words.
+    if change.get("order"):
+        return "swapped numbers"
+    return LABELS.get(change["kind"], change["kind"])
+
+
 def _short(v) -> str:
     if isinstance(v, dict):
         return ", ".join(f"{k}×{n}" if n > 1 else str(k) for k, n in v.items()) or "(gone)"
@@ -184,8 +191,7 @@ def format_table(result: dict) -> str:
     for c in result["changed"]:
         lines.append(f"\n¶{c['paragraph']}")
         for ch in c["changes"]:
-            label = LABELS.get(ch["kind"], ch["kind"])
-            lines.append(f"  {label:<21} {_short(ch['before'])}  ->  {_short(ch['after'])}")
+            lines.append(f"  {_label(ch):<21} {_short(ch['before'])}  ->  {_short(ch['after'])}")
     lines.append("\nOK: every protected fact is unchanged." if result["pass"]
                  else "\nCHANGED: restore or review the paragraphs above.")
     return "\n".join(lines) + "\n"
@@ -225,11 +231,11 @@ def block_diff(before: Path, after: Path) -> tuple[str, bool]:
         if c is None:
             lines = [f"¶{i} kept"]
         else:
-            labels = ", ".join(dict.fromkeys(LABELS.get(k, k) for k in c["kinds"]))
+            labels = ", ".join(dict.fromkeys(_label(ch) for ch in c["changes"]))
             lines = [f"¶{i} CHANGED: {labels}"]
         lines += [f"- {_one_line(x)}", f"+ {_one_line(y)}"]
         for ch in (c["changes"] if c else []):
-            label = LABELS.get(ch["kind"], ch["kind"])
+            label = _label(ch)
             old, new = _counts(ch["before"]), _counts(ch["after"])
             if old - new:
                 lines.append(f"  lost   {label}  {_delta(old - new)}")
