@@ -152,6 +152,25 @@ def _rpc_post(base_url: str, token: str, method: str, params: dict) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _confirmation_token(base_url: str, token: str, session_id: str, plan: dict) -> str:
+    """The approval sheet's single-use token, which the bridge requires to approve."""
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/api/approval/confirmation",
+        data=json.dumps(
+            {
+                "sessionId": session_id,
+                "planId": plan["planId"],
+                "planHash": plan["planHash"],
+                "baseDigest": plan["boundSha256"],
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Rigorloom-Token": token},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))["confirmationToken"]
+
+
 def _mutate_hwpx_source(hwpx_path: Path, scratch_dir: Path, name: str = "external-drift.hwpx") -> None:
     """Mutate a valid HWPX file atomically via preedit.py to simulate external byte drift."""
     mutated = scratch_dir / name
@@ -537,6 +556,9 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
                     "planHash": stale_plan["planHash"],
                     "decision": "approved",
                     "approver": "playwright-verifier",
+                    "confirmationToken": _confirmation_token(
+                        base_url, token, stale_session_id, stale_plan
+                    ),
                 },
             )
             assert res_stale["ok"] is True, res_stale
