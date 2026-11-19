@@ -675,12 +675,17 @@ def _register_on_router(router: Any) -> None:
 
     def wrap(fn: Callable[..., Any], route: str) -> Callable[[Any, Any], Any]:
         def handler(bridge: Any, arg: Any) -> Any:
+            # Raw bytes are the standalone server's; the bridge answers JSON
+            # only, and says so before reading anything (finding 10).
+            if fn is handle_get and route == "/api/workspace/read" and isinstance(arg, dict):
+                fmt = ((arg.get("format") or ["json"])[0] or "json").strip().lower()
+                if fmt != "json":
+                    raise bridge_error("invalid_params", "use format=json through the bridge", status=HTTPStatus.BAD_REQUEST)
             try:
                 status, payload = fn(_service_from_bridge(bridge), route, arg)
             except WorkspaceError as exc:
                 raise bridge_error(exc.code, exc.message, status=exc.status) from None
-            if not isinstance(payload, dict):
-                # Raw bytes are the standalone server's; the bridge answers JSON only.
+            if not isinstance(payload, dict) or "_raw" in payload:
                 raise bridge_error("invalid_params", "use format=json through the bridge", status=HTTPStatus.BAD_REQUEST)
             return payload
 

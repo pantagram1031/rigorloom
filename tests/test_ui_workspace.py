@@ -586,3 +586,46 @@ def test_a_folder_file_is_opened_by_the_path_the_bridge_resolves(tmp_path: Path)
         assert status == 404, body
     finally:
         srv.shutdown_bridge()
+
+
+def test_format_raw_through_the_bridge_is_refused_before_reading(tmp_path: Path, monkeypatch):
+    """Finding 10: `format=raw` is the standalone server's; through the bridge it
+    is a 400 answered before the file is read, not a dropped connection."""
+    import http.client
+    import threading
+
+    docs_dir = tmp_path / "문서"
+    docs_dir.mkdir()
+    (docs_dir / "a.md").write_text("# 제목\n", encoding="utf-8")
+    reads: list[object] = []
+    real_read = rt_workspace.WorkspaceService.read_file_bytes
+
+    def counting(self, rel):
+        reads.append(rel)
+        return real_read(self, rel)
+
+    monkeypatch.setattr(rt_workspace.WorkspaceService, "read_file_bytes", counting)
+    srv = rt_ui.create_bridge_server(root=tmp_path / "rt-root", port=0, prefs_path=tmp_path / "prefs.json")
+    srv.bridge.patch_prefs({"patch": {"docFolder": str(docs_dir)}})
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+
+    def get(path: str) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
+        try:
+            conn.request("GET", path, headers={"X-Rigorloom-Token": srv.token})
+            resp = conn.getresponse()
+            return resp.status, json.loads(resp.read().decode("utf-8") or "{}")
+        finally:
+            conn.close()
+
+    try:
+        for fmt in ("raw", "RAW", "bytes"):
+            status, body = get(f"/api/workspace/read?path=a.md&format={fmt}")
+            assert status == 400 and body["error"]["code"] == "invalid_params", (fmt, body)
+        assert reads == []
+        status, body = get("/api/workspace/read?path=a.md")
+        assert status == 200 and body["ok"] is True
+        assert reads == ["a.md"]
+    finally:
+        srv.shutdown_bridge()
