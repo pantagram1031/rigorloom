@@ -479,6 +479,18 @@
       "license": "고용노동부 자료실 publication; 공공누리(KOGL) marking not present on the retrieved page — verify before redistribution"
     },
     {
+      "slug": "rt-doc-contract-basic",
+      "family": "rt-doc-contract",
+      "path": "../../fixtures/rt_doc_contract/basic.hwpx",
+      "format": "hwpx",
+      "bytes": 3504,
+      "sha256": "2bba3e677528a726a93d7fd255b18bd96b714a0431f2a39a157b45f29e031e3f",
+      "kind": "test_fixture",
+      "provenance": "Rigorloom-authored synthetic",
+      "license": "Rigorloom-authored; no third-party content",
+      "notes": "Fixture for tests/test_rt_doc_contract.py: three headings, four body paragraphs, one 3x2 table and two empty fill seats, as listed in that test's docstring. Every string is synthetic filler, so it carries no personal data."
+    },
+    {
       "slug": "gongmun-demo-expected",
       "family": "gongmun-demo",
       "path": "../../../examples/gongmun/expected/filled.hwpx",

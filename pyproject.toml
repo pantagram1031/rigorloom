@@ -89,5 +89,6 @@ rigorloom_runtime = "runtime/scripts"
 "rigorloom_runtime.style_packs" = "runtime/style_packs"
 
 [tool.setuptools.package-data]
-rigorloom_runtime = ["ui_dist/*", "ui_dist/assets/*"]
+# knowledge/*.md: the guide tool's topics and the MCP server instructions.
+rigorloom_runtime = ["ui_dist/*", "ui_dist/assets/*", "knowledge/*.md"]
 "rigorloom_runtime.style_packs" = ["*.json"]

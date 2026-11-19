@@ -247,6 +247,83 @@ def invisible_in(path: str) -> list[str]:
     return seen
 
 
+#: Characters a POSIX shell still expands inside double quotes.
+_DQUOTE_ACTIVE = set('"$`\\!')
+#: ... and the ones cmd.exe or PowerShell expand inside them.
+_DQUOTE_ACTIVE_NT = set('"%$`')
+
+
+def shell_arg(text: str, *, windows: bool | None = None) -> str | None:
+    """``text`` as one shell argument a person can copy, or None if it cannot be.
+
+    Double quotes when nothing inside them would be expanded (the common
+    case, and how every other command line here is written); POSIX single
+    quotes otherwise. None when the text has a character a person cannot see
+    or type from the screen, or Windows quoting cannot carry it: then no
+    command is shown at all rather than one that names a different file.
+    """
+    windows = (os.name == "nt") if windows is None else windows
+    if not text or any(_invisible(ch) for ch in text):
+        return None
+    if windows:
+        return None if _DQUOTE_ACTIVE_NT & set(text) else f'"{text}"'
+    if not _DQUOTE_ACTIVE & set(text):
+        return f'"{text}"'
+    return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
+def undo_line(target: str, *, shown=None) -> str:
+    """How to put the replaced file back, as a command when one can be copied."""
+    # ``shown`` escapes what cannot be seen; judge the name itself.
+    arg = None if invisible_in(target) else shell_arg((shown or str)(target))
+    if arg is None:
+        return "되돌리려면 rigorloom undo 뒤에 실제 파일 경로를 입력해 실행하세요."
+    return f"되돌리기: rigorloom undo {arg}"
+
+
+#: A conversion note or font name in the question: one line, this long at most.
+_DETAIL_MAX = 200
+
+
+def _detail_text(value) -> str:
+    """A value from the document (a loss note, a font name) for one prompt line.
+
+    The document wrote it, so line breaks, controls, bidi and invisible
+    characters are escaped like a file name: only the template breaks lines.
+    """
+    return truncate(path_text(str(value)), _DETAIL_MAX)
+
+
+def save_question(question: str, detail: dict, *, shown=None) -> list[str]:
+    """The overwrite question, then each thing to weigh before answering.
+
+    One wording for the terminal prompt and the MCP elicitation, so a person
+    sees the same facts whichever client asks. ``shown`` renders a path
+    (default ``path_text``; the terminal passes one relative to its folder).
+    """
+    target = str(detail.get("target") or "")
+    lines = [question]
+    hidden = invisible_in(target)
+    if hidden:
+        lines.append(f"파일 이름에 보이지 않는 문자가 있습니다: {', '.join(hidden)}")
+    if detail.get("revision"):
+        lines.append(f"저장할 초안: {detail['revision']}판")
+    pages = detail.get("changedPages") or []
+    if pages:
+        lines.append(f"바뀐 쪽: {', '.join(_detail_text(p) for p in pages)}")
+    if detail.get("unreviewed"):
+        lines.append(f"에이전트가 고친 내용 중 아직 아무도 확인하지 않은 항목: {detail['unreviewed']}건")
+    if detail.get("lossy"):
+        lines.append("변환하면 빠지는 항목: " + ", ".join(_detail_text(x) for x in detail["lossy"]))
+    if detail.get("fontsSubstituted"):
+        pairs = ", ".join(f"{_detail_text(s.get('want'))} → {_detail_text(s.get('got'))}"
+                          for s in detail["fontsSubstituted"])
+        lines.append(f"글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)")
+    lines.append("이전 내용은 저장 기록에 남습니다.")
+    lines.append(undo_line(target, shown=shown))
+    return lines
+
+
 def one_line(text: str) -> str:
     """Collapse line breaks and tabs so a preview stays on one row."""
     return " ".join(safe_text(text).replace("\t", " ").split())

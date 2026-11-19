@@ -54,14 +54,17 @@ PAGE_H_PT = 841.89
 MAX_SCALE = 8.0
 MAX_CANDIDATES = 5
 
-#: Every code this fake can emit. All but the first three are in
-#: runtime/scripts/rt_codes.py; ``stale``, ``expect_mismatch``, ``not_found``
-#: and ``ambiguous_match`` are doc-core-api.md's own vocabulary.
-ERROR_CODES = frozenset({
-    "stale", "expect_mismatch", "ambiguous_match", "not_found",
-    "invalid_params", "capability_unavailable", "source_rejected", "page_out_of_range",
+#: Every code this fake can emit. The first six are the real rt_doc's own
+#: vocabulary (docs/doc-core.md, PR #388): ``bad_address`` for an address that
+#: is malformed or does not resolve, ``bad_input`` for a malformed request,
+#: ``not_found`` for a missing file or folder or a ``replace`` text that does
+#: not occur. The rest are in runtime/scripts/rt_codes.py.
+DOC_CORE_CODES = frozenset({
+    "stale", "expect_mismatch", "ambiguous_match", "not_found", "bad_address", "bad_input",
+    "locked",
 })
-RETRYABLE = frozenset({"stale"})
+ERROR_CODES = DOC_CORE_CODES | {"capability_unavailable", "source_rejected"}
+RETRYABLE = frozenset({"stale", "locked"})
 
 CONVERT_TARGETS = ("hwpx", "hwp", "pdf", "png", "md", "docx")
 EDIT_OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
@@ -340,7 +343,7 @@ def _rev(data: bytes) -> str:
 
 def _path(value, what: str = "path") -> Path:
     if not isinstance(value, (str, Path)) or not str(value) or "\x00" in str(value):
-        raise _Refusal("invalid_params", f"{what}: 경로가 아닙니다")
+        raise _Refusal("bad_input", f"{what}: 경로가 아닙니다")
     return Path(value)
 
 
@@ -376,21 +379,21 @@ def _same_file(a: Path, b: Path) -> bool:
 
 def _write(out: Path, data: bytes) -> None:
     if not out.parent.is_dir():
-        raise _Refusal("invalid_params", "저장할 폴더가 없습니다")
+        raise _Refusal("not_found", "저장할 폴더가 없습니다")
     if out.is_dir():
-        raise _Refusal("invalid_params", "저장 경로가 폴더입니다")
+        raise _Refusal("bad_input", "저장 경로가 폴더입니다")
     try:
         out.write_bytes(data)
     except OSError as exc:
-        raise _Refusal("invalid_params", f"저장하지 못했습니다: {exc.strerror or exc}") from None
+        raise _Refusal("bad_input", f"저장하지 못했습니다: {exc.strerror or exc}") from None
 
 
 def _out_path(out, src: Path) -> Path:
     if out is None:
-        raise _Refusal("invalid_params", "out을 지정하세요")
+        raise _Refusal("bad_input", "out을 지정하세요")
     o = _path(out, "out")
     if _same_file(o, src):
-        raise _Refusal("invalid_params", "원본에 덮어쓸 수 없습니다. 다른 out을 지정하세요")
+        raise _Refusal("bad_input", "원본에 덮어쓸 수 없습니다. 다른 out을 지정하세요")
     return o
 
 
@@ -433,32 +436,32 @@ def _unquote(s: str) -> str:
 
 def _resolve(doc: _Doc, at, *, step: int | None = None) -> _Target:
     if not isinstance(at, str) or not at.strip():
-        raise _Refusal("invalid_params", "주소가 비었습니다", step=step)
+        raise _Refusal("bad_address", "주소가 비었습니다", step=step)
     at = at.strip()
     if m := _A_P.fullmatch(at):
         n = int(m.group(1))
         if n < len(doc.paras):
             return _Target("para", doc.paras[n], f"p{n}")
-        raise _Refusal("not_found", f"{at} 문단이 없습니다", at=at, step=step,
+        raise _Refusal("bad_address", f"{at} 문단이 없습니다", at=at, step=step,
                        candidates=_nearest_numbers(n, len(doc.paras), "p{}"))
     if m := _A_T.fullmatch(at):
         n = int(m.group(1))
         if n < len(doc.tables):
             return _Target("table", doc.tables[n], f"t{n}")
-        raise _Refusal("not_found", f"{at} 표가 없습니다", at=at, step=step,
+        raise _Refusal("bad_address", f"{at} 표가 없습니다", at=at, step=step,
                        candidates=_nearest_numbers(n, len(doc.tables), "t{}"))
     if m := _A_CELL.fullmatch(at):
         t, r, c = int(m.group(1)), int(m.group(2)), int(m.group(3))
         p = int(m.group(4)) if m.group(4) is not None else 0
         if t >= len(doc.tables):
-            raise _Refusal("not_found", f"t{t} 표가 없습니다", at=at, step=step,
+            raise _Refusal("bad_address", f"t{t} 표가 없습니다", at=at, step=step,
                            candidates=_nearest_numbers(t, len(doc.tables), "t{}"))
         b = doc.tables[t]
         if r < len(b.rows) and c < len(b.rows[r]) and p == 0:
             return _Target("cell", b, f"t{t}/r{r}/c{c}", row=b.rows[r], r=r, c=c)
         cells = [(rr, cc) for rr in range(len(b.rows)) for cc in range(len(b.rows[rr]))]
         cells.sort(key=lambda rc: (abs(rc[0] - r) + abs(rc[1] - c), rc))
-        raise _Refusal("not_found", f"{at} 칸이 없습니다", at=at, step=step,
+        raise _Refusal("bad_address", f"{at} 칸이 없습니다", at=at, step=step,
                        candidates=[f"t{t}/r{rr}/c{cc}" for rr, cc in cells[:MAX_CANDIDATES]])
     if at.startswith("h:"):
         want = _unquote(at[2:].strip())
@@ -468,27 +471,27 @@ def _resolve(doc: _Doc, at, *, step: int | None = None) -> _Target:
         if len(hits) == 1:
             return _Target("para", hits[0], doc.addr(hits[0]))
         if len(hits) > 1:
-            raise _Refusal("ambiguous_match", "같은 제목이 여럿입니다", at=at, step=step,
+            raise _Refusal("bad_address", "같은 제목이 여럿입니다", at=at, step=step,
                            candidates=[doc.addr(h) for h in hits])
-        raise _Refusal("not_found", "그런 제목이 없습니다", at=at, step=step,
+        raise _Refusal("bad_address", "그런 제목이 없습니다", at=at, step=step,
                        candidates=_close(want, [h.text for h in heads]))
     if at.startswith("place:"):
         return _resolve_place(doc, at[len("place:"):], step=step, at=at)
     if _A_PAGE.fullmatch(at):
-        raise _Refusal("invalid_params", "쪽 주소는 render·pages에서만 씁니다", at=at, step=step)
-    raise _Refusal("invalid_params", f"주소 형식이 아닙니다: {at}", at=at, step=step)
+        raise _Refusal("bad_address", "쪽 주소는 render·pages에서만 씁니다", at=at, step=step)
+    raise _Refusal("bad_address", f"주소 형식이 아닙니다: {at}", at=at, step=step)
 
 
 def _resolve_place(doc: _Doc, pid, *, step=None, at=None) -> _Target:
     if not isinstance(pid, str) or not pid.strip():
-        raise _Refusal("invalid_params", "자리 id가 비었습니다", step=step)
+        raise _Refusal("bad_address", "자리 id가 비었습니다", step=step)
     pid = pid.strip()
     if pid.startswith("place:"):
         pid = pid[len("place:"):]
     for b in doc.places():
         if b.place_id == pid:
             return _Target("para", b, doc.addr(b))
-    raise _Refusal("not_found", "그런 자리가 없습니다", at=at or f"place:{pid}", step=step,
+    raise _Refusal("bad_address", "그런 자리가 없습니다", at=at or f"place:{pid}", step=step,
                    candidates=_close(pid, [b.place_id for b in doc.places()]))
 
 
@@ -515,8 +518,10 @@ def outline(path) -> dict:
                      for b in doc.headings()],
         "tables": [{"at": doc.addr(b), "rows": len(b.rows), "cols": len(b.rows[0]) if b.rows else 0,
                     "page": doc.page(b)} for b in doc.tables],
+        # Filled places stay listed, with their value (doc-core ruling 2026-11-19).
         "places": [{"id": b.place_id, "at": doc.addr(b), "label": b.label, "kind": b.place_kind,
-                    "page": doc.page(b)} for b in doc.places()],
+                    "page": doc.page(b), "value": b.text, "filled": bool(b.text.strip())}
+                   for b in doc.places()],
     }
 
 
@@ -577,11 +582,11 @@ def _scope_units(doc: _Doc, scope) -> list[tuple[str, str, int]]:
 def find(path, query, *, regex=False, scope=None) -> dict:
     doc, data = _load(path)
     if not isinstance(query, str) or query == "":
-        raise _Refusal("invalid_params", "찾을 글이 비었습니다")
+        raise _Refusal("bad_input", "찾을 글이 비었습니다")
     try:
         pattern = re.compile(query if regex else re.escape(query))
     except re.error as exc:
-        raise _Refusal("invalid_params", f"정규식 오류: {exc}") from None
+        raise _Refusal("bad_input", f"정규식 오류: {exc}") from None
     hits = []
     for addr, text, page in _scope_units(doc, scope):
         for m in pattern.finditer(text):
@@ -629,14 +634,14 @@ def _page_numbers(pages_arg, count: int) -> list[int]:
         if isinstance(item, str) and (m := _A_PAGE.fullmatch(item.strip())):
             item = int(m.group(1))
         if isinstance(item, bool) or not isinstance(item, int):
-            raise _Refusal("invalid_params", "쪽 번호는 1부터 세는 정수입니다")
+            raise _Refusal("bad_input", "쪽 번호는 1부터 세는 정수입니다")
         if not 1 <= item <= count:
-            raise _Refusal("page_out_of_range", f"{item}쪽은 없습니다 (전체 {count}쪽)",
-                           at=f"page:{item}")
+            raise _Refusal("bad_address", f"{item}쪽은 없습니다 (전체 {count}쪽)",
+                           at=f"page:{item}", range=[1, count])
         if item not in out:
             out.append(item)
     if not out:
-        raise _Refusal("invalid_params", "쪽을 하나 이상 고르세요")
+        raise _Refusal("bad_input", "쪽을 하나 이상 고르세요")
     return out
 
 
@@ -677,9 +682,9 @@ def _pdf(count: int) -> bytes:
 def render(path, pages=None, *, scale=2.0, fmt="png", out_dir=None) -> dict:  # noqa: A002
     doc, data = _load(path)
     if isinstance(scale, bool) or not isinstance(scale, (int, float)) or not 0 < scale <= MAX_SCALE:
-        raise _Refusal("invalid_params", f"scale은 0보다 크고 {MAX_SCALE:g} 이하입니다")
+        raise _Refusal("bad_input", f"scale은 0보다 크고 {MAX_SCALE:g} 이하입니다")
     if fmt not in ("png", "pdf"):
-        raise _Refusal("invalid_params", "fmt는 png 또는 pdf입니다")
+        raise _Refusal("bad_input", "fmt는 png 또는 pdf입니다")
     numbers = _page_numbers(pages, doc.page_count)
     if out_dir is None:
         target = Path(tempfile.mkdtemp(prefix="fake-rt-doc-"))
@@ -688,7 +693,7 @@ def render(path, pages=None, *, scale=2.0, fmt="png", out_dir=None) -> dict:  # 
         try:
             target.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            raise _Refusal("invalid_params", f"출력 폴더를 만들 수 없습니다: {exc.strerror or exc}") from None
+            raise _Refusal("bad_input", f"출력 폴더를 만들 수 없습니다: {exc.strerror or exc}") from None
     stem = Path(path).stem
     result = []
     if fmt == "pdf":
@@ -725,10 +730,10 @@ class _Session:
 
     def check_live(self, t: _Target, step: int) -> None:
         if not self.live(t.block):
-            raise _Refusal("invalid_params", f"{t.addr}는 이 편집에서 이미 지웠습니다", at=t.addr,
+            raise _Refusal("bad_input", f"{t.addr}는 이 편집에서 이미 지웠습니다", at=t.addr,
                            step=step)
         if t.row is not None and id(t.row) in self.deleted_rows:
-            raise _Refusal("invalid_params", f"{t.addr} 행은 이 편집에서 이미 지웠습니다",
+            raise _Refusal("bad_input", f"{t.addr} 행은 이 편집에서 이미 지웠습니다",
                            at=t.addr, step=step)
 
     def touch(self, b: Block) -> None:
@@ -754,10 +759,10 @@ def _need(op: dict, key: str, kind, step: int, *, optional=False):
     if key not in op or op[key] is None:
         if optional:
             return None
-        raise _Refusal("invalid_params", f"{op.get('op')}에 {key}가 없습니다", step=step)
+        raise _Refusal("bad_input", f"{op.get('op')}에 {key}가 없습니다", step=step)
     value = op[key]
     if not isinstance(value, kind) or isinstance(value, bool) and kind is not bool:
-        raise _Refusal("invalid_params", f"{op.get('op')}.{key} 형식이 틀렸습니다", step=step)
+        raise _Refusal("bad_input", f"{op.get('op')}.{key} 형식이 틀렸습니다", step=step)
     return value
 
 
@@ -766,7 +771,7 @@ def _check_expect(op: dict, t: _Target, step: int, done: list[int]) -> None:
         return
     want = op["expect"]
     if not isinstance(want, str):
-        raise _Refusal("invalid_params", "expect는 글자열입니다", step=step)
+        raise _Refusal("bad_input", "expect는 글자열입니다", step=step)
     actual = _target_text(t)
     if actual != want:
         raise _Refusal("expect_mismatch", f"{t.addr}의 글이 예상과 다릅니다", at=t.addr, step=step,
@@ -776,7 +781,7 @@ def _check_expect(op: dict, t: _Target, step: int, done: list[int]) -> None:
 def _parse_markdown(md: str, step: int) -> list[Block]:
     blocks = parse(md, markdown=True)
     if not [b for b in blocks if b.kind != "break"]:
-        raise _Refusal("invalid_params", "넣을 내용이 비었습니다", step=step)
+        raise _Refusal("bad_input", "넣을 내용이 비었습니다", step=step)
     return blocks
 
 
@@ -785,7 +790,7 @@ def _grid(value, step: int) -> list[list]:
             or not all(isinstance(r, list) for r in value)
             or not all(c is None or isinstance(c, (str, int, float)) and not isinstance(c, bool)
                        for r in value for c in r)):
-        raise _Refusal("invalid_params", "grid는 글자열 행의 목록입니다", step=step)
+        raise _Refusal("bad_input", "grid는 글자열 행의 목록입니다", step=step)
     return value
 
 
@@ -802,7 +807,7 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
         s.check_live(t, i)
         _check_expect(op, t, i, done)
         if t.kind == "table":
-            raise _Refusal("invalid_params", "표 전체는 set할 수 없습니다. 칸 주소를 쓰세요",
+            raise _Refusal("bad_input", "표 전체는 set할 수 없습니다. 칸 주소를 쓰세요",
                            at=t.addr, step=i)
         if t.kind == "cell":
             t.row[t.c] = _cell_value(text)
@@ -815,7 +820,7 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
         needle = _need(op, "find", str, i)
         repl = op.get("with")
         if needle == "" or not isinstance(repl, str):
-            raise _Refusal("invalid_params", "replace에는 find와 with 글자열이 필요합니다", step=i)
+            raise _Refusal("bad_input", "replace에는 find와 with 글자열이 필요합니다", step=i)
         every = bool(op.get("all", False))
         if op.get("at") is not None:
             t = _resolve(doc, _need(op, "at", str, i), step=i)
@@ -849,7 +854,7 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
                            step=i, done=list(done), candidates=[t.addr for t, _ in matched])
         if op.get("expect") is not None:
             if len(matched) > 1:
-                raise _Refusal("invalid_params", "expect는 한 곳을 바꿀 때만 씁니다", step=i)
+                raise _Refusal("bad_input", "expect는 한 곳을 바꿀 때만 씁니다", step=i)
             _check_expect(op, matched[0][0], i, done)
         for t, _ in matched:
             if t.kind == "cell":
@@ -865,7 +870,7 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
     if kind in ("insert_after", "insert_table"):
         t = _resolve(doc, _need(op, "at", str, i), step=i)
         if t.kind == "cell":
-            raise _Refusal("invalid_params", "칸 안에는 넣을 수 없습니다. 문단이나 표 주소를 쓰세요",
+            raise _Refusal("bad_input", "칸 안에는 넣을 수 없습니다. 문단이나 표 주소를 쓰세요",
                            at=t.addr, step=i)
         if kind == "insert_after":
             new = _parse_markdown(_need(op, "markdown", str, i), i)
@@ -875,7 +880,7 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
             rows = [[_cell_value("" if c is None else str(c)) for c in r] + [""] * (width - len(r))
                     for r in data]
             if not width:
-                raise _Refusal("invalid_params", "표 data가 비었습니다", step=i)
+                raise _Refusal("bad_input", "표 data가 비었습니다", step=i)
             new = [Block("table", rows=rows)]
         like = op.get("like")
         if like is not None:
@@ -891,7 +896,7 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
     if kind == "delete":
         t = _resolve(doc, _need(op, "at", str, i), step=i)
         if t.kind == "cell":
-            raise _Refusal("invalid_params", "칸은 지울 수 없습니다. table.delete_row를 쓰세요",
+            raise _Refusal("bad_input", "칸은 지울 수 없습니다. table.delete_row를 쓰세요",
                            at=t.addr, step=i)
         s.check_live(t, i)
         _check_expect(op, t, i, done)
@@ -902,17 +907,17 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
     if kind == "table.set_cells":
         t = _resolve(doc, _need(op, "at", str, i), step=i)
         if t.kind == "para":
-            raise _Refusal("invalid_params", "표나 칸 주소를 쓰세요", at=t.addr, step=i)
+            raise _Refusal("bad_input", "표나 칸 주소를 쓰세요", at=t.addr, step=i)
         s.check_live(t, i)
         grid = _grid(op.get("grid"), i)
         base_rows = t.block.rows
         r0, c0 = (t.r, t.c) if t.kind == "cell" else (0, 0)
         if r0 + len(grid) > len(base_rows) or any(c0 + len(r) > len(base_rows[0]) for r in grid):
-            raise _Refusal("invalid_params", "grid가 표 밖으로 나갑니다", at=t.addr, step=i)
+            raise _Refusal("bad_input", "grid가 표 밖으로 나갑니다", at=t.addr, step=i)
         for dr, values in enumerate(grid):
             row = base_rows[r0 + dr]
             if id(row) in s.deleted_rows:
-                raise _Refusal("invalid_params", "이 편집에서 지운 행입니다", at=t.addr, step=i)
+                raise _Refusal("bad_input", "이 편집에서 지운 행입니다", at=t.addr, step=i)
             for dc, value in enumerate(values):
                 if value is not None:
                     row[c0 + dc] = _cell_value(str(value))
@@ -923,21 +928,21 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
     if kind == "table.add_row":
         t = _resolve(doc, _need(op, "at", str, i), step=i)
         if t.kind == "para":
-            raise _Refusal("invalid_params", "표 주소를 쓰세요", at=t.addr, step=i)
+            raise _Refusal("bad_input", "표 주소를 쓰세요", at=t.addr, step=i)
         s.check_live(t, i)
         rows = t.block.rows
         after = op.get("after", len(rows) - 1)
         if isinstance(after, bool) or not isinstance(after, int) or not -1 <= after < len(rows):
-            raise _Refusal("invalid_params", f"after는 -1부터 {len(rows) - 1} 사이 행 번호입니다",
+            raise _Refusal("bad_input", f"after는 -1부터 {len(rows) - 1} 사이 행 번호입니다",
                            at=t.addr, step=i)
         width = len(rows[0])
         values = op.get("values") or []
         if not isinstance(values, list) or len(values) > width:
-            raise _Refusal("invalid_params", "values가 표 폭보다 깁니다", at=t.addr, step=i)
+            raise _Refusal("bad_input", "values가 표 폭보다 깁니다", at=t.addr, step=i)
         if op.get("like") is not None and (isinstance(op["like"], bool)
                                            or not isinstance(op["like"], int)
                                            or not 0 <= op["like"] < len(rows)):
-            raise _Refusal("invalid_params", "like는 행 번호입니다", at=t.addr, step=i)
+            raise _Refusal("bad_input", "like는 행 번호입니다", at=t.addr, step=i)
         new = [_cell_value("" if v is None else str(v)) for v in values] + [""] * (width - len(values))
         key = (id(t.block), None if after == -1 else id(rows[after]))
         s.new_rows.setdefault(key, []).append(new)
@@ -949,16 +954,16 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
         if t.kind == "table" and op.get("row") is not None:
             r = op["row"]
             if isinstance(r, bool) or not isinstance(r, int) or not 0 <= r < len(t.block.rows):
-                raise _Refusal("not_found", "그런 행이 없습니다", at=t.addr, step=i,
+                raise _Refusal("bad_address", "그런 행이 없습니다", at=t.addr, step=i,
                                candidates=_nearest_numbers(r if isinstance(r, int) else 0,
                                                            len(t.block.rows), t.addr + "/r{}/c0"))
             t = _Target("cell", t.block, f"{t.addr}/r{r}/c0", row=t.block.rows[r], r=r, c=0)
         if t.kind != "cell":
-            raise _Refusal("invalid_params", "지울 행을 칸 주소(t/r/c)로 쓰세요", at=t.addr, step=i)
+            raise _Refusal("bad_input", "지울 행을 칸 주소(t/r/c)로 쓰세요", at=t.addr, step=i)
         s.check_live(t, i)
         live_rows = [row for row in t.block.rows if id(row) not in s.deleted_rows]
         if len(live_rows) <= 1:
-            raise _Refusal("invalid_params", "표의 마지막 행은 지울 수 없습니다. delete를 쓰세요",
+            raise _Refusal("bad_input", "표의 마지막 행은 지울 수 없습니다. delete를 쓰세요",
                            at=t.addr, step=i)
         s.deleted_rows.add(id(t.row))
         s.touch(t.block)
@@ -976,15 +981,15 @@ def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
         t = _resolve(doc, _need(op, "at", str, i), step=i)
         name = op.get("style")
         if not isinstance(name, str) or not name or re.search(r"[{}\n]", name):
-            raise _Refusal("invalid_params", "style은 중괄호·줄바꿈 없는 이름입니다", step=i)
+            raise _Refusal("bad_input", "style은 중괄호·줄바꿈 없는 이름입니다", step=i)
         if t.kind == "cell":
-            raise _Refusal("invalid_params", "칸에는 스타일을 줄 수 없습니다", at=t.addr, step=i)
+            raise _Refusal("bad_input", "칸에는 스타일을 줄 수 없습니다", at=t.addr, step=i)
         s.check_live(t, i)
         t.block.style = name
         s.touch(t.block)
         return {"i": i, "op": kind, "at": t.addr}
 
-    raise _Refusal("invalid_params", f"모르는 op입니다: {kind!r}", step=i,
+    raise _Refusal("bad_input", f"모르는 op입니다: {kind!r}", step=i,
                    candidates=_close(str(kind), list(EDIT_OPS)))
 
 
@@ -993,9 +998,9 @@ def edit(path, ops, *, base, out=None, in_place=False, preview=False) -> dict:
     src = _path(path)
     base_doc, data = _load(src)
     if in_place:
-        raise _Refusal("invalid_params", "가짜 rt_doc은 제자리 저장을 하지 않습니다. out을 쓰세요")
+        raise _Refusal("bad_input", "가짜 rt_doc은 제자리 저장을 하지 않습니다. out을 쓰세요")
     if not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{12}", base):
-        raise _Refusal("invalid_params", "base는 read가 준 rev(12자리 16진수)입니다")
+        raise _Refusal("bad_input", "base는 read가 준 rev(12자리 16진수)입니다")
     if preview:
         out_path = Path(tempfile.mkdtemp(prefix="fake-rt-doc-preview-")) / src.name
     else:
@@ -1005,7 +1010,7 @@ def edit(path, ops, *, base, out=None, in_place=False, preview=False) -> dict:
         raise _Refusal("stale", "문서가 바뀌었습니다. 다시 읽고 고치세요",
                        data={"rev": rev_before})
     if not isinstance(ops, list) or not ops or not all(isinstance(o, dict) for o in ops):
-        raise _Refusal("invalid_params", "ops는 op 객체의 목록입니다")
+        raise _Refusal("bad_input", "ops는 op 객체의 목록입니다")
 
     work = _Doc(copy.deepcopy(base_doc.blocks))
     origin = {id(w): b for w, b in zip(work.blocks, base_doc.blocks)}
@@ -1245,7 +1250,7 @@ def hwpx_bytes(doc_or_text) -> bytes:
 def convert(src, out, *, to) -> dict:
     src_p = _path(src, "src")
     if to not in CONVERT_TARGETS:
-        raise _Refusal("invalid_params", f"to는 {', '.join(CONVERT_TARGETS)} 중 하나입니다")
+        raise _Refusal("bad_input", f"to는 {', '.join(CONVERT_TARGETS)} 중 하나입니다")
     if to not in ("md", "hwpx"):
         raise _Refusal("capability_unavailable", f"가짜 rt_doc은 {to}로 바꾸지 못합니다")
     doc, _ = _load(src_p, suffixes=(SUFFIX, ".md"))
@@ -1264,7 +1269,7 @@ def new(markdown_path_or_text, out, *, form=None) -> dict:
     if form is not None:
         raise _Refusal("capability_unavailable", "가짜 rt_doc은 양식 위에 만들지 못합니다")
     if not isinstance(markdown_path_or_text, (str, Path)):
-        raise _Refusal("invalid_params", "markdown 글이나 .md 경로를 주세요")
+        raise _Refusal("bad_input", "markdown 글이나 .md 경로를 주세요")
     src_path = None
     if isinstance(markdown_path_or_text, Path) or (
             "\n" not in markdown_path_or_text and markdown_path_or_text.lower().endswith(".md")):
@@ -1281,7 +1286,7 @@ def new(markdown_path_or_text, out, *, form=None) -> dict:
     if out_p.suffix.lower() != SUFFIX:
         raise _Refusal("capability_unavailable", f"가짜 rt_doc은 {SUFFIX}만 만듭니다")
     if src_path is not None and _same_file(out_p, src_path):
-        raise _Refusal("invalid_params", "원본에 덮어쓸 수 없습니다. 다른 out을 지정하세요")
+        raise _Refusal("bad_input", "원본에 덮어쓸 수 없습니다. 다른 out을 지정하세요")
     blocks = parse(text, markdown=True)
     payload = serialize(blocks).encode("utf-8")
     _write(out_p, payload)

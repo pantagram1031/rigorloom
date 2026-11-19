@@ -31,20 +31,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+#: Names Windows opens as devices, whatever the extension: the classic four,
+#: COM and LPT with a digit or a superscript one, two or three, and the
+#: console aliases (Microsoft "Naming Files, Paths, and Namespaces").
 _WINDOWS_RESERVED = frozenset(
-    ["CON", "PRN", "AUX", "NUL"]
-    + [f"COM{i}" for i in range(1, 10)]
-    + [f"LPT{i}" for i in range(1, 10)])
+    ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"]
+    + [f"{dev}{n}" for dev in ("COM", "LPT")
+       for n in [str(i) for i in range(10)] + ["\u00b9", "\u00b2", "\u00b3"]])
+
+#: Win32 device and verbatim namespaces (``\\.\COM1``, ``\\?\C:\x``): they skip
+#: the normalisation every other check here relies on.
+_DEVICE_PREFIXES = ("\\\\.\\", "\\\\?\\", "//./", "//?/", "\\??\\")
 
 
 class PathRefused(Exception):
     """A path the caller may not use. ``code`` is from the tool error set."""
 
-    def __init__(self, code: str, message: str, path: str | None = None):
+    def __init__(self, code: str, message: str, path: str | None = None, *,
+                 hint: str | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.path = path
+        #: What the person can do about it, when the refuser knows better than
+        #: the caller (``no_roots`` names the exact ``--allow`` line).
+        self.hint = hint
 
 
 def sha256_file(path: Path) -> str:
@@ -69,6 +80,8 @@ def _validate_text(raw: str) -> None:
         raise PathRefused("invalid_params", "경로가 비어 있습니다.")
     if "\x00" in raw:
         raise PathRefused("invalid_params", "경로에 널 문자(문자 코드 0)가 있습니다.", raw)
+    if raw.startswith(_DEVICE_PREFIXES):
+        raise PathRefused("invalid_params", "\\\\.\\ 또는 \\\\?\\로 시작하는 장치 경로는 쓸 수 없습니다.", raw)
 
 
 def _validate_components(path: Path) -> None:
@@ -103,11 +116,30 @@ def canonical(raw: str | os.PathLike, base: Path | None = None) -> Path:
     text = os.fspath(raw)
     _validate_text(text)
     path = Path(text).expanduser()
+    # The spelling as given first: Windows drops a trailing dot or space and
+    # maps device names while resolving, so the resolved path alone can hide
+    # them. Then the resolved path, for what links and ".." led to.
+    _validate_components(path)
     if not path.is_absolute():
         path = (base or Path.cwd()) / path
     resolved = Path(os.path.realpath(path))
     _validate_components(resolved)
     return resolved
+
+
+def _same_folder(spelled: Path, root: Path) -> bool:
+    """Is the candidate's own ancestor at the root's depth the root itself?
+
+    The prefix test above folds case on Windows, but a folder there can be
+    case-sensitive, so ``C:\\Base\\root`` and ``C:\\Base\\Root`` may be two
+    folders. The file system decides, and when it cannot tell (the folder
+    is missing or cannot be looked up) the answer is no: nothing under a
+    folder that cannot be checked is allowed.
+    """
+    try:
+        return os.path.samefile(spelled, root)
+    except OSError:
+        return False
 
 
 @dataclass
@@ -133,7 +165,8 @@ class Roots:
         for root in self.paths:
             root_key = _norm(root)
             if key == root_key or key.startswith(root_key.rstrip(os.sep) + os.sep):
-                return True
+                if _same_folder(Path(*path.parts[:len(root.parts)]), root):
+                    return True
         return False
 
     def check(self, raw: str | os.PathLike, *, base: Path | None = None) -> Path:

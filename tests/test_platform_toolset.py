@@ -305,7 +305,7 @@ def test_fill_skips_signature_seats_and_reports_what_is_left(env):
             "person_only_seat")
     assert e["candidates"] == ["place:서명"]
     e = err(call(env.ctx(), "fill", {"path": str(path), "values": {"place:셩명": "x"}}),
-            "not_found")
+            "bad_address")
     assert "place:성명" in e["candidates"]
     r = ok(call(env.ctx(), "fill", {"path": str(path), "values": {"성명": "홍길동"}}))
     assert r["personOnly"] == ["place:서명"] and r["unfilled"] == ["place:소속"]
@@ -736,17 +736,218 @@ def test_new_never_reads_a_file_named_by_a_one_line_body(env):
     assert "비밀 내용" not in text
 
 
-def test_markdown_pictures_are_checked_in_every_form(env, tmp_path):
+def _layer_sees(monkeypatch, name):
+    """What the document layer's ``name`` receives: (markdown or source text, kwargs)."""
+    seen = []
+    real = getattr(fake, name)
+
+    def spy(src, out, **kw):
+        text = Path(src).read_text(encoding="utf-8") if "\n" not in str(src) else src
+        seen.append(text)
+        return real(src, out, **kw)
+
+    monkeypatch.setattr(fake, name, spy)
+    return seen
+
+
+def test_new_checks_the_pictures_the_converter_reads(env, tmp_path):
+    # Plain mode (new): a line that is only a picture, or a [그림 n] line.
     outside = tmp_path / "outside.png"
     outside.write_bytes(b"x")
-    for body in (f"![a]({outside})\n", f"![a][r]\n\n[r]: {outside}\n",
-                 f'<img src="{outside}">\n'):
+    for body in (f"![a]({outside})\n", f"  ![a](<{outside}> \"제목\")\n",
+                 f"[그림 1] 시험 ({outside})\n"):
         err(call(env.ctx(), "new", {"markdown": body}), "outside_roots")
     inside = env.work / "그림.png"
     inside.write_bytes(b"x")
     ok(call(env.ctx(), "new", {"markdown": "![a](그림.png)\n", "base_dir": str(env.work)}))
     err(call(env.ctx(), "new", {"markdown": "![a](그림.png)\n", "base_dir": str(tmp_path)}),
         "outside_roots")
+
+
+def test_a_picture_the_converter_cannot_open_is_refused_not_dropped(env):
+    # Sol's re-check (with N5): in a .md file, ![a](그림(1).png) reads as the
+    # picture "그림(1", which the converter dropped without a word. The agent
+    # is told instead, as for a folder named as a picture.
+    (env.work / "그림(1).png").write_bytes(b"x")
+    (env.work / "폴더").mkdir()
+    source = env.work / "본문.md"
+    for body, code, shown in (("본문 ![a](그림(1).png) 끝\n", "not_found", "그림(1"),
+                              ("![a](폴더)\n", "invalid_params", "폴더")):
+        source.write_text(body, encoding="utf-8")
+        e = err(call(env.ctx(), "save", {"path": str(source), "to": str(env.work / "a.hwpx")}),
+                code)
+        assert e["message"] == f"이 그림 경로는 사용할 수 없습니다({shown})."
+        assert not (env.work / "a.hwpx").exists()
+
+
+def test_a_picture_line_the_converter_would_not_read_is_refused(env):
+    # Sol's re-check (with N5): "[그림 1] 캡션 (sample (a).png)" and
+    # "![표지](sample (a).png)" are text to the converter, so the document got
+    # the markdown instead of the picture and nobody was told.
+    (env.work / "sample (a).png").write_bytes(b"x")
+    (env.work / "사진.PNG").write_bytes(b"x")
+    for line in ("![표지](sample (a).png)", "[그림 1] 캡션 (sample (a).png)",
+                 "[그림 2] 캡션 (사진.PNG)", "[그림 3] 캡션 (<사진.png>)",
+                 "![가](사진.PNG) ![나](사진.PNG)"):
+        e = err(call(env.ctx(), "new", {"markdown": f"# 제목\n\n{line}\n",
+                                        "base_dir": str(env.work)}), "invalid_params")
+        assert e["message"] == f"다음 줄을 그림으로 읽을 수 없어 문서 생성을 중단했습니다({line})."
+    # in a code block it is code, and from the command line it stays text
+    ok(call(env.ctx(), "new", {"markdown": "```\n![표지](sample (a).png)\n```\n",
+                               "base_dir": str(env.work)}))
+    ok(call(env.ctx(roots=None), "new", {"markdown": "![표지](sample (a).png)\n",
+                                         "base_dir": str(env.work)}))
+
+
+def test_text_that_is_not_a_picture_is_passed_on_as_written(env, tmp_path, monkeypatch):
+    # Sol's re-check N4: the check rewrote every image-like name in brackets,
+    # prose and links included. Only what the converter reads as a picture is
+    # checked; everything else reaches the layer unchanged.
+    seen = _layer_sees(monkeypatch, "new")
+    outside = tmp_path / "밖.png"
+    outside.write_bytes(b"x")
+    for body in (f"![a][r]\n\n[r]: {outside}\n",
+                 f'<img src="{outside}">\n',
+                 f"참고 그림은 ![a]({outside})에 있습니다.\n",  # mid-sentence: text in plain mode
+                 f"```\n![a]({outside})\n```\n",
+                 f"출처는 부록입니다 (부록 {outside})\n",
+                 "[링크](../../밖.png)\n"):
+        ok(call(env.ctx(), "new", {"markdown": body}))
+        assert seen[-1] == body
+
+
+def test_a_checked_picture_reaches_the_layer_as_a_copy_of_its_bytes(env, monkeypatch):
+    seen = _layer_sees(monkeypatch, "new")
+    folder = env.work / "새 폴더 (2)"
+    folder.mkdir()
+    (folder / "그림.png").write_bytes(b"\x89PNG first")
+    body = "# 제목\n\n본문 (괄호) 그대로\n\n![설명](그림.png)\n\n[그림 1] 배치도 (그림.png)\n"
+    ok(call(env.ctx(), "new", {"markdown": body, "base_dir": str(folder)}))
+    sent = seen[-1]
+    assert "본문 (괄호) 그대로" in sent and str(folder) not in sent
+    copies = [line[line.index("(") + 1:-1] for line in sent.splitlines() if line.endswith(".png)")]
+    assert len(copies) == 2 and all(")" not in c for c in copies)
+    # the copies were the checked bytes, and are gone once the document is made
+    assert not any(Path(c).exists() for c in copies)
+    assert not any((env.home / "pictures").glob("*/*"))
+
+
+def test_a_state_folder_with_brackets_still_takes_pictures(env, tmp_path, monkeypatch):
+    # The copies go where the converter can read their path back; a state
+    # folder inside a profile named "홍길동 (회사)" cannot be one of those places.
+    seen = _layer_sees(monkeypatch, "new")
+    (env.work / "그림.png").write_bytes(b"x")
+    ctx = env.ctx(_drafts=DraftStore(tmp_path / "상태 (회사)"))
+    ok(call(ctx, "new", {"markdown": "[그림 1] 배치도 (그림.png)\n", "base_dir": str(env.work)}))
+    copy = seen[-1].rsplit("(", 1)[1].rstrip(")\n")
+    assert copy.endswith(".png") and "상태" not in copy
+
+
+def test_a_picture_the_check_did_not_see_stops_the_build(env, tmp_path, monkeypatch):
+    # Sol's re-check N3: a syntax the converter reads and this check does not
+    # (here the layer reads <img src>) cannot put an unchecked file in the
+    # document: the package's pictures must be the checked bytes.
+    import re
+    import zipfile
+    secret = tmp_path / "비밀.png"
+    secret.write_bytes(b"secret bytes")
+    inside = env.work / "그림.png"
+    inside.write_bytes(b"checked bytes")
+    real = fake.new
+
+    def new(src, out, **kw):
+        r = real(src, out, **kw)
+        text = str(src)
+        pics = [m.group(1) for m in re.finditer(r'(?:!\[[^\]]*\]\(|<img src=")([^)"]+)', text)]
+        Path(out).unlink()
+        with zipfile.ZipFile(out, "w") as z:
+            z.writestr("Contents/section0.xml", "<sec/>")
+            for i, pic in enumerate(pics, 1):
+                z.writestr(f"BinData/image{i}.png", Path(pic).read_bytes())
+        return r
+
+    monkeypatch.setattr(fake, "new", new)
+    ok(call(env.ctx(), "new", {"markdown": f"![a]({inside})\n"}))
+    before = sorted(p.name for p in (env.home / "drafts").glob("*")) \
+        if (env.home / "drafts").exists() else []
+    e = err(call(env.ctx(), "new", {"markdown": f'![a]({inside})\n\n<img src="{secret}">\n'}),
+            "invalid_params")
+    assert e["at"] == "BinData/image2.png"
+    after = sorted(p.name for p in (env.home / "drafts").glob("*")) \
+        if (env.home / "drafts").exists() else []
+    assert len(after) <= len(before) + 1
+    assert not any(p.read_bytes() == b"secret bytes" for p in env.home.rglob("*") if p.is_file())
+
+
+def _markdown_converter(monkeypatch, *, also=r"(?!)"):
+    """The fake's convert, plus what the real one does with pictures: each
+    ![](path) (and anything ``also`` matches) goes into the package."""
+    import re
+    import zipfile
+    real = fake.convert
+    calls = []
+
+    def convert(src, out, *, to):
+        calls.append((Path(src).suffix, to))
+        if Path(src).suffix == ".hwpx":  # the fake cannot read a package: copy it
+            Path(out).write_bytes(Path(src).read_bytes())
+            return {"ok": True, "out": str(out), "lossy": []}
+        r = real(src, out, to=to)
+        if to == "hwpx" and Path(src).suffix == ".md":
+            text = Path(src).read_text(encoding="utf-8")
+            pics = [next(g for g in m.groups() if g) for m in
+                    re.finditer(r"!\[[^\]]*\]\(([^)]+)\)|" + also, text)]
+            with zipfile.ZipFile(out, "a") as z:
+                for i, pic in enumerate(pics, 1):
+                    z.writestr(f"BinData/image{i}.png", Path(pic).read_bytes())
+        return r
+
+    monkeypatch.setattr(fake, "convert", convert)
+    return calls
+
+
+def _pictures_in(package):
+    import zipfile
+    with zipfile.ZipFile(package) as z:
+        return [z.read(n) for n in z.namelist() if n.startswith("BinData/")]
+
+
+def test_a_replaced_picture_is_converted_again(env, monkeypatch):
+    # Sol's re-check N5: the converted file was kept per revision of the
+    # markdown alone, so a picture replaced on disk was saved stale.
+    calls = _markdown_converter(monkeypatch)
+    picture = env.work / "그림.png"
+    picture.write_bytes(b"first")
+    source = env.work / "본문.md"
+    source.write_text("# 제목\n\n본문 ![그림](그림.png) 끝\n", encoding="utf-8")
+    ok(call(env.ctx(), "save", {"path": str(source), "to": str(env.work / "1.hwpx")}))
+    assert _pictures_in(env.work / "1.hwpx") == [b"first"]
+    picture.write_bytes(b"second")
+    ok(call(env.ctx(), "save", {"path": str(source), "to": str(env.work / "2.hwpx")}))
+    assert _pictures_in(env.work / "2.hwpx") == [b"second"]
+    assert calls == [(".md", "hwpx"), (".md", "hwpx")]
+    # unchanged pictures: the kept file is used
+    ok(call(env.ctx(), "save", {"path": str(source), "to": str(env.work / "3.hwpx")}))
+    assert len(calls) == 2
+
+
+def test_saving_markdown_converts_through_a_checked_package(env, tmp_path, monkeypatch):
+    calls = _markdown_converter(monkeypatch, also=r'<img src="([^"]+)">')
+    (env.work / "그림.png").write_bytes(b"inside")
+    source = env.work / "본문.md"
+    source.write_text("# 제목\n\n![그림](그림.png)\n", encoding="utf-8")
+    target = env.work / "본문.md.hwpx"
+    ok(call(env.ctx(), "save", {"path": str(source), "to": str(target)}))
+    assert calls == [(".md", "hwpx")] and _pictures_in(target) == [b"inside"]
+    secret = tmp_path / "비밀.png"
+    secret.write_bytes(b"secret")
+    source.write_text(f'# 제목\n\n![그림](그림.png)\n\n<img src="{secret}">\n', encoding="utf-8")
+    other = env.work / "다른.hwpx"
+    e = err(call(env.ctx(), "save", {"path": str(source), "to": str(other)}), "invalid_params")
+    assert e["at"].startswith("BinData/")
+    assert not other.exists()
+    exports = env.home / "exports"
+    assert not any(p.read_bytes() == b"secret" for p in exports.rglob("*") if p.is_file())
 
 
 def test_edit_cannot_write_a_signature_seat(env):
@@ -1019,6 +1220,15 @@ def test_document_layer_english_becomes_korean_for_people():
                            "message": "'근로' occurs 2 times; narrow it with at"})
     assert msg.startswith("찾는 말이 여러 곳에")
     assert candidates_line([f"t0/r{i}" for i in range(11)]) == "t0/r0 ~ t0/r10 (11개)"
+    # Past the end is bad_address with a range (doc-core-api ruling 2026-11-19).
+    assert person_error({"code": "bad_address", "at": "page:9", "range": [1, 3],
+                         "message": "page 9 is out of range"}) == (
+        "page:9: 문서에 없는 쪽입니다.", "1쪽부터 3쪽까지 있습니다.")
+    assert person_error({"code": "bad_address", "at": "p2:40", "range": [0, 12],
+                         "message": "offset 40 is out of range"}) == (
+        "p2:40: 범위를 벗어난 위치입니다.", "위치는 0부터 12까지 지정할 수 있습니다.")
+    assert person_error({"code": "locked", "message": "file is locked", "retryable": True}) == (
+        "다른 프로그램에서 이 파일을 열어 두었습니다.", "파일을 열어 둔 프로그램에서 닫은 뒤 다시 실행하세요.")
 
 
 def test_a_narrow_find_keeps_the_word_in_view():
