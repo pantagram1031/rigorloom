@@ -75,7 +75,9 @@ EXIT_INTERNAL = 4
 #: other malformed request — mapping it to exit 3 would tell an operator the
 #: document failed a gate it never reached.
 USAGE_CODES = frozenset({"invalid_params", "unknown_field",
-                         "ambiguous_fill_keys"})
+                         "ambiguous_fill_keys",
+                         # doc_core (rt_doc) spellings of a malformed request
+                         "bad_input", "bad_address"})
 
 CLIENT = "cli-client"
 
