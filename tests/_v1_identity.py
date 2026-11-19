@@ -16,6 +16,22 @@ one with the same runtime, browser and fonts, at the default URL and at
 `?ui=v1`, and compares. Capturing both on the same machine keeps what depends
 on the machine (a preview that cannot render, font metrics) out of the result.
 
+Rules for `tests/fixtures/v1_main_ui_dist/` (set by the advisor):
+
+1. The folder exists so that this test fails on an unintended v1 change.
+2. It is refreshed only when an intentional change is one the captures can
+   see: the DOM or the computed style of the five screens and the toast at
+   1440 px, light and dark. That is exactly when this test would fail without
+   a refresh. The brand pull request and the final switch to editor v2
+   refresh it regardless. The refreshing pull request replaces the folder
+   with its own rebuilt bundle, names the refresh in its CHANGELOG line and
+   keeps this test green.
+3. A copy change the captures never show gets no refresh; its CHANGELOG line
+   names the change instead.
+4. Each refresh adds about 730 KB to the history.
+
+The folder currently holds main dbc1b18's bundle.
+
 To look at one capture by hand:
 
     python tests/_v1_identity.py --ui-dist tests/fixtures/v1_main_ui_dist \
