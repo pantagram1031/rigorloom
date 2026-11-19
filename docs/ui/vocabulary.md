@@ -173,7 +173,7 @@
 | `fill_charpr_script_anomaly` | 위첨자나 아래첨자 서식이 있는 칸입니다. 글자 크기 확인이 필요합니다. | This blank uses superscript or subscript formatting. Check the text size. |
 | `script_anomaly_target` | 위첨자나 아래첨자 서식이 있는 칸입니다. 글자 크기 확인이 필요합니다. | This blank uses superscript or subscript formatting. Check the text size. |
 | `run_color_anomaly` | 바꾸려는 문구에 강조색이 있습니다. | The text to replace contains an emphasis colour. |
-| `at_cell_expect_mismatch` | 처음 읽은 뒤 칸의 문구가 바뀌었습니다. | The cell text has changed since it was read. |
+| `at_cell_expect_mismatch` | 칸의 문구가 예상한 내용과 다릅니다. | The cell text differs from what was expected. |
 | `replace_key_ambiguous` | 같은 칸에 같은 문구가 여러 번 있어 바꿀 위치를 찾을 수 없습니다. | The same text appears more than once in this cell. Could not identify which occurrence to change. |
 | `at_cell_run_ambiguous` | 같은 칸에 같은 문구가 여러 번 있어 바꿀 위치를 찾을 수 없습니다. | The same text appears more than once in this cell. Could not identify which occurrence to change. |
 | `run_inventory_unavailable` | 이 문구의 위치나 서식 정보를 확인할 수 없어 직접 고칠 수 없습니다. | Could not find the text or its formatting information. Inline editing is unavailable. |
@@ -408,7 +408,7 @@
 | `fill_delete_guides_queued` | 안내문 지움 {0}건을 제안에 포함했습니다 | Guide deletion queued ({0}) |
 | `fill_undo_removed` | ‘{0}’ 항목을 변경 제안에서 뺐습니다 | Removed entry for '{0}'. |
 | `fill_undo_restore` | 방금 뺀 항목 되살리기 | Undo remove |
-| `fill_undo_empty` | ‘{0}’의 입력을 지워 변경 제안에서 뺐습니다 | Removed the proposed entry for '{0}' after clearing its input. |
+| `fill_undo_empty` | ‘{0}’ 입력을 지워 변경 제안에서 뺐습니다 | Removed the proposed entry for '{0}' after clearing its input. |
 | `fill_ambiguous_warning` | 이름이 ‘{0}’인 빈칸이 {1}개 있습니다. 입력할 칸의 위치를 확인해야 합니다. | There are {1} blanks named '{0}'. Confirm the selected slot below. |
 | `fill_ambiguous_slot_option` | {0}번째 빈칸 · {1} | Blank #{0} · {1} |
 | `fill_clear_value` | 입력 지우기 | Clear entry |
@@ -712,7 +712,7 @@
 | `operator_event_check_pass` | 통과 | passed |
 | `operator_event_check_fail` | 미통과 | not passed |
 | `operator_event_pdf` | 인쇄 화면용 문서를 준비했습니다 | Prepared print view document |
-| `review_behind_head_banner` | 이 변경 제안은 수정본 {0} 이전 문서를 기준으로 만들어졌습니다. 그대로 적용하면 수정본 {0}의 변경이 빠집니다. | This proposal was made against a document older than revision {0}. Applying it would drop the changes in revision {0}. |
+| `review_behind_head_banner` | 이 변경 제안은 수정본 {0} 이전 문서를 기준으로 만들어졌습니다. 그대로 적용하면 수정본 {0} 변경 내용이 빠집니다. | This proposal was made against a document older than revision {0}. Applying it would drop the changes in revision {0}. |
 | `review_repropose_on_head` | 수정본 {0} 기준으로 다시 제안 | Re-propose on revision {0} |
 | `review_repropose_on_latest` | 최신 수정본 기준으로 다시 제안 | Re-propose on the latest revision |
 | `proposer_mock` | 시험용 제안 | Test proposal |

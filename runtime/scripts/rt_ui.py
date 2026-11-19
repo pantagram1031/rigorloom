@@ -24,7 +24,7 @@ import io
 import json
 import mimetypes
 import os
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 import queue
 import re
 import secrets
@@ -66,7 +66,9 @@ MAX_JSON_BODY_BYTES = max(64 * 1024 * 1024, MAX_SOURCE_BYTES * 2)
 # few ids and flags, never a document: their bodies are under 1 KiB, so they
 # get their own cap instead of the upload-sized one.
 SMALL_JSON_BODY_BYTES = 16 * 1024
-_SMALL_BODY_CORE_POST_PATHS = frozenset({"/api/approval/confirmation"})
+_SMALL_BODY_CORE_POST_PATHS = frozenset({"/api/approval/confirmation", "/api/doc-folder"})
+# Where the 문서 폴더 lives in prefs (`documentsRoot` is the earlier name).
+DOC_FOLDER_PREF_KEYS = ("docFolder", "documentsRoot")
 SSE_KEEPALIVE_SECONDS = 15.0
 
 AGENTHOST_CONFIG_KEYS = frozenset({
@@ -131,6 +133,32 @@ _MIME_OVERRIDES = {
 
 _SCRIPT_CLOSE_RE = re.compile(r"</head>", re.IGNORECASE)
 _BODY_CLOSE_RE = re.compile(r"</body>", re.IGNORECASE)
+
+
+_WINDOWS_SYSTEM_FOLDERS = frozenset({"windows", "program files", "program files (x86)", "programdata"})
+
+
+def system_folder_refusal(path: PurePath) -> str | None:
+    """Why `path` cannot be the 문서 폴더 for where it sits, or None.
+
+    A filesystem or drive root, and any folder directly under one (/etc,
+    /tmp, /home, /usr, /var; C:\\Users), is refused: each holds far more
+    than one person's documents. On Windows, Windows, Program Files,
+    Program Files (x86) and ProgramData are refused with everything inside
+    them. A network share's root is refused, a folder inside it is not.
+    """
+    if not path.anchor:
+        return None
+    below = path.parts[1:]
+    if not below:
+        return "a filesystem or drive root cannot be the document folder"
+    windows = isinstance(path, PureWindowsPath)
+    unc = windows and path.drive.startswith("\\\\")
+    if len(below) == 1 and not unc:
+        return "a folder directly under the filesystem root cannot be the document folder"
+    if windows and not unc and below[0].casefold() in _WINDOWS_SYSTEM_FOLDERS:
+        return "a Windows system folder cannot be the document folder"
+    return None
 
 
 class BridgeError(Exception):
@@ -1055,6 +1083,14 @@ class BridgeApplication:
         patch = body.get("patch")
         if not isinstance(patch, dict):
             raise BridgeError("invalid_params", "patch must be an object")
+        # The 문서 폴더 is the root the workspace routes confine reads to; it is
+        # set only through /api/doc-folder, which checks it (finding 13).
+        for key in DOC_FOLDER_PREF_KEYS:
+            if key in patch:
+                raise BridgeError("invalid_doc_folder", "set the document folder through /api/doc-folder")
+        return self._write_prefs(patch)
+
+    def _write_prefs(self, patch: dict[str, Any]) -> dict[str, Any]:
         with self._prefs_lock:
             current: dict[str, Any] = {}
             if self._prefs_path.is_file():
@@ -1077,6 +1113,70 @@ class BridgeApplication:
             encoded = (json.dumps(current, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
             atomic_write_bytes(self._prefs_path, encoded)
             return dict(current)
+
+    def doc_folder_refusal(self, raw: Any) -> tuple[Path | None, str | None]:
+        """The 문서 폴더 a value names, or why it cannot be one.
+
+        Absolute, existing, a directory; not a filesystem or drive root or a
+        folder directly under one (nor a Windows system folder), not the
+        person's whole home, and not the runtime's own store (sessions,
+        candidates, receipts) or anything inside it.
+        """
+        if not isinstance(raw, str) or not raw.strip() or "\x00" in raw:
+            return None, "the document folder must be a path"
+        given = Path(raw)
+        if not given.is_absolute():
+            return None, "the document folder must be an absolute path"
+        try:
+            folder = given.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None, "the document folder does not exist"
+        if not folder.is_dir():
+            return None, "the document folder is not a directory"
+        # Both spellings: /tmp resolves to /private/tmp on macOS.
+        for spelled in (Path(os.path.normpath(given)), folder):
+            why = system_folder_refusal(spelled)
+            if why:
+                return None, why
+        try:
+            home = Path.home().resolve()
+        except (OSError, RuntimeError):
+            home = None
+        if home is not None and folder == home:
+            return None, "the whole home folder cannot be the document folder"
+        for store in {self.default_root, self.current_root()}:
+            try:
+                store_resolved = Path(store).resolve()
+            except (OSError, RuntimeError):
+                continue
+            if folder == store_resolved or folder.is_relative_to(store_resolved):
+                return None, "the runtime's own store cannot be the document folder"
+        return folder, None
+
+    def set_doc_folder(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /api/doc-folder {path}: choose the 문서 폴더, or clear it with null."""
+        unknown = sorted(set(body) - {"path"})
+        if unknown:
+            raise BridgeError("invalid_params", "unknown fields: " + ", ".join(unknown))
+        raw = body.get("path")
+        if raw is None:
+            self._write_prefs({key: None for key in DOC_FOLDER_PREF_KEYS})
+            return {"ok": True, "docFolder": None}
+        folder, why = self.doc_folder_refusal(raw)
+        if folder is None:
+            raise BridgeError("invalid_doc_folder", why or "not a document folder")
+        self._write_prefs({"docFolder": str(folder), "documentsRoot": None})
+        return {"ok": True, "docFolder": str(folder)}
+
+    def doc_folder(self) -> Path | None:
+        """The chosen 문서 폴더, checked again on every use; None when unset or unfit."""
+        prefs = self.get_prefs() or {}
+        for key in DOC_FOLDER_PREF_KEYS:
+            raw = prefs.get(key)
+            if isinstance(raw, str) and raw.strip():
+                folder, _why = self.doc_folder_refusal(raw)
+                return folder
+        return None
 
     def list_corpus_files(self) -> dict[str, Any]:
         if self.engine_root is None:
@@ -2193,6 +2293,7 @@ _CORE_POST_API_PATHS = frozenset({
     "/api/credential/delete",
     "/api/guard/diff",
     "/api/approval/confirmation",
+    "/api/doc-folder",
     "/api/pipeline/gate-resolve",
 })
 _EXTENSION_PATH_RE = re.compile(r"^/api/[a-z0-9][a-z0-9/_-]*$")
@@ -2556,6 +2657,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 "/api/credential/delete": self.server.bridge.credential_delete,
                 "/api/guard/diff": self.server.bridge.guard_diff,
                 "/api/approval/confirmation": self.server.bridge.approval_confirmation,
+                "/api/doc-folder": self.server.bridge.set_doc_folder,
                 "/api/pipeline/gate-resolve": self.server.bridge.pipeline_gate_resolve,
             }
             handler = routes.get(path)
