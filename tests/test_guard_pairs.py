@@ -22,8 +22,8 @@ CLI = REPO / "runtime" / "scripts" / "cli.py"
 FIXTURES = REPO / "tests" / "fixtures" / "guard_pairs"
 #: fixture -> how many pairs it holds; T180's pairs are one line each, T183's
 #: may hold a table or a list on several lines (one paragraph still).
-SETS = {"sol-t180-pairs.json": 55, "sol-t183-pairs.json": 92, "sol-t183b-pairs.json": 79,
-        "fable-t183-pairs.json": 15, "fable-t193-pairs.json": 3}
+SETS = {"review-t180-pairs.json": 55, "review-t183-pairs.json": 92, "review-t183b-pairs.json": 79,
+        "advisor-t183-pairs.json": 15, "advisor-t193-pairs.json": 3}
 PAIRS = {name: json.loads((FIXTURES / name).read_text(encoding="utf-8"))["pairs"] for name in SETS}
 GAPS = {"numbers-in-words", "fractions", "ranges", "phone-account-id", "list-labels",
         "leading-decimal", "year-month", "time-units", "date-forms", "clock-times",
@@ -57,7 +57,7 @@ def test_the_pairs_are_well_formed(name):
     for p in pairs:
         text = p["before"] + "\n" + p["after"]
         assert "\n\n" not in text, p["case"]
-        assert name != "sol-t180-pairs.json" or "\n" not in p["before"] + p["after"], p["case"]
+        assert name != "review-t180-pairs.json" or "\n" not in p["before"] + p["after"], p["case"]
         assert p["fact"] in {"changed", "same"}, p["case"]
         assert p.get("scope", "in") in {"in", "out"}, p["case"]
         assert p.get("gap") is None or p["gap"] in GAPS, p["case"]
