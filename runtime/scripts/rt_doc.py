@@ -2979,6 +2979,39 @@ def _page_setup_kwargs(op, i, at):
     return kw
 
 
+def _page_fit(doc, si, kw, i, at):
+    """Refuse margins that leave no room on the paper (Hancom's 편집 용지 refuses them too): the section's own
+    pagePr / margin, with what this op changes, in HWPUNIT (7200 per inch). Landscape pages lay the paper's
+    height across, as the engine draws them."""
+    sec = doc.secs[si]
+    pp = re.search(r"<hp:pagePr\b[^>]*>", sec)
+    mg = re.search(r"<hp:margin\b[^>]*/?>", sec[pp.end():]) if pp else None
+    if not pp or not mg:
+        return
+
+    def num(tag, k):
+        m = re.search(r'\b%s="(-?\d+)"' % k, tag)
+        return int(m.group(1)) if m else 0
+    hu = lambda mm: mm * 7200 / 25.4                            # noqa: E731
+    w = hu(kw["width_mm"]) if "width_mm" in kw else num(pp.group(0), "width")
+    h = hu(kw["height_mm"]) if "height_mm" in kw else num(pp.group(0), "height")
+    land = kw["landscape"] if "landscape" in kw else 'landscape="NARROWLY"' in pp.group(0)
+    gt = kw.get("gutter_type") or (re.search(r'gutterType="(\w+)"', pp.group(0)) or [None, "LEFT_ONLY"])[1]
+    m = {k: num(mg.group(0), k) for k in MARGIN_KEYS}
+    m.update({k: hu(x) for k, x in kw.get("margins_mm", {}).items()})
+    across, down = (h, w) if land else (w, h)
+    g = m["gutter"]
+    used_x = m["left"] + m["right"] + (g if gt != "TOP_BOTTOM" else 0)     # 맞쪽 too: one gutter a page
+    used_y = m["top"] + m["bottom"] + m["header"] + m["footer"] + (g if gt == "TOP_BOTTOM" else 0)
+    mm = lambda x: round(x * 25.4 / 7200, 1)                    # noqa: E731
+    if used_x >= across:
+        raise DocError("bad_input", "page_setup: left + right + gutter margins (%s mm) leave no room across the "
+                       "%s mm page" % (mm(used_x), mm(across)), i=i, at=at)
+    if used_y >= down:
+        raise DocError("bad_input", "page_setup: top + bottom + header + footer margins (%s mm) leave no room "
+                       "down the %s mm page" % (mm(used_y), mm(down)), i=i, at=at)
+
+
 def _columns_kwargs(op, i, at):
     """The checked ``set`` of a columns op as hnc_edit.set_columns keyword arguments."""
     v = op.get("set")
@@ -3529,6 +3562,7 @@ def _plan_op(doc, cl, i, name, op, at):
                            i=i, at=at)
         go = ["goto", p.k, 0, p.si]
         if name == "page_setup":
+            _page_fit(doc, p.si, kw, i, at)
             _section_claim(cl, p.si, i, name, at)
             acts.append(_Act(i, name, at, p, p.start, side=2, steps=[go, {"op": "page_setup", "kwargs": kw}]))
         elif name == "columns":

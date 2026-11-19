@@ -1399,6 +1399,15 @@ def test_page_ops_are_checked_before_anything_runs(no_engine, tmp_path):
     assert err({"op": "page_setup", "at": "p0", "set": {"paper": "A4", "width_mm": 200}})["code"] == "bad_input"
     assert err({"op": "page_setup", "at": "p0", "set": {"height_mm": 20}})["code"] == "bad_input"
     assert err({"op": "page_setup", "at": "p0", "set": {"landscape": "yes"}})["code"] == "bad_input"
+    assert err({"op": "page_setup", "at": "p0", "set": {"width_mm": True}})["code"] == "bad_input"
+    # margins that leave no room on the paper are refused, with the paper of this op or of the section
+    e = err({"op": "page_setup", "at": "p0", "set": {"paper": "A5", "margins": {"left": 80, "right": 70}}})
+    assert e["code"] == "bad_input" and "across" in e["message"]
+    e = err({"op": "page_setup", "at": "p0", "set": {"margins": {"top": 150, "bottom": 150}}})
+    assert e["code"] == "bad_input" and "down" in e["message"]
+    e = err({"op": "page_setup", "at": "p0", "set": {"paper": "A4", "landscape": True,
+                                                    "margins": {"top": 100, "bottom": 100}}})
+    assert e["code"] == "bad_input" and "down" in e["message"]     # landscape A4 is 210 mm down
     e = err({"op": "page_setup", "at": "p0", "set": {"margins": {"lefft": 20}}})
     assert e["code"] == "bad_input" and "left" in e["candidates"]
     assert err({"op": "page_setup", "at": "p0", "set": {"margins": {"top": 501}}})["code"] == "bad_input"
@@ -1472,6 +1481,28 @@ def test_engine_page_setup_columns_and_breaks(kit, tmp_path):
     assert 'pageBreak="1"' in heads["p3"] and 'columnBreak="1"' in heads["p4"]
     assert 'pageBreak="1"' not in heads["p5"] and 'columnBreak="1"' not in heads["p5"]
     assert [q.text for q in d.top] == [q.text for q in D._load(f).top]
+    # set and break on one paragraph in one edit: both land
+    out2 = tmp_path / "pg2.hwpx"
+    r = D.edit(f, [{"op": "set", "at": "p3", "text": "새 쪽의 첫 문단"}, {"op": "break", "at": "p3", "kind": "page"}],
+               base=D.rev_of(f), out=out2)
+    assert r["ok"], r
+    d = D._load(out2)
+    assert d.top[3].text == "새 쪽의 첫 문단" and 'pageBreak="1"' in d.top[3].head
+
+
+@engine
+def test_engine_landscape_page_is_drawn_wide(kit, tmp_path):
+    pytest.importorskip("pypdfium2")
+    f = _copy(kit / "tests" / "features" / "feat_paragraphs.hwpx", tmp_path)
+    out = tmp_path / "land.hwpx"
+    r = D.edit(f, [{"op": "page_setup", "at": "p0", "set": {"paper": "A4", "landscape": True}}],
+               base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    before = D.render(f, [1], scale=0.5, out_dir=tmp_path / "a")["pages"][0]
+    after = D.render(out, [1], scale=0.5, out_dir=tmp_path / "b")["pages"][0]
+    assert before["width_pt"] < before["height_pt"]
+    assert after["width_pt"] > after["height_pt"] and after["px_w"] > after["px_h"]
+    assert abs(after["width_pt"] - before["height_pt"]) < 1 and abs(after["height_pt"] - before["width_pt"]) < 1
 
 
 @engine

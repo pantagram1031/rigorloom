@@ -212,8 +212,8 @@ rt_doc.edit("보고서.hwpx", [
 - Every op is checked before anything is written: address kinds, ranges
   (`p3:2-5` only for `set`, `replace` and `char_shape`), `expect`
   (`expect_mismatch`; only `set`, `replace`, `delete`, `fill`,
-  `table.delete_row`, `table.delete_col`, `char_shape`, `para_shape` and
-  `numbering` take one,
+  `table.delete_row`, `table.delete_col`, `char_shape`, `para_shape`,
+  `numbering` and `break` take one,
   others refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
   and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
   or an op on something another op deletes (a paragraph, table or row; one
@@ -302,7 +302,11 @@ rt_doc.edit("보고서.hwpx", [
     writes the orientation), `margins` (`left`, `right`, `top`, `bottom`,
     `header`, `footer`, `gutter`, 0 to 500 mm; margins left out keep their
     value) and `gutter_type` (제본: `LEFT_ONLY`, `LEFT_RIGHT`, `TOP_BOTTOM`).
-    The engine does not check that the margins fit the paper.
+    Margins that leave no room are refused with `bad_input`: left + right +
+    gutter (top + bottom + header + footer, plus the gutter for
+    `TOP_BOTTOM`) must stay below the page's width (height), using the
+    section's paper and margins for what the op leaves out; a landscape page
+    lays the paper's height across.
   - `columns` changes the column definition (다단) that governs the paragraph,
     the last one before it in its section: `set` takes `count` (1 to 255),
     `gap_mm` (0 to 100), `line` (구분선, true/false), `kind` (`NEWSPAPER`,
@@ -316,7 +320,12 @@ rt_doc.edit("보고서.hwpx", [
     after the last one, so a section break goes in the document's last
     section and not on that section's first paragraph. Paragraph and table
     addresses do not change (they count across sections). `expect` guards the
-    paragraph's text.
+    paragraph's text. Order: the engine runs the edit's steps from the end of
+    the document back, and at one paragraph a section break runs after the
+    edits inside that paragraph and before an `insert_after` on the
+    paragraph before it, so every step still finds its paragraph by its
+    position in the original document. A `set` or other text op and a
+    `page` or `column` break on one paragraph in one edit both apply.
   - Conflicts: two `page_setup` or two `columns` ops on one section are a
     `conflict`; so is either of them on the section of a section break, a
     second section break in the same edit, a second break on one paragraph,
