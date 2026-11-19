@@ -421,6 +421,7 @@ class RuntimeCore:
         append_event(session, "plan.proposed", planId=plan.id,
                      opsHash=plan.payload["opsHash"], backend=backend,
                      proposer=proposer, ops=len(plan.payload["ops"]),
+                     provenance=plan.payload.get("provenance"),
                      baseRunId=(base or {}).get("runId"),
                      reversesRunId=(reversal or {}).get("runId"))
         return {"plan": plan.public()}
@@ -461,7 +462,97 @@ class RuntimeCore:
                 # Degrade to the base profile; the validator then reports
                 # run_inventory_unavailable rather than assuming clean.
                 profile = base
-        return validate_plan(plan, profile=profile, current_sha256=current)
+        report = validate_plan(plan, profile=profile, current_sha256=current)
+        behind = self.behind_head(session, plan)
+        if behind is not None:
+            report["hard"].append(behind)
+            report["ok"] = False
+            report["verdict"] = "fail"
+            report["counts"]["hard"] = len(report["hard"])
+        return report
+
+    # -- the head -------------------------------------------------------------
+    @staticmethod
+    def head_run_id(session) -> str | None:
+        """The newest published candidate of a session, or ``None``.
+
+        The runtime keeps parents, not a head (§15.7), and a person can still
+        look at any candidate. But what a NEW plan may be applied onto is not a
+        matter of taste: applying onto anything older than the newest
+        candidate publishes a file that silently lacks the newest one's
+        changes. So for that one question the newest candidate is the head.
+        """
+        rows = list_candidates(session)
+        return rows[-1]["runId"] if rows else None
+
+    def behind_head(self, session, plan) -> dict | None:
+        """The ``plan_behind_head`` finding, when the plan predates the head.
+
+        A plan that was already applied is exempt: it IS the history, and its
+        base is older than the candidate it produced by construction.
+        """
+        if plan.state == "applied":
+            return None
+        head = self.head_run_id(session)
+        if head is None:
+            return None
+        base = plan.payload.get("base") or None
+        base_run = base.get("runId") if isinstance(base, dict) else None
+        if base_run == head:
+            return None
+        return {
+            "code": "plan_behind_head",
+            "msg": ("this plan was computed against "
+                    + ("the source" if base_run is None else f"candidate {base_run}")
+                    + f", but candidate {head} is newer; applying it would drop "
+                    "that candidate's changes. Re-propose on the head."),
+            "at": "plan",
+            "baseRunId": base_run,
+            "headRunId": head,
+        }
+
+    def _supersede_pending(self, session, applied_plan_id: str,
+                           head_run_id: str) -> list[str]:
+        """Return every other pending approval of this session.
+
+        Once a candidate is published, a pending approval for another plan of
+        the same session can only be applied by dropping that candidate. It is
+        resolved here as returned — never approved — with a reason code, so
+        the queue it belonged to stops offering a button that cannot work.
+        """
+        approvals_dir = self.store.root / "approvals"
+        if not approvals_dir.is_dir():
+            return []
+        superseded: list[str] = []
+        for path in sorted(approvals_dir.glob("*.json")):
+            payload = self.store.load_record("approvals", path.stem)
+            if not payload or payload.get("state") != "pending":
+                continue
+            plan_id = payload.get("planId")
+            if plan_id == applied_plan_id:
+                continue
+            plan_payload = self.store.load_record("plans", plan_id)
+            if not plan_payload or plan_payload.get("sessionId") != session.id:
+                continue
+            record = ApprovalRecord(payload)
+            resolve_approval(record, plan_id=plan_id,
+                             plan_hash=payload.get("planHash"),
+                             decision="rejected", approver=None,
+                             reason_code="superseded_by_newer_candidate")
+            record.payload["resolvedBy"] = "runtime"
+            record.payload["supersededBy"] = head_run_id
+            self.save_approval(record)
+            plan = OperationPlan(plan_payload)
+            if plan.state not in ("applied",):
+                plan.state = "rejected"
+                self.save_plan(plan)
+            append_event(session, "approval.resolved", planId=plan_id,
+                         approvalId=record.id, state="rejected",
+                         approver=None,
+                         reasonCode="superseded_by_newer_candidate",
+                         supersededBy=head_run_id)
+            superseded.append(record.id)
+        return superseded
 
     def plan_validate(self, plan_id) -> dict:
         plan = self.plan(plan_id)
@@ -500,7 +591,7 @@ class RuntimeCore:
         return {"approval": self.approval(approval_id).public()}
 
     def approval_resolve(self, approval_id, plan_id, plan_hash, decision,
-                         approver) -> dict:
+                         approver, reason=None) -> dict:
         record = self.approval(approval_id)
         plan = self.plan(plan_id)
         report = self.validated(plan)
@@ -510,15 +601,24 @@ class RuntimeCore:
                            "cannot be approved",
                            planId=plan.id, boundSha256=plan.payload["boundSha256"],
                            currentSha256=report["currentSha256"])
+        if decision == "approved":
+            # Returning an outdated plan stays possible; approving one does not.
+            behind = next((row for row in report["hard"]
+                           if row["code"] == "plan_behind_head"), None)
+            if behind is not None:
+                raise RpcError("plan_behind_head", behind["msg"],
+                               planId=plan.id, baseRunId=behind["baseRunId"],
+                               headRunId=behind["headRunId"])
         resolve_approval(record, plan_id=plan_id, plan_hash=plan_hash,
-                         decision=decision, approver=approver)
+                         decision=decision, approver=approver, reason=reason)
         plan.state = "approved" if record.state == "approved" else "rejected"
         self.save_approval(record)
         self.save_plan(plan)
         append_event(self.store.get(plan.payload["sessionId"]),
                      "approval.resolved", planId=plan.id,
                      approvalId=record.id, state=record.state,
-                     approver=approver)
+                     approver=approver,
+                     **({"reason": reason} if reason is not None else {}))
         return {"approval": record.public()}
 
     # -- apply --------------------------------------------------------------
@@ -550,6 +650,9 @@ class RuntimeCore:
                              sha256=candidate["candidate"]["sha256"],
                              acceptance=candidate["checks"]["acceptance"],
                              ranAll=candidate["checks"]["ranAll"])
+            # Idempotent: only approvals still pending are touched, so a
+            # replayed apply supersedes nothing twice.
+            self._supersede_pending(session, plan.id, candidate["runId"])
 
         def execute(run_id):
             report = self.validated(plan)
@@ -558,6 +661,12 @@ class RuntimeCore:
                                "the source changed after this plan was approved",
                                planId=plan.id, boundSha256=plan.payload["boundSha256"],
                                currentSha256=report["currentSha256"])
+            behind = next((row for row in report["hard"]
+                           if row["code"] == "plan_behind_head"), None)
+            if behind is not None:
+                raise RpcError("plan_behind_head", behind["msg"],
+                               planId=plan.id, baseRunId=behind["baseRunId"],
+                               headRunId=behind["headRunId"])
             if not report["ok"]:
                 raise RpcError("plan_invalid",
                                "this plan does not validate against the current document",

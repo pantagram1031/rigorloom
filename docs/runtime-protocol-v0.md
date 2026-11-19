@@ -545,6 +545,16 @@ engine's nearest existing relative is `--at-cell-expect`
 on mismatch, and `form_hash` (`engine/scripts/form_inspect.py:1418`) is the
 document-level hash a plan should bind to.
 
+`plan_behind_head` is its lineage sibling. A plan whose `base` is missing or
+names anything other than the session's newest candidate validates with this
+hard finding, and `approval/resolve` (decision `approved`) and `plan/apply`
+refuse with the same code: applying it would publish a file without the newest
+candidate's changes. Returning such a plan stays possible. When a plan is
+applied, every other pending approval of the same session is resolved as
+`rejected` with `reasonCode: "superseded_by_newer_candidate"`, `approver: null`
+and `resolvedBy: "runtime"`. `approval/resolve` takes an optional `reason`
+string, stored as the record's `reason` and never as its `approver`.
+
 ### 5.3 Severity mapping
 
 `hard` → error frame, exit-3-class · `warn` → carried in the response, never

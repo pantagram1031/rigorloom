@@ -309,6 +309,11 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
             "reverses": (dict(plan.payload["reverses"])
                          if plan.payload.get("reverses") else None),
             "approval": approval.public(),
+            # Who proposed the bytes, read from the plan the approval binds.
+            # ``provenance`` is "mock" for the bundled test agents and absent
+            # otherwise, so history can say a test value was approved.
+            "proposer": plan.payload.get("proposer"),
+            "provenance": plan.payload.get("provenance"),
             "steps": steps,
             "checks": checks,
             # The exemptions this candidate was graded WITH, bound to the plan
@@ -427,6 +432,8 @@ def list_candidates(session) -> list[dict]:
                 "base": payload.get("base"),
                 "reverses": payload.get("reverses"),
                 "acceptance": (payload.get("checks") or {}).get("acceptance"),
+                "proposer": payload.get("proposer"),
+                "provenance": payload.get("provenance"),
                 "opKinds": [step.get("kind") for step in payload.get("steps") or []],
             })
         rows.append(row)

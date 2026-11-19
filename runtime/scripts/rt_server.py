@@ -462,7 +462,7 @@ class RuntimeServer:
 
     def _m_approval_resolve(self, params: dict, _id) -> dict:
         params = _object(params, {"approvalId", "planId", "planHash", "decision",
-                                  "approver"},
+                                  "approver", "reason"},
                          required=("approvalId", "planId", "planHash", "decision"),
                          where="approval/resolve.params",
                          policy=self.unknown_field_policy)
@@ -470,7 +470,8 @@ class RuntimeServer:
             params["approvalId"], _text(params["planId"], "planId"),
             _text(params["planHash"], "planHash"),
             _text(params["decision"], "decision"),
-            params.get("approver") or "host-operator")
+            params.get("approver") or "host-operator",
+            reason=params.get("reason"))
 
     def _m_plan_apply(self, params: dict, request_id) -> dict:
         params = _object(params, {"planId", "approvalId"},

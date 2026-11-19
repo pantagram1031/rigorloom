@@ -137,6 +137,10 @@ def test_agent_propose_authority_separation_host_approve_apply_export_roundtrip(
         sub_res = client.rpc("event/subscribe", {"sessionId": session_id})
         assert sub_res["ok"] is True
 
+        # The test agent runs only with the developer setting on.
+        s_prefs, _ = client.post_json("/api/prefs", {"patch": {"devMockAgent": True}})
+        assert s_prefs == 200
+
         # 2) Run agenthost mock turn (`serve.py --entry agent`) — emits SSE agenthost://events,
         # builds validated plan & pending approval, and CANNOT call host-only approval/resolve or plan/apply.
         s_ah, ah_run = client.post_json(
@@ -539,3 +543,44 @@ def test_runtime_approval_resolve_and_apply_refuse_approvals_md_gate_name(bridge
         },
     )
     assert http_err.get("ok") is False and http_err["error"]["code"] == "unknown_approval"
+
+
+def test_the_test_agent_is_refused_without_the_developer_setting(bridge, monkeypatch):
+    """No real provider and no developer setting: nothing proposes anything.
+
+    The review found the bundled mock answering every request on a fresh
+    install, writing ``AGENT-HOST-0001`` into an unrelated cell under the label
+    of a real agent proposal. Now the bridge refuses, says why, and reports
+    ``mockAllowed: false`` so the UI can show the not-connected state.
+    """
+    monkeypatch.delenv("RIGORLOOM_DEV_MOCK_AGENT", raising=False)
+    _, client, _ = bridge
+    b64 = base64.b64encode(CORPUS_FORM.read_bytes()).decode("ascii")
+    s_up, opened = client.post_json("/api/open-upload", {"filename": "form.hwpx", "bytesBase64": b64})
+    assert s_up == 200
+    session_id = opened["sessionId"]
+
+    s_status, status = client.get_json("/api/agent-host/status")
+    assert s_status == 200 and status["mockAllowed"] is False
+
+    for path, body in (
+        ("/api/agent-host/run", {"sessionId": session_id, "instruction": "수신 칸을 채워 주세요"}),
+        ("/api/agent-host/run", {"sessionId": session_id, "provider": "mock"}),
+        ("/api/run-mock-agent", {"sessionId": session_id}),
+    ):
+        code, payload = client.post_json(path, body)
+        assert code == 409, (path, code, payload)
+        assert "agent_not_connected" in json.dumps(payload), payload
+
+    listed = client.rpc("plan/propose", {"sessionId": session_id, "backend": "preedit",
+                                         "ops": [{"kind": "fill_cell", "table": 0, "row": 5,
+                                                  "col": 1, "text": "x"}]})
+    assert listed["ok"] is True
+    events = client.rpc("event/poll", {"sessionId": session_id, "after": -1})["result"]["events"]
+    proposers = [(ev.get("detail") or {}).get("proposer") for ev in events if ev["kind"] == "plan.proposed"]
+    assert "agenthost-mock" not in proposers
+
+    s_on, _ = client.post_json("/api/prefs", {"patch": {"devMockAgent": True}})
+    assert s_on == 200
+    s_status, status = client.get_json("/api/agent-host/status")
+    assert status["mockAllowed"] is True

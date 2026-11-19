@@ -7,9 +7,10 @@ closed:
 1. **Two applies in a row must not lose the first edit.** Before lineage every
    apply chained from ``session.source``, so a second candidate was a sibling of
    the first, not a child — the second one silently did not carry the first
-   edit, and exporting it lost approved work. ``test_a_second_apply_without_a_
-   base_drops_the_first_edit`` pins that behaviour where it is still correct
-   (an explicitly source-based plan), and the base-run tests pin the fix.
+   edit, and exporting it lost approved work. A plan computed against
+   anything older than the newest candidate is now refused with
+   ``plan_behind_head`` (``test_a_plan_behind_the_head_cannot_be_approved_or_
+   applied``), and the base-run tests pin the fix.
 
 2. **The value an undo restores is READ, not remembered.**
    ``document/readRegion`` with a ``runId`` answers out of a published
@@ -89,21 +90,104 @@ def test_a_base_less_plan_records_a_null_base(tmp_path):
         assert receipt["reverses"] is None
 
 
-def test_a_second_apply_without_a_base_drops_the_first_edit(tmp_path):
-    """The pre-lineage behaviour, pinned where it is still what was asked for.
+def test_a_plan_behind_the_head_cannot_be_approved_or_applied(tmp_path):
+    """The defect this file exists for, now refused rather than pinned.
 
-    A plan that names no base is computed against the SOURCE and applied to the
-    source, so its candidate carries its own ops and nothing else. That is
-    correct and it is also why `baseRunId` had to exist: a client that just
-    kept editing got this silently.
+    A plan that names no base is computed against the SOURCE. Once a candidate
+    exists, applying it would publish a file without that candidate's edit —
+    the review called this "an outdated proposal overwrites 수정본 1". The
+    runtime now says so: validation carries the hard finding
+    ``plan_behind_head``, approving is refused with the same code, and
+    returning it stays possible.
     """
     with RuntimeClient(tmp_path / "root") as client:
         session = _open(client, tmp_path)
         _, first = _apply(client, session, FIRST)
-        _, second = _apply(client, session, SECOND)
-        text, subject = _text(client, session, CELL, run_id=second["runId"])
-        assert subject["kind"] == "candidate"
-        assert text != "처음", "a source-based second apply must not carry edit one"
+        plan = client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
+                                          "ops": SECOND})["plan"]
+        validation = client.ok("plan/validate", {"planId": plan["planId"]})["validation"]
+        assert validation["ok"] is False
+        behind = [row for row in validation["hard"] if row["code"] == "plan_behind_head"]
+        assert len(behind) == 1, validation["hard"]
+        assert behind[0]["baseRunId"] is None
+        assert behind[0]["headRunId"] == first["runId"]
+
+        approval = client.ok("approval/request", {"planId": plan["planId"]})["approval"]
+        refused = client.err("approval/resolve", {
+            "approvalId": approval["approvalId"], "planId": plan["planId"],
+            "planHash": plan["planHash"], "decision": "approved",
+            "approver": "test-operator"})
+        assert refused["code"] == "plan_behind_head", refused
+        assert refused["data"]["headRunId"] == first["runId"]
+
+        returned = client.ok("approval/resolve", {
+            "approvalId": approval["approvalId"], "planId": plan["planId"],
+            "planHash": plan["planHash"], "decision": "rejected",
+            "approver": "test-operator", "reason": "수신을 고쳐 주세요"})["approval"]
+        assert returned["state"] == "rejected"
+        # The reason is the reason; who decided stays who decided.
+        assert returned["reason"] == "수신을 고쳐 주세요"
+        assert returned["approver"] == "test-operator"
+
+        # The same ops on the head are fine.
+        _, second = _apply(client, session, SECOND, base=first["runId"])
+        one, _ = _text(client, session, CELL, run_id=second["runId"])
+        assert one == "처음", "a head-based second apply carries edit one"
+
+
+def test_an_approved_plan_behind_the_head_is_refused_at_apply(tmp_path):
+    """Approved before the head moved, applied after: still refused."""
+    with RuntimeClient(tmp_path / "root") as client:
+        session = _open(client, tmp_path)
+        late = client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
+                                          "ops": SECOND})["plan"]
+        late_approval = client.ok("approval/request",
+                                  {"planId": late["planId"]})["approval"]
+        client.ok("approval/resolve", {
+            "approvalId": late_approval["approvalId"], "planId": late["planId"],
+            "planHash": late["planHash"], "decision": "approved",
+            "approver": "test-operator"})
+        _apply(client, session, FIRST)
+        refused = client.err("plan/apply", {"planId": late["planId"],
+                                            "approvalId": late_approval["approvalId"]})
+        assert refused["code"] == "plan_behind_head", refused
+        assert len(client.ok("candidate/list", {"sessionId": session})["candidates"]) == 1
+
+
+def test_applying_a_plan_returns_other_pending_approvals_as_superseded(tmp_path):
+    with RuntimeClient(tmp_path / "root") as client:
+        session = _open(client, tmp_path)
+        waiting = client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
+                                             "ops": SECOND,
+                                             "proposer": "agenthost-mock"})["plan"]
+        assert waiting["provenance"] == "mock"
+        waiting_approval = client.ok("approval/request",
+                                     {"planId": waiting["planId"]})["approval"]
+        _, first = _apply(client, session, FIRST)
+
+        record = client.ok("approval/get",
+                           {"approvalId": waiting_approval["approvalId"]})["approval"]
+        assert record["state"] == "rejected"
+        assert record["decision"] == "rejected"
+        assert record["reasonCode"] == "superseded_by_newer_candidate"
+        assert record["supersededBy"] == first["runId"]
+        # Nobody approved anything on anyone's behalf.
+        assert record["approver"] is None
+        events = client.ok("event/poll", {"sessionId": session, "after": -1})["events"]
+        superseded = [ev for ev in events if ev["kind"] == "approval.resolved"
+                      and (ev.get("detail") or {}).get("reasonCode") == "superseded_by_newer_candidate"]
+        assert len(superseded) == 1, events
+
+
+def test_a_plan_from_a_person_carries_no_provenance(tmp_path):
+    with RuntimeClient(tmp_path / "root") as client:
+        session = _open(client, tmp_path)
+        plan, candidate = _apply(client, session, FIRST)
+        assert "provenance" not in plan
+        receipt = client.ok("receipt/read", {"sessionId": session,
+                                             "runId": candidate["runId"]})["receipt"]
+        assert receipt["provenance"] is None
+        assert receipt["proposer"] == plan["proposer"]
 
 
 def test_a_based_plan_chains_onto_the_candidate(tmp_path):
