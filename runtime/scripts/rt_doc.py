@@ -1510,7 +1510,8 @@ def _hwp_to_hwpx(e, data: bytes, sha: str) -> bytes:
 def _load(path, *, meta=True):
     """The Doc of a file's current bytes (cached by path, content and engine). The rev it carries is the rev of
     exactly the bytes it parsed. With meta, the engine's layout and form analysis are loaded once per Doc, so
-    every function resolves addresses against the same metadata whatever ran before."""
+    every function resolves addresses against the same metadata whatever ran before. meta="layout" loads only
+    the layout (render and geometry take page numbers, not addresses: no outline/analyze for a preview copy)."""
     p = _need_file(path)
     data = _read_bytes(p)
     fmt = _format_of_bytes(data[:8], p)
@@ -1534,18 +1535,19 @@ def _load(path, *, meta=True):
             while len(_DOCS) > _DOCS_MAX:
                 _DOCS.pop(next(iter(_DOCS)))
     if meta and e is not None:
-        _ensure_meta(d, e)
+        _ensure_meta(d, e, places=meta != "layout")
     return d
 
 
-def _ensure_meta(d, e):
+def _ensure_meta(d, e, places=True):
     """Layout (pages) and form analysis (headings, places) from the engine, once per Doc. A transient failure
     (timeout, worker gone) is retried by the next call; any other failure is kept, and the Doc then uses the
-    built-in analysis, the same for every caller."""
-    if d.meta_done:
+    built-in analysis, the same for every caller. places=False: the layout only (the rest waits for a caller
+    that resolves addresses)."""
+    if d.meta_done or (not places and d.layout is not None):
         return
     with d.meta_lock:
-        if d.meta_done:
+        if d.meta_done or (not places and d.layout is not None):
             return
         f = str(d.engine_file())
         transient = False
@@ -1557,7 +1559,10 @@ def _ensure_meta(d, e):
                                  if isinstance(s, dict) and isinstance(s.get("para"), int) and s["para"] >= 0] or [0]
             else:
                 transient |= bool((r.get("error") or {}).get("retryable"))
-                d.meta_errors.append({"fn": "pages", **(r.get("error") or {})})
+                if places:
+                    d.meta_errors.append({"fn": "pages", **(r.get("error") or {})})
+        if not places:
+            return
         if d.engine_places is None:
             # an engine whose outline takes known=[ids] (doc-core-api.md, amendment 2026-11-19 05:50Z) lists the
             # seats this module filled; one without it (or without outline) is asked for analyze() as before
@@ -3379,7 +3384,7 @@ def _edit_build(doc, acts, target, preview):
                                "structural_edit_unsupported", at=a.at, i=a.i)
         data = _fallback_apply(doc, order)
     else:
-        data, lay, before = _engine_apply(e, doc, order, target)
+        data, lay, before = _engine_apply(e, doc, order, target, draft=preview)
     newdoc = None
     if target.suffix.lower() == ".hwpx":
         try:
@@ -3422,8 +3427,29 @@ def _edit_build(doc, acts, target, preview):
     return res, data, newdoc
 
 
-def _engine_apply(e, doc, order, target):
-    """Run the ops as one engine script on the Doc's own bytes; (output bytes, layout, pages before)."""
+_NO_OPT = set()      # (engine folder, fn, option): options an older engine does not take (before hwp-engine #20)
+
+
+def _call_opt(e, fn, args, kw, opt):
+    """e.call(fn, *args, **kw, **opt) when the engine takes those options, else without them: an engine that
+    answers bad_input "unknown option(s) <name>" is asked again without, and not offered them again."""
+    key = _ENGINE_KEY or ""
+    names = tuple(sorted(opt))
+    if not opt or (key, fn, names) in _NO_OPT:
+        return e.call(fn, *args, **kw)
+    r = e.call(fn, *args, **kw, **opt)
+    err = r.get("error") or {}
+    if (not r.get("ok") and err.get("code") == "bad_input"
+            and any("unknown option(s) %s" % n in str(err.get("message")) for n in names)):
+        _NO_OPT.add((key, fn, names))
+        r = e.call(fn, *args, **kw)
+    return r
+
+
+def _engine_apply(e, doc, order, target, draft=False):
+    """Run the ops as one engine script on the Doc's own bytes; (output bytes, layout, pages before).
+    draft: a preview copy, never handed to the user: the engine may keep the source's thumbnail instead of drawing
+    page 1 again (edit(draft=True) inside its serve worker). An engine without that option is asked without it."""
     script, owner = [], []
     for a in order:
         for st in a.steps:
@@ -3434,7 +3460,8 @@ def _engine_apply(e, doc, order, target):
     try:
         staged = stage / ("out" + target.suffix.lower())
         before = e.call("pages", f, page_hash=True)
-        r = e.call("edit", f, script, out=str(staged), layout=True, page_hash=True)
+        r = _call_opt(e, "edit", (f, script), {"out": str(staged), "layout": True, "page_hash": True},
+                      {"draft": True} if draft else {})
         if not r.get("ok"):
             err = r.get("error") or {}
             step = err.get("step")
@@ -3719,6 +3746,10 @@ def _render(doc, sel, scale, fmt, names, pdf_name=None):
     want = sorted(sel)
     stage = Path(tempfile.mkdtemp(prefix="render-", dir=str(_scratch())))
     try:
+        if fmt == "png" and pdf_name is None:
+            got = _engine_png(e, f, sel, want, scale, names, stage)
+            if got is not None:
+                return got
         spdf = stage / "pages.pdf"
         r = e.call("pdf", f, str(spdf), pages=want)
         if not r.get("ok"):
@@ -3768,6 +3799,45 @@ def _render(doc, sel, scale, fmt, names, pdf_name=None):
         shutil.rmtree(stage, True)
 
 
+def _engine_png(e, f, sel, want, scale, names, stage):
+    """The engine's own png(): the same PDF rasterised by the same pypdfium2, written by the engine's PNG writer
+    (hwp-engine #20: same pixels, faster; inside its worker it reuses the layout an edit just made). None when the
+    engine has no png or it fails, so the caller draws through pdf() + pypdfium2 here as before."""
+    pdir = stage / "png"
+    pdir.mkdir()
+    try:
+        # notes="layout": only the chosen pages are drawn (render reports no approx; open()/pages() give the
+        # document's own)
+        r = _call_opt(e, "png", (f, str(pdir)), {"pages": want, "scale": float(scale)}, {"notes": "layout"})
+    except DocError:
+        return None
+    pages_ = r.get("pages") if r.get("ok") else None
+    if not isinstance(pages_, list):
+        return None
+    got = {}
+    for p in pages_:
+        if not isinstance(p, dict) or not isinstance(p.get("file"), str):
+            return None
+        fp = Path(p["file"])
+        if not fp.is_absolute() or fp.parent.resolve() != pdir.resolve() or not fp.is_file() or fp.is_symlink():
+            return None
+        with fp.open("rb") as fh:
+            if fh.read(8) != b"\x89PNG\r\n\x1a\n":
+                return None
+        if not all(_num(p.get(k)) for k in ("width_pt", "height_pt", "px_w", "px_h")):
+            return None
+        got[p.get("n")] = p
+    if sorted(n for n in got if isinstance(n, int)) != want:
+        return None
+    items, res = [], []
+    for n in sel:
+        p = got[n]
+        items.append((names[n], None, Path(p["file"])))
+        res.append({"n": n, "file": str(names[n]), **{k: p.get(k) for k in ("width_pt", "height_pt", "px_w", "px_h")}})
+    _publish_many(items)
+    return {"pages": res, "via": "engine_png"}
+
+
 def _render_args(doc, pages_, scale, fmt):
     if fmt not in ("png", "pdf"):
         raise DocError("bad_input", "fmt is png or pdf")
@@ -3785,7 +3855,7 @@ def render(path, pages, *, scale=2.0, fmt="png", out_dir=None):  # noqa: A002 - 
     """{rev, pages: [{n, file, width_pt, height_pt, px_w, px_h}]} in the order asked for; fmt="pdf" writes one
     PDF ({rev, file, pages: [{n, file, index, width_pt, height_pt}]}, pages in the PDF's ascending order).
     Files are ``<stem>.p<N>.png`` / ``<stem>.pdf`` in out_dir (default: a private scratch folder)."""
-    doc = _load(path)
+    doc = _load(path, meta="layout")
     _need_engine("render")
     sel = _render_args(doc, pages, scale, fmt)
     rdir = _scratch_sub("render")
@@ -3841,7 +3911,7 @@ def _one_page(doc, page):
 @_api
 def geometry(path, page):
     """{rev, page, width_pt, height_pt, boxes: [{at, kind, rect, text?, baseline?, xs?}]} (engine)."""
-    doc = _load(path)
+    doc = _load(path, meta="layout")
     _need_engine("geometry")
     return _passthrough("geometry", doc, _one_page(doc, page))
 

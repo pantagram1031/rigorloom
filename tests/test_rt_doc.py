@@ -853,3 +853,118 @@ def test_bottom_heading_is_not_a_finding_on_the_last_page():
     assert [(s["page"], s["at"], s["lines_after"]) for s in two if s["kind"] == "bottom_heading"] == [(1, "p7", 1)]
     last = D._signals([{"page": 1}, {"page": 2, "bottom_heading": dict(bh)}], pages={2})
     assert [s for s in last if s["kind"] == "bottom_heading"] == []
+
+
+def _prv(path):
+    with zipfile.ZipFile(path) as z:
+        names = [n for n in z.namelist() if n.lower().startswith("preview/prvimage")]
+        return z.read(names[0]) if names else None
+
+
+def test_preview_edits_are_drafts_and_older_engines_are_asked_without(kit, tmp_path, monkeypatch):
+    # a preview copy is never handed to the user: an engine with edit(draft=True) keeps the source's thumbnail
+    # there instead of drawing page 1 again; one without the option answers bad_input and is asked again without it
+    src = tmp_path / "a.hwpx"
+    shutil.copy(FX_DOC, src)
+    rev = D.open(str(src))["rev"]
+    monkeypatch.setattr(D, "_NO_OPT", set())
+    calls = []
+    real = D._Engine.call
+
+    def spy(self, fn, *a, **kw):
+        if fn == "edit":
+            calls.append("draft" in kw)
+        return real(self, fn, *a, **kw)
+    assert _prv(src) is not None
+    with patch.object(D._Engine, "call", spy):
+        r = D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서 양식 (안)"}], base=rev, preview=True)
+    assert r.get("ok", True) is not False and Path(r["out"]).exists()
+    old_engine = calls == [True, False]
+    if not old_engine:                          # the engine took draft: the source's thumbnail, not redrawn
+        assert calls == [True] and _prv(r["out"]) == _prv(src)
+    else:                                       # an older engine: asked again without draft, once per engine
+        assert ((D._ENGINE_KEY or ""), "edit", ("draft",)) in D._NO_OPT
+    calls.clear()
+    with patch.object(D._Engine, "call", spy):
+        b = D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서 양식 (안)"}], base=rev,
+                   out=str(tmp_path / "b.hwpx"))
+    assert calls == [False]                     # a real edit is never a draft
+    assert _prv(b["out"]) != _prv(src)          # and it draws the changed page 1 into its thumbnail
+    if not old_engine:                          # the preview differs from the real output only by that thumbnail
+        with zipfile.ZipFile(r["out"]) as za, zipfile.ZipFile(b["out"]) as zb:
+            na = [n for n in za.namelist() if not n.lower().startswith("preview/prvimage")]
+            assert na == [n for n in zb.namelist() if not n.lower().startswith("preview/prvimage")]
+            assert all(za.read(n) == zb.read(n) for n in na if n.lower().endswith(".xml"))
+
+
+def test_older_engine_without_draft_is_asked_once(kit, tmp_path, monkeypatch):
+    src = tmp_path / "a.hwpx"
+    shutil.copy(FX_DOC, src)
+    rev = D.open(str(src))["rev"]
+    monkeypatch.setattr(D, "_NO_OPT", set())
+    real, calls = D._Engine.call, []
+
+    def old_engine(self, fn, *a, **kw):
+        if fn == "edit":
+            calls.append("draft" in kw)
+            if "draft" in kw:
+                return {"ok": False, "error": {"code": "bad_input", "message": "edit: unknown option(s) draft; "
+                                                "options: path, script, out, pdf, pdf_pages, since, layout, page_hash"}}
+        return real(self, fn, *a, **kw)
+    with patch.object(D._Engine, "call", old_engine):
+        for t in ("가", "나"):
+            D.edit(str(src), [{"op": "set", "at": "p0", "text": t}], base=rev, preview=True)
+    assert calls == [True, False, False]
+
+
+@pytest.mark.parametrize("scale", [2.0, 1.37])
+def test_render_png_through_the_engine_matches_the_pdf_path_pixel_for_pixel(kit, tmp_path, scale):
+    PIL = pytest.importorskip("PIL.Image")
+    src = shutil.copyfile(FX_DOC, tmp_path / "doc.hwpx")
+    a = D.render(str(src), [1], scale=scale, out_dir=str(tmp_path / "a"))
+    assert a["via"] == "engine_png"             # the engine has png(): the new path ran, not the fallback twice
+    with patch.object(D, "_engine_png", lambda *a_, **k: None):
+        b = D.render(str(src), [1], scale=scale, out_dir=str(tmp_path / "b"))
+    assert b["via"] == "engine_pdf+pypdfium2"
+    pa, pb = a["pages"][0], b["pages"][0]
+    assert {k: pa[k] for k in ("n", "width_pt", "height_pt", "px_w", "px_h")} == \
+        {k: pb[k] for k in ("n", "width_pt", "height_pt", "px_w", "px_h")}
+    ia, ib = PIL.open(pa["file"]).convert("RGB"), PIL.open(pb["file"]).convert("RGB")
+    assert ia.size == ib.size and ia.tobytes() == ib.tobytes()
+
+
+def test_older_engine_png_without_notes_is_asked_once(kit, tmp_path, monkeypatch):
+    src = shutil.copyfile(FX_DOC, tmp_path / "doc.hwpx")
+    monkeypatch.setattr(D, "_NO_OPT", set())
+    real, calls = D._Engine.call, []
+
+    def old_engine(self, fn, *a, **kw):
+        if fn == "png":
+            calls.append(kw.get("notes"))
+            if "notes" in kw:
+                return {"ok": False, "error": {"code": "bad_input", "message": "png: unknown option(s) notes; "
+                                                "options: hwpx, out_dir, pages, scale"}}
+        return real(self, fn, *a, **kw)
+    with patch.object(D._Engine, "call", old_engine):
+        a = D.render(str(src), [1], out_dir=str(tmp_path / "a"))
+        b = D.render(str(src), [1], out_dir=str(tmp_path / "b"))
+    assert calls == ["layout", None, None] and a["via"] == b["via"] == "engine_png"
+
+
+def test_render_and_geometry_of_a_preview_copy_skip_the_form_analysis(kit, tmp_path):
+    # render/geometry take page numbers, not addresses: a fresh preview copy is not sent through outline/analyze
+    src = shutil.copyfile(FX_DOC, tmp_path / "doc.hwpx")
+    rev = D.open(str(src))["rev"]
+    r = D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서 (안)"}], base=rev, preview=True)
+    real, calls = D._Engine.call, []
+
+    def spy(self, fn, *a, **kw):
+        calls.append(fn)
+        return real(self, fn, *a, **kw)
+    with patch.object(D._Engine, "call", spy):
+        D.render(r["out"], [1])
+        D.geometry(r["out"], 1)
+    assert "analyze" not in calls and "outline" not in calls
+    with patch.object(D._Engine, "call", spy):
+        D.read(r["out"])                        # an address-resolving call still loads the form analysis
+    assert "analyze" in calls
