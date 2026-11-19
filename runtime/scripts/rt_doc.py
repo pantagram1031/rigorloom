@@ -962,6 +962,22 @@ def _attr(tag, name):
     return m.group(1) if m else None
 
 
+_XML_REF = re.compile(r"&(?:#x([0-9A-Fa-f]+)|#([0-9]+)|(amp|lt|gt|quot|apos));")
+_XML_NAMED = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
+
+
+def _xml_unescape(v):
+    """An attribute value as the document means it (place ids hash this, as the engine does)."""
+    def one(m):
+        if m.group(3):
+            return _XML_NAMED[m.group(3)]
+        try:
+            return chr(int(m.group(1), 16) if m.group(1) else int(m.group(2)))
+        except (ValueError, OverflowError):
+            return m.group(0)
+    return _XML_REF.sub(one, v)
+
+
 def _namespaces(s, name="section"):
     """(canon(name) -> name with the paragraph namespace's prefix spelled hp:, the prefix to write new tags with).
     Matching goes by namespace URI, not by the literal prefix."""
@@ -1278,7 +1294,7 @@ def _field_mark(s, m, name, tag, selfc, p, stack, paras):
             d = _DIRECTION.search(s, m.end(), close if close >= 0 else len(s))
             if d:
                 direction = "".join(_xml_char(x) for x in _XCHAR.finditer(d.group(1)))
-        f = {"type": _attr(tag, "type"), "name": _attr(tag, "name") or "", "id": _attr(tag, "id"),
+        f = {"type": _attr(tag, "type"), "name": _xml_unescape(_attr(tag, "name") or ""), "id": _attr(tag, "id"),
              "direction": direction, "b": len(p.chars), "e": None, "after": m.end(), "endx": None, "para": p}
         p.fields.append(f)
         for fr in reversed(stack):              # the control around it, when there is one

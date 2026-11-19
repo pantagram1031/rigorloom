@@ -823,6 +823,13 @@ def test_click_here_fields_are_fill_places(no_engine, tmp_path):
     assert r2["ok"] and texts(r2["out"])[1] == "김철수"
 
 
+def test_click_here_field_names_hash_as_the_document_means_them(no_engine, tmp_path):
+    # the engine decodes XML references before hashing; a name with & < > " must give the same id here
+    src = _fields_doc(tmp_path, extra=_field_para(3, 13, "a&amp;b &lt;c&gt; &quot;d&quot; &#xD55C;", "기타"))
+    pl = {p["label"]: p for p in D.outline(src)["places"]}
+    assert pl["기타"]["id"] == D.place_id("click", 'a&b <c> "d" 한', 0)
+
+
 def test_outline_says_when_places_are_incomplete(no_engine, tmp_path):
     ctrl = ('<hp:p id="9" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
             '<hp:run charPrIDRef="0"><hp:checkBtn caption="동의"/></hp:run></hp:p>')
