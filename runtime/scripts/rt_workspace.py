@@ -546,24 +546,8 @@ def _service_from_bridge(bridge: Any) -> WorkspaceService:
             if folder is None:
                 raise _uniform_not_found()
             return Path(folder)
-        root_fn = getattr(bridge, "workspace_root", None)
-        if callable(root_fn):
-            candidate = root_fn()
-            if candidate:
-                return Path(candidate)
-        prefs_fn = getattr(bridge, "get_prefs", None)
-        if callable(prefs_fn):
-            prefs = prefs_fn() or {}
-            # `docFolder` is the key the shell's 문서 폴더 setting writes;
-            # `documentsRoot` is accepted as the earlier name.
-            for key in ("docFolder", "documentsRoot"):
-                docs_root = prefs.get(key)
-                if isinstance(docs_root, str) and docs_root.strip():
-                    p = Path(docs_root).expanduser()
-                    if p.is_dir():
-                        return p
-        # No 문서 폴더 chosen: nothing is listed. The runtime's own store (the
-        # bridge root, with sessions and candidates) is never offered as one.
+        # A bridge without the checked 문서 폴더 offers nothing: there is no
+        # fallback to its root, a workspace_root() or an unchecked prefs value.
         raise _uniform_not_found()
 
     return WorkspaceService(resolve_bridge_root)
@@ -732,7 +716,11 @@ def register_routes(bridge: Any) -> dict[str, dict[str, Callable[..., Any]]] | N
 
 
 class WorkspaceHTTPServer(ThreadingHTTPServer):
-    """Standalone read-only HTTP server enforcing identical rt_ui security guards."""
+    """Standalone read-only HTTP server enforcing identical rt_ui security guards.
+
+    Nothing in the product launches it: it serves the tests and the module's
+    own checks. `rigorloom ui` serves these routes through its extension hook.
+    """
 
     allow_reuse_address = True
     daemon_threads = True

@@ -757,3 +757,21 @@ def test_the_doc_folder_refuses_windows_drive_roots_and_system_folders():
     ]
     for value in allowed:
         assert rt_ui.system_folder_refusal(PureWindowsPath(value)) is None, value
+
+
+def test_a_bridge_without_a_checked_doc_folder_offers_nothing(tmp_path: Path) -> None:
+    """No fallback to workspace_root() or an unchecked prefs value."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "기안문.hwpx").write_bytes(b"PK")
+
+    class BridgeWithoutDocFolder:
+        def workspace_root(self) -> str:
+            return str(docs)
+
+        def get_prefs(self) -> dict:
+            return {"docFolder": str(docs), "documentsRoot": str(docs)}
+
+    with pytest.raises(rt_workspace.WorkspaceError) as caught:
+        rt_workspace.handle_get(BridgeWithoutDocFolder(), "/api/workspace/list", {})
+    assert caught.value.status == rt_workspace.UNIFORM_NOT_FOUND_STATUS
