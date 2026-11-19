@@ -7,6 +7,7 @@ import * as rt from "../runtime";
 import { ensureDoc, getState, setState, subscribeWorkspace } from "../store";
 import type { RuntimeError } from "../types";
 import { findSessionByPath, pathBasename } from "../workspace/openHelpers";
+import { plainName } from "./names";
 import {
   activeTab,
   docLayout,
@@ -134,7 +135,7 @@ export function land(sessionId: string): void {
 function beginOpening(name: string, path?: string): string {
   const id = `opening:${(openingSeq += 1)}`;
   const s = getShell();
-  const tab: Tab = { kind: "opening", id, name, path };
+  const tab: Tab = { kind: "opening", id, name: plainName(name), path };
   const startAt = s.tabs.findIndex((t) => t.kind === "start");
   const tabs =
     startAt >= 0 && s.activeTab === "start"

@@ -6,11 +6,12 @@ import type { WorkspaceState } from "../store";
 import type { UiLanguage } from "../types";
 import { getSessionDisplayTitle, pathParentFolder } from "../workspace/openHelpers.ts";
 import { S } from "../i18n/v2/shell.ts";
+import { plainName } from "./names.ts";
 
 export function docTitle(s: WorkspaceState, sessionId: string): string {
   const session = s.sessions.find((x) => x.sessionId === sessionId) ?? null;
   if (!session) return S.t("shell_tab_untitled", s.language);
-  return getSessionDisplayTitle(session, s.openedPaths, s.corpusFiles, s.language) || session.source.name;
+  return plainName(getSessionDisplayTitle(session, s.openedPaths, s.corpusFiles, s.language) || session.source.name);
 }
 
 /** Whether a title is a sample form's catalogue title rather than a file name. */

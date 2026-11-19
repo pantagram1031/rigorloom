@@ -3,6 +3,7 @@
  * the attributes (`data-variant`) already follow the primitives' contract.
  */
 import type { ReactNode } from "react";
+import { plainName } from "./names";
 
 import { chordCaps } from "./keys";
 import { useKeyHint } from "./keys";
@@ -123,13 +124,19 @@ export function Btn({
 }
 
 /** File name with the extension dimmed (J1 §3 IA: tabs). */
-export function FileName({ name }: { name: string }) {
+/** A file name, without bidi controls and isolated from the text around it. */
+export function FileName({ name: raw }: { name: string }) {
+  const name = plainName(raw);
   const dot = name.lastIndexOf(".");
-  if (dot <= 0 || dot < name.length - 6) return <span className="sh-fname">{name}</span>;
+  if (dot <= 0 || dot < name.length - 6) {
+    return (
+      <bdi className="sh-fname">{name}</bdi>
+    );
+  }
   return (
-    <span className="sh-fname">
+    <bdi className="sh-fname">
       {name.slice(0, dot)}
       <span className="sh-fname-ext">{name.slice(dot)}</span>
-    </span>
+    </bdi>
   );
 }
