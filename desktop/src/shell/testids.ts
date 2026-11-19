@@ -19,10 +19,12 @@ export const TID = {
   toggleLeft: "toggle-left",
   toggleRight: "toggle-right",
   leftPane: "left-pane",
+  /** The shell's host for the `rightPanel` slot; `right-panel` is the panel's own root (WP4). */
+  rightPanelHost: "right-panel-host",
   paneTabs: "pane-tabs",
-  rightPanel: "right-panel",
-  canvas: "canvas",
-  docStrip: "doc-strip",
+  /** Shell hosts. The packages' own roots keep the D1 names (`doc-strip`, `paper`, `right-panel`). */
+  canvasHost: "canvas-host",
+  stripHost: "strip-host",
   statusbar: "statusbar",
   start: "start",
   startOpenFile: "start-open-file",
@@ -39,12 +41,14 @@ export const TID = {
   filesPane: "files-pane",
 
   // canvas (WP3)
+  docStrip: "doc-strip",
   paper: "paper",
   viewSwitch: "view-switch",
   stepper: "stepper",
   markToolbar: "mark-toolbar",
 
   // panel and gate (WP4)
+  rightPanel: "right-panel",
   approve: "approve",
   approveSheet: "approve-sheet",
   approveConfirm: "approve-confirm",

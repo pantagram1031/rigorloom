@@ -3,10 +3,12 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { loadPrefs } from "./runtime";
 import "./styles.css";
+import { resolveUiVariant, setUiVariant, uiVariantFromQuery } from "./uiVariant";
 
 // The v1 screens keep main's palette (v1-tokens.css applies under this mark).
-document.documentElement.dataset.ui = "v1";
+setUiVariant("v1");
 
 if (import.meta.env.DEV) {
   // Hot reload re-evaluates modules; let defineDocSlice accept a re-definition.
@@ -24,6 +26,10 @@ async function start() {
     const { installDevMock } = await import("./devMock");
     installDevMock();
   }
+  // v1 unless `?ui=v2` or the devEditorV2 developer preference opts in.
+  const query = uiVariantFromQuery(window.location.search);
+  const prefs = query ? null : await loadPrefs().catch(() => null);
+  setUiVariant(resolveUiVariant(query, prefs));
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <ErrorBoundary>
