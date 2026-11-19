@@ -929,6 +929,56 @@ OP_EXAMPLES = {
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
               "to": "with", "replace": "with", "replacement": "with", "value": "text",
               "content": "text", "address": "at", "where": "at", "md": "markdown"}
+#: What an op's fields mean where their names do not say: the `ops` guide topic.
+OP_NOTES = {
+    "set": "the new text of a paragraph, a range in one (p3:2-5) or a cell",
+    "replace": "`find` is plain text; without `all: true` it must match once, otherwise "
+               "ambiguous_match lists every match to pass as `at`",
+    "insert_after": "one plain paragraph per line; list markers and # are dropped and tables "
+                    "are refused; `like` copies another paragraph's style",
+    "delete": "removes a paragraph or a table, or empties a cell",
+    "table.set_cells": "`grid` is rows of cell texts written from the cell `at` names (from "
+                       "r0/c0 for a whole table); null leaves a cell as it is",
+    "table.add_row": "`after` is the row the new one goes under; `like` is the row whose look "
+                     "it copies, that row or the next",
+    "fill": "`place` is a place id from open (the fill tool takes several at once)",
+    "style": "`style` is a paragraph style name this document has",
+}
+#: The ops the edit description spells out: what agents send nearly every time.
+#: The rest are named there, with their fields in the `ops` guide topic.
+OPS_SPELLED = ("set", "replace", "insert_after", "delete")
+#: The guide topic built from OP_FIELDS, OP_NOTES and OP_EXAMPLES, in every install.
+OPS_TOPIC = "ops"
+
+
+def _op_signature(name: str) -> str:
+    required, optional = OP_FIELDS[name]
+    return name + "{" + ",".join([*required, *(k + "?" for k in optional)]) + "}"
+
+
+def _ops_guide() -> str:
+    lines = ["Ops for `edit`; `?` marks an optional field.",
+             "Addresses count from 0: p0 is the first paragraph, t0/r0/c0 the first cell "
+             "of the first table.",
+             "`expect` is the text you read at that address: if the text there differs, "
+             "nothing changes and the error says what is there.",
+             "Pass the `rev` you read as `base`.", ""]
+    for name in OP_FIELDS:
+        lines.append(_op_signature(name) + (": " + OP_NOTES[name] if name in OP_NOTES else ""))
+        lines.append("  " + OP_EXAMPLES[name])
+    return "\n".join(lines) + "\n"
+
+
+def _edit_description() -> str:
+    spelled = ", ".join(_op_signature(n) + (" (one plain paragraph per line, no tables)"
+                                            if n == "insert_after" else "") for n in OPS_SPELLED)
+    named = ", ".join(n for n in OP_FIELDS if n not in OPS_SPELLED and n != "fill")
+    return ("Change the document with declarative ops, staged into its draft (the "
+            "person's file is not touched until `save`). Ops: " + spelled + "; also "
+            + named + ". Each op's fields and an example: guide topic `ops`. Addresses "
+            "count from 0 (t0/r0/c0 is the first cell). Pass the `rev` you read as "
+            "`base`; use `expect` to guard the text you are replacing. Returns changed "
+            "pages: preview them.")
 
 
 #: A GFM table's delimiter row: | --- | :---: |
@@ -1059,14 +1109,7 @@ def _refuse_person_seats(ctx: Context, ref: Ref, ops: list) -> None:
 
 register(Tool(
     name="edit", title="고치기",
-    description="Change the document with declarative ops, staged into its draft "
-                "(the person's file is not touched until `save`). Ops: set{at,text,"
-                "expect?}, replace{find,with,at?,all?,expect?}, insert_after{at,"
-                "markdown,like?} (one plain paragraph per line, no tables), "
-                "delete{at,expect?}, table.set_cells{at,grid}, "
-                "table.add_row{at,after,like?}, table.delete_row{at}, style{at,style}. "
-                "Pass the `rev` you read as `base`; use `expect` to guard the text "
-                "you are replacing. Returns changed pages: preview them.",
+    description=_edit_description(),
     group="write", read_only=False, idempotent=False,
     input_schema=_obj({
         "path": S_PATH, "base": S_REV,
@@ -2169,16 +2212,20 @@ def _topics() -> dict[str, Path]:
 
 def _run_guide(ctx: Context, args: dict) -> dict:
     topics = _topics()
-    if not topics:
-        raise ToolError("capability_unavailable", "설치한 프로그램에 문서 작성 안내가 없습니다.")
     topic = args.get("topic")
     if not topic:
+        # The pack's index, when there is a pack: the placeholder says no topic is installed.
         index = KNOWLEDGE_DIR / "_index.md"
-        return {"topics": sorted(topics),
-                "text": index.read_text(encoding="utf-8") if index.exists() else ""}
+        return {"topics": sorted([*topics, OPS_TOPIC]),
+                "text": index.read_text(encoding="utf-8") if topics and index.exists() else ""}
+    if topic == OPS_TOPIC:
+        return {"topic": OPS_TOPIC, "text": _ops_guide()}
+    if not topics:
+        raise ToolError("capability_unavailable", "설치한 프로그램에 문서 작성 안내가 없습니다.")
     if topic not in topics:
         raise ToolError("not_found", f"'{topic}' 주제의 작성 안내가 없습니다.",
-                        hint="주제를 빼고 guide를 실행해 주제 목록을 확인하세요.", candidates=sorted(topics))
+                        hint="주제를 빼고 guide를 실행해 주제 목록을 확인하세요.",
+                        candidates=sorted([*topics, OPS_TOPIC]))
     return {"topic": topic, "text": topics[topic].read_text(encoding="utf-8")}
 
 
@@ -2197,13 +2244,13 @@ def _guide_description() -> str:
     """Name only the topics this install has: an agent that reads of a topic
     asks for it, and a build without the guides would answer every such call
     with a refusal."""
+    ops = "Topic `ops`: each `edit` op's fields with an example."
     topics = _topics()
     if not topics:
-        return ("Korean document conventions. This build has no guides installed, "
-                "so there is nothing to read here.")
+        return ops + " This build has no Korean writing guides."
     named = ", ".join(f"{t} ({GUIDE_TOPICS[t]})" if t in GUIDE_TOPICS else t for t in topics)
     return ("Korean document conventions with sources: " + named
-            + ". Read the one that fits before writing.")
+            + ". Read the one that fits before writing. " + ops)
 
 
 register(Tool(

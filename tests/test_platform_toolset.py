@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -1635,13 +1636,47 @@ def test_guide_names_only_the_topics_it_has(monkeypatch, tmp_path):
     empty.mkdir()
     monkeypatch.setattr(rt_toolset, "KNOWLEDGE_DIR", empty)
     assert rt_toolset._guide_description() == (
-        "Korean document conventions. This build has no guides installed, "
-        "so there is nothing to read here.")
+        "Topic `ops`: each `edit` op's fields with an example. "
+        "This build has no Korean writing guides.")
     (empty / "gongmun.md").write_text("# 공문\n", encoding="utf-8")
     (empty / "extra.md").write_text("# 기타\n", encoding="utf-8")
     assert rt_toolset._guide_description() == (
         "Korean document conventions with sources: extra, gongmun (공문 항목 기호, 날짜 표기, "
-        "‘끝.’ 표시, 붙임). Read the one that fits before writing.")
+        "‘끝.’ 표시, 붙임). Read the one that fits before writing. "
+        "Topic `ops`: each `edit` op's fields with an example.")
+
+
+def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeypatch, tmp_path):
+    # The edit description holds at most 700 characters and every new op
+    # would add its fields there; it spells out only the ops agents send
+    # nearly every time and names the rest. The guide topic `ops`, built from
+    # the same tables, has every op's fields and a working example, in every
+    # install, with or without the knowledge pack.
+    description = rt_tools.REGISTRY["edit"].description
+    for name in rt_toolset.OP_FIELDS:
+        if name != "fill":                          # the fill tool is its own entry
+            assert re.search(r"(?<![\w.])" + re.escape(name) + r"(?!\w)", description), name
+    for name in rt_toolset.OPS_SPELLED:
+        assert rt_toolset._op_signature(name) in description
+    assert "count from 0" in description
+
+    empty = tmp_path / "none"
+    empty.mkdir()
+    monkeypatch.setattr(rt_toolset, "KNOWLEDGE_DIR", empty)
+    listed = ok(call(env.ctx(), "guide", {}))
+    assert listed["topics"] == ["ops"] and listed["text"] == ""
+    text = ok(call(env.ctx(), "guide", {"topic": "ops"}))["text"]
+    for name, example in rt_toolset.OP_EXAMPLES.items():
+        assert rt_toolset._op_signature(name) in text and example in text, name
+        rt_toolset._check_ops([json.loads(example)])   # each example passes the op check
+    assert set(rt_toolset.OP_EXAMPLES) == set(rt_toolset.OP_FIELDS)
+    assert "t0/r0/c0 the first cell" in text
+    err(call(env.ctx(), "guide", {"topic": "gongmun"}), "capability_unavailable")
+
+    (empty / "gongmun.md").write_text("# 공문\n", encoding="utf-8")
+    assert ok(call(env.ctx(), "guide", {}))["topics"] == ["gongmun", "ops"]
+    assert err(call(env.ctx(), "guide", {"topic": "없는주제"}), "not_found")["candidates"] \
+        == ["gongmun", "ops"]
 
 
 def test_a_substituted_font_is_named_or_called_another_font():
