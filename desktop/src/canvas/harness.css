@@ -68,7 +68,7 @@ body,
   width: 6px;
   height: 6px;
   border-radius: 3px;
-  background: var(--accent);
+  background: var(--text-3);
 }
 
 .rl-harness-theme-btn {
@@ -135,7 +135,7 @@ body,
 .rl-harness-pane-tab--active {
   color: var(--ink);
   font-weight: var(--weight-semibold);
-  border-bottom-color: var(--accent);
+  border-bottom-color: var(--ink);
 }
 
 .rl-harness-pane-tab:focus-visible {
@@ -204,8 +204,12 @@ body,
 .rl-harness-change-n {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
-  color: var(--accent);
+  color: var(--text-2);
   min-width: 20px;
+}
+
+.rl-harness-change-n[data-accent] {
+  color: var(--accent);
 }
 
 .rl-harness-change-n[data-decided="true"] {

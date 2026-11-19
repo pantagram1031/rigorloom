@@ -140,7 +140,7 @@
   border-radius: 3px;
 }
 
-.rl-outline-dot--fact {
+.rl-outline-dot--fact[data-fact] {
   background: var(--fact);
 }
 
@@ -154,7 +154,7 @@
   font-weight: var(--weight-semibold);
 }
 
-.rl-outline-range--pending {
+.rl-outline-range--pending[data-accent] {
   color: var(--accent);
 }
 
