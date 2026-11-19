@@ -100,7 +100,7 @@ SCHEMA = "rigorloom/doc-core/v1"
 OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
-       "table.delete_col", "table.size")
+       "table.delete_col", "table.size", "page_setup", "columns", "break")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2529,7 +2529,7 @@ def _no_list_twice(cl, q, i, name, at):
 
 
 EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape", "numbering",
-              "table.delete_col")
+              "table.delete_col", "break")
 RANGE_OPS = ("set", "replace", "char_shape")
 
 
@@ -2910,6 +2910,114 @@ def _plan(doc, ops):
             exc.extra.setdefault("at", at if isinstance(at, str) else None)
             raise
     return acts
+
+
+#: 편집 용지 (F7): paper names and their portrait size in mm, as Hancom's 용지 종류 list names them.
+PAPER_MM = {"A3": (297, 420), "A4": (210, 297), "A5": (148, 210), "B4": (257, 364), "B5": (182, 257),
+            "LETTER": (215.9, 279.4), "LEGAL": (215.9, 355.6)}
+PAGE_SIZE_MM = (50, 1000)
+MARGIN_KEYS = ("left", "right", "top", "bottom", "header", "footer", "gutter")
+MARGIN_MM = (0, 500)
+GUTTER_TYPES = ("LEFT_ONLY", "LEFT_RIGHT", "TOP_BOTTOM")
+COLUMN_KINDS = ("NEWSPAPER", "BALANCED_NEWSPAPER", "PARALLEL")
+COLUMN_LAYOUTS = ("LEFT", "RIGHT", "MIRROR")
+COLUMN_COUNT = (1, 255)
+COLUMN_GAP_MM = (0, 100)
+BREAK_KINDS = ("page", "column", "section")
+
+
+def _in(v, lo, hi):
+    return _num(v) and lo <= v <= hi
+
+
+def _page_setup_kwargs(op, i, at):
+    """The checked ``set`` of a page_setup op as hnc_edit.page_setup keyword arguments."""
+    v = op.get("set")
+    keys = ("paper", "width_mm", "height_mm", "landscape", "margins", "gutter_type")
+    if not isinstance(v, dict) or not v:
+        raise DocError("bad_input", "page_setup needs set: {key: value} (keys: %s)" % ", ".join(keys), i=i, at=at)
+    bad = sorted(str(k) for k in v if k not in keys)
+    if bad:
+        raise DocError("bad_input", "page_setup: unknown key(s) %s (keys: %s)" % (", ".join(bad), ", ".join(keys)),
+                       i=i, at=at, candidates=_cands_near(list(keys), bad[0]))
+    kw = {}
+    if "paper" in v:
+        name = v["paper"].upper() if isinstance(v["paper"], str) else None
+        if name not in PAPER_MM:
+            raise DocError("bad_input", "page_setup: paper is one of %s" % ", ".join(PAPER_MM), i=i, at=at,
+                           candidates=list(PAPER_MM))
+        if "width_mm" in v or "height_mm" in v:
+            raise DocError("bad_input", "page_setup: give paper or width_mm/height_mm, not both", i=i, at=at)
+        kw["width_mm"], kw["height_mm"] = PAPER_MM[name]
+    for k in ("width_mm", "height_mm"):
+        if k in v:
+            if not _in(v[k], *PAGE_SIZE_MM):
+                raise DocError("bad_input", "page_setup: %s is %d to %d mm" % ((k,) + PAGE_SIZE_MM), i=i, at=at)
+            kw[k] = float(v[k])
+    if "landscape" in v:
+        if not isinstance(v["landscape"], bool):
+            raise DocError("bad_input", "page_setup: landscape is true or false", i=i, at=at)
+        kw["landscape"] = v["landscape"]
+    if "margins" in v:
+        m = v["margins"]
+        if not isinstance(m, dict) or not m:
+            raise DocError("bad_input", "page_setup: margins is {%s: mm}" % ", ".join(MARGIN_KEYS), i=i, at=at)
+        bad = sorted(str(k) for k in m if k not in MARGIN_KEYS)
+        if bad:
+            raise DocError("bad_input", "page_setup: margins has no %s (keys: %s)" % (bad[0], ", ".join(MARGIN_KEYS)),
+                           i=i, at=at, candidates=_cands_near(list(MARGIN_KEYS), bad[0]))
+        for k, x in m.items():
+            if not _in(x, *MARGIN_MM):
+                raise DocError("bad_input", "page_setup: margins.%s is %d to %d mm" % ((k,) + MARGIN_MM), i=i, at=at)
+        kw["margins_mm"] = {k: float(x) for k, x in m.items()}
+    if "gutter_type" in v:
+        g = v["gutter_type"].upper() if isinstance(v["gutter_type"], str) else None
+        if g not in GUTTER_TYPES:
+            raise DocError("bad_input", "page_setup: gutter_type is one of %s" % ", ".join(GUTTER_TYPES), i=i,
+                           at=at, candidates=list(GUTTER_TYPES))
+        kw["gutter_type"] = g
+    return kw
+
+
+def _columns_kwargs(op, i, at):
+    """The checked ``set`` of a columns op as hnc_edit.set_columns keyword arguments."""
+    v = op.get("set")
+    keys = ("count", "gap_mm", "line", "kind", "layout")
+    if not isinstance(v, dict) or "count" not in v:
+        raise DocError("bad_input", "columns needs set: {count, gap_mm?, line?, kind?, layout?}", i=i, at=at)
+    bad = sorted(str(k) for k in v if k not in keys)
+    if bad:
+        raise DocError("bad_input", "columns: unknown key(s) %s (keys: %s)" % (", ".join(bad), ", ".join(keys)),
+                       i=i, at=at, candidates=_cands_near(list(keys), bad[0]))
+    if not (_is_int(v["count"]) and COLUMN_COUNT[0] <= v["count"] <= COLUMN_COUNT[1]):
+        raise DocError("bad_input", "columns: count is %d to %d" % COLUMN_COUNT, i=i, at=at)
+    kw = {"count": v["count"]}
+    if "gap_mm" in v:
+        if not _in(v["gap_mm"], *COLUMN_GAP_MM):
+            raise DocError("bad_input", "columns: gap_mm is %d to %d" % COLUMN_GAP_MM, i=i, at=at)
+        kw["gap_mm"] = float(v["gap_mm"])
+    if "line" in v:
+        if not isinstance(v["line"], bool):
+            raise DocError("bad_input", "columns: line (구분선) is true or false", i=i, at=at)
+        kw["line"] = v["line"]
+    for k, allowed in (("kind", COLUMN_KINDS), ("layout", COLUMN_LAYOUTS)):
+        if k in v:
+            x = v[k].upper() if isinstance(v[k], str) else None
+            if x not in allowed:
+                raise DocError("bad_input", "columns: %s is one of %s" % (k, ", ".join(allowed)), i=i, at=at,
+                               candidates=list(allowed))
+            kw[k] = x
+    return kw
+
+
+def _section_claim(cl, si, i, name, at):
+    """page_setup, columns and a section break (name "break") each own a section's settings for the edit; a
+    section break also owns the edit's one new section (the engine adds it after the last one)."""
+    held = cl.__dict__.setdefault("sections", [])
+    for s2, j, op2, _at2 in held:
+        if j != i and ((s2 == si and (op2 == name or "break" in (op2, name))) or op2 == name == "break"):
+            cl._conflict(i, name, j, op2, at)
+    held.append((si, i, name, at))
 
 
 def _plan_op(doc, cl, i, name, op, at):
@@ -3397,6 +3505,55 @@ def _plan_op(doc, cl, i, name, op, at):
                 acts.append(_Act(i, name, at, q, q.start, side=2, intra=a0, steps=st))
             if not any(a.i == i for a in acts):
                 raise DocError("bad_input", "%s has no characters to shape" % at, i=i, at=at)
+    elif name in ("page_setup", "columns", "break"):
+        known = {"page_setup": ("set",), "columns": ("set",), "break": ("kind", "expect")}[name]
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "%s takes %s, not %s" % (name, ", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=list(known))
+        if name == "page_setup":
+            kw = _page_setup_kwargs(op, i, at)
+        elif name == "columns":
+            kw = _columns_kwargs(op, i, at)
+        else:
+            kind = op.get("kind")
+            if kind not in BREAK_KINDS:
+                raise DocError("bad_input", "break: kind is one of %s" % ", ".join(BREAK_KINDS), i=i, at=at,
+                               candidates=list(BREAK_KINDS))
+        r = resolve(doc, at, allow=("para", "heading"))
+        if r.get("range"):
+            raise DocError("bad_address", "%s takes a whole paragraph, not a character range" % name, i=i, at=at)
+        p = r["para"]
+        if not p.top:
+            raise DocError("bad_address", "%s needs a body paragraph, not one in a table, note or box" % name,
+                           i=i, at=at)
+        go = ["goto", p.k, 0, p.si]
+        if name == "page_setup":
+            _section_claim(cl, p.si, i, name, at)
+            acts.append(_Act(i, name, at, p, p.start, side=2, steps=[go, {"op": "page_setup", "kwargs": kw}]))
+        elif name == "columns":
+            _section_claim(cl, p.si, i, name, at)
+            acts.append(_Act(i, name, at, p, p.start, side=2, steps=[go, {"op": "set_columns", "kwargs": kw}]))
+        else:
+            _check_expect(op, i, at, p.text)
+            for s2, pos, j, op2, at2 in cl.touched:
+                if j != i and s2 == p.si and pos == p.start and op2 == "break":
+                    cl._conflict(i, name, j, op2, at)
+            if kind == "section":
+                sec_top = [q for q in doc.top if q.si == p.si]
+                if p.si != len(doc.secs) - 1:
+                    raise DocError("bad_address", "a section break goes in the last section (구역 %d of %d); "
+                                   "this one is in 구역 %d" % (len(doc.secs), len(doc.secs), p.si + 1), i=i, at=at)
+                if p is sec_top[0]:
+                    raise DocError("bad_address", "%s starts its section already" % at, i=i, at=at)
+                _section_claim(cl, p.si, i, name, at)
+                # the paragraphs from here on move into the new section: no other op may change them in this edit
+                cl.remove(p.si, p.start, max(q.end for q in sec_top), i, name, at)
+                acts.append(_Act(i, name, at, p, p.start, side=0, rank=1, steps=[go, ["break_section"]]))
+            else:
+                cl.touch(p.si, p.start, i, name, at)
+                acts.append(_Act(i, name, at, p, p.start, side=2,
+                                 steps=[go, ["break_page" if kind == "page" else "break_column"]]))
     elif name == "numbering":
         want = _numbering_set(op, i, at)
         if want["kind"] == "outline" and _outline_style(doc, want["level"]) is None:

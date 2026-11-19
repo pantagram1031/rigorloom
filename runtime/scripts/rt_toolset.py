@@ -918,6 +918,9 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "table.add_col": (("at",), ("after", "like")),
     "table.delete_col": (("at",), ("col", "expect")),
     "table.size": (("at",), ("width_mm", "height_mm", "col_widths_mm", "row_heights_mm")),
+    "page_setup": (("at", "set"), ()),
+    "columns": (("at", "set"), ()),
+    "break": (("at", "kind"), ("expect",)),
 }
 
 
@@ -940,6 +943,9 @@ OP_EXAMPLES = {
     "table.add_col": '{"op":"table.add_col","at":"t0","after":1}',
     "table.delete_col": '{"op":"table.delete_col","at":"t0/r0/c2"}',
     "table.size": '{"op":"table.size","at":"t0","col_widths_mm":[30,null,45]}',
+    "page_setup": '{"op":"page_setup","at":"p0","set":{"paper":"A4","margins":{"left":20,"right":20}}}',
+    "columns": '{"op":"columns","at":"p0","set":{"count":2,"gap_mm":8,"line":true}}',
+    "break": '{"op":"break","at":"p12","kind":"page"}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
