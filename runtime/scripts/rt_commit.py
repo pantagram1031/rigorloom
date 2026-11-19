@@ -328,7 +328,7 @@ def undo(target: Path, *, by: str, home: Path | None = None,
         entry = _last_undoable(entries, target, folder)
         if expect is not None and entry_id(entry) != expect:
             raise ToolError("stale", "확인하는 사이에 저장 기록이 바뀌어 되돌리지 않았습니다.",
-                            hint="저장 기록을 다시 확인한 뒤 실행하세요.", retryable=True,
+                            hint="저장 기록을 다시 확인한 뒤 되돌리기를 실행하세요.", retryable=True,
                             at=str(target), data={"history": str(folder)})
         mine = entry["newSha256"]
         changed = ToolError("target_changed", "확인하는 사이에 파일이 바뀌어 되돌리지 않았습니다.",
@@ -372,7 +372,7 @@ def undo(target: Path, *, by: str, home: Path | None = None,
         except OSError as exc:
             # The file is already back; only the record failed. Say so, and
             # where the bytes undo moved aside are (Sol re-check F3, round 3).
-            raise ToolError("internal", "되돌렸지만 저장 기록에 남기지 못했습니다.",
+            raise ToolError("internal", "파일은 되돌렸지만 저장 기록에는 남기지 못했습니다.",
                             hint=f"되돌리기 전 파일은 여기에 보관했습니다: {kept}",
                             at=str(target), data={"kept": str(kept), "error": exc.strerror}) from exc
     return {"target": str(target), "restored": restored,

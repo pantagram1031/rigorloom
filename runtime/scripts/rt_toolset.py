@@ -1284,14 +1284,14 @@ def _run_save(ctx: Context, args: dict) -> dict:
     if said_no:
         if ctx.client != "cli":
             raise ToolError("declined_by_person",
-                            "이 내용으로 파일을 덮어쓰지 않기로 했습니다.",
-                            hint="덮어쓸지 다시 묻지 마세요. 저장하려면 새 파일 이름을 먼저 받으세요.",
+                            "사용자가 이 내용으로 파일을 덮어쓰지 않기로 했습니다.",
+                            hint="덮어쓸지 다시 묻지 마세요. 저장하려면 먼저 사용자에게 새 파일 이름을 물어보세요.",
                             at=str(target))
         if ctx.force:
             hint = ("다른 이름으로 저장하세요: -o 새이름" if ctx.draft_scope else
-                    f"--force 없이 저장하면 터미널에서 직접 확인할 수 있습니다: {_person_line(ref, target)}")
+                    f"터미널에서 --force 없이 저장하면 덮어쓸지 직접 선택할 수 있습니다: {_person_line(ref, target)}")
             raise ToolError("declined_by_person",
-                            "이 내용으로는 덮어쓰지 않기로 한 기록이 있어 --force로 저장하지 않았습니다.",
+                            "사용자가 이 내용으로 덮어쓰기를 거절한 기록이 있어 --force로 저장하지 않았습니다.",
                             hint=hint, at=str(target))
 
     if not target.exists():
@@ -1370,7 +1370,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
             record = ctx.drafts.load(ref)
             if record is None:
                 # Discarded while we asked: there is nothing the person agreed to.
-                raise ToolError("stale", "확인하는 사이에 초안을 버려 저장하지 않았습니다.",
+                raise ToolError("stale", "확인하는 사이에 초안이 폐기되어 저장하지 않았습니다.",
                                 hint="초안을 다시 만든 뒤 저장하세요.", retryable=False,
                                 data={"reason": "superseded_by_newer_candidate"})
             head = record.get("head") or {}
