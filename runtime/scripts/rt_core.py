@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,6 +36,7 @@ from rt_apply import (  # noqa: E402
     _execute_preedit_steps,
     apply_plan,
     candidate_artifact,
+    input_snapshot,
     list_candidates,
     read_receipt,
     verification_report,
@@ -540,7 +542,7 @@ class RuntimeCore:
     def save_plan(self, plan: OperationPlan) -> None:
         self.store.save_record("plans", plan.id, plan.payload)
 
-    def validated(self, plan: OperationPlan) -> dict:
+    def validated(self, plan: OperationPlan, *, snapshot=None) -> dict:
         """Validate against the plan's OWN subject — source, or its base candidate.
 
         A plan chained onto a candidate must be checked against that
@@ -549,10 +551,19 @@ class RuntimeCore:
         And `current_sha256` is that subject's digest, so a candidate-based
         plan is never stale — a published candidate is immutable, which is the
         honest reason rather than an exemption.
+
+        ``snapshot`` (an ``rt_apply.InputSnapshot``) is the apply path's
+        private copy of that subject: when given, the profile is taken from
+        the copy and its digest is the current one, so the apply validates the
+        very bytes it then executes.
         """
         session = self.store.get(plan.payload["sessionId"])
-        subject, current = self.plan_subject(session, plan)
-        tag = "base" if subject is None else f"cand-{plan.payload['base']['runId'][:12]}"
+        if snapshot is None:
+            subject, current = self.plan_subject(session, plan)
+        else:
+            subject, current = snapshot.path, snapshot.sha256
+        tag = ("base" if not plan.payload.get("base")
+               else f"cand-{plan.payload['base']['runId'][:12]}")
         base = load_profile(self.tools, session, tag=tag, subject=subject)
         profile = base
         specs = safe_full_text_specs(wanted_full_text(plan), base)
@@ -830,23 +841,29 @@ class RuntimeCore:
             self._supersede_invalidated(session, plan.id)
 
         def execute(run_id):
-            report = self.validated(plan)
-            if report["stale"]:
-                raise RpcError("plan_stale",
-                               "the source changed after this plan was approved",
-                               planId=plan.id, boundSha256=plan.payload["boundSha256"],
-                               currentSha256=report["currentSha256"])
-            behind = next((row for row in report["hard"]
-                           if row["code"] == "plan_behind_head"), None)
-            if behind is not None:
-                raise RpcError("plan_behind_head", behind["msg"],
-                               planId=plan.id, baseRunId=behind["baseRunId"],
-                               headRunId=behind["headRunId"])
-            if not report["ok"]:
-                raise RpcError("plan_invalid",
-                               "this plan does not validate against the current document",
-                               planId=plan.id, hard=report["hard"])
-            result = apply_plan(self.tools, session, plan, record, checkpoint=checkpoint, run_id=run_id)
+            # One private copy of the input, hashed against the plan's binding
+            # (refused as plan_stale otherwise), then validated, executed and
+            # graded from that copy alone. The runtime's own copy can change
+            # after this line without reaching the candidate.
+            with input_snapshot(session, plan, run_id) as snapshot:
+                report = self.validated(plan, snapshot=snapshot)
+                if report["stale"]:
+                    raise RpcError("plan_stale",
+                                   "the source changed after this plan was approved",
+                                   planId=plan.id, boundSha256=plan.payload["boundSha256"],
+                                   currentSha256=report["currentSha256"])
+                behind = next((row for row in report["hard"]
+                               if row["code"] == "plan_behind_head"), None)
+                if behind is not None:
+                    raise RpcError("plan_behind_head", behind["msg"],
+                                   planId=plan.id, baseRunId=behind["baseRunId"],
+                                   headRunId=behind["headRunId"])
+                if not report["ok"]:
+                    raise RpcError("plan_invalid",
+                                   "this plan does not validate against the current document",
+                                   planId=plan.id, hard=report["hard"])
+                result = apply_plan(self.tools, session, plan, record, checkpoint=checkpoint,
+                                    run_id=run_id, snapshot=snapshot)
             response = {"candidate": result}
             reconcile(response, emit_events=True)
             return response
@@ -871,18 +888,12 @@ class RuntimeCore:
                 planId=plan.id,
                 backend=plan.payload.get("backend"),
             )
-        subject, current = self.plan_subject(session, plan)
-        origin = session.source if subject is None else subject
-        if plan.payload["boundSha256"] != current:
-            raise RpcError(
-                "plan_stale",
-                "the source changed after this plan was proposed",
-                planId=plan.id,
-                boundSha256=plan.payload["boundSha256"],
-                currentSha256=current,
-            )
-
-        with tempfile.TemporaryDirectory(prefix="rigorloom-plan-preview-") as tmp:
+        # The same discipline as an apply: one private copy, hashed against
+        # the binding (plan_stale otherwise), and every read below is of it.
+        with input_snapshot(session, plan, f"preview-{uuid.uuid4().hex}",
+                            when="proposed") as snapshot, \
+                tempfile.TemporaryDirectory(prefix="rigorloom-plan-preview-") as tmp:
+            origin, current = snapshot.path, snapshot.sha256
             tmp_dir = Path(tmp)
             base_profile_path = tmp_dir / "profile-base.json"
             self.tools.profile(origin, base_profile_path)
