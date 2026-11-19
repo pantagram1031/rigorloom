@@ -8,6 +8,10 @@ the kernel's contract shape.
 
 ## Unreleased
 
+### Added
+
+- **T179:** `rigorloom` has document verbs for people and agents: `open`, `read`, `find`, `edit`, `fill`, `new`, `preview`, `check`, `save`, `changes`, `undo`, `convert` and `guide`. Edits go to a draft kept outside your folder, and the file changes only on `save`. `save` asks before it replaces a file it did not create (`--force` answers yes up front), keeps the replaced copy, and `rigorloom undo` puts it back. `-o OUT` writes a one-off result without touching the shared draft. `--json` prints the same result an agent receives. Each tool is defined once and served to the CLI, the MCP server and the agent loop from the same registry, so the three cannot drift apart. Output for people is in Korean, and document text and file names lose terminal control and bidi characters before they are printed. Legacy commands (`--root DIR ...`, `guard`, `style`, `ui`, `doctor`, `install`, `engine`, `demo`) parse and print exactly as before. The document verbs need the document layer from T178; without it they answer `capability_unavailable` and exit 3.
+
 ### Changed
 
 - **T177:** XML report assembly now splits snapshot capture and one-shot compilation in `engine/scripts/build_report.py` from mechanical HWPX execution in `engine/scripts/report_xml_worker.py`. The worker consumes frozen operations, resolved post-processing settings, and content-addressed form, baseline, and figure blobs without re-reading source files, while measurement and rendering settings stay separate in `engine/scripts/fill_report.py`. User-visible CLI behavior, exit codes, verdicts, and receipts are unchanged.
