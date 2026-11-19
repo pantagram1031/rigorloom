@@ -925,6 +925,7 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "page_number": (("at",), ("pos", "format", "side_char")),
     "table.cell_style": (("at", "set"), ("to",)),
     "table.style": (("at", "set"), ()),
+    "style.create": (("name",), ("eng_name", "kind", "based_on", "char", "para")),
 }
 
 
@@ -955,6 +956,8 @@ OP_EXAMPLES = {
     "table.cell_style": '{"op":"table.cell_style","at":"t0/r0","set":{"fill":"#D9D9D9","header":true,'
                         '"border":{"bottom":{"type":"DOUBLE_SLIM","width":0.5}}}}',
     "table.style": '{"op":"table.style","at":"t0","set":{"repeat_header":true}}',
+    "style.create": '{"op":"style.create","name":"보고서 본문","based_on":"바탕글",'
+                    '"char":{"size":11,"bold":false},"para":{"align":"JUSTIFY","after":4}}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",

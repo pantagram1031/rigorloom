@@ -253,6 +253,26 @@ rt_doc.edit("보고서.hwpx", [
   are fields of the 글자 모양 / 문단 모양 dialogs. They change no addresses,
   and run before text edits in the same paragraph, so a range means what it
   meant in `base`.
+- `style.create` (서식 > 스타일 > 추가) makes a new style in the document's
+  header. It takes `name` (1 to 64 characters on one line, not only digits),
+  `eng_name` (optional), `kind` (`para`, the default, or `char`), `based_on`
+  (an existing style's name, English name or id; default 바탕글) and the
+  changes from that style: `char`, the `char_shape` keys except `markpen`
+  (형광펜 is a mark in the text, not part of a 글자 모양), and `para`, the
+  `para_shape` keys (refused for a `char` style). A style belongs to the whole
+  document, so the op takes no `at` and no `expect`, and no address changes.
+  Checked before anything runs: a name or English name the document already
+  has (as a name, an English name or an id) is `bad_input`, so the op never
+  changes an existing style; an unknown `based_on` is `bad_input` with the
+  nearest names as `candidates`; keys and ranges are those of `char_shape` /
+  `para_shape`. Two `style.create` ops in one edit that make the same name
+  are a `conflict`. A `style` op cannot apply a style that a `style.create`
+  in the same edit makes (`bad_input`): apply it in a later edit. Needs the
+  engine. After the edit a .hwpx output's header must hold the style once, with
+  its type and English name and the size, bold, italic, colour and alignment
+  asked; otherwise the edit fails and nothing is written. Changing,
+  renaming or deleting an existing style has no op yet: the engine has no
+  such step.
 - `numbering` puts whole paragraphs into 개요 번호, 문단 번호 or 글머리표, or
   takes them out: `set` is `{"kind": "outline"|"number"|"bullet"|"none"}`
   with `level` 1 to 7 (the XML's level 0 to 6; `outline` defaults to 1 and

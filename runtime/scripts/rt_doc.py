@@ -101,7 +101,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
-       "table.cell_style", "table.style")
+       "table.cell_style", "table.style", "style.create")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2488,6 +2488,7 @@ class _Act:
         self.restyled = []      # table gs whose cells or table properties alone change (grid and cells kept)
         self.cell_delta = []    # (table g, cells table.add_col adds)
         self.text_of = None     # the base paragraph whose text this act changes
+        self.new_style = None   # style.create: {name, eng, kind, char, para} the output's header must have
 
 
 class _Claims:
@@ -2500,6 +2501,8 @@ class _Claims:
         self.removed = []       # (si, start, end, i, op, at)
         self.touched = []       # (si, pos, i, op, at)
         self.tables = {}        # table g -> [(i, op, at, kind, rect, border)]: row and style ops on one table
+        self.new_styles = {}    # style name -> the first style.create op that makes it in this edit
+        self.created = {}       # style name -> (i, op) of the style.create planned so far
 
     def _conflict(self, i, op, j, op2, at):
         raise DocError("conflict", "ops %d (%s) and %d (%s) both change %s; send them in separate edits or as "
@@ -2575,12 +2578,14 @@ PARA_SHAPE = {
 _LS_TYPES = ("PERCENT", "FIXED", "BETWEEN_LINES", "AT_LEAST")
 
 
-def _shape_fmt(name, op, i, at):
-    """The checked ``set`` of a char_shape / para_shape op (keys and values an engine accepts)."""
-    table = CHAR_SHAPE if name == "char_shape" else PARA_SHAPE
-    fmt = op.get("set")
+def _shape_fmt(name, op, i, at, table=None, key="set"):
+    """The checked ``set`` of a char_shape / para_shape op (keys and values an engine accepts); with table and
+    key, the same check of another op's shape field (style.create's char / para), named ``name``."""
+    table = table or (CHAR_SHAPE if name == "char_shape" else PARA_SHAPE)
+    fmt = op.get(key)
     if not isinstance(fmt, dict) or not fmt:
-        raise DocError("bad_input", "%s needs set: {key: value} (keys: %s)" % (name, ", ".join(table)), i=i, at=at)
+        raise DocError("bad_input", "%s needs %s: {key: value} (keys: %s)" % (name, key, ", ".join(table)),
+                       i=i, at=at)
     bad = sorted(k for k in fmt if k not in table)
     if bad:
         raise DocError("bad_input", "%s: unknown key(s) %s (keys: %s)" % (name, ", ".join(map(str, bad)),
@@ -2630,7 +2635,7 @@ def _shape_fmt(name, op, i, at):
                            i=i, at=at)
         out[k] = v
     if out.get("sup") and out.get("sub"):
-        raise DocError("bad_input", "char_shape: sup and sub cannot both be on", i=i, at=at)
+        raise DocError("bad_input", "%s: sup and sub cannot both be on" % name, i=i, at=at)
     return out
 
 
@@ -3023,6 +3028,8 @@ def _plan(doc, ops):
         raise DocError("bad_input", "ops: a non-empty list of operations")
     acts = []
     cl = _Claims(doc)
+    cl.new_styles = {o["name"]: j for j, o in enumerate(ops) if isinstance(o, dict) and
+                     o.get("op") == "style.create" and isinstance(o.get("name"), str)}
     for i, op in enumerate(ops):
         if not isinstance(op, dict) or op.get("op") not in OPS:
             raise DocError("bad_input", "op %d: unknown operation %r (known: %s)" % (
@@ -3230,6 +3237,92 @@ def _section_claim(cl, si, i, name, at):
         if j != i and ((s2 == si and (op2 == name or "break" in (op2, name))) or op2 == name == "break"):
             cl._conflict(i, name, j, op2, at)
     held.append((si, i, name, at))
+
+
+#: style.create (스타일 추가, F6 > 추가): the fields it takes, and the 글자 모양 keys a style keeps (형광펜 is a
+#: mark in the text, not part of a 글자 모양)
+STYLE_CREATE_KEYS = ("name", "eng_name", "kind", "based_on", "char", "para")
+STYLE_CHAR = {k: v for k, v in CHAR_SHAPE.items() if k != "markpen"}
+STYLE_NAME_MAX = 64
+
+
+def _style_names(doc):
+    """Every name a style answers to in this document: its name, its English name and its id."""
+    out = set(doc.styles)
+    for st in doc.styles.values():
+        out.update(x for x in (st.get("name"), st.get("engName")) if x)
+    return out
+
+
+def _style_create(doc, cl, i, op, at):
+    """A new paragraph or character style from based_on with the given 글자 모양 / 문단 모양 changes, checked
+    against the document's styles before anything runs. A style belongs to the whole document: no at, no
+    expect, nothing in the body changes."""
+    name = "style.create"
+    if at is not None:
+        raise DocError("bad_input", "style.create takes no at: a style belongs to the whole document", i=i, at=at)
+    extra = sorted(str(k) for k in set(op) - {"op"} - set(STYLE_CREATE_KEYS))
+    if extra:
+        raise DocError("bad_input", "style.create takes %s, not %s" % (", ".join(STYLE_CREATE_KEYS), extra[0]),
+                       i=i, at=at,
+                       candidates=_cands_near(list(STYLE_CREATE_KEYS), extra[0]) or list(STYLE_CREATE_KEYS))
+    have = _style_names(doc)
+
+    def text(key, need):
+        v = op.get(key)
+        if v is None and not need:
+            return ""
+        if not isinstance(v, str) or not v or v != v.strip() or len(v) > STYLE_NAME_MAX or _CTRL.search(v) \
+                or re.search(r"[\t\n\r]", v):
+            raise DocError("bad_input", "style.create: %s is 1 to %d characters on one line, no control characters "
+                           "and no spaces at either end" % (key, STYLE_NAME_MAX), i=i, at=at)
+        if v.isdigit():
+            raise DocError("bad_input", "style.create: %s cannot be only digits (that reads as a style id)" % key,
+                           i=i, at=at)
+        if v in have:
+            raise DocError("bad_input", "style.create: this document already has a style called %r; pick another "
+                           "%s (style.create makes new styles only)" % (v, key), i=i, at=at)
+        return v
+    sname = text("name", True)
+    eng = text("eng_name", False)
+    if eng and eng == sname:
+        raise DocError("bad_input", "style.create: eng_name is the same as name", i=i, at=at)
+    for v in (sname, eng):
+        j = cl.created.get(v) if v else None
+        if j is not None:
+            cl._conflict(i, name, j, name, "style %r" % v)
+    kind = _enum(op.get("kind"), ("PARA", "CHAR"), "style.create: kind", i, at, "PARA")
+    base = op.get("based_on", "바탕글")
+    if not isinstance(base, str) or base not in have:
+        raise DocError("bad_input", "style.create: no style %r in this document to base it on" % (base,), i=i,
+                       at=at, candidates=_cands_near([st["name"] for st in doc.styles.values()], str(base)))
+    char = para = None
+    if "char" in op:
+        if isinstance(op["char"], dict) and "markpen" in op["char"]:
+            raise DocError("bad_input", "style.create: char has no markpen (형광펜 is a mark in the text, not part "
+                           "of a style's 글자 모양)", i=i, at=at)
+        char = _shape_fmt(name, op, i, at, table=STYLE_CHAR, key="char")
+    if "para" in op:
+        if kind == "CHAR":
+            raise DocError("bad_input", "style.create: a character style (kind char) keeps no 문단 모양; leave out "
+                           "para or use kind para", i=i, at=at)
+        para = _shape_fmt(name, op, i, at, table=PARA_SHAPE, key="para")
+    for v in (sname, eng):
+        if v:
+            cl.created[v] = i
+    first = doc.top[0]
+    kw = {"name": sname, "base": base, "kind": kind}
+    if eng:
+        kw["eng_name"] = eng
+    if char:
+        kw["char"] = dict(char)
+    if para:
+        kw["para"] = dict(para)
+    # intra -i: style.create ops run in input order, so the new styles get ids in that order
+    a = _Act(i, name, None, first, first.start, side=0, intra=-i, rank=0,
+             steps=[{"op": "create_style", "kwargs": kw}])
+    a.new_style = {"name": sname, "eng": eng, "kind": kind, "char": char or {}, "para": para or {}}
+    return a
 
 
 def _plan_op(doc, cl, i, name, op, at):
@@ -3748,12 +3841,17 @@ def _plan_op(doc, cl, i, name, op, at):
             raise DocError("bad_input", "style needs a style name", i=i, at=at)
         if sty not in {s["name"] for s in doc.styles.values()} | set(doc.styles) | {
                 s["engName"] for s in doc.styles.values()}:
+            if sty in cl.new_styles:
+                raise DocError("bad_input", "style %r is made by op %d (style.create) in this edit; apply it in "
+                               "a later edit, once the document has it" % (sty, cl.new_styles[sty]), i=i, at=at)
             raise DocError("bad_input", "no style %r in this document" % sty, i=i, at=at,
                            candidates=_cands_near([s["name"] for s in doc.styles.values()], sty))
         r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
         for q in r["paras"]:
             _no_list_twice(cl, q, i, name, at)
             acts.append(_Act(i, name, at, q, q.start, side=2, steps=[["goto", q.k, 0, q.si], ["apply_style", sty]]))
+    elif name == "style.create":
+        acts.append(_style_create(doc, cl, i, op, at))
     elif name in ("char_shape", "para_shape"):
         fmt = _shape_fmt(name, op, i, at)
         r = resolve(doc, at, allow=("para", "cell", "cellpara", "row", "table", "heading", "place"))
@@ -4193,6 +4291,8 @@ def _verify(doc, newdoc, acts):
         return False
     if not _verify_hf(newdoc, acts, st):
         return False
+    if not _verify_styles(doc, newdoc, acts):
+        return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
         ng = st["newt"][t.g]
@@ -4228,6 +4328,49 @@ def _verify_hf(newdoc, acts, st):
                 continue
             have = _hf_controls(newdoc, first, kind, x)
             if len(have) != 1 or "\n".join(q.text for q in have[0][1]) != y:
+                return False
+    return True
+
+
+def _verify_styles(doc, newdoc, acts):
+    """Each style a style.create op made is in the output's header.xml, once, with its type and English name,
+    and its charPr / paraPr hold the values asked that can be read back (size, bold, italic, color, align);
+    no style of the base document went missing."""
+    made = [a.new_style for a in acts if a.new_style]
+    if not made:
+        return True
+    if len(newdoc.styles) != len(doc.styles) + len(made):
+        return False
+    try:
+        root = ET.fromstring(newdoc.zip.read("Contents/header.xml"))
+    except (ET.ParseError, KeyError, OSError):
+        return False
+    prs = {}
+    for el in root.iter():
+        t = _local(el.tag)
+        if t in ("charPr", "paraPr"):
+            prs[(t, el.get("id"))] = el
+    for want in made:
+        got = [st for st in newdoc.styles.values() if st["name"] == want["name"]]
+        if len(got) != 1:
+            return False
+        st = got[0]
+        if st["type"] != want["kind"] or (st["engName"] or "") != want["eng"]:
+            return False
+        cp, pp = prs.get(("charPr", st["charPr"])), prs.get(("paraPr", st["paraPr"]))
+        if cp is None or pp is None:
+            return False
+        ch = want["char"]
+        if "size" in ch and cp.get("height") != str(int(round(ch["size"] * 100))):
+            return False
+        if "color" in ch and (cp.get("textColor") or "").upper() != ch["color"].upper():
+            return False
+        for k in ("bold", "italic"):
+            if k in ch and any(_local(x.tag) == k for x in cp) != ch[k]:
+                return False
+        if "align" in want["para"]:
+            al = next((x for x in pp.iter() if _local(x.tag) == "align"), None)
+            if al is None or al.get("horizontal") != want["para"]["align"]:
                 return False
     return True
 
@@ -4281,9 +4424,9 @@ def _remap_result(doc, newdoc, acts):
     if newdoc is None or _verify(doc, newdoc, acts):
         return remap, False
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
-            or a.hf]
-    if dels:        # a removal the output does not show was not done: never report it applied
-        raise DocError("internal", "the output does not show what op %d (%s) removes; nothing was written"
+            or a.hf or a.new_style]
+    if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
+        raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
     return _align_remap(doc, newdoc), True
 
