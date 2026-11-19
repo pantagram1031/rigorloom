@@ -66,6 +66,16 @@ def test_a_number_right_after_hangul_is_still_a_number(tmp_path):
         (1, ["numbers"]), (2, ["numbers"]), (3, ["numbers"])]
 
 
+def test_a_version_glued_to_a_latin_letter_is_left_alone(tmp_path):
+    # The boundary on the other side: digits right after an ASCII letter (v2,
+    # x86, A4) stay outside the guard, even when they change.
+    b = _write(tmp_path / "b.md", "내부 초안 표시는 v2다.")
+    a = _write(tmp_path / "a.md", "내부 초안 표시는 v3다.")
+    proc = _guard(b, a)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    result = json.loads(proc.stdout)["result"]
+    assert result["edited"] == 1 and result["changed"] == []
+
 
 def test_the_same_number_spelled_another_way_is_not_a_change(tmp_path):
     # Reading numbers after Hangul (T180) must not start flagging digit width,
@@ -75,6 +85,7 @@ def test_the_same_number_spelled_another_way_is_not_a_change(tmp_path):
     proc = _guard(b, a)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert json.loads(proc.stdout)["result"]["changed"] == []
+
 
 def test_added_or_removed_paragraphs_are_refused_not_guessed(tmp_path):
     b = _write(tmp_path / "b.txt", "하나.", "둘.")
