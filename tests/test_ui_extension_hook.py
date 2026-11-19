@@ -113,7 +113,20 @@ def test_extension_request_with_a_foreign_host_or_origin_is_refused(server):
         srv, "POST", "/api/wp2-fake/echo", body={}, headers={"Sec-Fetch-Site": "cross-site"}
     )
     assert status == 403
+    # A page on another origin holds no token by design, but even with one it
+    # never reaches an extension handler.
+    for origin in ("https://evil.example", "null"):
+        status, payload = _request(srv, "GET", "/api/wp2-fake/ping", headers={"Origin": origin})
+        assert status == 403 and payload["error"]["code"] == "invalid_origin", origin
+        status, payload = _request(
+            srv, "POST", "/api/wp2-fake/echo", body={}, headers={"Origin": origin}
+        )
+        assert status == 403 and payload["error"]["code"] == "invalid_origin", origin
     assert calls == []
+    # The bridge's own page and the desktop webview do reach it.
+    for origin in (f"http://127.0.0.1:{srv.port}", "tauri://localhost"):
+        status, _ = _request(srv, "GET", "/api/wp2-fake/ping", headers={"Origin": origin})
+        assert status == 200, origin
 
 
 def test_extension_post_body_is_capped_like_core_routes(server):
