@@ -1306,10 +1306,12 @@ def _run_save(ctx: Context, args: dict) -> dict:
                 raise ToolError("declined_by_person",
                                 "덮어쓰지 않았습니다. 초안은 그대로 있습니다.",
                                 hint=other, at=str(target))
-            raise ToolError("needs_person",
-                            "확인을 받지 못해 덮어쓰지 않았습니다. 터미널에서 실행하거나 "
-                            "--force를 붙이세요." if ctx.client == "cli"
-                            else "확인을 받지 못해 덮어쓰지 않았습니다.",
+            if ctx.client == "cli":
+                raise ToolError("needs_person",
+                                "터미널이 아니어서 덮어쓸지 묻지 못했습니다. 저장하지 않았습니다.",
+                                hint=f"터미널에서 다시 실행하거나 --force를 붙이세요. {other}",
+                                at=str(target), data=detail)
+            raise ToolError("needs_person", "확인을 받지 못해 덮어쓰지 않았습니다.",
                             hint=f"사람이 터미널에서 실행: {_person_line(ref, target)}. {other}",
                             at=str(target), data=detail)
         policy = "person:" + ("tty" if ctx.client == "cli" else "elicitation")

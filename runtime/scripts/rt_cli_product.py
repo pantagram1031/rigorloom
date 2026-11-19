@@ -499,7 +499,7 @@ def _context(args) -> Context:
                               for s in detail["fontsSubstituted"])
             lines.append(f"  글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)")
         lines.append("  이전 내용은 저장 기록에 남습니다. 되돌리기: "
-                     f"{detail.get('undo')}")
+                     f'rigorloom undo "{shown(str(detail.get("target")))}"')
         sys.stderr.write(safe_text(lines[0] + " [y/N]\n" + "\n".join(lines[1:])) + "\n")
         return confirm("", prompt="> ")
     return Context(client="cli", roots=None, source=getattr(args, "source", "disk"),
