@@ -37,7 +37,7 @@ A client configured with JSON takes the same command and arguments:
 | `fill` | fill form places; signature, seal and approval-date places are left for the person |
 | `new` | a new document from markdown (CommonMark by default; `dialect: "report"` for the report dialect, the only one a `form` takes), as `draft:<id>` |
 | `preview` | page images of the draft |
-| `check` | style, layout, font and changed-number checks; numbers that traded places come with `swapped`, each side's numbers with the words that name them |
+| `check` | style, layout, font and changed-number checks; numbers that traded places come with `swapped`, each side's numbers with the words that name them; a table is compared cell by cell, so a value written into an empty cell is an added fact (a notice), not a change |
 | `save` | write the draft to a file |
 | `changes` | drafts and save history |
 | `guide` | writing guides for official letters, reports and forms |
