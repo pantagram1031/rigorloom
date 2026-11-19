@@ -1,11 +1,14 @@
 /**
- * The mark, inline so it can inherit `currentColor` and be animated.
+ * The v1 weave mark, inline so it can inherit `currentColor` and be animated.
  *
- * Kept in sync with `src/assets/logo.svg`, which is the drawing of record and
- * the source the Tauri icon set is generated from. The geometry rationale lives
- * in that file's comment; this component only adds the class hooks the entrance
- * animation drives (`.rl-warp-a` … `.rl-leg`, drawn in the order a loom is
- * dressed) and `pathLength="100"` so stroke-dashoffset needs no measurement.
+ * The v1 screens (top bar, splash, boot) keep this mark until the switch to
+ * editor v2; it is no longer the drawing of record and no longer the source of
+ * the icon set. The product mark is now 리을R: `brand/Mark.tsx`, drawn from
+ * `src/assets/logo.svg`, and `desktop/scripts/make_icons.py` generates the
+ * Tauri icons and the favicon from its 16-px cut. This component only adds the
+ * class hooks the entrance animation drives (`.rl-warp-a` … `.rl-leg`, drawn in
+ * the order a loom is dressed) and `pathLength="100"` so stroke-dashoffset
+ * needs no measurement.
  */
 export function Logo({
   size = 20,

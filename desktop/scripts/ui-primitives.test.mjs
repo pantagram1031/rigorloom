@@ -247,3 +247,32 @@ test("public/favicon.ico uses the current shipped mark and index.html links it",
   );
   assert.match(indexHtml, /rel="icon"[^>]+favicon\.ico/);
 });
+
+test("Mark draws the 리을R as one path, the 16-px cut at small sizes and the full drawing above", async () => {
+  const { createRequire } = await import("node:module");
+  const vm = await import("node:vm");
+  const ts = (await import("typescript")).default;
+  const nodeRequire = createRequire(import.meta.url);
+  const source = fs.readFileSync(path.join(SRC_DIR, "brand", "Mark.tsx"), "utf8");
+  const { outputText } = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+    fileName: "Mark.tsx",
+  });
+  const mod = { exports: {} };
+  vm.runInThisContext(`(function(exports, require, module) {\n${outputText}\n})`)(mod.exports, nodeRequire, mod);
+  const { renderToStaticMarkup } = nodeRequire("react-dom/server");
+  const React = nodeRequire("react");
+  const svgPath = (file) => fs.readFileSync(path.join(SRC_DIR, "assets", file), "utf8").match(/<path d="([^"]+)"/)[1];
+  const render = (size) => renderToStaticMarkup(React.createElement(mod.exports.Mark, { size }));
+
+  const small = render(16);
+  const large = render(40);
+  for (const html of [small, large]) {
+    assert.equal((html.match(/<path\b/g) ?? []).length, 1, html);
+    assert.match(html, /pathLength="100"/);
+  }
+  assert.ok(small.includes(`d="${svgPath("logo-16.svg")}"`), small);
+  assert.ok(large.includes(`d="${svgPath("logo.svg")}"`), large);
+  assert.match(small, /width="16"/);
+  assert.match(large, /width="40"/);
+});
