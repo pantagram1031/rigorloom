@@ -132,13 +132,14 @@ def _same_folder(spelled: Path, root: Path) -> bool:
 
     The prefix test above folds case on Windows, but a folder there can be
     case-sensitive, so ``C:\\Base\\root`` and ``C:\\Base\\Root`` may be two
-    folders. The file system decides. A root that does not exist yet has
-    nothing to compare, and nothing under it can be read either.
+    folders. The file system decides, and when it cannot tell (the folder
+    is missing or cannot be looked up) the answer is no: nothing under a
+    folder that cannot be checked is allowed.
     """
     try:
         return os.path.samefile(spelled, root)
     except OSError:
-        return _norm(spelled) == _norm(root)
+        return False
 
 
 @dataclass

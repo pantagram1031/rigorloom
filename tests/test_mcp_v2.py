@@ -1255,6 +1255,16 @@ def test_cancelling_after_yes_does_not_wait_for_the_folder_list(env):
     assert path.read_bytes() == before
 
 
+def test_a_folder_whose_identity_cannot_be_read_grants_nothing(env, monkeypatch):
+    path = env.doc()
+    s = env.session()
+    s.handshake()
+    assert s.tool("open", {"path": str(path)})["isError"] is False
+    monkeypatch.setattr(rt_mcp, "_identity", lambda p: None)
+    r = s.tool("open", {"path": str(path)})
+    assert r["structuredContent"]["error"]["code"] in ("no_roots", "outside_roots")
+
+
 def test_mcp_is_a_product_verb_that_no_legacy_command_uses():
     import cli
     import rt_cli_product

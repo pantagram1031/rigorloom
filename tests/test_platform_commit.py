@@ -347,6 +347,21 @@ def test_a_folded_prefix_must_be_the_same_folder(tmp_path, monkeypatch):
     assert not roots.contains(upper / "a.hwpx")
 
 
+def test_a_folder_the_file_system_cannot_check_allows_nothing(tmp_path, monkeypatch):
+    # Sol's re-check of 07d6997: when the identity lookup failed, the match
+    # fell back to comparing names and allowed the path.
+    root = tmp_path / "root"
+    root.mkdir()
+    roots = Roots.of([root])
+    assert roots.contains(root / "a.hwpx")
+
+    def cannot_tell(a, b):
+        raise PermissionError("no access")
+
+    monkeypatch.setattr(rt_paths.os.path, "samefile", cannot_tell)
+    assert not roots.contains(root / "a.hwpx")
+
+
 def test_empty_and_nul_paths_are_refused():
     for raw in ("", "   ", "a\x00b.hwpx"):
         with pytest.raises(PathRefused):

@@ -670,9 +670,11 @@ class McpServer:
             except (OSError, ValueError):
                 same_place = False
             now = _identity(path)
+            if now is None:
+                continue  # missing or unreadable now: grants nothing, kept for later
             if known is None and same_place:
                 entry[1] = known = now  # first seen now: remember this folder
-            if same_place and (now is None or now == known):
+            if same_place and now == known:
                 out.append(path)
             elif str(path) not in self._dropped_roots:
                 self._dropped_roots.add(str(path))
