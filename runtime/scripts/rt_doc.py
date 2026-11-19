@@ -3598,10 +3598,10 @@ def _plan_op(doc, cl, i, name, op, at):
         if r.get("range"):
             raise DocError("bad_address", "numbering takes whole paragraphs, not a character range", i=i, at=at)
         paras = [q for q in r["paras"] if q is not None]
-        if len(paras) == 1:
+        if r.get("cell") is not None and r["kind"] in ("cell", "place"):
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
+        elif len(paras) == 1:
             _check_expect(op, i, at, paras[0].text)
-        elif r.get("cell") is not None:
-            _check_expect(op, i, at, _cell_text(r["cell"]))
         elif op.get("expect") is not None:
             raise DocError("bad_input", "expect works on one paragraph or cell", i=i, at=at)
         for q in paras:

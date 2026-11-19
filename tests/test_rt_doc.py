@@ -231,6 +231,8 @@ def test_expect_on_a_cell_names_where_the_expected_text_is(no_engine, tmp_path):
     assert e["found_at"] == "t0/r2/c2"
     e = refused({"op": "char_shape", "at": "t0/r0/c0", "set": {"bold": True}, "expect": "연락"})
     assert e["found_at"] == "t0/r2/c0"      # checked before the engine is needed
+    e = refused({"op": "numbering", "at": "t0/r0/c0", "set": {"kind": "bullet"}, "expect": "연락"})
+    assert e["found_at"] == "t0/r2/c0"
     # Nowhere in the table, or in more than one cell (the empty ones): no guess.
     assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": "없는 글"})
     assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": ""})
