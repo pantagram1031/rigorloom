@@ -10,8 +10,8 @@ default UI. This module captures what a person sees on the five v1 screens
   (custom properties left out: they show only through the properties that
   read them).
 
-`tests/fixtures/v1_main_ui_dist/` is main's committed bundle after the brand
-pull request, copied unchanged. `tests/test_ui_v1_identity.py` captures that
+`tests/fixtures/v1_main_ui_dist/` is main's committed bundle after PR #403
+(T189, the brand pull request), copied unchanged. `tests/test_ui_v1_identity.py` captures that
 bundle and the current one with the same runtime, browser and fonts, at the
 default URL and at `?ui=v1`, and compares. Capturing both on the same
 machine keeps what depends on the machine (a preview that cannot render, font
@@ -31,8 +31,8 @@ Rules for `tests/fixtures/v1_main_ui_dist/` (set by the advisor):
    names the change instead.
 4. Each refresh adds about 730 KB to the history.
 
-The folder currently holds main after the brand pull request; before it, the
-folder held main dbc1b18's bundle.
+The folder currently holds main after PR #403 (T189); before it, the folder
+held main dbc1b18's bundle.
 
 To look at one capture by hand:
 
