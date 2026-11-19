@@ -39,6 +39,7 @@ export const S = defineStrings("shell", {
   shell_files_empty: { ko: "이 폴더에 열 수 있는 문서가 없습니다.", en: "No documents in this folder." },
   shell_files_unavailable: { ko: "문서 폴더를 읽을 수 없습니다.", en: "The documents folder cannot be read." },
   shell_files_loading: { ko: "폴더 읽는 중", en: "Reading folder" },
+  shell_open_filter: { ko: "문서", en: "Documents" },
 
   // start tab
   shell_start_boundary: {
@@ -129,6 +130,7 @@ export const S = defineStrings("shell", {
   shell_settings_general: { ko: "일반", en: "General" },
   shell_settings_folders: { ko: "폴더", en: "Folders" },
   shell_settings_dev: { ko: "개발", en: "Developer" },
+  shell_settings_agent: { ko: "에이전트", en: "Agent" },
   shell_settings_language: { ko: "화면 언어", en: "Language" },
   shell_settings_theme: { ko: "화면 테마", en: "Theme" },
   shell_settings_theme_system: { ko: "시스템", en: "System" },

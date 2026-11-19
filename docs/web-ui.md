@@ -37,6 +37,14 @@ What you can do there:
   dialog, which writes `APPROVALS.md` (see below). The gate routes are
   unchanged; none of the five screens shows them outside that section.
 
+### Editor v2 (opt-in)
+
+The five screens above stay the default. The editor v2 shell (tabs, the
+Start tab, the 파일 pane, the palette) opens instead with `?ui=v2` in the
+address, or, in the browser and the desktop app alike, when the developer
+preference `devEditorV2` is `true` in `prefs.json` (read through the same
+prefs route as `devMockAgent`). `?ui=v1` always opens the five screens.
+
 ## Security model
 
 The bridge is meant for one person on their own computer.
@@ -60,7 +68,11 @@ The bridge is meant for one person on their own computer.
   a Windows system folder (`Windows`, `Program Files`, `Program Files (x86)`,
   `ProgramData` and what they hold), the whole home folder, or the runtime's
   own store; the bridge checks
-  it again on every use. Workspace, page and style routes and
+  it again on every use. In the desktop app, choosing a 문서 폴더 (폴더 열기
+  or 설정) saves `docFolder` to the app's own prefs for display only: the
+  runtime never reads that value as the folder, and the desktop 파일 pane
+  lists nothing yet. A future desktop listing goes through the same
+  `POST /api/doc-folder` check. Workspace, page and style routes and
   `/api/approval/confirmation` cap their bodies at 16 KiB.
 - The event stream (`/events`) and staged export download
   (`/api/export-download`) accept the per-launch token via `?token=`.

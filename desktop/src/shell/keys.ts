@@ -21,8 +21,11 @@ import { useSyncExternalStore } from "react";
 
 export type KeyProfile = "standard";
 
-/** A context name such as `review`, `sheet`, `pageEdit`, `composer`. Absent = global. */
-export type KeyWhen = string;
+/**
+ * A context name such as `review`, `sheet`, `pageEdit`, `composer`, or a
+ * predicate read at dispatch time. Absent, `"global"` or `"always"` = global.
+ */
+export type KeyWhen = string | (() => boolean);
 
 export interface KeyBinding {
   /** Stable action id, e.g. `shell.palette`, `review.accept`. One binding per id. */
@@ -40,7 +43,7 @@ export interface KeyBinding {
   /** See the file comment. Default: true for modifier chords, false for single keys. */
   inEditable?: boolean;
   /** Return `false` to decline, letting the next match (or the browser) have the key. */
-  run: (event: KeyEventLike) => boolean | void;
+  run: (event: KeyEventLike) => boolean | void | Promise<unknown>;
 }
 
 /** The subset of `KeyboardEvent` the dispatcher reads. Tests pass plain objects. */
@@ -127,6 +130,13 @@ const CODE_ALIASES: Record<string, string> = {
   Numpad9: "Digit9",
 };
 
+/** `KeyboardEvent.code` names accepted verbatim in chords (`Ctrl+Equal`). */
+const KNOWN_CODES = new Set([
+  "Equal", "Minus", "Comma", "Period", "Slash", "Semicolon", "Quote", "BracketLeft", "BracketRight",
+  "Backslash", "Backquote", "Enter", "Escape", "Tab", "Space", "Backspace", "Delete", "ArrowUp",
+  "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End", "Insert",
+]);
+
 function keyToCode(raw: string): string {
   const k = raw.trim();
   if (k.length === 1 && /[a-z]/i.test(k)) return `Key${k.toUpperCase()}`;
@@ -134,7 +144,8 @@ function keyToCode(raw: string): string {
   if (/^f([1-9]|1[0-2])$/i.test(k)) return k.toUpperCase();
   const named = NAMED[k.toLowerCase()];
   if (named) return named;
-  if (/^(Key[A-Z]|Digit[0-9])$/.test(k)) return k;
+  if (/^(Key[A-Z]|Digit[0-9]|Numpad[0-9])$/.test(k)) return CODE_ALIASES[k] ?? k;
+  if (KNOWN_CODES.has(k)) return k;
   throw new Error(`keys: unknown key name "${raw}"`);
 }
 
@@ -324,9 +335,20 @@ export function defineContext(name: string, active: () => boolean): () => void {
   };
 }
 
+function isGlobal(when: KeyWhen | undefined): boolean {
+  return !when || when === "global" || when === "always";
+}
+
 export function isContextActive(when: KeyWhen | undefined): boolean {
-  if (!when || when === "global") return true;
-  const getter = contexts.get(when);
+  if (isGlobal(when)) return true;
+  if (typeof when === "function") {
+    try {
+      return Boolean(when());
+    } catch {
+      return false;
+    }
+  }
+  const getter = contexts.get(when as string);
   if (!getter) return false;
   try {
     return Boolean(getter());
@@ -349,6 +371,13 @@ export function getBinding(id: string): KeyBinding | null {
 
 export function allBindings(): KeyBinding[] {
   return [...entries.values()].sort((a, b) => a.seq - b.seq).map((e) => e.binding);
+}
+
+/** Run a binding's action by id, as if its key were pressed. False when nothing is bound. */
+export function runKeyAction(id: string): boolean {
+  const b = entries.get(id)?.binding;
+  if (!b) return false;
+  return b.run({ code: "" }) !== false;
 }
 
 /** Keycaps for the binding's first active chord, or null when nothing is bound. */
@@ -399,7 +428,7 @@ export function conflicts(list: KeyBinding[] = allBindings()): ChordConflict[] {
   const out: ChordConflict[] = [];
   const flat: Array<{ id: string; when: string; profile: string; key: string; chord: string }> = [];
   for (const b of list) {
-    const when = b.when ?? "global";
+    const when = isGlobal(b.when) ? "global" : typeof b.when === "function" ? `fn:${b.id}` : (b.when as string);
     const profile = b.profile ?? "standard";
     for (const chord of [...b.chords, ...(b.browserChords ?? [])]) {
       flat.push({ id: b.id, when, profile, key: chordId(chord), chord });
@@ -422,6 +451,26 @@ export function conflicts(list: KeyBinding[] = allBindings()): ChordConflict[] {
     }
   }
   return out;
+}
+
+/**
+ * Chords that more than one binding would answer right now, given the
+ * contexts and predicates as they stand. Predicate-scoped bindings (WP3's and
+ * WP4's review keys) are separate scopes for `conflicts()`; this is the check
+ * that their predicates really are exclusive in a given state.
+ */
+export function activeConflicts(): ChordConflict[] {
+  const live = allBindings().filter((b) => isContextActive(b.when) && (b.profile ?? "standard") === "standard");
+  const byChord = new Map<string, string[]>();
+  for (const b of live) {
+    for (const chord of activeChords(b)) {
+      const key = chordId(chord);
+      byChord.set(key, [...(byChord.get(key) ?? []), b.id]);
+    }
+  }
+  return [...byChord.entries()]
+    .filter(([, ids]) => new Set(ids).size > 1)
+    .map(([chord, ids]) => ({ chord, when: "active", profile: "standard", ids: [...new Set(ids)] }));
 }
 
 function strokeEq(a: Stroke, b: Stroke): boolean {
@@ -454,8 +503,8 @@ export function dispatch(e: KeyEventLike, now: number = Date.now()): boolean {
 
   // Scoped bindings win over global ones; among equals the latest registration wins.
   candidates.sort((a, b) => {
-    const as = a.binding.when && a.binding.when !== "global" ? 1 : 0;
-    const bs = b.binding.when && b.binding.when !== "global" ? 1 : 0;
+    const as = isGlobal(a.binding.when) ? 0 : 1;
+    const bs = isGlobal(b.binding.when) ? 0 : 1;
     return bs - as || b.seq - a.seq;
   });
 
@@ -494,6 +543,7 @@ export function _resetForTest(): void {
 
 export const keys = {
   register,
+  activeConflicts,
   defineContext,
   dispatch,
   conflicts,

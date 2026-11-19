@@ -918,6 +918,53 @@ def test_v2_css_token_usage_rules() -> None:
     assert not violations, "J1 §4 CSS token usage rule violations:\n" + "\n".join(violations)
 
 
+CSS_CLASS_RE = re.compile(r"\.([A-Za-z_][A-Za-z0-9_-]*)")
+
+
+def _v1_class_names() -> set[str]:
+    """Classes the v1 stylesheet (styles.css) styles; `?ui=v1` renders with these."""
+    names: set[str] = set()
+    for _media, selector, _body in _iter_css_rules(STYLES_CSS.read_text(encoding="utf-8")):
+        for part in selector.split(","):
+            names.update(CSS_CLASS_RE.findall(part))
+    return names
+
+
+def _find_v1_leaks(css_text: str, rel_label: str, v1_classes: set[str]) -> list[str]:
+    """v2 rules that select a v1 class without a v2-only ancestor."""
+    leaks: list[str] = []
+    for media, selector, _body in _iter_css_rules(css_text):
+        if media and media.startswith(("@keyframes", "@-webkit-keyframes")):
+            continue
+        for part in selector.split(","):
+            part = part.strip()
+            if not any(c in v1_classes for c in CSS_CLASS_RE.findall(part)):
+                continue
+            lead = re.split(r"\s*[\s>+~]\s*", part, maxsplit=1)[0]
+            lead_classes = CSS_CLASS_RE.findall(lead)
+            if "shell-v2" in lead_classes or any(c not in v1_classes for c in lead_classes):
+                continue
+            leaks.append(f"{rel_label}: {part}")
+    return leaks
+
+
+def test_v2_styles_do_not_restyle_the_v1_ui() -> None:
+    """`?ui=v1` keeps its own look: a v2 stylesheet that restyles a class the
+    v1 stylesheet also styles (the toast) must scope it to the v2 shell."""
+    v1_classes = _v1_class_names()
+    assert "toast" in v1_classes
+    leaks: list[str] = []
+    for path in _iter_v2_source_files():
+        if path.suffix != ".css":
+            continue
+        rel = path.relative_to(DESKTOP_SRC).as_posix()
+        leaks.extend(_find_v1_leaks(path.read_text(encoding="utf-8"), rel, v1_classes))
+    assert not leaks, "v2 rules restyle the v1 UI:\n" + "\n".join(leaks)
+    # The detector itself: an unscoped override is caught, a scoped one is not.
+    assert _find_v1_leaks("body .toast { color: red; }", "probe", v1_classes) == ["probe: body .toast"]
+    assert _find_v1_leaks(".shell-v2 .toast { color: red; }", "probe", v1_classes) == []
+
+
 def test_token_lint_detectors_catch_violations_and_allow_valid_v2() -> None:
     # Hex detector catches single-line, multi-line, and @keyframes CSS hexes; ignores comments & url(#id)
     bad_css = (

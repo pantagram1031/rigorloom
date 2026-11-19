@@ -1,29 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
-import {
-  boot,
-  closeTopmostOverlay,
-  copySelection,
-  exportApplied,
-  navigateScreen,
-  openDropped,
-  openDroppedFiles,
-  openViaDialog,
-  resetUiZoom,
-  stepUiZoom,
-  toggleCommandPalette,
-  toggleFullscreen,
-} from "./actions";
+import { boot } from "./actions";
 import { ApprovalDialog } from "./components/ApprovalDialog";
-import { BrowserOpenDialog } from "./components/BrowserOpenDialog";
-import { CommandPalette } from "./components/CommandPalette";
 import { DetailDisclosure } from "./components/DetailDisclosure";
 import { Logo } from "./components/Logo";
-import { OperatorAgentModal } from "./components/OperatorAgentModal";
 import { Splash } from "./components/Splash";
 import { Toast } from "./components/Toast";
-import { TopBar } from "./components/TopBar";
 import { deliverDocumentEvents, stopDocumentEvents } from "./documentEvents";
 import { errorCodeMessage, t } from "./i18n/vocabulary";
 import * as rt from "./runtime";
@@ -38,27 +21,12 @@ import {
 } from "./store";
 import { runSmoke, smokeIntent } from "./smoke";
 import "./shell/registrations";
-import { FillView } from "./views/FillView";
-import { HistoryView } from "./views/HistoryView";
-import { OpenView } from "./views/OpenView";
-import { ReviewView } from "./views/ReviewView";
-import { SettingsView } from "./views/SettingsView";
+import { engineState } from "./shell/docInfo";
+import { isLegacyUi, LegacyApp } from "./shell/LegacyApp";
+import { openDroppedFileList, openDroppedPaths } from "./shell/open";
+import { Shell } from "./shell/Shell";
+import { setUiVariant } from "./uiVariant";
 
-const REVIEW_KEY_CODES = new Set([
-  "KeyJ",
-  "KeyK",
-  "KeyA",
-  "KeyR",
-  "KeyD",
-  "KeyE",
-  "ArrowDown",
-  "ArrowUp",
-  "Enter",
-  "Backspace",
-  "Delete",
-  "BracketLeft",
-  "BracketRight",
-]);
 
 function Boot({ note }: { note: string }) {
   const language = useWorkspace((s) => s.language);
@@ -105,14 +73,13 @@ function Fatal({
 }
 
 export default function App() {
-  const screen = useWorkspace((s) => s.screen);
+  const [legacy, setLegacy] = useState(isLegacyUi);
   const language = useWorkspace((s) => s.language);
   const phase = useWorkspace((s) => s.phase);
   const phaseNote = useWorkspace((s) => s.phaseNote);
   const fatal = useWorkspace((s) => s.fatal);
   const entranceDone = useWorkspace((s) => s.entranceDone);
   const holdEntrance = useWorkspace((s) => s.holdEntrance);
-  const dragOver = useWorkspace((s) => s.dragOver);
   const lastCommit = useWorkspace((s) => s.lastCommit);
   const session = useWorkspace(activeSession);
 
@@ -138,7 +105,10 @@ export default function App() {
             !(await subscriptions.add(
               getCurrentWebview().onDragDropEvent((event) => {
                 if (event.payload.type === "over") setState({ dragOver: true });
-                else if (event.payload.type === "drop") void openDropped(event.payload.paths);
+                else if (event.payload.type === "drop") {
+                  setState({ dragOver: false });
+                  void openDroppedPaths(event.payload.paths);
+                }
                 else setState({ dragOver: false });
               }),
             ))
@@ -161,8 +131,8 @@ export default function App() {
         const onDrop = (e: DragEvent) => {
           e.preventDefault();
           const files = Array.from(e.dataTransfer?.files ?? []);
-          if (files.length > 0) void openDroppedFiles(files);
-          else setState({ dragOver: false });
+          setState({ dragOver: false });
+          if (files.length > 0) void openDroppedFileList(files);
         };
         window.addEventListener("dragover", onDragOver);
         window.addEventListener("dragleave", onDragLeave);
@@ -180,6 +150,12 @@ export default function App() {
 
       const intent = await smokeIntent();
       if (subscriptions.isDisposed) return;
+      // The scripted Tauri smoke still drives the v1 screens; it runs on them
+      // until it is ported to the shell's test ids.
+      if (intent) {
+        setUiVariant("v1");
+        setLegacy(true);
+      }
       if (intent?.phase === "hold-entrance") setState({ holdEntrance: true });
 
       await boot();
@@ -198,125 +174,12 @@ export default function App() {
     };
   }, []);
 
-  // Global keyboard & Korean IME guard (Ruling H).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.isComposing || e.keyCode === 229) {
-        return;
-      }
-
-      if (e.key === "F11") {
-        e.preventDefault();
-        void toggleFullscreen();
-        return;
-      }
-
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && !e.altKey && (e.code === "KeyK" || e.key.toLowerCase() === "k")) {
-        e.preventDefault();
-        toggleCommandPalette();
-        return;
-      }
-
-      if (e.key === "Escape") {
-        if (closeTopmostOverlay()) e.preventDefault();
-        return;
-      }
-
-      const target = e.target as HTMLElement | null;
-      const isEditable =
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        Boolean(target?.isContentEditable);
-      if (isEditable) return;
-
-      if (mod && !e.altKey) {
-        switch (e.code) {
-          case "KeyO":
-            e.preventDefault();
-            navigateScreen("open");
-            void openViaDialog();
-            return;
-          case "Digit1":
-            if (getState().activeSessionId) {
-              e.preventDefault();
-              navigateScreen("review");
-            }
-            return;
-          case "Digit2":
-            if (getState().activeSessionId) {
-              e.preventDefault();
-              navigateScreen("fill");
-            }
-            return;
-          case "Digit3":
-            if (getState().activeSessionId) {
-              e.preventDefault();
-              navigateScreen("history");
-            }
-            return;
-          case "Comma":
-            e.preventDefault();
-            navigateScreen("settings");
-            return;
-          case "KeyE":
-            if (getState().activeSessionId) {
-              e.preventDefault();
-              void exportApplied();
-            }
-            return;
-          case "Equal":
-            e.preventDefault();
-            stepUiZoom(1);
-            return;
-          case "Minus":
-            e.preventDefault();
-            stepUiZoom(-1);
-            return;
-          case "Digit0":
-            e.preventDefault();
-            resetUiZoom();
-            return;
-          case "KeyC":
-            void copySelection();
-            return;
-          default:
-            break;
-        }
-        return;
-      }
-
-      if (!mod && !e.altKey) {
-        const current = getState();
-        const modalOpen =
-          current.commandPaletteOpen ||
-          current.operatorModalOpen ||
-          current.settingsOpen ||
-          current.openDialogOpen ||
-          current.approvalDialogOpen ||
-          current.returnPopoverOpen;
-        if (current.screen === "review" && !modalOpen && REVIEW_KEY_CODES.has(e.code)) {
-          e.preventDefault();
-          window.dispatchEvent(
-            new CustomEvent("rigorloom:review-key", {
-              detail: { code: e.code, key: e.key, shiftKey: e.shiftKey },
-            }),
-          );
-        }
-      }
-    };
-
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  if (phase === "failed" && fatal) {
+  if (phase === "failed" && fatal && engineState(getState()) !== "missing") {
     return <Fatal code={fatal.code} message={fatal.message} onRetry={() => void boot()} />;
   }
 
   const showSplash = !entranceDone;
-  if (phase !== "ready") {
+  if (phase !== "ready" && !(phase === "failed" && fatal)) {
     return (
       <>
         {showSplash ? (
@@ -332,51 +195,17 @@ export default function App() {
     );
   }
 
-  const activeScreen =
-    screen === "settings"
-      ? "settings"
-      : screen === "history" && session
-        ? "history"
-        : screen === "fill" && session
-          ? "fill"
-          : screen === "review" && session
-            ? "review"
-            : "open";
+  if (legacy) return <LegacyApp />;
 
   return (
     <div
-      className="shell"
+      className="shell-v2"
       data-session={session?.sessionId ?? ""}
       data-last-composed={lastCommit ? String(lastCommit.composed) : ""}
       data-last-commit={lastCommit ? lastCommit.value : ""}
     >
-      <TopBar />
-
-      <div className="viewport">
-        {activeScreen === "settings" ? (
-          <SettingsView />
-        ) : activeScreen === "history" ? (
-          <HistoryView />
-        ) : activeScreen === "review" ? (
-          <ReviewView />
-        ) : activeScreen === "fill" ? (
-          <FillView />
-        ) : (
-          <OpenView />
-        )}
-      </div>
-
-      <BrowserOpenDialog />
+      <Shell />
       <ApprovalDialog />
-      <CommandPalette />
-      <OperatorAgentModal />
-
-      {dragOver ? (
-        <div className="dropveil" data-testid="dropveil">
-          <div className="box">{t("open_drop_prompt", language)}</div>
-        </div>
-      ) : null}
-
       <Toast />
     </div>
   );

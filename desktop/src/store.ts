@@ -1226,7 +1226,7 @@ export function composerBlocker(s: WorkspaceState): string | null {
  * per-document slices below). Shared across view mounts, never persisted to
  * prefs, and never carried to another document.
  */
-export const setComposerDraft = (text: string, doc?: string | null) => writeComposerDraft({ text }, doc);
+export const setComposerDraft = (text: string, doc?: string | null) => composerDraftSlice.set(doc, { draft: { text } });
 
 /**
  * Reconcile a send completion with whatever is in the composer now.
@@ -1643,40 +1643,64 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
 // so state from document A cannot appear in document B by construction.
 // Packages add per-document state with `defineDocSlice(key, initial)` in their
 // own directory and read it with `slice.use(sessionId)` / `slice.useActive()`,
-// or the whole record with `useDoc(sessionId)` / `useActiveDoc()`. Kept apart
-// from `WorkspaceState` so this block is append-only for the trust rebase.
+// or the document with `useDoc(sessionId)` / `useActiveDoc()`. Kept apart from
+// `WorkspaceState` so this block is append-only for the trust rebase.
+//
+// Document arguments: a session id is that document; `undefined` (argument
+// omitted) is the active document; `null` is "no document" (the Start tab),
+// which has its own record like any other.
 
+/** A document as the shell knows it: who it is, plus its slice values. */
 export interface DocState {
   sessionId: string;
+  /** Source file name; empty for a document the store has not listed yet. */
+  name: string;
+  /** Source document kind (`hwpx`, `hwp` ...); empty when unknown. */
+  kind: string;
+  sha256: string;
   /** Slice values by slice key. A slice never written reads as its initial value. */
   slices: Readonly<Record<string, unknown>>;
 }
 
+type DocArg = string | null | undefined;
+type Updater<T> = T extends object ? Partial<T> | ((prev: T) => Partial<T> | T) : T | ((prev: T) => T);
+
 export interface DocSlice<T> {
   readonly key: string;
-  /** The value for a document; the initial value when the document has none yet. */
-  get(sessionId: string | null | undefined): T;
-  /** Replace or update the value for one document. Other documents are untouched. */
-  set(sessionId: string, next: T | ((prev: T) => T)): void;
-  /** Shallow-merge into an object slice. */
-  patch(sessionId: string, partial: T extends object ? Partial<T> : never): void;
+  readonly initial: T;
+  /** The value for a document; its initial value when nothing was written. */
+  get(doc?: DocArg): T;
+  /**
+   * Update one document's value; other documents are untouched. Object slices
+   * shallow-merge (a partial or an updater's result); other slices replace.
+   */
+  set(doc: DocArg, next: Updater<T>): void;
+  /** Alias of `set` for object slices, for readability at call sites. */
+  patch(doc: DocArg, partial: Updater<T>): void;
   /** Back to the initial value for one document. */
-  reset(sessionId: string): void;
+  reset(doc?: DocArg): void;
   /** React: the value for a document, optionally selected. */
-  use(sessionId: string | null | undefined): T;
-  use<R>(sessionId: string | null | undefined, select: (value: T) => R): R;
+  use(doc?: DocArg): T;
+  use<R>(doc: DocArg, select: (value: T) => R): R;
   /** React: the value for the active document. */
   useActive(): T;
   useActive<R>(select: (value: T) => R): R;
 }
 
-type DocsMap = Readonly<Record<string, DocState>>;
+const NO_DOC_KEY = "\u0000none";
 
-let docs: DocsMap = {};
+type DocSlices = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+
+let docSlices: DocSlices = {};
 const docListeners = new Set<() => void>();
-const sliceInitials = new Map<string, () => unknown>();
+const sliceKeys = new Set<string>();
 
 const activeGetter = (): string | null => state.activeSessionId;
+
+function docKey(doc: DocArg): string {
+  if (doc === undefined) return activeGetter() ?? NO_DOC_KEY;
+  return doc ?? NO_DOC_KEY;
+}
 
 function emitDocs() {
   for (const l of docListeners) l();
@@ -1692,119 +1716,113 @@ function subscribeDocs(listener: () => void) {
   };
 }
 
+/** Subscribe to the workspace store outside React (the shell's tab sync). */
+export function subscribeWorkspace(listener: () => void): () => void {
+  return subscribe(listener);
+}
+
 export function activeDocId(): string | null {
   return activeGetter();
 }
 
-export function getDocs(): DocsMap {
-  return docs;
-}
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
-export function getDoc(sessionId: string | null | undefined): DocState | null {
-  if (!sessionId) return null;
-  return docs[sessionId] ?? null;
-}
-
-function writeSlice(sessionId: string, key: string, value: unknown) {
-  const prev = docs[sessionId] ?? { sessionId, slices: {} };
-  if (prev.slices[key] === value && docs[sessionId]) return;
-  docs = { ...docs, [sessionId]: { sessionId, slices: { ...prev.slices, [key]: value } } };
+function writeSlice(key: string, sliceKey: string, value: unknown) {
+  const prev = docSlices[key] ?? {};
+  if (prev[sliceKey] === value && docSlices[key]) return;
+  docSlices = { ...docSlices, [key]: { ...prev, [sliceKey]: value } };
   emitDocs();
 }
 
-/** Ensure a document has a record (a tab opened). Idempotent. */
+/** Ensure a document has a record (its tab opened). Idempotent. */
 export function ensureDoc(sessionId: string): void {
-  if (docs[sessionId]) return;
-  docs = { ...docs, [sessionId]: { sessionId, slices: {} } };
+  if (docSlices[sessionId]) return;
+  docSlices = { ...docSlices, [sessionId]: {} };
   emitDocs();
 }
 
 /** Forget a document's state (its tab closed and nothing needs it). */
 export function dropDoc(sessionId: string): void {
-  if (!docs[sessionId]) return;
-  const next = { ...docs };
+  if (!docSlices[sessionId]) return;
+  const next = { ...docSlices };
   delete next[sessionId];
-  docs = next;
+  docSlices = next;
   emitDocs();
 }
 
-const identity = <T,>(v: T) => v;
-
 export function defineDocSlice<T>(key: string, initial: T | (() => T)): DocSlice<T> {
-  if (sliceInitials.has(key)) {
-    // Re-definition happens under HMR; anything else is two packages fighting over a name.
-    // `main.tsx` sets the flag in development builds only.
+  if (sliceKeys.has(key)) {
+    // Re-definition happens under hot reload (`main.tsx` sets the flag in
+    // development builds only); anything else is two packages sharing a name.
     const g = globalThis as { __RL_HMR__?: boolean };
-    if (!g.__RL_HMR__) {
-      throw new Error(`defineDocSlice: key "${key}" is already defined`);
-    }
+    if (!g.__RL_HMR__) throw new Error(`defineDocSlice: key "${key}" is already defined`);
   }
-  const makeInitial = typeof initial === "function" ? (initial as () => T) : () => initial;
-  // One initial value per document, cached so selectors stay reference-stable.
+  sliceKeys.add(key);
+  const makeInitial = typeof initial === "function" ? (initial as () => T) : () => initial as T;
+  const firstInitial = makeInitial();
+  // One initial value per document, cached so reads are reference-stable and
+  // mutating one document's initial value can never reach another's.
   const initials = new Map<string, T>();
-  let globalInitial: T | undefined;
-  const initialFor = (sessionId: string | null | undefined): T => {
-    if (!sessionId) {
-      if (globalInitial === undefined) globalInitial = makeInitial();
-      return globalInitial;
-    }
-    let v = initials.get(sessionId);
+  const initialFor = (k: string): T => {
+    let v = initials.get(k);
     if (v === undefined) {
-      v = makeInitial();
-      initials.set(sessionId, v);
+      // A factory gives each document a fresh value. A plain object is copied
+      // shallowly per document; pass a factory when it nests arrays or objects.
+      const made = makeInitial();
+      v = isPlainObject(made) && typeof initial !== "function" ? ({ ...made } as T) : made;
+      initials.set(k, v);
     }
     return v;
   };
-  sliceInitials.set(key, makeInitial);
-
-  const get = (sessionId: string | null | undefined): T => {
-    if (!sessionId) return initialFor(null);
-    const doc = docs[sessionId];
-    if (doc && Object.prototype.hasOwnProperty.call(doc.slices, key)) return doc.slices[key] as T;
-    return initialFor(sessionId);
+  const get = (doc?: DocArg): T => {
+    const k = docKey(doc);
+    const rec = docSlices[k];
+    if (rec && Object.prototype.hasOwnProperty.call(rec, key)) return rec[key] as T;
+    return initialFor(k);
   };
-
+  const set = (doc: DocArg, next: unknown) => {
+    const k = docKey(doc);
+    const prev = get(doc);
+    const value = typeof next === "function" ? (next as (p: T) => unknown)(prev) : next;
+    const merged = isPlainObject(prev) && isPlainObject(value) ? { ...prev, ...value } : value;
+    writeSlice(k, key, merged);
+  };
   const slice: DocSlice<T> = {
     key,
+    initial: firstInitial,
     get,
-    set(sessionId, next) {
-      const value = typeof next === "function" ? (next as (prev: T) => T)(get(sessionId)) : next;
-      writeSlice(sessionId, key, value);
-    },
-    patch(sessionId, partial) {
-      const prev = get(sessionId) as unknown as Record<string, unknown>;
-      writeSlice(sessionId, key, { ...prev, ...(partial as Record<string, unknown>) });
-    },
-    reset(sessionId) {
-      initials.delete(sessionId);
-      const doc = docs[sessionId];
-      if (!doc || !Object.prototype.hasOwnProperty.call(doc.slices, key)) return;
-      const slices = { ...doc.slices };
-      delete slices[key];
-      docs = { ...docs, [sessionId]: { sessionId, slices } };
+    set: set as DocSlice<T>["set"],
+    patch: set as DocSlice<T>["patch"],
+    reset(doc?: DocArg) {
+      const k = docKey(doc);
+      initials.delete(k);
+      const rec = docSlices[k];
+      if (!rec || !Object.prototype.hasOwnProperty.call(rec, key)) return;
+      const next = { ...rec };
+      delete next[key];
+      docSlices = { ...docSlices, [k]: next };
       emitDocs();
     },
-    use<R>(sessionId: string | null | undefined, select?: (value: T) => R): R {
-      const sel = (select ?? identity) as (value: T) => R;
+    use<R>(doc?: DocArg, select?: (value: T) => R): R {
+      const sel = (select ?? ((v: T) => v as unknown as R)) as (value: T) => R;
       return useSyncExternalStore(
         subscribeDocs,
-        () => sel(get(sessionId)),
-        () => sel(initialFor(sessionId)),
+        () => sel(get(doc)),
+        () => sel(firstInitial),
       );
     },
     useActive<R>(select?: (value: T) => R): R {
-      const sel = (select ?? identity) as (value: T) => R;
+      const sel = (select ?? ((v: T) => v as unknown as R)) as (value: T) => R;
       return useSyncExternalStore(
         subscribeDocs,
-        () => sel(get(activeGetter())),
-        () => sel(initialFor(null)),
+        () => sel(get(undefined)),
+        () => sel(firstInitial),
       );
     },
   } as DocSlice<T>;
   return slice;
 }
-
-const NO_DOC = null;
 
 /**
  * The composer's unsent instruction, one per document (finding 2): text typed
@@ -1814,57 +1832,85 @@ const NO_DOC = null;
  */
 export const composerDraftSlice = defineDocSlice<{ draft: ComposerDraft }>("workspace.composer", () => ({ draft: { text: "" } }));
 
-/** Typing before any document is open keeps its own record. */
-const COMPOSER_NO_DOC = "\u0000none";
-
-function composerKey(doc?: string | null): string {
-  return (doc === undefined ? state.activeSessionId : doc) ?? COMPOSER_NO_DOC;
-}
-
 /** The unsent instruction for a document (the active one when omitted). */
-export function composerDraftOf(doc?: string | null): ComposerDraft {
-  return composerDraftSlice.get(composerKey(doc)).draft;
+export function composerDraftOf(doc?: DocArg): ComposerDraft {
+  return composerDraftSlice.get(doc).draft;
 }
 
 /** Replace a document's unsent instruction with this exact object. */
-export function writeComposerDraft(draft: ComposerDraft, doc?: string | null): void {
-  composerDraftSlice.set(composerKey(doc), { draft });
+export function writeComposerDraft(draft: ComposerDraft, doc?: DocArg): void {
+  composerDraftSlice.set(doc, { draft });
 }
 
 /** React: the active document's unsent instruction text. */
 export function useComposerDraftText(): string {
-  const active = useWorkspace((s) => s.activeSessionId);
-  return composerDraftSlice.use(active ?? COMPOSER_NO_DOC, (v) => v.draft.text);
+  return composerDraftSlice.useActive((v) => v.draft.text);
 }
 
-/** React: the whole per-document record (or a selection of it). */
-export function useDoc(sessionId: string | null | undefined): DocState | null;
-export function useDoc<R>(sessionId: string | null | undefined, select: (doc: DocState | null) => R): R;
-export function useDoc<R>(sessionId: string | null | undefined, select?: (doc: DocState | null) => R) {
+const docStateCache = new WeakMap<object, Map<string, DocState>>();
+const NO_SLICES: Readonly<Record<string, unknown>> = {};
+
+/** The document record for a session, or null when the store has never heard of it. */
+export function getDoc(sessionId: DocArg): DocState | null {
+  const k = docKey(sessionId);
+  if (k === NO_DOC_KEY) return null;
+  const session = state.sessions.find((s) => s.sessionId === k);
+  const slices = docSlices[k];
+  if (!session && !slices) return null;
+  // Reference-stable per (sessions array, slices record), for useSyncExternalStore.
+  const anchor = (slices ?? NO_SLICES) as object;
+  let byId = docStateCache.get(anchor);
+  if (!byId) {
+    byId = new Map();
+    docStateCache.set(anchor, byId);
+  }
+  const cached = byId.get(k);
+  if (
+    cached &&
+    cached.name === (session?.source.name ?? "") &&
+    cached.sha256 === (session?.source.sha256 ?? "")
+  ) {
+    return cached;
+  }
+  const source = session?.source as { name?: string; sha256?: string; documentKind?: string } | undefined;
+  const doc: DocState = {
+    sessionId: k,
+    name: source?.name ?? "",
+    kind: source?.documentKind ?? "",
+    sha256: source?.sha256 ?? "",
+    slices: slices ?? NO_SLICES,
+  };
+  byId.set(k, doc);
+  return doc;
+}
+
+/** React: a document's record (or a selection of it). */
+export function useDoc(sessionId: DocArg): DocState | null;
+export function useDoc<R>(sessionId: DocArg, select: (doc: DocState | null) => R): R;
+export function useDoc<R>(sessionId: DocArg, select?: (doc: DocState | null) => R) {
   const sel = select ?? ((d: DocState | null) => d as unknown as R);
   return useSyncExternalStore(
     subscribeDocs,
-    () => sel(sessionId ? docs[sessionId] ?? NO_DOC : NO_DOC),
-    () => sel(NO_DOC),
+    () => sel(getDoc(sessionId)),
+    () => sel(null),
   );
 }
 
-/** React: the active document's id and record. `sessionId` is null on the Start tab. */
-export function useActiveDoc(): { sessionId: string | null; doc: DocState | null };
-export function useActiveDoc<R>(select: (sessionId: string | null, doc: DocState | null) => R): R;
-export function useActiveDoc<R>(select?: (sessionId: string | null, doc: DocState | null) => R) {
-  const id = useSyncExternalStore(subscribeDocs, activeGetter, activeGetter);
-  const doc = useSyncExternalStore(
+/** React: the active document's record; null on the Start tab. */
+export function useActiveDoc(): DocState | null;
+export function useActiveDoc<R>(select: (doc: DocState | null) => R): R;
+export function useActiveDoc<R>(select?: (doc: DocState | null) => R) {
+  const sel = select ?? ((d: DocState | null) => d as unknown as R);
+  return useSyncExternalStore(
     subscribeDocs,
-    () => (id ? docs[id] ?? NO_DOC : NO_DOC),
-    () => NO_DOC,
+    () => sel(getDoc(undefined)),
+    () => sel(null),
   );
-  return select ? select(id, doc) : { sessionId: id, doc };
 }
 
 /** Test support. */
 export function _resetDocsForTest(): void {
-  docs = {};
-  sliceInitials.clear();
+  docSlices = {};
+  sliceKeys.clear();
   emitDocs();
 }

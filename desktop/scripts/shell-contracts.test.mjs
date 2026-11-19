@@ -198,6 +198,22 @@ test("document B shows none of document A's slice state", () => {
   assert.throws(() => docStore.defineDocSlice("test.zoom", 2));
 });
 
+test("doc slices: object slices merge, undefined means the active document, null is no document", () => {
+  docStore._resetDocsForTest();
+  docStore.setState({ activeSessionId: "doc-x" });
+  const panel = docStore.defineDocSlice("test.panel", { tab: "agent", sheetOpen: false });
+  panel.set(undefined, { tab: "changes" });
+  assert.deepEqual(panel.get("doc-x"), { tab: "changes", sheetOpen: false });
+  panel.set("doc-x", (prev) => ({ sheetOpen: !prev.sheetOpen }));
+  assert.deepEqual(panel.get(), { tab: "changes", sheetOpen: true });
+  panel.set(null, { tab: "checks" });
+  assert.equal(panel.get(null).tab, "checks");
+  assert.equal(panel.get("doc-y").tab, "agent");
+  assert.equal(docStore.getDoc(null), null);
+  assert.equal(docStore.getDoc("doc-x").slices["test.panel"].tab, "changes");
+  assert.equal(docStore.getDoc("doc-x"), docStore.getDoc("doc-x"));
+});
+
 test("store.ts re-exports the doc API and binds the active session", async () => {
   const store = await import("../src/store.ts");
   for (const name of ["defineDocSlice", "useDoc", "useActiveDoc", "dropDoc", "ensureDoc", "getDoc"]) {
@@ -231,4 +247,30 @@ test("i18n/v2: no v2 key collides with vocabulary.ts", async () => {
       assert.ok(!(key in VOCABULARY), `${wp}.${key} collides with vocabulary.ts`);
     }
   }
+});
+
+test("keys accept the shapes WP3 and WP4 register: predicate when, code names, 'always'", () => {
+  _resetForTest();
+  const fired = [];
+  let reviewing = false;
+  register({ id: "change.accept", chords: ["Y"], when: () => reviewing, run: () => fired.push("Y") });
+  register({ id: "canvas.cycleView", chords: ["KeyV"], run: () => fired.push("V") });
+  register({ id: "canvas.zoomIn", chords: ["Ctrl+Equal", "Ctrl+Shift+Equal"], when: "always", run: () => fired.push("zoom") });
+  register({ id: "canvas.async", chords: ["F9"], run: async () => fired.push("async") });
+  dispatch(ev("KeyY"));
+  reviewing = true;
+  dispatch(ev("KeyY"));
+  dispatch(ev("KeyV", { target: INPUT }));
+  dispatch(ev("KeyV"));
+  dispatch(ev("NumpadAdd", { ctrl: true }));
+  dispatch(ev("Equal", { ctrl: true, shift: true }));
+  assert.equal(dispatch(ev("F9")), true);
+  assert.deepEqual(fired, ["Y", "V", "zoom", "zoom", "async"]);
+  // Predicate-scoped bindings are scopes of their own for the conflict check.
+  register({ id: "canvas.accept", chords: ["Y"], when: () => true, run() {} });
+  assert.deepEqual(conflicts(), []);
+  // ... but when both predicates hold at once, the live check names the clash.
+  assert.deepEqual(keysMod.activeConflicts().map((c) => c.ids.sort().join("+")), ["canvas.accept+change.accept"]);
+  reviewing = false;
+  assert.deepEqual(keysMod.activeConflicts(), []);
 });
