@@ -32,6 +32,7 @@ import {
   shortHash,
 } from "../workspace/trust";
 import { buildRegionTextMap } from "../workspace/externalPlan";
+import { clearSheetConfirmation, prepareSheetConfirmation } from "../workspace/sheetConfirmation";
 import {
   buildIndexedChanges,
   runAuthoritativeGuardDiff,
@@ -95,6 +96,23 @@ export function ApprovalDialog() {
     const id = window.setTimeout(() => dialogRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
   }, [open, plan?.planId, plan?.planHash]);
+
+  // The sheet as rendered asks the browser bridge for its single-use
+  // confirmation token; the confirm spends it on the decision.
+  // Only this dialog's own close clears it: the v2 sheet shares the holder
+  // while this (closed) dialog stays mounted.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      if (wasOpenRef.current) clearSheetConfirmation();
+      wasOpenRef.current = false;
+      return;
+    }
+    wasOpenRef.current = true;
+    const binding = captureConfirmation({ activeSessionId: activeSessionId ?? null, draft }, []);
+    if (binding) prepareSheetConfirmation(binding);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, activeSessionId, plan?.planId, plan?.planHash, plan?.boundSha256]);
 
   // If ApprovalDialog opened via command palette before ReviewView audited this plan,
   // run the authoritative Python guard diff so changed-fact gating is always active.

@@ -5,6 +5,11 @@ import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./styles.css";
 
+if (import.meta.env.DEV) {
+  // Hot reload re-evaluates modules; let defineDocSlice accept a re-definition.
+  (globalThis as { __RL_HMR__?: boolean }).__RL_HMR__ = true;
+}
+
 async function start() {
   // Design work in a plain browser, replaying a recorded real session. The
   // guard is a literal after Vite's replacement, so both this branch and

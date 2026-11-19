@@ -235,6 +235,7 @@ function renderApprovalDialog(guardSummary, stateOverrides = {}) {
     "../store": storeStub,
     "../workspace/externalPlan": { buildRegionTextMap: () => ({}) },
     "../workspace/guardHelper": createGuardStub(guardSummary),
+    "../workspace/sheetConfirmation": { prepareSheetConfirmation: () => {}, clearSheetConfirmation: () => {} },
     "../workspace/trust": loadTrustModule(loadModule),
     "./DetailDisclosure": {
       DetailDisclosure: ({ children }) => React.createElement("details", null, children),

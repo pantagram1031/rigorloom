@@ -17,8 +17,10 @@ from datetime import datetime, timezone
 import difflib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hashlib
 import hmac
 import importlib.util
+import io
 import json
 import mimetypes
 import os
@@ -60,6 +62,11 @@ VALID_UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 SECTION_MEMBER_RE = re.compile(r"^Contents/section(\d+)\.xml$")
 
 MAX_JSON_BODY_BYTES = max(64 * 1024 * 1024, MAX_SOURCE_BYTES * 2)
+# Extension routes (workspace, page, style) and the confirmation route take a
+# few ids and flags, never a document: their bodies are under 1 KiB, so they
+# get their own cap instead of the upload-sized one.
+SMALL_JSON_BODY_BYTES = 16 * 1024
+_SMALL_BODY_CORE_POST_PATHS = frozenset({"/api/approval/confirmation"})
 SSE_KEEPALIVE_SECONDS = 15.0
 
 AGENTHOST_CONFIG_KEYS = frozenset({
@@ -91,6 +98,13 @@ AGENTHOST_PROVIDERS = ("mock", "anthropic", "router")
 #: It runs only when a developer turned it on, through this environment
 #: variable or the ``devMockAgent`` preference; otherwise a request with no
 #: real provider is refused as "not connected" instead of silently proposing.
+# An approval recorded through this bridge needs a confirmation token the
+# client asked for when the approval sheet rendered (see
+# BridgeApplication.approval_confirmation). One use, short life, kept here.
+CONFIRMATION_TTL_SECONDS = 120.0
+MAX_OPEN_CONFIRMATIONS = 64
+SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+
 DEV_MOCK_AGENT_ENV = "RIGORLOOM_DEV_MOCK_AGENT"
 DEV_MOCK_AGENT_PREF = "devMockAgent"
 
@@ -190,6 +204,34 @@ def _valid_host_header(host_value: str | None) -> bool:
     if sep and (not port_str or not port_str.isdigit()):
         return False
     return host.lower() in ALLOWED_HOSTS
+
+
+# The webview origins of the native shell. The shell talks to the runtime
+# directly, but its webview may still reach a bridge on this machine.
+TAURI_ORIGINS = frozenset({"tauri://localhost", "http://tauri.localhost"})
+
+
+def _valid_origin_header(origin_value: str | None) -> bool:
+    """Allow a request with no Origin, a loopback http origin, or the Tauri webview.
+
+    A page served from anywhere else (or an opaque "null" origin: sandboxed
+    frames, file://, data:) never reaches a route, token or no token.
+    """
+    if origin_value is None:
+        return True
+    raw = origin_value.strip()
+    if not raw or raw.lower() == "null":
+        return False
+    if raw.lower() in TAURI_ORIGINS:
+        return True
+    parsed = urlsplit(raw)
+    if parsed.scheme.lower() != "http":
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        return False
+    return _valid_host_header(parsed.netloc)
 
 
 def _inject_bootstrap(html: str, payload: dict[str, Any]) -> str:
@@ -367,7 +409,17 @@ def _collect_direct_paragraph_text(p_elem: ET.Element) -> str:
     return "".join(chunks)
 
 
-def _extract_hwpx_paragraphs(hwpx_path: Path) -> list[str]:
+def _read_hwpx_paragraphs(hwpx_path: Path) -> tuple[list[str], str]:
+    """Paragraphs of an HWPX file and the sha256 of the very bytes they came from.
+
+    The file is read once; the digest is of those bytes, not of a second read,
+    so a caller can state exactly which document its diff describes.
+    """
+    data = hwpx_path.read_bytes()
+    return _extract_hwpx_paragraphs(io.BytesIO(data)), hashlib.sha256(data).hexdigest()
+
+
+def _extract_hwpx_paragraphs(hwpx_path: Path | io.BytesIO) -> list[str]:
     """Extract paragraph strings in document reading order from HWPX section XMLs."""
     paragraphs: list[str] = []
     with zipfile.ZipFile(hwpx_path, "r") as zf:
@@ -914,6 +966,9 @@ class BridgeApplication:
         self._agent_proc: subprocess.Popen[str] | None = None
         self._prose_fidelity_mod: Any = None
         self._pipeline_ctl_mod: Any = None
+        self._confirm_lock = threading.Lock()
+        # token -> {"binding": {...}, "expires": monotonic seconds}. RAM only.
+        self._confirmations: dict[str, dict[str, Any]] = {}
 
     def current_root(self) -> Path:
         return self.sidecar.active_root() or self.default_root
@@ -1663,6 +1718,95 @@ class BridgeApplication:
             raise BridgeError("candidate_not_found", f"missing candidate artifact {artifact}", status=HTTPStatus.NOT_FOUND)
         return artifact
 
+    # --- Approval confirmation --------------------------------------------------
+
+    def _plan_binding_break(self, binding: dict[str, str]) -> str | None:
+        """Why the runtime's plan does not match `binding`, or None if it does."""
+        ok, payload = self.sidecar.rpc("plan/get", {"planId": binding["planId"]})
+        if not ok:
+            code = payload.get("code") if isinstance(payload, dict) else None
+            return str(code or "plan_not_found")
+        plan = payload.get("plan") if isinstance(payload, dict) else None
+        if not isinstance(plan, dict):
+            return "plan_not_found"
+        if plan.get("sessionId") != binding["sessionId"]:
+            return "session"
+        if plan.get("planHash") != binding["planHash"]:
+            return "planHash"
+        if plan.get("boundSha256") != binding["baseDigest"]:
+            return "baseDigest"
+        return None
+
+    def approval_confirmation(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Issue a single-use token for the approval sheet the client rendered.
+
+        Bound to (session id, plan id, plan hash, base digest), checked against
+        the runtime's own plan record before it is issued, valid for
+        CONFIRMATION_TTL_SECONDS and kept only in this process.
+        """
+        binding: dict[str, str] = {}
+        for key in ("sessionId", "planId"):
+            binding[key] = _require_bare_component(body.get(key), key)
+        for key in ("planHash", "baseDigest"):
+            value = body.get(key)
+            if not isinstance(value, str) or not SHA256_HEX_RE.match(value):
+                raise BridgeError("invalid_params", f"{key} must be a sha256 hex digest")
+            binding[key] = value
+        why = self._plan_binding_break(binding)
+        if why is not None:
+            raise BridgeError(
+                "confirmation_binding_mismatch",
+                f"the plan does not match the confirmation ({why})",
+                status=HTTPStatus.CONFLICT,
+            )
+        token = secrets.token_urlsafe(32)
+        now = time.monotonic()
+        with self._confirm_lock:
+            for key in [k for k, v in self._confirmations.items() if v["expires"] <= now]:
+                del self._confirmations[key]
+            while len(self._confirmations) >= MAX_OPEN_CONFIRMATIONS:
+                oldest = min(self._confirmations, key=lambda k: self._confirmations[k]["expires"])
+                del self._confirmations[oldest]
+            self._confirmations[token] = {"binding": binding, "expires": now + CONFIRMATION_TTL_SECONDS}
+        return {"confirmationToken": token, "expiresInMs": int(CONFIRMATION_TTL_SECONDS * 1000)}
+
+    def consume_confirmation(self, token: Any, params: dict[str, Any]) -> None:
+        """Spend `token` on an approval/resolve call, or refuse with 403.
+
+        The token is removed before any check, so it never works twice, not
+        even after a refused attempt.
+        """
+        if not isinstance(token, str) or not token:
+            raise BridgeError(
+                "confirmation_required",
+                "approving needs the confirmation token of the approval sheet",
+                status=HTTPStatus.FORBIDDEN,
+            )
+        with self._confirm_lock:
+            entry = self._confirmations.pop(token, None)
+        if entry is None:
+            raise BridgeError(
+                "confirmation_invalid",
+                "unknown or already used confirmation token",
+                status=HTTPStatus.FORBIDDEN,
+            )
+        if entry["expires"] <= time.monotonic():
+            raise BridgeError("confirmation_expired", "the confirmation token expired", status=HTTPStatus.FORBIDDEN)
+        binding = entry["binding"]
+        if params.get("planId") != binding["planId"] or params.get("planHash") != binding["planHash"]:
+            raise BridgeError(
+                "confirmation_binding_mismatch",
+                "the confirmation token was issued for another plan",
+                status=HTTPStatus.FORBIDDEN,
+            )
+        why = self._plan_binding_break(binding)
+        if why is not None:
+            raise BridgeError(
+                "confirmation_binding_mismatch",
+                f"the plan no longer matches the confirmation ({why})",
+                status=HTTPStatus.FORBIDDEN,
+            )
+
     def guard_diff(self, body: dict[str, Any]) -> dict[str, Any]:
         rt_guard = _try_import_rt_guard()
         if rt_guard is not None and callable(getattr(rt_guard, "guard_diff", None)):
@@ -1677,6 +1821,9 @@ class BridgeApplication:
             after_label = "text:after"
             before_paras = before_text.splitlines() if before_text else [""]
             after_paras = after_text.splitlines() if after_text else [""]
+            # Text the caller sent has no document behind it.
+            before_sha: str | None = None
+            after_sha: str | None = None
         else:
             raw_session = body.get("sessionId")
             if not raw_session:
@@ -1727,11 +1874,11 @@ class BridgeApplication:
                 before_label = "source"
 
             if body.get("runId"):
-                before_paras = _extract_hwpx_paragraphs(before_hwpx)
+                before_paras, before_sha = _read_hwpx_paragraphs(before_hwpx)
                 run_id = _require_bare_component(body["runId"], "runId")
                 after_hwpx = self._core_candidate_hwpx(core, session_id, run_id)
                 after_label = f"run:{run_id}"
-                after_paras = _extract_hwpx_paragraphs(after_hwpx)
+                after_paras, after_sha = _read_hwpx_paragraphs(after_hwpx)
             elif plan_record is not None:
                 after_label = f"plan:{plan_record['planId']}"
                 with tempfile.TemporaryDirectory(prefix="rigorloom-guard-preview-") as td:
@@ -1740,12 +1887,13 @@ class BridgeApplication:
                         core.plan_preview(session_id, plan_record["planId"], out_path=preview_hwpx)
                     except _rpc_error_classes() as exc:
                         raise _bridge_error_from_rpc(exc) from exc
-                    before_paras = _extract_hwpx_paragraphs(before_hwpx)
-                    after_paras = _extract_hwpx_paragraphs(preview_hwpx)
+                    before_paras, before_sha = _read_hwpx_paragraphs(before_hwpx)
+                    after_paras, after_sha = _read_hwpx_paragraphs(preview_hwpx)
             else:
-                before_paras = _extract_hwpx_paragraphs(before_hwpx)
+                before_paras, before_sha = _read_hwpx_paragraphs(before_hwpx)
                 after_label = before_label
                 after_paras = list(before_paras)
+                after_sha = before_sha
 
         pf = self._get_prose_fidelity()
         number_key = getattr(pf, "_number_key", None)
@@ -1815,6 +1963,11 @@ class BridgeApplication:
             "schema": "rigorloom/guard-v1",
             "before": before_label,
             "after": after_label,
+            # The sha256 of the bytes each side was read from (null for text
+            # the caller sent). A client compares `beforeSha256` with the
+            # plan's boundSha256 before it lets anyone approve on this diff.
+            "beforeSha256": before_sha,
+            "afterSha256": after_sha,
             "paragraphs": len(all_rows),
             "pass": overall_pass,
             "reason": reason,
@@ -1992,6 +2145,104 @@ class BridgeApplication:
         }
 
 
+# --- extension routes (WP2 hook, J1 §5) --------------------------------------
+#
+# New read-only routes live in their own modules, never as lines in this file:
+# `rt_workspace` (WP2/WPS), `rt_page` (WP6), `rt_ui_style` (WP4). Each, when
+# present next to this file, exposes `register_routes(router)` and calls
+# `router.get(path, handler)` / `router.post(path, handler)`.
+#
+# - GET handlers are called as `handler(bridge, query)` with the parsed query
+#   (`dict[str, list[str]]`); POST handlers as `handler(bridge, body)` with the
+#   JSON object body. Both return a JSON-serialisable dict (sent with 200) or
+#   raise `router.BridgeError`.
+# - Paths must start with `/api/` and may not shadow a core route, so every
+#   extension request passes the same Host/Origin guard, header token and body
+#   cap as the core routes before its handler runs.
+# - A module that is absent is skipped. A module that is present but fails to
+#   import raises, so a broken extension is loud rather than silently missing.
+
+UI_EXTENSION_MODULES = ("rt_workspace", "rt_page", "rt_ui_style")
+
+_CORE_GET_API_PATHS = frozenset({
+    "/api/export-download",
+    "/api/runtime/status",
+    "/api/prefs",
+    "/api/default-root",
+    "/api/corpus-files",
+    "/api/agent-tool-status",
+    "/api/agent-host/status",
+    "/api/task-packs",
+    "/api/pipeline/gates",
+})
+_CORE_POST_API_PATHS = frozenset({
+    "/api/runtime/start",
+    "/api/runtime/stop",
+    "/api/runtime/cancel",
+    "/api/prefs",
+    "/api/open-upload",
+    "/api/export",
+    "/api/run-mock-agent",
+    "/api/agent-host/capabilities",
+    "/api/agent-host/save-config",
+    "/api/agent-host/read-config",
+    "/api/agent-host/run",
+    "/api/agent-host/stop",
+    "/api/credential/status",
+    "/api/credential/set",
+    "/api/credential/delete",
+    "/api/guard/diff",
+    "/api/approval/confirmation",
+    "/api/pipeline/gate-resolve",
+})
+_EXTENSION_PATH_RE = re.compile(r"^/api/[a-z0-9][a-z0-9/_-]*$")
+
+
+class ExtensionRouter:
+    """What an extension module's `register_routes(router)` receives."""
+
+    BridgeError = BridgeError
+
+    def __init__(self) -> None:
+        self.get_routes: dict[str, Any] = {}
+        self.post_routes: dict[str, Any] = {}
+        self.modules: list[str] = []
+
+    def _add(self, table: dict[str, Any], core: frozenset[str], path: str, handler: Any) -> None:
+        if not isinstance(path, str) or not _EXTENSION_PATH_RE.match(path) or ".." in path:
+            raise ValueError(f"extension route must be a plain /api/ path: {path!r}")
+        if path in core:
+            raise ValueError(f"extension route shadows a core route: {path}")
+        if path in table:
+            raise ValueError(f"extension route registered twice: {path}")
+        if not callable(handler):
+            raise ValueError(f"extension handler for {path} is not callable")
+        table[path] = handler
+
+    def get(self, path: str, handler: Any) -> None:
+        self._add(self.get_routes, _CORE_GET_API_PATHS, path, handler)
+
+    def post(self, path: str, handler: Any) -> None:
+        self._add(self.post_routes, _CORE_POST_API_PATHS, path, handler)
+
+
+def load_ui_extensions(names: tuple[str, ...] = UI_EXTENSION_MODULES) -> ExtensionRouter:
+    """Import each extension module that exists next to this file and collect its routes."""
+    router = ExtensionRouter()
+    for name in names:
+        module = sys.modules.get(name) or sys.modules.get(f"rigorloom_runtime.{name}")
+        if module is None:
+            path = HERE / f"{name}.py"
+            if not path.is_file():
+                continue
+            module = _load_python_module(name, path)
+        register = getattr(module, "register_routes", None)
+        if callable(register):
+            register(router)
+            router.modules.append(name)
+    return router
+
+
 class BridgeHTTPServer(ThreadingHTTPServer):
     """Threading HTTP/1.1 server bound strictly to 127.0.0.1."""
 
@@ -2001,6 +2252,7 @@ class BridgeHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address: tuple[str, int], bridge: BridgeApplication) -> None:
         self.bridge = bridge
         self.stop_event = threading.Event()
+        self.extensions = load_ui_extensions(UI_EXTENSION_MODULES)
         super().__init__(server_address, BridgeHTTPHandler)
 
     @property
@@ -2051,6 +2303,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        # The page carries the per-run token: no other page may frame it.
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         if extra_headers:
             for k, v in extra_headers.items():
                 self.send_header(k, v)
@@ -2069,6 +2323,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         self._send_bytes(status, encoded, "application/json; charset=utf-8", extra_headers=headers)
 
     def _reject_forbidden(self, code: str, message: str) -> None:
+        # A refused request's body is never read; do not parse it as the next request.
+        self.close_connection = True
         self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": {"code": code, "message": message}})
 
     def _check_origin_guards(self) -> bool:
@@ -2077,6 +2333,9 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             return False
         if (self.headers.get("Sec-Fetch-Site") or "").strip().lower() == "cross-site":
             self._reject_forbidden("cross_site_refused", "cross-site requests are forbidden")
+            return False
+        if not _valid_origin_header(self.headers.get("Origin")):
+            self._reject_forbidden("invalid_origin", "Origin header must be a loopback page or the desktop app")
             return False
         return True
 
@@ -2095,7 +2354,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _read_json_body(self) -> dict[str, Any]:
+    def _read_json_body(self, limit: int = MAX_JSON_BODY_BYTES) -> dict[str, Any]:
         raw_len = self.headers.get("Content-Length")
         if raw_len is None or not raw_len.strip():
             return {}
@@ -2103,7 +2362,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             length = int(raw_len)
         except ValueError as exc:
             raise BridgeError("invalid_params", "invalid Content-Length") from exc
-        if length < 0 or length > MAX_JSON_BODY_BYTES:
+        if length < 0 or length > limit:
             raise BridgeError("body_too_large", "request body exceeds maximum allowed size", status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
         if length == 0:
             return {}
@@ -2204,6 +2463,19 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 elif path == "/api/pipeline/gates":
                     ws = (query.get("workspace") or [""])[0]
                     self._send_json(HTTPStatus.OK, self.server.bridge.pipeline_gates(ws))
+                elif path in self.server.extensions.get_routes:
+                    handler = self.server.extensions.get_routes[path]
+                    try:
+                        payload = handler(self.server.bridge, query)
+                    except BridgeError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - an extension fault must not drop the server
+                        raise BridgeError(
+                            "internal_error",
+                            f"{type(exc).__name__}: {exc}",
+                            status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                        ) from exc
+                    self._send_json(HTTPStatus.OK, payload)
                 else:
                     raise BridgeError("not_found", f"unknown GET endpoint {path}", status=HTTPStatus.NOT_FOUND)
             except BridgeError as exc:
@@ -2244,13 +2516,21 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            body = self._read_json_body()
+            small = path in _SMALL_BODY_CORE_POST_PATHS or path in self.server.extensions.post_routes
+            body = self._read_json_body(SMALL_JSON_BODY_BYTES if small else MAX_JSON_BODY_BYTES)
             if path == "/rpc":
                 method = body.get("method")
                 params = body.get("params")
                 tag = body.get("tag")
                 if tag is not None and not isinstance(tag, str):
                     raise BridgeError("invalid_params", "tag must be a string")
+                if method == "approval/resolve" and isinstance(params, dict):
+                    # The token is the bridge's, never the runtime's.
+                    params = dict(params)
+                    token = params.pop("confirmationToken", None)
+                    # Anything but a return needs the sheet's single-use token.
+                    if params.get("decision") != "rejected":
+                        self.server.bridge.consume_confirmation(token, params)
                 ok, payload = self.server.bridge.sidecar.rpc(method, params, tag=tag)
                 if ok:
                     self._send_json(HTTPStatus.OK, {"ok": True, "result": payload})
@@ -2275,9 +2555,13 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 "/api/credential/set": self.server.bridge.credential_set,
                 "/api/credential/delete": self.server.bridge.credential_delete,
                 "/api/guard/diff": self.server.bridge.guard_diff,
+                "/api/approval/confirmation": self.server.bridge.approval_confirmation,
                 "/api/pipeline/gate-resolve": self.server.bridge.pipeline_gate_resolve,
             }
             handler = routes.get(path)
+            if handler is None and path in self.server.extensions.post_routes:
+                extension = self.server.extensions.post_routes[path]
+                handler = lambda b, _h=extension: _h(self.server.bridge, b)  # noqa: E731
             if handler is None:
                 raise BridgeError("not_found", f"unknown POST endpoint {path}", status=HTTPStatus.NOT_FOUND)
             result = handler(body)

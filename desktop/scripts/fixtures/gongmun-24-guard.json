@@ -1,0 +1,2837 @@
+{
+ "_note": "The runtime's copy of examples/gongmun/expected/plan.json on tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx and its /api/guard/diff result. Regenerate with desktop/scripts/record-gongmun-guard.py.",
+ "guard": {
+  "after": "plan:30c306ca416c49e09898b72354c6622f",
+  "afterSha256": "f6159cbb779a6467c7e844b117c18f3dbcac490d1fc71521faf2ea20d2dee0de",
+  "allParagraphs": [
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙 [별지 제1호서식] <개정 2016. 7. 11.>",
+    "beforeProtected": [
+     {
+      "end": 47,
+      "kind": "numbers",
+      "start": 43,
+      "status": "removed",
+      "text": "2016"
+     },
+     {
+      "end": 54,
+      "kind": "dates",
+      "start": 43,
+      "status": "removed",
+      "text": "2016. 7. 11"
+     },
+     {
+      "end": 50,
+      "kind": "numbers",
+      "start": 49,
+      "status": "removed",
+      "text": "7"
+     },
+     {
+      "end": 54,
+      "kind": "numbers",
+      "start": 52,
+      "status": "removed",
+      "text": "11"
+     }
+    ],
+    "changes": [
+     {
+      "after": {},
+      "before": {
+       "11": 1,
+       "2016": 1,
+       "7": 1
+      },
+      "kind": "numbers"
+     },
+     {
+      "after": {},
+      "before": {
+       "2016. 7. 11": 1
+      },
+      "kind": "dates"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "numbers"
+    ],
+    "paragraph": 1,
+    "pass": false
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 2,
+    "pass": true
+   },
+   {
+    "after": "가온공공기록원",
+    "afterProtected": [],
+    "before": "행 정 기 관 명",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 3,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 4,
+    "pass": true
+   },
+   {
+    "after": "수신 협조기관장(기록관리과장)",
+    "afterProtected": [],
+    "before": "수신",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 5,
+    "pass": true
+   },
+   {
+    "after": "(경유)",
+    "afterProtected": [],
+    "before": "(경유)",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 6,
+    "pass": true
+   },
+   {
+    "after": "제목 2026년 전자기록물 장기보존 체계 공동 점검 협조 요청",
+    "afterProtected": [
+     {
+      "end": 7,
+      "kind": "numbers",
+      "start": 3,
+      "status": "added",
+      "text": "2026"
+     }
+    ],
+    "before": "제목 ",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "2026": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 7,
+    "pass": false
+   },
+   {
+    "after": "1. 관련: 기록정책과-88(2026. 10. 30.)",
+    "afterProtected": [
+     {
+      "end": 1,
+      "kind": "numbers",
+      "start": 0,
+      "status": "added",
+      "text": "1"
+     },
+     {
+      "end": 30,
+      "kind": "headings",
+      "start": 0,
+      "status": "added",
+      "text": "1. 관련: 기록정책과-88(2026. 10. 30.)"
+     },
+     {
+      "end": 15,
+      "kind": "numbers",
+      "start": 13,
+      "status": "added",
+      "text": "88"
+     },
+     {
+      "end": 20,
+      "kind": "numbers",
+      "start": 16,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 28,
+      "kind": "dates",
+      "start": 16,
+      "status": "added",
+      "text": "2026. 10. 30"
+     },
+     {
+      "end": 24,
+      "kind": "numbers",
+      "start": 22,
+      "status": "added",
+      "text": "10"
+     },
+     {
+      "end": 28,
+      "kind": "numbers",
+      "start": 26,
+      "status": "added",
+      "text": "30"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "1": 1,
+       "10": 1,
+       "2026": 1,
+       "30": 1,
+       "88": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "2026. 10. 30": 1
+      },
+      "before": {},
+      "kind": "dates"
+     },
+     {
+      "after": [
+       "1. 관련: 기록정책과-88(2026. 10. 30.)"
+      ],
+      "before": [],
+      "kind": "headings"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "headings",
+     "numbers"
+    ],
+    "paragraph": 8,
+    "pass": false
+   },
+   {
+    "after": "2. 우리 원은 2026년도 생산 전자기록물의 보존 포맷 호환성을 점검합니다. 귀 기관은 아래 일정에 따라 소관 기록물을 점검하고 결과를 회신하여 주시기 바랍니다.",
+    "afterProtected": [
+     {
+      "end": 1,
+      "kind": "numbers",
+      "start": 0,
+      "status": "added",
+      "text": "2"
+     },
+     {
+      "end": 13,
+      "kind": "numbers",
+      "start": 9,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 75,
+      "kind": "causal_markers",
+      "start": 73,
+      "status": "added",
+      "text": "결과"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "2": 1,
+       "2026": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "결과": 1
+      },
+      "before": {},
+      "kind": "causal_markers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "causal_markers",
+     "numbers"
+    ],
+    "paragraph": 9,
+    "pass": false
+   },
+   {
+    "after": "  가. 점검 기간: 2026. 11. 18.(수) ~ 2026. 11. 27.(금)",
+    "afterProtected": [
+     {
+      "end": 16,
+      "kind": "numbers",
+      "start": 12,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 24,
+      "kind": "dates",
+      "start": 12,
+      "status": "added",
+      "text": "2026. 11. 18"
+     },
+     {
+      "end": 20,
+      "kind": "numbers",
+      "start": 18,
+      "status": "added",
+      "text": "11"
+     },
+     {
+      "end": 24,
+      "kind": "numbers",
+      "start": 22,
+      "status": "added",
+      "text": "18"
+     },
+     {
+      "end": 35,
+      "kind": "numbers",
+      "start": 31,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 43,
+      "kind": "dates",
+      "start": 31,
+      "status": "added",
+      "text": "2026. 11. 27"
+     },
+     {
+      "end": 39,
+      "kind": "numbers",
+      "start": 37,
+      "status": "added",
+      "text": "11"
+     },
+     {
+      "end": 43,
+      "kind": "numbers",
+      "start": 41,
+      "status": "added",
+      "text": "27"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "11": 2,
+       "18": 1,
+       "2026": 2,
+       "27": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "2026. 11. 18": 1,
+       "2026. 11. 27": 1
+      },
+      "before": {},
+      "kind": "dates"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "numbers"
+    ],
+    "paragraph": 10,
+    "pass": false
+   },
+   {
+    "after": "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성",
+    "afterProtected": [
+     {
+      "end": 35,
+      "kind": "headings",
+      "start": 0,
+      "status": "added",
+      "text": "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": [
+       "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성"
+      ],
+      "before": [],
+      "kind": "headings"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "headings"
+    ],
+    "paragraph": 11,
+    "pass": false
+   },
+   {
+    "after": "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지",
+    "afterProtected": [
+     {
+      "end": 36,
+      "kind": "headings",
+      "start": 0,
+      "status": "added",
+      "text": "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지"
+     },
+     {
+      "end": 16,
+      "kind": "numbers",
+      "start": 12,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 24,
+      "kind": "dates",
+      "start": 12,
+      "status": "added",
+      "text": "2026. 11. 30"
+     },
+     {
+      "end": 20,
+      "kind": "numbers",
+      "start": 18,
+      "status": "added",
+      "text": "11"
+     },
+     {
+      "end": 24,
+      "kind": "numbers",
+      "start": 22,
+      "status": "added",
+      "text": "30"
+     },
+     {
+      "end": 31,
+      "kind": "numbers",
+      "start": 29,
+      "status": "added",
+      "text": "18"
+     },
+     {
+      "end": 34,
+      "kind": "numbers",
+      "start": 32,
+      "status": "added",
+      "text": "00"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "00": 1,
+       "11": 1,
+       "18": 1,
+       "2026": 1,
+       "30": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "2026. 11. 30": 1
+      },
+      "before": {},
+      "kind": "dates"
+     },
+     {
+      "after": [
+       "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지"
+      ],
+      "before": [],
+      "kind": "headings"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "headings",
+     "numbers"
+    ],
+    "paragraph": 12,
+    "pass": false
+   },
+   {
+    "after": "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송",
+    "afterProtected": [
+     {
+      "end": 38,
+      "kind": "headings",
+      "start": 0,
+      "status": "added",
+      "text": "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": [
+       "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송"
+      ],
+      "before": [],
+      "kind": "headings"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "headings"
+    ],
+    "paragraph": 13,
+    "pass": false
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 14,
+    "pass": true
+   },
+   {
+    "after": "붙임  전자기록물 보존 체계 공동 점검표 1부.  끝.",
+    "afterProtected": [
+     {
+      "end": 24,
+      "kind": "numbers",
+      "start": 23,
+      "status": "added",
+      "text": "1"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "1": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 15,
+    "pass": false
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 16,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 17,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 18,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 19,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 20,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 21,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 22,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 23,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 24,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 25,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 26,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": " ",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 27,
+    "pass": true
+   },
+   {
+    "after": "직인",
+    "afterProtected": [],
+    "before": "직인",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 28,
+    "pass": true
+   },
+   {
+    "after": "가온공공기록원장",
+    "afterProtected": [],
+    "before": "발신명의",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 29,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 30,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 31,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 32,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 33,
+    "pass": true
+   },
+   {
+    "after": "주무관 한서진",
+    "afterProtected": [],
+    "before": "기안자  직위(직급) 서명",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 34,
+    "pass": true
+   },
+   {
+    "after": "사무관 박도윤",
+    "afterProtected": [],
+    "before": " 검토자  직위(직급) 서명",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 35,
+    "pass": true
+   },
+   {
+    "after": "원장 윤지현",
+    "afterProtected": [],
+    "before": " 결재권자  직위(직급) 서명",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 36,
+    "pass": true
+   },
+   {
+    "after": "협조자",
+    "afterProtected": [],
+    "before": "협조자",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 37,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 38,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 39,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 40,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 41,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 42,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 43,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 44,
+    "pass": true
+   },
+   {
+    "after": "시행",
+    "afterProtected": [],
+    "before": "시행",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 45,
+    "pass": true
+   },
+   {
+    "after": "기록정책과-104(2026. 11. 15.)",
+    "afterProtected": [
+     {
+      "end": 9,
+      "kind": "numbers",
+      "start": 6,
+      "status": "added",
+      "text": "104"
+     },
+     {
+      "end": 14,
+      "kind": "numbers",
+      "start": 10,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 22,
+      "kind": "dates",
+      "start": 10,
+      "status": "added",
+      "text": "2026. 11. 15"
+     },
+     {
+      "end": 18,
+      "kind": "numbers",
+      "start": 16,
+      "status": "added",
+      "text": "11"
+     },
+     {
+      "end": 22,
+      "kind": "numbers",
+      "start": 20,
+      "status": "added",
+      "text": "15"
+     }
+    ],
+    "before": " 처리과명-연도별 일련번호(시행일)",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "104": 1,
+       "11": 1,
+       "15": 1,
+       "2026": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "2026. 11. 15": 1
+      },
+      "before": {},
+      "kind": "dates"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "numbers"
+    ],
+    "paragraph": 46,
+    "pass": false
+   },
+   {
+    "after": "접수",
+    "afterProtected": [],
+    "before": "접수",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 47,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "    처리과명-연도별 일련번호(접수일)",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 48,
+    "pass": true
+   },
+   {
+    "after": "우 00000",
+    "afterProtected": [
+     {
+      "end": 7,
+      "kind": "numbers",
+      "start": 2,
+      "status": "added",
+      "text": "00000"
+     }
+    ],
+    "before": "우",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "00000": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 49,
+    "pass": false
+   },
+   {
+    "after": "가상시 예시구 예시로 0",
+    "afterProtected": [
+     {
+      "end": 13,
+      "kind": "numbers",
+      "start": 12,
+      "status": "added",
+      "text": "0"
+     }
+    ],
+    "before": "도로명주소",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "0": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 50,
+    "pass": false
+   },
+   {
+    "after": "/",
+    "afterProtected": [],
+    "before": "/",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 51,
+    "pass": true
+   },
+   {
+    "after": "https://archive.example.com",
+    "afterProtected": [
+     {
+      "end": 27,
+      "kind": "urls",
+      "start": 0,
+      "status": "added",
+      "text": "https://archive.example.com"
+     }
+    ],
+    "before": "홈페이지 주소",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "https://archive.example.com": 1
+      },
+      "before": {},
+      "kind": "urls"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "urls"
+    ],
+    "paragraph": 52,
+    "pass": false
+   },
+   {
+    "after": "전화번호(044-555-0142)",
+    "afterProtected": [
+     {
+      "end": 8,
+      "kind": "numbers",
+      "start": 5,
+      "status": "added",
+      "text": "044"
+     },
+     {
+      "end": 12,
+      "kind": "numbers",
+      "start": 9,
+      "status": "added",
+      "text": "555"
+     },
+     {
+      "end": 17,
+      "kind": "numbers",
+      "start": 13,
+      "status": "added",
+      "text": "0142"
+     }
+    ],
+    "before": "전화번호(   )",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "0142": 1,
+       "044": 1,
+       "555": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 53,
+    "pass": false
+   },
+   {
+    "after": "팩스번호(044-555-0143)",
+    "afterProtected": [
+     {
+      "end": 8,
+      "kind": "numbers",
+      "start": 5,
+      "status": "added",
+      "text": "044"
+     },
+     {
+      "end": 12,
+      "kind": "numbers",
+      "start": 9,
+      "status": "added",
+      "text": "555"
+     },
+     {
+      "end": 17,
+      "kind": "numbers",
+      "start": 13,
+      "status": "added",
+      "text": "0143"
+     }
+    ],
+    "before": "팩스번호(   )",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "0143": 1,
+       "044": 1,
+       "555": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 54,
+    "pass": false
+   },
+   {
+    "after": "/",
+    "afterProtected": [],
+    "before": "/",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 55,
+    "pass": true
+   },
+   {
+    "after": "gongmun@example.com",
+    "afterProtected": [],
+    "before": "공무원의 전자우편주소",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 56,
+    "pass": true
+   },
+   {
+    "after": "/",
+    "afterProtected": [],
+    "before": "/",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 57,
+    "pass": true
+   },
+   {
+    "after": "대외공개",
+    "afterProtected": [],
+    "before": "공개 구분",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 58,
+    "pass": true
+   },
+   {
+    "after": "210㎜×297㎜(백상지 80g/㎡)",
+    "afterProtected": [
+     {
+      "end": 3,
+      "kind": "numbers",
+      "start": 0,
+      "status": "kept",
+      "text": "210"
+     },
+     {
+      "end": 8,
+      "kind": "numbers",
+      "start": 5,
+      "status": "kept",
+      "text": "297"
+     },
+     {
+      "end": 17,
+      "kind": "numbers",
+      "start": 14,
+      "status": "kept",
+      "text": "80g"
+     }
+    ],
+    "before": "210㎜×297㎜(백상지 80g/㎡)",
+    "beforeProtected": [
+     {
+      "end": 3,
+      "kind": "numbers",
+      "start": 0,
+      "status": "kept",
+      "text": "210"
+     },
+     {
+      "end": 8,
+      "kind": "numbers",
+      "start": 5,
+      "status": "kept",
+      "text": "297"
+     },
+     {
+      "end": 17,
+      "kind": "numbers",
+      "start": 14,
+      "status": "kept",
+      "text": "80g"
+     }
+    ],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 59,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "비고(이 난은 서식에 포함하지 아니한다)",
+    "beforeProtected": [
+     {
+      "end": 19,
+      "kind": "qualifiers",
+      "start": 17,
+      "status": "removed",
+      "text": "아니"
+     }
+    ],
+    "changes": [
+     {
+      "after": {},
+      "before": {
+       "아니": 1
+      },
+      "kind": "qualifiers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "qualifiers"
+    ],
+    "paragraph": 60,
+    "pass": false
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": " - 문서를 작성할 때 \"행정기관명\", \"발신명\", \"기안자\", \"검토자\", \"결재권자\", \"직위(직급) 서명\", \"처리과명-연도별 일련번호(시행일)\", \"도로명주소\", \"홈페이지 주소\", \"공무원의 전자우편주소\", \"공개 구분\"의 용어는 표시하지 아니하고 그 내용을 적는다.",
+    "beforeProtected": [
+     {
+      "end": 20,
+      "kind": "direct_quotes",
+      "start": 13,
+      "status": "removed",
+      "text": "\"행정기관명\""
+     },
+     {
+      "end": 27,
+      "kind": "direct_quotes",
+      "start": 22,
+      "status": "removed",
+      "text": "\"발신명\""
+     },
+     {
+      "end": 34,
+      "kind": "direct_quotes",
+      "start": 29,
+      "status": "removed",
+      "text": "\"기안자\""
+     },
+     {
+      "end": 41,
+      "kind": "direct_quotes",
+      "start": 36,
+      "status": "removed",
+      "text": "\"검토자\""
+     },
+     {
+      "end": 49,
+      "kind": "direct_quotes",
+      "start": 43,
+      "status": "removed",
+      "text": "\"결재권자\""
+     },
+     {
+      "end": 62,
+      "kind": "direct_quotes",
+      "start": 51,
+      "status": "removed",
+      "text": "\"직위(직급) 서명\""
+     },
+     {
+      "end": 84,
+      "kind": "direct_quotes",
+      "start": 64,
+      "status": "removed",
+      "text": "\"처리과명-연도별 일련번호(시행일)\""
+     },
+     {
+      "end": 93,
+      "kind": "direct_quotes",
+      "start": 86,
+      "status": "removed",
+      "text": "\"도로명주소\""
+     },
+     {
+      "end": 104,
+      "kind": "direct_quotes",
+      "start": 95,
+      "status": "removed",
+      "text": "\"홈페이지 주소\""
+     },
+     {
+      "end": 119,
+      "kind": "direct_quotes",
+      "start": 106,
+      "status": "removed",
+      "text": "\"공무원의 전자우편주소\""
+     },
+     {
+      "end": 128,
+      "kind": "direct_quotes",
+      "start": 121,
+      "status": "removed",
+      "text": "\"공개 구분\""
+     },
+     {
+      "end": 141,
+      "kind": "qualifiers",
+      "start": 139,
+      "status": "removed",
+      "text": "아니"
+     }
+    ],
+    "changes": [
+     {
+      "after": {},
+      "before": {
+       "\"검토자\"": 1,
+       "\"결재권자\"": 1,
+       "\"공개 구분\"": 1,
+       "\"공무원의 전자우편주소\"": 1,
+       "\"기안자\"": 1,
+       "\"도로명주소\"": 1,
+       "\"발신명\"": 1,
+       "\"직위(직급) 서명\"": 1,
+       "\"처리과명-연도별 일련번호(시행일)\"": 1,
+       "\"행정기관명\"": 1,
+       "\"홈페이지 주소\"": 1
+      },
+      "kind": "direct_quotes"
+     },
+     {
+      "after": {},
+      "before": {
+       "아니": 1
+      },
+      "kind": "qualifiers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "direct_quotes",
+     "qualifiers"
+    ],
+    "paragraph": 61,
+    "pass": false
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 62,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 63,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": false,
+    "kinds": [],
+    "paragraph": 64,
+    "pass": true
+   }
+  ],
+  "before": "source",
+  "beforeSha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+  "changed": [
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙 [별지 제1호서식] <개정 2016. 7. 11.>",
+    "beforeProtected": [
+     {
+      "end": 47,
+      "kind": "numbers",
+      "start": 43,
+      "status": "removed",
+      "text": "2016"
+     },
+     {
+      "end": 54,
+      "kind": "dates",
+      "start": 43,
+      "status": "removed",
+      "text": "2016. 7. 11"
+     },
+     {
+      "end": 50,
+      "kind": "numbers",
+      "start": 49,
+      "status": "removed",
+      "text": "7"
+     },
+     {
+      "end": 54,
+      "kind": "numbers",
+      "start": 52,
+      "status": "removed",
+      "text": "11"
+     }
+    ],
+    "changes": [
+     {
+      "after": {},
+      "before": {
+       "11": 1,
+       "2016": 1,
+       "7": 1
+      },
+      "kind": "numbers"
+     },
+     {
+      "after": {},
+      "before": {
+       "2016. 7. 11": 1
+      },
+      "kind": "dates"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "numbers"
+    ],
+    "paragraph": 1,
+    "pass": false
+   },
+   {
+    "after": "가온공공기록원",
+    "afterProtected": [],
+    "before": "행 정 기 관 명",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 3,
+    "pass": true
+   },
+   {
+    "after": "수신 협조기관장(기록관리과장)",
+    "afterProtected": [],
+    "before": "수신",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 5,
+    "pass": true
+   },
+   {
+    "after": "제목 2026년 전자기록물 장기보존 체계 공동 점검 협조 요청",
+    "afterProtected": [
+     {
+      "end": 7,
+      "kind": "numbers",
+      "start": 3,
+      "status": "added",
+      "text": "2026"
+     }
+    ],
+    "before": "제목 ",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "2026": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 7,
+    "pass": false
+   },
+   {
+    "after": "1. 관련: 기록정책과-88(2026. 10. 30.)",
+    "afterProtected": [
+     {
+      "end": 1,
+      "kind": "numbers",
+      "start": 0,
+      "status": "added",
+      "text": "1"
+     },
+     {
+      "end": 30,
+      "kind": "headings",
+      "start": 0,
+      "status": "added",
+      "text": "1. 관련: 기록정책과-88(2026. 10. 30.)"
+     },
+     {
+      "end": 15,
+      "kind": "numbers",
+      "start": 13,
+      "status": "added",
+      "text": "88"
+     },
+     {
+      "end": 20,
+      "kind": "numbers",
+      "start": 16,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 28,
+      "kind": "dates",
+      "start": 16,
+      "status": "added",
+      "text": "2026. 10. 30"
+     },
+     {
+      "end": 24,
+      "kind": "numbers",
+      "start": 22,
+      "status": "added",
+      "text": "10"
+     },
+     {
+      "end": 28,
+      "kind": "numbers",
+      "start": 26,
+      "status": "added",
+      "text": "30"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "1": 1,
+       "10": 1,
+       "2026": 1,
+       "30": 1,
+       "88": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "2026. 10. 30": 1
+      },
+      "before": {},
+      "kind": "dates"
+     },
+     {
+      "after": [
+       "1. 관련: 기록정책과-88(2026. 10. 30.)"
+      ],
+      "before": [],
+      "kind": "headings"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "headings",
+     "numbers"
+    ],
+    "paragraph": 8,
+    "pass": false
+   },
+   {
+    "after": "2. 우리 원은 2026년도 생산 전자기록물의 보존 포맷 호환성을 점검합니다. 귀 기관은 아래 일정에 따라 소관 기록물을 점검하고 결과를 회신하여 주시기 바랍니다.",
+    "afterProtected": [
+     {
+      "end": 1,
+      "kind": "numbers",
+      "start": 0,
+      "status": "added",
+      "text": "2"
+     },
+     {
+      "end": 13,
+      "kind": "numbers",
+      "start": 9,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 75,
+      "kind": "causal_markers",
+      "start": 73,
+      "status": "added",
+      "text": "결과"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "2": 1,
+       "2026": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "결과": 1
+      },
+      "before": {},
+      "kind": "causal_markers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "causal_markers",
+     "numbers"
+    ],
+    "paragraph": 9,
+    "pass": false
+   },
+   {
+    "after": "  가. 점검 기간: 2026. 11. 18.(수) ~ 2026. 11. 27.(금)",
+    "afterProtected": [
+     {
+      "end": 16,
+      "kind": "numbers",
+      "start": 12,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 24,
+      "kind": "dates",
+      "start": 12,
+      "status": "added",
+      "text": "2026. 11. 18"
+     },
+     {
+      "end": 20,
+      "kind": "numbers",
+      "start": 18,
+      "status": "added",
+      "text": "11"
+     },
+     {
+      "end": 24,
+      "kind": "numbers",
+      "start": 22,
+      "status": "added",
+      "text": "18"
+     },
+     {
+      "end": 35,
+      "kind": "numbers",
+      "start": 31,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 43,
+      "kind": "dates",
+      "start": 31,
+      "status": "added",
+      "text": "2026. 11. 27"
+     },
+     {
+      "end": 39,
+      "kind": "numbers",
+      "start": 37,
+      "status": "added",
+      "text": "11"
+     },
+     {
+      "end": 43,
+      "kind": "numbers",
+      "start": 41,
+      "status": "added",
+      "text": "27"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "11": 2,
+       "18": 1,
+       "2026": 2,
+       "27": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "2026. 11. 18": 1,
+       "2026. 11. 27": 1
+      },
+      "before": {},
+      "kind": "dates"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "numbers"
+    ],
+    "paragraph": 10,
+    "pass": false
+   },
+   {
+    "after": "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성",
+    "afterProtected": [
+     {
+      "end": 35,
+      "kind": "headings",
+      "start": 0,
+      "status": "added",
+      "text": "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": [
+       "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성"
+      ],
+      "before": [],
+      "kind": "headings"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "headings"
+    ],
+    "paragraph": 11,
+    "pass": false
+   },
+   {
+    "after": "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지",
+    "afterProtected": [
+     {
+      "end": 36,
+      "kind": "headings",
+      "start": 0,
+      "status": "added",
+      "text": "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지"
+     },
+     {
+      "end": 16,
+      "kind": "numbers",
+      "start": 12,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 24,
+      "kind": "dates",
+      "start": 12,
+      "status": "added",
+      "text": "2026. 11. 30"
+     },
+     {
+      "end": 20,
+      "kind": "numbers",
+      "start": 18,
+      "status": "added",
+      "text": "11"
+     },
+     {
+      "end": 24,
+      "kind": "numbers",
+      "start": 22,
+      "status": "added",
+      "text": "30"
+     },
+     {
+      "end": 31,
+      "kind": "numbers",
+      "start": 29,
+      "status": "added",
+      "text": "18"
+     },
+     {
+      "end": 34,
+      "kind": "numbers",
+      "start": 32,
+      "status": "added",
+      "text": "00"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "00": 1,
+       "11": 1,
+       "18": 1,
+       "2026": 1,
+       "30": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "2026. 11. 30": 1
+      },
+      "before": {},
+      "kind": "dates"
+     },
+     {
+      "after": [
+       "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지"
+      ],
+      "before": [],
+      "kind": "headings"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "headings",
+     "numbers"
+    ],
+    "paragraph": 12,
+    "pass": false
+   },
+   {
+    "after": "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송",
+    "afterProtected": [
+     {
+      "end": 38,
+      "kind": "headings",
+      "start": 0,
+      "status": "added",
+      "text": "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": [
+       "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송"
+      ],
+      "before": [],
+      "kind": "headings"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "headings"
+    ],
+    "paragraph": 13,
+    "pass": false
+   },
+   {
+    "after": "붙임  전자기록물 보존 체계 공동 점검표 1부.  끝.",
+    "afterProtected": [
+     {
+      "end": 24,
+      "kind": "numbers",
+      "start": 23,
+      "status": "added",
+      "text": "1"
+     }
+    ],
+    "before": "",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "1": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 15,
+    "pass": false
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": " ",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 27,
+    "pass": true
+   },
+   {
+    "after": "가온공공기록원장",
+    "afterProtected": [],
+    "before": "발신명의",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 29,
+    "pass": true
+   },
+   {
+    "after": "주무관 한서진",
+    "afterProtected": [],
+    "before": "기안자  직위(직급) 서명",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 34,
+    "pass": true
+   },
+   {
+    "after": "사무관 박도윤",
+    "afterProtected": [],
+    "before": " 검토자  직위(직급) 서명",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 35,
+    "pass": true
+   },
+   {
+    "after": "원장 윤지현",
+    "afterProtected": [],
+    "before": " 결재권자  직위(직급) 서명",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 36,
+    "pass": true
+   },
+   {
+    "after": "기록정책과-104(2026. 11. 15.)",
+    "afterProtected": [
+     {
+      "end": 9,
+      "kind": "numbers",
+      "start": 6,
+      "status": "added",
+      "text": "104"
+     },
+     {
+      "end": 14,
+      "kind": "numbers",
+      "start": 10,
+      "status": "added",
+      "text": "2026"
+     },
+     {
+      "end": 22,
+      "kind": "dates",
+      "start": 10,
+      "status": "added",
+      "text": "2026. 11. 15"
+     },
+     {
+      "end": 18,
+      "kind": "numbers",
+      "start": 16,
+      "status": "added",
+      "text": "11"
+     },
+     {
+      "end": 22,
+      "kind": "numbers",
+      "start": 20,
+      "status": "added",
+      "text": "15"
+     }
+    ],
+    "before": " 처리과명-연도별 일련번호(시행일)",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "104": 1,
+       "11": 1,
+       "15": 1,
+       "2026": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     },
+     {
+      "after": {
+       "2026. 11. 15": 1
+      },
+      "before": {},
+      "kind": "dates"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "dates",
+     "numbers"
+    ],
+    "paragraph": 46,
+    "pass": false
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "    처리과명-연도별 일련번호(접수일)",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 48,
+    "pass": true
+   },
+   {
+    "after": "우 00000",
+    "afterProtected": [
+     {
+      "end": 7,
+      "kind": "numbers",
+      "start": 2,
+      "status": "added",
+      "text": "00000"
+     }
+    ],
+    "before": "우",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "00000": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 49,
+    "pass": false
+   },
+   {
+    "after": "가상시 예시구 예시로 0",
+    "afterProtected": [
+     {
+      "end": 13,
+      "kind": "numbers",
+      "start": 12,
+      "status": "added",
+      "text": "0"
+     }
+    ],
+    "before": "도로명주소",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "0": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 50,
+    "pass": false
+   },
+   {
+    "after": "https://archive.example.com",
+    "afterProtected": [
+     {
+      "end": 27,
+      "kind": "urls",
+      "start": 0,
+      "status": "added",
+      "text": "https://archive.example.com"
+     }
+    ],
+    "before": "홈페이지 주소",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "https://archive.example.com": 1
+      },
+      "before": {},
+      "kind": "urls"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "urls"
+    ],
+    "paragraph": 52,
+    "pass": false
+   },
+   {
+    "after": "전화번호(044-555-0142)",
+    "afterProtected": [
+     {
+      "end": 8,
+      "kind": "numbers",
+      "start": 5,
+      "status": "added",
+      "text": "044"
+     },
+     {
+      "end": 12,
+      "kind": "numbers",
+      "start": 9,
+      "status": "added",
+      "text": "555"
+     },
+     {
+      "end": 17,
+      "kind": "numbers",
+      "start": 13,
+      "status": "added",
+      "text": "0142"
+     }
+    ],
+    "before": "전화번호(   )",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "0142": 1,
+       "044": 1,
+       "555": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 53,
+    "pass": false
+   },
+   {
+    "after": "팩스번호(044-555-0143)",
+    "afterProtected": [
+     {
+      "end": 8,
+      "kind": "numbers",
+      "start": 5,
+      "status": "added",
+      "text": "044"
+     },
+     {
+      "end": 12,
+      "kind": "numbers",
+      "start": 9,
+      "status": "added",
+      "text": "555"
+     },
+     {
+      "end": 17,
+      "kind": "numbers",
+      "start": 13,
+      "status": "added",
+      "text": "0143"
+     }
+    ],
+    "before": "팩스번호(   )",
+    "beforeProtected": [],
+    "changes": [
+     {
+      "after": {
+       "0143": 1,
+       "044": 1,
+       "555": 1
+      },
+      "before": {},
+      "kind": "numbers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "numbers"
+    ],
+    "paragraph": 54,
+    "pass": false
+   },
+   {
+    "after": "gongmun@example.com",
+    "afterProtected": [],
+    "before": "공무원의 전자우편주소",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 56,
+    "pass": true
+   },
+   {
+    "after": "대외공개",
+    "afterProtected": [],
+    "before": "공개 구분",
+    "beforeProtected": [],
+    "changes": [],
+    "edited": true,
+    "kinds": [],
+    "paragraph": 58,
+    "pass": true
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": "비고(이 난은 서식에 포함하지 아니한다)",
+    "beforeProtected": [
+     {
+      "end": 19,
+      "kind": "qualifiers",
+      "start": 17,
+      "status": "removed",
+      "text": "아니"
+     }
+    ],
+    "changes": [
+     {
+      "after": {},
+      "before": {
+       "아니": 1
+      },
+      "kind": "qualifiers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "qualifiers"
+    ],
+    "paragraph": 60,
+    "pass": false
+   },
+   {
+    "after": "",
+    "afterProtected": [],
+    "before": " - 문서를 작성할 때 \"행정기관명\", \"발신명\", \"기안자\", \"검토자\", \"결재권자\", \"직위(직급) 서명\", \"처리과명-연도별 일련번호(시행일)\", \"도로명주소\", \"홈페이지 주소\", \"공무원의 전자우편주소\", \"공개 구분\"의 용어는 표시하지 아니하고 그 내용을 적는다.",
+    "beforeProtected": [
+     {
+      "end": 20,
+      "kind": "direct_quotes",
+      "start": 13,
+      "status": "removed",
+      "text": "\"행정기관명\""
+     },
+     {
+      "end": 27,
+      "kind": "direct_quotes",
+      "start": 22,
+      "status": "removed",
+      "text": "\"발신명\""
+     },
+     {
+      "end": 34,
+      "kind": "direct_quotes",
+      "start": 29,
+      "status": "removed",
+      "text": "\"기안자\""
+     },
+     {
+      "end": 41,
+      "kind": "direct_quotes",
+      "start": 36,
+      "status": "removed",
+      "text": "\"검토자\""
+     },
+     {
+      "end": 49,
+      "kind": "direct_quotes",
+      "start": 43,
+      "status": "removed",
+      "text": "\"결재권자\""
+     },
+     {
+      "end": 62,
+      "kind": "direct_quotes",
+      "start": 51,
+      "status": "removed",
+      "text": "\"직위(직급) 서명\""
+     },
+     {
+      "end": 84,
+      "kind": "direct_quotes",
+      "start": 64,
+      "status": "removed",
+      "text": "\"처리과명-연도별 일련번호(시행일)\""
+     },
+     {
+      "end": 93,
+      "kind": "direct_quotes",
+      "start": 86,
+      "status": "removed",
+      "text": "\"도로명주소\""
+     },
+     {
+      "end": 104,
+      "kind": "direct_quotes",
+      "start": 95,
+      "status": "removed",
+      "text": "\"홈페이지 주소\""
+     },
+     {
+      "end": 119,
+      "kind": "direct_quotes",
+      "start": 106,
+      "status": "removed",
+      "text": "\"공무원의 전자우편주소\""
+     },
+     {
+      "end": 128,
+      "kind": "direct_quotes",
+      "start": 121,
+      "status": "removed",
+      "text": "\"공개 구분\""
+     },
+     {
+      "end": 141,
+      "kind": "qualifiers",
+      "start": 139,
+      "status": "removed",
+      "text": "아니"
+     }
+    ],
+    "changes": [
+     {
+      "after": {},
+      "before": {
+       "\"검토자\"": 1,
+       "\"결재권자\"": 1,
+       "\"공개 구분\"": 1,
+       "\"공무원의 전자우편주소\"": 1,
+       "\"기안자\"": 1,
+       "\"도로명주소\"": 1,
+       "\"발신명\"": 1,
+       "\"직위(직급) 서명\"": 1,
+       "\"처리과명-연도별 일련번호(시행일)\"": 1,
+       "\"행정기관명\"": 1,
+       "\"홈페이지 주소\"": 1
+      },
+      "kind": "direct_quotes"
+     },
+     {
+      "after": {},
+      "before": {
+       "아니": 1
+      },
+      "kind": "qualifiers"
+     }
+    ],
+    "edited": true,
+    "kinds": [
+     "direct_quotes",
+     "qualifiers"
+    ],
+    "paragraph": 61,
+    "pass": false
+   }
+  ],
+  "edited": 27,
+  "paragraphs": 64,
+  "pass": false,
+  "reason": "protected expression drift in p1(dates,numbers), p7(numbers), p8(dates,headings,numbers), p9(causal_markers,numbers), p10(dates,numbers), p11(headings), p12(dates,headings,numbers), p13(headings), p15(numbers), p46(dates,numbers), p49(numbers), p50(numbers), p52(urls), p53(numbers), p54(numbers), p60(qualifiers), p61(direct_quotes,qualifiers)",
+  "schema": "rigorloom/guard-v1"
+ },
+ "plan": {
+  "backend": "preedit",
+  "base": null,
+  "boundSha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
+  "createdUtc": "2026-11-19T05:45:13Z",
+  "declares": {
+   "fillMap": {
+    "검토자  직위(직급) 서명": "사무관 박도윤",
+    "결재권자  직위(직급) 서명": "원장 윤지현",
+    "공개 구분": "대외공개",
+    "공무원의 전자우편주소": {
+     "other_occurrences": "seats",
+     "text": "gongmun@example.com"
+    },
+    "기안자  직위(직급) 서명": "주무관 한서진",
+    "도로명주소": "가상시 예시구 예시로 0",
+    "발신명의": "가온공공기록원장",
+    "수신": "수신 협조기관장(기록관리과장)",
+    "전화번호(   )": "전화번호(044-555-0142)",
+    "제목": "제목 2026년 전자기록물 장기보존 체계 공동 점검 협조 요청",
+    "처리과명-연도별 일련번호(시행일)": {
+     "other_occurrences": "seats",
+     "text": "기록정책과-104(2026. 11. 15.)"
+    },
+    "팩스번호(   )": "팩스번호(044-555-0143)",
+    "행 정 기 관 명": "가온공공기록원",
+    "홈페이지 주소": "https://archive.example.com"
+   },
+   "keep": [
+    "(경유)",
+    "직인",
+    "협조자",
+    "시행",
+    "접수",
+    "우",
+    "/",
+    "210㎜×297㎜(백상지 80g/㎡)"
+   ]
+  },
+  "implVersion": "0.1.0",
+  "ops": [
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-1",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 0,
+     "run": 0,
+     "table": 0,
+     "text": ""
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-2",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 0,
+     "run": 1,
+     "table": 0,
+     "text": ""
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-3",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 0,
+     "run": 2,
+     "table": 0,
+     "text": ""
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-4",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 0,
+     "run": 3,
+     "table": 0,
+     "text": ""
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-5",
+    "params": {
+     "charPr": "12",
+     "col": 0,
+     "mode": "replace",
+     "row": 1,
+     "run": 0,
+     "table": 0,
+     "text": "가온공공기록원"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-6",
+    "params": {
+     "charPr": "14",
+     "col": 0,
+     "mode": "replace",
+     "row": 1,
+     "run": 1,
+     "table": 0,
+     "text": "수신 협조기관장(기록관리과장)"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-7",
+    "params": {
+     "charPr": "14",
+     "col": 0,
+     "mode": "replace",
+     "row": 1,
+     "run": 3,
+     "table": 0,
+     "text": "제목 2026년 전자기록물 장기보존 체계 공동 점검 협조 요청"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-8",
+    "params": {
+     "charPr": "8",
+     "col": 0,
+     "mode": "replace",
+     "row": 0,
+     "run": 0,
+     "table": 2,
+     "text": "가온공공기록원장"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-9",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 4,
+     "run": 0,
+     "table": 0,
+     "text": "주무관 한서진"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-10",
+    "params": {
+     "col": 3,
+     "mode": "replace",
+     "row": 4,
+     "run": 0,
+     "table": 0,
+     "text": "사무관 박도윤"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-11",
+    "params": {
+     "col": 9,
+     "mode": "replace",
+     "row": 4,
+     "run": 0,
+     "table": 0,
+     "text": "원장 윤지현"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-12",
+    "params": {
+     "col": 1,
+     "mode": "replace",
+     "row": 6,
+     "run": 0,
+     "table": 0,
+     "text": "기록정책과-104(2026. 11. 15.)"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-13",
+    "params": {
+     "col": 8,
+     "mode": "replace",
+     "row": 6,
+     "run": 0,
+     "table": 0,
+     "text": ""
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-14",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 7,
+     "run": 0,
+     "table": 0,
+     "text": "우 00000"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-15",
+    "params": {
+     "col": 1,
+     "mode": "replace",
+     "row": 7,
+     "run": 0,
+     "table": 0,
+     "text": "가상시 예시구 예시로 0"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-16",
+    "params": {
+     "col": 7,
+     "mode": "replace",
+     "row": 7,
+     "run": 0,
+     "table": 0,
+     "text": "https://archive.example.com"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-17",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 8,
+     "run": 0,
+     "table": 0,
+     "text": "전화번호(044-555-0142)"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-18",
+    "params": {
+     "col": 2,
+     "mode": "replace",
+     "row": 8,
+     "run": 0,
+     "table": 0,
+     "text": "팩스번호(044-555-0143)"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-19",
+    "params": {
+     "col": 7,
+     "mode": "replace",
+     "row": 8,
+     "run": 0,
+     "table": 0,
+     "text": "gongmun@example.com"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-20",
+    "params": {
+     "col": 12,
+     "mode": "replace",
+     "row": 8,
+     "run": 0,
+     "table": 0,
+     "text": "대외공개"
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-21",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 10,
+     "run": 0,
+     "table": 0,
+     "text": ""
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-22",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 10,
+     "run": 1,
+     "table": 0,
+     "text": ""
+    }
+   },
+   {
+    "kind": "replace_at_cell",
+    "opId": "op-23",
+    "params": {
+     "col": 0,
+     "mode": "replace",
+     "row": 10,
+     "run": 2,
+     "table": 0,
+     "text": ""
+    }
+   },
+   {
+    "kind": "fill_cell",
+    "opId": "op-24",
+    "params": {
+     "charPr": "14",
+     "col": 0,
+     "lines": [
+      "1. 관련: 기록정책과-88(2026. 10. 30.)",
+      "2. 우리 원은 2026년도 생산 전자기록물의 보존 포맷 호환성을 점검합니다. 귀 기관은 아래 일정에 따라 소관 기록물을 점검하고 결과를 회신하여 주시기 바랍니다.",
+      "  가. 점검 기간: 2026. 11. 18.(수) ~ 2026. 11. 27.(금)",
+      "  나. 점검 대상: 보존 포맷 메타데이터 및 첨부 파일 무결성",
+      "  다. 회신 기한: 2026. 11. 30.(월) 18:00까지",
+      "  라. 제출 방법: 붙임 점검표를 작성하여 전자문서 시스템으로 발송",
+      "",
+      "붙임  전자기록물 보존 체계 공동 점검표 1부.  끝."
+     ],
+     "paraPr": "18",
+     "row": 2,
+     "table": 0
+    }
+   }
+  ],
+  "opsHash": "4ee7519bc4ad80d53deeef548866892a81c7477763c9aecf4207daf75aaa6a0c",
+  "planHash": "d9fe10e9edbc00ca44796fb65556c9e1f9a7c94b06929400b6a5afd19fac1d11",
+  "planId": "30c306ca416c49e09898b72354c6622f",
+  "proposer": "gongmun-fixture",
+  "reverses": null,
+  "schema": "rigorloom/runtime-plan/v0",
+  "sessionId": "61a5daac109d4cec9df4c17c709cde34",
+  "state": "proposed"
+ }
+}

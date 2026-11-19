@@ -105,6 +105,21 @@ class _BridgeClient:
         return resp, out_q, stop
 
 
+def _confirmation_token(client: _BridgeClient, session_id: str, plan: dict) -> str:
+    """The single-use token the approval sheet asks for when it renders."""
+    status, issued = client.post_json(
+        "/api/approval/confirmation",
+        {
+            "sessionId": session_id,
+            "planId": plan["planId"],
+            "planHash": plan["planHash"],
+            "baseDigest": plan["boundSha256"],
+        },
+    )
+    assert status == 200, issued
+    return issued["confirmationToken"]
+
+
 @pytest.fixture()
 def bridge(tmp_path: Path):
     srv = rt_ui.create_bridge_server(
@@ -186,7 +201,24 @@ def test_agent_propose_authority_separation_host_approve_apply_export_roundtrip(
         )
         assert s_unauth == 403
 
-        # 3) Resolve approval via authenticated Host /rpc & apply plan!
+        # The host credential alone does not record an approval.
+        no_sheet = client.post_json(
+            "/rpc",
+            {
+                "method": "approval/resolve",
+                "params": {
+                    "approvalId": approval_id,
+                    "planId": plan_id,
+                    "planHash": plan_hash,
+                    "decision": "approved",
+                    "approver": "ui-reviewer",
+                },
+            },
+        )
+        assert no_sheet[0] == 403 and no_sheet[1]["error"]["code"] == "confirmation_required"
+
+        # 3) Resolve approval via authenticated Host /rpc with the sheet's
+        # confirmation token & apply plan!
         resolved = client.rpc(
             "approval/resolve",
             {
@@ -195,6 +227,7 @@ def test_agent_propose_authority_separation_host_approve_apply_export_roundtrip(
                 "planHash": plan_hash,
                 "decision": "approved",
                 "approver": "ui-reviewer",
+                "confirmationToken": _confirmation_token(client, session_id, ah_run["plan"]),
             },
         )
         assert resolved["ok"] is True
@@ -540,6 +573,7 @@ def test_runtime_approval_resolve_and_apply_refuse_approvals_md_gate_name(bridge
             "planHash": plan["planHash"],
             "decision": "approved",
             "approver": "alice",
+            "confirmationToken": _confirmation_token(client, session_id, plan),
         },
     )
     assert http_err.get("ok") is False and http_err["error"]["code"] == "unknown_approval"

@@ -374,7 +374,8 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
                bound_sha256: str, base: dict | None = None,
                reverses: dict | None = None, declares=None,
                inventory: dict | None = None,
-               provenance: str | None = None) -> OperationPlan:
+               provenance: str | None = None,
+               mock_ops: list[str] | None = None) -> OperationPlan:
     """Create a plan. Refuses an unservable backend or op kind before anything else.
 
     ``base`` is the published candidate these ops are chained onto, or ``None``
@@ -476,6 +477,11 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
         if provenance not in PROVENANCES:
             raise RpcError("invalid_params", "unknown provenance", provenance=provenance)
         payload["provenance"] = provenance
+        # A plan that repeats some test values without coming from the test
+        # agent names which ops those are; the rest are not test values. Absent
+        # means every op is (a test agent's own plan).
+        if mock_ops is not None:
+            payload["mockOps"] = sorted(set(mock_ops))
     payload["opsHash"] = ops_hash(backend, bound_sha256, normalised)
     payload["planHash"] = hashlib.sha256(
         canonical_bytes(payload, omit=("state",))).hexdigest()

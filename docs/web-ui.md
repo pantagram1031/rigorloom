@@ -43,7 +43,10 @@ The bridge is meant for one person on their own computer.
 
 - It binds to `127.0.0.1` only. Requests whose `Host` header is not a
   loopback name are refused, which blocks DNS rebinding. Requests a browser
-  marks `Sec-Fetch-Site: cross-site` are refused too.
+  marks `Sec-Fetch-Site: cross-site` are refused too, and so is any request
+  whose `Origin` is not a loopback `http` page or the desktop app's webview
+  (`tauri://localhost`, `http://tauri.localhost`); an opaque `null` origin is
+  refused.
 - Every API call needs a per-run random token (`X-Rigorloom-Token`, compared
   in constant time). The token is written into the `index.html` served on
   `GET /`. **Any other program on the same computer can fetch that page and
@@ -71,8 +74,9 @@ bridge because four independent controls limit exposure:
   exclusively to `127.0.0.1`, never a public or LAN interface.
 - **Host allowlist and cross-site refusal**: `_check_origin_guards` runs on
   every `GET` and `POST`, rejecting any `Host` outside `ALLOWED_HOSTS`
-  (`127.0.0.1` or `localhost`, blocking DNS rebinding) and refusing requests
-  with `Sec-Fetch-Site: cross-site`.
+  (`127.0.0.1` or `localhost`, blocking DNS rebinding), refusing requests
+  with `Sec-Fetch-Site: cross-site`, and refusing an `Origin` other than a
+  loopback `http` page or the Tauri webview (`invalid_origin`).
 - **Per-launch token and directory confinement**: `_require_query_token`
   compares `?token=` against the per-launch random token with
   `hmac.compare_digest`, and `resolve_export_download` validates the filename
@@ -92,6 +96,13 @@ document it was proposed against. Approving records exactly that plan hash.
 If the document's bytes or the queued edits change after you approved, the
 approval no longer matches: the queue shows a re-approval banner and apply is
 refused until you approve again.
+
+An approval sent through the bridge carries a single-use confirmation token
+that the sheet asks for when it shows the plan (`POST /api/approval/confirmation`,
+valid for 120 s). The token ties the approval to the plan record (session,
+plan hash, base digest) as the runtime held it, and each token works once. It
+is not a second factor and does not prove that a person used the sheet: any
+holder of the bridge token can ask for one and then approve.
 
 ## Pipeline gates and `APPROVALS.md`
 

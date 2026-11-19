@@ -63,7 +63,19 @@ jobs:
             python pipeline/scripts/module_registry.py write-enabled --none
           fi
           python pipeline/scripts/module_registry.py list
-      - run: python -m pytest -q
+      # The browser tests (tests/test_ui_principles.py, test_ui_playwright.py,
+      # the gongmun walkthrough ...) skip without a browser locally. Here they
+      # must run: RL_REQUIRE_BROWSER=1 turns a missing playwright or Chromium
+      # into a failure, so the suite cannot pass on zero principle checks.
+      - name: Install playwright and headless Chromium
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Python tests
+        run: python -m pytest -q
+        env:
+          RL_REQUIRE_BROWSER: ${{ runner.os == 'Linux' && '1' || '' }}
       - run: python -m pytest -q qa/tests
       # Module-agnostic by contract (modules/README.md rule 4): the sweep's
       # patterns live in the script and include modules/*/scripts/*.py, so a

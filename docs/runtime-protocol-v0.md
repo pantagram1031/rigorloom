@@ -585,7 +585,12 @@ approval is revoked in the same locked step with the same reason code and
 `mcp_server.py --provider-identity mock`) are how the bundled test agents are
 launched. A plan that repeats a test agent's op (same target and value) in the
 same session inherits `mock`, so a client that rebuilds the queue cannot drop
-it.
+it. Such a plan also carries `mockOps: [opId, ...]`, the ops that repeat a
+test value; the others (a person's own typing beside them) are not test
+values. Only the ops of a plan that arrived on the test agent's connection
+are remembered as test values, so an inherited plan never turns a person's
+typing into one. A plan with `provenance: "mock"` and no `mockOps` is a test
+agent's own plan: every op in it is a test value.
 
 `candidate/compare` reports `regionsEqual: true` only when every requested
 region was readable on both sides and equal; one unreadable region makes it
@@ -691,8 +696,30 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 7. **Browser HTTP surface versus the Runtime (resolved by `rigorloom ui`).**
    The retired legacy dashboard has been replaced by `rigorloom ui`
    (`runtime/scripts/rt_ui.py`, `docs/web-ui.md`), a loopback HTTP/SSE bridge
-   that forwards JSON-RPC to `serve.py --entry host` with `Host`,
+   that forwards JSON-RPC to `serve.py --entry host` with `Host`, `Origin`,
    `Sec-Fetch-Site`, and `X-Rigorloom-Token` guards.
+   An approval through the bridge also needs a confirmation token. When the
+   approval sheet renders a plan, the client asks
+   `POST /api/approval/confirmation` with `{sessionId, planId, planHash,
+   baseDigest}`; the bridge checks that binding against the runtime's plan
+   record (`plan/get`: session, plan hash, `boundSha256`) and returns a random
+   `confirmationToken`, kept only in the bridge's memory, single-use and valid
+   for 120 s. An `approval/resolve` over `/rpc` whose `decision` is anything
+   but `rejected` must carry that token as `params.confirmationToken`; the
+   bridge removes it before forwarding, spends it before checking it, and
+   refuses with 403 `confirmation_required`, `confirmation_invalid` (unknown
+   or already used), `confirmation_expired` or
+   `confirmation_binding_mismatch` (another plan or hash, or the plan no
+   longer matches the binding). Returning a proposal needs no token. The
+   native shell calls the runtime directly, not through this bridge, and has
+   no token. `/api/guard/diff` states the digest of the bytes it compared
+   (`beforeSha256`, `afterSha256`; null for caller-sent text); the sheet
+   refuses 승인 when `beforeSha256` is not the plan's `boundSha256`.
+   The confirmation token is not a second factor and does not prove that a
+   person used the sheet: any holder of the bridge token can ask for one and
+   then approve. What it does is tie each approval call to the plan record
+   (session, plan hash, base digest) as the runtime held it within the last
+   120 s, and make each call single-use.
 8. **Event ordering across a restart.** `events.jsonl` is append-only and
    pipeline events have no global sequence number across restarts. Runtime
    document logs carry session-scoped sequence numbers; whether pipeline

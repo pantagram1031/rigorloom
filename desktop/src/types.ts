@@ -254,6 +254,12 @@ export interface OperationPlan {
   proposer: string;
   /** `"mock"` when a bundled test agent proposed it; absent otherwise. */
   provenance?: string | null;
+  /**
+   * With `provenance: "mock"`: the ops that repeat a test value, when the plan
+   * did not come from the test agent itself (the others are a person's own
+   * typing). Absent: every op of a mock plan is a test value.
+   */
+  mockOps?: string[] | null;
   implVersion: string;
   ops: PlanOp[];
   state: string;
@@ -1242,6 +1248,13 @@ export interface GuardDiffResult {
   edited: boolean;
   changed: GuardDiffParagraph[];
   allParagraphs: GuardDiffParagraph[];
+  /**
+   * The sha256 of the bytes the "before" side was read from (null for text a
+   * caller sent; absent from an older bridge). A plan's diff must come from
+   * the document the plan is bound to (`boundSha256`).
+   */
+  beforeSha256?: string | null;
+  afterSha256?: string | null;
 }
 
 export interface PipelineGateRow {

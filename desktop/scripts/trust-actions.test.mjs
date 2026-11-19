@@ -157,7 +157,8 @@ test("the decision call carries the reason to the runtime as its own field", asy
     ctx,
   );
   await ctx.decide("rejected", "host-operator", "날짜가 틀렸습니다");
-  assert.deepEqual(calls, [["a1", "p1", "h1", "rejected", "host-operator", "날짜가 틀렸습니다"]]);
+  // The seventh argument is the bridge confirmation token; a return has none.
+  assert.deepEqual(calls, [["a1", "p1", "h1", "rejected", "host-operator", "날짜가 틀렸습니다", null]]);
 });
 
 // --- fix 8: the body character shape is applied for the person --------------------------------

@@ -1,7 +1,8 @@
 """End-to-end Playwright verification for Rigorloom local web UI (`cli.py ui`).
 
 Covers:
-1. Clean `pytest.skip` when `playwright` or headless Chromium is unavailable.
+1. Clean `pytest.skip` when `playwright` or headless Chromium is unavailable
+   (a failure instead under `RL_REQUIRE_BROWSER=1`).
 2. Live subprocess launch (`cli.py ui --root <tmp> --port 0 --no-open`) with zero
    uncaught `pageerror`s and zero HTTP 5xx / unexpected API errors.
 3. Opening a real corpus form (`gianmun-byeolji-1ho.hwpx`) via the Open screen
@@ -42,6 +43,8 @@ from pathlib import Path
 
 import pytest
 
+from _browser_gate import no_browser  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "runtime" / "scripts" / "cli.py"
 PREEDIT_PATH = REPO_ROOT / "engine" / "scripts" / "preedit.py"
@@ -61,7 +64,7 @@ def _import_playwright():
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
-        pytest.skip(f"playwright Python package unavailable: {exc}")
+        no_browser(f"playwright Python package unavailable: {exc}")
     return sync_playwright
 
 
@@ -70,7 +73,7 @@ def _launch_chromium(pw):
     try:
         return pw.chromium.launch(headless=True)
     except Exception as exc:  # pragma: no cover - environment dependent
-        pytest.skip(f"headless Chromium unavailable: {exc}")
+        no_browser(f"headless Chromium unavailable: {exc}")
 
 
 def _start_ui_server(tmp_path: Path) -> tuple[subprocess.Popen[str], str, Path]:
@@ -147,6 +150,25 @@ def _rpc_post(base_url: str, token: str, method: str, params: dict) -> dict:
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _confirmation_token(base_url: str, token: str, session_id: str, plan: dict) -> str:
+    """The approval sheet's single-use token, which the bridge requires to approve."""
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/api/approval/confirmation",
+        data=json.dumps(
+            {
+                "sessionId": session_id,
+                "planId": plan["planId"],
+                "planHash": plan["planHash"],
+                "baseDigest": plan["boundSha256"],
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Rigorloom-Token": token},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))["confirmationToken"]
 
 
 def _mutate_hwpx_source(hwpx_path: Path, scratch_dir: Path, name: str = "external-drift.hwpx") -> None:
@@ -534,6 +556,9 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
                     "planHash": stale_plan["planHash"],
                     "decision": "approved",
                     "approver": "playwright-verifier",
+                    "confirmationToken": _confirmation_token(
+                        base_url, token, stale_session_id, stale_plan
+                    ),
                 },
             )
             assert res_stale["ok"] is True, res_stale
