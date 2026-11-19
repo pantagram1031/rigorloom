@@ -98,7 +98,8 @@ _LINEAGE = {}
 SCHEMA = "rigorloom/doc-core/v1"
 
 OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
-       "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation")
+       "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
+       "char_shape", "para_shape")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2507,8 +2508,106 @@ class _Claims:
         self.removed.append((si, start, end, i, op, at))
 
 
-EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row")
-RANGE_OPS = ("set", "replace")
+EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape")
+RANGE_OPS = ("set", "replace", "char_shape")
+
+
+_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_UL = ("BOTTOM", "CENTER", "TOP")
+_LINE_SHAPES = ("SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE", "DOUBLE_SLIM",
+                "SLIM_THICK", "THICK_SLIM", "SLIM_THICK_SLIM", "WAVE", "DOUBLE_WAVE")
+_BOOL = ("bool",)
+#: 글자 모양 (서식 > 글자 모양) an agent can set: key -> kind and range. The engine's hnc_edit.set_char_shape
+#: takes them as they are; markpen (형광펜) is its own engine step.
+CHAR_SHAPE = {
+    "bold": _BOOL, "italic": _BOOL, "emboss": _BOOL, "engrave": _BOOL, "sup": _BOOL, "sub": _BOOL,
+    "underline": ("underline",), "underline_shape": ("enum", _LINE_SHAPES), "underline_color": ("color",),
+    "strike": ("strike",), "strike_color": ("color",),
+    "color": ("color",), "shade": ("color_or_none",), "markpen": ("color_or_none",),
+    "size": ("num", 1.0, 4096.0), "ratio": ("int", 50, 200), "spacing": ("int", -50, 50),
+    "rel_size": ("int", 10, 250), "offset": ("int", -100, 100),
+    "font": ("font",),
+}
+#: 문단 모양 (서식 > 문단 모양): lengths in pt, line_spacing in % or {"type", "value" pt}.
+PARA_SHAPE = {
+    "align": ("enum", ("JUSTIFY", "LEFT", "RIGHT", "CENTER", "DISTRIBUTE", "DISTRIBUTE_SPACE")),
+    "left": ("num", 0.0, 1000.0), "right": ("num", 0.0, 1000.0), "indent": ("num", -1000.0, 1000.0),
+    "before": ("num", 0.0, 1000.0), "after": ("num", 0.0, 1000.0),
+    "line_spacing": ("spacing",),
+    "keep_next": _BOOL, "keep_lines": _BOOL, "widow_orphan": _BOOL, "page_break_before": _BOOL,
+}
+_LS_TYPES = ("PERCENT", "FIXED", "BETWEEN_LINES", "AT_LEAST")
+
+
+def _shape_fmt(name, op, i, at):
+    """The checked ``set`` of a char_shape / para_shape op (keys and values an engine accepts)."""
+    table = CHAR_SHAPE if name == "char_shape" else PARA_SHAPE
+    fmt = op.get("set")
+    if not isinstance(fmt, dict) or not fmt:
+        raise DocError("bad_input", "%s needs set: {key: value} (keys: %s)" % (name, ", ".join(table)), i=i, at=at)
+    bad = sorted(k for k in fmt if k not in table)
+    if bad:
+        raise DocError("bad_input", "%s: unknown key(s) %s (keys: %s)" % (name, ", ".join(map(str, bad)),
+                                                                        ", ".join(table)), i=i, at=at,
+                       candidates=_cands_near(list(table), str(bad[0])))
+    out = {}
+    for k, v in fmt.items():
+        kind = table[k]
+        t = kind[0]
+        ok = True
+        if t == "bool":
+            ok = isinstance(v, bool)
+        elif t == "num":
+            ok = _num(v) and kind[1] <= v <= kind[2]
+            v = float(v) if ok else v
+        elif t == "int":
+            ok = _is_int(v) and kind[1] <= v <= kind[2]
+        elif t == "enum":
+            ok = isinstance(v, str) and v.upper() in kind[1]
+            v = v.upper() if ok else v
+        elif t == "color":
+            ok = isinstance(v, str) and bool(_COLOR.match(v))
+        elif t == "color_or_none":
+            ok = v is None or (isinstance(v, str) and bool(_COLOR.match(v)))
+        elif t == "underline":
+            ok = isinstance(v, bool) or (isinstance(v, str) and v.upper() in _UL)
+            v = v.upper() if ok and isinstance(v, str) else v
+        elif t == "strike":
+            ok = isinstance(v, bool) or (isinstance(v, str) and v.upper() in _LINE_SHAPES)
+            v = v.upper() if ok and isinstance(v, str) else v
+        elif t == "font":
+            ok = (isinstance(v, str) and 0 < len(v) <= 64 and not _CTRL.search(v)) or (
+                isinstance(v, dict) and v and all(kk in ("hangul", "latin", "hanja", "japanese", "other",
+                                                        "symbol", "user") and isinstance(vv, str) and
+                                                  0 < len(vv) <= 64 and not _CTRL.search(vv)
+                                                  for kk, vv in v.items()))
+        elif t == "spacing":
+            if _is_int(v):
+                ok = 50 <= v <= 500
+            else:
+                ok = (isinstance(v, dict) and set(v) == {"type", "value"} and isinstance(v["type"], str)
+                      and v["type"].upper() in _LS_TYPES and _num(v["value"]) and 0 < v["value"] <= 500)
+                if ok:
+                    v = {"type": v["type"].upper(), "value": v["value"]}
+        if not ok:
+            raise DocError("bad_input", "%s: %s=%r is out of range (%s)" % (name, k, v, _shape_hint(kind)),
+                           i=i, at=at)
+        out[k] = v
+    if out.get("sup") and out.get("sub"):
+        raise DocError("bad_input", "char_shape: sup and sub cannot both be on", i=i, at=at)
+    return out
+
+
+def _shape_hint(kind):
+    t = kind[0]
+    if t in ("num", "int"):
+        return "%s to %s" % (kind[1], kind[2])
+    if t == "enum":
+        return "one of " + ", ".join(kind[1])
+    return {"bool": "true or false", "color": "#RRGGBB", "color_or_none": "#RRGGBB or null",
+            "underline": "true, false or BOTTOM/CENTER/TOP", "strike": "true, false or a line shape",
+            "font": "a face name or {hangul, latin, ...}",
+            "spacing": "a percent 50-500 or {type: FIXED|BETWEEN_LINES|AT_LEAST|PERCENT, value}"}[t]
 
 
 def _check_expect(op, i, at, actual, table=None):
@@ -2653,7 +2752,7 @@ def _plan(doc, ops):
                 raise DocError("bad_input", "all is true or false", i=i, at=at)
             if at is not None and name not in RANGE_OPS and isinstance(at, str) and re.match(
                     r"^(?:p\d+|t\d+/r\d+/c\d+/p\d+):\d+-\d+$", at.strip()):
-                raise DocError("bad_address", "a character range only works with set and replace", i=i, at=at)
+                raise DocError("bad_address", "a character range only works with %s" % ", ".join(RANGE_OPS), i=i, at=at)
             acts.extend(_plan_op(doc, cl, i, name, op, at))
         except DocError as exc:
             exc.extra.setdefault("i", i)
@@ -2969,6 +3068,47 @@ def _plan_op(doc, cl, i, name, op, at):
         for q in r["paras"]:
             cl.touch(q.si, q.start, i, name, at)
             acts.append(_Act(i, name, at, q, q.start, side=2, steps=[["goto", q.k, 0, q.si], ["apply_style", sty]]))
+    elif name in ("char_shape", "para_shape"):
+        fmt = _shape_fmt(name, op, i, at)
+        r = resolve(doc, at, allow=("para", "cell", "cellpara", "row", "table", "heading", "place"))
+        rng = r.get("range")
+        paras = [q for q in r["paras"] if q is not None]
+        if r["kind"] == "table":
+            _check_expect(op, i, at, _table_text(r["table"]))
+        elif r.get("cell") is not None and r["kind"] in ("cell", "place"):
+            _check_expect(op, i, at, _cell_text(r["cell"]))
+        elif len(paras) == 1:
+            p0 = paras[0]
+            _check_expect(op, i, at, p0.text[rng[0]:rng[1]] if rng else p0.text)
+        elif op.get("expect") is not None:
+            raise DocError("bad_input", "expect works on one paragraph, cell or table", i=i, at=at)
+        if name == "para_shape":
+            if rng:
+                raise DocError("bad_address", "para_shape takes whole paragraphs, not a character range", i=i,
+                               at=at)
+            for q in paras:
+                cl.touch(q.si, q.start, i, name, at)
+                acts.append(_Act(i, name, at, q, q.start, side=2,
+                                 steps=[["goto", q.k, 0, q.si], {"op": "set_para_shape", "kwargs": dict(fmt)}]))
+        else:
+            mp = fmt.pop("markpen", False)
+            for q in paras:
+                if rng:
+                    a0 = _ppos(q, rng[0])
+                    b0 = _ppos(q, rng[1] - 1) + 1 if rng[1] > rng[0] else a0
+                else:
+                    a0, b0 = 0, len(q.chars)
+                if b0 <= a0:
+                    continue                    # an empty paragraph has no characters to shape
+                cl.span(q, a0, b0, i, name)
+                st = [["goto", q.k, a0, q.si], ["select", b0 - a0]]
+                if fmt:
+                    st.append({"op": "set_char_shape", "kwargs": dict(fmt)})
+                if mp is not False:
+                    st.append(["markpen", mp])
+                acts.append(_Act(i, name, at, q, q.start, side=2, intra=a0, steps=st))
+            if not any(a.i == i for a in acts):
+                raise DocError("bad_input", "%s has no characters to shape" % at, i=i, at=at)
     elif name in ("insert_table", "insert_picture", "insert_equation"):
         r = resolve(doc, at, allow=("para", "cellpara", "heading", "cell", "place"))
         p = r["cell"].paras[-1] if (r.get("cell") is not None and r["kind"] in ("cell", "place")) else r["para"]
