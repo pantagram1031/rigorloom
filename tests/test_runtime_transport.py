@@ -28,8 +28,10 @@ def client(tmp_path):
 
 def test_error_codes_are_one_closed_set_with_no_overlap():
     assert rt_codes.TRANSPORT_CODES & rt_codes.DOMAIN_CODES == frozenset()
+    assert rt_codes.DOC_CORE_CODES & (rt_codes.TRANSPORT_CODES | rt_codes.DOMAIN_CODES) == frozenset()
     assert rt_codes.ERROR_CODES == (rt_codes.TRANSPORT_CODES
-                                    | rt_codes.DOMAIN_CODES)
+                                    | rt_codes.DOMAIN_CODES
+                                    | rt_codes.DOC_CORE_CODES)
 
 
 def test_an_undeclared_code_cannot_be_constructed():
