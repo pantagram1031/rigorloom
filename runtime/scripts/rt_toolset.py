@@ -422,8 +422,8 @@ def _representable(text: str, kind: str) -> bool:
 
 def _unusable_picture(target: str) -> ToolError:
     return ToolError("invalid_params", f"이 그림은 문서에 넣을 수 없습니다({target}).",
-                     hint="임시 폴더 경로에 괄호가 있어 그림을 넣지 못했습니다. "
-                          "RIGORLOOM_HOME을 괄호가 없는 폴더로 지정해 달라고 사용자에게 요청하세요.")
+                     hint="임시 폴더 경로에 괄호가 있어 그림을 넣지 못했습니다. 사용자에게 "
+                          "경로에 괄호가 없는 폴더를 RIGORLOOM_HOME으로 지정해 달라고 요청하세요.")
 
 
 def _package_pictures(package_path: Path) -> dict[str, str]:
@@ -458,9 +458,9 @@ def _only_checked_pictures(out: Path, allowed: set[str]) -> None:
 
 def _unchecked_picture(name: str) -> ToolError:
     return ToolError("invalid_params",
-                     "확인하지 않은 그림이 문서에 들어가려 해서 멈췄습니다.",
-                     hint="그림은 한 줄에 하나씩 ![설명](그림 파일 경로)로 쓰고, "
-                          "허용한 폴더 안의 파일만 쓰세요.",
+                     "문서에서 안전 검사를 거치지 않은 그림을 발견해 문서 생성을 중단했습니다.",
+                     hint="그림은 한 줄에 하나씩 ![설명](그림 파일 경로) 형식으로 적으세요. "
+                          "허용한 폴더 안의 파일만 사용하세요.",
                      at=name)
 
 

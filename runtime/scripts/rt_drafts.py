@@ -148,8 +148,8 @@ def _source_sha(ref: Ref) -> str | None:
 
 def source_missing(path: Path) -> ToolError:
     """The draft's original file is gone: its draft can be read and saved elsewhere."""
-    return ToolError("not_found", f"초안의 원본 파일이 없습니다({path}).",
-                     hint="원본을 원래 자리로 되돌리거나, 다른 경로를 지정해 초안을 저장하세요.",
+    return ToolError("not_found", f"초안의 원본 파일을 찾을 수 없습니다({path}).",
+                     hint="원본 파일을 원래 위치로 되돌리거나 초안을 다른 경로에 저장하세요.",
                      at=str(path))
 
 
