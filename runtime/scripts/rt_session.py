@@ -537,7 +537,9 @@ def load_profile(tools, session: Session, *, tag: str = "base",
     PUBLISHED CANDIDATE inside this session's ``candidates/`` tree, and callers
     resolve one through ``rt_apply.candidate_artifact`` — which reads the
     receipt first, so the bytes were re-verified against their binding before
-    anything profiled them. No path from a client ever reaches this argument.
+    anything profiled them — or the apply path's private snapshot of either
+    (``rt_apply.input_snapshot``), already hashed against the plan's binding.
+    No path from a client ever reaches this argument.
     """
     out = _profile_path(session, tag)
     tools.profile(session.source if subject is None else subject, out,

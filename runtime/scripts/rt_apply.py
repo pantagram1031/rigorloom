@@ -36,6 +36,13 @@ nothing an undo could be the inverse OF.
    candidate reverses which" is a runtime fact rather than something a client
    remembered. Nothing is ever deleted or rewritten: history is append-only and
    an undo is one more candidate.
+
+5. **The bytes that were checked are the bytes that run.** An apply copies its
+   input — the session source, or the base candidate — ONCE into a private
+   directory under ``work/``, hashes that copy against the plan's
+   ``boundSha256``, and profiles, executes and grades from the copy alone. A
+   change to the runtime's own copy after the check therefore cannot reach the
+   candidate, and the receipt's ``input`` names the digest that actually ran.
 """
 from __future__ import annotations
 
@@ -43,9 +50,12 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import sys
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_codes import IMPL_VERSION, RECEIPT_SCHEMA, RpcError  # noqa: E402
@@ -54,6 +64,8 @@ from rt_session import atomic_write_bytes, now_utc, sha256_file  # noqa: E402
 
 RECEIPT_NAME = "receipt.json"
 REQUIRED_CHECKS = ("check_residue",)
+#: Run-private input copies live in ``work/input-<label>/``.
+INPUT_DIR_PREFIX = "input-"
 
 
 class Cancelled(Exception):
@@ -195,6 +207,84 @@ def candidate_artifact(session, run_id: str) -> tuple[Path, dict]:
     return path, receipt
 
 
+class InputSnapshot(NamedTuple):
+    """A private, read-only copy of an input and the digest of THAT copy."""
+    path: Path
+    sha256: str
+    bytes: int
+    kind: str  # "session_source" | "candidate"
+
+
+def _discard_snapshot(directory: Path) -> None:
+    for entry in directory.glob("*"):
+        try:
+            os.chmod(entry, stat.S_IREAD | stat.S_IWRITE)  # Windows will not unlink read-only
+        except OSError:
+            pass
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+@contextmanager
+def private_snapshot(session, source: Path, label: str, *, expected_sha256: str,
+                     kind: str, stale_message: str, **refusal):
+    """Copy ``source`` once, hash the copy, and refuse unless it is ``expected_sha256``.
+
+    The copy is made on the runtime's own filesystem (``work/input-<label>/``)
+    and keeps the source's file name, so every later reader — form_inspect,
+    preedit, the residue gate — sees the same name it always did, but bytes
+    nobody else can change. The digest is computed from the COPY: that is the
+    whole point, a digest of the original says nothing about what a later
+    ``open`` of it returns. The directory is removed when the block exits,
+    however it exits.
+    """
+    session.work_dir.mkdir(parents=True, exist_ok=True)
+    directory = session.work_dir / f"{INPUT_DIR_PREFIX}{label}"
+    try:
+        directory.mkdir(exist_ok=False)
+    except OSError as exc:
+        raise RpcError("publication_failed", "could not create the input snapshot",
+                       detail=str(exc)) from exc
+    try:
+        target = directory / source.name
+        try:
+            with source.open("rb") as reader, target.open("xb") as writer:
+                shutil.copyfileobj(reader, writer, 1024 * 1024)
+            os.chmod(target, stat.S_IREAD)
+            digest, size = sha256_file(target)
+        except OSError as exc:
+            raise RpcError("plan_stale", stale_message, **refusal,
+                           boundSha256=expected_sha256, currentSha256=None,
+                           detail=str(exc)) from exc
+        if digest != expected_sha256:
+            raise RpcError("plan_stale", stale_message, **refusal,
+                           boundSha256=expected_sha256, currentSha256=digest)
+        yield InputSnapshot(target, digest, size, kind)
+    finally:
+        _discard_snapshot(directory)
+
+
+@contextmanager
+def input_snapshot(session, plan, label: str, *, when: str = "approved"):
+    """The plan's input — source or base candidate — as a bound private snapshot.
+
+    A base candidate is resolved through ``candidate_artifact`` first, so its
+    receipt and bytes are re-verified as before; the snapshot then closes the
+    gap between that check and the first read.
+    """
+    base = plan.payload.get("base") or None
+    if base is None:
+        source, kind = session.source, "session_source"
+        message = f"the source changed after this plan was {when}"
+    else:
+        source, _ = candidate_artifact(session, str(base["runId"]))
+        kind = "candidate"
+        message = f"the base candidate changed after this plan was {when}"
+    with private_snapshot(session, source, label,
+                          expected_sha256=plan.payload["boundSha256"], kind=kind,
+                          stale_message=message, planId=plan.id) as snapshot:
+        yield snapshot
+
+
 def _execute_preedit_steps(
     tools,
     ops: list[dict],
@@ -236,26 +326,32 @@ def _execute_preedit_steps(
     return current, steps
 
 
-def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) -> dict:
+def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None,
+               snapshot: InputSnapshot | None = None) -> dict:
     """Run the plan, publish the candidate, return the CandidateArtifact.
 
     The first step reads the plan's BASE — a published candidate when the plan
     declared one, the session source otherwise — and every later step chains
     through ``work/``. The source is never an output either way.
+
+    The base is read from ``snapshot``: a private copy already hashed against
+    the plan's binding. A caller that validated against a snapshot passes the
+    same one, so validation and execution saw identical bytes; without one,
+    this takes its own (re-verifying a base candidate's receipt on the way —
+    an apply may happen long after the proposal).
     """
+    run_id = run_id or uuid.uuid4().hex
+    if snapshot is None:
+        with input_snapshot(session, plan, run_id) as owned:
+            return apply_plan(tools, session, plan, approval, checkpoint=checkpoint,
+                              run_id=run_id, snapshot=owned)
+
     ops = plan.payload["ops"]
     base = plan.payload.get("base") or None
-    run_id = run_id or uuid.uuid4().hex
     run_dir = session.candidates_dir / run_id
     work_dir = session.work_dir / run_id
     suffix = session.source.suffix or ".bin"
-
-    if base is None:
-        origin = session.source
-    else:
-        # Re-verified here even though plan/propose already read it: an apply
-        # may happen long after the proposal, and the check costs one hash.
-        origin, _ = candidate_artifact(session, str(base["runId"]))
+    origin = snapshot.path
 
     try:
         work_dir.mkdir(parents=True, exist_ok=False)
@@ -274,7 +370,20 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
         candidate_sha, candidate_bytes = sha256_file(artifact)
 
         source_profile = session.profile_dir / f"verify-{run_id}.json"
-        tools.profile(session.source, source_profile)
+        if base is None:
+            # The snapshot IS the bound source: grade against what ran.
+            tools.profile(origin, source_profile)
+        else:
+            # A chained run is graded against the session source, so that
+            # reference gets the same treatment, bound to the digest the
+            # receipt's ``source`` records.
+            with private_snapshot(
+                    session, session.source, f"{run_id}-source",
+                    expected_sha256=session.meta["sourceSha256"],
+                    kind="session_source",
+                    stale_message="the session source changed during this apply",
+                    planId=plan.id) as reference:
+                tools.profile(reference.path, source_profile)
         declaration = plan.payload.get("declares") or None
         checks = verification_report(tools, source_profile, artifact,
                                      declaration)
@@ -303,6 +412,11 @@ def apply_plan(tools, session, plan, approval, *, checkpoint=None, run_id=None) 
             # built from the session source — and anything else names the exact
             # candidate its ops were chained onto.
             "base": dict(base) if base else None,
+            # The bytes the first step actually read: the private snapshot,
+            # hashed after it was copied. Equal to the plan's boundSha256 by
+            # construction, or nothing was published.
+            "input": {"kind": snapshot.kind, "sha256": snapshot.sha256,
+                      "bytes": snapshot.bytes},
             # Which candidate this one undoes, when the plan declared one. Never
             # inferred from the ops: a client says what it is reversing and the
             # runtime records the claim beside the bytes that back it.

@@ -559,6 +559,13 @@ head check through the receipt and candidate write, and around every
 approval-record replacement and its `approval.resolved` event. Two plans on the
 same base can therefore never both publish.
 
+`plan/apply` (and the read-only preview) copies its input, the session source
+or the base candidate, once into a private file under the session's `work/`,
+hashes that copy against `boundSha256` (`plan_stale` otherwise), and validates,
+executes and grades from the copy alone, so a later change to the runtime's own
+copy cannot reach the candidate; the receipt's `input: {kind, sha256, bytes}`
+records the digest that ran.
+
 When a plan is applied, the open approvals (pending, or approved and not yet
 applied) of plans whose base is no longer the newest candidate are resolved as
 `rejected` with `reasonCode: "superseded_by_newer_candidate"`, `approver: null`,
