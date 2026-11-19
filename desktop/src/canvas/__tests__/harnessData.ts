@@ -77,7 +77,7 @@ export const HARNESS_SOURCE = {
 
 /**
  * 24-op gongmun review queue modeled on `examples/gongmun/expected/plan.json`
- * for the `default` scenario (mix of accepted & pending items so canvas mirrors M-opus).
+ * for the `default` scenario (mix of accepted & pending items so canvas mirrors the base mockup).
  */
 export function buildDefaultGongmunChanges(
   scenario: HarnessScenario,

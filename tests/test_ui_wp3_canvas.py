@@ -5,7 +5,9 @@ Requires:
   - Live `rigorloom ui` backend for real HWPX `/rpc` typeface & SeatEditor gates
 
 Run:
-  /home/ubuntu/hub/ax/rl-swarm-run/venv/bin/pytest tests/test_ui_wp3_canvas.py -v
+  pytest tests/test_ui_wp3_canvas.py -v
+
+Screenshots go to RL_WP3_SHOTS_DIR, or desktop/scripts/_run/wp3-shots.
 """
 
 from __future__ import annotations
@@ -28,11 +30,6 @@ import pytest
 
 from _browser_gate import no_browser  # noqa: E402
 
-if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
-    _default_pw = Path("/home/ubuntu/.cache/ms-playwright")
-    if _default_pw.is_dir():
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_default_pw)
-
 try:
     from playwright.sync_api import sync_playwright  # noqa: E402
 except ImportError as _exc:  # pragma: no cover - environment dependent
@@ -40,7 +37,7 @@ except ImportError as _exc:  # pragma: no cover - environment dependent
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ROOT = REPO_ROOT / "desktop"
-SHOTS_DIR = Path("/home/ubuntu/hub/ax/ui2/out/WP3/shots")
+SHOTS_DIR = Path(os.environ.get("RL_WP3_SHOTS_DIR") or (DESKTOP_ROOT / "scripts" / "_run" / "wp3-shots"))
 BRIDGE_TOKEN = "wp3-canvas-test-token"
 
 if str(REPO_ROOT) not in sys.path:
@@ -196,7 +193,7 @@ def servers(tmp_path_factory: pytest.TempPathFactory):
 
 
 def _launch_browser(p):
-    pw_root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/home/ubuntu/.cache/ms-playwright"))
+    pw_root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or (Path.home() / ".cache" / "ms-playwright"))
     candidates = [
         pw_root / "chromium_headless_shell-1248" / "chrome-headless-shell-linux-arm64" / "chrome-headless-shell",
         pw_root / "chromium-1248" / "chrome-linux-arm64" / "chrome",
