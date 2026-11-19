@@ -1280,8 +1280,10 @@ def _run_save(ctx: Context, args: dict) -> dict:
         raise ToolError("target_exists", f"같은 이름이 이미 있어 저장하지 않았습니다({target}).",
                         hint="덮어쓰려면 --force를 붙이세요. 이전 내용은 저장 기록에 남습니다.",
                         at=str(target))
-    elif rt_commit.owned(target, ctx.drafts.home, draft=ref.key):
-        expected, policy = sha256_file(target), "policy:own-file"
+    elif (ours := rt_commit.owned_sha256(target, ctx.drafts.home, draft=ref.key)) is not None:
+        # The digest the ownership check matched, not a fresh hash: a foreign
+        # write after the check fails the commit as target_changed.
+        expected, policy = ours, "policy:own-file"
     else:
         expected = sha256_file(target)
         question = (f"{target} 파일을 덮어쓸까요?")

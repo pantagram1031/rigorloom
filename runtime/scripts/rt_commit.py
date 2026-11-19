@@ -195,18 +195,30 @@ def owned(target: Path, home: Path | None = None, *, draft: str | None = None) -
     policy save, nothing was undone, and the file still holds the bytes of the
     last one. A person's approval to replace a file is for that save alone.
     """
+    return owned_sha256(target, home, draft=draft) is not None
+
+
+def owned_sha256(target: Path, home: Path | None = None, *,
+                 draft: str | None = None) -> str | None:
+    """The digest ``owned()`` matched, or None when the file is not ours.
+
+    A save under ``policy:own-file`` passes this value as ``expected``, never a
+    fresh hash of the target: bytes written by someone else after this check
+    then fail the commit with ``target_changed`` instead of being replaced.
+    """
     if draft is None or not target.exists():
-        return False
+        return None
     home = Path(home) if home else state_home()
     entries = _done(_settled(_load_index(_history_dir(home, target)), target))
     created = [i for i, e in enumerate(entries) if e.get("oldSha256") is None]
     if not created:
-        return False
+        return None
     since = entries[created[-1]:]
     if any(e.get("draft") != draft or e.get("undone")
            or e.get("policy") not in ("policy:new-file", "policy:own-file") for e in since):
-        return False
-    return sha256_file(target) == since[-1]["newSha256"]
+        return None
+    last = since[-1]["newSha256"]
+    return last if sha256_file(target) == last else None
 
 
 def declined(target: Path, digest: str, home: Path | None = None) -> bool:

@@ -333,6 +333,28 @@ def test_new_then_save_creates_and_then_resaves_its_own_file(env):
     assert s2["acceptedVia"] == "policy:own-file" and s2["replaced"] is True
 
 
+def test_a_foreign_write_after_the_ownership_check_is_not_replaced(env, monkeypatch):
+    # Fable #389 item 1: own-file must compare against the bytes the ownership
+    # check matched, so a write that lands just after it fails as target_changed.
+    import rt_commit
+    draft = ok(call(env.ctx(), "new", {"markdown": "# 회의록\n\n안건은 둘입니다.\n"}))["path"]
+    target = env.work / "회의록.fdoc"
+    ok(call(env.ctx(), "save", {"path": draft, "to": str(target)}))
+    head = ok(call(env.ctx(), "open", {"path": draft}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": draft, "base": head, "ops": [
+        {"op": "set", "at": "p1", "text": "안건은 셋입니다."}]}))
+    real = rt_commit.owned_sha256
+
+    def check_then_someone_writes(*a, **kw):
+        result = real(*a, **kw)
+        target.write_bytes(b"someone else")
+        return result
+
+    monkeypatch.setattr(rt_commit, "owned_sha256", check_then_someone_writes)
+    err(call(env.ctx(), "save", {"path": draft, "to": str(target)}), "target_changed")
+    assert target.read_bytes() == b"someone else"
+
+
 def test_save_over_a_persons_file_needs_the_person(env):
     path = env.doc()
     before = path.read_bytes()
