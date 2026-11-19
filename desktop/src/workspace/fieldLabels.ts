@@ -1,4 +1,4 @@
-import { INSTRUCTION_PHRASES } from "../i18n/formTokens.ts";
+import { INSTRUCTION_PHRASES, SLOT_PLACEHOLDER_MARKERS } from "../i18n/formTokens.ts";
 import { opKindLabel, t } from "../i18n/vocabulary.ts";
 import type {
   GraphCell,
@@ -428,4 +428,83 @@ export function deriveOpFieldLabel(
 
   const mode = typeof params.mode === "string" ? params.mode : null;
   return opKindLabel(op.kind, lang, mode);
+}
+
+/**
+ * Determine whether a cell edit fills an empty blank (`fill_cell`), appends
+ * to existing form text (`replace_at_cell` with `mode: "append"` -> `칸 문구 덧붙임`),
+ * or replaces existing cell text (`replace_at_cell` with `mode: "replace"` -> `칸 문구 바꿈`).
+ */
+export function classifyCellEditMode(
+  beforeText: string,
+  afterText: string,
+): {
+  kind: "fill_cell" | "replace_at_cell";
+  mode?: "append" | "replace";
+  hasFormText: boolean;
+} {
+  if (beforeText.trim().length === 0) {
+    return { kind: "fill_cell", hasFormText: false };
+  }
+  const trimmedBefore = beforeText.trim();
+  const isAppend =
+    afterText.startsWith(beforeText) ||
+    (trimmedBefore.length > 0 && afterText.startsWith(trimmedBefore));
+  return {
+    kind: "replace_at_cell",
+    mode: isAppend ? "append" : "replace",
+    hasFormText: true,
+  };
+}
+
+/**
+ * Disambiguate repeated blank labels by numbering duplicates `1..N`
+ * (e.g. `협조자 1` .. `협조자 7`) while leaving unique labels untouched.
+ */
+export function disambiguateBlankLabels<T extends { baseLabel: string }>(
+  items: readonly T[],
+): Array<T & { displayLabel: string; duplicateIndex: number | null; duplicateTotal: number }> {
+  const totals = new Map<string, number>();
+  for (const item of items) {
+    totals.set(item.baseLabel, (totals.get(item.baseLabel) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const total = totals.get(item.baseLabel) ?? 1;
+    if (total <= 1) {
+      return {
+        ...item,
+        displayLabel: item.baseLabel,
+        duplicateIndex: null,
+        duplicateTotal: 1,
+      };
+    }
+    const idx = (seen.get(item.baseLabel) ?? 0) + 1;
+    seen.set(item.baseLabel, idx);
+    return {
+      ...item,
+      displayLabel: `${item.baseLabel} ${idx}`,
+      duplicateIndex: idx,
+      duplicateTotal: total,
+    };
+  });
+}
+
+/**
+ * Check whether a cell text matches a form slot placeholder (used to expose
+ * fillable form slots in addition to `fill_target` regions).
+ */
+export function isSlotPlaceholderText(
+  text: string,
+  formCtx: FormInstructionContext,
+): boolean {
+  const collapsed = collapseFormGuideLabel(text);
+  const compact = collapsed.replace(/\s+/g, "");
+  if (!compact) return false;
+  if (SLOT_PLACEHOLDER_MARKERS.some((m) => compact.includes(m))) return true;
+  if (/\(\s{2,}\)|\[\s{2,}\]/.test(text)) return true;
+  for (const term of formCtx.quotedTerms) {
+    if (compact === term) return true;
+  }
+  return false;
 }
