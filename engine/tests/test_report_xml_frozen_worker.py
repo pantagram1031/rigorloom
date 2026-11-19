@@ -2691,7 +2691,11 @@ def _parent_probe(root: Path, ws: Path, case: str) -> dict:
         if isinstance(value, list):
             return [normalize(v) for v in value]
         if isinstance(value, str):
-            return value.replace(str(ws.resolve()), "<workspace>").replace(ws.resolve().as_posix(), "<workspace>")
+            value = value.replace(str(ws.resolve()), "<workspace>").replace(ws.resolve().as_posix(), "<workspace>")
+            if "<workspace>" in value:
+                # Fixtures were captured on POSIX; Windows joins with backslashes.
+                value = value.replace("\\", "/")
+            return value
         return value
     return normalize(result)
 
