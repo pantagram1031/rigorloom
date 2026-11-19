@@ -3,10 +3,12 @@
 
     python tests/fixtures/doc_core/build_addressing.py [BASE.hwpx]
 
-BASE is the package whose header and metadata are kept (default: the engine's forms/blank_a4.hwpx, found
-through RIGORLOOM_HWP_ENGINE). Writes addressing.hwpx and addressing.json next to this file. The JSON is what
-both implementations must answer on it (rt_doc: tests/test_rt_doc_addressing.py; the engine runs the same
-file). The document:
+BASE is the package whose header and settings are kept (default: the committed addressing.hwpx itself, so the
+fixture rebuilds from this repo alone; its package members were first taken from a blank A4 document as Hancom
+writes it). Its section is replaced and the authoring metadata in content.hpf (creator, lastsaveby, dates) is
+blanked. Writes addressing.hwpx and addressing.json next to this file. The JSON is what both implementations
+must answer on it (rt_doc: the "shared addressing fixture" tests in tests/test_rt_doc.py; the engine runs the
+same file). The document:
 
     p0  신청서 양식
     p1  t0 (id 5001), 3 x 3:  성명 | _ | 비고 (rowSpan 2, so r1/c2 is covered)
@@ -22,7 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -71,8 +73,11 @@ def two_by_two(tid, labels, width):
 
 
 def section(base_xml):
-    head = base_xml[:base_xml.index("</hp:run></hp:p>")]          # the first paragraph's run, up to its end
-    tail = base_xml[base_xml.index("</hp:run></hp:p>") + len("</hp:run></hp:p>"):]
+    # keep the first paragraph's opening and its section properties; drop its text and every other paragraph
+    head = base_xml[:base_xml.index("</hp:run></hp:p>")]
+    cut = head.find("<hp:t>", head.rindex("</hp:ctrl>")) if "</hp:ctrl>" in head else -1
+    head = head[:cut] if cut >= 0 else head
+    tail = base_xml[base_xml.rindex("</hs:sec>"):]
     w = 14000
     nested = two_by_two("5002", ["전화", "메일"], w - 1200)
     t0 = table("5001", 3, 3, [
@@ -110,6 +115,13 @@ def expected():
     }
 
 
+def blank_metadata(hpf):
+    """content.hpf without who wrote the base document or when."""
+    for name in ("creator", "lastsaveby", "CreatedDate", "ModifiedDate", "date"):
+        hpf = re.sub(r'(<opf:meta name="%s" content="text")(?:/>|>[^<]*</opf:meta>)' % name, r"\1/>", hpf)
+    return hpf
+
+
 def build(base: Path, out: Path):
     with zipfile.ZipFile(base) as z:
         members = [(i, z.read(i)) for i in z.infolist()]
@@ -119,6 +131,8 @@ def build(base: Path, out: Path):
                 data = section(data.decode("utf-8")).encode("utf-8")
             elif info.filename == "Preview/PrvText.txt":
                 data = b""
+            elif info.filename == "Contents/content.hpf":
+                data = blank_metadata(data.decode("utf-8")).encode("utf-8")
             zi = zipfile.ZipInfo(info.filename, FIXED_TIME)
             zi.compress_type = zipfile.ZIP_STORED if info.filename == "mimetype" else zipfile.ZIP_DEFLATED
             w.writestr(zi, data)
@@ -126,14 +140,14 @@ def build(base: Path, out: Path):
 
 
 def main(argv):
-    if len(argv) > 1:
-        base = Path(argv[1])
-    else:
-        eng = os.environ.get("RIGORLOOM_HWP_ENGINE", "").strip()
-        if not eng:
-            sys.exit("usage: build_addressing.py BASE.hwpx (or set RIGORLOOM_HWP_ENGINE to use forms/blank_a4.hwpx)")
-        base = Path(eng) / "forms" / "blank_a4.hwpx"
-    build(base, HERE / "addressing.hwpx")
+    base = Path(argv[1]) if len(argv) > 1 else HERE / "addressing.hwpx"
+    data = base.read_bytes()                # the default base is the file about to be rewritten
+    tmp = HERE / "addressing.base.tmp"
+    tmp.write_bytes(data)
+    try:
+        build(tmp, HERE / "addressing.hwpx")
+    finally:
+        tmp.unlink()
     (HERE / "addressing.json").write_text(json.dumps(expected(), ensure_ascii=False, indent=1) + "\n", "utf-8")
     print("wrote", HERE / "addressing.hwpx", "and addressing.json")
 
