@@ -103,7 +103,7 @@ def _done(entries: list[dict]) -> list[dict]:
 def commit(candidate: Path, target: Path, *, expected: str, by: str,
            policy: str, home: Path | None = None,
            provenance: dict | None = None, candidate_sha256: str | None = None,
-           draft: str | None = None) -> dict:
+           draft: str | None = None, honour_declines: bool = False) -> dict:
     """Publish ``candidate``'s bytes at ``target``.
 
     ``expected`` is ``"absent"`` (create only) or the full sha256 the target
@@ -112,8 +112,11 @@ def commit(candidate: Path, target: Path, *, expected: str, by: str,
     the draft that wrote it (the own-file exemption is per draft).
     ``provenance`` (``{"mock": bool, ...}``) goes into the history entry and
     the receipt unchanged, so a test-only proposal stays labelled wherever its
-    bytes end up. Returns a receipt; raises ToolError and writes nothing when
-    a binding does not hold.
+    bytes end up. ``honour_declines``: refuse bytes a person said no to at this
+    target, checked under the same lock ``record_decline`` takes, so a "no"
+    given in another session while this one waited for its own answer wins.
+    Returns a receipt; raises ToolError and writes nothing when a binding does
+    not hold.
     """
     home = Path(home) if home else state_home()
     data = candidate.read_bytes()
@@ -124,6 +127,11 @@ def commit(candidate: Path, target: Path, *, expected: str, by: str,
                         data={"reason": "superseded_by_newer_candidate"})
     folder = private_dir(_history_dir(home, target))
     with _lock(folder):
+        if honour_declines and declined(target, new_sha, home):
+            raise ToolError("declined_by_person",
+                            "사용자가 이 내용으로 파일을 덮어쓰지 않기로 했습니다.",
+                            hint="덮어쓸지 다시 묻지 마세요. 저장하려면 먼저 사용자에게 새 파일 이름을 물어보세요.",
+                            at=str(target))
         entries = _settled(_load_index(folder), target)
         entry = {"id": secrets.token_hex(8), "at": _now(), "target": str(target),
                  "newSha256": new_sha,

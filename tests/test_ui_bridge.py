@@ -151,7 +151,8 @@ def test_pyproject_package_data_and_cli_ui_subcommand(tmp_path: Path, monkeypatc
         "rigorloom_runtime.style_packs": "runtime/style_packs",
     }
     assert st_cfg["package-data"] == {
-        "rigorloom_runtime": ["ui_dist/*", "ui_dist/assets/*"],
+        # knowledge/*.md: the guide topics and the MCP server's instructions.
+        "rigorloom_runtime": ["ui_dist/*", "ui_dist/assets/*", "knowledge/*.md"],
         "rigorloom_runtime.style_packs": ["*.json"],
     }
 

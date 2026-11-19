@@ -291,6 +291,11 @@ class Context:
     #: ask(question, detail) -> bool. A person answers: MCP elicitation, a TTY
     #: prompt, or the UI. ``None`` = nobody can be asked.
     ask: Callable[[str, dict], bool] | None = None
+    #: The roots as they are now. A person's answer can take minutes, and
+    #: the client may change its folders meanwhile (MCP ``roots/list``), so
+    #: ``save`` checks again with this before it writes. ``None``: ``roots``
+    #: cannot change while a call runs.
+    current_roots: Callable[[], Any] | None = None
     #: Lazily resolved document layer (rt_doc) and draft store.
     _doc: Any = None
     _drafts: Any = None
@@ -308,8 +313,36 @@ class Context:
         return self._drafts
 
 
+#: TEST-ONLY. A path to a Python file that stands in for ``rt_doc`` in a
+#: subprocess (the MCP stdio tests run a fake document layer through it). It
+#: is not configuration: nothing in the product sets it, and a warning goes to
+#: stderr whenever it is used.
+TEST_DOC_ENV = "RIGORLOOM_TEST_DOC_MODULE"
+_test_docs: dict[str, Any] = {}
+
+
+def _load_test_doc(path: str):
+    if path not in _test_docs:
+        import importlib.util
+        import sys
+        spec = importlib.util.spec_from_file_location("_rigorloom_test_doc", path)
+        if spec is None or spec.loader is None:
+            raise ToolError("capability_unavailable",
+                            f"환경 변수 {TEST_DOC_ENV}에 지정된 파일을 불러오지 못했습니다.",
+                            data={"path": path})
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        print(f"rigorloom: {TEST_DOC_ENV} is set (test only): "
+              f"document layer from {path}", file=sys.stderr, flush=True)
+        _test_docs[path] = module
+    return _test_docs[path]
+
+
 def load_doc():
     """The document layer, or a refusal that says what is missing."""
+    seam = os.environ.get(TEST_DOC_ENV)
+    if seam:
+        return _load_test_doc(seam)
     try:
         rt_doc = sibling("rt_doc")
     except ImportError as exc:
@@ -337,6 +370,13 @@ def _safe(value: Any) -> Any:
     return value
 
 
+#: Result fields that name a file exactly. They are data for a program (the
+#: agent passes them back, the UI opens them), so they are not cleaned like
+#: document text: dropping a bidi mark from a file name names another file.
+#: Every place that SHOWS one escapes it (``rt_term.path_text``).
+EXACT_KEYS = frozenset({"path", "saved"})
+
+
 def call(ctx: Context, name: str, args: dict | None) -> dict:
     """Validate, run, and wrap. Never raises; returns the envelope.
 
@@ -349,7 +389,8 @@ def call(ctx: Context, name: str, args: dict | None) -> dict:
         result = tool.run(ctx, args)
         if not isinstance(result, dict):
             raise ToolError("internal", f"{name}: 도구가 잘못된 형식으로 결과를 보냈습니다.")
-        return {"ok": True, "result": _safe(result)}
+        return {"ok": True, "result": {k: v if k in EXACT_KEYS and isinstance(v, str)
+                                       else _safe(v) for k, v in result.items()}}
     except ToolError as exc:
         return {"ok": False, "error": _safe(exc.to_dict())}
     except Exception as exc:  # noqa: BLE001 - a bug must not look like a verdict
@@ -391,6 +432,7 @@ def doc_call(fn: Callable, *args, **kwargs) -> dict:
         "source_rejected": "source_rejected",
         "page_out_of_range": "page_out_of_range",
         "bad_address": "bad_address",
+        "locked": "locked",
         "conflict": "conflict",
         "engine_timeout": "engine_unavailable",
         "engine_unavailable": "engine_unavailable",
@@ -401,7 +443,9 @@ def doc_call(fn: Callable, *args, **kwargs) -> dict:
         mapped, err.get("message") or "문서 처리를 마치지 못했습니다.",
         hint=err.get("hint"), at=err.get("at"),
         done=err.get("done"), candidates=err.get("candidates"),
-        retryable=bool(err.get("retryable", False)),
+        # doc-core ruling 2026-11-19: locked is retryable, whether or not
+        # the layer says so on that error.
+        retryable=bool(err.get("retryable", False)) or mapped in ("locked", "stale"),
         data={k: v for k, v in err.items()
               if k not in ("code", "message", "hint", "at", "done",
                            "candidates", "retryable")} or None)

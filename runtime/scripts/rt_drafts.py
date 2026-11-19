@@ -138,6 +138,21 @@ class _Lock:
         return False
 
 
+def _source_sha(ref: Ref) -> str | None:
+    """The source file's digest, or None when it is no longer there."""
+    try:
+        return sha256_file(ref.source)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+
+
+def source_missing(path: Path) -> ToolError:
+    """The draft's original file is gone: its draft can be read and saved elsewhere."""
+    return ToolError("not_found", f"초안의 원본 파일을 찾을 수 없습니다({path}).",
+                     hint="원본 파일을 원래 위치로 되돌리거나 초안을 다른 경로에 저장하세요.",
+                     at=str(path))
+
+
 class DraftStore:
     def __init__(self, home: Path | None = None):
         self.home = Path(home) if home else state_home()
@@ -214,7 +229,14 @@ class DraftStore:
                 raise ToolError("not_found", f"이 식별자의 초안을 찾을 수 없습니다({ref.label}).",
                                 hint="new 결과에 나온 초안 식별자를 확인하세요.")
             return self._head_input(ref, record)
-        source_sha = sha256_file(ref.source)
+        source_sha = _source_sha(ref)
+        if source_sha is None:
+            # The file was moved or deleted after the draft was made: what the
+            # draft holds can still be read, but nothing can be checked
+            # against the original any more.
+            if use_draft and record and record.get("head"):
+                return self._head_input(ref, record)
+            raise source_missing(ref.source)
         if use_draft and record and record.get("head"):
             self._require_source_unchanged(record, source_sha)
             return self._head_input(ref, record)
@@ -254,7 +276,9 @@ class DraftStore:
         with self.lock(ref):
             folder = self.dir_for(ref)
             record = self.load(ref)
-            source_sha = sha256_file(ref.source) if ref.source else None
+            source_sha = _source_sha(ref) if ref.source else None
+            if ref.source is not None and source_sha is None:
+                raise source_missing(ref.source)
             if record is None:
                 assert ref.source is not None and source_sha is not None
                 record = new_record(source=ref.source, sha256=source_sha)

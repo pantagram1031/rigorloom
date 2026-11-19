@@ -107,10 +107,15 @@ def canonical_bytes(payload: dict, *, omit: tuple[str, ...] = ()) -> bytes:
 READ_EOF = "eof"
 READ_LINE = "line"
 READ_OVERSIZE = "oversize"
+#: Input ended inside a frame shorter than the cap (no closing newline).
+#: Returned only to callers that pass ``truncated=True``; others get
+#: READ_OVERSIZE, as before.
+READ_TRUNCATED = "truncated"
 
 
 def read_raw_frame(stream: BinaryIO,
-                   max_bytes: int = MAX_FRAME_BYTES) -> tuple[str, bytes | None]:
+                   max_bytes: int = MAX_FRAME_BYTES, *,
+                   truncated: bool = False) -> tuple[str, bytes | None]:
     """Read one line, refusing an oversized one without parsing it.
 
     ``readline(limit)`` stops at the limit, so an attacker cannot make the
@@ -126,6 +131,8 @@ def read_raw_frame(stream: BinaryIO,
         if len(body) > max_bytes:
             return READ_OVERSIZE, None
         return READ_LINE, body
+    if truncated and len(line) <= max_bytes:
+        return READ_TRUNCATED, None  # readline stopped short of the cap: input ended
     # No newline within the cap: either an oversized frame or a truncated tail.
     while True:
         chunk = stream.readline(65536)
