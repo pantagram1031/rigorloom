@@ -206,8 +206,9 @@ rt_doc.edit("보고서.hwpx", [
 - `base` must be the file's current rev, otherwise `stale` and nothing happens.
   The file is read once; the rev, the plan and the engine all use those bytes.
 - Every op is checked before anything is written: address kinds, ranges
-  (`p3:2-5` only for `set` and `replace`), `expect` (`expect_mismatch`; only
-  `set`, `replace`, `delete`, `fill` and `table.delete_row` take one, others
+  (`p3:2-5` only for `set`, `replace` and `char_shape`), `expect`
+  (`expect_mismatch`; only `set`, `replace`, `delete`, `fill`,
+  `table.delete_row`, `char_shape` and `para_shape` take one, others
   refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
   and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
   or an op on something another op deletes (a paragraph, table or row; one
@@ -227,6 +228,26 @@ rt_doc.edit("보고서.hwpx", [
   Hancom, so new paragraphs take the neighbour's numbering, indent and shape.
   List markers and `#` in the markdown are dropped for that reason. `like`
   copies another paragraph's style and character shape onto them.
+- `char_shape` (서식 > 글자 모양) and `para_shape` (서식 > 문단 모양) take `at`
+  and `set`, a map of what to change; keys left out keep their value.
+  `char_shape` works on a paragraph, a character range, a cell, a row or a
+  table: `bold`, `italic`, `emboss`, `engrave`, `sup`, `sub` (true/false),
+  `underline` (true/false or `BOTTOM`/`CENTER`/`TOP`), `underline_shape`,
+  `strike` (true/false or a line shape), `color`, `underline_color`,
+  `strike_color` (`#RRGGBB`), `shade` and `markpen` (형광펜; `#RRGGBB` or
+  null to remove), `size` (pt, 1 to 4096), `font` (a face or
+  `{"hangul": ..., "latin": ...}`), `ratio` (장평 %, 50 to 200), `spacing`
+  (자간 %, -50 to 50), `rel_size` and `offset` (%). `para_shape` takes whole
+  paragraphs (a range is refused): `align` (`JUSTIFY`, `LEFT`, `RIGHT`,
+  `CENTER`, `DISTRIBUTE`, `DISTRIBUTE_SPACE`), `left`, `right`, `indent`
+  (negative = 내어쓰기), `before`, `after` (pt), `line_spacing` (a percent,
+  or `{"type": "FIXED"|"BETWEEN_LINES"|"AT_LEAST"|"PERCENT", "value": pt}`),
+  `keep_next`, `keep_lines`, `widow_orphan`, `page_break_before`. An unknown
+  key or a value out of range is `bad_input` before anything runs. Both need
+  the engine, which applies them to the selected text or paragraphs; the keys
+  are fields of the 글자 모양 / 문단 모양 dialogs. They change no addresses,
+  and run before text edits in the same paragraph, so a range means what it
+  meant in `base`.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is
