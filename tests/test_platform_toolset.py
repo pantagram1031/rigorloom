@@ -1681,9 +1681,13 @@ def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeyp
     for name, example in rt_toolset.OP_EXAMPLES.items():
         assert rt_toolset._op_signature(name) in text and example in text, name
         rt_toolset._check_ops([json.loads(example)])   # each example passes the op check
+    # Every op the document layer checks `expect` on takes it here too.
+    doc = rt_tools.sibling("rt_doc")
+    for name in doc.EXPECT_OPS:
+        assert "expect" in rt_toolset.OP_FIELDS[name][1], name
+    rt_toolset._check_ops([{"op": "table.delete_row", "at": "t0/r2", "expect": "합계\t120"}])
     assert set(rt_toolset.OP_EXAMPLES) == set(rt_toolset.OP_FIELDS)
     assert "t0/r0/c0 the first cell" in text
-    doc = rt_tools.sibling("rt_doc")
     for name, table in rt_toolset.OP_SET_KEYS.items():   # the keys the layer checks, not a copy
         line = next(x for x in text.splitlines() if x.startswith(name + "{"))
         assert all(f" {key} (" in line for key in getattr(doc, table)), name

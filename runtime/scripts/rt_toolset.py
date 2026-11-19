@@ -907,8 +907,8 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "delete": (("at",), ("expect",)),
     "table.set_cells": (("at", "grid"), ()),
     "table.add_row": (("at", "after"), ("like",)),
-    "table.delete_row": (("at",), ()),
-    "fill": (("place", "text"), ()),
+    "table.delete_row": (("at",), ("expect",)),
+    "fill": (("place", "text"), ("expect",)),
     "style": (("at", "style"), ()),
     "char_shape": (("at", "set"), ("expect",)),
     "para_shape": (("at", "set"), ("expect",)),
@@ -947,7 +947,10 @@ OP_NOTES = {
                        "r0/c0 for a whole table); null leaves a cell as it is",
     "table.add_row": "`after` is the row the new one goes under; `like` is the row whose look "
                      "it copies, that row or the next",
-    "fill": "`place` is a place id from open (the fill tool takes several at once)",
+    "table.delete_row": "`at` is the row (t0/r2); `expect` is that row's text, its cells "
+                        "joined by a tab",
+    "fill": "`place` is a place id from open (the fill tool takes several at once); "
+            "`expect` is the value the place holds now",
     "style": "`style` is a paragraph style name this document has",
     "char_shape": "`at` is a paragraph, a range in one (p3:5-9), a cell, a row or a table; "
                   "`set` holds only what changes; size is in pt, ratio (장평), spacing (자간), "
