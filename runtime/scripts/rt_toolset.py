@@ -1072,10 +1072,10 @@ register(Tool(
                 "delete{at,expect?}, table.set_cells{at,grid}, "
                 "table.add_row{at,after,like?}, table.delete_row{at}, style{at,style}, "
                 "char_shape{at,set} (at: paragraph, range p3:5-9, cell, table; set: {bold,size,color,...}), "
-                "para_shape{at,set} (set: {align,indent,before,after,line_spacing,...}), "
+                "para_shape{at,set} (set: {align,before,after,...}), "
                 "numbering{at,set} (set: {kind: outline|number|bullet|none, level}). "
                 "Pass the `rev` you read as `base`; `expect` guards the text you change. "
-                "Returns changed pages.",
+                "Returns changed pages: preview them.",
     group="write", read_only=False, idempotent=False,
     input_schema=_obj({
         "path": S_PATH, "base": S_REV,

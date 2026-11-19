@@ -1108,13 +1108,36 @@ def test_engine_numbering_sets_the_list_state(kit, tmp_path):
         head = z.read("Contents/header.xml").decode("utf-8")
         assert re.search(r'<hh:paraHead start="5" level="1"', head)
         assert "■" in head
-    # an op that finds the paragraph already there adds no step; none takes each list off
+    # an op that finds the paragraph already there adds no step; none takes each list off; number -> bullet
     r = D.edit(out, [
         {"op": "numbering", "at": "p3", "set": {"kind": "number", "level": 2}},
         {"op": "numbering", "at": "p4", "set": {"kind": "none"}},
         {"op": "numbering", "at": "p5", "set": {"kind": "none"}},
+        {"op": "numbering", "at": "p6", "set": {"kind": "bullet"}},
     ], base=D.rev_of(out), out=out2)
     assert r["ok"], r
     assert state(out2, "p3")[0] == ("NUMBER", 1)
     assert state(out2, "p4")[0][0] == "NONE"
     assert state(out2, "p5")[:2] == (("NONE", 0), "Normal")
+    assert state(out2, "p6")[0][0] == "BULLET" and state(out2, "p6")[2] == texts["p6"]
+
+    # outline -> number, and bullet -> number restarted (새 번호로 시작: a numbering of its own from 1)
+    out3 = tmp_path / "n3.hwpx"
+    r = D.edit(out, [
+        {"op": "numbering", "at": "p5", "set": {"kind": "number"}},
+        {"op": "numbering", "at": "p4", "set": {"kind": "number", "restart": True}},
+    ], base=D.rev_of(out), out=out3)
+    assert r["ok"], r
+    assert state(out3, "p5")[0][0] == "NUMBER" and state(out3, "p5")[1] != "Outline 2"
+    assert state(out3, "p4")[0][0] == "NUMBER"
+
+    def num_ref(path, a):
+        d = D._load(path)
+        q = D.resolve(d, a)["para"]
+        with zipfile.ZipFile(path) as z:
+            head = z.read("Contents/header.xml").decode("utf-8")
+        pp = re.search(r'<hh:paraPr id="%s".*?</hh:paraPr>' % q.pr, head, re.S).group(0)
+        ref = re.search(r'<hh:heading type="NUMBER" idRef="(\d+)"', pp).group(1)
+        return ref, re.search(r'<hh:numbering id="%s"[^>]*\bstart="(\d+)"' % ref, head).group(1)
+    assert num_ref(out3, "p4")[0] != num_ref(out3, "p5")[0]
+    assert num_ref(out3, "p4")[1] == "1"
