@@ -229,9 +229,12 @@ def test_expect_on_a_cell_names_where_the_expected_text_is(no_engine, tmp_path):
     assert (e["at"], e["actual"], e["found_at"]) == ("t0/r2/c0", "연락", "t0/r1/c0")
     e = refused({"op": "delete", "at": "t0/r0/c2", "expect": "끝"})
     assert e["found_at"] == "t0/r2/c2"
+    e = refused({"op": "char_shape", "at": "t0/r0/c0", "set": {"bold": True}, "expect": "연락"})
+    assert e["found_at"] == "t0/r2/c0"      # checked before the engine is needed
     # Nowhere in the table, or in more than one cell (the empty ones): no guess.
     assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": "없는 글"})
     assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": ""})
+
 
 def test_edit_refusals(no_engine, tmp_path):
     src = _copy(GUARD, tmp_path)

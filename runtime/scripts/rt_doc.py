@@ -3076,7 +3076,7 @@ def _plan_op(doc, cl, i, name, op, at):
         if r["kind"] == "table":
             _check_expect(op, i, at, _table_text(r["table"]))
         elif r.get("cell") is not None and r["kind"] in ("cell", "place"):
-            _check_expect(op, i, at, _cell_text(r["cell"]))
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
         elif len(paras) == 1:
             p0 = paras[0]
             _check_expect(op, i, at, p0.text[rng[0]:rng[1]] if rng else p0.text)
