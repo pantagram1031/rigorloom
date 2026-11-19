@@ -1041,6 +1041,20 @@ class TestPdfCmdWiring(unittest.TestCase):
                 self.assertEqual(receipt["proof_grade"], "none")
 
 
+def _one_pixel_png() -> bytes:
+    """A valid 1x1 grey PNG, written here so the test needs no image file."""
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0)  # 1x1, 8-bit greyscale
+    idat = zlib.compress(b"\x00\x80")                   # filter 0, one grey pixel
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
 class TestDocxBackend(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1064,6 +1078,37 @@ class TestDocxBackend(unittest.TestCase):
             xml = z.read("word/document.xml").decode("utf-8")
         # a section heading string must survive into the document body
         self.assertIn("Intro", xml)
+        # _make_ws writes plot.png as a PNG signature and nothing after it:
+        # python-docx cannot read it, so the figure becomes a note and the
+        # rest of the document is still built.
+        self.assertIn("[unreadable figure: plot.png]", xml)
+        self.assertIn("Figure 1. A synthetic plot", xml)
+        # the table's caption comes before the table, as in the bundle backend
+        self.assertLess(xml.index("Table 1. Synthetic data"), xml.index("<w:tbl>"))
+
+    def test_docx_embeds_a_figure_it_can_read(self):
+        if importlib.util.find_spec("docx") is None:
+            self.skipTest("python-docx not installed")
+        (self.ws / "bundle" / "figures" / "plot.png").write_bytes(_one_pixel_png())
+        result, code = docx_backend.build(str(self.ws))
+        self.assertEqual(code, 0, result)
+        with zipfile.ZipFile(result["out"]) as z:
+            xml = z.read("word/document.xml").decode("utf-8")
+            media = [n for n in z.namelist() if n.startswith("word/media/")]
+        self.assertEqual(len(media), 1, media)
+        self.assertNotIn("figure: plot.png]", xml)
+
+    def test_docx_notes_a_file_that_is_not_an_image(self):
+        if importlib.util.find_spec("docx") is None:
+            self.skipTest("python-docx not installed")
+        (self.ws / "bundle" / "figures" / "plot.png").write_text("not a picture", encoding="utf-8")
+        result, code = docx_backend.build(str(self.ws))
+        self.assertEqual(code, 0, result)
+        with zipfile.ZipFile(result["out"]) as z:
+            xml = z.read("word/document.xml").decode("utf-8")
+            media = [n for n in z.namelist() if n.startswith("word/media/")]
+        self.assertIn("[unreadable figure: plot.png]", xml)
+        self.assertEqual(media, [])
 
 
 if __name__ == "__main__":
