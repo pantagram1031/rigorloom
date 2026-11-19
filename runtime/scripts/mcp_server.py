@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 """MCP stdio adapter — the agent-safe subset, and nothing else.
 
+DEPRECATED: removed in 0.20. This adapter serves the desktop review flow over
+Runtime sessions. The document tools are served by ``rigorloom mcp``
+(``rt_mcp.py``); new clients should use that.
+
     python runtime/scripts/mcp_server.py --root <dir> [--engine-root <dir>]
 
 FRAMING: newline-delimited JSON-RPC 2.0, which is what the MCP stdio transport

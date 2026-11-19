@@ -7,6 +7,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "runtime" / "scripts"))
 
 from rt_term import (  # noqa: E402
@@ -19,6 +21,7 @@ from rt_term import (  # noqa: E402
     truncate,
     width,
 )
+import rt_term  # noqa: E402
 
 
 def test_korean_is_two_columns():
@@ -96,3 +99,28 @@ def test_help_descriptions_start_at_one_column():
             assert what, usage  # every verb says what it does
             line = next(x for x in text if x.startswith("  " + usage + " "))
             assert width(line[: line.index(what)]) == HELP_USAGE_COLUMNS + 4, line
+
+
+@pytest.mark.parametrize("name,posix,windows", [
+    ("보고서.hwpx", '"보고서.hwpx"', '"보고서.hwpx"'),
+    ("C:\\문서\\보고서.hwpx", "'C:\\문서\\보고서.hwpx'", '"C:\\문서\\보고서.hwpx"'),
+    ('report"quoted".hwpx', "'report\"quoted\".hwpx'", None),
+    ("a$HOME.hwpx", "'a$HOME.hwpx'", None),
+    ("it's $x.hwpx", "'it'\"'\"'s $x.hwpx'", None),
+    ("100%.hwpx", '"100%.hwpx"', None),
+    ("a\u202eb.hwpx", None, None),
+    ("a\nb.hwpx", None, None),
+])
+def test_shell_arg_is_copyable_or_absent(name, posix, windows):
+    import shlex
+    assert rt_term.shell_arg(name, windows=False) == posix
+    assert rt_term.shell_arg(name, windows=True) == windows
+    if posix is not None:
+        assert shlex.split(posix) == [name]
+
+
+def test_the_undo_line_names_no_command_for_an_invisible_character():
+    assert rt_term.undo_line("/x/a\u200b.hwpx") == \
+        "되돌리려면 rigorloom undo 뒤에 실제 파일 경로를 입력해 실행하세요."
+    assert rt_term.undo_line("/x/a.hwpx", shown=rt_term.path_text) == \
+        '되돌리기: rigorloom undo "/x/a.hwpx"'

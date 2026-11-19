@@ -17,24 +17,31 @@ turn. People-facing text (titles, messages, hints) is Korean.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
+import secrets
+import shutil
+import stat
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
 try:  # installed as rigorloom_runtime
     from . import rt_commit
-    from .rt_drafts import Input, Ref, is_virtual, rev_of, summary
+    from .rt_drafts import Input, Ref, is_virtual, rev_of, source_missing, summary
     from .rt_paths import (PathRefused, canonical, check_readable, mark_state, private_dir,
                            sha256_file)
-    from .rt_term import one_line, path_text, safe_text
+    from .rt_term import one_line, path_text, safe_text, shell_arg
     from .rt_tools import Context, Tool, ToolError, doc_call, register, sibling
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
-    from rt_drafts import Input, Ref, is_virtual, rev_of, summary
+    from rt_drafts import Input, Ref, is_virtual, rev_of, source_missing, summary
     from rt_paths import (PathRefused, canonical, check_readable, mark_state, private_dir,
                           sha256_file)
-    from rt_term import one_line, path_text, safe_text
+    from rt_term import one_line, path_text, safe_text, shell_arg
     from rt_tools import Context, Tool, ToolError, doc_call, register, sibling
 
 READ_DEFAULT_CHARS = 6000
@@ -93,19 +100,31 @@ def _out(props: dict) -> dict:
 # resolution: which file, which draft, may we touch it
 # ---------------------------------------------------------------------------
 
+_REFUSAL_HINTS = {
+    "outside_roots": "이 폴더를 허용하려면 사용자에게 MCP 설정에 --allow <폴더>를 추가해 달라고 요청하세요.",
+    "not_found": "상대 경로는 작업 폴더를 기준으로 합니다. 경로가 맞는지 사용자에게 확인하세요.",
+}
+
+
 def resolve(ctx: Context, raw: str) -> Ref:
     """A Ref for ``raw``, after the roots check. Refuses what may not be read."""
     if is_virtual(raw):
-        return ctx.drafts.ref(raw)
+        ref = ctx.drafts.ref(raw)
+        source = ((ctx.drafts.load(ref) or {}).get("source") or {}).get("path")
+        if source is None:
+            return ref  # made with `new`: no file behind it to confine
+        # A draft of a file is that file: the same roots apply to its id.
+        try:
+            path = ctx.roots.check(source) if ctx.roots is not None else canonical(source)
+        except PathRefused as exc:
+            raise ToolError(exc.code, exc.message, hint=exc.hint or _REFUSAL_HINTS.get(exc.code),
+                            at=raw) from exc
+        return type(ref)(ref.key, path)
     try:
         path = ctx.roots.check(raw) if ctx.roots is not None else canonical(raw)
         check_readable(path)
     except PathRefused as exc:
-        hint = None
-        if exc.code == "outside_roots":
-            hint = "이 폴더를 허용하려면 사용자가 MCP 설정에 --allow <폴더>를 추가해야 합니다."
-        elif exc.code == "not_found":
-            hint = "경로를 확인하세요. 상대 경로는 작업 폴더 기준입니다."
+        hint = exc.hint or _REFUSAL_HINTS.get(exc.code)
         raise ToolError(exc.code, exc.message, hint=hint, at=exc.path) from exc
     fmt = path.suffix.lower().lstrip(".")
     if fmt not in FORMATS_IN:
@@ -131,49 +150,341 @@ def _provenance(ctx: Context) -> dict:
     return out
 
 
-#: Every way markdown can pull in a file: inline images, reference
-#: definitions, and HTML <img>. Each target is checked and made absolute, so
-#: the document layer resolves exactly the file that was checked.
-_ASSET_PATTERNS = (
-    re.compile(r"(!\[[^\]]*\]\()(<[^>]*>|[^)\s]+)"),
-    re.compile(r"(?m)(^[ \t]{0,3}\[[^\]]+\]:[ \t]*)(<[^>]*>|\S+)"),
-    re.compile(r"""(<img\b[^>]*?\bsrc\s*=\s*["']?)([^"'\s>]+)""", re.IGNORECASE),
+# ---------------------------------------------------------------------------
+# pictures named in markdown
+# ---------------------------------------------------------------------------
+#
+# The converter (eng-formats md2spec: body_blocks, mark_runs and
+# _resolve_img_target) reads a picture from disk in three places, and nowhere
+# else. ``new`` builds in its plain mode; ``save`` from a .md file converts in
+# CommonMark mode:
+#
+#   a line that is only ![설명](경로)                 both modes
+#   a figure line, [그림 1] 설명 (그림.png)           both modes
+#   ![설명](경로) inside a paragraph, heading,        CommonMark only
+#   list item, quote, table cell or footnote
+#
+# Fenced code blocks are skipped in both modes; in CommonMark a code span, a
+# backslash escape or a link that starts earlier takes the text first, and
+# reference definitions are skipped. Each picture destination found here is
+# checked against the roots and rewritten to the absolute path that was
+# checked, so the converter opens that file and no other. Nothing else in the
+# text is touched. After the build, every picture in the package must be the
+# bytes of a checked file (``_only_checked_pictures``): a syntax this scanner
+# does not know, or a file swapped after the check, stops the build there.
+
+_FENCE_OPEN = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+_FOOTNOTE_DEF = re.compile(r"^\[\^([^\]]+)\]:\s*(.*)$")
+_LINK_DEF = re.compile(r'^\s*\[([^\^\]]+)\]:\s*<?(\S+?)>?'
+                       r'(?:\s+(?:"[^"]*"|\'[^\']*\'|\([^)]*\)))?\s*$')
+_PICTURE_LINE = re.compile(r"^(\s*!\[[^\]]*\]\()([^)]+)\)\s*$")
+_FIGURE_LINE = re.compile(r"^(\s*\[그림\s*\d+\].*\()([^)]+\.(?:png|jpe?g))\)\s*$")
+#: Lines meant as a picture that the converter does not read as one: a name
+#: with brackets in it (그림 (1).png), two pictures on one line, an upper-case
+#: or <>-wrapped name on a figure line. Written into the document as text,
+#: they would look like a picture went missing without a word.
+_ALMOST_PICTURE = re.compile(r"^\s*!\[[^\]]*\]\(.*\)\s*$")
+_ALMOST_FIGURE = re.compile(r"^\s*\[그림\s*\d+\].*\.(?:png|jpe?g|gif|bmp)>?\s*\)\s*$",
+                            re.IGNORECASE)
+#: md2spec.CM_INLINE_RE, copied so a picture is found exactly where the
+#: converter finds one: group 5 is a picture's destination, groups 19 and 20
+#: (**bold**) are read again for what is inside them.
+_CM_INLINE = re.compile(
+    r"\\([\\`*_{}\[\]()#+\-.!~|<>])"
+    r"|(`+)(.+?)\2"
+    r"|!\[([^\]]*)\]\(([^)]+)\)"
+    r"|==(.+?)=="
+    r"|~~(.+?)~~"
+    r"|\{\{찾아보기:([^}|]+)(?:\|([^}]+))?\}\}"
+    r"|\{\{덧말:([^}|]+)\|([^}]+)\}\}"
+    r"|\[([^\]]+)\]\(([^)\s]+(?:\s+(?:\"[^\"]*\"|'[^']*'))?)\)"
+    r"|\[([^\]]+)\]\[([^\]]*)\]"
+    r"|<((?:https?://|mailto:)[^>\s]+)>"
+    r"|\*\*\*(.+?)\*\*\*|___(.+?)___"
+    r"|\*\*(.+?)\*\*|(?<![\w])__(.+?)__(?![\w])"
+    r"|(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)"
+    r"|(?<![\w])_(?!\s)(.+?)(?<!\s)_(?![\w])"
+    r"|(<br\s*/?>)"
+    r"|<sup>(.*?)</sup>|<sub>(.*?)</sub>"
+    r"|<(/?[A-Za-z][A-Za-z0-9]*(?:\s+[^>]*)?/?)>"
 )
+_TITLE = re.compile(r'^(\S+)\s+(?:"[^"]*"|\'[^\']*\')$')
+_REMOTE = re.compile(r"^(?:https?://|data:)", re.IGNORECASE)
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+_DRIVE = re.compile(r"^[a-z]:[\\/]", re.IGNORECASE)
 
 
-def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None) -> str:
-    """Markdown with every file it pulls in checked against the roots and absolute.
+def _inline_pictures(text: str, offset: int):
+    for m in _CM_INLINE.finditer(text):
+        if m.group(5) is not None:
+            yield offset + m.start(5), offset + m.end(5), "image"
+        elif m.group(19) is not None or m.group(20) is not None:
+            group = 19 if m.group(19) is not None else 20
+            yield from _inline_pictures(m.group(group), offset + m.start(group))
 
-    A reference definition can also be a plain link; it is checked the same
-    way, which may refuse a link that only looks like a path. That is the
-    safe side.
+
+def _picture_spans(markdown: str, *, commonmark: bool):
+    """(start, end, kind) of each picture destination the converter reads."""
+    pos = 0
+    fence: tuple[str, int] | None = None
+    footnote = False
+    for raw in markdown.splitlines(keepends=True):
+        start, pos = pos, pos + len(raw)
+        line = raw.rstrip("\r\n").rstrip()
+        if fence is not None:
+            if re.match(r"^\s*%s{%d,}\s*$" % (re.escape(fence[0]), fence[1]), line):
+                fence = None
+            continue
+        if footnote and raw.startswith(("    ", "\t")):
+            if commonmark:  # the note's text is read as CommonMark too
+                yield from _inline_pictures(line, start)
+            continue
+        footnote = False
+        stripped = line.strip()
+        if _FOOTNOTE_DEF.match(stripped):
+            footnote = True
+            if commonmark:
+                yield from _inline_pictures(line, start)
+            continue
+        if commonmark and _LINK_DEF.match(line):
+            continue
+        opened = _FENCE_OPEN.match(line)
+        if opened:
+            fence = (opened.group(1)[0], len(opened.group(1)))
+            continue
+        m = _PICTURE_LINE.match(line)
+        if m:
+            yield start + m.start(2), start + m.end(2), "image"
+            continue
+        m = _FIGURE_LINE.match(line)
+        if m:
+            yield start + m.start(2), start + m.end(2), "figure"
+            continue
+        if _ALMOST_FIGURE.match(line) or (not commonmark and _ALMOST_PICTURE.match(line)):
+            yield start, start + len(line), "unread"
+            continue
+        if commonmark:
+            yield from _inline_pictures(line, start)
+
+
+def _picture_target(raw: str, kind: str) -> str:
+    """The path the converter opens for this destination (md2spec's own
+    reading: a figure line's text is the path as written)."""
+    if kind == "figure":
+        return raw
+    target = raw.strip().strip("<>")
+    m = _TITLE.match(target)
+    return m.group(1) if m else target
+
+
+def _is_address(target: str) -> bool:
+    return bool(_SCHEME.match(target)) and not _DRIVE.match(target)
+
+
+class Pictures:
+    """Markdown whose pictures point at checked copies, and those copies."""
+
+    def __init__(self, text: str, files: list[tuple[str, str]], staging: Path | None):
+        self.text = text
+        self.files = files  # (the person's file, sha256 of the copy read from it)
+        self.staging = staging
+
+    @property
+    def digests(self) -> set[str]:
+        return {d for _, d in self.files}
+
+    @property
+    def key(self) -> str:
+        """Changes whenever a picture's path or bytes change."""
+        if not self.files:
+            return ""
+        joined = "\n".join(f"{p}\0{d}" for p, d in sorted(self.files))
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:12]
+
+    def remove(self) -> None:
+        if self.staging is not None:
+            shutil.rmtree(self.staging, ignore_errors=True)
+            self.staging = None
+
+
+_PICTURE_HINT = "사용자에게 허용된 폴더 안에 있는 그림 파일의 경로를 알려 달라고 요청하세요."
+
+
+def _copy_picture(path: Path, folder: Path, n: int) -> tuple[Path, str]:
+    """A copy of the picture beside the others, and the sha256 of its bytes.
+    Opened without following a final link and refused unless it is a regular
+    file, so a name swapped for a pipe or a link after the check is not read."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | \
+        getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ToolError("not_found", f"이 그림 경로는 사용할 수 없습니다({path}).",
+                        hint=_PICTURE_HINT, at=str(path)) from exc
+    with os.fdopen(fd, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise ToolError("invalid_params", f"이 그림 경로는 사용할 수 없습니다({path}).",
+                            hint=_PICTURE_HINT, at=str(path))
+        suffix = path.suffix.lower()
+        copy = folder / f"{n}{suffix if re.fullmatch(r'[.][a-z0-9]{1,8}', suffix) else ''}"
+        digest = hashlib.sha256()
+        with open(copy, "xb") as out:
+            for chunk in iter(lambda: source.read(1 << 20), b""):
+                digest.update(chunk)
+                out.write(chunk)
+    return copy, digest.hexdigest()
+
+
+def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None, *,
+                          commonmark: bool, addresses: str = "refuse") -> Pictures:
+    """Check every picture the converter will read against the roots.
+
+    Each picture is copied, once checked, into a private folder, and its
+    destination becomes that copy: the converter reads exactly the bytes that
+    were checked, the person's own path never reaches the document, and a
+    folder name with brackets in it (새 폴더 (2)) is no obstacle. The rest of
+    the text is left as it was. Call ``remove()`` when the build is done.
+
+    A confined caller (MCP, with roots) is refused a picture that is missing
+    or not a file. A web address is refused too, unless ``addresses="keep"``
+    (a person's own .md saved from the command line): the converter then
+    reports it as not embedded.
     """
-    def fix(match: re.Match) -> str:
-        target = match.group(2).strip("<>")
-        if target.startswith("#"):
-            return match.group(0)
-        if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.IGNORECASE) and \
-                not re.match(r"^[a-z]:[\\/]", target, re.IGNORECASE):
-            if re.match(r"^(https?|mailto):", target, re.IGNORECASE) and \
-                    not match.group(1).startswith(("!", "<")):
-                return match.group(0)  # a plain link in a reference definition
-            raise ToolError("invalid_params",
-                            f"그림을 파일 경로 대신 주소로 지정했습니다({target}).",
-                            hint="허용한 폴더에 그림을 내려받고 그 파일의 경로를 입력하세요.")
-        try:
-            path = (ctx.roots.check(target, base=base) if ctx.roots is not None
-                    else canonical(target, base=base))
-        except PathRefused as exc:
-            raise ToolError(exc.code, f"이 그림 경로는 사용할 수 없습니다({target}).",
-                            hint="허용한 폴더 안에 있는 그림 파일의 경로를 입력하세요.",
-                            at=exc.path) from exc
-        text = str(path).replace("\\", "/")
-        if " " in text and not match.group(1).lower().startswith("<img"):
-            text = f"<{text}>"  # CommonMark: a destination with spaces goes in <>
-        return match.group(1) + text
-    for pattern in _ASSET_PATTERNS:
-        markdown = pattern.sub(fix, markdown)
-    return markdown
+    confined = ctx.roots is not None
+    pieces: list[str] = []
+    files: list[tuple[str, str]] = []
+    written: set[str] = set()
+    left: set[str] = set()
+    staging: Path | None = None
+    at = 0
+    try:
+        for start, end, kind in _picture_spans(markdown, commonmark=commonmark):
+            raw = markdown[start:end]
+            if kind == "unread":
+                if confined:
+                    raise _unread_picture_line(raw.strip())
+                continue
+            target = _picture_target(raw, kind)
+            if not target.strip():
+                continue  # the converter reads the base folder, which is not a picture
+            if _is_address(target):
+                if addresses == "keep" and _REMOTE.match(target):
+                    left.add(target)
+                    continue
+                raise ToolError("invalid_params",
+                                f"그림을 파일 경로 대신 주소로 지정했습니다({target}).",
+                                hint="허용한 폴더에 그림을 내려받고 그 파일의 경로를 입력하세요.")
+            try:
+                path = (ctx.roots.check(target, base=base) if ctx.roots is not None
+                        else canonical(target, base=base))
+                if confined:
+                    check_readable(path)
+            except PathRefused as exc:
+                raise ToolError(exc.code, f"이 그림 경로는 사용할 수 없습니다({target}).",
+                                hint=exc.hint or _PICTURE_HINT, at=exc.path) from exc
+            if path.is_file():
+                if staging is None:
+                    staging = _picture_folder(ctx)
+                copy, digest = _copy_picture(path, staging, len(files) + 1)
+                files.append((str(path), digest))
+                text = str(copy).replace("\\", "/")
+            else:  # not there (command line only): the converter says so
+                text = str(path).replace("\\", "/")
+            if not _representable(text, kind):
+                if confined or path.is_file():
+                    raise _unusable_picture(target)
+                left.add(target)
+                continue
+            written.add(text)
+            pieces.append(markdown[at:start])
+            pieces.append(text)
+            at = end
+        pieces.append(markdown[at:])
+        out = "".join(pieces)
+        # Read the result the way the converter will. Every destination in it
+        # must be one this pass wrote (or, from the command line, one it left).
+        for start, end, kind in _picture_spans(out, commonmark=commonmark):
+            if kind == "unread":
+                continue  # refused above for a confined caller; text otherwise
+            target = _picture_target(out[start:end], kind)
+            if target in written or target in left or not target.strip():
+                continue
+            raise _unusable_picture(target)
+    except BaseException:
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return Pictures(out, files, staging)
+
+
+def _picture_folder(ctx: Context) -> Path:
+    """An owner-only folder for this call's picture copies, whose path the
+    converter reads back as written: in the state folder, or, when that path
+    has a bracket in it (a profile folder named "홍길동 (회사)"), in the system's temp."""
+    mark_state(ctx.drafts.home)
+    folder = private_dir(ctx.drafts.home / "pictures" / secrets.token_hex(6))
+    if _representable(str(folder / "1.jpeg").replace("\\", "/"), "figure"):
+        return folder
+    shutil.rmtree(folder, ignore_errors=True)
+    return Path(tempfile.mkdtemp(prefix="rigorloom-pictures-"))
+
+
+def _representable(text: str, kind: str) -> bool:
+    """Does the converter read ``text`` back as this same path?"""
+    if ")" in text or "\n" in text or "\r" in text or _picture_target(text, kind) != text:
+        return False
+    return kind != "figure" or bool(_FIGURE_LINE.match(f"[그림 1] ({text})"))
+
+
+def _unread_picture_line(line: str) -> ToolError:
+    shown = line if len(line) <= 80 else line[:79] + "…"
+    return ToolError("invalid_params", f"다음 줄을 그림으로 읽을 수 없어 문서 생성을 중단했습니다({shown}).",
+                     hint="그림은 한 줄에 하나씩 ![설명](그림 파일 경로) 형식으로 적으세요. "
+                          "파일이나 폴더 이름에 괄호가 있으면 사용자에게 괄호 없는 경로를 알려 달라고 요청하세요.")
+
+
+def _unusable_picture(target: str) -> ToolError:
+    return ToolError("invalid_params", f"이 그림은 문서에 넣을 수 없습니다({target}).",
+                     hint="임시 폴더 경로에 괄호가 있어 그림을 넣지 못했습니다. 사용자에게 "
+                          "경로에 괄호가 없는 폴더를 RIGORLOOM_HOME으로 지정해 달라고 요청하세요.")
+
+
+def _package_pictures(package_path: Path) -> dict[str, str]:
+    """Each picture part of a package and the sha256 of its bytes."""
+    found: dict[str, str] = {}
+    if not zipfile.is_zipfile(package_path):
+        return found
+    with zipfile.ZipFile(package_path) as package:
+        for info in package.infolist():
+            if info.is_dir() or not info.filename.lower().startswith("bindata/"):
+                continue
+            digest = hashlib.sha256()
+            with package.open(info) as part:
+                for chunk in iter(lambda: part.read(1 << 20), b""):
+                    digest.update(chunk)
+            found[info.filename] = digest.hexdigest()
+    return found
+
+
+def _only_checked_pictures(out: Path, allowed: set[str]) -> None:
+    """Every picture in the built package is the bytes of a file the roots
+    check read (or of the form it was built on). Anything else is removed and
+    refused."""
+    for name, digest in _package_pictures(out).items():
+        if digest not in allowed:
+            try:
+                out.unlink()
+            except OSError:
+                pass
+            raise _unchecked_picture(name)
+
+
+def _unchecked_picture(name: str) -> ToolError:
+    return ToolError("invalid_params",
+                     "문서에서 안전 검사를 거치지 않은 그림을 발견해 문서 생성을 중단했습니다.",
+                     hint="그림은 한 줄에 하나씩 ![설명](그림 파일 경로) 형식으로 적으세요. "
+                          "허용한 폴더 안의 파일만 사용하세요.",
+                     at=name)
 
 
 def is_person_only(place: dict) -> bool:
@@ -658,10 +969,9 @@ def _run_edit(ctx: Context, args: dict) -> dict:
     _check_ops(ops)
     ref = resolve(ctx, args["path"])
     _refuse_person_seats(ctx, ref, ops)
-    for op in ops:
-        if op["op"] == "insert_after":
-            op["markdown"] = _gate_markdown_assets(
-                ctx, str(op.get("markdown", "")), ref.source.parent if ref.source else None)
+    # insert_after's markdown is text: the document layer embeds no picture
+    # from it (rt_doc._md_lines), so there is no file to check and nothing to
+    # rewrite. ![설명](경로) stays as the person or agent wrote it.
     return _stage(ctx, ref, args["base"], ops, "edit")
 
 
@@ -727,7 +1037,7 @@ def _run_fill(ctx: Context, args: dict) -> dict:
             _refuse_filled_place(ctx, ref, inp, pid)
             near = [f"place:{p}" for p in places if pid in p or p in pid][:5] or \
                 [f"place:{p}" for p in list(places)[:5]]
-            raise ToolError("not_found", f"'{pid}' 칸을 찾지 못했습니다.",
+            raise ToolError("bad_address", f"'{pid}' 칸을 찾지 못했습니다.",
                             hint="open 결과에서 채울 칸의 주소를 확인하세요.",
                             at=f"place:{pid}", candidates=near)
         if is_person_only(place):
@@ -755,7 +1065,7 @@ def _run_fill(ctx: Context, args: dict) -> dict:
                             if is_person_only(p)]
     result["skipped"] = blocked
     result["unfilled"] = [f"place:{pid}" for pid, p in places.items()
-                          if pid not in filled and not is_person_only(p)
+                          if pid not in filled and not is_person_only(p) and not p.get("filled")
                           and not str(p.get("value") or "").strip()]
     return result
 
@@ -813,18 +1123,43 @@ def _run_new(ctx: Context, args: dict) -> dict:
         except PathRefused as exc:
             raise ToolError(exc.code, exc.message, hint=getattr(exc, "hint", None),
                             at=exc.path) from exc
-    markdown = _gate_markdown_assets(ctx, markdown, base_dir)
-    if "\n" not in markdown:
-        # The document layer reads a one-line argument naming a file as that
-        # file. A body is never a file name.
-        markdown += "\n"
+    pictures = _gate_markdown_assets(ctx, markdown, base_dir, commonmark=False)
+    made_form = None
+    try:
+        markdown = pictures.text
+        if "\n" not in markdown:
+            # The document layer reads a one-line argument naming a file as
+            # that file. A body is never a file name.
+            markdown += "\n"
+        allowed = pictures.digests
+        if ctx.roots is not None and form_path is not None:
+            # The form's own pictures are in the result too. A .hwp form is
+            # read as the package the layer would make of it, so its pictures
+            # can be named by their bytes.
+            if not zipfile.is_zipfile(form_path):
+                made_form = private_dir(ctx.drafts.home / "forms") / \
+                    f"form-{secrets.token_hex(6)}.hwpx"
+                data = doc_call(ctx.doc.convert, str(form_path), str(made_form), to="hwpx")
+                made_form = Path(data.get("out") or made_form)
+                form_path = made_form
+            allowed = allowed | set(_package_pictures(form_path).values())
 
-    def build(out_path: Path) -> dict:
-        return doc_call(ctx.doc.new, markdown, str(out_path),
-                        form=str(form_path) if form_path else None)
-    ref, staged = ctx.drafts.create_virtual(
-        name=args.get("name"), author=ctx.client, provenance=_provenance(ctx),
-        build=build, suffix=getattr(ctx.doc, "NATIVE_SUFFIX", ".hwpx"))
+        def build(out_path: Path) -> dict:
+            result = doc_call(ctx.doc.new, markdown, str(out_path),
+                              form=str(form_path) if form_path else None)
+            if ctx.roots is not None:
+                _only_checked_pictures(out_path, allowed)
+            return result
+        ref, staged = ctx.drafts.create_virtual(
+            name=args.get("name"), author=ctx.client, provenance=_provenance(ctx),
+            build=build, suffix=getattr(ctx.doc, "NATIVE_SUFFIX", ".hwpx"))
+    finally:
+        pictures.remove()
+        if made_form is not None:
+            try:
+                made_form.unlink()
+            except OSError:
+                pass
     cs = staged["changeset"]
     return {"path": ref.label, "source": "draft", "revision": 1, "rev": cs["rev"],
             "changeset": cs["id"], "saved": False,
@@ -1210,7 +1545,7 @@ def _target(ctx: Context, raw: str) -> Path:
     try:
         path = ctx.roots.check(raw) if ctx.roots is not None else canonical(raw)
     except PathRefused as exc:
-        raise ToolError(exc.code, exc.message, at=exc.path) from exc
+        raise ToolError(exc.code, exc.message, hint=exc.hint, at=exc.path) from exc
     fmt = path.suffix.lower().lstrip(".")
     if fmt not in FORMATS_OUT:
         raise ToolError("unsupported_format",
@@ -1220,10 +1555,16 @@ def _target(ctx: Context, raw: str) -> Path:
     return path
 
 
+def _arg(text: str) -> str:
+    """A path in a command line for a person: quoted for the shell when it can
+    be, else shown escaped (such a name has to be typed some other way)."""
+    return shell_arg(text) or f'"{path_text(text)}"'
+
+
 def _person_line(ref: Ref, target: Path) -> str:
     if ref.source is not None and _same_path(target, ref.source):
-        return f'rigorloom save "{ref.label}"'
-    return f'rigorloom save "{ref.label}" --to "{target}"'
+        return f"rigorloom save {_arg(ref.label)}"
+    return f"rigorloom save {_arg(ref.label)} --to {_arg(str(target))}"
 
 
 def _draft_id(ref: Ref, record: dict | None) -> str:
@@ -1246,6 +1587,8 @@ def _run_save(ctx: Context, args: dict) -> dict:
     if args.get("to"):
         target = _target(ctx, args["to"])
     elif ref.source is not None:
+        if not ref.source.exists():
+            raise source_missing(ref.source)  # the draft is still there to save elsewhere
         target = ref.source
     else:
         raise ToolError("invalid_params", "새 문서를 저장할 경로가 빠졌습니다.",
@@ -1258,17 +1601,9 @@ def _run_save(ctx: Context, args: dict) -> dict:
 
     # Candidate bytes: the head, converted when the target format differs.
     candidate = head_input.path
+    lossy: list[str] = []
     if candidate.suffix.lower().lstrip(".") != fmt:
-        out_dir = private_dir(ctx.drafts.home / "exports" / ref.key)
-        converted = out_dir / f"{head_input.rev}.{fmt}"
-        if not converted.exists():
-            data = doc_call(ctx.doc.convert, str(candidate), str(converted), to=fmt)
-            lossy = data.get("lossy") or []
-        else:
-            lossy = []
-        candidate = converted
-    else:
-        lossy = []
+        candidate, lossy = _converted(ctx, ref, head_input, fmt)
 
     digest = sha256_file(candidate)
     if target.exists() and sha256_file(target) == digest:
@@ -1320,7 +1655,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
                                           for p in c.get("changedPages", [])}),
                   "unreviewed": unreviewed, "lossy": lossy,
                   "fontsSubstituted": _substituted_fonts(ctx, head_input.path),
-                  "undo": f'rigorloom undo "{target}"'}
+                  "undo": _undo_command(target)}
         other = ("다른 이름으로 저장: --to 새이름" if ctx.client == "cli"
                  else "다른 이름으로 저장하려면 to에 새 경로를 입력하세요.")
         if ctx.ask is None:
@@ -1345,11 +1680,20 @@ def _run_save(ctx: Context, args: dict) -> dict:
                             hint=f"사람이 터미널에서 실행: {_person_line(ref, target)}. {other}",
                             at=str(target), data=detail)
         policy = "person:" + ("tty" if ctx.client == "cli" else "elicitation")
-        # The answer may have taken minutes: the path must still name the same place.
-        again = _target(ctx, args["to"]) if args.get("to") else canonical(ref.source)
+        # The answer may have taken minutes: the path must still name the same
+        # place, and that place must still be one the person allows (the
+        # client may have taken a folder away meanwhile).
+        if ctx.current_roots is not None:
+            ctx.roots = ctx.current_roots()
+        again = _target(ctx, args["to"] if args.get("to") else str(ref.source))
         if not _same_path(again, target):
             raise ToolError("target_changed", "확인하는 사이에 저장 경로가 바뀌었습니다.",
                             hint="경로를 확인하고 다시 저장하세요.", at=str(target))
+        if ref.source is not None and ctx.roots is not None:
+            try:
+                ctx.roots.check(ref.source)
+            except PathRefused as exc:
+                raise ToolError(exc.code, exc.message, hint=exc.hint, at=exc.path) from exc
 
     provenance = _saved_provenance(record)
     if record is None and has_edits:
@@ -1357,11 +1701,14 @@ def _run_save(ctx: Context, args: dict) -> dict:
         raise ToolError("stale", "확인하는 사이에 초안이 바뀌어 저장하지 않았습니다.",
                         hint="초안을 다시 확인하고 저장하세요.", retryable=True,
                         data={"reason": "superseded_by_newer_candidate"})
+    # An agent's save never publishes bytes a person refused here, even when
+    # the "no" came from another session while this one was asking.
+    honour = ctx.client != "cli"
     if record is None:
         receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
                                    policy=policy, home=ctx.drafts.home,
                                    provenance=provenance, candidate_sha256=digest,
-                                   draft=writer)
+                                   draft=writer, honour_declines=honour)
     else:
         with ctx.drafts.lock(ref):
             # Re-read under the lock: an edit or another save may have landed
@@ -1382,7 +1729,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
             receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
                                        policy=policy, home=ctx.drafts.home,
                                        provenance=provenance, candidate_sha256=digest,
-                                       draft=writer)
+                                       draft=writer, honour_declines=honour)
             record.setdefault("saves", []).append({
                 "target": str(target), "sha256": receipt["sha256"],
                 "revision": head_input.revision, "policy": policy,
@@ -1401,8 +1748,96 @@ def _run_save(ctx: Context, args: dict) -> dict:
             "format": fmt, "replaced": receipt["replaced"] is not None,
             "acceptedVia": policy, "unreviewed": unreviewed, "lossy": lossy,
             "provenance": provenance,
-            "undo": f'rigorloom undo "{target}"' if receipt["undo"] or
+            "undo": _undo_command(target) if receipt["undo"] or
             receipt["replaced"] is None else None}
+
+
+def _undo_command(target: Path) -> str | None:
+    """``rigorloom undo <target>`` to paste in a shell, or None when the name
+    cannot be passed through one unchanged (``rt_term.shell_arg``)."""
+    arg = shell_arg(str(target))
+    return f"rigorloom undo {arg}" if arg else None
+
+
+#: Formats the converter reads as markdown: their pictures are files on disk.
+_MARKDOWN = (".md", ".markdown")
+
+
+def _converted(ctx: Context, ref: Ref, head: Input, fmt: str) -> tuple[Path, list[str]]:
+    """The head converted to ``fmt``, and what the conversion loses.
+
+    A converted file is kept per revision with its loss list beside it, so a
+    second save asks the person about the same losses as the first; a kept
+    file without its list is converted again.
+
+    Markdown pulls pictures in from other files. Every picture it names is
+    checked on every save, kept file or not, and the conversion reads a copy
+    whose picture paths are the checked, absolute ones. The kept file's name
+    carries the pictures' paths and bytes, so a picture replaced on disk is
+    converted again rather than saved stale. For a confined caller (MCP) the
+    markdown becomes a package first and its pictures are compared with the
+    checked files before anything else is made from it.
+    """
+    out_dir = private_dir(ctx.drafts.home / "exports" / ref.key)
+    source = head.path
+    pictures = None
+    if source.suffix.lower() in _MARKDOWN:
+        try:
+            text = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ToolError("invalid_params", "마크다운 파일의 인코딩이 UTF-8이 아닙니다.",
+                            hint="파일을 UTF-8로 저장하고 다시 시도하세요.", at=str(source)) from exc
+        pictures = _gate_markdown_assets(
+            ctx, text, ref.source.parent if ref.source is not None else source.parent,
+            commonmark=True, addresses="refuse" if ctx.roots is not None else "keep")
+    stem = f"{head.rev}.{pictures.key}" if pictures is not None and pictures.key else head.rev
+    converted = out_dir / f"{stem}.{fmt}"
+    meta = out_dir / f"{stem}.{fmt}.lossy.json"
+    try:
+        cached = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cached = None
+    if converted.exists() and isinstance(cached, list):
+        if pictures is not None:
+            pictures.remove()
+        return converted, [str(x) for x in cached]
+    temp = out_dir / f".{head.rev}.{secrets.token_hex(4)}.{fmt}"
+    copy = package = None
+    if pictures is not None:
+        copy = out_dir / f".{head.rev}.{secrets.token_hex(4)}.md"
+        copy.write_text(pictures.text, encoding="utf-8")
+    try:
+        if pictures is not None and ctx.roots is not None:
+            package = out_dir / f".{head.rev}.{secrets.token_hex(4)}.hwpx"
+            data = doc_call(ctx.doc.convert, str(copy), str(package), to="hwpx")
+            lossy = [str(x) for x in data.get("lossy") or []]
+            package = Path(data.get("out") or package)
+            _only_checked_pictures(package, pictures.digests)
+            if fmt == "hwpx":
+                os.replace(package, converted)
+            else:
+                data = doc_call(ctx.doc.convert, str(package), str(temp), to=fmt)
+                lossy += [str(x) for x in data.get("lossy") or [] if str(x) not in lossy]
+                os.replace(Path(data.get("out") or temp), converted)
+        else:
+            data = doc_call(ctx.doc.convert, str(copy or source), str(temp), to=fmt)
+            lossy = [str(x) for x in data.get("lossy") or []]
+            # The layer names what it wrote (a PNG of a longer document is its
+            # first page, beside ``temp``).
+            os.replace(Path(data.get("out") or temp), converted)
+        note = out_dir / f".{head.rev}.{secrets.token_hex(4)}.json"
+        note.write_text(json.dumps(lossy, ensure_ascii=False), encoding="utf-8")
+        os.replace(note, meta)
+    finally:
+        if pictures is not None:
+            pictures.remove()
+        for leftover in (temp, copy, package):
+            if leftover is not None and leftover.exists():
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+    return converted, lossy
 
 
 def _substituted_fonts(ctx: Context, path: Path) -> list[dict]:

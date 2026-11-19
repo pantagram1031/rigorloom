@@ -88,8 +88,10 @@ def test_fdoc_structure_and_addresses(doc):
         ("p0", 1, "개요", 1), ("p2", 2, "배경", 1), ("p4", 3, "맺는 제목", 1), ("p7", 2, "배경 설명", 2)]
     assert o["tables"] == [{"at": "t0", "rows": 3, "cols": 2, "page": 1}]
     assert o["places"] == [
-        {"id": "name", "at": "p5", "label": "성명", "kind": "text", "page": 2},
-        {"id": "sign", "at": "p6", "label": "서명", "kind": "signature", "page": 2}]
+        {"id": "name", "at": "p5", "label": "성명", "kind": "text", "page": 2,
+         "value": "", "filled": False},
+        {"id": "sign", "at": "p6", "label": "서명", "kind": "signature", "page": 2,
+         "value": "홍길동", "filled": True}]
     assert text(doc, "p1") == "첫 문단은 2026년에 쓴다.\n같은 문단의 둘째 줄."
     assert text(doc, "t0/r0/c0") == "항목"          # the header row is row 0
     assert text(doc, "t0/r2/c1/p0") == "2"
@@ -103,19 +105,19 @@ def test_heading_address_exact_then_unique_prefix(doc):
     assert fake.read(doc, 'h:"맺는"')["blocks"][0]["at"] == "p4"       # unique prefix
     assert fake.read(doc, "h:개요")["blocks"][0]["at"] == "p0"         # quotes optional
     err = fake.read(doc, 'h:"배"')["error"]                           # shared prefix
-    assert err["code"] == "ambiguous_match" and err["candidates"] == ["p2", "p7"]
+    assert err["code"] == "bad_address" and err["candidates"] == ["p2", "p7"]
     err = fake.read(doc, 'h:"없는"')["error"]
-    assert err["code"] == "not_found" and len(err["candidates"]) <= 5
+    assert err["code"] == "bad_address" and len(err["candidates"]) <= 5
     assert set(err["candidates"]) <= {"개요", "배경", "맺는 제목", "배경 설명"}
 
 
-def test_not_found_candidates_are_nearest_and_at_most_five(doc):
+def test_bad_address_candidates_are_nearest_and_at_most_five(doc):
     err = fake.read(doc, "p42")["error"]
-    assert err == {"code": "not_found", "message": err["message"], "at": "p42",
+    assert err == {"code": "bad_address", "message": err["message"], "at": "p42",
                    "candidates": ["p4", "p5", "p6", "p7", "p8"], "retryable": False}
     assert fake.read(doc, "t0/r9/c0")["error"]["candidates"][0] == "t0/r2/c0"
     assert fake.read(doc, "place:nam")["error"]["candidates"][0] == "name"
-    assert fake.read(doc, "page:1")["error"]["code"] == "invalid_params"
+    assert fake.read(doc, "page:1")["error"]["code"] == "bad_address"
 
 
 @pytest.mark.parametrize("value", [
@@ -162,7 +164,7 @@ def test_two_ops_on_one_paragraph_apply_in_order(doc, tmp_path):
     assert res["ok"], res
     assert text(out, "p8") == "둘"
     err = edit(doc, [{"op": "delete", "at": "p8"}, {"op": "set", "at": "p8", "text": "x"}], out)["error"]
-    assert (err["code"], err["step"], err["done"]) == ("invalid_params", 1, [0])
+    assert (err["code"], err["step"], err["done"]) == ("bad_input", 1, [0])
 
 
 def test_expect_mismatch_details(doc, tmp_path):
@@ -207,10 +209,10 @@ def test_table_ops(doc, tmp_path):
     rows = fake.read(out, "t0")["blocks"][0]["text"].split("\n")
     assert rows == ["맨 위\t", "머리\t값", "가\t10", "가 뒤\t9"]
     err = edit(doc, [{"op": "table.set_cells", "at": "t0/r2/c1", "grid": [["a", "b"]]}], out)["error"]
-    assert err["code"] == "invalid_params"
+    assert err["code"] == "bad_input"
     err = edit(doc, [{"op": "table.delete_row", "at": "t0/r0/c0"}, {"op": "table.delete_row", "at": "t0/r1/c0"},
                      {"op": "table.delete_row", "at": "t0/r2/c0"}], out)["error"]
-    assert err["code"] == "invalid_params" and err["step"] == 2
+    assert err["code"] == "bad_input" and err["step"] == 2
 
 
 def test_fill_style_insert_table_and_engine_only_ops(doc, tmp_path):
@@ -223,7 +225,7 @@ def test_fill_style_insert_table_and_engine_only_ops(doc, tmp_path):
     assert fake.read(out, "p8")["blocks"][0]["style"] == "강조"
     assert text(out, "t1/r1/c1") == "2"
     err = edit(doc, [{"op": "fill", "place": "nobody", "text": "x"}], out)["error"]
-    assert err["code"] == "not_found" and err["candidates"]
+    assert err["code"] == "bad_address" and err["candidates"]
     err = edit(doc, [{"op": "set", "at": "p0", "text": "x"},
                      {"op": "insert_equation", "at": "p0", "latex": "x^2"}], out)["error"]
     assert (err["code"], err["step"], err["done"]) == ("capability_unavailable", 1, [0])
@@ -232,13 +234,13 @@ def test_fill_style_insert_table_and_engine_only_ops(doc, tmp_path):
 
 def test_out_rules(doc, tmp_path):
     ops = [{"op": "set", "at": "p0", "text": "x"}]
-    assert fake.edit(doc, ops, base=rev(doc))["error"]["code"] == "invalid_params"
-    assert fake.edit(doc, ops, base=rev(doc), in_place=True)["error"]["code"] == "invalid_params"
+    assert fake.edit(doc, ops, base=rev(doc))["error"]["code"] == "bad_input"
+    assert fake.edit(doc, ops, base=rev(doc), in_place=True)["error"]["code"] == "bad_input"
     existing = tmp_path / "exists.fdoc"
     existing.write_text("old", encoding="utf-8")
     assert edit(doc, ops, existing)["ok"] and text(existing, "p0") == "x"
     missing_dir = tmp_path / "nope" / "b.fdoc"
-    assert edit(doc, ops, missing_dir)["error"]["code"] == "invalid_params"
+    assert edit(doc, ops, missing_dir)["error"]["code"] == "not_found"
 
 
 def test_preview_writes_a_temp_copy_and_reports_changes(doc, tmp_path):
@@ -282,9 +284,10 @@ def test_render_png_and_pdf(doc, tmp_path):
     assert data.startswith(b"%PDF-1.4") and b"/Count 2" in data and data.rstrip().endswith(b"%%EOF")
     xref = int(data.rsplit(b"startxref\n", 1)[1].split(b"\n")[0])
     assert data[xref:xref + 4] == b"xref"
-    assert fake.render(doc, [3])["error"]["code"] == "page_out_of_range"
-    assert fake.render(doc, [1], scale=0)["error"]["code"] == "invalid_params"
-    assert fake.render(doc, [1], fmt="svg")["error"]["code"] == "invalid_params"
+    past = fake.render(doc, [3])["error"]
+    assert (past["code"], past["at"], past["range"]) == ("bad_address", "page:3", [1, 2])
+    assert fake.render(doc, [1], scale=0)["error"]["code"] == "bad_input"
+    assert fake.render(doc, [1], fmt="svg")["error"]["code"] == "bad_input"
 
 
 # --------------------------------------------------------------------------- convert / new / diff / guard / style
@@ -299,8 +302,8 @@ def test_convert(doc, tmp_path):
         assert t.replace("\n", "") in paras
     for to in ("docx", "pdf", "png", "hwp"):
         assert fake.convert(doc, tmp_path / f"a.{to}", to=to)["error"]["code"] == "capability_unavailable"
-    assert fake.convert(doc, tmp_path / "a.x", to="odt")["error"]["code"] == "invalid_params"
-    assert fake.convert(doc, doc, to="md")["error"]["code"] == "invalid_params"
+    assert fake.convert(doc, tmp_path / "a.x", to="odt")["error"]["code"] == "bad_input"
+    assert fake.convert(doc, doc, to="md")["error"]["code"] == "bad_input"
     assert fake.convert(tmp_path / "a.hwpx", tmp_path / "b.md", to="md")["error"]["code"] == \
         "capability_unavailable"
 
@@ -342,7 +345,10 @@ def test_diff_guard_style(doc, tmp_path):
 
 # --------------------------------------------------------------------------- envelope
 def test_error_codes_are_declared():
-    shared = rt_codes.ERROR_CODES | {"stale", "expect_mismatch", "ambiguous_match", "not_found"}
+    doc_core = {"stale", "expect_mismatch", "ambiguous_match", "not_found", "bad_address", "bad_input",
+                "locked"}
+    assert fake.DOC_CORE_CODES == doc_core
+    shared = rt_codes.ERROR_CODES | doc_core
     assert fake.ERROR_CODES <= shared
 
 

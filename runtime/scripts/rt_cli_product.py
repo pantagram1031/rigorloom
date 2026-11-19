@@ -33,7 +33,7 @@ try:  # installed as rigorloom_runtime
     from .rt_cli_render import SHOW, candidates_line, person_error, shown
     from .rt_paths import STATE_MARKER, PathRefused, canonical, state_home
     from .rt_term import (Term, confirm, invisible_in, is_console, one_line, pad, prepare_stdio,
-                          safe_text, width)
+                          safe_text, save_question, undo_line, width)
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
@@ -41,14 +41,15 @@ except ImportError:  # a checkout, runtime/scripts on sys.path
     from rt_cli_render import SHOW, candidates_line, person_error, shown
     from rt_paths import STATE_MARKER, PathRefused, canonical, state_home
     from rt_term import (Term, confirm, invisible_in, is_console, one_line, pad, prepare_stdio,
-                         safe_text, width)
+                         safe_text, save_question, undo_line, width)
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
 #: cli.main sends ``open`` here only when no global --root/--engine-root
 #: precedes it (every legacy ``open`` has one).
 PRODUCT_VERBS = ("open", "outline", "read", "find", "edit", "fill", "new",
-                 "preview", "check", "save", "changes", "undo", "convert", "guide")
+                 "preview", "check", "save", "changes", "undo", "convert", "guide",
+                 "mcp")
 
 LEGACY_GLOBALS = ("--root", "--engine-root")
 LEGACY_ALWAYS = ("install", "doctor", "guard", "style", "engine", "ui", "demo")
@@ -76,6 +77,9 @@ HELP_SECTIONS = (
         ("changes [FILE]", "초안과 저장 기록"),
         ("undo FILE", "마지막 저장 되돌리기"),
         ("guide [주제]", "공문·보고서·양식 작성 안내"),
+    )),
+    ("에이전트", (
+        ("mcp [--allow 폴더]", "에이전트가 이 명령들을 도구로 쓸 수 있도록 MCP 서버(stdio) 실행"),
     )),
 )
 HELP_TAIL = """\
@@ -483,27 +487,8 @@ def _context(args) -> Context:
         if not (is_console(sys.stdin) and is_console(sys.stderr)):
             return None
         # The question first, then what the person needs to answer it, then y/N.
-        pages = detail.get("changedPages") or []
-        lines = [question]
-        hidden = invisible_in(str(detail.get("target") or ""))
-        if hidden:
-            lines.append(f"  파일 이름에 보이지 않는 문자가 있습니다: {', '.join(hidden)}")
-        if detail.get("revision"):
-            lines.append(f"  저장할 것: 초안 {detail['revision']}판")
-        if pages:
-            lines.append(f"  바뀐 쪽: {', '.join(map(str, pages))}")
-        if detail.get("unreviewed"):
-            lines.append(f"  에이전트가 고치고 아직 아무도 확인하지 않은 변경: "
-                         f"{detail['unreviewed']}건")
-        if detail.get("lossy"):
-            lines.append("  변환하면 빠지는 항목: " + ", ".join(detail["lossy"]))
-        if detail.get("fontsSubstituted"):
-            pairs = ", ".join(f"{s.get('want')} → {s.get('got')}"
-                              for s in detail["fontsSubstituted"])
-            lines.append(f"  글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)")
-        lines.append("  이전 내용은 저장 기록에 남습니다. 되돌리기: "
-                     f'rigorloom undo "{shown(str(detail.get("target")))}"')
-        sys.stderr.write(safe_text(lines[0] + " [y/N]\n" + "\n".join(lines[1:])) + "\n")
+        lines = save_question(question, detail, shown=shown)
+        sys.stderr.write(safe_text(lines[0] + " [y/N]\n" + "\n".join("  " + x for x in lines[1:])) + "\n")
         return confirm("", prompt="> ")
     return Context(client="cli", roots=None, source=getattr(args, "source", "disk"),
                    ask=ask, force=bool(getattr(args, "force", False)))
@@ -615,7 +600,7 @@ def _undo(term: Term, args) -> int:
     if answer is None:
         envelope = {"ok": False, "error": ToolError(
             "needs_person", "되돌리기는 터미널에서 직접 확인해야 합니다.",
-            hint=f'터미널에서 rigorloom undo "{target}" 명령을 실행하세요.').to_dict()}
+            hint=undo_line(str(target), shown=shown)).to_dict()}
     elif not answer:
         envelope = {"ok": False, "error": ToolError(
             "declined_by_person", "되돌리지 않았습니다.").to_dict()}
@@ -762,6 +747,13 @@ def _clean(term: Term, args) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["mcp"]:
+        # stdio belongs to the protocol: no reconfiguring, no human output.
+        try:
+            from . import rt_mcp
+        except ImportError:
+            import rt_mcp
+        return rt_mcp.main(argv[1:])
     try:
         return _main(argv)
     except BrokenPipeError:

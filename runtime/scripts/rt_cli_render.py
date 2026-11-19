@@ -13,9 +13,11 @@ import re
 from typing import Callable
 
 try:  # installed as rigorloom_runtime
-    from .rt_term import Term, one_line, path_text, safe_text, truncate, width
+    from .rt_term import (Term, invisible_in, one_line, path_text, safe_text, shell_arg,
+                          truncate, width)
 except ImportError:  # a checkout, runtime/scripts on sys.path
-    from rt_term import Term, one_line, path_text, safe_text, truncate, width
+    from rt_term import (Term, invisible_in, one_line, path_text, safe_text, shell_arg,
+                         truncate, width)
 
 VERB_KO = {
     "open": "열기", "read": "읽기", "find": "찾기", "edit": "고치기", "fill": "채우기",
@@ -62,7 +64,14 @@ def shown(path: str) -> str:
 
 
 def _q(path: str) -> str:
-    return f'"{shown(path)}"'
+    """A path inside a command line: quoted so the shell passes it unchanged.
+
+    A name with characters nobody can see cannot be typed from the screen;
+    it is shown escaped, like everywhere else.
+    """
+    raw = str(path)
+    arg = None if invisible_in(raw) else shell_arg(shown(raw))
+    return arg if arg is not None else f'"{shown(raw)}"'
 
 
 def _draft_tag(r: dict) -> str | None:
@@ -81,19 +90,32 @@ _DOC_ERRORS = {
                         'at에 고칠 곳의 주소를 지정하거나 "all": true를 추가하세요.'),
     "expect_mismatch": ("읽은 뒤 내용이 바뀌어 고치지 않았습니다.", "다시 읽고 고치세요."),
     "page_out_of_range": ("문서에 없는 쪽입니다.", "open 결과에서 쪽 수를 확인하세요."),
+    "locked": ("다른 프로그램에서 이 파일을 열어 두었습니다.", "파일을 열어 둔 프로그램에서 닫은 뒤 다시 실행하세요."),
     "source_rejected": ("이 파일은 문서로 열 수 없습니다.", "hwpx 또는 docx 파일을 지정하세요."),
     "invalid_params": ("입력이 맞지 않습니다.", None),
     "engine_refused": ("문서를 처리하지 못했습니다.", None),
 }
 _HANGUL = re.compile(r"[\uac00-\ud7a3]")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|“[^”]*”|‘[^’]*’")
+#: Quoted document text, a parenthesised value, or a file name or path: none
+#: of them makes an English sentence Korean ("could not open 보고서.hwpx").
+#: A file name is a word with an extension (보고서.hwpx); a sentence's own
+#: period is not one, so "저장했습니다." stays Korean.
+_NAMES = re.compile(_QUOTED.pattern + r"|\([^()]*\)|\S*[/\\]\S*"
+                    r"|\S*?\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9])")
+
+
+def korean_sentence(message: str) -> bool:
+    """Is the message itself Korean, apart from the names it quotes?"""
+    return bool(_HANGUL.search(_NAMES.sub(" ", message)))
 
 
 def person_error(err: dict, path: str | None = None) -> tuple[str, str | None]:
     """(message, hint) for a person. Korean errors pass through unchanged."""
     message, hint = err.get("message") or "", err.get("hint")
-    # Quoted document text ('근로') does not make an English sentence Korean.
-    if _HANGUL.search(_QUOTED.sub("", message)):
+    # Quoted document text ('근로') or a file name does not make an English
+    # sentence Korean.
+    if korean_sentence(message):
         return message, hint
     low = message.lower()
     name = f'"{shown(path)}"' if path else "FILE"
@@ -110,6 +132,14 @@ def person_error(err: dict, path: str | None = None) -> tuple[str, str | None]:
                 f"{' (' + err['at'] + ' 없음)' if err.get('at') else ''}.",
                 f"마지막 문단: rigorloom read {name} --at p{span.group(2)}")
     base, default_hint = _DOC_ERRORS.get(err.get("code", ""), ("문서를 처리하지 못했습니다.", None))
+    span = err.get("range")
+    if err.get("code") == "bad_address" and isinstance(span, list) and len(span) == 2:
+        # A page or offset past the end (doc-core-api ruling 2026-11-19): say the range.
+        if str(err.get("at") or "").startswith("page:"):
+            base, default_hint = "문서에 없는 쪽입니다.", f"{span[0]}쪽부터 {span[1]}쪽까지 있습니다."
+        else:
+            base, default_hint = "범위를 벗어난 위치입니다.", f"위치는 {span[0]}부터 {span[1]}까지 지정할 수 있습니다."
+        hint = None
     if err.get("at") and err.get("code") in ("bad_address", "not_found"):
         base = f"{err['at']}: {base}"
     if hint and not _HANGUL.search(_QUOTED.sub("", hint)):
