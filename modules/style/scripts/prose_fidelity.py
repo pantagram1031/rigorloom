@@ -102,9 +102,12 @@ _STEM_RE = re.compile("(?<![가-힣])(" + "|".join(DIRECTION_STEMS) + ")")
 _EN_RE = re.compile(r"(?<![A-Za-z])(" + "|".join(DIRECTION_EN) + r")(?![A-Za-z])", re.I)
 
 # A short line such as "3. 실험 방법" or "II. 결과" is a numbered heading. Lines
-# ending in sentence punctuation are list items, not headings.
-_NUMBERED_HEADING = re.compile(r"^\s*(?:\d+(?:\.\d+)*\.?|[IVX]+\.|[가-하]\.)\s+"
-                               r"(?!(?:" + "|".join(_UNITS_KO) + r")(?![가-힣]))\S")
+# ending in sentence punctuation are list items, not headings. A number with
+# no dot that a unit follows is an amount written with a space (30 평대의 집,
+# 5 명이 참석, 3 개월간 운영), read by the same rule as in a number.
+_NUMBERED_HEADING = re.compile(r"^\s*(?:(?:\d+(?:\.\d+)*\.|[IVX]+\.|[가-하]\.)\s+"
+                               r"(?!(?:" + "|".join(_UNITS_KO) + r")(?![가-힣]))"
+                               r"|\d+(?:\.\d+)*\s+(?!" + _UNIT_KO_SPACED + r"))\S")
 
 
 def _sha256(text: str) -> str:
@@ -292,6 +295,31 @@ def _label(text: str, lo: int, hi: int, glued: bool, *,
             text[kept[0].start():kept[-1].end()])
 
 
+# A number whose only label is the number right before it: 1차 3명, 1분기 3건,
+# 2025년에는 120명, 제1항은 3일, 1차년도 300만원. Only spaces may stand
+# between them, after the first number's own word (항, 월, 년도) and a topic
+# or place particle (은, 는, 에, 에는). A particle that joins two numbers
+# (3명과 5명, 1일부터 3일, 3%에서 5%로, 3건 중 1건) labels nothing.
+_JOINING = ("과", "와", "부터", "까지", "에서", "이나", "나", "보다", "으로", "로", "을", "를",
+            "이", "가", "의", "만", "며", "고", "랑", "및")
+
+
+def _number_label(text: str, prev: re.Match[str], key: str, start: int) -> tuple[str, str]:
+    glued = re.match(r"[가-힣]*", text[prev.end():start]).group(0)
+    gap = text[prev.end() + len(glued):start]
+    if gap.strip(" \t\u00a0") or glued.endswith(_JOINING):
+        return "", ""
+    word = glued
+    for particle in ("에는", "은", "는", "에"):
+        if word.endswith(particle):
+            word = word[:-len(particle)]
+            break
+    head = prev.start()
+    while head and "가" <= text[head - 1] <= "힣":     # 제 in 제1항
+        head -= 1
+    return "#" + key + word, text[head:prev.end() + len(glued)]
+
+
 # A unit declared once for amounts written without one. 연구비(천원)는 75:
 # the field's unit, for the next number only. 단위: 백만원 and 천원 단위로:
 # for every bare amount after it, up to the next declaration. In a table, a
@@ -437,10 +465,13 @@ def _number_change(before: str, after: str) -> dict[str, object] | None:
     for text in (before, after):
         tokens = _number_tokens(text)
         found = []
-        for i, (m, key, raw) in enumerate(zip(tokens, *_keys(text, tokens))):
+        keys, raws = _keys(text, tokens)
+        for i, (m, key, raw) in enumerate(zip(tokens, keys, raws)):
             prev_end = tokens[i - 1].end() if i else 0
             next_start = tokens[i + 1].start() if i + 1 < len(tokens) else len(text)
             pre, pre_shown = _label(text, prev_end, m.start(), i > 0)
+            if not pre and i:
+                pre, pre_shown = _number_label(text, tokens[i - 1], keys[i - 1], m.start())
             post, post_shown = _label(text, m.end(), next_start, True, after=True)
             found.append((pre, key, post, raw, pre_shown, post_shown))
         sides.append(found)
