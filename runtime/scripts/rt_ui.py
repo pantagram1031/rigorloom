@@ -465,16 +465,24 @@ def _extract_raw_protected_spans(pf_module: Any, text: str) -> list[dict[str, An
 def _annotate_protected_status(
     before_raw: list[dict[str, Any]],
     after_raw: list[dict[str, Any]],
+    same: Any = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Label each protected span occurrence as kept, removed, or added."""
-    b_counts = Counter((s["kind"], s["text"]) for s in before_raw)
-    a_counts = Counter((s["kind"], s["text"]) for s in after_raw)
+    """Label each protected span occurrence as kept, removed, or added.
+
+    ``same(kind, text)`` gives the spelling spans are compared on, so a number
+    the guard counts as unchanged (500만원 and 5,000,000원) is not shown as
+    removed and added. Each span keeps the text the document wrote."""
+    def key(s: dict[str, Any]) -> tuple[str, str]:
+        return (s["kind"], same(s["kind"], s["text"]) if same else s["text"])
+
+    b_counts = Counter(key(s) for s in before_raw)
+    a_counts = Counter(key(s) for s in after_raw)
     kept_quota = {k: min(b_counts[k], a_counts[k]) for k in set(b_counts) | set(a_counts)}
 
     b_seen: Counter[tuple[str, str]] = Counter()
     before_out: list[dict[str, Any]] = []
     for item in before_raw:
-        k = (item["kind"], item["text"])
+        k = key(item)
         b_seen[k] += 1
         status = "kept" if b_seen[k] <= kept_quota.get(k, 0) else "removed"
         before_out.append({**item, "status": status})
@@ -482,7 +490,7 @@ def _annotate_protected_status(
     a_seen: Counter[tuple[str, str]] = Counter()
     after_out: list[dict[str, Any]] = []
     for item in after_raw:
-        k = (item["kind"], item["text"])
+        k = key(item)
         a_seen[k] += 1
         status = "kept" if a_seen[k] <= kept_quota.get(k, 0) else "added"
         after_out.append({**item, "status": status})
@@ -1737,6 +1745,11 @@ class BridgeApplication:
                 after_paras = list(before_paras)
 
         pf = self._get_prose_fidelity()
+        number_key = getattr(pf, "_number_key", None)
+
+        def same(kind: str, text: str) -> str:
+            return number_key(text) if kind == "numbers" and callable(number_key) else text
+
         paired = _pair_paragraphs(before_paras, after_paras)
         all_rows: list[dict[str, Any]] = []
         changed_rows: list[dict[str, Any]] = []
@@ -1745,7 +1758,7 @@ class BridgeApplication:
             edited = b_para != a_para
             b_spans_raw = _extract_raw_protected_spans(pf, b_para)
             a_spans_raw = _extract_raw_protected_spans(pf, a_para)
-            b_prot, a_prot = _annotate_protected_status(b_spans_raw, a_spans_raw)
+            b_prot, a_prot = _annotate_protected_status(b_spans_raw, a_spans_raw, same)
             if edited:
                 audit = pf.audit_text(b_para, a_para)
                 changes = list(audit.get("changes") or [])

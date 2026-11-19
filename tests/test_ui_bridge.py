@@ -488,8 +488,19 @@ def test_guard_diff_text_and_hwpx_plan_preview_and_export_safety(started_bridge,
     row = g_bad["changed"][0]
     assert row["pass"] is False
     assert "numbers" in row["kinds"]
-    assert any(sp["text"] == "100" and sp["status"] == "removed" for sp in row["beforeProtected"])
-    assert any(sp["text"] == "250" and sp["status"] == "added" for sp in row["afterProtected"])
+    # A number is shown with its magnitude and unit, as the guard reads it (T183).
+    assert any(sp["text"] == "100만원" and sp["status"] == "removed" for sp in row["beforeProtected"])
+    assert any(sp["text"] == "250만원" and sp["status"] == "added" for sp in row["afterProtected"])
+
+    # The same amount written another way passes and is not marked as changed.
+    s_same, g_same = client.post_json(
+        "/api/guard/diff",
+        {"beforeText": "총 예산은 500만원이다.", "afterText": "총 예산은 5,000,000원이다."},
+    )
+    assert s_same == 200 and g_same["pass"] is True, (s_same, g_same)
+    same_row = g_same["changed"][0]
+    spans = same_row["beforeProtected"] + same_row["afterProtected"]
+    assert spans and all(sp["status"] == "kept" for sp in spans), spans
 
     # 2) Real HWPX open-upload + planId preview via preedit BEFORE plan/apply.
     b64 = base64.b64encode(CORPUS_FORM.read_bytes()).decode("ascii")
@@ -516,7 +527,7 @@ def test_guard_diff_text_and_hwpx_plan_preview_and_export_safety(started_bridge,
     assert g_prev["edited"] >= 1
     assert any("한빛 2026년 100만원" in c["after"] for c in g_prev["changed"])
     assert any(
-        sp["text"] == "100" and sp["kind"] == "numbers" and sp["status"] == "added"
+        sp["text"] == "100만원" and sp["kind"] == "numbers" and sp["status"] == "added"
         for c in g_prev["changed"]
         for sp in c["afterProtected"]
     )
