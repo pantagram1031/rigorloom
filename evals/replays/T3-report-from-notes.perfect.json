@@ -1,0 +1,52 @@
+{
+  "schema": "rigorloom-mcp-replay/v1",
+  "task_id": "T3-report-from-notes",
+  "variant": "perfect",
+  "description": "Builds a clean report with all 4 required headings, verbatim numbers/dates/names from notes, zero error findings, and no lone heading.",
+  "simulated_tokens": {"input": 5200, "output": 890, "total": 6090},
+  "requests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "eval-scripted", "version": "1.0"}
+      }
+    },
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/call",
+      "params": {
+        "name": "new",
+        "arguments": {
+          "name": "결과보고서",
+          "markdown": "# 차세대 정밀센서 시제품 개발 결과보고서\n\n## 1. 사업 개요\n\n한빛기술연구소가 주관하고 가람정밀이 협력기관으로 참여한 차세대 정밀센서 시제품 개발 과제는 2026년 3월 2일부터 2026년 11월 19일까지 수행했습니다. 연구책임자는 김하늘이며 실무담당자는 박서윤입니다. 총 사업비는 240,000,000원입니다.\n\n## 2. 주요 성과\n\n1단계에서 기본 센서 모듈 3종을 설계하고 가람정밀과 기구부를 공동 제작했습니다. 최종 점검일인 2026년 11월 12일 기준으로 목표 달성률 98.5%를 기록했습니다.\n\n## 3. 시험 결과\n\n2단계 시험 평가에서 시료 42건을 검증했습니다. 불량률은 4.2%에서 3.4%로 18.5% 감소했습니다.\n\n## 4. 향후 계획\n\n3단계 양산 준비는 2027년 3월 31일까지 완료할 예정입니다.\n"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {"name": "check", "arguments": {"path": "${DRAFT}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {"name": "save", "arguments": {"path": "${DRAFT}", "to": "${OUTPUT}"}}
+    }
+  ],
+  "expected_call_outcomes": [
+    {"id": 2, "tool": "new", "isError": false, "error_code": null},
+    {"id": 3, "tool": "check", "isError": false, "error_code": null},
+    {"id": 4, "tool": "save", "isError": false, "error_code": null}
+  ],
+  "final_answer": "notes.md의 모든 수치·날짜·기관명·담당자 이름을 그대로 반영해 4개 필수 제목을 갖춘 결과보고서를 작성하고 점검 후 저장했습니다.",
+  "expected_passed": true,
+  "expected_failed_checks": []
+}

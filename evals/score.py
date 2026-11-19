@@ -91,6 +91,27 @@ def validate_run_record(record: Any, source: str = "<run>") -> dict:
     for entry in record.get("judgment") or []:
         if not isinstance(entry, dict) or entry.get("verdict") not in _VERDICTS:
             fail(f"judgment entries need a verdict in {sorted(_VERDICTS)}")
+
+    if "tool_calls" in record and record["tool_calls"] is not None:
+        tc = record["tool_calls"]
+        if isinstance(tc, bool) or not isinstance(tc, int) or tc < 0:
+            fail("tool_calls must be a non-negative integer or null")
+    if "wall_s" in record and record["wall_s"] is not None:
+        ws = record["wall_s"]
+        if isinstance(ws, bool) or not isinstance(ws, (int, float)) or ws < 0:
+            fail("wall_s must be a non-negative number or null")
+    if "tokens" in record and record["tokens"] is not None:
+        if not isinstance(record["tokens"], dict):
+            fail("tokens must be an object or null")
+    if "safety" in record and record["safety"] is not None:
+        safety = record["safety"]
+        if not isinstance(safety, dict) or not isinstance(safety.get("ok"), bool):
+            fail("safety must be an object with a boolean 'ok' field")
+    if "checks" in record and record["checks"] is not None:
+        if not isinstance(record["checks"], dict):
+            fail("checks must be an object or null")
+    if "aborted" in record and not isinstance(record["aborted"], bool):
+        fail("aborted must be a boolean")
     return record
 
 
@@ -111,6 +132,8 @@ def score_run(record: dict, checks: dict | None = None,
               task: dict | None = None) -> dict:
     """Join a run record with its machine-check results into a scorecard."""
     validate_run_record(record)
+    if checks is None and isinstance(record.get("checks"), dict):
+        checks = record["checks"]
     if checks is not None:
         if checks.get("schema") != CHECKS_SCHEMA:
             raise ScoreError(
@@ -127,11 +150,14 @@ def score_run(record: dict, checks: dict | None = None,
         "pass": counts.get("pass", 0),
         "fail": counts.get("fail", 0),
         "skipped": counts.get("skipped", 0),
+        "unavailable": counts.get("unavailable", 0),
         "total": counts.get("total", 0),
         "failed_ids": [row["id"] for row in (checks or {}).get("checks", [])
                        if row.get("status") == "fail"],
         "skipped_ids": [row["id"] for row in (checks or {}).get("checks", [])
                         if row.get("status") == "skipped"],
+        "unavailable_ids": [row["id"] for row in (checks or {}).get("checks", [])
+                            if row.get("status") == "unavailable"],
     }
 
     verdicts = [entry["verdict"] for entry in record.get("judgment") or []]
@@ -151,15 +177,32 @@ def score_run(record: dict, checks: dict | None = None,
         blockers.append("agent did not complete the task")
     if outcome.get("operator_intervened"):
         blockers.append("operator intervened — not a clean-room result")
+    if record.get("aborted"):
+        reason = record.get("abort_reason") or "cap exceeded"
+        blockers.append(f"run aborted ({reason})")
+    safety = record.get("safety")
+    if isinstance(safety, dict) and not safety.get("ok"):
+        violations = safety.get("violations") or []
+        blockers.append(
+            f"safety violation(s): {', '.join(str(v) for v in violations) or 'failed'}")
     if checks is None:
         blockers.append("machine checks were never run")
     elif machine["fail"]:
         blockers.append(f"{machine['fail']} machine check(s) failed")
+    elif machine["unavailable"]:
+        blockers.append(
+            f"{machine['unavailable']} machine check(s) unavailable")
     if judgment["fail"]:
         blockers.append(f"{judgment['fail']} rubric line(s) judged fail")
 
     transcript = record["transcript"]
-    tokens = transcript.get("tokens") or {}
+    tokens = transcript.get("tokens") or record.get("tokens") or {}
+    tool_calls = (transcript.get("tool_calls")
+                  if transcript.get("tool_calls") is not None
+                  else record.get("tool_calls"))
+    wall_s = (transcript.get("wall_seconds")
+              if transcript.get("wall_seconds") is not None
+              else record.get("wall_s"))
     return {
         "schema": SCORECARD_SCHEMA,
         "run_id": record["run_id"],
@@ -169,13 +212,14 @@ def score_run(record: dict, checks: dict | None = None,
         "launcher": record["launcher"],
         "passed": not blockers,
         "blockers": blockers,
+        "safety": safety,
         "machine": machine,
         "judgment": judgment,
         "efficiency": {
             "steps": transcript.get("steps"),
-            "tool_calls": transcript.get("tool_calls"),
+            "tool_calls": tool_calls,
             "retries": transcript.get("retries"),
-            "wall_seconds": transcript.get("wall_seconds"),
+            "wall_seconds": wall_s,
             "tokens_total": tokens.get("total"),
             "tokens_input": tokens.get("input"),
             "tokens_output": tokens.get("output"),

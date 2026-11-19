@@ -1,0 +1,54 @@
+{
+  "schema": "rigorloom-mcp-replay/v1",
+  "task_id": "T4-convert-hwp",
+  "variant": "perfect",
+  "description": "Converts source to HWPX without altering text, runs check, and explicitly reports both lossy ('styles') and font substitution approx ('함초롬바탕→Noto Serif CJK KR') in the final answer.",
+  "simulated_tokens": {"input": 2200, "output": 340, "total": 2540},
+  "approx_fonts": [{"want": "함초롬바탕", "got": "Noto Serif CJK KR"}],
+  "requests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "eval-scripted", "version": "1.0"}
+      }
+    },
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/call",
+      "params": {"name": "open", "arguments": {"path": "${SOURCE}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {"name": "read", "arguments": {"path": "${SOURCE}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {"name": "save", "arguments": {"path": "${SOURCE}", "to": "${OUTPUT}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "tools/call",
+      "params": {"name": "check", "arguments": {"path": "${OUTPUT}"}}
+    }
+  ],
+  "expected_call_outcomes": [
+    {"id": 2, "tool": "open", "isError": false, "error_code": null},
+    {"id": 3, "tool": "read", "isError": false, "error_code": null},
+    {"id": 4, "tool": "save", "isError": false, "error_code": null},
+    {"id": 5, "tool": "check", "isError": false, "error_code": null}
+  ],
+  "final_answer": "원본 문서를 공문_변환.hwpx로 변환하고 check 점검을 마쳤습니다. 모든 문단 텍스트는 원본과 동일합니다. 변환 시 손실(lossy) 항목으로 styles가 보고되었으며, 글꼴 대체(approx)로 함초롬바탕→Noto Serif CJK KR 대체가 발생했습니다.",
+  "expected_passed": true,
+  "expected_failed_checks": []
+}

@@ -2211,18 +2211,35 @@ def _engine_info():
     return {"available": d is not None, **({"reason": why} if d is None else {})}
 
 
+#: The engine's note for a font it measured with another face (hwp-engine, 2026-11):
+#: "font 함초롬바탕 measured with the system face Noto Serif CJK KR (no Hancom font installed)".
+_MEASURED_WITH = re.compile(r"^font (?P<want>.+?) measured with the system face (?P<got>.+?)(?: \(.*\))?$")
+
+
 def _fonts(doc, approx=None):
     used = []
     for f in doc.fonts:
         if f not in used:
             used.append(f)
-    sub = []
+    sub, seen = [], {}
     for a in approx or []:
+        a = str(a)
+        m = _MEASURED_WITH.match(a)
         if "→" in a:
-            w, g = a.split("→", 1)
-            sub.append({"want": w.strip(), "got": g.strip()})
+            w, g = (x.strip() for x in a.split("→", 1))
+        elif m:
+            w, g = m.group("want").strip(), m.group("got").strip()
         elif a in used:
-            sub.append({"want": a, "got": None})
+            w, g = a, None
+        else:
+            continue
+        # The engine names a font twice (the note, then the bare name): one entry, with the face if known.
+        if w in seen:
+            if g and not seen[w]["got"]:
+                seen[w]["got"] = g
+            continue
+        seen[w] = {"want": w, "got": g or None}
+        sub.append(seen[w])
     return {"used": used, "substituted": sub}
 
 
@@ -3998,8 +4015,14 @@ def convert(src, out, *, to):
 
 
 @_api
-def new(markdown_path_or_text, out, *, form=None):
-    """{out, rev}: a document built from markdown (a .md path or the text), optionally on a form."""
+def new(markdown_path_or_text, out, *, form=None, commonmark=False):
+    """{out, rev}: a document built from markdown (a .md path or the text), optionally on a form.
+
+    commonmark=True reads the markdown as CommonMark with GFM tables, the way the engine converts a .md file:
+    lists and tables become lists and tables, and headings carry no automatic number (a heading written
+    "1. 개요" shows as written). Pictures are taken only from the markdown file's own folder, so pass a .md
+    path that sits beside them. Without it the markdown is the report dialect (□/○ markers, TABLE:, \\newpage),
+    whose heading style numbers each heading. Not with form."""
     src = markdown_path_or_text
     if isinstance(src, os.PathLike):
         src = os.fspath(src)
@@ -4013,13 +4036,25 @@ def new(markdown_path_or_text, out, *, form=None):
     if form is not None:
         fpath = _need_file(form)
         inputs.append(fpath)
+    if commonmark and fpath is not None:
+        raise DocError("bad_input", "commonmark markdown is not written on a form")
     o = _check_out(out, inputs, suffixes=(".hwpx",))
     e = _need_engine("new")
     stage = Path(tempfile.mkdtemp(prefix="new-", dir=str(_scratch())))
     try:
         staged = stage / "new.hwpx"
-        kw = {"form": str(fpath)} if fpath is not None else {}
-        r = e.call("build", src, str(staged), **kw)
+        if commonmark:
+            md = src
+            if not inputs:
+                md = str(stage / "content.md")
+                Path(md).write_text(src, encoding="utf-8")
+            r = e.call("convert", md, str(staged), to="hwpx")
+            if not r.get("ok"):
+                raise _engine_error(r, "convert")
+            r = {"ok": True, "warnings": list(r.get("lossy") or [])}
+        else:
+            kw = {"form": str(fpath)} if fpath is not None else {}
+            r = e.call("build", src, str(staged), **kw)
         if not r.get("ok"):
             raise _engine_error(r, "build")
         if not staged.is_file():

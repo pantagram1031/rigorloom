@@ -94,8 +94,11 @@ _DOC_ERRORS = {
     "source_rejected": ("이 파일은 문서로 열 수 없습니다.", "hwpx 또는 docx 파일을 지정하세요."),
     "invalid_params": ("입력이 맞지 않습니다.", None),
     "engine_refused": ("문서를 처리하지 못했습니다.", None),
+    "conflict": ("한 번에 보낸 작업 중 둘 이상이 같은 위치를 지정했습니다.", "작업을 나눠서 차례로 보내세요."),
 }
 _HANGUL = re.compile(r"[\uac00-\ud7a3]")
+#: rt_doc's conflict: "ops 0 (insert_after) and 1 (delete) both change p6; ..."
+_BOTH_CHANGE = re.compile(r"ops (\d+) \(([\w.]+)\) and (\d+) \(([\w.]+)\) both change (\S+?)[;,.]?(?:\s|$)")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|“[^”]*”|‘[^’]*’")
 #: Quoted document text, a parenthesised value, or a file name or path: none
 #: of them makes an English sentence Korean ("could not open 보고서.hwpx").
@@ -126,6 +129,11 @@ def person_error(err: dict, path: str | None = None) -> tuple[str, str | None]:
         stem = shown(path).rsplit(".", 1)[0] if path else "결과"
         return ("마크다운 파일은 열지 않고 새 문서의 내용으로 씁니다.",
                 f'새 문서로 만들기: rigorloom new {name} -o "{stem}.hwpx"')
+    both = _BOTH_CHANGE.search(message)
+    if err.get("code") == "conflict" and both:
+        a, ka, b, kb, at = both.groups()
+        return (f"ops[{a}]({ka}), ops[{b}]({kb}) 두 작업이 같은 위치({at})를 지정했습니다.",
+                "두 작업을 나눠서 차례로 보내세요.")
     span = re.search(r"\((p0\.\.p(\d+))\)", message)
     if span:
         return (f"이 문서의 문단 주소는 p0부터 p{span.group(2)}까지입니다"
@@ -163,7 +171,7 @@ def candidates_line(items: list) -> str:
 def _fonts(term: Term, fonts: dict) -> None:
     subs = (fonts or {}).get("substituted") or []
     if subs:
-        pairs = ", ".join(f"{s.get('want')} → {s.get('got')}" for s in subs[:6])
+        pairs = ", ".join(f"{s.get('want')} → {s.get('got') or '다른 글꼴'}" for s in subs[:6])
         term.line(term.dim(f"글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있습니다)"))
 
 
