@@ -548,9 +548,14 @@ def materialize_fixture(task_id: str, dest_dir: Path, *, mode: str = "hwpx") -> 
         return {"files": files, "source": str(src), "output_name": out_name}
 
     if task_id == "T3-report-from-notes":
-        src = write_file("notes.md", T3_NOTES_MD.encode("utf-8"), "notes")
-        out_name = "결과보고서.fdoc" if mode == "fake" else "결과보고서.hwpx"
-        return {"files": files, "source": str(src), "output_name": out_name}
+        if mode == "fake":
+            src = write_file("notes.md", T3_NOTES_MD.encode("utf-8"), "notes")
+            return {"files": files, "source": str(src), "output_name": "결과보고서.fdoc",
+                    "notes": T3_NOTES_MD}
+        # The document tools read documents, not a markdown file, so a person
+        # hands the agent their notes in the message itself.
+        return {"files": files, "source": None, "output_name": "결과보고서.hwpx",
+                "notes": T3_NOTES_MD}
 
     if task_id == "T4-convert-hwp":
         if mode == "fake":

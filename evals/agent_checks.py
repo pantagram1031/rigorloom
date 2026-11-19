@@ -223,6 +223,33 @@ def _normalize_place_id(raw: str) -> str:
     return raw[len("place:"):] if raw.startswith("place:") else raw
 
 
+def _label_key(text: str) -> str:
+    return "".join((text or "").split())
+
+
+def _seat_lookup(places: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Seats by id and by label (whitespace ignored). Place ids are hashes the
+    document layer makes, so a task names its seats by the label a person
+    reads; a label two seats share is left out rather than guessed."""
+    by_key: dict[str, dict[str, Any]] = {}
+    seen: dict[str, int] = {}
+    for p in places:
+        by_key[p["id"]] = p
+        key = _label_key(p.get("label") or "")
+        if key:
+            seen[key] = seen.get(key, 0) + 1
+            by_key.setdefault("label:" + key, p)
+    for key, n in seen.items():
+        if n > 1:
+            by_key.pop("label:" + key, None)
+    return by_key
+
+
+def _find_seat(lookup: dict[str, dict[str, Any]], raw: str) -> dict[str, Any] | None:
+    pid = _normalize_place_id(raw)
+    return lookup.get(pid) or lookup.get("label:" + _label_key(pid))
+
+
 def _addr_in_allowed(addr: str | None, allowed: set[str]) -> bool:
     if not addr:
         return False
@@ -256,13 +283,13 @@ def check_t1_seats_hold_values(
     if not src_outline.get("ok"):
         return _result(cid, "seats_hold_values", "fail",
                        f"source outline failed: {_err_msg(src_outline)}")
-    by_id = {p["id"]: p for p in src_outline.get("places") or []}
+    lookup = _seat_lookup(src_outline.get("places") or [])
 
     mismatches: dict[str, dict[str, Any]] = {}
     checked: dict[str, dict[str, Any]] = {}
     for raw_key, expected in expected_seats.items():
         pid = _normalize_place_id(raw_key)
-        place = by_id.get(pid)
+        place = _find_seat(lookup, raw_key)
         if place is None:
             mismatches[pid] = {"at": None, "expected": expected, "actual": None,
                                "error": "place not in source outline"}
@@ -303,9 +330,9 @@ def check_t1_diff_confined_to_seats(
     if not src_outline.get("ok"):
         return _result(cid, "diff_confined_to_seats", "fail",
                        f"source outline failed: {_err_msg(src_outline)}")
-    by_id = {p["id"]: p for p in src_outline.get("places") or []}
-    wanted = [_normalize_place_id(s) for s in seat_ids]
-    allowed_addrs = {by_id[pid]["at"] for pid in wanted if pid in by_id}
+    lookup = _seat_lookup(src_outline.get("places") or [])
+    wanted = list(seat_ids)
+    allowed_addrs = {p["at"] for p in (_find_seat(lookup, s) for s in wanted) if p}
 
     diff_resp = doc_mod.diff(str(source_path), str(output_path))
     if not diff_resp.get("ok"):
@@ -345,7 +372,8 @@ def check_t1_signature_seats_untouched(
         return _result(cid, "signature_seats_untouched", "fail",
                        f"source outline failed: {_err_msg(src_outline)}")
     places = src_outline.get("places") or []
-    explicit = {_normalize_place_id(s) for s in (signature_seat_ids or ())}
+    lookup = _seat_lookup(places)
+    explicit = {p["id"] for p in (_find_seat(lookup, s) for s in (signature_seat_ids or ())) if p}
     sig_places = [
         p for p in places
         if rt_toolset.is_person_only(p) or p.get("id") in explicit
@@ -615,7 +643,13 @@ def check_t3_required_headings_present(
     *,
     cid: str = "t3_required_headings_present",
 ) -> dict[str, Any]:
-    """T3 pass rule 1: every required heading appears in ``rt_doc.outline()``."""
+    """T3 pass rule 1: every required heading reads as asked.
+
+    A heading style can number its headings, so the text of a heading in
+    ``rt_doc.outline()`` is not what the person sees: ``1. 사업 개요`` under a
+    numbered style shows as ``1. 1. 사업 개요``. With the engine, each heading
+    is matched against the lines of the drawn pages; without it, against the
+    outline text."""
     missing_file = _need_output(cid, "required_headings_present", output_path)
     if missing_file:
         return missing_file
@@ -626,13 +660,46 @@ def check_t3_required_headings_present(
         return _result(cid, "required_headings_present", "fail",
                        f"outline failed: {_err_msg(out)}")
     found = [_norm_ws(str(h.get("text") or "")) for h in out.get("headings") or []]
-    missing = [h for h in required_headings if _norm_ws(h) not in found]
+    drawn = _drawn_lines(doc_mod, output_path)
+    if drawn is not None:
+        seen = {_norm_ws(line) for line in drawn}
+        missing = [h for h in required_headings if _norm_ws(h) not in seen]
+        shown = [line for line in drawn
+                 if any(f and _norm_ws(line).endswith(f) for f in found)]
+        evidence = {"required": required_headings, "outline": found, "drawn_headings": shown}
+    else:
+        missing = [h for h in required_headings if _norm_ws(h) not in found]
+        evidence = {"required": required_headings, "outline": found, "drawn_headings": None}
     if missing:
         return _result(cid, "required_headings_present", "fail",
                        f"{len(missing)} required heading(s) missing",
-                       {"missing": missing, "found": found})
-    return _result(cid, "required_headings_present", "pass",
-                   evidence={"required": required_headings, "found": found})
+                       {"missing": missing, **evidence})
+    return _result(cid, "required_headings_present", "pass", evidence=evidence)
+
+
+def _drawn_lines(doc_mod: Any, path: Path) -> list[str] | None:
+    """The text lines of the drawn pages, or None without the engine."""
+    convert = getattr(doc_mod, "convert", None)
+    if convert is None:
+        return None
+    try:
+        import pypdfium2 as pdfium  # noqa: PLC0415
+    except ImportError:
+        return None
+    with tempfile.TemporaryDirectory(prefix="p7-drawn-") as tmp:
+        pdf_path = Path(tmp) / "drawn.pdf"
+        res = convert(str(path), str(pdf_path), to="pdf")
+        if not isinstance(res, dict) or not res.get("ok") or not pdf_path.is_file():
+            return None
+        pdf = pdfium.PdfDocument(str(pdf_path))
+        try:
+            lines: list[str] = []
+            for i in range(len(pdf)):
+                text = pdf[i].get_textpage().get_text_range()
+                lines.extend(x for x in re.split(r"[\r\n]+", text) if x.strip())
+            return lines
+        finally:
+            pdf.close()
 
 
 def _verbatim_token_present(token: str, haystack: str) -> bool:
@@ -959,8 +1026,24 @@ def _collect_lossy_and_approx(
     return lossy, approx
 
 
+_APPROX_FONT = re.compile(r"^font (.+?) measured with\b")
+
+
+def _named(name: str, text: str) -> bool:
+    """``name`` appears in ``text`` as a whole name: 돋움 is not named by 돋움체."""
+    pat = r"(?<![가-힣A-Za-z0-9])" + re.escape(name.lower()) + r"(?![가-힣A-Za-z0-9])"
+    return re.search(pat, text) is not None
+
+
 def _approx_mentioned(item: str, answer_lower: str) -> bool:
     if item.lower() in answer_lower:
+        return True
+    # A substituted font is reported when the answer names the font; the face
+    # drawn in its place is this machine's, not the document's.
+    m = _APPROX_FONT.match(item)
+    if m and _named(m.group(1).strip(), answer_lower):
+        return True
+    if "→" not in item and " " not in item.strip() and _named(item.strip(), answer_lower):
         return True
     if "→" in item:
         want, got = (part.strip().lower() for part in item.split("→", 1))
@@ -1024,8 +1107,12 @@ def evaluate_task_checks(
     output_path: Path | None,
     final_answer: str = "",
     transcript_events: list[dict[str, Any]] | None = None,
+    notes_text: str | None = None,
 ) -> dict[str, Any]:
-    """Run every declared ``pass_rule`` for an agent-eval task definition."""
+    """Run every declared ``pass_rule`` for an agent-eval task definition.
+
+    ``notes_text`` is the notes the person gave in the message; without it
+    the rule reads ``notes_file`` from the task directory."""
     results: list[dict[str, Any]] = []
     for spec in task.get("pass_rules") or []:
         cid = spec["id"]
@@ -1071,10 +1158,12 @@ def evaluate_task_checks(
             row = check_t3_required_headings_present(
                 doc_mod, output_path, list(spec["headings"]), cid=cid)
         elif rule == "notes_facts_verbatim":
-            notes_file = Path(task_dir) / spec.get("notes_file", "notes.md")
-            notes_text = notes_file.read_text(encoding="utf-8") if notes_file.is_file() else ""
+            notes = notes_text
+            if notes is None:
+                notes_file = Path(task_dir) / spec.get("notes_file", "notes.md")
+                notes = notes_file.read_text(encoding="utf-8") if notes_file.is_file() else ""
             row = check_t3_notes_facts_verbatim(
-                doc_mod, output_path, notes_text,
+                doc_mod, output_path, notes,
                 required_names=list(spec.get("required_names") or ()),
                 required_dates=list(spec.get("required_dates") or ()),
                 required_numbers=list(spec.get("required_numbers") or ()),

@@ -213,7 +213,10 @@ class TestAgentTasksAndFixtures:
             "담당자": "김하늘",
             "신청일자": "2026년 11월 19일",
         }
-        ops = [{"op": "fill", "place": k, "text": v} for k, v in expected.items()]
+        # Place ids are hashes the document layer makes; the task names its
+        # seats by label, as a person reads them.
+        by_label = {p["label"]: p["id"] for p in rt_doc.outline(str(src1))["places"]}
+        ops = [{"op": "fill", "place": by_label[k], "text": v} for k, v in expected.items()]
         ed = rt_doc.edit(str(src1), ops, base=rev1, out=str(out1))
         assert ed["ok"], ed
         assert agent_checks.check_t1_seats_hold_values(rt_doc, src1, out1, expected)["status"] == "pass"

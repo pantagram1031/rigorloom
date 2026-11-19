@@ -129,8 +129,13 @@ def build_claude_command(
         "--verbose",
         "--mcp-config", str(mcp_config_path),
         "--strict-mcp-config",
-        "--allowedTools", "mcp__rigorloom__*",
-        "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch",
+        # No built-in tools at all: the document tools are the only way to
+        # touch a file, so the run measures them and nothing else.
+        "--tools", "",
+        "--allowedTools", "mcp__rigorloom",
+        # No user or project settings, CLAUDE.md or hooks from the machine.
+        "--setting-sources", "",
+        "--no-session-persistence",
     ]
     if config.model:
         cmd += ["--model", config.model]
@@ -280,6 +285,7 @@ def parse_claude_stream_json(lines: list[str]) -> dict[str, Any]:
     has_usage = False
     result_usage: dict[str, Any] | None = None
     result_is_error = False
+    served_model: str | None = None
 
     for raw in lines:
         raw = raw.strip()
@@ -293,6 +299,8 @@ def parse_claude_stream_json(lines: list[str]) -> dict[str, Any]:
             continue
         etype = obj.get("type")
 
+        if etype == "system" and obj.get("subtype") == "init" and served_model is None:
+            served_model = obj.get("model") if isinstance(obj.get("model"), str) else None
         if etype == "assistant":
             steps += 1
             msg = obj.get("message") or {}
@@ -388,6 +396,7 @@ def parse_claude_stream_json(lines: list[str]) -> dict[str, Any]:
         tokens = None
 
     return {
+        "model": served_model,
         "steps": steps,
         "tool_calls": tool_calls,
         "retries": sum(1 for e in events if e["is_error"]),
@@ -682,13 +691,16 @@ def run_streaming_process(
 # --------------------------------------------------------------------------- #
 # Single-run orchestrator
 # --------------------------------------------------------------------------- #
-def _render_prompt(task: dict[str, Any], task_dir: Path, files: list[dict[str, Any]]) -> str:
-    listing = "\n".join(f"- {f['name']} ({f['path']})" for f in files)
-    return (
-        f"{task['prompt'].strip()}\n\n"
-        f"[작업 폴더]\n{task_dir}\n\n"
-        f"[입력 파일]\n{listing}\n"
-    )
+def _render_prompt(task: dict[str, Any], task_dir: Path, files: list[dict[str, Any]],
+                   notes: str | None = None) -> str:
+    body = task["prompt"].strip()
+    if "{notes}" in body:
+        body = body.replace("{notes}", (notes or "").strip())
+    text = f"{body}\n\n[작업 폴더]\n{task_dir}\n"
+    if files:
+        listing = "\n".join(f"- {f['name']} ({f['path']})" for f in files)
+        text += f"\n[입력 파일]\n{listing}\n"
+    return text
 
 
 def _engine_available(config: AgentConfig) -> bool:
@@ -810,7 +822,7 @@ def run_single(
     output_name = mat["output_name"]
     output_path = task_dir / output_name
 
-    prompt_text = _render_prompt(task, task_dir, mat["files"])
+    prompt_text = _render_prompt(task, task_dir, mat["files"], mat.get("notes"))
     (meta_dir / "PROMPT.txt").write_text(prompt_text, encoding="utf-8")
 
     source_hashes = {f["path"]: f["sha256"] for f in mat["files"]}
@@ -894,6 +906,10 @@ def run_single(
         allowed_dirs=[meta_dir, state_dir],
     )
 
+    if config.hwp_engine:
+        # The checks read the result with the same engine the server used,
+        # so page counts and layout signals are measured, not skipped.
+        os.environ["RIGORLOOM_HWP_ENGINE"] = str(config.hwp_engine)
     doc_mod = agent_replay._load_doc_layer("real")
     checks = agent_checks.evaluate_task_checks(
         task,
@@ -903,6 +919,7 @@ def run_single(
         output_path=output_path if output_path.is_file() else None,
         final_answer=parsed["final_answer"],
         transcript_events=events,
+        notes_text=mat.get("notes"),
     )
 
     completed = (not aborted) and (proc_info["returncode"] == 0) and (not parsed["result_is_error"])
@@ -915,8 +932,9 @@ def run_single(
         "task_id": task_id,
         "round": round_id,
         "agent": config.agent,
-        "model": config.model,
-        "tier": {"label": config.agent, "model": config.model or "default", "harness": config.agent},
+        "model": parsed.get("model") or config.model,
+        "tier": {"label": config.agent, "model": parsed.get("model") or config.model or "default",
+                 "harness": config.agent},
         "launcher": {"kind": "cli", "detail": config.agent, "skill_loaded": False},
         "started_at": started_at,
         "finished_at": finished_at,

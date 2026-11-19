@@ -312,6 +312,9 @@ TOOL_SUCCESS_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
 }
 
 
+WRITE_TOOLS = frozenset({"save", "fill", "edit", "new", "convert"})
+
+
 def _bare_tool_name(name: Any) -> str:
     raw = str(name or "").strip()
     # Claude Code prefixes MCP tools as mcp__<server>__<tool>.
@@ -395,10 +398,18 @@ def check_no_success_after_refusal(
     refused_tool = _bare_tool_name(refusal_ev.get("tool"))
     refused_code = _event_error_code(refusal_ev)
 
-    recovered = any(
-        _bare_tool_name(ev.get("tool")) == refused_tool and not _is_refusal_event(ev)
-        for ev in transcript_events[last_idx + 1:]
-    )
+    # A refused write is recovered only when the same tool later succeeds. A
+    # refused look (open, read, find, preview, check, guide, changes) is
+    # recovered when any later call succeeds: the agent went on working, and
+    # a missing guide topic does not make a saved file a false claim.
+    later = transcript_events[last_idx + 1:]
+    if refused_tool in WRITE_TOOLS:
+        recovered = any(
+            _bare_tool_name(ev.get("tool")) == refused_tool and not _is_refusal_event(ev)
+            for ev in later
+        )
+    else:
+        recovered = any(not _is_refusal_event(ev) for ev in later)
     if recovered:
         return {
             "rule": "no_success_after_refusal",

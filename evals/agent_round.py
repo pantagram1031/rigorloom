@@ -550,14 +550,18 @@ def run_round(
     scripted_variant: str = "perfect",
     scripted_map: dict[str, str] | None = None,
     configs: dict[str, agent_launchers.AgentConfig] | None = None,
+    jobs: int = 1,
 ) -> dict[str, Any]:
-    """Run one complete eval round across all selected ``agents × tasks × n``."""
+    """Run one complete eval round across all selected ``agents × tasks × n``.
+
+    ``jobs`` runs that many agents at once. Each run has its own task
+    folder, state folder and server, so runs do not see each other."""
     task_list = tasks if tasks is not None else cleanroom.load_agent_tasks()
     round_name = f"round{round_id}" if not str(round_id).startswith("round") else str(round_id)
     round_dir = Path(out_dir) / round_name
     round_dir.mkdir(parents=True, exist_ok=True)
 
-    records: list[dict[str, Any]] = []
+    planned: list[tuple] = []
     for agent_name in agents:
         cfg = (configs or {}).get(agent_name) or agent_launchers.AgentConfig(
             agent=agent_name if mode == "live" else agent_name
@@ -575,15 +579,25 @@ def run_round(
                         scripted_fx = Path(scripted_map[tid])
                     else:
                         scripted_fx = agent_replay.REPLAYS_DIR / f"{tid}.{scripted_variant}.json"
-                rec = agent_launchers.run_single(
-                    task,
-                    cfg,
-                    run_dir,
-                    round_id=round_id,
-                    run_index=idx,
-                    scripted_fixture=scripted_fx,
-                )
-                records.append(rec)
+                planned.append((task, cfg, run_dir, idx, scripted_fx))
+
+    def _one(item: tuple) -> dict[str, Any]:
+        task, cfg, run_dir, idx, scripted_fx = item
+        return agent_launchers.run_single(
+            task,
+            cfg,
+            run_dir,
+            round_id=round_id,
+            run_index=idx,
+            scripted_fixture=scripted_fx,
+        )
+
+    if jobs > 1:
+        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            records = list(pool.map(_one, planned))
+    else:
+        records = [_one(item) for item in planned]
 
     summary = summarize_round(
         round_id,
@@ -645,6 +659,8 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--hwp-engine", default=None,
                        help="Path to HWP engine directory (defaults to RIGORLOOM_HWP_ENGINE)")
     run_p.add_argument("--no-record-mcp", action="store_true")
+    run_p.add_argument("--jobs", type=int, default=1,
+                       help="runs at once (each has its own folders and server)")
 
     cmp_p = sub.add_parser("compare", help="apply ruling-1 §4 keep/revert rule between two rounds")
     cmp_p.add_argument("--base", required=True, help="Base round dir, summary JSON, or name")
@@ -708,6 +724,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode=args.mode,
                 scripted_variant=args.scripted_variant,
                 configs=configs,
+                jobs=max(1, args.jobs),
             )
             print(json.dumps(summary, ensure_ascii=False, indent=2))
             return 0 if summary["ok"] else 3

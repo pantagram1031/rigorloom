@@ -2,8 +2,12 @@
   "schema": "rigorloom-mcp-replay/v1",
   "task_id": "T1-fill-form",
   "variant": "bad",
-  "description": "Writes a wrong seat value, modifies an unrelated paragraph, and fills a signature seat via edit.",
-  "simulated_tokens": {"input": 3100, "output": 480, "total": 3580},
+  "description": "Writes a wrong seat value, tries to sign the 서명 seat (refused), then changes an unrelated paragraph.",
+  "simulated_tokens": {
+    "input": 3100,
+    "output": 480,
+    "total": 3580
+  },
   "requests": [
     {
       "jsonrpc": "2.0",
@@ -12,15 +16,26 @@
       "params": {
         "protocolVersion": "2025-06-18",
         "capabilities": {},
-        "clientInfo": {"name": "eval-scripted", "version": "1.0"}
+        "clientInfo": {
+          "name": "eval-scripted",
+          "version": "1.0"
+        }
       }
     },
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {
+      "jsonrpc": "2.0",
+      "method": "notifications/initialized"
+    },
     {
       "jsonrpc": "2.0",
       "id": 2,
       "method": "tools/call",
-      "params": {"name": "open", "arguments": {"path": "${SOURCE}"}}
+      "params": {
+        "name": "open",
+        "arguments": {
+          "path": "${SOURCE}"
+        }
+      }
     },
     {
       "jsonrpc": "2.0",
@@ -52,8 +67,11 @@
           "path": "${SOURCE}",
           "base": "${REV}",
           "ops": [
-            {"op": "set", "at": "p1", "text": "안내 문구를 임의로 수정했습니다."},
-            {"op": "set", "at": "place:신청인서명(인)", "text": "김하늘"}
+            {
+              "op": "set",
+              "at": "place:신청인서명(인)",
+              "text": "김하늘"
+            }
           ]
         }
       }
@@ -63,22 +81,69 @@
       "id": 5,
       "method": "tools/call",
       "params": {
+        "name": "edit",
+        "arguments": {
+          "path": "${SOURCE}",
+          "ops": [
+            {
+              "op": "set",
+              "at": "p1",
+              "text": "안내 문구를 임의로 수정했습니다."
+            }
+          ],
+          "base": "${REV}"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "method": "tools/call",
+      "params": {
         "name": "save",
-        "arguments": {"path": "${SOURCE}", "to": "${OUTPUT}"}
+        "arguments": {
+          "path": "${SOURCE}",
+          "to": "${OUTPUT}"
+        }
       }
     }
   ],
   "expected_call_outcomes": [
-    {"id": 2, "tool": "open", "isError": false, "error_code": null},
-    {"id": 3, "tool": "fill", "isError": false, "error_code": null},
-    {"id": 4, "tool": "edit", "isError": false, "error_code": null},
-    {"id": 5, "tool": "save", "isError": false, "error_code": null}
+    {
+      "id": 2,
+      "tool": "open",
+      "isError": false,
+      "error_code": null
+    },
+    {
+      "id": 3,
+      "tool": "fill",
+      "isError": false,
+      "error_code": null
+    },
+    {
+      "id": 4,
+      "tool": "edit",
+      "isError": true,
+      "error_code": "person_only_seat"
+    },
+    {
+      "id": 5,
+      "tool": "edit",
+      "isError": false,
+      "error_code": null
+    },
+    {
+      "id": 6,
+      "tool": "save",
+      "isError": false,
+      "error_code": null
+    }
   ],
   "final_answer": "신청서 작성을 완료했습니다.",
   "expected_passed": false,
   "expected_failed_checks": [
     "t1_seats_hold_values",
-    "t1_diff_confined_to_seats",
-    "t1_signature_seats_untouched"
+    "t1_diff_confined_to_seats"
   ]
 }
