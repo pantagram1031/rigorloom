@@ -24,21 +24,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 try:  # installed as rigorloom_runtime
     from . import rt_commit, rt_toolset  # rt_toolset registers the tools
-    from .rt_cli_render import SHOW
+    from .rt_cli_render import SHOW, candidates_line, person_error, shown
     from .rt_paths import STATE_MARKER, PathRefused, canonical, state_home
-    from .rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text
+    from .rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text, width
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
     import rt_toolset
-    from rt_cli_render import SHOW
+    from rt_cli_render import SHOW, candidates_line, person_error, shown
     from rt_paths import STATE_MARKER, PathRefused, canonical, state_home
-    from rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text
+    from rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text, width
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
@@ -58,15 +59,15 @@ HELP_SECTIONS = (
     ("읽기", (
         ("open FILE", "문서 구조: 쪽, 글꼴, 제목, 표, 채울 칸과 주소"),
         ("read FILE [--at 주소]", "본문 읽기 (긴 글은 --cursor로 이어 읽기)"),
-        ("find FILE 말", "찾은 곳마다 주소"),
-        ("preview FILE", "쪽 그림 (PNG)"),
+        ("find FILE 찾을말", "찾은 곳마다 주소"),
+        ("preview FILE", "쪽 미리보기 그림 (PNG)"),
     )),
     ("쓰기 (원본은 save 전까지 그대로)", (
         ("edit FILE --op JSON", "고치기: set, replace, insert_after, delete, table.*"),
-        ("fill FILE --set 칸=값", "양식 채우기 (서명·날인 칸은 사람 몫)"),
+        ("fill FILE --set 칸=값", "양식 채우기 (서명·날인 칸은 건너뜀)"),
         ("new 내용.md", "마크다운으로 새 문서"),
         ("save FILE [--to 경로]", "초안을 파일로 저장 (덮어쓰기는 물어봄, undo 가능)"),
-        ("convert FILE --to pdf -o OUT", ""),
+        ("convert FILE -o OUT", "다른 형식으로 내보내기 (pdf, docx, md, png)"),
     )),
     ("점검과 기록", (
         ("check FILE", "문체·쪽 배치·글꼴·숫자 바뀜 점검"),
@@ -76,7 +77,8 @@ HELP_SECTIONS = (
     )),
 )
 HELP_TAIL = """\
-공통 옵션: --json (기계용 출력)  --source disk|draft  --color auto|always|never
+공통 옵션: --json (JSON으로 출력)  --color auto|always|never
+명령마다 자세히: rigorloom <명령> --help
 
 앱·설치: ui  doctor  engine  install  demo  guard  style
 프로토콜 명령 (--root 필요): capabilities sessions inspect read-region render
@@ -84,7 +86,7 @@ HELP_TAIL = """\
   approval approve reject apply candidates compare receipt verify
   자세히: rigorloom protocol --help
 """
-HELP_USAGE_COLUMNS = 21
+HELP_USAGE_COLUMNS = 22
 
 
 def help_text() -> str:
@@ -92,12 +94,90 @@ def help_text() -> str:
     for title, rows in HELP_SECTIONS:
         lines.append(title)
         for usage, what in rows:
-            if not what:
-                lines.append(f"  {usage}")
-                continue
-            lines.append(f"  {pad(usage, HELP_USAGE_COLUMNS)} {what}")
+            lines.append(f"  {pad(usage, HELP_USAGE_COLUMNS)}  {what}".rstrip())
         lines.append("")
-    return "\n".join(lines) + HELP_TAIL
+    return "\n".join(lines) + "\n" + HELP_TAIL
+
+
+#: Each verb's own --help: what it does, then two command lines to copy.
+VERB_HELP = {
+    "open": ("문서 구조를 봅니다: 쪽, 글꼴, 제목, 표, 채울 칸과 그 주소.",
+             ("rigorloom open 보고서.hwpx",
+              "rigorloom open 신청서.hwpx --source draft")),
+    "outline": ("open과 같습니다.", ("rigorloom outline 보고서.hwpx",)),
+    "read": ("본문을 주소와 함께 읽습니다. 긴 글은 마지막 줄에 나오는 명령으로 이어 읽습니다.",
+             ("rigorloom read 보고서.hwpx --at p12",
+              "rigorloom read 보고서.hwpx --at t3")),
+    "find": ("말을 찾아 찾은 곳마다 주소를 붙여 보여 줍니다.",
+             ("rigorloom find 보고서.hwpx 예산",
+              'rigorloom find 계약서.hwpx "제[0-9]+조" --regex')),
+    "edit": ("초안에서 고칩니다. 원래 파일은 save 전까지 그대로입니다.\n"
+             "작업: set, replace, insert_after, delete, table.set_cells, table.add_row, "
+             "table.delete_row, style",
+             ("""rigorloom edit 보고서.hwpx --op '{"op":"replace","at":"p3","find":"사본하여","with":"복사하여"}'""",
+              """rigorloom edit 보고서.hwpx --op '{"op":"set","at":"p0","text":"2027년 업무계획"}' -o 보고서-수정.hwpx""")),
+    "fill": ("양식의 빈칸을 채웁니다. 서명·날인·결재일 칸은 채우지 않고 알려 줍니다.",
+             ("rigorloom fill 신청서.hwpx --set 성명=홍길동 --set 소속=총무과",
+              "rigorloom fill 신청서.hwpx --values 값.json -o 신청서-작성.hwpx")),
+    "new": ("마크다운 글로 새 문서를 만듭니다. 양식 파일을 주면 그 위에 씁니다.",
+            ("rigorloom new 초안.md -o 보고서.hwpx",
+             "rigorloom new 초안.md --form 기안문양식.hwpx -o 기안문.hwpx")),
+    "preview": ("쪽을 그림(PNG)으로 만듭니다. 한글 엔진이 있어야 합니다.",
+                ("rigorloom preview 보고서.hwpx --page 1",
+                 "rigorloom preview 보고서.hwpx --source draft --changed")),
+    "check": ("문체, 쪽 배치, 글꼴, 숫자·사실이 바뀌었는지 점검합니다.",
+              ("rigorloom check 보고서.hwpx --source draft",
+               "rigorloom check 보고서-수정.hwpx --against 보고서.hwpx --pack gongmun")),
+    "save": ("초안을 파일로 저장합니다. 있는 파일을 덮어쓸 때는 먼저 묻고, "
+             "이전 내용은 저장 기록에 남깁니다.",
+             ("rigorloom save 보고서.hwpx",
+              "rigorloom save 보고서.hwpx --to 보고서-수정.hwpx")),
+    "changes": ("초안과 저장 기록을 봅니다. discard는 초안을 버리고, "
+                "clean은 오래된 초안·미리보기·저장 기록을 지웁니다.",
+                ("rigorloom changes 보고서.hwpx",
+                 "rigorloom changes clean --older-than 30")),
+    "undo": ("마지막 저장을 되돌립니다. 그 뒤에 파일이 바뀌었으면 되돌리지 않습니다.",
+             ("rigorloom undo 보고서.hwpx",)),
+    "convert": ("다른 형식으로 내보냅니다. 형식은 -o 파일의 확장자와 --to가 같아야 합니다.",
+                ("rigorloom convert 보고서.hwpx --to pdf -o 보고서.pdf",
+                 "rigorloom convert 보고서.hwpx --to docx -o 보고서.docx")),
+    "guide": ("공문·보고서·양식 작성 안내를 봅니다. 주제 없이 실행하면 주제 목록이 나옵니다.",
+              ("rigorloom guide", "rigorloom guide gongmun")),
+}
+
+
+class _Help(argparse.RawDescriptionHelpFormatter):
+    """argparse's layout with Korean section names."""
+
+    _HEADINGS = {"positional arguments": "인자", "options": "옵션",
+                 "optional arguments": "옵션"}
+
+    def start_section(self, heading):
+        super().start_section(self._HEADINGS.get(heading, heading))
+
+    def add_usage(self, usage, actions, groups, prefix=None):
+        super().add_usage(usage, actions, groups, "사용법: " if prefix is None else prefix)
+
+    def format_help(self) -> str:
+        # argparse pads by character count; a Korean metavar is two columns
+        # per character, so pull its help text back to the shared column.
+        out = []
+        for line in super().format_help().split("\n"):
+            m = re.match(r"^(\s+)(-\S.*?)( {2,})(\S.*)$", line)
+            if m:
+                extra = width(m.group(2)) - len(m.group(2))
+                gap = m.group(3)
+                if extra > 0 and len(gap) - extra >= 2:
+                    line = m.group(1) + m.group(2) + gap[extra:] + m.group(4)
+            out.append(line)
+        return "\n".join(out)
+
+
+def _verb(sub, name: str, summary: str) -> argparse.ArgumentParser:
+    what, examples = VERB_HELP[name]
+    epilog = "예:\n" + "\n".join(f"  {line}" for line in examples)
+    return sub.add_parser(name, help=summary, description=what, epilog=epilog,
+                          formatter_class=_Help, add_help=False)
 
 
 def is_product(argv: list[str]) -> bool:
@@ -115,15 +195,40 @@ def wants_product_help(argv: list[str]) -> bool:
     return argv in (["--help"], ["-h"], ["help"], [])
 
 
+def is_unknown(argv: list[str], legacy_commands) -> bool:
+    """A first word that is neither a product verb nor a legacy command.
+
+    Without this, a typo (``opn``) fell through to the protocol parser and
+    printed its English list of 28 internal commands.
+    """
+    if not argv or argv[0].startswith("-"):
+        return False
+    return argv[0] not in PRODUCT_VERBS and argv[0] not in legacy_commands \
+        and argv[0] not in ("protocol", "help")
+
+
+def _unknown(word: str) -> "_Usage":
+    import difflib
+    known = list(PRODUCT_VERBS) + list(LEGACY_ALWAYS)
+    near = difflib.get_close_matches(word, known, n=1, cutoff=0.6)
+    if near:
+        return _Usage(f"알 수 없는 명령입니다: {word} (혹시 {near[0]}?)",
+                      f"명령 목록: rigorloom --help")
+    return _Usage(f"알 수 없는 명령입니다: {word}", "명령 목록: rigorloom --help")
+
+
 # --------------------------------------------------------------------------
 # argv -> typed request
 # --------------------------------------------------------------------------
 
-def _common(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--json", action="store_true", help="기계용 JSON 한 덩어리로 출력")
-    p.add_argument("--source", choices=("disk", "draft"), default="disk",
-                   help="읽을 대상: 디스크의 파일(기본) 또는 초안")
-    p.add_argument("--color", choices=("auto", "always", "never"), default="auto")
+def _common(p: argparse.ArgumentParser, *, source: bool = False) -> None:
+    p.add_argument("-h", "--help", action="help", help="이 도움말")
+    p.add_argument("--json", action="store_true", help="결과를 JSON으로 출력 (프로그램·에이전트용)")
+    if source:
+        p.add_argument("--source", choices=("disk", "draft"), default="disk",
+                       help="읽을 것: 파일(disk, 기본) 또는 저장 안 한 초안(draft)")
+    p.add_argument("--color", choices=("auto", "always", "never"), default="auto",
+                   help="색 쓰기 (기본 auto: 터미널일 때만)")
     p.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
 
 
@@ -140,64 +245,84 @@ def _parser() -> argparse.ArgumentParser:
     root = _Parser(prog="rigorloom", add_help=False)
     sub = root.add_subparsers(dest="verb", required=True)
 
-    p = sub.add_parser("open", help="문서 구조"); p.add_argument("path"); _common(p)
-    p = sub.add_parser("outline", help="문서 구조 (open과 같음)"); p.add_argument("path"); _common(p)
+    for name in ("open", "outline"):
+        p = _verb(sub, name, "문서 구조")
+        p.add_argument("path", metavar="FILE", help="열 문서"); _common(p, source=True)
 
-    p = sub.add_parser("read", help="본문 읽기")
-    p.add_argument("path"); p.add_argument("--at")
-    p.add_argument("--cursor"); p.add_argument("--max-chars", type=int)
-    p.add_argument("--runs", action="store_true"); _common(p)
+    p = _verb(sub, "read", "본문 읽기")
+    p.add_argument("path", metavar="FILE", help="읽을 문서")
+    p.add_argument("--at", metavar="주소", help="이 주소만 읽기 (p12, t3, t3/r2/c1, place:성명)")
+    p.add_argument("--cursor", help="이어 읽기 위치 (앞 화면 마지막 줄에 나옴)")
+    p.add_argument("--max-chars", type=int, metavar="글자수", help="한 번에 읽을 최대 글자 수")
+    p.add_argument("--runs", action="store_true", help="글자 모양(굵게, 글꼴 등)도 함께")
+    _common(p, source=True)
 
-    p = sub.add_parser("find", help="찾기")
-    p.add_argument("path"); p.add_argument("query")
-    p.add_argument("--regex", action="store_true"); p.add_argument("--scope")
-    p.add_argument("--limit", type=int); _common(p)
+    p = _verb(sub, "find", "찾기")
+    p.add_argument("path", metavar="FILE", help="찾을 문서")
+    p.add_argument("query", metavar="찾을말", help="찾을 말")
+    p.add_argument("--regex", action="store_true", help="말을 정규식으로 해석")
+    p.add_argument("--scope", metavar="주소", help="이 주소 안에서만 찾기 (예: t3)")
+    p.add_argument("--limit", type=int, metavar="개수", help="보여 줄 최대 개수")
+    _common(p, source=True)
 
-    p = sub.add_parser("edit", help="고치기")
-    p.add_argument("path")
-    p.add_argument("--op", action="append", default=[], metavar="JSON")
-    p.add_argument("--ops-file")
-    p.add_argument("--base", help="읽었던 rev (생략하면 지금 판)")
-    p.add_argument("-o", "--out", help="고친 결과를 이 파일로 저장")
-    p.add_argument("--force", action="store_true", help="-o 대상이 있으면 덮어씀 (이전 판은 저장 기록에)")
+    p = _verb(sub, "edit", "고치기")
+    p.add_argument("path", metavar="FILE", help="고칠 문서")
+    p.add_argument("--op", action="append", default=[], metavar="JSON",
+                   help="작업 하나 (여러 번 쓸 수 있음, 아래 예 참고)")
+    p.add_argument("--ops-file", metavar="파일", help="작업 목록 JSON 파일 (- 이면 표준 입력)")
+    p.add_argument("--base", metavar="REV", help=argparse.SUPPRESS)
+    p.add_argument("-o", "--out", metavar="OUT", help="고친 결과를 이 새 파일로 바로 저장")
+    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에)")
     _common(p)
 
-    p = sub.add_parser("fill", help="양식 채우기")
-    p.add_argument("path")
-    p.add_argument("--set", action="append", default=[], metavar="칸=값")
-    p.add_argument("--values", help="칸→값 JSON 파일 (- 이면 표준 입력)")
-    p.add_argument("--base")
-    p.add_argument("-o", "--out"); p.add_argument("--force", action="store_true")
+    p = _verb(sub, "fill", "양식 채우기")
+    p.add_argument("path", metavar="FILE", help="채울 양식")
+    p.add_argument("--set", action="append", default=[], metavar="칸=값",
+                   help="채울 칸과 값 (여러 번 쓸 수 있음). 칸 이름은 open에 나옴")
+    p.add_argument("--values", metavar="파일", help="칸→값 JSON 파일 (- 이면 표준 입력)")
+    p.add_argument("--base", metavar="REV", help=argparse.SUPPRESS)
+    p.add_argument("-o", "--out", metavar="OUT", help="채운 결과를 이 새 파일로 바로 저장")
+    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에)")
     _common(p)
 
-    p = sub.add_parser("new", help="새 문서")
-    p.add_argument("markdown", help="마크다운 파일 (- 이면 표준 입력)")
-    p.add_argument("--form"); p.add_argument("--name")
-    p.add_argument("-o", "--out"); p.add_argument("--force", action="store_true")
+    p = _verb(sub, "new", "새 문서")
+    p.add_argument("markdown", metavar="내용.md", help="마크다운 파일 (- 이면 표준 입력)")
+    p.add_argument("--form", metavar="양식", help="이 양식 문서 위에 쓰기")
+    p.add_argument("--name", metavar="이름", help="초안 이름 (changes 목록에 보임)")
+    p.add_argument("-o", "--out", metavar="OUT", help="만든 문서를 이 새 파일로 바로 저장")
+    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에)")
     _common(p)
 
-    p = sub.add_parser("preview", help="쪽 그림")
-    p.add_argument("path"); p.add_argument("--page", type=int, action="append")
-    p.add_argument("--changed", action="store_true"); p.add_argument("--scale", type=float)
-    _common(p)
+    p = _verb(sub, "preview", "쪽 그림")
+    p.add_argument("path", metavar="FILE", help="볼 문서")
+    p.add_argument("--page", type=int, action="append", metavar="쪽", help="볼 쪽 (여러 번 쓸 수 있음)")
+    p.add_argument("--changed", action="store_true", help="초안에서 바뀐 쪽만")
+    p.add_argument("--scale", type=float, metavar="배율", help="그림 배율 (기본 1.0)")
+    _common(p, source=True)
 
-    p = sub.add_parser("check", help="점검")
-    p.add_argument("path"); p.add_argument("--against")
-    p.add_argument("--pack", choices=("gongmun", "minwon", "hr", "grant"))
-    p.add_argument("--only", action="append",
-                   choices=("style", "layout", "fonts", "guard"))
-    _common(p)
+    p = _verb(sub, "check", "점검")
+    p.add_argument("path", metavar="FILE", help="점검할 문서")
+    p.add_argument("--against", metavar="원본", help="이 문서와 비교해 숫자·사실이 바뀌었는지 보기")
+    p.add_argument("--pack", choices=("gongmun", "minwon", "hr", "grant"),
+                   help="문서 종류별 규칙 (공문, 민원, 인사, 지원사업)")
+    p.add_argument("--only", action="append", choices=("style", "layout", "fonts", "guard"),
+                   help="이 점검만 (여러 번 쓸 수 있음)")
+    _common(p, source=True)
 
-    p = sub.add_parser("save", help="초안 저장")
-    p.add_argument("path"); p.add_argument("--to")
+    p = _verb(sub, "save", "초안 저장")
+    p.add_argument("path", metavar="FILE", help="초안이 있는 문서")
+    p.add_argument("--to", metavar="경로", help="다른 이름으로 저장 (형식은 확장자를 따름)")
     p.add_argument("--force", action="store_true",
-                   help="있는 파일을 묻지 않고 덮어씀 (이전 판은 저장 기록에 남음)")
+                   help="있는 파일을 묻지 않고 덮어씀 (이전 내용은 저장 기록에 남음)")
     _common(p)
 
-    p = sub.add_parser("changes", help="초안과 변경 기록")
+    p = _verb(sub, "changes", "초안과 변경 기록")
     p.add_argument("action", nargs="?", default="list",
-                   choices=("list", "show", "discard", "clean"))
-    p.add_argument("path", nargs="?"); p.add_argument("--id")
+                   choices=("list", "show", "discard", "clean"), metavar="list|show|discard|clean",
+                   help="list(기본): 초안 목록, show: 한 문서의 기록, discard: 초안 버리기, "
+                        "clean: 오래된 것 지우기")
+    p.add_argument("path", nargs="?", metavar="FILE", help="문서 (show, discard)")
+    p.add_argument("--id", help=argparse.SUPPRESS)
     p.add_argument("--older-than", type=int, metavar="일", default=RETENTION_DAYS,
                    help=f"clean: 이 날수보다 오래된 것만 지움 (기본 {RETENTION_DAYS}일)")
     p.add_argument("--all", action="store_true",
@@ -205,17 +330,20 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--yes", action="store_true", help="clean: 묻지 않고 지움")
     _common(p)
 
-    p = sub.add_parser("undo", help="마지막 저장 되돌리기")
-    p.add_argument("path"); _common(p)
+    p = _verb(sub, "undo", "마지막 저장 되돌리기")
+    p.add_argument("path", metavar="FILE", help="되돌릴 파일"); _common(p)
 
-    p = sub.add_parser("convert", help="형식 바꾸기")
-    p.add_argument("path"); p.add_argument("--to", required=True,
-                                           choices=("hwpx", "hwp", "pdf", "png", "md", "docx"))
-    p.add_argument("-o", "--out", required=True); p.add_argument("--force", action="store_true")
+    p = _verb(sub, "convert", "형식 바꾸기")
+    p.add_argument("path", metavar="FILE", help="바꿀 문서")
+    p.add_argument("--to", required=True, choices=("hwpx", "hwp", "pdf", "png", "md", "docx"),
+                   help="만들 형식")
+    p.add_argument("-o", "--out", required=True, metavar="OUT", help="만들 파일")
+    p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에)")
     _common(p)
 
-    p = sub.add_parser("guide", help="작성 안내")
-    p.add_argument("topic", nargs="?"); _common(p)
+    p = _verb(sub, "guide", "작성 안내")
+    p.add_argument("topic", nargs="?", metavar="주제", help="gongmun, report, forms, layout, writing, workflow")
+    _common(p)
     return root
 
 
@@ -354,21 +482,26 @@ def _context(args) -> Context:
             return True  # the person named this target and typed --force
         if not (is_console(sys.stdin) and is_console(sys.stderr)):
             return None
+        # The question first, then what the person needs to answer it, then y/N.
         pages = detail.get("changedPages") or []
         lines = [question]
+        if detail.get("revision"):
+            lines.append(f"  저장할 것: 초안 {detail['revision']}판")
         if pages:
             lines.append(f"  바뀐 쪽: {', '.join(map(str, pages))}")
         if detail.get("unreviewed"):
-            lines.append(f"  사람이 아직 검토하지 않은 변경 묶음: {detail['unreviewed']}개")
+            lines.append(f"  에이전트가 고치고 아직 아무도 확인하지 않은 변경: "
+                         f"{detail['unreviewed']}건")
         if detail.get("lossy"):
             lines.append("  변환하며 빠지는 것: " + ", ".join(detail["lossy"]))
         if detail.get("fontsSubstituted"):
             pairs = ", ".join(f"{s.get('want')} → {s.get('got')}"
                               for s in detail["fontsSubstituted"])
             lines.append(f"  글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)")
-        lines.append(f"  되돌리기: {detail.get('undo')}")
-        sys.stderr.write(safe_text("\n".join(lines[1:])) + "\n")
-        return confirm(lines[0])
+        lines.append("  이전 내용은 저장 기록에 남습니다. 되돌리기: "
+                     f"{detail.get('undo')}")
+        sys.stderr.write(safe_text(lines[0] + " [y/N]\n" + "\n".join(lines[1:])) + "\n")
+        return confirm("", prompt="> ")
     return Context(client="cli", roots=None, source=getattr(args, "source", "disk"),
                    ask=ask)
 
@@ -395,15 +528,37 @@ def _emit(term: Term, args, verb: str, envelope: dict) -> int:
             term.line(render_text(get(tool), envelope["result"]))
         return code
     err = envelope["error"]
-    sys.stderr.write(f"{safe_text(err['message'])}\n")
-    if err.get("hint"):
-        sys.stderr.write(f"  {safe_text(err['hint'])}\n")
-    if err.get("candidates"):
-        sys.stderr.write("  후보: " + ", ".join(one_line(str(c)) for c in err["candidates"][:8])
-                         + "\n")
-    if getattr(args, "debug", False) and err.get("data"):
-        sys.stderr.write(json.dumps(err["data"], ensure_ascii=False, indent=2) + "\n")
+    message, hint = person_error(err, getattr(args, "path", None))
+    sys.stderr.write(f"{safe_text(message)}\n")
+    if hint:
+        sys.stderr.write(f"  {safe_text(hint)}\n")
+    if err.get("candidates") and err.get("code") != "person_only_seat" and not (
+            len(err["candidates"]) == 1 and str(err["candidates"][0]) in (hint or "")):
+        sys.stderr.write("  후보: " + candidates_line(err["candidates"]) + "\n")
+    if getattr(args, "debug", False):
+        if message != err["message"]:
+            sys.stderr.write(f"  ({safe_text(err['message'])})\n")
+        if err.get("data"):
+            sys.stderr.write(json.dumps(err["data"], ensure_ascii=False, indent=2) + "\n")
     return code
+
+
+def _draft_note(ctx: Context, path: str) -> str | None:
+    """One line when a person reads the file while a draft holds unsaved work."""
+    try:
+        ref = rt_toolset.resolve(ctx, path)
+        if ref.source is None:
+            return None
+        draft = ctx.drafts.input_for(ref, use_draft=False).draft or {}
+    except (ToolError, OSError):
+        return None
+    if draft.get("sourceChanged"):
+        return ("초안을 만든 뒤 파일이 바뀌었습니다. 초안을 버리려면: "
+                f'rigorloom changes discard "{path}"')
+    if draft.get("unsaved"):
+        return (f"저장 안 한 초안({draft.get('revision')}판)이 있습니다. 지금 본 것은 파일입니다. "
+                "초안을 보려면 --source draft")
+    return None
 
 
 _TOOL_OF = {"outline": "open", "convert": "save"}
@@ -434,14 +589,23 @@ def _save_after(ctx: Context, args, path: str) -> dict:
 def _undo(term: Term, args) -> int:
     try:
         target = canonical(args.path)
+        # Say "nothing to undo" before asking, not after the person said yes.
+        entry = rt_commit.undoable(target)
     except PathRefused as exc:
         return _emit(term, args, "undo", {"ok": False, "error": ToolError(
             exc.code, exc.message, at=exc.path).to_dict()})
-    answer = confirm(f"{target}을(를) 마지막 저장 전으로 되돌릴까요?")
+    except ToolError as exc:
+        return _emit(term, args, "undo", {"ok": False, "error": exc.to_dict()})
+    name = shown(str(target))
+    if entry.get("oldSha256") is None:
+        sys.stderr.write(f"{name} 파일은 Rigorloom이 새로 만든 파일입니다. "
+                         "되돌리면 파일을 치우고 저장 기록에 보관합니다.\n")
+    when = (entry.get("at") or "").replace("T", " ").replace("Z", " UTC")
+    answer = confirm(f'"{name}" 파일을 마지막 저장({when}) 전으로 되돌릴까요?')
     if answer is None:
         envelope = {"ok": False, "error": ToolError(
-            "needs_person", "되돌리기는 사람이 터미널에서 직접 확인해야 합니다.",
-            hint=f'터미널에서 직접 rigorloom undo "{target}" 명령을 실행하세요.').to_dict()}
+            "needs_person", "되돌리기는 터미널에서 직접 확인해야 합니다.",
+            hint=f'터미널에서 rigorloom undo "{target}" 명령을 실행하세요.').to_dict()}
     elif not answer:
         envelope = {"ok": False, "error": ToolError(
             "declined_by_person", "되돌리지 않았습니다.").to_dict()}
@@ -452,8 +616,8 @@ def _undo(term: Term, args) -> int:
             envelope = {"ok": False, "error": exc.to_dict()}
     if envelope["ok"] and not args.json:
         r = envelope["result"]
-        term.line(f"되돌렸습니다: {r['target']}" if not r["removed"]
-                  else f"Rigorloom이 만든 파일을 저장 기록으로 옮겼습니다: {r['target']}")
+        term.line(f"되돌렸습니다: {shown(r['target'])}" if not r["removed"]
+                  else f"새로 만들었던 파일을 치웠습니다: {shown(r['target'])} (저장 기록에 보관)")
         return EXIT_OK
     return _emit(term, args, "undo", envelope)
 
@@ -464,6 +628,9 @@ def _convert(term: Term, args) -> int:
         raise _Usage(f"--to {args.to}와 저장할 파일의 확장자(.{suffix or '없음'})가 다릅니다.",
                      f"예: rigorloom convert {Path(args.path).name} --to {args.to} "
                      f"-o {Path(args.out).stem or '결과'}.{args.to}")
+    if Path(args.path).suffix.lower().lstrip(".") == args.to:
+        raise _Usage(f"원래 문서도 .{args.to} 형식입니다.",
+                     f'초안을 다른 이름으로 저장하려면: rigorloom save "{args.path}" --to "{args.out}"')
     ctx = _context(args)
     ctx.create_only = not args.force
     envelope = call(ctx, "save", {"path": args.path, "to": args.out})
@@ -479,7 +646,8 @@ def _discard(term: Term, args) -> int:
     except ToolError as exc:
         envelope = {"ok": False, "error": exc.to_dict()}
     if envelope["ok"] and not args.json:
-        term.line(f"초안을 버렸습니다. 보관 위치: {envelope['result']['keptAt']}")
+        term.line(f"초안을 버렸습니다: {shown(args.path)}")
+        term.line(term.dim(f"버린 초안은 여기 보관합니다: {envelope['result']['keptAt']}"))
         return EXIT_OK
     return _emit(term, args, "changes", envelope)
 
@@ -609,6 +777,11 @@ def _main(argv: list[str]) -> int:
     if wants_product_help(argv):
         sys.stdout.write(help_text())
         return EXIT_OK
+    if argv and not argv[0].startswith("-") and argv[0] not in PRODUCT_VERBS:
+        return _usage(_unknown(argv[0]), argv)
+    if argv[:1] == ["changes"] and len(argv) > 1 and not argv[1].startswith("-") \
+            and argv[1] not in ("list", "show", "discard", "clean"):
+        argv = ["changes", "show", *argv[1:]]  # `changes FILE`, as --help shows it
     parser = _parser()
     try:
         args = parser.parse_args(argv)
@@ -667,7 +840,14 @@ def _main(argv: list[str]) -> int:
     if envelope["ok"] and out and tool in ("edit", "fill", "new"):
         envelope = _save_after(ctx, args, envelope["result"]["path"])
         return _emit(term, args, "save", envelope)
-    return _emit(term, args, args.verb, envelope)
+    code = _emit(term, args, args.verb, envelope)
+    if envelope["ok"] and not args.json and getattr(args, "source", None) == "disk" \
+            and tool in ("read", "find", "check", "preview"):
+        note = _draft_note(ctx, req["path"])
+        if note:
+            sys.stderr.write(term.style(note, "yellow") + "\n"
+                             if Term.detect(args.color, sys.stderr).color else note + "\n")
+    return code
 
 
 if __name__ == "__main__":

@@ -558,6 +558,24 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 }
 
 
+#: One correct op of each kind, shown when an op is missing or misnames a field.
+OP_EXAMPLES = {
+    "set": '{"op":"set","at":"p1","text":"새 문장"}',
+    "replace": '{"op":"replace","at":"p1","find":"옛말","with":"새말"}',
+    "insert_after": '{"op":"insert_after","at":"p1","markdown":"덧붙일 문단"}',
+    "delete": '{"op":"delete","at":"p1"}',
+    "table.set_cells": '{"op":"table.set_cells","at":"t0/r1/c0","grid":[["값"]]}',
+    "table.add_row": '{"op":"table.add_row","at":"t0","after":2}',
+    "table.delete_row": '{"op":"table.delete_row","at":"t0/r2"}',
+    "fill": '{"op":"fill","place":"성명","text":"홍길동"}',
+    "style": '{"op":"style","at":"p1","style":"개요 1"}',
+}
+#: Field names people and agents reach for first, and the one each op uses.
+OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
+              "to": "with", "replace": "with", "replacement": "with", "value": "text",
+              "content": "text", "address": "at", "where": "at", "md": "markdown"}
+
+
 def _check_ops(ops: list) -> None:
     for index, op in enumerate(ops):
         where = f"ops[{index}]"
@@ -570,17 +588,24 @@ def _check_ops(ops: list) -> None:
                             hint="목록에서 사용할 작업 이름을 고르세요.",
                             at=where, candidates=sorted(OP_FIELDS))
         required, optional = OP_FIELDS[kind]
+        allowed = {"op", *required, *optional}
+        extra = sorted(set(op) - allowed)
+        for key in extra:
+            alias = OP_ALIASES.get(key)
+            if alias in allowed and alias not in op:
+                raise ToolError("invalid_params",
+                                f"{where}: {kind} 작업에는 '{key}' 대신 '{alias}'를 씁니다.",
+                                hint="예: " + OP_EXAMPLES[kind], at=f"{where}.{key}")
         for key in required:
             if key not in op:
-                raise ToolError("invalid_params", f"{where}.{key}: 필수 항목이 빠졌습니다.",
-                                hint="이 항목에 값을 입력하세요.",
-                                at=f"{where}.{key}")
-        extra = set(op) - {"op", *required, *optional}
+                raise ToolError("invalid_params",
+                                f"{where}: {kind} 작업에 '{key}' 항목이 없습니다.",
+                                hint="예: " + OP_EXAMPLES[kind], at=f"{where}.{key}")
         if extra:
             raise ToolError("invalid_params",
-                            f"{where}: 이 작업에 쓸 수 없는 항목이 있습니다({sorted(extra)[0]!r}).",
-                            hint="작업에서 이 항목을 빼세요.",
-                            at=where, candidates=sorted({*required, *optional}))
+                            f"{where}: {kind} 작업에 쓸 수 없는 항목입니다('{extra[0]}').",
+                            hint="예: " + OP_EXAMPLES[kind],
+                            at=where, candidates=sorted(allowed - {"op"}))
 
 
 def _stage(ctx: Context, ref: Ref, base: str | None, ops: list, kind: str) -> dict:
@@ -650,7 +675,7 @@ def _refuse_person_seats(ctx: Context, ref: Ref, ops: list) -> None:
             named.add(_place_id(str(op["at"])))
     if not named:
         return
-    outline = doc_call(ctx.doc.outline, str(current(ctx, ref).path))
+    outline = doc_call(ctx.doc.outline, str(ctx.drafts.input_for(ref).path))
     blocked = sorted(f"place:{p['id']}" for p in outline.get("places", [])
                      if p.get("id") in named and is_person_only(p))
     if blocked:
@@ -687,7 +712,9 @@ def _place_id(key: str) -> str:
 
 def _run_fill(ctx: Context, args: dict) -> dict:
     ref = resolve(ctx, args["path"])
-    inp = current(ctx, ref)
+    # The places of what fill writes into: the draft head when there is one.
+    # Reading the file instead listed seats an earlier fill already filled.
+    inp = ctx.drafts.input_for(ref)
     outline = doc_call(ctx.doc.outline, str(inp.path))
     places = {p["id"]: p for p in outline.get("places", [])}
     values: dict = args["values"]
@@ -697,6 +724,7 @@ def _run_fill(ctx: Context, args: dict) -> dict:
         pid = _place_id(key)
         place = places.get(pid)
         if place is None:
+            _refuse_filled_place(ctx, ref, inp, pid)
             near = [f"place:{p}" for p in places if pid in p or p in pid][:5] or \
                 [f"place:{p}" for p in list(places)[:5]]
             raise ToolError("not_found", f"'{pid}' 칸을 찾지 못했습니다.",
@@ -717,7 +745,12 @@ def _run_fill(ctx: Context, args: dict) -> dict:
     if not ops:
         raise ToolError("invalid_params", "채울 값이 없습니다.", hint="채울 칸과 값을 한 쌍 이상 입력하세요.")
     result = _stage(ctx, ref, args.get("base") or inp.rev, ops, "fill")
-    filled = {op["place"] for op in ops}
+    # Seats this draft already filled, whether or not the document layer
+    # still lists a filled cell as a place.
+    filled = {op["place"] for cs in (ctx.drafts.load(ref) or {}).get("changesets", [])
+              for op in cs.get("ops") or [] if isinstance(op, dict) and op.get("op") == "fill"}
+    filled |= {op["place"] for op in ops}
+    result["filled"] = [{"place": f"place:{op['place']}", "text": op["text"]} for op in ops]
     result["personOnly"] = [f"place:{p['id']}" for p in places.values()
                             if is_person_only(p)]
     result["skipped"] = blocked
@@ -725,6 +758,23 @@ def _run_fill(ctx: Context, args: dict) -> dict:
                           if pid not in filled and not is_person_only(p)
                           and not str(p.get("value") or "").strip()]
     return result
+
+
+def _refuse_filled_place(ctx: Context, ref: Ref, inp, pid: str) -> None:
+    """A seat the draft already filled is no longer a place; say where it went."""
+    if inp.source != "draft" or ref.source is None:
+        return
+    try:
+        original = doc_call(ctx.doc.outline, str(ref.source))
+    except ToolError:
+        return
+    for p in original.get("places", []):
+        if p.get("id") == pid:
+            at = p.get("at") or f"place:{pid}"
+            raise ToolError("not_found", f"place:{pid} 칸은 초안에서 이미 채웠습니다({at}).",
+                            hint=f"값을 바꾸려면 edit로 그 주소를 고치세요: "
+                                 f'{{"op":"set","at":"{at}","text":"새 값"}}',
+                            at=at)
 
 
 register(Tool(
@@ -740,7 +790,7 @@ register(Tool(
     }, ["path", "values"]),
     output_schema=_out({**O_DOCREF, "changeset": {"type": "string"},
                         "personOnly": {"type": "array"}, "unfilled": {"type": "array"},
-                        "skipped": {"type": "array"}}),
+                        "skipped": {"type": "array"}, "filled": {"type": "array"}}),
     run=_run_fill, text=_edit_text,
 ))
 
@@ -1214,10 +1264,12 @@ def _run_save(ctx: Context, args: dict) -> dict:
     # A change set the person made at the terminal is reviewed by definition.
     unreviewed = sum(1 for c in (record or {}).get("changesets", [])
                      if c.get("status") == "proposed" and c.get("author") != "cli")
-    if rt_commit.declined(target, digest, ctx.drafts.home):
+    # A "no" is final for these bytes at this target when an agent would ask
+    # again. A person at the terminal who runs save again is asking themself.
+    if ctx.client != "cli" and rt_commit.declined(target, digest, ctx.drafts.home):
         raise ToolError("declined_by_person",
-                        "사람이 이미 이 내용으로 이 파일을 덮어쓰지 않기로 했습니다.",
-                        hint="저장이 필요하면 새 파일 이름을 지정하세요.",
+                        "사람이 이 내용으로 이 파일을 덮어쓰지 않기로 했습니다.",
+                        hint="다시 묻지 마세요. 저장이 필요하면 사람에게 새 파일 이름을 받으세요.",
                         at=str(target))
 
     if not target.exists():
@@ -1239,22 +1291,26 @@ def _run_save(ctx: Context, args: dict) -> dict:
                   "unreviewed": unreviewed, "lossy": lossy,
                   "fontsSubstituted": _substituted_fonts(ctx, head_input.path),
                   "undo": f'rigorloom undo "{target}"'}
+        other = ("다른 이름으로 저장: --to 새이름" if ctx.client == "cli"
+                 else "다른 이름으로 저장하려면 to에 새 경로를 주세요.")
         if ctx.ask is None:
             raise ToolError("needs_person",
-                            "기존 파일을 덮어쓰려면 사람의 확인이 필요합니다.",
-                            hint=f"사람이 터미널에서 실행: {_person_line(ref, target)} "
-                                 "또는 다른 이름(to)으로 저장하세요.",
+                            "있는 파일을 덮어쓰려면 사람의 확인이 필요합니다.",
+                            hint=f"사람이 터미널에서 실행: {_person_line(ref, target)}. {other}",
                             at=str(target), data=detail)
         answer = ctx.ask(question, detail)
         if answer is not True:
             if answer is False:
                 # Final for these bytes at this target, whichever draft asks next.
                 rt_commit.record_decline(target, digest, by=ctx.client, home=ctx.drafts.home)
-                raise ToolError("declined_by_person", "덮어쓰지 않았습니다.",
-                                hint="다른 이름(to)으로 저장할 수 있습니다.", at=str(target))
-            raise ToolError("needs_person", "확인을 받지 못해 덮어쓰지 않았습니다.",
-                            hint=f"사람이 터미널에서 실행: {_person_line(ref, target)} "
-                                 "또는 다른 이름(to)으로 저장하세요.",
+                raise ToolError("declined_by_person",
+                                "덮어쓰지 않았습니다. 초안은 그대로 있습니다.",
+                                hint=other, at=str(target))
+            raise ToolError("needs_person",
+                            "확인을 받지 못해 덮어쓰지 않았습니다. 터미널에서 실행하거나 "
+                            "--force를 붙이세요." if ctx.client == "cli"
+                            else "확인을 받지 못해 덮어쓰지 않았습니다.",
+                            hint=f"사람이 터미널에서 실행: {_person_line(ref, target)}. {other}",
                             at=str(target), data=detail)
         policy = "person:" + ("tty" if ctx.client == "cli" else "elicitation")
         # The answer may have taken minutes: the path must still name the same place.

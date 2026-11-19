@@ -528,6 +528,14 @@ def _top_level_command(argv: list[str]) -> str | None:
     return None
 
 
+def _legacy_commands() -> frozenset[str]:
+    """The protocol parser's command names (without building it twice)."""
+    for action in build_parser()._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return frozenset(action.choices)
+    return frozenset()
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     # Product verbs (open FILE, read, edit, save, ...) and the top-level help
@@ -535,14 +543,15 @@ def main(argv: list[str] | None = None) -> int:
     # command that takes a global --root, stays on the parser below, byte for
     # byte. ``rigorloom protocol ...`` is an explicit way into that parser.
     try:
-        from .rt_cli_product import is_product, main as product_main, \
+        from .rt_cli_product import is_product, is_unknown, main as product_main, \
             wants_product_help
     except ImportError:
-        from rt_cli_product import is_product, main as product_main, \
+        from rt_cli_product import is_product, is_unknown, main as product_main, \
             wants_product_help
     if raw_argv[:1] == ["protocol"]:
         raw_argv = raw_argv[1:]
-    elif wants_product_help(raw_argv) or is_product(raw_argv):
+    elif wants_product_help(raw_argv) or is_product(raw_argv) \
+            or is_unknown(raw_argv, _legacy_commands()):
         return product_main(raw_argv)
     utf8_stdio()
     parser = build_parser()

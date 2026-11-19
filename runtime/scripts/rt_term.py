@@ -105,13 +105,17 @@ def is_console(stream) -> bool:
         return False
 
 
-def confirm(question: str, *, stdin=None, stdout=None) -> bool | None:
-    """Ask a person y/N on the console. ``None`` when no person can answer."""
+def confirm(question: str, *, stdin=None, stdout=None, prompt: str = " [y/N] ") -> bool | None:
+    """Ask a person y/N on the console. ``None`` when no person can answer.
+
+    ``prompt`` follows the question; a caller that already printed the
+    question and its details passes an empty question and ``"> "``.
+    """
     stdin = stdin if stdin is not None else sys.stdin
     stdout = stdout if stdout is not None else sys.stderr
     if not (is_console(stdin) and is_console(stdout)):
         return None
-    stdout.write(f"{safe_text(question)} [y/N] ")
+    stdout.write(f"{safe_text(question)}{prompt}")
     stdout.flush()
     try:
         answer = stdin.readline()

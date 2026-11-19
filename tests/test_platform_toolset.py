@@ -507,7 +507,7 @@ def test_cli_fill_with_out_saves_a_new_file(env, monkeypatch):
     assert code == 0, errs
     assert "홍길동" in out.read_text(encoding="utf-8")
     assert path.read_text(encoding="utf-8") == FORM
-    assert stdout.startswith("저장했습니다: ") and "새로 만들었습니다" in stdout
+    assert stdout.startswith("새 파일로 저장했습니다: ")
     assert "검토하지 않은" not in stdout  # the person made this change themselves
 
 
@@ -871,3 +871,148 @@ def test_the_state_folder_is_owner_only(env):
         {"op": "set", "at": "p1", "text": "x"}]}))
     for folder in (env.home, env.home / "drafts"):
         assert folder.stat().st_mode & 0o077 == 0, oct(folder.stat().st_mode)
+
+
+# -- what a person at the terminal sees (the P0 UX review) ------------------------
+
+def test_changes_with_just_a_file_shows_that_file(env, monkeypatch):
+    path = env.doc()
+    _cli(["fill", str(path), "--set", "성명=홍길동"], monkeypatch)
+    code, out, errs = _cli(["changes", str(path)], monkeypatch)
+    assert code == 0, errs
+    assert "초안 1판" in out and "고친 기록" in out
+
+
+def test_a_mistyped_command_gets_a_korean_line_not_the_protocol_parser(monkeypatch):
+    import cli
+    out, errs = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", errs)
+    assert cli.main(["opn", "a.hwpx"]) == 2
+    assert out.getvalue() == ""
+    assert "알 수 없는 명령입니다: opn" in errs.getvalue() and "open" in errs.getvalue()
+    assert "capabilities" not in errs.getvalue()
+    assert rt_cli_product.is_unknown(["opn"], {"guard"})
+    assert not rt_cli_product.is_unknown(["guard"], {"guard"})
+    assert not rt_cli_product.is_unknown(["--root", "/w", "bogus"], {"guard"})
+
+
+@pytest.mark.parametrize("verb", ["open", "read", "find", "edit", "fill", "new", "preview",
+                                  "check", "save", "changes", "undo", "convert", "guide"])
+def test_every_verb_help_is_korean_with_examples(verb, monkeypatch):
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    assert rt_cli_product.main([verb, "--help"]) == 0
+    text = out.getvalue()
+    assert text.startswith("사용법: rigorloom " + verb)
+    assert "옵션:" in text and "show this help" not in text and "options:" not in text
+    assert f"예:\n  rigorloom {verb}" in text
+    if verb in ("save", "undo", "guide", "changes", "edit", "fill", "new", "convert"):
+        assert "--source" not in text  # only verbs that read take it
+
+
+def test_a_person_at_the_terminal_may_say_yes_after_a_no(env):
+    path = env.doc()
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "고친 문장"}]}))
+    answers = [False, True]
+    asked = []
+
+    def person(question, detail):
+        asked.append(question)
+        return answers.pop(0)
+
+    e = err(call(env.ctx(client="cli", ask=person), "save", {"path": str(path)}),
+            "declined_by_person")
+    assert "--to" in e["hint"] and "(to)" not in e["hint"]
+    # An agent may not ask again for these bytes...
+    err(call(env.ctx(ask=lambda q, d: True), "save", {"path": str(path)}), "declined_by_person")
+    # ...but the person who said no may run save again and say yes.
+    ok(call(env.ctx(client="cli", ask=person), "save", {"path": str(path)}))
+    assert len(asked) == 2 and "고친 문장" in path.read_text(encoding="utf-8")
+
+
+def test_undo_says_there_is_nothing_before_asking(env, monkeypatch):
+    path = env.doc()
+    asked = []
+    monkeypatch.setattr(rt_cli_product, "confirm", lambda *a, **k: asked.append(a) or True)
+    code, out, errs = _cli(["undo", str(path)], monkeypatch)
+    assert code == 2 and asked == []
+    assert "되돌릴 저장 기록이 없습니다" in errs
+
+
+def test_a_second_fill_lists_only_seats_still_empty(env, monkeypatch):
+    path = env.doc()
+    _cli(["fill", str(path), "--set", "성명=홍길동"], monkeypatch)
+    code, out, errs = _cli(["fill", str(path), "--set", "소속=총무과", "--json"], monkeypatch)
+    assert code == 0, errs
+    r = json.loads(out)["result"]
+    assert r["unfilled"] == [] and r["filled"] == [{"place": "place:소속", "text": "총무과"}]
+    code, out, _ = _cli(["fill", str(path), "--set", "소속=기획과"], monkeypatch)
+    assert code == 0 and "채운 칸: place:소속" in out
+
+
+def test_a_misnamed_op_field_names_the_right_one(env):
+    path = env.doc()
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "replace", "find": "출장", "new": "파견"}]}), "invalid_params")
+    assert "'new' 대신 'with'" in e["message"] and '"with"' in e["hint"]
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "replace", "find": "출장"}]}), "invalid_params")
+    assert "'with'" in e["message"] and e["hint"].startswith("예: ")
+
+
+def test_reading_the_file_says_a_draft_is_waiting(env, monkeypatch):
+    path = env.doc()
+    _cli(["fill", str(path), "--set", "성명=홍길동"], monkeypatch)
+    code, out, errs = _cli(["read", str(path), "--at", "place:성명"], monkeypatch)
+    assert code == 0 and "저장 안 한 초안(1판)" in errs and "--source draft" in errs
+    code, out, errs = _cli(["read", str(path), "--source", "draft"], monkeypatch)
+    assert code == 0 and errs == ""
+
+
+def test_document_layer_english_becomes_korean_for_people():
+    from rt_cli_render import candidates_line, person_error
+    msg, hint = person_error({"code": "capability_unavailable",
+                              "message": ".hwp files need the HWP engine; only .hwpx is "
+                                         "supported without it"}, "a.hwp")
+    assert msg.startswith("'.hwp' 파일은") and "doctor" in hint
+    msg, hint = person_error({"code": "bad_address", "at": "p999",
+                              "message": "the document has 3 top-level paragraphs (p0..p2)"},
+                             "a.hwpx")
+    assert "p0부터 p2까지" in msg and "--at p2" in hint
+    msg, hint = person_error({"code": "invalid_params", "message":
+                              "a markdown file is not a document here; use new() or convert()"},
+                             "초안.md")
+    assert "rigorloom new" in hint and "new()" not in msg + hint
+    assert person_error({"code": "stale", "message": "이미 한국어"}) == ("이미 한국어", None)
+    msg, _ = person_error({"code": "ambiguous_match",
+                           "message": "'근로' occurs 2 times; narrow it with at"})
+    assert msg.startswith("찾는 말이 여러 곳에")
+    assert candidates_line([f"t0/r{i}" for i in range(11)]) == "t0/r0 ~ t0/r10 (11개)"
+
+
+def test_a_narrow_find_keeps_the_word_in_view():
+    from rt_cli_render import around
+    text = "가" * 40 + "임금" + "나" * 40
+    cut = around(text, "임금", 30)
+    assert "임금" in cut
+    from rt_term import width
+    assert width(cut) <= 30
+
+
+def test_long_findings_wrap_instead_of_losing_the_end():
+    from rt_cli_render import show_check
+    from rt_term import Term
+    out = io.StringIO()
+    term = Term(stream=out, color=False, columns=60, interactive=False)
+    tail = "끝에서 바뀐 말 제18조"
+    show_check(term, {"path": "a.hwpx", "source": "disk", "pass": False,
+                      "checks": {"guard": {"state": "failed"}},
+                      "findings": [{"severity": "warning", "at": "p2",
+                                    "message": "숫자가 바뀌었습니다: " + "앞부분 " * 12 + tail}]})
+    joined = " ".join(line.strip() for line in out.getvalue().splitlines())
+    assert tail in joined and "…" not in out.getvalue()
+

@@ -235,6 +235,33 @@ def record_decline(target: Path, digest: str, *, by: str, home: Path | None = No
         os.replace(temp, path)
 
 
+def _last_undoable(entries: list[dict], target: Path, folder: Path) -> dict:
+    done = _done(entries)
+    if not done:
+        raise ToolError("not_found", "이 파일에는 되돌릴 저장 기록이 없습니다.", at=str(target),
+                        hint="Rigorloom으로 저장한 파일만 되돌릴 수 있습니다.")
+    entry = done[-1]
+    if entry.get("undone"):
+        raise ToolError("not_found", "마지막 저장은 이미 되돌렸습니다.", at=str(target))
+    current = sha256_file(target) if target.exists() else None
+    if current != entry["newSha256"]:
+        raise ToolError("target_changed",
+                        "마지막으로 저장한 뒤 파일이 바뀌어 되돌리지 않았습니다.",
+                        hint="지금 내용을 지키려면 그대로 두세요. 이전 판은 저장 기록에 남아 있습니다.",
+                        at=str(target), data={"history": str(folder)})
+    return entry
+
+
+def undoable(target: Path, home: Path | None = None) -> dict:
+    """The history entry ``undo`` would reverse now, or the ToolError it would raise.
+
+    A preview for asking the person first; ``undo`` checks again under the lock.
+    """
+    home = Path(home) if home else state_home()
+    folder = _history_dir(home, target)
+    return _last_undoable(_settled(_load_index(folder), target), target, folder)
+
+
 def undo(target: Path, *, by: str, home: Path | None = None) -> dict:
     """Put back what the last commit replaced, if the file is still ours.
 
@@ -245,18 +272,8 @@ def undo(target: Path, *, by: str, home: Path | None = None) -> dict:
     folder = private_dir(_history_dir(home, target))
     with _lock(folder):
         entries = _settled(_load_index(folder), target)
-        done = _done(entries)
-        if not done:
-            raise ToolError("not_found", "되돌릴 저장 기록이 없습니다.", at=str(target))
-        entry = done[-1]
-        if entry.get("undone"):
-            raise ToolError("not_found", "마지막 저장은 이미 되돌렸습니다.", at=str(target))
+        entry = _last_undoable(entries, target, folder)
         current = sha256_file(target) if target.exists() else None
-        if current != entry["newSha256"]:
-            raise ToolError("target_changed",
-                            "마지막으로 저장했을 때와 파일 상태가 달라 되돌리지 않았습니다.",
-                            hint="지금 내용을 지키려면 그대로 두세요. 이전 판은 저장 기록에 남아 있습니다.",
-                            at=str(target), data={"history": str(folder)})
         stamp = f"{_now().replace(':', '')}-{secrets.token_hex(3)}"
         try:
             if entry["oldSha256"] is None:

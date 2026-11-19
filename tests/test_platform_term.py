@@ -88,12 +88,11 @@ def test_confirm_reads_a_yes_only_from_a_console(monkeypatch):
 
 
 def test_help_descriptions_start_at_one_column():
-    from rt_cli_product import HELP_SECTIONS, help_text
+    from rt_cli_product import HELP_SECTIONS, HELP_USAGE_COLUMNS, help_text
 
     text = help_text().splitlines()
     for _, rows in HELP_SECTIONS:
         for usage, what in rows:
-            if not what:
-                continue
+            assert what, usage  # every verb says what it does
             line = next(x for x in text if x.startswith("  " + usage + " "))
-            assert width(line[: line.index(what)]) == 24, line
+            assert width(line[: line.index(what)]) == HELP_USAGE_COLUMNS + 4, line
