@@ -587,7 +587,8 @@ def test_b12_a_filled_place_keeps_its_id_and_shows_its_value(no_engine, tmp_path
 @engine
 def test_s1_addresses_do_not_depend_on_call_order(kit):
     D.close()
-    pid = _by_label(REPORT, "성명")["id"]
+    # (since hwp-engine #7 the engine labels a cell from its left neighbour first, so t1/r3/c1 reads 기본정보)
+    pid = _by_label(REPORT, "연구과제명")["id"]
     D.close()
     r = D.find(REPORT, "abc", scope="place:%s" % pid)
     assert r["ok"], r
