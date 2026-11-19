@@ -13,9 +13,11 @@ import re
 from typing import Callable
 
 try:  # installed as rigorloom_runtime
-    from .rt_term import Term, one_line, path_text, safe_text, truncate, width
+    from .rt_term import (Term, invisible_in, one_line, path_text, safe_text, shell_arg,
+                          truncate, width)
 except ImportError:  # a checkout, runtime/scripts on sys.path
-    from rt_term import Term, one_line, path_text, safe_text, truncate, width
+    from rt_term import (Term, invisible_in, one_line, path_text, safe_text, shell_arg,
+                         truncate, width)
 
 VERB_KO = {
     "open": "열기", "read": "읽기", "find": "찾기", "edit": "고치기", "fill": "채우기",
@@ -62,7 +64,14 @@ def shown(path: str) -> str:
 
 
 def _q(path: str) -> str:
-    return f'"{shown(path)}"'
+    """A path inside a command line: quoted so the shell passes it unchanged.
+
+    A name with characters nobody can see cannot be typed from the screen;
+    it is shown escaped, like everywhere else.
+    """
+    raw = str(path)
+    arg = None if invisible_in(raw) else shell_arg(shown(raw))
+    return arg if arg is not None else f'"{shown(raw)}"'
 
 
 def _draft_tag(r: dict) -> str | None:

@@ -291,6 +291,11 @@ class Context:
     #: ask(question, detail) -> bool. A person answers: MCP elicitation, a TTY
     #: prompt, or the UI. ``None`` = nobody can be asked.
     ask: Callable[[str, dict], bool] | None = None
+    #: The roots as they are now. A person's answer can take minutes, and
+    #: the client may change its folders meanwhile (MCP ``roots/list``), so
+    #: ``save`` checks again with this before it writes. ``None``: ``roots``
+    #: cannot change while a call runs.
+    current_roots: Callable[[], Any] | None = None
     #: Lazily resolved document layer (rt_doc) and draft store.
     _doc: Any = None
     _drafts: Any = None
@@ -365,6 +370,13 @@ def _safe(value: Any) -> Any:
     return value
 
 
+#: Result fields that name a file exactly. They are data for a program (the
+#: agent passes them back, the UI opens them), so they are not cleaned like
+#: document text: dropping a bidi mark from a file name names another file.
+#: Every place that SHOWS one escapes it (``rt_term.path_text``).
+EXACT_KEYS = frozenset({"path", "saved"})
+
+
 def call(ctx: Context, name: str, args: dict | None) -> dict:
     """Validate, run, and wrap. Never raises; returns the envelope.
 
@@ -377,7 +389,8 @@ def call(ctx: Context, name: str, args: dict | None) -> dict:
         result = tool.run(ctx, args)
         if not isinstance(result, dict):
             raise ToolError("internal", f"{name}: 도구가 잘못된 형식으로 결과를 보냈습니다.")
-        return {"ok": True, "result": _safe(result)}
+        return {"ok": True, "result": {k: v if k in EXACT_KEYS and isinstance(v, str)
+                                       else _safe(v) for k, v in result.items()}}
     except ToolError as exc:
         return {"ok": False, "error": _safe(exc.to_dict())}
     except Exception as exc:  # noqa: BLE001 - a bug must not look like a verdict
@@ -430,7 +443,9 @@ def doc_call(fn: Callable, *args, **kwargs) -> dict:
         mapped, err.get("message") or "문서 처리를 마치지 못했습니다.",
         hint=err.get("hint"), at=err.get("at"),
         done=err.get("done"), candidates=err.get("candidates"),
-        retryable=bool(err.get("retryable", False)),
+        # doc-core ruling 2026-11-19: locked is retryable, whether or not
+        # the layer says so on that error.
+        retryable=bool(err.get("retryable", False)) or mapped in ("locked", "stale"),
         data={k: v for k, v in err.items()
               if k not in ("code", "message", "hint", "at", "done",
                            "candidates", "retryable")} or None)

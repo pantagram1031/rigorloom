@@ -159,6 +159,25 @@ def test_a_decline_is_shared_by_every_draft(tmp_path, home):
     assert rt_commit.declined(target, "ab" * 32) and not rt_commit.declined(target, "cd" * 32)
 
 
+def test_a_decline_recorded_while_waiting_stops_the_publish(tmp_path, home):
+    # Sol P2 H3: the "no" is read again under the history lock, just before
+    # the bytes go out, so a session that asked earlier cannot overtake it.
+    target, candidate = tmp_path / "a.hwpx", tmp_path / "cand"
+    target.write_bytes(b"old")
+    candidate.write_bytes(b"new")
+    digest = rt_paths.sha256_bytes(b"new")
+    rt_commit.record_decline(target, digest, by="mcp:other")
+    with pytest.raises(ToolError) as err:
+        rt_commit.commit(candidate, target, expected=rt_paths.sha256_bytes(b"old"),
+                         by="mcp:x", policy="person:elicitation", honour_declines=True)
+    assert err.value.code == "declined_by_person"
+    assert target.read_bytes() == b"old"
+    # A person at the terminal may still change their mind.
+    rt_commit.commit(candidate, target, expected=rt_paths.sha256_bytes(b"old"),
+                     by="cli", policy="person:tty")
+    assert target.read_bytes() == b"new"
+
+
 def test_undo_keeps_the_bytes_it_displaces(tmp_path, home):
     # Sol M3: undo is a write too; what it replaces goes to history.
     target = tmp_path / "b.hwpx"
@@ -292,10 +311,40 @@ def test_roots_allow_inside_and_reject_prefix_siblings(tmp_path):
         roots.check(str(tmp_path / "work2" / "a.hwpx"))
 
 
-@pytest.mark.parametrize("name", ["CON", "nul.hwpx", "COM1.txt", "a.hwpx:stream", "LPT9"])
+@pytest.mark.parametrize("name", ["CON", "nul.hwpx", "COM1.txt", "a.hwpx:stream", "LPT9",
+                                  "COM\u00b9.hwpx", "LPT\u00b2.hwpx", "COM0.hwpx",
+                                  "CONOUT$.hwpx", "conin$", "CLOCK$.txt"])
 def test_windows_device_names_and_streams_are_refused_everywhere(tmp_path, name):
     with pytest.raises(PathRefused):
         canonical(str(tmp_path / name))
+
+
+@pytest.mark.parametrize("raw", ["\\\\.\\COM1", "\\\\?\\C:\\x.hwpx", "//./nul", "//?/C:/x.hwpx"])
+def test_device_namespace_paths_are_refused(raw):
+    with pytest.raises(PathRefused):
+        canonical(raw)
+
+
+def test_a_trailing_dot_is_refused_as_typed(tmp_path):
+    # Windows drops it while resolving, so the spelling given is what is checked.
+    with pytest.raises(PathRefused):
+        canonical("보고서.hwpx.", base=tmp_path)
+
+
+def test_a_folded_prefix_must_be_the_same_folder(tmp_path, monkeypatch):
+    # Windows compares names case-folded, but a folder there can be
+    # case-sensitive: two folders may differ only in case. The prefix match
+    # alone would take one for the other; the file system decides.
+    lower, upper = tmp_path / "root", tmp_path / "Root"
+    lower.mkdir()
+    try:
+        upper.mkdir()
+    except FileExistsError:
+        pytest.skip("this file system folds case")
+    monkeypatch.setattr(rt_paths, "_norm", lambda p: str(p).casefold())
+    roots = Roots.of([lower])
+    assert roots.contains(lower / "a.hwpx")
+    assert not roots.contains(upper / "a.hwpx")
 
 
 def test_empty_and_nul_paths_are_refused():

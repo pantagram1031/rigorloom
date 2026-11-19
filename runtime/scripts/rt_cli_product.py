@@ -33,7 +33,7 @@ try:  # installed as rigorloom_runtime
     from .rt_cli_render import SHOW, candidates_line, person_error, shown
     from .rt_paths import STATE_MARKER, PathRefused, canonical, state_home
     from .rt_term import (Term, confirm, invisible_in, is_console, one_line, pad, prepare_stdio,
-                          safe_text, save_question, width)
+                          safe_text, save_question, undo_line, width)
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
@@ -41,7 +41,7 @@ except ImportError:  # a checkout, runtime/scripts on sys.path
     from rt_cli_render import SHOW, candidates_line, person_error, shown
     from rt_paths import STATE_MARKER, PathRefused, canonical, state_home
     from rt_term import (Term, confirm, invisible_in, is_console, one_line, pad, prepare_stdio,
-                         safe_text, save_question, width)
+                         safe_text, save_question, undo_line, width)
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
@@ -600,7 +600,7 @@ def _undo(term: Term, args) -> int:
     if answer is None:
         envelope = {"ok": False, "error": ToolError(
             "needs_person", "되돌리기는 터미널에서 직접 확인해야 합니다.",
-            hint=f'터미널에서 rigorloom undo "{target}" 명령을 실행하세요.').to_dict()}
+            hint=undo_line(str(target), shown=shown)).to_dict()}
     elif not answer:
         envelope = {"ok": False, "error": ToolError(
             "declined_by_person", "되돌리지 않았습니다.").to_dict()}

@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 """The MCP server for the document tools: ``rigorloom mcp [--allow DIR]...``.
 
-Newline-delimited JSON-RPC 2.0 on stdio (MCP 2025-06-18, 2025-03-26 accepted).
+Newline-delimited JSON-RPC 2.0 on stdio, MCP 2025-06-18 (a client asking for
+another revision is offered this one). 2025-03-26 is not served: it requires
+JSON-RPC batches, which this server does not take.
 stdout carries frames and nothing else; every log line goes to stderr, and a
 stray ``print`` in a lower layer is sent to stderr too (``main`` rebinds
 ``sys.stdout``).
@@ -17,21 +19,27 @@ a tool behaves the same here as on the CLI. What this module adds is the wire:
   error object; an unknown tool is a JSON-RPC error;
 * ``preview`` page images as MCP image content, dropped from the end until
   the frame fits ``rt_codes.MAX_FRAME_BYTES``;
-* roots: the folders the client declares, plus ``--allow``; without roots,
-  the working directory unless it is the home folder or a filesystem root;
+* roots: the folders the client declares, plus ``--allow``; a client that
+  never names a folder gets the working directory instead, unless that is
+  the home folder or a filesystem root. A folder counts only while it is the
+  same folder it was when granted (a link swapped in later grants nothing);
+  a change announced by the client withdraws the old list at once;
 * elicitation: ``save`` over an existing file asks the person through the
   client, naming the target, changed pages, unreviewed change sets, what a
   conversion loses and how to undo.
 
 Requests are handled one at a time. While a call waits (for the roots answer
 or a person's answer) pings are still answered, other requests queue in
-order, and ``notifications/cancelled`` drops a queued request.
+order, and ``notifications/cancelled`` drops a queued request. Cancelling the
+call that is running withdraws its question to the person, writes nothing,
+and gets no response, as MCP asks.
 """
 from __future__ import annotations
 
 import argparse
 import base64
 import copy
+import json
 import os
 import queue
 import re
@@ -46,22 +54,23 @@ try:  # installed as rigorloom_runtime
     from . import rt_toolset  # noqa: F401 - registers the tools
     from . import rt_tools
     from .rt_codes import MAX_FRAME_BYTES
-    from .rt_jsonl import (READ_EOF, READ_LINE, StrictJsonError, dumps_frame,
-                           loads_strict, read_raw_frame)
+    from .rt_cli_render import person_error
+    from .rt_jsonl import (READ_EOF, READ_LINE, READ_TRUNCATED, StrictJsonError,
+                           dumps_frame, loads_strict, read_raw_frame)
     from .rt_paths import PathRefused, Roots, canonical
     from .rt_term import one_line, safe_text, save_question
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_toolset  # noqa: F401
     import rt_tools
     from rt_codes import MAX_FRAME_BYTES
-    from rt_jsonl import (READ_EOF, READ_LINE, StrictJsonError, dumps_frame,
-                          loads_strict, read_raw_frame)
+    from rt_cli_render import person_error
+    from rt_jsonl import (READ_EOF, READ_LINE, READ_TRUNCATED, StrictJsonError,
+                          dumps_frame, loads_strict, read_raw_frame)
     from rt_paths import PathRefused, Roots, canonical
     from rt_term import one_line, safe_text, save_question
 
 LATEST = "2025-06-18"
-OLDER = "2025-03-26"
-SUPPORTED_VERSIONS = (LATEST, OLDER)
+SUPPORTED_VERSIONS = (LATEST,)
 
 SERVER_NAME = "rigorloom"
 SERVER_TITLE = "Rigorloom"
@@ -69,6 +78,12 @@ SERVER_TITLE = "Rigorloom"
 ROOTS_WAIT_S = 10.0
 ELICIT_WAIT_S = 600.0
 INSTRUCTIONS_MAX = 2000
+
+#: Request ids this server echoes: a string this long at most, or an integer a
+#: JavaScript client holds exactly. Anything bigger is refused with ``id:
+#: null``, so an error reply always fits the frame cap.
+ID_MAX_CHARS = 256
+ID_MAX_INT = 2 ** 53 - 1
 
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
@@ -243,12 +258,49 @@ class ServerRoots(Roots):
 # the server
 # ---------------------------------------------------------------------------
 
+#: ``_active`` when no request is running (no id can equal it).
+_IDLE = object()
+
+
+def _identity(path: Path | None):
+    """(device, inode) of a folder, or None when it is not there (yet)."""
+    if path is None:
+        return None
+    try:
+        info = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def _valid_id(mid: Any) -> bool:
+    if isinstance(mid, bool):
+        return False
+    if isinstance(mid, int):
+        return -ID_MAX_INT <= mid <= ID_MAX_INT
+    return isinstance(mid, str) and len(mid) <= ID_MAX_CHARS
+
+
+def _same_id(a: Any, b: Any) -> bool:
+    """Ids match by type and value: ``1`` is not ``"1"``, and ``True`` is no id."""
+    return type(a) is type(b) and a == b
+
+
+def _encodable(message: dict) -> bool:
+    try:
+        json.dumps(message, ensure_ascii=False).encode("utf-8")
+    except (UnicodeEncodeError, ValueError, RecursionError):
+        return False
+    return True
+
+
 class McpServer:
     """One MCP session over a pair of byte streams.
 
     ``allow``: folders the person allowed (``--allow``). ``cwd``: the server's
-    working directory, a fallback root when the client declares none. ``home``:
-    the person's home folder (default ``Path.home()``), never a fallback root.
+    working directory, a fallback root while the client has named none.
+    ``home``: the person's home folder (default ``Path.home()``), never a
+    fallback root.
     """
 
     def __init__(self, stdin: BinaryIO, stdout: BinaryIO, *, allow, cwd,
@@ -262,7 +314,10 @@ class McpServer:
         self.elicit_timeout = elicit_timeout
         self.max_frame = max_frame
 
-        self.allow: list[Path] = []
+        #: Granted folders as ``[path, identity]``: the identity (device and
+        #: inode) is taken when the folder is first seen, and a folder whose
+        #: identity changed stops counting (see ``_live``).
+        self.allow: list[list] = []
         for item in allow or []:
             try:
                 path = canonical(item)
@@ -271,10 +326,12 @@ class McpServer:
                 continue
             if not path.is_dir():
                 log(f"rigorloom mcp: --allow {path} is not a folder (yet)")
-            self.allow.append(path)
+            self.allow.append([path, _identity(path)])
         home_path = Path(home) if home is not None else Path.home()
         self.cwd = Path(cwd)
         self.cwd_root = cwd_fallback(self.cwd, home_path)
+        self._cwd_entry = ([self.cwd_root, _identity(self.cwd_root)]
+                           if self.cwd_root is not None else None)
         self.no_roots_hint = (
             "사용자에게 다음 예처럼 MCP 클라이언트 설정의 서버 명령에 폴더를 추가해 달라고 요청하세요. "
             + allow_line(self.cwd_root))
@@ -285,35 +342,87 @@ class McpServer:
         self.provenance: dict = {}
         self.can_roots = False
         self.can_elicit = False
-        #: Folders from the client's last roots/list answer (None: no answer).
-        self.client_roots: list[Path] | None = None
+        #: Folders from the client's last roots/list answer, as ``[path,
+        #: identity]`` (None: no answer yet). Emptied as soon as the client
+        #: announces a change, so a folder it took away is gone before the
+        #: new list arrives.
+        self.client_roots: list[list] | None = None
+        #: The client has named folders at least once. From then on its list
+        #: is the whole truth: an empty or failed answer never falls back to
+        #: the working directory.
+        self._client_named_roots = False
 
         self._inbox: queue.Queue = queue.Queue()
         self._backlog: list[dict] = []
         self._handlers: dict[Any, Callable[[dict], None]] = {}
         self._next_id = 0
         self._eof = False
+        self._out_closed = False
         self._roots_pending: str | None = None
         self._roots_gave_up = False
         self._drafts = None
+        #: The id of the request being handled, and whether the client has
+        #: cancelled it since it started.
+        self._active: Any = _IDLE
+        self._cancelled = False
+        self._dropped_roots: set[str] = set()
 
     # -- outbound -------------------------------------------------------------
 
-    def _send(self, frame: dict) -> None:
+    def _encode(self, frame: dict) -> bytes:
+        """The frame's bytes; an error in its place when it cannot be sent."""
         try:
             data = dumps_frame(frame)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError) as exc:  # UnicodeEncodeError is a ValueError
             log(f"rigorloom mcp: unserialisable frame: {exc}")
-            data = dumps_frame(_error(frame.get("id"), INTERNAL_ERROR,
-                                      "the server built a response it could not encode"))
-        if len(data) > self.max_frame:
-            data = dumps_frame(_error(
-                frame.get("id"), INTERNAL_ERROR,
-                f"response exceeds the {self.max_frame}-byte frame cap; narrow the request",
-                {"limit": self.max_frame, "bytes": len(data)}))
-        with self._write_lock:
-            self._out.write(data)
-            self._out.flush()
+            data = None
+        if data is not None and len(data) <= self.max_frame:
+            return data
+        if data is None:
+            error = _error(frame.get("id"), INTERNAL_ERROR,
+                           "the server built a response it could not encode")
+        else:
+            error = _error(frame.get("id"), INTERNAL_ERROR,
+                           f"response exceeds the {self.max_frame}-byte frame cap; "
+                           "narrow the request",
+                           {"limit": self.max_frame, "bytes": len(data)})
+        try:
+            data = dumps_frame(error)
+        except (TypeError, ValueError):
+            data = None
+        if data is None or len(data) > self.max_frame:
+            data = dumps_frame(_error(None, INTERNAL_ERROR,
+                                      "the server could not encode a response"))
+        return data
+
+    def _send(self, frame: dict) -> None:
+        if self._out_closed:
+            return
+        data = self._encode(frame)
+        try:
+            with self._write_lock:
+                self._out.write(data)
+                self._out.flush()
+        except (OSError, ValueError) as exc:  # BrokenPipeError, a closed stream
+            self._output_closed(exc)
+
+    def _output_closed(self, exc: BaseException) -> None:
+        """The client stopped reading: the session is over, not failed."""
+        if not self._out_closed:
+            log(f"rigorloom mcp: the client closed the connection ({type(exc).__name__})")
+        self._out_closed = True
+        self._eof = True
+        # Python flushes stdout again on the way out; aim the descriptor at
+        # the null device so that flush cannot fail and turn exit 0 into 120.
+        try:
+            fd = self._out.fileno()
+            null = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(null, fd)
+            finally:
+                os.close(null)
+        except (AttributeError, OSError, ValueError):
+            pass
 
     def _request(self, method: str, params: dict | None,
                  on_reply: Callable[[dict], None]) -> str:
@@ -331,9 +440,11 @@ class McpServer:
     def _read_loop(self) -> None:
         try:
             while True:
-                kind, raw = read_raw_frame(self._in, self.max_frame)
+                kind, raw = read_raw_frame(self._in, self.max_frame, truncated=True)
                 self._inbox.put((kind, raw))
-                if kind == READ_EOF:
+                if kind in (READ_EOF, READ_TRUNCATED):
+                    if kind == READ_TRUNCATED:
+                        self._inbox.put((READ_EOF, None))
                     return
         except (OSError, ValueError) as exc:  # stream closed under us
             log(f"rigorloom mcp: input closed: {exc}")
@@ -352,6 +463,11 @@ class McpServer:
         if kind == READ_EOF:
             self._eof = True
             return
+        if kind == READ_TRUNCATED:
+            self._send(_error(None, INVALID_REQUEST,
+                              "the input ended inside a message (no closing newline); "
+                              "the partial message was dropped"))
+            return
         if kind != READ_LINE:
             self._send(_error(None, INVALID_REQUEST,
                               f"message exceeded the {self.max_frame}-byte frame cap "
@@ -361,44 +477,64 @@ class McpServer:
             return
         try:
             message = loads_strict(raw.decode("utf-8"))
-        except (UnicodeDecodeError, StrictJsonError) as exc:
-            detail = exc.detail if isinstance(exc, StrictJsonError) else "not UTF-8"
-            self._send(_error(None, PARSE_ERROR, f"parse error: {detail}"))
+        except UnicodeDecodeError:
+            self._send(_error(None, PARSE_ERROR, "parse error: not UTF-8"))
+            return
+        except StrictJsonError as exc:
+            self._send(_error(None, PARSE_ERROR, f"parse error: {exc.detail}"))
+            return
+        except (ValueError, RecursionError):
+            # An integer too long to convert, or nesting deeper than Python goes.
+            self._send(_error(None, PARSE_ERROR,
+                              "parse error: a value is too large or nested too deeply"))
+            return
+        if isinstance(message, list):
+            self._send(_error(None, INVALID_REQUEST,
+                              f"batches are not part of MCP {LATEST}; send one message per line"))
             return
         if not isinstance(message, dict):
+            self._send(_error(None, INVALID_REQUEST, "a message must be one JSON object"))
+            return
+        if not _encodable(message):
+            # JSON can spell a lone UTF-16 surrogate (\ud800); nothing can send it back.
             self._send(_error(None, INVALID_REQUEST,
-                              "a message must be one JSON object (no batches)"))
+                              "a string in the message is not valid Unicode (lone surrogate)"))
             return
         has_id = "id" in message
         mid = message.get("id")
+        reply_id = mid if has_id and _valid_id(mid) else None
         if message.get("jsonrpc") != "2.0":
-            if has_id:
-                self._send(_error(mid, INVALID_REQUEST, 'jsonrpc must be "2.0"'))
+            self._send(_error(reply_id, INVALID_REQUEST, 'jsonrpc must be "2.0"'))
+            return
+        if has_id and not _valid_id(mid):
+            self._send(_error(None, INVALID_REQUEST,
+                              f"id must be a string of at most {ID_MAX_CHARS} characters "
+                              f"or an integer of magnitude at most {ID_MAX_INT}"))
             return
         if "method" not in message:
             if has_id and ("result" in message or "error" in message):
-                handler = (self._handlers.pop(mid, None)
-                           if isinstance(mid, (str, int)) else None)
+                handler = self._handlers.pop(mid, None)
                 if handler is None:
                     log(f"rigorloom mcp: reply to unknown request {mid!r} ignored")
                 else:
                     handler(message)
-            elif has_id:
-                self._send(_error(mid, INVALID_REQUEST, "request without a method"))
+            else:
+                self._send(_error(reply_id, INVALID_REQUEST,
+                                  "not a request, a notification or a reply"))
             return
         method = message["method"]
         if not isinstance(method, str):
-            self._send(_error(mid if has_id else None, INVALID_REQUEST,
-                              "method must be a string"))
+            self._send(_error(reply_id, INVALID_REQUEST, "method must be a string"))
             return
         if not has_id:
             self._notification(method, message.get("params"))
             return
-        if isinstance(mid, bool) or not isinstance(mid, (str, int)):
-            self._send(_error(None, INVALID_REQUEST, "id must be a string or an integer"))
-            return
         if method == "ping":
-            self._send(_result(mid, {}))
+            params = message.get("params")
+            if params is not None and not isinstance(params, dict):
+                self._send(_error(mid, INVALID_PARAMS, "params must be an object"))
+            else:
+                self._send(_result(mid, {}))
             return
         self._backlog.append(message)
 
@@ -411,12 +547,20 @@ class McpServer:
                     self._ask_roots()
         elif method == "notifications/cancelled":
             target = params.get("requestId")
+            if not _valid_id(target):
+                return
+            if self._active is not _IDLE and _same_id(target, self._active):
+                self._cancelled = True
+                log(f"rigorloom mcp: request {target!r} cancelled while it ran")
+                return
             before = len(self._backlog)
-            self._backlog = [m for m in self._backlog if m.get("id") != target]
+            self._backlog = [m for m in self._backlog if not _same_id(m.get("id"), target)]
             if len(self._backlog) < before:
                 log(f"rigorloom mcp: request {target!r} cancelled before it ran")
         elif method == "notifications/roots/list_changed":
             if self.state == "ready" and self.can_roots:
+                # The old list may name a folder the person just took away.
+                self.client_roots = []
                 self._ask_roots()
 
     def _wait(self, done: Callable[[], bool], timeout: float) -> bool:
@@ -452,63 +596,102 @@ class McpServer:
         self._roots_pending = rid
 
     def _apply_roots(self, reply: dict) -> None:
-        roots: list[Path] = []
-        if "error" in reply:
-            log(f"rigorloom mcp: roots/list failed: {reply['error']}")
+        roots: list[list] = []
         result = reply.get("result")
         listed = result.get("roots") if isinstance(result, dict) else None
-        for entry in listed if isinstance(listed, list) else []:
+        if "error" in reply or not isinstance(listed, list):
+            log(f"rigorloom mcp: roots/list failed: {reply.get('error') or 'no roots list'}")
+            listed = []
+        for entry in listed:
             uri = entry.get("uri") if isinstance(entry, dict) else None
             local = root_uri_to_path(uri)
             if local is None:
                 log(f"rigorloom mcp: root {uri!r} refused (file:// local folders only)")
                 continue
             try:
-                roots.append(canonical(local))
+                path = canonical(local)
             except PathRefused as exc:
                 log(f"rigorloom mcp: root {uri!r} refused: {exc.message}")
+                continue
+            roots.append([path, _identity(path)])
+        if listed:
+            # Even if none could be used: the client said which folders it
+            # means, and the working directory is not one of them.
+            self._client_named_roots = True
         self.client_roots = roots
 
+    def _live(self, entries: list[list]) -> list[Path]:
+        """The granted folders that are still the folders that were granted.
+
+        A folder replaced by a link (or by another folder of the same name)
+        no longer counts, and is not followed to wherever it now points.
+        """
+        out: list[Path] = []
+        for entry in entries:
+            path, known = entry
+            try:
+                same_place = Path(os.path.realpath(path)) == path
+            except (OSError, ValueError):
+                same_place = False
+            now = _identity(path)
+            if known is None and same_place:
+                entry[1] = known = now  # first seen now: remember this folder
+            if same_place and (now is None or now == known):
+                out.append(path)
+            elif str(path) not in self._dropped_roots:
+                self._dropped_roots.add(str(path))
+                log(f"rigorloom mcp: {path} is no longer the folder that was allowed; "
+                    "it is not used")
+        return out
+
     def roots(self) -> ServerRoots:
-        """What tools may touch now: client roots (else the cwd fallback) + --allow."""
-        base = list(self.client_roots or [])
-        if not base and self.cwd_root is not None:
-            base = [self.cwd_root]
-        out = ServerRoots.of(base + self.allow)
+        """What tools may touch now: the client's folders (or, while it has
+        named none, the working directory) plus ``--allow``."""
+        base = self._live(self.client_roots or [])
+        if not base and not self._client_named_roots and self._cwd_entry is not None:
+            base = self._live([self._cwd_entry])
+        out = ServerRoots.of(base + self._live(self.allow))
         out.hint = self.no_roots_hint
         return out
+
+    def _roots_now(self) -> ServerRoots:
+        """The roots after any change the client announced has arrived.
+
+        Used by ``save`` once the person has answered. A cancelled call gets
+        no folders at all: nothing it does may reach a file any more.
+        """
+        if self._roots_pending is not None:
+            if not self._wait(lambda: self._roots_pending is None, self.roots_timeout):
+                self._roots_gave_up = True
+        if self._cancelled:
+            out = ServerRoots([])
+            out.hint = self.no_roots_hint
+            return out
+        return self.roots()
 
     # -- elicitation ----------------------------------------------------------
 
     def _ask_person(self, question: str, detail: dict) -> bool | None:
+        if self._cancelled:
+            return None
         box: dict = {}
         rid = self._request("elicitation/create", {
             "message": elicitation_message(question, detail),
             "requestedSchema": OVERWRITE_SCHEMA,
         }, lambda reply: box.setdefault("reply", reply))
-        if not self._wait(lambda: "reply" in box, self.elicit_timeout):
+        self._wait(lambda: "reply" in box or self._cancelled, self.elicit_timeout)
+        if "reply" not in box or self._cancelled:
+            # Timed out, the input ended, or the call this question belongs
+            # to was cancelled: withdraw the question; a late "yes" counts
+            # for nothing.
             self._handlers.pop(rid, None)
+            reason = "the request was cancelled" if self._cancelled else "timed out"
             if not self._eof:
                 self._send({"jsonrpc": "2.0", "method": "notifications/cancelled",
-                            "params": {"requestId": rid, "reason": "timed out"}})
-            log("rigorloom mcp: no answer to the overwrite question")
+                            "params": {"requestId": rid, "reason": reason}})
+            log(f"rigorloom mcp: no answer to the overwrite question ({reason})")
             return None
-        reply = box["reply"]
-        result = reply.get("result")
-        if "error" in reply or not isinstance(result, dict):
-            return None
-        action = result.get("action")
-        if action == "decline":
-            return False
-        if action != "accept":
-            return None  # cancel, or something we do not know
-        content = result.get("content")
-        answer = content.get("overwrite") if isinstance(content, dict) else None
-        if answer is True:
-            return True
-        if answer is False:
-            return False
-        return None
+        return overwrite_answer(box["reply"])
 
     # -- requests -------------------------------------------------------------
 
@@ -519,9 +702,10 @@ class McpServer:
         while True:
             while not self._backlog and not self._eof:
                 self._receive(self._inbox.get())
-            if not self._backlog:
+            if not self._backlog or self._out_closed:
                 return 0
             message = self._backlog.pop(0)
+            self._active, self._cancelled = message["id"], False
             try:
                 reply = self._dispatch(message)
             except Exception as exc:  # noqa: BLE001 - keep serving
@@ -529,7 +713,12 @@ class McpServer:
                 log("rigorloom mcp: internal error:\n" + traceback.format_exc())
                 reply = _error(message["id"], INTERNAL_ERROR,
                                f"internal error ({type(exc).__name__})")
-            if reply is not None:
+            finally:
+                cancelled = self._cancelled
+                self._active, self._cancelled = _IDLE, False
+            if cancelled:
+                log(f"rigorloom mcp: request {message['id']!r} was cancelled; no response sent")
+            elif reply is not None:
                 self._send(reply)
 
     def _dispatch(self, message: dict) -> dict | None:
@@ -568,30 +757,22 @@ class McpServer:
         if info.get("version") is not None:
             self.provenance = {"clientVersion": one_line(str(info["version"]))[:64]}
         self.can_roots = isinstance(caps.get("roots"), dict)
-        self.can_elicit = (self.version == LATEST
-                           and isinstance(caps.get("elicitation"), dict))
+        self.can_elicit = isinstance(caps.get("elicitation"), dict)
         self.state = "initializing"
-        server_info = {"name": SERVER_NAME, "version": package_version()}
-        if self.version == LATEST:
-            server_info = {"name": SERVER_NAME, "title": SERVER_TITLE,
-                           "version": server_info["version"]}
         return _result(mid, {
             "protocolVersion": self.version,
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": server_info,
+            "serverInfo": {"name": SERVER_NAME, "title": SERVER_TITLE,
+                           "version": package_version()},
             "instructions": instructions(),
         })
 
     def tool_entry(self, tool) -> dict:
-        entry: dict = {"name": tool.name}
-        if self.version == LATEST:
-            entry["title"] = tool.title
-        entry["description"] = tool.description
-        entry["inputSchema"] = tool.input_schema
-        if self.version == LATEST:
-            entry["outputSchema"] = output_schema(tool)
-        entry["annotations"] = tool.annotations()
-        return entry
+        return {"name": tool.name, "title": tool.title,
+                "description": tool.description,
+                "inputSchema": tool.input_schema,
+                "outputSchema": output_schema(tool),
+                "annotations": tool.annotations()}
 
     def context(self) -> rt_tools.Context:
         if self._drafts is None:
@@ -600,9 +781,9 @@ class McpServer:
             client=self.client, roots=self.roots(), write_mode="draft",
             source="draft", provenance=dict(self.provenance),
             ask=self._ask_person if self.can_elicit else None,
-            _drafts=self._drafts)
+            current_roots=self._roots_now, _drafts=self._drafts)
 
-    def _tools_call(self, mid, params: dict) -> dict:
+    def _tools_call(self, mid, params: dict) -> dict | None:
         name = params.get("name")
         if not isinstance(name, str):
             return _error(mid, INVALID_PARAMS, "tools/call needs a tool name")
@@ -619,29 +800,28 @@ class McpServer:
         if self._roots_pending is not None and not self._roots_gave_up:
             if not self._wait(lambda: self._roots_pending is None, self.roots_timeout):
                 self._roots_gave_up = True
-                log("rigorloom mcp: no roots/list answer in time; using the fallback")
+                log("rigorloom mcp: no roots/list answer in time; using the folders known now")
+        if self._cancelled:
+            return None
         envelope = rt_tools.call(self.context(), name, args)
         if envelope["ok"]:
             return self._ok_frame(mid, tool, envelope["result"])
         return _result(mid, self._refusal(envelope["error"]))
 
     def _refusal(self, error: dict) -> dict:
+        error = agent_error(error)
         lines = [str(error.get("message") or error.get("code"))]
         if error.get("hint"):
             lines.append(str(error["hint"]))
         if error.get("candidates"):
             lines.append("후보: " + ", ".join(str(c) for c in error["candidates"]))
-        out: dict = {"content": [{"type": "text", "text": safe_text("\n".join(lines))}],
-                     "isError": True}
-        if self.version == LATEST:
-            out["structuredContent"] = {"error": error}
-        return out
+        return {"content": [{"type": "text", "text": safe_text("\n".join(lines))}],
+                "isError": True, "structuredContent": {"error": error}}
 
     def _ok_frame(self, mid, tool, result: dict) -> dict:
         text = safe_text(rt_tools.render_text(tool, result))
-        body: dict = {"content": [{"type": "text", "text": text}], "isError": False}
-        if self.version == LATEST:
-            body["structuredContent"] = result
+        body: dict = {"content": [{"type": "text", "text": text}], "isError": False,
+                      "structuredContent": result}
         if tool.name != "preview":
             return _result(mid, body)
         return self._fit_images(mid, body, text, result)
@@ -684,6 +864,60 @@ def output_schema(tool) -> dict:
     schema = copy.deepcopy(tool.output_schema)
     schema.setdefault("properties", {})["error"] = ERROR_SCHEMA
     return schema
+
+
+def overwrite_answer(reply: dict) -> bool | None:
+    """The person's answer from an ``elicitation/create`` reply.
+
+    True or False only for a well-formed answer: one of ``result``/``error``,
+    a known action, and for ``accept`` content that is exactly the boolean
+    the question asked for. Anything else is no answer, which writes nothing
+    and records nothing.
+    """
+    if ("result" in reply) == ("error" in reply):
+        return None
+    result = reply.get("result")
+    if not isinstance(result, dict) or not set(result) <= {"action", "content", "_meta"}:
+        return None
+    action = result.get("action")
+    if action == "decline":
+        return False
+    if action != "accept":
+        return None  # cancel, or an action this server does not know
+    content = result.get("content")
+    if not isinstance(content, dict) or set(content) != {"overwrite"}:
+        return None
+    answer = content["overwrite"]
+    return answer if isinstance(answer, bool) else None
+
+
+_HANGUL = re.compile(r"[\uac00-\ud7a3]")
+
+
+def agent_error(error: dict) -> dict:
+    """A refusal as the agent gets it: in Korean, like every other refusal.
+
+    The document layer's own messages are English; the agent relays them to
+    a Korean-speaking person, so it gets the same one-line Korean wording the
+    terminal shows, without terminal commands, and the layer's words stay in
+    ``data.detail``.
+    """
+    message = str(error.get("message") or "")
+    if _HANGUL.search(message):
+        return error
+    data = dict(error.get("data") or {})
+    korean, hint = person_error({**data, **error})
+    if hint and "rigorloom " in hint:
+        hint = None  # a command line for a terminal, not a tool call
+    out = {**error, "message": korean}
+    out.pop("hint", None)
+    if hint:
+        out["hint"] = hint
+    if message:
+        data["detail"] = message
+    if data:
+        out["data"] = data
+    return out
 
 
 def elicitation_message(question: str, detail: dict) -> str:

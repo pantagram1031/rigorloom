@@ -17,8 +17,10 @@ turn. People-facing text (titles, messages, hints) is Korean.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -27,14 +29,14 @@ try:  # installed as rigorloom_runtime
     from .rt_drafts import Input, Ref, is_virtual, rev_of, summary
     from .rt_paths import (PathRefused, canonical, check_readable, mark_state, private_dir,
                            sha256_file)
-    from .rt_term import one_line, path_text, safe_text
+    from .rt_term import one_line, path_text, safe_text, shell_arg
     from .rt_tools import Context, Tool, ToolError, doc_call, register, sibling
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
     from rt_drafts import Input, Ref, is_virtual, rev_of, summary
     from rt_paths import (PathRefused, canonical, check_readable, mark_state, private_dir,
                           sha256_file)
-    from rt_term import one_line, path_text, safe_text
+    from rt_term import one_line, path_text, safe_text, shell_arg
     from rt_tools import Context, Tool, ToolError, doc_call, register, sibling
 
 READ_DEFAULT_CHARS = 6000
@@ -93,18 +95,31 @@ def _out(props: dict) -> dict:
 # resolution: which file, which draft, may we touch it
 # ---------------------------------------------------------------------------
 
+_REFUSAL_HINTS = {
+    "outside_roots": "이 폴더를 허용하려면 사용자에게 MCP 설정에 --allow <폴더>를 추가해 달라고 요청하세요.",
+    "not_found": "상대 경로는 작업 폴더를 기준으로 합니다. 경로가 맞는지 사용자에게 확인하세요.",
+}
+
+
 def resolve(ctx: Context, raw: str) -> Ref:
     """A Ref for ``raw``, after the roots check. Refuses what may not be read."""
     if is_virtual(raw):
-        return ctx.drafts.ref(raw)
+        ref = ctx.drafts.ref(raw)
+        source = ((ctx.drafts.load(ref) or {}).get("source") or {}).get("path")
+        if source is None:
+            return ref  # made with `new`: no file behind it to confine
+        # A draft of a file is that file: the same roots apply to its id.
+        try:
+            path = ctx.roots.check(source) if ctx.roots is not None else canonical(source)
+        except PathRefused as exc:
+            raise ToolError(exc.code, exc.message, hint=exc.hint or _REFUSAL_HINTS.get(exc.code),
+                            at=raw) from exc
+        return type(ref)(ref.key, path)
     try:
         path = ctx.roots.check(raw) if ctx.roots is not None else canonical(raw)
         check_readable(path)
     except PathRefused as exc:
-        hint = exc.hint or {
-            "outside_roots": "이 폴더를 허용하려면 사용자에게 MCP 설정에 --allow <폴더>를 추가해 달라고 요청하세요.",
-            "not_found": "상대 경로는 작업 폴더를 기준으로 합니다. 경로가 맞는지 사용자에게 확인하세요.",
-        }.get(exc.code)
+        hint = exc.hint or _REFUSAL_HINTS.get(exc.code)
         raise ToolError(exc.code, exc.message, hint=hint, at=exc.path) from exc
     fmt = path.suffix.lower().lstrip(".")
     if fmt not in FORMATS_IN:
@@ -147,7 +162,7 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None) -> str
     way, which may refuse a link that only looks like a path. That is the
     safe side.
     """
-    def fix(match: re.Match) -> str:
+    def fix(match: re.Match, paren: bool = False) -> str:
         target = match.group(2).strip("<>")
         if target.startswith("#"):
             return match.group(0)
@@ -167,12 +182,23 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None) -> str
                             hint=exc.hint or "사용자에게 허용된 폴더 안에 있는 그림 파일의 경로를 알려 달라고 요청하세요.",
                             at=exc.path) from exc
         text = str(path).replace("\\", "/")
+        if paren:  # keep the spelling the converter's own syntax used
+            return match.group(1) + (f"<{text}>" if match.group(2).startswith("<") else text)
         if " " in text and not match.group(1).lower().startswith("<img"):
             text = f"<{text}>"  # CommonMark: a destination with spaces goes in <>
         return match.group(1) + text
     for pattern in _ASSET_PATTERNS:
         markdown = pattern.sub(fix, markdown)
-    return markdown
+    # The converter reads more than CommonMark (a "[그림 1] 제목 (그림.png)"
+    # caption line, for one). Any image file named in parentheses gets the
+    # same check and is made absolute, whatever syntax it sits in.
+    return _IMAGE_IN_PARENS.sub(lambda m: fix(m, paren=True), markdown)
+
+
+_IMAGE_EXT = r"(?:png|jpe?g|gif|bmp|tiff?|webp|svg|emf|wmf)"
+_IMAGE_IN_PARENS = re.compile(
+    r"(\(\s*)(<[^<>\n]*\." + _IMAGE_EXT + r">|[^()\s<>][^()\n<>]*?\." + _IMAGE_EXT + r")(?=\s*\))",
+    re.IGNORECASE)
 
 
 def is_person_only(place: dict) -> bool:
@@ -1219,10 +1245,16 @@ def _target(ctx: Context, raw: str) -> Path:
     return path
 
 
+def _arg(text: str) -> str:
+    """A path in a command line for a person: quoted for the shell when it can
+    be, else shown escaped (such a name has to be typed some other way)."""
+    return shell_arg(text) or f'"{path_text(text)}"'
+
+
 def _person_line(ref: Ref, target: Path) -> str:
     if ref.source is not None and _same_path(target, ref.source):
-        return f'rigorloom save "{ref.label}"'
-    return f'rigorloom save "{ref.label}" --to "{target}"'
+        return f"rigorloom save {_arg(ref.label)}"
+    return f"rigorloom save {_arg(ref.label)} --to {_arg(str(target))}"
 
 
 def _draft_id(ref: Ref, record: dict | None) -> str:
@@ -1257,17 +1289,9 @@ def _run_save(ctx: Context, args: dict) -> dict:
 
     # Candidate bytes: the head, converted when the target format differs.
     candidate = head_input.path
+    lossy: list[str] = []
     if candidate.suffix.lower().lstrip(".") != fmt:
-        out_dir = private_dir(ctx.drafts.home / "exports" / ref.key)
-        converted = out_dir / f"{head_input.rev}.{fmt}"
-        if not converted.exists():
-            data = doc_call(ctx.doc.convert, str(candidate), str(converted), to=fmt)
-            lossy = data.get("lossy") or []
-        else:
-            lossy = []
-        candidate = converted
-    else:
-        lossy = []
+        candidate, lossy = _converted(ctx, ref, head_input, fmt)
 
     digest = sha256_file(candidate)
     if target.exists() and sha256_file(target) == digest:
@@ -1319,7 +1343,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
                                           for p in c.get("changedPages", [])}),
                   "unreviewed": unreviewed, "lossy": lossy,
                   "fontsSubstituted": _substituted_fonts(ctx, head_input.path),
-                  "undo": f'rigorloom undo "{target}"'}
+                  "undo": _undo_command(target)}
         other = ("다른 이름으로 저장: --to 새이름" if ctx.client == "cli"
                  else "다른 이름으로 저장하려면 to에 새 경로를 입력하세요.")
         if ctx.ask is None:
@@ -1344,11 +1368,20 @@ def _run_save(ctx: Context, args: dict) -> dict:
                             hint=f"사람이 터미널에서 실행: {_person_line(ref, target)}. {other}",
                             at=str(target), data=detail)
         policy = "person:" + ("tty" if ctx.client == "cli" else "elicitation")
-        # The answer may have taken minutes: the path must still name the same place.
-        again = _target(ctx, args["to"]) if args.get("to") else canonical(ref.source)
+        # The answer may have taken minutes: the path must still name the same
+        # place, and that place must still be one the person allows (the
+        # client may have taken a folder away meanwhile).
+        if ctx.current_roots is not None:
+            ctx.roots = ctx.current_roots()
+        again = _target(ctx, args["to"] if args.get("to") else str(ref.source))
         if not _same_path(again, target):
             raise ToolError("target_changed", "확인하는 사이에 저장 경로가 바뀌었습니다.",
                             hint="경로를 확인하고 다시 저장하세요.", at=str(target))
+        if ref.source is not None and ctx.roots is not None:
+            try:
+                ctx.roots.check(ref.source)
+            except PathRefused as exc:
+                raise ToolError(exc.code, exc.message, hint=exc.hint, at=exc.path) from exc
 
     provenance = _saved_provenance(record)
     if record is None and has_edits:
@@ -1356,11 +1389,14 @@ def _run_save(ctx: Context, args: dict) -> dict:
         raise ToolError("stale", "확인하는 사이에 초안이 바뀌어 저장하지 않았습니다.",
                         hint="초안을 다시 확인하고 저장하세요.", retryable=True,
                         data={"reason": "superseded_by_newer_candidate"})
+    # An agent's save never publishes bytes a person refused here, even when
+    # the "no" came from another session while this one was asking.
+    honour = ctx.client != "cli"
     if record is None:
         receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
                                    policy=policy, home=ctx.drafts.home,
                                    provenance=provenance, candidate_sha256=digest,
-                                   draft=writer)
+                                   draft=writer, honour_declines=honour)
     else:
         with ctx.drafts.lock(ref):
             # Re-read under the lock: an edit or another save may have landed
@@ -1381,7 +1417,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
             receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
                                        policy=policy, home=ctx.drafts.home,
                                        provenance=provenance, candidate_sha256=digest,
-                                       draft=writer)
+                                       draft=writer, honour_declines=honour)
             record.setdefault("saves", []).append({
                 "target": str(target), "sha256": receipt["sha256"],
                 "revision": head_input.revision, "policy": policy,
@@ -1400,8 +1436,72 @@ def _run_save(ctx: Context, args: dict) -> dict:
             "format": fmt, "replaced": receipt["replaced"] is not None,
             "acceptedVia": policy, "unreviewed": unreviewed, "lossy": lossy,
             "provenance": provenance,
-            "undo": f'rigorloom undo "{target}"' if receipt["undo"] or
+            "undo": _undo_command(target) if receipt["undo"] or
             receipt["replaced"] is None else None}
+
+
+def _undo_command(target: Path) -> str | None:
+    """``rigorloom undo <target>`` to paste in a shell, or None when the name
+    cannot be passed through one unchanged (``rt_term.shell_arg``)."""
+    arg = shell_arg(str(target))
+    return f"rigorloom undo {arg}" if arg else None
+
+
+#: Formats the converter reads as markdown: their pictures are files on disk.
+_MARKDOWN = (".md", ".markdown")
+
+
+def _converted(ctx: Context, ref: Ref, head: Input, fmt: str) -> tuple[Path, list[str]]:
+    """The head converted to ``fmt``, and what the conversion loses.
+
+    A converted file is kept per revision with its loss list beside it, so a
+    second save asks the person about the same losses as the first; a kept
+    file without its list is converted again. Markdown pulls pictures in from
+    other files, so for a confined caller (MCP) every picture it names passes
+    the roots check on every save, kept file or not, and a fresh conversion
+    reads a copy whose picture paths are the checked, absolute ones.
+    """
+    out_dir = private_dir(ctx.drafts.home / "exports" / ref.key)
+    converted = out_dir / f"{head.rev}.{fmt}"
+    meta = out_dir / f"{head.rev}.{fmt}.lossy.json"
+    source = head.path
+    gated = None
+    if ctx.roots is not None and source.suffix.lower() in _MARKDOWN:
+        try:
+            text = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ToolError("invalid_params", "마크다운 파일이 UTF-8로 저장되어 있지 않습니다.",
+                            hint="UTF-8로 다시 저장한 뒤 시도하세요.", at=str(source)) from exc
+        gated = _gate_markdown_assets(
+            ctx, text, ref.source.parent if ref.source is not None else None)
+    try:
+        cached = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cached = None
+    if converted.exists() and isinstance(cached, list):
+        return converted, [str(x) for x in cached]
+    temp = out_dir / f".{head.rev}.{secrets.token_hex(4)}.{fmt}"
+    copy = None
+    if gated is not None:
+        copy = out_dir / f".{head.rev}.{secrets.token_hex(4)}.md"
+        copy.write_text(gated, encoding="utf-8")
+    try:
+        data = doc_call(ctx.doc.convert, str(copy or source), str(temp), to=fmt)
+        lossy = [str(x) for x in data.get("lossy") or []]
+        # The layer names what it wrote (a PNG of a longer document is its
+        # first page, beside ``temp``).
+        os.replace(Path(data.get("out") or temp), converted)
+        note = out_dir / f".{head.rev}.{secrets.token_hex(4)}.json"
+        note.write_text(json.dumps(lossy, ensure_ascii=False), encoding="utf-8")
+        os.replace(note, meta)
+    finally:
+        for leftover in (temp, copy):
+            if leftover is not None and leftover.exists():
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+    return converted, lossy
 
 
 def _substituted_fonts(ctx: Context, path: Path) -> list[dict]:

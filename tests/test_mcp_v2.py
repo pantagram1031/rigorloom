@@ -281,12 +281,16 @@ def test_oversized_inbound_frame_is_refused_unread(env):
     assert s.call("ping")["result"] == {}
 
 
-def test_initialize_prefers_2025_06_18_and_accepts_2025_03_26(env):
-    for asked, got in ((LATEST, LATEST), (OLDER, OLDER), ("2024-11-05", LATEST),
-                       ("1999-01-01", LATEST)):
+def test_initialize_offers_2025_06_18_whatever_is_asked(env):
+    # 2025-03-26 would oblige the server to take JSON-RPC batches; it does not.
+    for asked in (LATEST, OLDER, "2024-11-05", "1999-01-01"):
         s = env.session()
         r = s.handshake(version=asked)
-        assert r["protocolVersion"] == got, asked
+        assert r["protocolVersion"] == LATEST, asked
+        s.cin.write(b'[{"jsonrpc":"2.0","id":1,"method":"ping"}]\n')
+        error = s.wait_for(lambda f: "error" in f)
+        assert error["id"] is None and error["error"]["code"] == -32600
+        assert "batches" in error["error"]["message"]
 
 
 def test_initialize_result_names_the_server(env):
@@ -363,25 +367,6 @@ def test_tools_list_is_the_registry_mcp_surface(env):
             assert isinstance(ann[hint], bool)
     save = next(t for t in tools if t["name"] == "save")["annotations"]
     assert save["destructiveHint"] is True and save["readOnlyHint"] is False
-
-
-def test_2025_03_26_gets_no_output_schema_structured_content_or_elicitation(env):
-    path = env.doc()
-    s = env.session()
-    r = s.handshake(caps={"elicitation": {}}, version=OLDER)
-    assert "title" not in r["serverInfo"]
-    tools = s.call("tools/list")["result"]["tools"]
-    assert all("outputSchema" not in t and "title" not in t for t in tools)
-    ok = s.tool("open", {"path": str(path)})
-    assert ok["isError"] is False and "structuredContent" not in ok
-    assert s.server.context().ask is None
-    rev = json.loads(json.dumps(rt_tools.call(s.server.context(), "open",
-                                              {"path": str(path)})))["result"]["rev"]
-    s.tool("edit", {"path": str(path), "base": rev,
-                    "ops": [{"op": "set", "at": "p1", "text": "다시 신청합니다."}]})
-    refused = s.tool("save", {"path": str(path)})
-    assert refused["isError"] is True and "structuredContent" not in refused
-    assert not [f for f in s.nothing_pending() if f.get("method") == "elicitation/create"]
 
 
 def test_unknown_tool_is_a_json_rpc_error(env):
@@ -594,7 +579,7 @@ def test_roots_round_trip(env):
     assert s.tool("open", {"path": str(inside)})["isError"] is False
     r = s.tool("open", {"path": str(outside)})
     assert r["structuredContent"]["error"]["code"] == "outside_roots"
-    assert s.server.client_roots == [folder.resolve()]
+    assert [path for path, _ in s.server.client_roots] == [folder.resolve()]
 
 
 def test_a_call_before_the_roots_answer_waits_and_pings_still_work(env):
@@ -865,7 +850,6 @@ def test_while_a_person_decides_pings_answer_and_requests_queue(env):
     listed = s.request("tools/list")
     dropped = s.request("tools/call", {"name": "guide", "arguments": {}})
     s.notify("notifications/cancelled", {"requestId": dropped, "reason": "user"})
-    s.notify("notifications/cancelled", {"requestId": rid, "reason": "user"})  # running: ignored
     assert not [f for f in s.nothing_pending(0.2) if f.get("id") in (listed, rid)]
     s.reply(ask["id"], {"action": "accept", "content": {"overwrite": True}})
     order = []
@@ -888,6 +872,332 @@ def test_cancel_for_a_queued_request_drops_it(env):
 # ---------------------------------------------------------------------------
 # the CLI entry and the test seam
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Sol's review of a952543: consent, folders, wire
+# ---------------------------------------------------------------------------
+
+def test_cancelling_the_running_save_withdraws_the_question_and_writes_nothing(env):
+    path = env.doc()
+    before = path.read_bytes()
+    s = env.session()
+    s.handshake(caps=ELICIT)
+    _edited(s, path)
+    rid, ask = _save_and_get_question(s, path)
+    s.notify("notifications/cancelled", {"requestId": rid, "reason": "user"})
+    withdrawn = s.wait_for(lambda f: f.get("method") == "notifications/cancelled")
+    assert withdrawn["params"]["requestId"] == ask["id"]
+    s.reply(ask["id"], {"action": "accept", "content": {"overwrite": True}})  # too late
+    assert s.call("ping")["result"] == {}
+    assert not [f for f in s.nothing_pending(0.3) if f.get("id") == rid]
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("reply", [
+    {"result": {"action": "accept", "content": {"overwrite": True, "extra": {}}}},
+    {"result": {"action": "accept", "content": {"overwrite": True, "note": "x"}}},
+    {"result": {"action": "accept", "content": {"overwrite": 1}}},
+    {"result": {"action": "accept"}},
+    {"result": {"action": "accept", "content": {"overwrite": True}, "more": 1}},
+    {"result": {"action": "accept", "content": {"overwrite": True}},
+     "error": {"code": 1, "message": "both"}},
+    {"result": {"action": "ACCEPT", "content": {"overwrite": True}}},
+])
+def test_a_malformed_answer_is_no_answer(env, reply):
+    path = env.doc()
+    before = path.read_bytes()
+    s = env.session()
+    s.handshake(caps=ELICIT)
+    _edited(s, path)
+    rid, ask = _save_and_get_question(s, path)
+    s.send({"jsonrpc": "2.0", "id": ask["id"], **reply})
+    r = s.response(rid)["result"]
+    assert r["structuredContent"]["error"]["code"] == "needs_person"
+    assert path.read_bytes() == before
+
+
+def test_overwrite_answer_takes_only_the_asked_boolean():
+    ok = {"result": {"action": "accept", "content": {"overwrite": True}}}
+    assert rt_mcp.overwrite_answer(ok) is True
+    assert rt_mcp.overwrite_answer(
+        {"result": {"action": "accept", "content": {"overwrite": False}}}) is False
+    assert rt_mcp.overwrite_answer({"result": {"action": "decline"}}) is False
+    assert rt_mcp.overwrite_answer({"result": {"action": "cancel"}}) is None
+    assert rt_mcp.overwrite_answer(
+        {"result": {"action": "accept", "content": {"overwrite": True}, "_meta": {}}}) is True
+
+
+def test_a_no_from_another_session_beats_an_older_open_question(env):
+    path = env.doc()
+    before = path.read_bytes()
+    first, second = env.session(), env.session()
+    first.handshake(caps=ELICIT)
+    second.handshake(caps=ELICIT)
+    _edited(first, path)
+    rid1, ask1 = _save_and_get_question(first, path)
+    rid2, ask2 = _save_and_get_question(second, path)  # same draft, same bytes
+    second.reply(ask2["id"], {"action": "decline"})
+    assert second.response(rid2)["result"]["structuredContent"]["error"]["code"] \
+        == "declined_by_person"
+    first.reply(ask1["id"], {"action": "accept", "content": {"overwrite": True}})
+    r = first.response(rid1)["result"]
+    assert r["structuredContent"]["error"]["code"] == "declined_by_person"
+    assert path.read_bytes() == before
+
+
+def test_the_question_escapes_what_the_document_wrote():
+    message = rt_mcp.elicitation_message('"a.hwpx" 파일을 덮어쓸까요?', {
+        "target": "/x/a.hwpx",
+        "lossy": ["picture (missing\r\n검토가 끝났습니다\u200b\n다음 줄)", "\u202e순서"],
+        "fontsSubstituted": [{"want": "함초롬\n바탕", "got": "Noto\u2028Serif"}]})
+    lines = message.splitlines()
+    assert lines == [
+        '"a.hwpx" 파일을 덮어쓸까요?',
+        "변환하면 빠지는 항목: picture (missing\\u000d\\u000a검토가 끝났습니다\\u200b"
+        "\\u000a다음 줄), \\u202e순서",
+        "글꼴 대체: 함초롬\\u000a바탕 → Noto\\u2028Serif (쪽 나눔이 한글과 다를 수 있음)",
+        "이전 내용은 저장 기록에 남습니다.",
+        '되돌리기: rigorloom undo "/x/a.hwpx"']
+
+
+def test_a_second_save_asks_about_the_same_conversion_losses(env):
+    path = env.doc()
+    target = env.work / "신청서.md"
+    target.write_text("이전 내용\n", encoding="utf-8")
+    s = env.session()
+    s.handshake(caps=ELICIT)
+    _edited(s, path)
+    for answer in ({"action": "cancel"}, {"action": "accept", "content": {"overwrite": True}}):
+        rid = s.request("tools/call", {"name": "save",
+                                       "arguments": {"path": str(path), "to": str(target)}})
+        ask = s.server_request("elicitation/create")
+        assert "변환하면 빠지는 항목: places" in ask["params"]["message"].splitlines()
+        s.reply(ask["id"], answer)
+        r = s.response(rid)["result"]
+    assert r["structuredContent"]["lossy"] == ["places"]
+
+
+def test_a_folder_taken_away_while_the_person_decides_is_not_written(env):
+    a, b = env.tmp / "a", env.tmp / "b"
+    a.mkdir(), b.mkdir()
+    path = env.doc(folder=a)
+    before = path.read_bytes()
+    s = env.session(allow=[])
+    s.handshake(caps={"roots": {"listChanged": True}, **ELICIT})
+    s.reply(s.server_request("roots/list")["id"], {"roots": [{"uri": file_uri(a)}]})
+    _edited(s, path)
+    rid, ask = _save_and_get_question(s, path)
+    s.notify("notifications/roots/list_changed")
+    s.reply(s.server_request("roots/list")["id"], {"roots": [{"uri": file_uri(b)}]})
+    s.reply(ask["id"], {"action": "accept", "content": {"overwrite": True}})
+    r = s.response(rid)["result"]
+    assert r["structuredContent"]["error"]["code"] == "outside_roots"
+    assert path.read_bytes() == before
+
+
+def test_an_empty_or_failed_refresh_never_widens_to_the_working_folder(env):
+    narrow = env.work / "좁은"
+    narrow.mkdir()
+    inside, sibling = env.doc(folder=narrow), env.doc("옆.fdoc")
+    for refresh in ({"result": {"roots": []}},
+                    {"error": {"code": -32603, "message": "broken"}}):
+        s = env.session(allow=[], cwd=env.work)
+        s.handshake(caps={"roots": {"listChanged": True}})
+        s.reply(s.server_request("roots/list")["id"], {"roots": [{"uri": file_uri(narrow)}]})
+        assert s.tool("open", {"path": str(inside)})["isError"] is False
+        assert s.tool("open", {"path": str(sibling)})["isError"] is True
+        s.notify("notifications/roots/list_changed")
+        s.send({"jsonrpc": "2.0", "id": s.server_request("roots/list")["id"], **refresh})
+        for path in (inside, sibling):
+            error = s.tool("open", {"path": str(path)})["structuredContent"]["error"]
+            assert error["code"] == "no_roots" and _expected_allow_line() not in error["hint"]
+
+
+def test_a_change_announced_withdraws_the_old_folders_before_the_new_list(env):
+    a = env.tmp / "a"
+    a.mkdir()
+    path = env.doc(folder=a)
+    s = env.session(allow=[env.work], roots_timeout=0.3)
+    s.handshake(caps={"roots": {"listChanged": True}})
+    s.reply(s.server_request("roots/list")["id"], {"roots": [{"uri": file_uri(a)}]})
+    assert s.tool("open", {"path": str(path)})["isError"] is False
+    s.notify("notifications/roots/list_changed")
+    s.server_request("roots/list")  # never answered
+    r = s.tool("open", {"path": str(path)})
+    assert r["structuredContent"]["error"]["code"] == "outside_roots"
+    assert s.tool("open", {"path": str(env.doc())})["isError"] is False  # --allow stays
+
+
+def test_a_draft_id_is_confined_like_its_file(env):
+    path = env.doc()
+    owner = env.session()
+    owner.handshake()
+    _edited(owner, path)
+    key = owner.tool("open", {"path": str(path)})["structuredContent"]
+    stranger = env.session(allow=[env.outside])
+    stranger.handshake()
+    import rt_drafts
+    alias = "draft:" + rt_drafts.key_for_path(path.resolve())
+    for tool in ("read", "open", "save"):
+        r = stranger.tool(tool, {"path": alias})
+        assert r["structuredContent"]["error"]["code"] == "outside_roots", (tool, key)
+    # inside the roots the id still works, and names the file
+    r = owner.tool("read", {"path": alias})
+    assert r["isError"] is False and "480,000원" in text_of(r)
+
+
+@pytest.mark.parametrize("markdown", [
+    "[그림 1] 시험 ({img})",
+    "![그림]({img})",
+    "[그림 1] 시험 (<{img}>)",
+])
+def test_new_checks_every_picture_path_it_can_find(env, markdown):
+    picture = env.outside / "그림.png"
+    picture.write_bytes(b"\x89PNG\r\n\x1a\n")
+    s = env.session()
+    s.handshake()
+    r = s.tool("new", {"markdown": "# 제목\n\n" + markdown.format(img=picture) + "\n"})
+    assert r["structuredContent"]["error"]["code"] == "outside_roots"
+
+
+def test_saving_markdown_to_another_format_checks_its_pictures(env):
+    picture = env.outside / "그림.png"
+    picture.write_bytes(b"\x89PNG\r\n\x1a\n")
+    source = env.work / "본문.md"
+    source.write_text(f"# 제목\n\n![그림]({picture})\n", encoding="utf-8")
+    s = env.session()
+    s.handshake()
+    r = s.tool("save", {"path": str(source), "to": str(env.work / "본문.fdoc")})
+    assert r["structuredContent"]["error"]["code"] == "outside_roots"
+    assert not (env.work / "본문.fdoc").exists()
+
+
+def test_a_granted_folder_replaced_by_a_link_grants_nothing(env):
+    configured = env.tmp / "configured"
+    configured.mkdir()
+    inside = env.doc(folder=configured)
+    secret = env.doc("비밀.fdoc", folder=env.outside)
+    s = env.session(allow=[configured])
+    s.handshake()
+    assert s.tool("open", {"path": str(inside)})["isError"] is False
+    configured.rename(env.tmp / "configured-old")
+    try:
+        os.symlink(env.outside, configured, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this system cannot make a directory link here")
+    for path in (secret, configured / secret.name):
+        r = s.tool("open", {"path": str(path)})
+        assert r["isError"] is True
+        assert r["structuredContent"]["error"]["code"] in ("outside_roots", "no_roots")
+
+
+def test_saved_is_the_exact_path_and_undo_is_safe_to_paste(env):
+    s = env.session()
+    s.handshake()
+    path = env.doc()
+    _edited(s, path)
+    odd = env.work / "결과\u202e.fdoc"
+    r = s.tool("save", {"path": str(path), "to": str(odd)})["structuredContent"]
+    assert r["saved"] == str(odd.resolve())
+    assert r["undo"] is None  # a name nobody can type from the screen gets no command
+    if os.name != "nt":
+        import shlex
+        quoted = env.work / 'report"quoted".fdoc'
+        r = s.tool("save", {"path": str(path), "to": str(quoted)})["structuredContent"]
+        assert shlex.split(r["undo"]) == ["rigorloom", "undo", str(quoted.resolve())]
+
+
+def test_document_layer_refusals_reach_the_agent_in_korean():
+    error = rt_mcp.agent_error({"code": "bad_address", "message": "p0 is 5 characters long",
+                                "retryable": False, "at": "p0:999-1000",
+                                "data": {"range": [0, 5]}})
+    assert error["message"] == "p0:999-1000: 범위를 벗어난 위치입니다."
+    assert error["hint"] == "위치는 0부터 5까지 지정할 수 있습니다."
+    assert error["data"] == {"range": [0, 5], "detail": "p0 is 5 characters long"}
+    korean = {"code": "outside_roots", "message": "허용한 폴더 밖의 경로입니다.",
+              "retryable": False}
+    assert rt_mcp.agent_error(korean) is korean
+
+
+def test_doc_layer_locked_is_retryable_even_unflagged():
+    with pytest.raises(rt_tools.ToolError) as caught:
+        rt_tools.doc_call(lambda: {"ok": False, "error": {"code": "locked",
+                                                          "message": "file is open"}})
+    assert caught.value.code == "locked" and caught.value.retryable is True
+
+
+@pytest.mark.parametrize("raw,code", [
+    (b"{}\n", -32600),
+    (b'{"jsonrpc":"1.0","method":"notifications/initialized"}\n', -32600),
+    (b'{"jsonrpc":"2.0"}\n', -32600),
+    (b'{"jsonrpc":"2.0","id":' + b"9" * 4301 + b',"method":"ping"}\n', -32700),
+    (b'{"jsonrpc":"2.0","id":"\\ud800","method":"ping"}\n', -32600),
+    (b'{"jsonrpc":"2.0","id":"\\ud800","method":"tools/list"}\n', -32600),
+    (b'{"jsonrpc":"2.0","id":"' + b"x" * 300 + b'","method":"tools/list"}\n', -32600),
+    (b'{"jsonrpc":"2.0","id":9007199254740993,"method":"ping"}\n', -32600),
+])
+def test_every_malformed_message_gets_an_answer_with_id_null(env, raw, code):
+    s = env.session()
+    s.handshake()
+    s.cin.write(raw)
+    error = s.wait_for(lambda f: "error" in f)
+    assert error["id"] is None and error["error"]["code"] == code
+    assert s.call("ping")["result"] == {}
+    assert s.close() == 0
+
+
+def test_ping_params_must_be_an_object(env):
+    s = env.session()
+    s.handshake()
+    rid = s.request("ping", [])  # type: ignore[arg-type]
+    assert s.response(rid)["error"]["code"] == -32602
+
+
+def test_a_refusal_never_outgrows_the_frame_cap(env):
+    s = env.session(max_frame=4096)
+    s.handshake()
+    s.cin.write(b'{"jsonrpc":"2.0","id":"' + b"y" * 4000 + b'","method":"tools/list"}\n')
+    error = s.wait_for(lambda f: "error" in f)
+    assert error["id"] is None
+    assert all(len(line) <= 4096 for line in s.raw)
+
+
+def test_input_ending_inside_a_message_is_reported_as_truncated(env):
+    s = env.session()
+    s.handshake()
+    s.cin.write(b'{"jsonrpc":"2.0","id":9,"method":"ping"}')
+    s.cin.close()
+    error = s.wait_for(lambda f: "error" in f)
+    assert error["error"]["code"] == -32600 and "ended inside" in error["error"]["message"]
+    s.thread.join(WAIT)
+    assert s.rc == [0]
+
+
+class _ClosingChan(Chan):
+    """A client output pipe that breaks once the client goes away."""
+
+    broken = False
+
+    def write(self, data: bytes) -> int:
+        if self.broken:
+            raise BrokenPipeError(32, "Broken pipe")
+        return super().write(data)
+
+
+def test_the_client_going_away_mid_question_ends_the_session_cleanly(env):
+    path = env.doc()
+    before = path.read_bytes()
+    s = env.session()
+    s.cout.__class__ = _ClosingChan
+    s.handshake(caps=ELICIT)
+    _edited(s, path)
+    _save_and_get_question(s, path)
+    s.cout.broken = True
+    s.cin.close()
+    s.thread.join(WAIT)
+    assert s.rc == [0]
+    assert path.read_bytes() == before
+
 
 def test_mcp_is_a_product_verb_that_no_legacy_command_uses():
     import cli
