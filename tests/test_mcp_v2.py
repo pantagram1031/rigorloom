@@ -1703,7 +1703,11 @@ def test_installed_wheel_serves_guide_instructions_and_preview_without_pymupdf(
         guide = proc.tool("guide", {"topic": "gongmun"})
         assert guide["isError"] is False and "끝. 표시" in guide["content"][0]["text"]
         index = proc.tool("guide", {})
-        assert index["structuredContent"]["topics"] == ["gongmun"]
+        assert index["structuredContent"]["topics"] == ["gongmun", "ops"]
+        ops = proc.tool("guide", {"topic": "ops"})   # built from the installed document layer
+        assert ops["isError"] is False
+        assert "table.delete_row{at,expect?}" in ops["content"][0]["text"]
+        assert " bold (" in ops["content"][0]["text"]   # char_shape keys read from rt_doc
         preview = proc.tool("preview", {"path": str(source), "pages": [1]})
         assert preview["isError"] is False, preview["content"][0]["text"]
         assert any(c["type"] == "image" for c in preview["content"])
