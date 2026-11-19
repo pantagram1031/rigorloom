@@ -33,14 +33,14 @@ A client configured with JSON takes the same command and arguments:
 | `open` | outline, fill-in places, draft status and addresses |
 | `read` | exact text at an address (`p12`, `t3/r2/c1`, `place:<id>`) |
 | `find` | where a phrase occurs, with addresses |
-| `edit` | stage changes in the draft; the person's file is untouched |
+| `edit` | stage changes in the draft; the person's file is untouched. Addresses count from 0 (`p0`, `t0/r0/c0`) |
 | `fill` | fill form places; signature, seal and approval-date places are left for the person |
 | `new` | a new document from markdown (CommonMark by default; `dialect: "report"` for the report dialect, the only one a `form` takes), as `draft:<id>` |
 | `preview` | page images of the draft |
 | `check` | style, layout, font and changed-number checks; numbers that traded places come with `swapped`, each side's numbers with the words that name them; a table is compared cell by cell, so a value written into an empty cell is an added fact (a notice), not a change |
 | `save` | write the draft to a file |
 | `changes` | drafts and save history |
-| `guide` | writing guides for official letters, reports and forms |
+| `guide` | writing guides for official letters, reports and forms, when the guide pack is installed; topic `ops` in every install: each `edit` op's fields, what they hold and an example |
 
 ## Folders
 
