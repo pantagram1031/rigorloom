@@ -11,12 +11,14 @@ fixtures are read from the engine folder at test time and never copied here.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -83,6 +85,13 @@ def test_rev_is_sha256_prefix():
     assert D.rev_of(GUARD) == hashlib.sha256(GUARD.read_bytes()).hexdigest()[:12]
 
 
+def place_of(src, key):
+    """The outline place whose label reads `key` (numbering and spaces aside)."""
+    pls = [p for p in D.outline(src)["places"] if D._norm_key(p["label"] or "") == key]
+    assert len(pls) == 1, pls
+    return pls[0]
+
+
 # ============================================================================ built-in read path
 def test_open_outline_without_engine(no_engine):
     o = D.open(GUARD)
@@ -94,8 +103,9 @@ def test_open_outline_without_engine(no_engine):
     ol = D.outline(GUARD)
     assert [t["at"] for t in ol["tables"]] == ["t%d" % i for i in range(7)]
     assert ol["tables"][5] == {"at": "t5", "rows": 20, "cols": 6, "in": "p152"}
-    assert {"id": "취업장소", "at": "t5/r13/c2", "label": "2. 취업 장소", "kind": "cell", "value": "",
-            "filled": False} in ol["places"]
+    t5 = D._load(GUARD).by_addr["t5"]
+    assert {"id": D.place_id("cell", t5.id, 13, 2), "at": "t5/r13/c2", "label": "2. 취업 장소", "kind": "cell",
+            "value": "", "filled": False} in ol["places"]
 
 
 def test_outline_headings_and_heading_address(no_engine):
@@ -128,8 +138,8 @@ def test_unresolved_addresses_give_candidates(no_engine):
     assert e["code"] == "bad_address" and e["candidates"][0] == "p153" and e["retryable"] is False
     e = D.read(GUARD, "t9")["error"]
     assert e["code"] == "bad_address" and "t0" in e["candidates"]
-    e = D.read(GUARD, "place:취업장")["error"]
-    assert e["code"] == "bad_address" and "place:취업장소" in e["candidates"]
+    e = D.read(GUARD, "place:취업장")["error"]       # a label is not an id; the label's place is offered
+    assert e["code"] == "bad_address" and "place:%s" % place_of(GUARD, "취업장소")["id"] in e["candidates"]
     e = D.read(REPORT, 'h:"연구 목적"')["error"]
     assert e["code"] == "bad_address" and any("연구 목적" in c for c in e["candidates"])
     assert D.read(GUARD, "page:1")["error"]["code"] == "capability_unavailable"
@@ -168,7 +178,7 @@ def test_text_edits_without_engine(no_engine, tmp_path):
         {"op": "replace", "at": "t0/r0/c0/p0:0-7", "find": "표준근로계약서", "with": "계약서"},
         {"op": "replace", "at": "p1", "find": "근로", "with": "N", "all": True},
         {"op": "table.set_cells", "at": "t5/r13/c2", "grid": [["강남구"]]},
-        {"op": "fill", "place": "근로자Worker", "text": "홍길동"},
+        {"op": "fill", "place": place_of(src, "근로자Worker")["id"], "text": "홍길동"},
     ], base=rev, out=out)
     assert r["ok"], r
     assert src.read_bytes() == before                       # input untouched
@@ -180,9 +190,10 @@ def test_text_edits_without_engine(no_engine, tmp_path):
     p1 = D.read(out, "p1")["blocks"][0]["text"]
     assert "근로" not in p1 and "N계약" in p1
     assert D.read(out, "t5/r13/c2")["blocks"][0]["text"] == "강남구"
-    seat = next(p["at"] for p in D.outline(src)["places"] if p["id"] == "근로자Worker")
+    worker = place_of(src, "근로자Worker")
+    seat = worker["at"]
     assert D.read(out, seat)["blocks"][0]["text"] == "홍길동"
-    filled = {p["id"]: p for p in D.outline(out)["places"]}["근로자Worker"]    # a filled seat keeps its id
+    filled = {p["id"]: p for p in D.outline(out)["places"]}[worker["id"]]    # a filled seat keeps its id
     assert filled["at"] == seat and filled["value"] == "홍길동" and filled["filled"] is True
     # the package: same members in the same order, mimetype first and stored, XML well-formed
     with zipfile.ZipFile(src) as a, zipfile.ZipFile(out) as b:
@@ -451,3 +462,184 @@ def test_engine_reads_and_edits_hwp(kit, tmp_path):
     assert r["ok"] and r["out"].endswith("kit_feat_lists.edited.hwpx")
     assert D.read(r["out"], "p0")["blocks"][0]["text"] == "바뀜"
     assert f.read_bytes() == before
+
+# ============================================================================ shared addressing fixture
+# tests/fixtures/doc_core/addressing.{hwpx,json} (doc-core-api.md, ruling 2026-11-19 04:30Z), the fixture
+# rt_doc and the engine both run: only top-level tables count as t<N>, a nested table goes through its cell, a
+# covered cell answers at its anchor, the unused hp:switch branch has no address, place ids hash an identity
+# filling cannot change, unresolved addresses are bad_address with at and candidates, ranges count code points,
+# and a locked file is `locked`.
+FX_DIR = REPO / "tests" / "fixtures" / "doc_core"
+FX_DOC = FX_DIR / "addressing.hwpx"
+FX_WANT = json.loads((FX_DIR / "addressing.json").read_text("utf-8"))
+
+
+def _fx_copy(tmp_path, name="doc.hwpx"):
+    return shutil.copyfile(FX_DOC, tmp_path / name)
+
+
+def _fx_text(f, at):
+    r = D.read(f, at)
+    assert r["ok"], r
+    return r["blocks"][0]["text"]
+
+
+def _fx_cells(f):
+    return {p["at"]: p for p in D.outline(f)["places"] if p["kind"] == "cell"}
+
+
+# ---------------------------------------------------------------------------- the addressing fixture
+def test_addressing_fixture_matches_its_builder():
+    sys.path.insert(0, str(FX_DIR))
+    try:
+        import build_addressing as B
+    finally:
+        sys.path.remove(str(FX_DIR))
+    assert B.expected() == FX_WANT, "addressing.json is stale; run tests/fixtures/doc_core/build_addressing.py"
+    for p in FX_WANT["cell_places"] + FX_WANT["label_lines"]:
+        assert D.place_id(*p["parts"]) == p["id"]
+
+
+# ============================================================================ tables
+def test_only_top_level_tables_count_and_nested_ones_go_through_their_cell(no_engine):
+    ol = D.outline(FX_DOC)
+    assert [(t["at"], t["rows"], t["cols"]) for t in ol["tables"]] == \
+        [(t["at"], t["rows"], t["cols"]) for t in FX_WANT["tables"]]
+    doc = D._load(FX_DOC)
+    assert {a: t.id for a, t in doc.by_addr.items()} == {t["at"]: t["id"] for t in FX_WANT["tables"]}
+    assert [t.id for t in doc.tables if t.addr is None] == ["5004"]        # the hp:default branch
+
+
+@pytest.mark.parametrize("at", sorted(FX_WANT["text"]))
+def test_addresses_read_back(no_engine, at):
+    assert _fx_text(FX_DOC, at) == FX_WANT["text"][at]
+
+
+def test_a_covered_cell_answers_at_its_anchor(no_engine):
+    for at, anchor in FX_WANT["covered"].items():
+        r = D.read(FX_DOC, at)
+        assert r["ok"] and r["blocks"][0]["at"].startswith(anchor + "/"), r
+
+
+@pytest.mark.parametrize("at", FX_WANT["bad_address"])
+def test_unresolved_addresses_are_bad_address_with_at_and_candidates(no_engine, at):
+    e = D.read(FX_DOC, at)["error"]
+    assert e["code"] == "bad_address" and e["at"] == at and e["candidates"], e
+    for c in e["candidates"]:
+        assert D.read(FX_DOC, c)["ok"], c                                   # every candidate resolves
+
+
+def test_full_read_blocks_read_back_alone(no_engine):
+    for b in D.read(FX_DOC)["blocks"]:
+        assert D.read(FX_DOC, b["at"])["ok"], b
+
+
+def test_edit_a_nested_cell(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    out = tmp_path / "out.hwpx"
+    r = D.edit(src, [{"op": "set", "at": "t0/r2/c1/t0/r0/c1", "text": "010-0000-0000"},
+                     {"op": "table.set_cells", "at": "t2/r1/c1", "grid": [["서울"]]}],
+               base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    assert r["remap"] == []
+    assert _fx_text(out, "t0/r2/c1/t0/r0/c1") == "010-0000-0000" and _fx_text(out, "t2/r1/c1") == "서울"
+    assert _fx_text(out, "t0/r1/c1") == "" and _fx_text(out, "t1/r0/c0") == "분류"
+
+
+# ============================================================================ place ids
+def test_cell_place_ids_hash_table_id_row_and_column(no_engine):
+    got = _fx_cells(FX_DOC)
+    for p in FX_WANT["cell_places"]:
+        assert got[p["at"]]["id"] == p["id"] and got[p["at"]]["label"] == p["label"], (p, got.get(p["at"]))
+    assert len({p["id"] for p in got.values()}) == len(got)               # the two 성명 cells differ
+
+
+def test_filling_one_form_moves_no_id_of_the_other(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    before = _fx_cells(src)
+    first = before["t0/r0/c1"]["id"]
+    out = tmp_path / "filled.hwpx"
+    r = D.edit(src, [{"op": "fill", "place": first, "text": "홍길동"}], base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    after = _fx_cells(out)
+    assert {a: p["id"] for a, p in after.items()} == {a: p["id"] for a, p in before.items()}
+    assert after["t0/r0/c1"]["value"] == "홍길동" and after["t0/r0/c1"]["filled"] is True
+    assert after["t0/r1/c1"]["label"] == "주소"                            # not relabelled by the typed value
+    assert after["t2/r0/c1"]["filled"] is False
+    # an outside copy (no lineage): every seat still empty there keeps the same id
+    D._LINEAGE.clear()
+    os.environ[D.CACHE_ENV] = str(tmp_path / "fresh-cache")
+    outside = {a: p["id"] for a, p in _fx_cells(out).items()}
+    assert outside == {a: p["id"] for a, p in before.items() if a != "t0/r0/c1"}
+    # filling the second form's 성명 by its id writes there, not into the first
+    r2 = D.edit(out, [{"op": "fill", "place": before["t2/r0/c1"]["id"], "text": "김철수"}], base=D.rev_of(out),
+                out=tmp_path / "again.hwpx")
+    assert r2["ok"] and _fx_text(r2["out"], "t2/r0/c1") == "김철수" and _fx_text(r2["out"], "t0/r0/c1") == "홍길동"
+
+
+# ============================================================================ errors and offsets
+def test_offsets_count_code_points(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    out = tmp_path / "cp.hwpx"
+    r = D.edit(src, [{"op": "set", "at": "p3", "text": "a😀b한c"}], base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    hit = D.find(out, "b한")["hits"][0]
+    assert (hit["at"], hit["start"], hit["end"]) == ("p3", 2, 4)
+    r = D.edit(out, [{"op": "replace", "at": "p3:1-2", "find": "😀", "with": "X"}], base=D.rev_of(out),
+               out=tmp_path / "cp2.hwpx")
+    assert r["ok"] and _fx_text(r["out"], "p3") == "aXb한c"
+    e = D.read(out, "p3:0-9")["error"]
+    assert e["code"] == "bad_address" and e["range"] == [0, 5]
+
+
+def test_a_locked_file_is_locked_and_retryable(no_engine, tmp_path):
+    src = _fx_copy(tmp_path)
+    real = D._bopen
+
+    def deny(path, *a, **k):
+        if Path(path) == Path(src):
+            raise PermissionError(13, "The process cannot access the file because it is being used")
+        return real(path, *a, **k)
+    with patch.object(D, "_bopen", side_effect=deny):
+        e = D.outline(src)["error"]
+    assert e["code"] == "locked" and e["retryable"] is True
+
+
+# ============================================================================ with the engine
+@engine
+def test_engine_agrees_on_tables_and_place_ids(kit):
+    D.close()
+    ol = D.outline(FX_DOC)
+    assert ol["ok"], ol
+    assert [t["at"] for t in ol["tables"]] == [t["at"] for t in FX_WANT["tables"]]
+    by_at = {p["at"]: p for p in ol["places"]}
+    for p in FX_WANT["cell_places"]:
+        if p["at"] in by_at and by_at[p["at"]]["kind"] == "cell":
+            assert by_at[p["at"]]["id"] == p["id"], (p, by_at[p["at"]])
+    for p in FX_WANT["label_lines"]:
+        if p["at"] in by_at:
+            assert by_at[p["at"]]["id"] == p["id"], (p, by_at[p["at"]])
+
+
+@engine
+def test_engine_edit_of_a_nested_cell_and_remap_through_it(kit, tmp_path):
+    D.close()
+    src = _fx_copy(tmp_path)
+    out = tmp_path / "ins.hwpx"
+    r = D.edit(src, [{"op": "insert_table", "at": "p0", "data": [["새", "표"]]},
+                     {"op": "set", "at": "t0/r2/c1/t0/r1/c1", "text": "a@b"}], base=D.rev_of(src), out=out)
+    assert r["ok"], r
+    assert not r.get("remap_approx"), r
+    assert D.follow_remap(r["remap"], "t0") == "t1"
+    assert D.follow_remap(r["remap"], "t0/r2/c1/t0/r1/c1") == "t1/r2/c1/t0/r1/c1"
+    assert _fx_text(out, "t1/r2/c1/t0/r1/c1") == "a@b" and _fx_text(out, "t1/r2/c1/t0/r0/c0") == "전화"
+    assert _fx_text(out, "t3/r0/c0") == "성명"
+
+
+@engine
+def test_engine_page_out_of_range_is_bad_address_with_range(kit):
+    D.close()
+    n = D.pages(FX_DOC)
+    assert n["ok"], n
+    e = D.render(FX_DOC, [n["count"] + 1])["error"]
+    assert e["code"] == "bad_address" and e["range"] == [1, n["count"]]

@@ -24,6 +24,7 @@ list, text that is not text) is `bad_input`, never `internal`.
 | `engine_done` | edit, engine | the engine's own record of the steps that ran |
 | `written` | edit | `false`: no file was changed |
 | `candidates` | `bad_address`, `ambiguous_match`, unknown style | addresses (`p3`, `t1/r2/c0`, `h:"..."`, `place:<id>`) to try instead; never empty while the document has paragraphs |
+| `range` | `bad_address` for a page or offset | `[lo, hi]`, the valid pages (`[1, count]`) or offsets (`[0, length]`) |
 | `rev` | `stale` | the file's current rev |
 | `total` | `ambiguous_match` | how many matches there were |
 | `expected`, `actual` | `expect_mismatch` | what `expect` said and what is there (text, or a match count) |
@@ -33,10 +34,11 @@ list, text that is not text) is `bad_input`, never `internal`.
 | Code | Retryable | Means |
 |---|---|---|
 | `bad_input` | no | the request is malformed: wrong types, unknown op, bad regex, an output that is the input (or a link to it), a precondition on an op that has none |
-| `bad_address` | no | an address that is malformed or does not resolve; see `candidates` |
+| `bad_address` | no | an address that is malformed or does not resolve (with `at` and `candidates`), or a page or offset out of range (with `range`); never `bad_input` |
 | `not_found` | no | a missing file, a missing output folder, `replace` text that does not occur, a missing picture |
 | `stale` | yes | `base` is not the file's current rev (also when another writer replaced the file during an in-place edit); read again |
-| `busy` | yes | another writer holds the destination's lock, or Windows refused the replace because the file is open elsewhere; retry |
+| `busy` | yes | another rt_doc writer holds the destination's lock; retry |
+| `locked` | yes | another program has the file open (Windows sharing violation on read or replace) or the file is not accessible; close it and retry |
 | `expect_mismatch` | no | `expect` did not hold |
 | `ambiguous_match` | no | `replace` without `all: true` matched more than once |
 | `conflict` | no | two ops in one edit touch overlapping text or something another op removes |
@@ -77,10 +79,11 @@ it does.
 | Address | Means |
 |---|---|
 | `p12` | top-level paragraph 12, counting through all sections from 0 |
-| `p12:5-18` | characters 5 to 18 of it (used by `replace` and in match lists) |
-| `t3` | table 3 in document order, nested tables included |
+| `p12:5-18` | code points 5 to 18 of its text (used by `replace` and in match lists) |
+| `t3` | top-level body table 3 in document order (nested tables not counted) |
+| `t3/r2/c1/t0` | the first table nested in that cell (`.../t0/r0/c0/p0` goes on below it) |
 | `t3/r2` | row 2 of it (for `table.add_row` / `table.delete_row`) |
-| `t3/r2/c1` | the cell at row 2, column 1; inside a merged cell it means the merged cell |
+| `t3/r2/c1` | the cell at row 2, column 1; a covered (merged-away) coordinate means its top-left anchor cell |
 | `t3/r2/c1/p0` | paragraph 0 of that cell |
 | `h:"제목"` | the heading with that text, or the only heading starting with it |
 | `place:<id>` | a fill seat from `outline()` |
@@ -96,8 +99,16 @@ says `remap_approx: true` and the map is a text alignment. When typed text has
 line breaks, the paragraph keeps its address (it holds the first line) and the
 new paragraphs follow it.
 
-The numbering is the engine's own (`hnc_edit`): a test checks paragraph counts,
-paragraph text and cell paragraphs against the engine on every engine fixture.
+The numbering is the engine's own (doc-core-api.md, ruling 2026-11-19): `p<N>`
+and cell paragraphs match `hnc_edit` (a test checks counts and text on every
+engine fixture), and `t<N>` counts top-level body tables as `hnc_addr` does.
+Inside `hp:switch` only the branch layout uses (the first `hp:case`, else
+`hp:default`) has table addresses; tables in headers, footers, notes,
+captions and text boxes have none. Offsets everywhere count Unicode code
+points of a paragraph's text. The shared fixture
+`tests/fixtures/doc_core/addressing.hwpx` (nested table, merged cell,
+`hp:switch`, two forms with the same labels; built by `build_addressing.py`,
+expected answers in `addressing.json`) runs in both repos.
 An address that does not resolve gives `bad_address` with `candidates`: the
 nearest headings, place ids or valid addresses.
 
@@ -106,27 +117,42 @@ nearest headings, place ids or valid addresses.
 `outline()` lists `places: [{id, at, label, kind, value, filled, page?}]`, and
 `place:<id>` addresses one. Without the engine they are:
 
-- click-here fields (누름틀, `fieldBegin type="CLICK_HERE"`): id = the field's
-  `name`, label = its `Direction` text, kind `field`, at = the paragraph that
-  holds it; `fill` types inside the field;
-- an empty table cell labelled by the cell to its left (else above): id = the
-  label without numbering, spaces and punctuation, kind `cell`;
+- click-here fields (누름틀, `fieldBegin type="CLICK_HERE"`): label = its
+  `Direction` text, kind `field`, at = the paragraph that holds it; `fill`
+  types inside the field;
+- an empty table cell labelled by the cell to its left (else above), kind `cell`;
 - a blank paragraph right under a heading: kind `body`.
 
 With the engine they are its form analysis (`analyze`), plus click-here
-fields it does not list. When two seats would get one id, each is listed as
-`<id>@<at>` and `place:<id>` alone is refused with both as candidates.
+fields it does not list.
+
+An id hashes an identity that filling cannot change (ruling 2026-11-19):
+`place_id(*parts)` = the first 12 hex of the sha256 of the parts joined by
+NUL (`rt_doc.place_id`), with parts
+
+| Seat | Parts |
+|---|---|
+| cell | `"cell"`, the table's `hp:tbl @id` (its address when it has none), row, col |
+| body seat | `"body"`, the text of the heading above it, how many earlier headings have that text |
+| label line (`성명: ...`) | `"field"`, the label, how many earlier lines have that label, filled or not |
+| click-here field | `"click"`, its name (else prompt), how many earlier click-here fields have that name |
+| anything else | its kind, its label, how many earlier seats of that kind have that label |
+
+So two forms with the same labels get different ids, and typing into one seat
+never moves an id to another. In the rare case that two seats still hash
+alike, each is listed as `<id>@<at>` and `place:<id>` alone is refused with
+both as candidates.
 
 `places_complete` says whether the list covers every kind of seat in the
 document; when it is `false`, `places_reason` says what is missing (form
 controls such as check boxes without the engine, a field across paragraphs, a
-failed engine analysis). An id stays with its seat: when rt_doc writes a
+failed engine analysis). A filled seat stays listed: when rt_doc writes a
 document (`edit`, `fill`), the seats of the document it started from are
 carried into the result through the exact remap and kept in a small cache
 (`RIGORLOOM_DOC_CACHE`, default `~/.cache/rigorloom/doc-core`, keyed by the
-output's sha256). So a filled seat keeps its id and shows its `value` with
-`filled: true`, and relabelling another cell never moves an id. A document
-changed outside rt_doc starts again from what can be discovered.
+output's sha256), so a filled seat keeps its id and shows its `value` with
+`filled: true`. In a document filled outside rt_doc, a seat discovery no
+longer recognises as empty is not listed, and every other seat keeps its id.
 
 `outline()` also gives `paragraphs` (the count of top-level paragraphs),
 `paragraph_range` (`"p0..pN"`) and, per table, `title`: the first cell's text,

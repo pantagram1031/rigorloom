@@ -158,6 +158,7 @@
 | `not_found` | 문서 파일을 찾을 수 없습니다. 문서를 다시 열어야 합니다. | Could not find the document file. Reopen the document. |
 | `stale` | 처음 읽은 뒤 문서가 바뀌었습니다. 문서를 다시 읽어야 합니다. | The document has changed since it was read. Read it again. |
 | `busy` | 다른 작업이 이 문서를 쓰고 있습니다. 잠시 후 다시 시도할 수 있습니다. | Another task is writing this document. Try again shortly. |
+| `locked` | 다른 프로그램에서 이 문서를 열고 있습니다. 그 프로그램에서 닫은 뒤 다시 시도할 수 있습니다. | Another program has this document open. Close it there, then try again. |
 | `expect_mismatch` | 바꾸려는 문구가 예상한 내용과 다릅니다. | The text to change differs from what was expected. |
 | `ambiguous_match` | 같은 문구가 여러 곳에 있어 바꿀 위치를 정할 수 없습니다. | The same text appears in more than one place. Could not tell which one to change. |
 | `conflict` | 같은 곳을 고치는 변경이 서로 겹칩니다. 변경을 나눠야 합니다. | Some changes overlap at the same place. Split the changes. |

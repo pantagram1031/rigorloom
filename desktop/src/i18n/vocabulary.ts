@@ -333,6 +333,10 @@ export const ERROR_CODE_VOCAB = {
     ko: "다른 작업이 이 문서를 쓰고 있습니다. 잠시 후 다시 시도할 수 있습니다.",
     en: "Another task is writing this document. Try again shortly.",
   },
+  locked: {
+    ko: "다른 프로그램에서 이 문서를 열고 있습니다. 그 프로그램에서 닫은 뒤 다시 시도할 수 있습니다.",
+    en: "Another program has this document open. Close it there, then try again.",
+  },
   expect_mismatch: {
     ko: "바꾸려는 문구가 예상한 내용과 다릅니다.",
     en: "The text to change differs from what was expected.",

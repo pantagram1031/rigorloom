@@ -163,6 +163,7 @@ DOC_CORE_CODES = frozenset({
     "not_found",
     "stale",
     "busy",
+    "locked",
     "expect_mismatch",
     "ambiguous_match",
     "conflict",

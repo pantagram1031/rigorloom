@@ -26,22 +26,26 @@ order their start tags appear, nested ones (cells, text boxes, captions, notes)
 included; that is ``hnc_edit.Doc.paragraphs(si)`` and its ``k``. A paragraph is
 *top-level* when no other ``<hp:p>`` encloses it. ``pN`` is the N-th top-level
 paragraph counting through all sections in order (0-based); this is the
-``para`` index of the engine's ``pages()`` flow and form_model's ``k``. Tables
-(``tN``) are ``<hp:tbl>`` elements in start-tag order, section after section,
-nested tables included (= ``hnc_edit``'s per-section table list, concatenated).
-A cell is addressed by its ``<hp:cellAddr>`` row/col; an address that lands
-inside a merged cell answers at the cell that covers it. ``tN/rR/cC/pK`` is the
-K-th paragraph directly in that cell (``hnc_edit.Doc.cell_paragraphs``).
-Positions inside a paragraph count characters, tabs and line breaks one each
-and every inline object (table, picture, equation) as one position too, the
-way ``hnc_edit`` moves the caret; text returned to callers leaves objects out
-and offsets in results are offsets into that text.
+``para`` index of the engine's ``pages()`` flow and form_model's ``k``. ``tN``
+counts top-level body tables only, in document order through all sections (the
+engine's ``hnc_addr``; doc-core-api.md, ruling 2026-11-19). A nested table is
+addressed through its cell: ``t0/r1/c2/t0`` is the first table in that cell,
+and ``t0/r1/c2/t0/r0/c0/p0`` goes on below it. Inside ``hp:switch`` only the
+branch layout uses (the first ``hp:case``, else ``hp:default``) is counted;
+tables in headers, footers, notes, captions and text boxes have no address.
+A cell is addressed by its ``<hp:cellAddr>`` row/col; a covered (merged-away)
+coordinate answers at its top-left anchor. ``tN/rR/cC/pK`` is the K-th
+paragraph directly in that cell (``hnc_edit.Doc.cell_paragraphs``). Internally
+every ``<hp:tbl>`` keeps its start-tag index (``Table.g``/``lt``), which is
+what engine edit scripts use. Offsets and ``p12:5-18`` ranges count Unicode
+code points of the paragraph's text (objects left out).
 
 ADDRESSES. ``p12``, ``t3``, ``t3/r2`` (a row, for table ops), ``t3/r2/c1``,
 ``t3/r2/c1/p0``, ``h:"제목"`` (exact heading text, then a unique prefix;
 quotes optional), ``place:<id>`` (a fill seat from ``outline()``), ``page:4``
 (1-based, pages/render/geometry only). An address that does not resolve is
-``bad_address`` with ``candidates``.
+``bad_address`` with ``at`` and the nearest ``candidates``; a page or offset out
+of range is ``bad_address`` with ``range: [lo, hi]``.
 
 EDITS. ``edit(path, ops, base=rev)`` reads the file once and refuses with
 ``stale`` when its rev (first 12 hex of the sha256 of its bytes) is not
@@ -99,7 +103,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
 _bopen = builtins.open
-_RETRYABLE = {"stale": True, "busy": True, "engine_timeout": True, "engine_unavailable": True, "internal": False}
+_RETRYABLE = {"stale": True, "busy": True, "locked": True, "engine_timeout": True, "engine_unavailable": True, "internal": False}
 
 
 # ============================================================================ errors
@@ -158,8 +162,12 @@ def rev_of(path) -> str:
 
 def _read_bytes(path) -> bytes:
     """The file's bytes in one read: every rev this module reports is the rev of the bytes it parsed."""
-    with _bopen(path, "rb") as f:
-        return f.read()
+    try:
+        with _bopen(path, "rb") as f:
+            return f.read()
+    except PermissionError as exc:      # Windows: open in Hancom without read sharing
+        raise DocError("locked", "%s is locked by another program (%s); close it and retry"
+                       % (Path(path).name, exc.strerror or exc), at=str(path), retryable=True)
 
 
 def _need_file(path):
@@ -183,8 +191,13 @@ def _format_of_bytes(head: bytes, path) -> str:
 
 
 def _format_of(path) -> str:
-    with _bopen(path, "rb") as f:
-        return _format_of_bytes(f.read(8), path)
+    try:
+        with _bopen(path, "rb") as f:
+            head = f.read(8)
+    except PermissionError as exc:
+        raise DocError("locked", "%s is locked by another program (%s); close it and retry"
+                       % (Path(path).name, exc.strerror or exc), at=str(path), retryable=True)
+    return _format_of_bytes(head, path)
 
 
 _SCRATCH = None
@@ -338,8 +351,8 @@ def _replace(tmp, dest):
         except PermissionError:
             if n + 1 < _REPLACE_TRIES:
                 time.sleep(0.02 * (2 ** n))
-    raise DocError("busy", "%s is open in another program (or not writable); close it and retry" % Path(dest).name,
-                   at=str(dest), retryable=True)
+    raise DocError("locked", "%s is open in another program (or not writable); close it and retry"
+                   % Path(dest).name, at=str(dest), retryable=True)
 
 
 def _fsync_dir(d):
@@ -873,6 +886,9 @@ INLINE_W = {"hp:tab": "\t", "hp:lineBreak": "\n", "hp:fwSpace": "　", "hp:nbSpa
 ZERO_CTRL = {"hp:colPr", "hp:fieldBegin", "hp:fieldEnd", "hp:bookmark", "hp:pageNum", "hp:pageHiding",
              "hp:newNum", "hp:indexmark", "hp:header", "hp:footer", "hp:autoNum"}
 OBJ = "￼"
+#: containers whose tables are not numbered (the engine's hnc_addr.SKIP_LOCAL)
+SKIP_TBL = frozenset("hp:" + k for k in ("header", "footer", "footNote", "endNote", "caption", "drawText",
+                                         "masterPage"))
 SECTION_RE = re.compile(r"^Contents/section(\d+)\.xml$")
 
 
@@ -974,11 +990,18 @@ class Cell:
 
 
 class Table:
-    __slots__ = ("si", "lt", "g", "start", "end", "host", "cells", "caption", "rows", "cols", "id")
+    """One <hp:tbl>. `g` is its index among ALL tables (start-tag order, the engine's edit-script index);
+    `addr` its public address (``t<N>`` for a top-level body table, ``<cell>/t<K>`` for a nested one), None
+    for a table that has none (header, footer, note, caption, text box, an unused hp:switch branch)."""
+    __slots__ = ("si", "lt", "g", "start", "end", "host", "cells", "caption", "rows", "cols", "id", "parent",
+                 "dead", "addr")
 
     def __init__(self, si, lt, start, host, tid):
         self.si, self.lt, self.g, self.start, self.end, self.host = si, lt, None, start, None, host
         self.cells, self.caption, self.rows, self.cols, self.id = [], [], 0, 0, tid
+        self.parent = None      # the Cell it sits in, None at the top level
+        self.dead = False       # inside a container that has no table addresses
+        self.addr = None
 
     def at(self, r, c):
         for x in self.cells:
@@ -1129,6 +1152,9 @@ def _scan_section(s, si, canon=None):
             t = Table(si, len(tables), m.start(), fr_p[1] if fr_p else None, _attr(tag, "id"))
             t.rows = int(_attr(tag, "rowCnt") or 0)
             t.cols = int(_attr(tag, "colCnt") or 0)
+            t.dead = any(fr[0] in SKIP_TBL or fr[2] == "dead" for fr in stack)
+            fr_tc = innermost("hp:tc")
+            t.parent = fr_tc[1] if fr_tc is not None else None
             tables.append(t)
             stack.append([name, t, None])
         elif name == "hp:tc":
@@ -1148,6 +1174,15 @@ def _scan_section(s, si, canon=None):
                     fr_c[1].rs, fr_c[1].cs = int(_attr(tag, "rowSpan") or 1), int(_attr(tag, "colSpan") or 1)
             if not selfc:
                 stack.append([name, None, None])
+        elif name == "hp:switch" and not selfc:
+            stack.append([name, {"case": False, "has_case": _switch_has_case(s, m)}, None])
+        elif name in ("hp:case", "hp:default") and not selfc and top is not None and top[0] == "hp:switch":
+            sw = top[1]
+            # layout reads the first hp:case, else hp:default (hnc_layout._run_children)
+            dead = sw["case"] if name == "hp:case" else sw["has_case"]
+            if name == "hp:case":
+                sw["case"] = True
+            stack.append([name, None, "dead" if dead else None])
         elif name == "hp:caption":
             if selfc:
                 continue
@@ -1159,6 +1194,25 @@ def _scan_section(s, si, canon=None):
 
 
 _DIRECTION = re.compile(r"<[\w:.-]*stringParam\b[^>]*\bname=\"Direction\"[^>]*>(.*?)</", re.S)
+
+
+def _switch_has_case(s, m):
+    """Whether the hp:switch opened by match m has an hp:case (then its hp:default is not what layout uses)."""
+    raw = m.group(2)
+    pfx = raw[:raw.index(":") + 1] if ":" in raw else ""
+    pat = re.compile(r"<(/?)%s(switch|case)\b" % re.escape(pfx))
+    depth = 0
+    for x in pat.finditer(s, m.end()):
+        if x.group(2) == "switch":
+            if x.group(1):
+                if depth == 0:
+                    return False
+                depth -= 1
+            else:
+                depth += 1
+        elif depth == 0 and not x.group(1):
+            return True
+    return False
 
 
 def _field_mark(s, m, name, tag, selfc, p, stack, paras):
@@ -1256,12 +1310,34 @@ class Doc:
         self.top = [p for p in self.paras if p.top]
         for i, p in enumerate(self.top):
             p.gp = i
+        self.cell_table = {}
         for g, t in enumerate(self.tables):
             t.g = g
             if not t.rows and t.cells:
-                t.rows = max(c.row + c.rs for c in t.cells)
+                t.rows = max((c.row or 0) + c.rs for c in t.cells)
             if not t.cols and t.cells:
-                t.cols = max(c.col + c.cs for c in t.cells)
+                t.cols = max((c.col or 0) + c.cs for c in t.cells)
+            for c in t.cells:
+                self.cell_table[id(c)] = t
+        # public table addresses (doc-core-api.md, ruling 2026-11-19): top-level body tables count t0, t1, ...
+        # through all sections; a nested table is <its cell>/t<K>, K counting the tables in that cell
+        top, inner = 0, {}
+        for t in self.tables:
+            if t.dead:
+                continue
+            if t.parent is None:
+                t.addr = "t%d" % top
+                top += 1
+                continue
+            host = self.cell_table.get(id(t.parent))
+            c = t.parent
+            if host is None or host.addr is None or c.row is None or c.col is None:
+                continue
+            k = inner.get(id(c), 0)
+            inner[id(c)] = k + 1
+            t.addr = "%s/r%d/c%d/t%d" % (host.addr, c.row, c.col, k)
+        self.by_addr = {t.addr: t for t in self.tables if t.addr}
+        self.top_tables = [t for t in self.tables if t.addr and t.parent is None]
         self.styles, self.para_heading, self.bold_cp, self.fonts = _header_info(hdr)
         self.meta_lock = threading.Lock()
         self.meta_done = False
@@ -1286,7 +1362,7 @@ class Doc:
         return [t for t in self.sec_tables[p.si] if p.start < t.start < p.end]
 
     def table_of(self, cell):
-        return next((t for t in self.tables if cell in t.cells), None)
+        return self.cell_table.get(id(cell))
 
     def page_of(self, p):
         if not self.page_starts:
@@ -1424,7 +1500,8 @@ def _ensure_meta(d, e):
 
 # ============================================================================ addresses
 _ADDR = re.compile(r"^(?:p(?P<p>\d+)(?P<rng>:\d+-\d+)?"
-                   r"|t(?P<t>\d+)(?:/r(?P<r>\d+)(?:/c(?P<c>\d+)(?:/p(?P<cp>\d+)(?P<crng>:\d+-\d+)?)?)?)?"
+                   r"|t(?P<t>\d+)(?P<nest>(?:/r\d+/c\d+/t\d+)*)"
+                   r"(?:/r(?P<r>\d+)(?:/c(?P<c>\d+)(?:/p(?P<cp>\d+)(?P<crng>:\d+-\d+)?)?)?)?"
                    r"|h:(?P<h>.+)|place:(?P<place>.+)|page:(?P<page>\d+))$", re.S)
 
 
@@ -1448,14 +1525,16 @@ def parse_address(addr):
     if g["p"] is not None:
         return {"kind": "para", "p": int(g["p"]), **({"range": rng} if rng else {})}
     if g["t"] is not None:
-        t = int(g["t"])
+        t = {"t": int(g["t"])}
+        if g["nest"]:       # t0/r1/c2/t0: the first table in cell (1, 2) of t0
+            t["nest"] = [tuple(int(v) for v in x) for x in re.findall(r"/r(\d+)/c(\d+)/t(\d+)", g["nest"])]
         if g["r"] is None:
-            return {"kind": "table", "t": t}
+            return {"kind": "table", **t}
         if g["c"] is None:
-            return {"kind": "row", "t": t, "r": int(g["r"])}
+            return {"kind": "row", **t, "r": int(g["r"])}
         if g["cp"] is None:
-            return {"kind": "cell", "t": t, "r": int(g["r"]), "c": int(g["c"])}
-        return {"kind": "cellpara", "t": t, "r": int(g["r"]), "c": int(g["c"]), "k": int(g["cp"]),
+            return {"kind": "cell", **t, "r": int(g["r"]), "c": int(g["c"])}
+        return {"kind": "cellpara", **t, "r": int(g["r"]), "c": int(g["c"]), "k": int(g["cp"]),
                 **({"range": rng} if rng else {})}
     if g["h"] is not None:
         h = g["h"].strip()
@@ -1472,9 +1551,35 @@ def para_address(doc, p):
     if p.top:
         return "p%d" % p.gp
     if p.cell is not None:
-        t = next(t for t in doc.sec_tables[p.si] if p.cell in t.cells)
-        return "t%d/r%d/c%d/p%d" % (t.g, p.cell.row, p.cell.col, p.cell.paras.index(p))
+        t = doc.table_of(p.cell)
+        if t is None or t.addr is None:
+            return None
+        return "%s/r%d/c%d/p%d" % (t.addr, p.cell.row, p.cell.col, p.cell.paras.index(p))
     return None
+
+
+def cell_address(t, c):
+    return "%s/r%d/c%d" % (t.addr, c.row, c.col)
+
+
+def _table_path(doc, a, addr):
+    """The Table an address's t<N>[/r/c/t<K>...] part names; bad_address with candidates when none."""
+    tops = doc.top_tables
+    if a["t"] >= len(tops):
+        raise DocError("bad_address", "the document has %d top-level tables" % len(tops), at=addr,
+                       candidates=[t.addr for t in tops[:8]])
+    t = tops[a["t"]]
+    for r, c, k in a.get("nest", ()):
+        cell = t.at(r, c)
+        if cell is None:
+            raise DocError("bad_address", "table %s has no cell at row %d, column %d" % (t.addr, r, c), at=addr,
+                           candidates=[cell_address(t, x) for x in t.row_cells(min(r, max(t.rows - 1, 0)))][:8])
+        inner = [x for x in doc.tables if x.parent is cell and x.addr]
+        if k >= len(inner):
+            raise DocError("bad_address", "cell %s holds %d tables" % (cell_address(t, cell), len(inner)), at=addr,
+                           candidates=[x.addr for x in inner] or [cell_address(t, cell)])
+        t = inner[k]
+    return t
 
 
 def _headings(doc):
@@ -1548,7 +1653,7 @@ def _discover(doc):
                 idx = pl.get("index")
                 p = doc.sec_paras[si][idx] if _is_int(idx) and 0 <= idx < len(doc.sec_paras[si]) else c.paras[0]
                 rec["para"] = p
-                rec["at"] = ("t%d/r%d/c%d" % (t.g, c.row, c.col)) if pl["kind"] == "cell" else para_address(doc, p)
+                rec["at"] = (cell_address(t, c) if t.addr else None) if pl["kind"] == "cell" else para_address(doc, p)
             else:
                 idx = pl.get("index")
                 if not _is_int(idx) or not 0 <= idx < len(doc.sec_paras[si]):
@@ -1560,6 +1665,8 @@ def _discover(doc):
                 out.append(rec)
     else:
         for t in doc.tables:
+            if t.addr is None:
+                continue
             texts = {(c.row, c.col): "\n".join(p.text for p in c.paras).strip() for c in t.cells}
             for c in t.cells:
                 if texts[(c.row, c.col)] or any(p.objs for p in c.paras) or not c.paras:
@@ -1574,7 +1681,7 @@ def _discover(doc):
                     continue
                 pid = _norm_key(label)
                 if pid:
-                    out.append({"id": pid, "at": "t%d/r%d/c%d" % (t.g, c.row, c.col), "label": label,
+                    out.append({"id": pid, "at": cell_address(t, c), "label": label,
                                 "kind": "cell", "table": t, "cell": c, "para": c.paras[0]})
         heads = _headings(doc)
         hk = {h["para"].gp for h in heads}
@@ -1593,12 +1700,12 @@ def _discover(doc):
         if doc.engine_places is not None and at in have and not any(
                 r.get("field_id") == f["id"] for r in out if r["at"] == at):
             continue                            # the engine already lists a seat there
-        rec = {"id": f["name"] or _norm_key(f["direction"] or "") or "field%s" % f["id"],
-               "at": at, "label": f["direction"] or f["name"], "kind": "field", "para": p, "field": f,
+        rec = {"id": None, "at": at, "label": f["direction"] or f["name"], "kind": "field", "para": p, "field": f,
                "field_id": f["id"]}
         if p.cell is not None:
             rec.update(cell_of=p.cell)
         out.append(rec)
+    _identity_ids(doc, out)
     count = {}
     for r in out:
         count[r["id"]] = count.get(r["id"], 0) + 1
@@ -1607,6 +1714,63 @@ def _discover(doc):
             r["shared"] = r["id"]
             r["id"] = "%s@%s" % (r["id"], r["at"])
     return out
+
+
+#: a label line ("성명: 홍길동"), as the engine's form_model.LABEL_RE reads one
+_LABEL_LINE = re.compile(r"^\s*([가-힣A-Za-z][가-힣A-Za-z ·]{0,14}?)\s*[:：]\s*(.*?)\s*$")
+
+
+def place_id(*parts):
+    """A place id: the first 12 hex of the sha256 of its identity parts joined by NUL (the engine's
+    hnc_addr.place_id hashes kind, label and ordinal the same way)."""
+    return hashlib.sha256("\0".join(str(x) for x in parts).encode("utf-8")).hexdigest()[:12]
+
+
+def _identity_ids(doc, recs):
+    """Give each seat the id of an identity that filling it cannot change (ruling 2026-11-19):
+    cell ``place_id("cell", <hp:tbl @id, else its address>, row, col)``; body seat ``place_id("body", heading
+    text, n)``, n counting the earlier headings with that text; label line ``place_id("field", label, n)``, n
+    counting the earlier lines with that label, filled or not; click-here field ``place_id("click", name or
+    prompt, n)``, n counting the earlier click-here fields with that name; anything else
+    ``place_id(kind, label, n)`` over the seats of that kind and label."""
+    heads = _headings(doc)
+    head_at, seen = {}, {}
+    for h in heads:
+        n = seen.get(h["text"], 0)
+        seen[h["text"]] = n + 1
+        head_at[h["para"].gp] = (h["text"], n)
+    gps = sorted(head_at)
+    lines, seen = {}, {}
+    for p in doc.paras:
+        m = _LABEL_LINE.match(p.text)
+        if m:
+            lab = re.sub(r"\s+", "", m.group(1))
+            n = seen.get(lab, 0)
+            seen[lab] = n + 1
+            lines[id(p)] = (lab, n)
+    clicks, seen = {}, {}
+    for f in _click_fields(doc):
+        lab = f["name"] or f["direction"] or ""
+        n = seen.get(lab, 0)
+        seen[lab] = n + 1
+        clicks[id(f)] = (lab, n)
+    other = {}
+    for r in recs:
+        kind, p = r.get("kind"), r.get("para")
+        if kind == "cell" and r.get("cell") is not None:
+            t, c = r["table"], r["cell"]
+            r["id"] = place_id("cell", t.id or t.addr, c.row, c.col)
+        elif kind == "field" and r.get("field") is not None:
+            r["id"] = place_id("click", *clicks[id(r["field"])])
+        elif kind in ("cover_field", "cell_field") and p is not None and id(p) in lines:
+            r["id"] = place_id("field", *lines[id(p)])
+        elif kind == "body" and p is not None and p.top and gps and gps[0] < p.gp:
+            r["id"] = place_id("body", *head_at[gps[bisect.bisect_left(gps, p.gp) - 1]])
+        else:
+            key = (kind, r.get("label") or "")
+            n = other.get(key, 0)
+            other[key] = n + 1
+            r["id"] = place_id(kind or "place", key[1], n)
 
 
 def _click_fields(doc):
@@ -1752,7 +1916,7 @@ def _with_range(res, a, addr):
         x, y = a["range"]
         if y > len(res["para"].text):
             raise DocError("bad_address", "%s is %d characters long" % (addr.split(":")[0], len(res["para"].text)),
-                           at=addr)
+                           at=addr, range=[0, len(res["para"].text)])
         res["range"] = (x, y)
     return res
 
@@ -1796,28 +1960,25 @@ def _resolve(doc, addr, allow):
         p = doc.top[a["p"]]
         return _with_range({"kind": "para", "para": p, "paras": [p]}, a, addr)
     if kind in ("table", "row", "cell", "cellpara"):
-        if a["t"] >= len(doc.tables):
-            raise DocError("bad_address", "the document has %d tables" % len(doc.tables), at=addr,
-                           candidates=["t%d" % i for i in range(min(len(doc.tables), 8))])
-        t = doc.tables[a["t"]]
+        t = _table_path(doc, a, addr)
         if kind == "table":
             return {"kind": "table", "table": t, "paras": [p for c in t.cells for p in c.paras]}
         if a["r"] >= t.rows:
-            raise DocError("bad_address", "table t%d has %d rows" % (t.g, t.rows), at=addr,
-                           candidates=["t%d/r%d" % (t.g, r) for r in range(min(t.rows, 8))])
+            raise DocError("bad_address", "table %s has %d rows" % (t.addr, t.rows), at=addr,
+                           candidates=["%s/r%d" % (t.addr, r) for r in range(max(0, t.rows - 3), t.rows)])
         if kind == "row":
             return {"kind": "row", "table": t, "row": a["r"],
                     "paras": [p for c in t.row_cells(a["r"]) for p in c.paras]}
-        c = t.at(a["r"], a["c"])
+        c = t.at(a["r"], a["c"])       # a covered (merged-away) coordinate answers at its anchor cell
         if c is None:
-            raise DocError("bad_address", "table t%d has no cell at row %d, column %d" % (t.g, a["r"], a["c"]),
-                           at=addr, candidates=["t%d/r%d/c%d" % (t.g, x.row, x.col) for x in t.row_cells(a["r"])])
+            raise DocError("bad_address", "table %s has no cell at row %d, column %d" % (t.addr, a["r"], a["c"]),
+                           at=addr, candidates=[cell_address(t, x) for x in t.row_cells(a["r"])]
+                           or [cell_address(t, x) for x in t.cells[:5]])
         if kind == "cell":
             return {"kind": "cell", "table": t, "cell": c, "paras": list(c.paras)}
         if a["k"] >= len(c.paras):
-            raise DocError("bad_address", "cell t%d/r%d/c%d has %d paragraphs" % (t.g, c.row, c.col, len(c.paras)),
-                           at=addr, candidates=["t%d/r%d/c%d/p%d" % (t.g, c.row, c.col, i)
-                                                for i in range(len(c.paras))])
+            raise DocError("bad_address", "cell %s has %d paragraphs" % (cell_address(t, c), len(c.paras)),
+                           at=addr, candidates=["%s/p%d" % (cell_address(t, c), i) for i in range(len(c.paras))])
         p = c.paras[a["k"]]
         return _with_range({"kind": "para", "para": p, "paras": [p], "table": t, "cell": c}, a, addr)
     if kind == "heading":
@@ -1848,8 +2009,14 @@ def _resolve(doc, addr, allow):
         if shared:
             raise DocError("bad_address", "%d fill places are labelled %r; name one" % (len(shared), a["id"]),
                            at=addr, candidates=["place:%s" % i for i in shared])
-        raise DocError("bad_address", "no fill place %r" % a["id"], at=addr,
-                       candidates=["place:%s" % i for i in _cands_near([pl["id"] for pl in pls], a["id"])])
+        by_label = {}
+        for pl in pls:
+            by_label.setdefault(pl.get("label") or "", []).append(pl["id"])
+        near = [i for lab in difflib.get_close_matches(a["id"], [x for x in by_label if x], n=5, cutoff=0.3)
+                for i in by_label[lab]]
+        raise DocError("bad_address", "no fill place %r (place ids come from outline().places)" % a["id"],
+                       at=addr, candidates=["place:%s" % i for i in (near or _cands_near([pl["id"] for pl in pls],
+                                                                                       a["id"]))][:8])
     return {"kind": "page", "page": a["page"], "paras": []}
 
 
@@ -1897,7 +2064,9 @@ def outline(path):
               **({"page": doc.page_of(h["para"])} if doc.page_starts else {})} for h in _headings(doc)]
     tables = []
     for t in doc.tables:
-        rec = {"at": "t%d" % t.g, "rows": t.rows, "cols": t.cols}
+        if t.addr is None:
+            continue
+        rec = {"at": t.addr, "rows": t.rows, "cols": t.cols}
         first = t.at(0, 0)
         title = " ".join(_cell_text(first).split()) if first is not None else ""
         if title:
@@ -1959,7 +2128,7 @@ def _table_block(doc, t):
     for c in t.cells:
         if c.row < t.rows and c.col < t.cols:
             grid[c.row][c.col] = "\n".join(p.text for p in c.paras)
-    return {"at": "t%d" % t.g, "kind": "table", "rows": t.rows, "cols": t.cols,
+    return {"at": t.addr, "kind": "table", "rows": t.rows, "cols": t.cols,
             "text": "\n".join("\t".join(r) for r in grid), "cells": grid}
 
 
@@ -2085,7 +2254,7 @@ class _Act:
         self.top_dels = []      # base top gps removed
         self.cell_adds = []     # (cell, k, n): n new paragraphs right after the cell's paragraph k
         self.cell_dels = []     # (cell, k)
-        self.tbl_adds = []      # (si, xml offset) of a new table
+        self.tbl_adds = []      # (si, xml offset, its Cell | "top" | None) of a new table
         self.tbl_dels = []      # base table gs removed
         self.row_adds = []      # (table g, after)
         self.row_dels = []      # (table g, row)
@@ -2461,16 +2630,16 @@ def _plan_op(doc, cl, i, name, op, at):
                 rr, cc = r0 + di, c0 + dj
                 c = t.at(rr, cc) if rr < t.rows and cc < t.cols else None
                 if c is None:
-                    raise DocError("bad_address", "table t%d has no cell at row %d, column %d"
-                                   % (t.g, rr, cc), at="t%d/r%d/c%d" % (t.g, rr, cc), i=i,
-                                   candidates=["t%d (%d x %d)" % (t.g, t.rows, t.cols)])
+                    raise DocError("bad_address", "table %s has no cell at row %d, column %d"
+                                   % (t.addr, rr, cc), at="%s/r%d/c%d" % (t.addr, rr, cc), i=i,
+                                   candidates=["%s/r%d/c%d" % (t.addr, min(rr, t.rows - 1), min(cc, t.cols - 1))])
                 if id(c) in done or (c.row, c.col) != (rr, cc):
-                    raise DocError("bad_address", "t%d/r%d/c%d is inside the merged cell t%d/r%d/c%d; "
-                                   "put None there" % (t.g, rr, cc, t.g, c.row, c.col),
-                                   at="t%d/r%d/c%d" % (t.g, rr, cc), i=i,
-                                   candidates=["t%d/r%d/c%d" % (t.g, c.row, c.col)])
+                    raise DocError("bad_address", "%s/r%d/c%d is inside the merged cell %s; "
+                                   "put None there" % (t.addr, rr, cc, cell_address(t, c)),
+                                   at="%s/r%d/c%d" % (t.addr, rr, cc), i=i,
+                                   candidates=[cell_address(t, c)])
                 done.add(id(c))
-                cat = "t%d/r%d/c%d" % (t.g, c.row, c.col)
+                cat = cell_address(t, c)
                 set_cell(c, _clean(str(val), "grid value", i, cat), cat)
     elif name in ("table.add_row", "table.delete_row"):
         r = resolve(doc, at, allow=("table", "row", "cell"))
@@ -2479,20 +2648,20 @@ def _plan_op(doc, cl, i, name, op, at):
         if name == "table.add_row":
             after = op.get("after", here)
             if not _is_int(after) or not 0 <= after < t.rows:
-                raise DocError("bad_address", "table.add_row: after must be a row of t%d (0..%d)"
-                               % (t.g, t.rows - 1), at=at, i=i)
+                raise DocError("bad_address", "table.add_row: after must be a row of %s (0..%d)"
+                               % (t.addr, t.rows - 1), at=at, i=i, range=[0, t.rows - 1])
             like = op.get("like", after)
             if not _is_int(like) or like not in (after, after + 1) or like >= t.rows:
                 raise DocError("bad_input", "table.add_row: like must be the row before or after the new "
                                "one (%d or %d)" % (after, after + 1), at=at, i=i)
             cands = [x for x in t.row_cells(like) if x.rs == 1] or t.row_cells(like)
             if not cands:
-                raise DocError("bad_address", "row %d of t%d starts no cell" % (like, t.g), at=at, i=i)
+                raise DocError("bad_address", "row %d of %s starts no cell" % (like, t.addr), at=at, i=i)
             c = cands[0]
             for row in {after, like}:
                 reg = _row_region(t, row)
                 if reg:
-                    cl.touch(t.si, reg[0], i, name, "t%d/r%d" % (t.g, row))
+                    cl.touch(t.si, reg[0], i, name, "%s/r%d" % (t.addr, row))
             steps = [["goto_cell", t.lt, c.row, c.col, False, t.si], ["insert_row", like == after]]
             vals = op.get("values", op.get("cells"))
             if vals is not None:
@@ -2509,14 +2678,15 @@ def _plan_op(doc, cl, i, name, op, at):
         else:
             row = op.get("row", here)
             if not _is_int(row) or not 0 <= row < t.rows:
-                raise DocError("bad_address", "table.delete_row needs a row of t%d (t%d/rN)" % (t.g, t.g),
-                               at=at, i=i, candidates=["t%d/r%d" % (t.g, x) for x in range(min(t.rows, 5))])
+                raise DocError("bad_address", "table.delete_row needs a row of %s (%s/rN)" % (t.addr, t.addr),
+                               at=at, i=i, range=[0, t.rows - 1],
+                               candidates=["%s/r%d" % (t.addr, x) for x in range(min(t.rows, 5))])
             cands = [x for x in t.row_cells(row) if x.rs == 1] or t.row_cells(row)
             if not cands:
-                raise DocError("bad_address", "row %d of t%d starts no cell" % (row, t.g), at=at, i=i)
+                raise DocError("bad_address", "row %d of %s starts no cell" % (row, t.addr), at=at, i=i)
             _check_expect(op, i, at, _table_text(t, {row}))
             reg = _row_region(t, row)
-            rat = "t%d/r%d" % (t.g, row)
+            rat = "%s/r%d" % (t.addr, row)
             cl.remove(t.si, reg[0], reg[1], i, name, rat)
             c = cands[0]
             a = _Act(i, name, rat, c.paras[0], reg[0],
@@ -2623,7 +2793,7 @@ def _plan_op(doc, cl, i, name, op, at):
             a = _Act(i, name, at, p, kw.pop("anchor"), steps=steps, **kw)
             # Enter makes one paragraph and Hancom ends the table's paragraph with another
             _adds_for(doc, a, p, 2 if inline is None else 0)
-            a.tbl_adds = [(p.si, xml_at)]
+            a.tbl_adds = [(p.si, xml_at, p.cell if p.cell is not None else ("top" if p.top else None))]
             acts.append(a)
         elif name == "insert_picture":
             img = op.get("path")
@@ -2687,7 +2857,7 @@ def _structure(doc, acts):
     newt = {}
     for t in doc.tables:
         newt[t.g] = None if t.g in tdset else (
-            t.g + sum(1 for si, pos in tadds if (si, pos) < (t.si, t.start)) - bisect.bisect_left(tdels, t.g))
+            t.g + sum(1 for si, pos, _h in tadds if (si, pos) < (t.si, t.start)) - bisect.bisect_left(tdels, t.g))
     radds, rdels = {}, {}
     for a in acts:
         for g, after in a.row_adds:
@@ -2705,8 +2875,32 @@ def _structure(doc, acts):
             cadds.setdefault(id(c), (c, []))[1].append((k, n))
         for c, k in a.cell_dels:
             cdels.setdefault(id(c), (c, set()))[1].add(k)
+
+    def same_host(x, host):
+        return x is host if host != "top" else x == "top"
+    addr_memo = {}
+
+    def newaddr(t):
+        """The public address table t has in the output (None: deleted, or it has none)."""
+        if t.g in addr_memo:
+            return addr_memo[t.g]
+        res = None
+        if t.addr is not None and t.g not in tdset:
+            host = "top" if t.parent is None else t.parent
+            sibs = [x for x in doc.tables if x.addr and (x.parent is None if host == "top" else x.parent is host)]
+            k = sibs.index(t) - sum(1 for x in sibs if x.g in tdset and x.g < t.g) + sum(
+                1 for si, pos, h in tadds if same_host(h, host) and (si, pos) < (t.si, t.start))
+            if host == "top":
+                res = "t%d" % k
+            else:
+                pt = doc.table_of(host)
+                pa = newaddr(pt) if pt is not None else None
+                nr = newrow(pt.g, host.row) if pa is not None else None
+                res = None if nr is None else "%s/r%d/c%d/t%d" % (pa, nr, host.col, k)
+        addr_memo[t.g] = res
+        return res
     return {"newtop": newtop, "newt": newt, "newrow": newrow, "adds": adds, "dels": dels, "tadds": tadds,
-            "tdels": tdels, "radds": radds, "rdels": rdels, "cadds": cadds, "cdels": cdels}
+            "tdels": tdels, "radds": radds, "rdels": rdels, "cadds": cadds, "cdels": cdels, "newaddr": newaddr}
 
 
 def _remap(doc, acts):
@@ -2719,23 +2913,26 @@ def _remap(doc, acts):
         if n != p.gp:
             out.append({"from": "p%d" % p.gp, "to": None if n is None else "p%d" % n})
     for t in doc.tables:
-        if st["newt"][t.g] != t.g:
-            out.append({"from": "t%d" % t.g, "to": None if st["newt"][t.g] is None else "t%d" % st["newt"][t.g]})
+        if t.addr is not None and st["newaddr"](t) != t.addr:
+            out.append({"from": t.addr, "to": st["newaddr"](t)})
     for g in sorted(set(st["radds"]) | set(st["rdels"])):
-        t, tg = doc.tables[g], st["newt"][g]
-        if tg is None:
+        t = doc.tables[g]
+        ta = st["newaddr"](t)
+        if ta is None or t.addr is None:
             continue
         for r in range(t.rows):
             nr = st["newrow"](g, r)
-            to = None if nr is None else "t%d/r%d" % (tg, nr)
-            if to != "t%d/r%d" % (g, r):
-                out.append({"from": "t%d/r%d" % (g, r), "to": to})
+            to = None if nr is None else "%s/r%d" % (ta, nr)
+            if to != "%s/r%d" % (t.addr, r):
+                out.append({"from": "%s/r%d" % (t.addr, r), "to": to})
     for key in set(st["cadds"]) | set(st["cdels"]):
         c = (st["cadds"].get(key) or st["cdels"].get(key))[0]
         adds = st["cadds"].get(key, (c, []))[1]
         dels = st["cdels"].get(key, (c, set()))[1]
         t = doc.table_of(c)
-        base = "t%d/r%d/c%d" % (t.g, c.row, c.col)
+        if t is None or t.addr is None:
+            continue
+        base = cell_address(t, c)
         cur = follow_remap(out, base)
         for k in range(len(c.paras)):
             if k in dels:
@@ -2785,6 +2982,11 @@ def _verify(doc, newdoc, acts):
         elif t.g not in touched:
             if (nt.rows, nt.cols) != (t.rows, t.cols) or _table_text(nt) != _table_text(t):
                 return False
+    for t in doc.tables:                # every surviving table is where the remap says, by its public address
+        na = st["newaddr"](t)
+        ng = st["newt"][t.g]
+        if na is not None and (ng is None or newdoc.tables[ng].addr != na):
+            return False
     for key in set(st["cadds"]) | set(st["cdels"]):
         c = (st["cadds"].get(key) or st["cdels"].get(key))[0]
         n = len(c.paras) + sum(x for _k, x in st["cadds"].get(key, (c, []))[1]) - \
@@ -2864,9 +3066,9 @@ def _signals(pl, doc=None, pages=None):
             rec = {"page": n, "kind": "table_split", "at": at(ts.get("para")), "pages": ts.get("pages"),
                    "rows": ts.get("rows")}
             if doc is not None and isinstance(ts.get("para"), int) and 0 <= ts["para"] < len(doc.top):
-                tt = doc.tables_in(doc.top[ts["para"]])
+                tt = [t for t in doc.tables_in(doc.top[ts["para"]]) if t.addr and t.parent is None]
                 if tt:
-                    rec["at"] = "t%d" % tt[0].g
+                    rec["at"] = tt[0].addr
             out.append(rec)
         for key in ("caption_split", "widows", "orphans"):
             for x in e.get(key) or []:
@@ -3275,7 +3477,8 @@ def _page_list(pages_, count=None):
     for n in sel:
         if n < 1 or (count is not None and n > count):
             raise DocError("bad_address", "the document has %s pages" % (count if count is not None else "1.."),
-                           at="page:%d" % n, candidates=["page:%d" % count] if count else None)
+                           at="page:%d" % n, range=[1, count] if count is not None else None,
+                           candidates=["page:%d" % count] if count else None)
     return sel
 
 
@@ -3452,8 +3655,11 @@ def caret_rect(path, at, offset):
     doc = _load(path)
     _need_engine("caret_rect")
     r = resolve(doc, at, allow=("para",))
-    if not _is_int(offset) or not 0 <= offset <= len(r["para"].text):
-        raise DocError("bad_input", "offset is 0..%d for %s" % (len(r["para"].text), at), at=at)
+    if not _is_int(offset):
+        raise DocError("bad_input", "offset is an int (code points into the paragraph's text)", at=at)
+    if not 0 <= offset <= len(r["para"].text):
+        raise DocError("bad_address", "offset is 0..%d for %s" % (len(r["para"].text), at), at=at,
+                       range=[0, len(r["para"].text)])
     return _passthrough("caret_rect", doc, at, offset)
 
 
@@ -3581,12 +3787,15 @@ def diff(a, b):
             ch.append({"at": "p%d" % pa.gp if pa else None, "at_b": "p%d" % pb.gp if pb else None,
                        "kind": "changed" if pa and pb else ("deleted" if pa else "inserted"),
                        "before": pa.text if pa else None, "after": pb.text if pb else None})
-    for ta, tb in zip(da.tables, db.tables):
+    for ta in da.tables:
+        tb = db.by_addr.get(ta.addr) if ta.addr else None
+        if tb is None:
+            continue
         for c in ta.cells:
             cb = tb.at(c.row, c.col)
             before, after = _cell_text(c), (_cell_text(cb) if cb is not None else None)
             if before != after:
-                ch.append({"at": "t%d/r%d/c%d" % (ta.g, c.row, c.col), "kind": "changed",
+                ch.append({"at": cell_address(ta, c), "kind": "changed",
                            "before": before, "after": after})
     return {"rev_a": da.rev, "rev_b": db.rev, "changes": ch}
 

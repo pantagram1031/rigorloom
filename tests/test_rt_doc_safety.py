@@ -544,41 +544,51 @@ def _places(f):
     return {p["id"]: p["at"] for p in r["places"]}
 
 
+def _by_label(f, key):
+    pls = [p for p in D.outline(f)["places"] if D._norm_key(p["label"] or "") == key]
+    assert len(pls) == 1, pls
+    return pls[0]
+
+
 def test_b12_editing_another_label_never_redirects_a_place(no_engine, tmp_path):
     src = make(tmp_path, "base.hwpx", "x")
     src = rewrite(tmp_path, "places.hwpx", _place_table, src=src)
-    assert _places(src) == {"Alpha": "t0/r0/c1", "Beta": "t0/r1/c1"}
+    before = _places(src)
+    assert sorted(before.values()) == ["t0/r0/c1", "t0/r1/c1"]
     r = apply(src, [set_("t0/r0/c0", "Beta")], tmp_path / "out.hwpx")
     assert r["ok"], r
-    got = _places(r["out"])
-    assert got.get("Beta") == "t0/r1/c1"                          # never t0/r0/c1
-    # with no lineage (an outside edit) the duplicate label is refused, not guessed
+    assert _places(r["out"]) == before                            # both labels read Beta; no id moved
+    # an outside edit (no lineage) gives the same ids: they hash the cell, not its label
     D._LINEAGE.clear()
     os.environ[D.CACHE_ENV] = str(tmp_path / "empty-cache")
-    e = D.read(r["out"], "place:Beta")
-    assert e["error"]["code"] == "bad_address" and len(e["error"]["candidates"]) == 2
+    assert _places(r["out"]) == before
+    for pid, at in before.items():
+        assert D.read(r["out"], "place:%s" % pid)["blocks"][0]["at"].startswith(at)
 
 
 def test_b12_a_filled_place_keeps_its_id_and_shows_its_value(no_engine, tmp_path):
     src = shutil.copyfile(GUARD, tmp_path / "g.hwpx")
     before = _places(src)
-    r = apply(src, [{"op": "fill", "place": "취업장소", "text": "강남구"}], tmp_path / "f.hwpx")
+    pid = _by_label(src, "취업장소")["id"]
+    r = apply(src, [{"op": "fill", "place": pid, "text": "강남구"}], tmp_path / "f.hwpx")
     assert r["ok"], r
     after = D.outline(r["out"])["places"]
-    rec = next(p for p in after if p["id"] == "취업장소")
-    assert rec["at"] == before["취업장소"] and rec["value"] == "강남구" and rec["filled"] is True
-    assert D.read(r["out"], "place:취업장소")["blocks"][0]["text"] == "강남구"
+    rec = next(p for p in after if p["id"] == pid)
+    assert rec["at"] == before[pid] and rec["value"] == "강남구" and rec["filled"] is True
+    assert D.read(r["out"], "place:%s" % pid)["blocks"][0]["text"] == "강남구"
     assert {p["id"] for p in after} == set(before)
-    r2 = D.edit(r["out"], [{"op": "fill", "place": "취업장소", "text": "서초구"}], base=D.rev_of(r["out"]),
+    r2 = D.edit(r["out"], [{"op": "fill", "place": pid, "text": "서초구"}], base=D.rev_of(r["out"]),
                 out=tmp_path / "f2.hwpx")
-    assert r2["ok"] and D.read(r2["out"], "place:취업장소")["blocks"][0]["text"] == "서초구"
+    assert r2["ok"] and D.read(r2["out"], "place:%s" % pid)["blocks"][0]["text"] == "서초구"
 
 
 # ============================================================================ S1 metadata
 @engine
 def test_s1_addresses_do_not_depend_on_call_order(kit):
     D.close()
-    r = D.find(REPORT, "abc", scope="place:성명")
+    pid = _by_label(REPORT, "성명")["id"]
+    D.close()
+    r = D.find(REPORT, "abc", scope="place:%s" % pid)
     assert r["ok"], r
 
 
@@ -644,19 +654,21 @@ def test_s4_preview_names_are_unique(no_engine, tmp_path):
 def test_s4_failed_png_publication_leaves_no_temp_files(kit, tmp_path):
     pytest.importorskip("pypdfium2")
     od = tmp_path / "png"
+    src = kit / "tests" / "features" / "feat_paragraphs.hwpx"
+    assert D.pages(src)["ok"]           # the engine's snapshot and page list exist: only publication fails
     with patch.object(D.os, "replace", side_effect=PermissionError(13, "sharing violation")):
-        r = D.render(kit / "tests" / "features" / "feat_paragraphs.hwpx", [1], scale=0.3, out_dir=od)
-    assert r["error"]["code"] == "busy" and r["error"]["retryable"] is True
+        r = D.render(src, [1], scale=0.3, out_dir=od)
+    assert r["error"]["code"] == "locked" and r["error"]["retryable"] is True
     assert leftovers(od) == []
 
 
 # ============================================================================ S5 busy destination
-def test_s5_busy_destination_is_retryable(no_engine, tmp_path):
+def test_s5_locked_destination_is_retryable(no_engine, tmp_path):
     src = make(tmp_path, "source.hwpx", "BASE")
     base = D.rev_of(src)
     with patch.object(D.os, "replace", side_effect=PermissionError(13, "sharing violation")):
         r = D.edit(src, [set_("p0", "NEW")], base=base, in_place=True)
-    assert r["error"]["code"] == "busy" and r["error"]["retryable"] is True
+    assert r["error"]["code"] == "locked" and r["error"]["retryable"] is True
     assert D.rev_of(src) == base and leftovers(tmp_path) == []
 
 
@@ -788,13 +800,14 @@ def test_click_here_fields_are_fill_places(no_engine, tmp_path):
     src = _fields_doc(tmp_path)
     ol = D.outline(src)
     assert ol["ok"] and ol["places_complete"] is True and "places_reason" not in ol
-    pl = {p["id"]: p for p in ol["places"]}
-    assert pl["applicant"] == {"id": "applicant", "at": "p1", "label": "신청인", "kind": "field", "value": "",
-                               "filled": False}
-    assert pl["date"]["at"] == "p2" and pl["date"]["value"] == "여기에 입력" and pl["date"]["label"] == "날짜"
+    pl = {p["label"]: p for p in ol["places"]}
+    applicant, date = D.place_id("click", "applicant", 0), D.place_id("click", "date", 0)
+    assert pl["신청인"] == {"id": applicant, "at": "p1", "label": "신청인", "kind": "field", "value": "",
+                          "filled": False}
+    assert pl["날짜"]["at"] == "p2" and pl["날짜"]["value"] == "여기에 입력" and pl["날짜"]["id"] == date
     out = tmp_path / "filled.hwpx"
-    r = apply(src, [{"op": "fill", "place": "applicant", "text": "홍길동"},
-                    {"op": "fill", "place": "date", "text": "2026-11-19"}], out)
+    r = apply(src, [{"op": "fill", "place": applicant, "text": "홍길동"},
+                    {"op": "fill", "place": date, "text": "2026-11-19"}], out)
     assert r["ok"], r
     assert texts(out) == ["신청서", "홍길동", "일자: 2026-11-19"]
     with zipfile.ZipFile(out) as z:
@@ -802,9 +815,9 @@ def test_click_here_fields_are_fill_places(no_engine, tmp_path):
     assert re.search(r'name="applicant".*?</hp:ctrl><hp:t>홍길동</hp:t><hp:ctrl><hp:fieldEnd', s)
     assert re.search(r'name="date".*?</hp:ctrl><hp:t>2026-11-19</hp:t><hp:ctrl><hp:fieldEnd', s)
     after = {p["id"]: p for p in D.outline(out)["places"]}
-    assert after["applicant"]["value"] == "홍길동" and after["applicant"]["filled"] is True
-    assert D.read(out, "place:date")["blocks"][0]["text"] == "일자: 2026-11-19"
-    r2 = D.edit(out, [{"op": "fill", "place": "applicant", "text": "김철수"}], base=D.rev_of(out),
+    assert after[applicant]["value"] == "홍길동" and after[applicant]["filled"] is True
+    assert D.read(out, "place:%s" % date)["blocks"][0]["text"] == "일자: 2026-11-19"
+    r2 = D.edit(out, [{"op": "fill", "place": applicant, "text": "김철수"}], base=D.rev_of(out),
                 out=tmp_path / "again.hwpx")
     assert r2["ok"] and texts(r2["out"])[1] == "김철수"
 
