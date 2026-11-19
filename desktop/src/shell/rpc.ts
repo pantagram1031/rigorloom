@@ -45,3 +45,29 @@ export async function listWorkspace(path = ""): Promise<WorkspaceListing | null>
     return null;
   }
 }
+
+/**
+ * The absolute path of a file in the 문서 폴더, from the bridge.
+ *
+ * The listing names files relative to the folder; the 파일 pane never joins
+ * that onto a folder name itself (finding 3: `rootName` is only the folder's
+ * bare name, so the joined path was relative and opened whatever the runtime's
+ * working directory held under that name). `/api/workspace/resolve` walks the
+ * path inside the folder with the same confinement as every workspace route
+ * and answers its absolute path, or nothing.
+ */
+export async function resolveWorkspaceFile(relPath: string): Promise<string | null> {
+  if (rt.isTauri()) return null;
+  try {
+    const res = await fetch("/api/workspace/resolve", {
+      method: "POST",
+      headers: rt.tokenHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ path: relPath }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { ok?: boolean; path?: unknown };
+    return body.ok !== false && typeof body.path === "string" && body.path ? body.path : null;
+  } catch {
+    return null;
+  }
+}

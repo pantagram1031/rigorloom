@@ -6,16 +6,28 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { S } from "../i18n/v2/shell";
-import { useWorkspace } from "../store";
+import { showToast, useWorkspace } from "../store";
+import type { UiLanguage } from "../i18n/vocabulary";
 import type { SlotProps } from "./slots";
 import { corpusFormDisplayInfo, filterCorpusEntries, isHwpBackendAvailable } from "../workspace/openHelpers";
 import { docTitle } from "./docInfo";
 import { isOpenable, openSample } from "./open";
 import { FileName } from "./parts";
-import { listWorkspace, type WorkspaceListing } from "./rpc";
+import { listWorkspace, resolveWorkspaceFile, type WorkspaceListing } from "./rpc";
 import { getShell, useShell } from "./shellState";
 import { activateTab, openDocumentPath, pinTab } from "./tabs";
 import { TID } from "./testids";
+
+/** Open a 문서 폴더 file by the absolute path the bridge resolved for it. */
+async function openWorkspaceFile(relPath: string, name: string, lang: UiLanguage): Promise<void> {
+  const path = await resolveWorkspaceFile(relPath);
+  if (path === null) {
+    // Gone, moved out of the folder, or no longer a document.
+    showToast(`${name} · ${S.t("shell_tab_failed", lang)}`, 2400);
+    return;
+  }
+  await openDocumentPath(path, { name, preview: true });
+}
 
 export function FilesPane(_props: SlotProps) {
   const lang = useWorkspace((s) => s.language);
@@ -70,7 +82,7 @@ export function FilesPane(_props: SlotProps) {
                       className="sh-tree-row"
                       data-kind={e.kind}
                       disabled={e.kind === "dir"}
-                      onClick={() => void openDocumentPath(`${listing.root}/${e.path}`, { name: e.name, preview: true })}
+                      onClick={() => void openWorkspaceFile(e.path, e.name, lang)}
                       onDoubleClick={() => pinTab(getShell().activeTab)}
                     >
                       <FileName name={e.name} />
