@@ -250,6 +250,15 @@ class McpDoor(_ChildDoor):
         return sorted(self._tools)
 
 
+def newest_candidate(door, session_id: str) -> str | None:
+    """The session's newest published candidate, read over the agent door."""
+    try:
+        rows = door.call("candidate/list", {"sessionId": session_id})["candidates"]
+    except DoorRefusal:
+        return None
+    return rows[-1]["runId"] if rows else None
+
+
 def open_door(door: str, root: Path, engine_root: Path | None,
               stderr_path: Path | None = None):
     if door == "protocol":
@@ -361,9 +370,15 @@ def run_scenario(door, args) -> tuple[dict, int]:
     record("target", target)
 
     op = build_op(target, args.marker)
-    plan = door.call("plan/propose", {
-        "sessionId": session_id, "backend": "preedit", "ops": [op],
-        "proposer": AGENT_NAME})["plan"]
+    propose = {"sessionId": session_id, "backend": "preedit", "ops": [op],
+               "proposer": AGENT_NAME}
+    # Propose on the newest 수정본, as any agent must: a plan on anything older
+    # is refused with plan_behind_head, because applying it would drop the
+    # newer candidate's changes.
+    head = newest_candidate(door, session_id)
+    if head is not None:
+        propose["baseRunId"] = head
+    plan = door.call("plan/propose", propose)["plan"]
     record("plan/propose", {"opsHash": plan["opsHash"]})
 
     validation = door.call("plan/validate", {"planId": plan["planId"]})["validation"]

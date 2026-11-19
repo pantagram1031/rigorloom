@@ -312,3 +312,20 @@ def test_a_provider_that_raises_ends_the_run_as_a_provider_fault(tmp_path):
     kinds = [event["kind"] for event in payload["events"]["events"]]
     assert "provider.failed" in kinds
     assert "runtime.refused" not in kinds
+
+
+def test_the_provider_proposes_on_the_head_the_host_names():
+    """A plan on anything older than the newest 수정본 is refused
+    (plan_behind_head), so the test agent chains onto the head when the host
+    puts one in the context, and proposes on the source when there is none."""
+    history = [{"tool": "document_inspect", "ok": True,
+                "result": {"regions": {"regions": [
+                    {"kind": "cell", "table": 0, "row": 5, "col": 1,
+                     "scriptAnomaly": False}]}}}]
+    provider = ah_mock.MockProvider()
+    on_head = provider.complete(ProviderRequest(
+        "x", {"sessionId": "s", "headRunId": "run-1"}, [], history=history))
+    assert on_head.tool_calls[0].arguments["baseRunId"] == "run-1"
+    on_source = provider.complete(ProviderRequest(
+        "x", {"sessionId": "s"}, [], history=history))
+    assert "baseRunId" not in on_source.tool_calls[0].arguments

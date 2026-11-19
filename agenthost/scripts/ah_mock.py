@@ -128,9 +128,13 @@ class MockProvider(ProviderAdapter):
             else:
                 target = mock_agent.choose_target(regions)
             op = mock_agent.build_op(target, self.marker)
-            return self._call("plan_propose",
-                              {"sessionId": session_id, "backend": "preedit",
-                               "ops": [op], "proposer": "agenthost-mock"},
+            arguments = {"sessionId": session_id, "backend": "preedit",
+                         "ops": [op], "proposer": "agenthost-mock"}
+            # On the newest 수정본 when there is one (the host says which).
+            head = request.context.get("headRunId")
+            if head:
+                arguments["baseRunId"] = head
+            return self._call("plan_propose", arguments,
                               f"Proposing one fill at "
                               f"({target['row']},{target['col']}).")
 
