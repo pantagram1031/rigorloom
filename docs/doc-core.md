@@ -208,8 +208,8 @@ rt_doc.edit("보고서.hwpx", [
 - Every op is checked before anything is written: address kinds, ranges
   (`p3:2-5` only for `set`, `replace` and `char_shape`), `expect`
   (`expect_mismatch`; only `set`, `replace`, `delete`, `fill`,
-  `table.delete_row`, `char_shape` and `para_shape` take one, others
-  refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
+  `table.delete_row`, `char_shape`, `para_shape` and `numbering` take one,
+  others refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
   and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
   or an op on something another op deletes (a paragraph, table or row; one
   row deleted twice).
@@ -248,6 +248,16 @@ rt_doc.edit("보고서.hwpx", [
   are fields of the 글자 모양 / 문단 모양 dialogs. They change no addresses,
   and run before text edits in the same paragraph, so a range means what it
   meant in `base`.
+- `numbering` puts whole paragraphs into 개요 번호, 문단 번호 or 글머리표, or
+  takes them out: `set` is `{"kind": "outline"|"number"|"bullet"|"none"}`
+  with `level` 1 to 7 (the XML's level 0 to 6; `outline` defaults to 1 and
+  applies the document's 개요 n style, which must exist), `char` for a
+  bullet, and `start` (1 to 9999) or `restart: true` for numbers. The op
+  reads each paragraph's base state and sends only the engine steps that
+  bring it there (none when it already is). `none` takes off the number or
+  bullet and moves a 개요 paragraph back to 바탕글. A `style` and a
+  `numbering` op on one paragraph in one edit are a `conflict`; send them
+  separately. Needs the engine; addresses do not change.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is
