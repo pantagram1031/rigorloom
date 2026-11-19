@@ -451,6 +451,40 @@ def test_a_caller_label_cannot_set_or_clear_test_provenance(tmp_path):
         assert rows[-1]["provenance"] == "mock"
 
 
+def test_a_persons_typing_beside_a_test_value_stays_the_persons(tmp_path):
+    """Finding 5: a mixed plan names its test ops and does not taint the rest.
+
+    The test agent proposes one value; the desktop re-proposes it beside the
+    person's own typing. That plan is mock (it holds a test value) and says
+    which op is the test value. Once the person drops the agent's op, the plan
+    holding only their typing carries no test label at all.
+    """
+    import mock_agent
+
+    root = tmp_path / "root"
+    with RuntimeClient(root) as client:
+        session = _open(client, tmp_path)
+        with mock_agent.open_door("protocol", root, None, identity="mock") as door:
+            door.call("plan/propose", {
+                "sessionId": session, "backend": "preedit",
+                "ops": [{"kind": "fill_cell", "table": 0, "row": 5, "col": 1,
+                         "text": "AGENT-HOST-0001"}]})
+        typed = {"opId": "u-typed", "kind": "fill_cell", "table": 0, "row": 5,
+                 "col": 2, "text": "홍길동"}
+        mixed = client.ok("plan/propose", {
+            "sessionId": session, "backend": "preedit",
+            "ops": [{"opId": "a-1", "kind": "fill_cell", "table": 0, "row": 5,
+                     "col": 1, "text": "AGENT-HOST-0001"}, typed]})["plan"]
+        assert mixed["provenance"] == "mock"
+        assert mixed["mockOps"] == ["a-1"]
+
+        plan, candidate = _apply(client, session, [typed])
+        assert "provenance" not in plan and "mockOps" not in plan, plan
+        receipt = client.ok("receipt/read", {"sessionId": session,
+                                             "runId": candidate["runId"]})["receipt"]
+        assert receipt["provenance"] is None
+
+
 def test_a_proof_needs_every_requested_region_to_be_readable(tmp_path, monkeypatch):
     """One region the profile did not return: the answer is "not proven".
 

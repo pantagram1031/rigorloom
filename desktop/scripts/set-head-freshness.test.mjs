@@ -356,7 +356,7 @@ test("an unchanged history is not re-walked across store notifications", () => {
   assert.ok(rowReads > 0, "the first selection walks the history");
   const afterFirst = rowReads;
   for (let i = 0; i < 100; i++) {
-    store.setState({ composerDraft: { text: `keystroke ${i}` } });
+    store.setState({ settingsOpen: i % 2 === 0 });
     assert.equal(store.headCandidate(store.getState())?.runId, "run-49");
   }
   assert.equal(rowReads - afterFirst, 0, "later notifications reuse the walked ordering");

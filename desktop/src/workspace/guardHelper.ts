@@ -568,6 +568,14 @@ function opTargetText(op: QueuedOp): string {
   return "";
 }
 
+/** The non-blank lines of a fill that writes more than one line, normalized. */
+function multiLineFillLines(op: QueuedOp): string[] {
+  if (op.kind !== "fill_cell") return [];
+  const raw = op.lines !== undefined ? op.lines : (op.text ?? "").split("\n");
+  if (raw.length < 2) return [];
+  return raw.map(normalizeForMatch).filter((line) => line.length > 0);
+}
+
 function matchParagraphTier(ch: IndexedChange, para: GuardDiffParagraph): number {
   const opBefore = normalizeForMatch(ch.beforeText);
   const opAfter = normalizeForMatch(ch.afterText);
@@ -745,6 +753,55 @@ export async function runAuthoritativeGuardDiff(
         matchedParaByOp.set(ch.opId, bestPara);
         attributedParaNums.set(ch.opId, [bestPara.paragraph]);
       }
+    }
+
+    // A multi-line fill into a blank writes one paragraph per line, and the
+    // checker reports each of them. The loop above ties one; the others are
+    // that same change's typing, not differences nobody can account for. They
+    // are tied to the fill only when the paragraph was blank, its text is one
+    // of the fill's lines (each line once), and it sits within the fill's
+    // own run of paragraphs. A fill over existing text stays with the
+    // ordinary matching, so a fact it changes is still reported.
+    for (const ch of nonDeleteChanges) {
+      if (ch.isAuditable) continue;
+      const lines = multiLineFillLines(ch.op);
+      if (lines.length < 2) continue;
+      const remaining = new Map<string, number>();
+      for (const line of lines) remaining.set(line, (remaining.get(line) ?? 0) + 1);
+      const take = (text: string): boolean => {
+        const left = remaining.get(text) ?? 0;
+        if (left <= 0) return false;
+        remaining.set(text, left - 1);
+        return true;
+      };
+      const fromBlank = (p: GuardDiffParagraph) =>
+        normalizeForMatch(p.before).length === 0 && normalizeForMatch(p.after).length > 0;
+      let anchor = matchedParaByOp.get(ch.opId) ?? null;
+      if (anchor && !(fromBlank(anchor) && take(normalizeForMatch(anchor.after)))) {
+        // The tied paragraph is not one of the lines; leave the rest alone.
+        continue;
+      }
+      if (!anchor) {
+        anchor =
+          changedParas.find(
+            (p) => !claimedChangedNums.has(p.paragraph) && fromBlank(p) && remaining.has(normalizeForMatch(p.after)),
+          ) ?? null;
+        if (!anchor) continue;
+        take(normalizeForMatch(anchor.after));
+        claimedChangedNums.add(anchor.paragraph);
+        matchedParaByOp.set(ch.opId, anchor);
+        if (ch.targetKey && !targetSharedPara.has(ch.targetKey)) targetSharedPara.set(ch.targetKey, anchor);
+      }
+      const span = ((ch.op.kind === "fill_cell" && ch.op.lines?.length) || lines.length) + 1;
+      const tied = [anchor.paragraph];
+      for (const para of changedParas) {
+        if (claimedChangedNums.has(para.paragraph)) continue;
+        if (Math.abs(para.paragraph - anchor.paragraph) > span) continue;
+        if (!fromBlank(para) || !take(normalizeForMatch(para.after))) continue;
+        claimedChangedNums.add(para.paragraph);
+        tied.push(para.paragraph);
+      }
+      attributedParaNums.set(ch.opId, tied);
     }
 
     for (const ch of nonDeleteChanges) {

@@ -76,6 +76,7 @@ import {
   queueAdmission,
   requiredAcknowledgements,
   requiredGuardAcks,
+  diffDigestBreaks,
   restorableOps,
   returnedFromPrefs,
   savableOps,
@@ -88,6 +89,7 @@ import {
   type GuardWarningSummary,
 } from "./workspace/trust";
 import { getReviewGuardSummary } from "./workspace/guardHelper";
+import { takeSheetConfirmation } from "./workspace/sheetConfirmation";
 import type {
   AppliedCandidate,
   ApprovalRecord,
@@ -1998,7 +2000,7 @@ export async function resolveApprovalDecision(
   decision: "approved" | "rejected",
   approver = "host-operator",
   reason: string | null = null,
-  options: { confirmed?: ConfirmationBinding; autoApply?: boolean } = {},
+  options: { confirmed?: ConfirmationBinding; autoApply?: boolean; confirmationToken?: string | null } = {},
 ): Promise<void> {
   const state = getState();
   const approval = state.approval;
@@ -2016,6 +2018,7 @@ export async function resolveApprovalDecision(
       decision,
       approver,
       reason,
+      options.confirmationToken ?? null,
     );
     // The decision belongs only to the captured draft/approval. Its resolved
     // record may remain on that exact preserved queue after a session switch,
@@ -2256,7 +2259,10 @@ export async function revalidateActiveDraft(): Promise<{ ok: boolean; stale: boo
   try {
     const validation = await rt.validatePlan(plan.planId);
     const current = getState();
-    if (current.draft !== draft || current.draft.plan?.planId !== plan.planId) {
+    // Another validation of the same plan (the one the dialog starts when it
+    // opens) may land first and replace the draft object; only a different
+    // plan makes this answer moot.
+    if (current.draft.plan !== plan || current.draft.sessionId !== draft.sessionId) {
       return { ok: false, stale: false };
     }
     const currentSha =
@@ -2345,6 +2351,7 @@ export async function approveAndApplyFromDialog(
     const state = getState();
     const guard = typeof getReviewGuardSummary === "function" ? getReviewGuardSummary() : null;
     const guardAcks = guard && guard.planId === confirmed.planId ? requiredGuardAcks(guard).total : 0;
+    if (guard && diffDigestBreaks(guard, confirmed)) return "diff_mismatch";
     return confirmationBreak(confirmed, state, requiredAcknowledgements(state.draft, guardAcks));
   };
   const stop = (why: ConfirmationBreak): false => {
@@ -2384,9 +2391,13 @@ export async function approveAndApplyFromDialog(
   if (!approvalBindsConfirmation(requested, confirmed)) return stop("plan_replaced");
 
   // Wait 3: the decision. Apply is NOT chained inside it; it runs below,
-  // after one more check.
+  // after one more check. Through the browser bridge the decision carries
+  // the sheet's single-use confirmation token for exactly this plan.
   if (requested!.state === "pending") {
-    await resolveApprovalDecision("approved", approver, null, { confirmed, autoApply: false });
+    const confirmationToken = await takeSheetConfirmation(confirmed);
+    why = broken();
+    if (why) return stop(why);
+    await resolveApprovalDecision("approved", approver, null, { confirmed, autoApply: false, confirmationToken });
     why = broken();
     if (why) return stop(why);
   }

@@ -20,9 +20,12 @@ import {
   activeSession,
   activeStoreKey,
   composerBlocker,
+  composerDraftOf,
   getState,
-  setState,
+  setComposerDraft,
+  useComposerDraftText,
   useWorkspace,
+  writeComposerDraft,
 } from "../store";
 import type {
   Activity,
@@ -161,11 +164,12 @@ function renderPlanNote(turn: Turn, payload: HostRunPayload, language: UiLanguag
 }
 
 /**
- * Shared composer bar for the operator modal. Reads and mutates `composerDraft`
- * directly in the workspace store so unsent text survives closing/switching.
+ * Shared composer bar for the operator modal. Reads and mutates the active
+ * document's draft in the workspace store so unsent text survives closing or
+ * switching views, and stays with the document it was typed for.
  */
 function OperatorAgentComposer({ language }: { language: UiLanguage }) {
-  const text = useWorkspace((s) => s.composerDraft.text);
+  const text = useComposerDraftText();
   const activeTurn = useWorkspace((s) => s.activeTurn);
   const blocker = useWorkspace(composerBlocker);
   const composingRef = useRef(false);
@@ -173,9 +177,10 @@ function OperatorAgentComposer({ language }: { language: UiLanguage }) {
   const canSend = text.trim().length > 0 && blocker === null && activeTurn === null;
 
   async function submitDraft() {
+    const doc = getState().activeSessionId;
     await submitComposerDraft({
-      read: () => getState().composerDraft,
-      write: (composerDraft) => setState({ composerDraft }),
+      read: () => composerDraftOf(doc),
+      write: (draft) => writeComposerDraft(draft, doc),
       send: sendInstruction,
     });
   }
@@ -217,9 +222,9 @@ function OperatorAgentComposer({ language }: { language: UiLanguage }) {
         }}
         onCompositionEnd={(e) => {
           composingRef.current = false;
-          setState({ composerDraft: { text: e.currentTarget.value } });
+          setComposerDraft(e.currentTarget.value);
         }}
-        onChange={(e) => setState({ composerDraft: { text: e.target.value } })}
+        onChange={(e) => setComposerDraft(e.target.value)}
         onKeyDown={handleKeyDown}
       />
 

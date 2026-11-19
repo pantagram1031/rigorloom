@@ -115,7 +115,7 @@ workspace, configure providers, change policy, or delete a workspace
 
 Authority is a property of how the connection was created, never a field in a
 payload. In `rigorloom ui` (`runtime/scripts/rt_ui.py`, `docs/web-ui.md`), the
-HTTP bridge enforces loopback `Host` and `Sec-Fetch-Site` guards plus a
+HTTP bridge enforces loopback `Host`, `Origin` and `Sec-Fetch-Site` guards plus a
 per-run `X-Rigorloom-Token` header on API calls, while Agent Host runs as a
 separate `--entry agent` process that cannot call host-only methods.
 
