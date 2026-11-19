@@ -53,6 +53,15 @@ The bridge is meant for one person on their own computer.
   read the token**, just as it could read your files. Web pages from other
   origins cannot: the bridge sends no CORS headers, so a browser will not
   hand them the response.
+- The 문서 폴더 the `/api/workspace/*` routes read from is set only through
+  `POST /api/doc-folder {path}` (not the general prefs patch). It must be an
+  absolute path to an existing directory, and not a filesystem or drive
+  root, a folder directly under one (`/etc`, `/tmp`, `/home`, `C:\Users`),
+  a Windows system folder (`Windows`, `Program Files`, `Program Files (x86)`,
+  `ProgramData` and what they hold), the whole home folder, or the runtime's
+  own store; the bridge checks
+  it again on every use. Workspace, page and style routes and
+  `/api/approval/confirmation` cap their bodies at 16 KiB.
 - The event stream (`/events`) and staged export download
   (`/api/export-download`) accept the per-launch token via `?token=`.
   `EventSource` cannot send custom headers, so `/events` requires `?token=`.
