@@ -1693,6 +1693,9 @@ def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeyp
         assert all(f" {key} (" in line for key in getattr(doc, table)), name
     line = next(x for x in text.splitlines() if x.startswith("numbering{"))
     assert all(kind in line for kind in doc.NUMBERING_KINDS)
+    assert set(rt_toolset.OP_NOTES) == set(rt_toolset.OP_FIELDS)   # every op says what its fields hold
+    for name in doc.TABLE_SHAPE_OPS:
+        assert rt_toolset.OP_NOTES[name].endswith(rt_toolset._OWNS_TABLE), name
     err(call(env.ctx(), "guide", {"topic": "gongmun"}), "capability_unavailable")
 
     (empty / "gongmun.md").write_text("# 공문\n", encoding="utf-8")

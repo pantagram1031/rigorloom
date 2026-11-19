@@ -945,6 +945,8 @@ OP_EXAMPLES = {
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
               "to": "with", "replace": "with", "replacement": "with", "value": "text",
               "content": "text", "address": "at", "where": "at", "md": "markdown"}
+#: A table shape op owns its table for the edit (rt_doc.TABLE_SHAPE_OPS).
+_OWNS_TABLE = "; any other op on that table in the same edit is a conflict"
 #: What an op's fields mean where their names do not say: the `ops` guide topic.
 OP_NOTES = {
     "set": "the new text of a paragraph, a range in one (p3:2-5) or a cell",
@@ -972,6 +974,20 @@ OP_NOTES = {
                  "defaults to 1), char (bullet: one character), start (number: 1 to 9999) "
                  "or restart (number: true); style and numbering on one paragraph in one "
                  "edit are a conflict",
+    "table.merge": "`at` is a cell and `to` the cell at the block's other corner; the top-left "
+                   "cell takes the block and the text of every merged cell" + _OWNS_TABLE,
+    "table.split": "`at` is a cell; `rows` and `cols` are 1 to 20, not both 1; a cell that "
+                   "spans several rows or columns splits along its grid lines, so the count "
+                   "must divide the span" + _OWNS_TABLE,
+    "table.add_col": "`after` is the column the new one goes after and `like` the column whose "
+                     "look it copies (default `after`), as in table.add_row; `at` a cell puts "
+                     "it after that cell's last column" + _OWNS_TABLE,
+    "table.delete_col": "`col`, or `at` a cell, names the column; `expect` is the column's "
+                        "cells joined by a newline" + _OWNS_TABLE,
+    "table.size": "millimetres, 1 to 1000: `width_mm` / `height_mm` for the column or row of "
+                  "the cell `at` names (`height_mm` also at a row); the `col_widths_mm` / "
+                  "`row_heights_mm` lists go on the table address only, null keeping one"
+                  + _OWNS_TABLE,
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
