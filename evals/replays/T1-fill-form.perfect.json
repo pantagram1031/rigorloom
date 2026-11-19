@@ -1,0 +1,64 @@
+{
+  "schema": "rigorloom-mcp-replay/v1",
+  "task_id": "T1-fill-form",
+  "variant": "perfect",
+  "description": "Fills all 6 fillable seats, leaves signature/seal seats untouched, saves to a new file within the tool-call cap.",
+  "simulated_tokens": {"input": 2800, "output": 420, "total": 3220},
+  "requests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "eval-scripted", "version": "1.0"}
+      }
+    },
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {"name": "open", "arguments": {"path": "${SOURCE}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {
+        "name": "fill",
+        "arguments": {
+          "path": "${SOURCE}",
+          "base": "${REV}",
+          "values": {
+            "place:기관명": "한빛기술연구소",
+            "place:사업자번호": "204-81-00102",
+            "place:과제명": "차세대 정밀센서 시제품 개발",
+            "place:신청금액": "240,000,000원",
+            "place:담당자": "김하늘",
+            "place:신청일자": "2026년 11월 19일"
+          }
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "tools/call",
+      "params": {
+        "name": "save",
+        "arguments": {"path": "${SOURCE}", "to": "${OUTPUT}"}
+      }
+    }
+  ],
+  "expected_call_outcomes": [
+    {"id": 3, "tool": "open", "isError": false, "error_code": null},
+    {"id": 4, "tool": "fill", "isError": false, "error_code": null},
+    {"id": 5, "tool": "save", "isError": false, "error_code": null}
+  ],
+  "final_answer": "신청서의 6개 입력 칸(기관명, 사업자번호, 과제명, 신청금액, 담당자, 신청일자)을 채우고 신청서_작성 파일로 저장했습니다. 신청인 서명 (인)과 기관장 직인 칸은 사람이 직접 날인할 수 있도록 비워 두었습니다.",
+  "expected_passed": true,
+  "expected_failed_checks": []
+}

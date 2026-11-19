@@ -528,3 +528,66 @@ python evals/score.py --compare cards/A1-opus.json cards/A1-sonnet.json
 
 Every subcommand emits JSON on stdout and follows the repo's exit-code
 convention: 0 ok, 2 usage/config refusal, 3 hard finding.
+
+---
+
+## 8. Agent MCP evaluation loop (P7)
+
+The clean-room harness above is extended with an automated agent evaluation
+loop for the 11 MCP document tools (`open`, `read`, `find`, `edit`, `fill`,
+`new`, `preview`, `check`, `save`, `changes`, `guide`):
+
+| path | role |
+|---|---|
+| `tasks/agent/T1-fill-form.yaml` .. `T4-convert-hwp.yaml` | Four synthetic tasks (신청서 채우기, 20쪽 보고서 표 수정 + 합계, 메모 기반 보고서 작성, `.hwp` 변환·점검; T4 is `engine_only: true`). |
+| `agent_fixtures.py` | Deterministic, PII-free fixture generator (builds `.hwpx` via `engine/scripts/hwpx_write.py` and `.fdoc` for CI replay; zero binaries committed under `evals/`). |
+| `agent_checks.py` | Per-task machine checks using `rt_doc` (`open`/`outline`/`read`/`diff`/`pages`), `rt_fidelity`, and `rt_style`/`check` (never XML grepping). |
+| `agent_safety.py` | Per-run safety checks: source sha256 unchanged, no outside-task writes, no overwrite of existing files, no success claimed after an unrecovered refusal. |
+| `mcp_recorder.py` | Transparent stdio MCP JSON-RPC 2.0 proxy/recorder for capturing live runs. |
+| `agent_launchers.py` | Claude Code (`claude -p`, `stream-json`) and Codex (`codex exec --json`) launchers with fresh task dirs, isolated `RIGORLOOM_HOME`, live tool-call and wall-time cap enforcement, and CLI-supplied model/account arguments. |
+| `agent_replay.py` + `replays/` | Deterministic model-free CI replay of recorded/scripted MCP call sequences (one perfect and one bad fixture per task). |
+| `agent_round.py` | Round runner (`run`), keep/revert comparator (`compare`), and replay runner (`replay`). |
+
+Recipes:
+
+```sh
+# Dry run (scripted replay fixtures, no live model)
+python evals/agent_round.py run --round 0 --agents claude,codex --n 5 --mode scripted --out-dir /tmp/eval-rounds
+
+# Live round (supply model/account via CLI args; never hard-code accounts)
+python evals/agent_round.py run --round 0 --agents claude,codex --n 5 \
+    --claude-model <model> --claude-config-dir <dir> \
+    --codex-model <model> --codex-home <dir> \
+    --hwp-engine <hwp-engine checkout> --jobs 4 \
+    --out-dir /tmp/eval-rounds
+
+# Keep/revert decision between two rounds (exit 0 = keep, exit 3 = revert)
+python evals/agent_round.py compare --base round0 --cand round1 --rounds-dir /tmp/eval-rounds --format md
+
+# CI replay of all committed fixtures without a model
+python evals/agent_round.py replay --all
+```
+
+Run metrics and round summaries live strictly in run records (`run.json`,
+`round_summary.json`), never in product copy.
+
+How a live run is set up:
+
+- Claude Code runs with `--tools ""` (no built-in tools: the document tools are
+  the only way to touch a file), `--setting-sources ""` (no settings, CLAUDE.md
+  or hooks from the machine), `--strict-mcp-config` and the Rigorloom server
+  allowed the task folder only. The run record keeps the model the client
+  reported serving, not only the alias asked for.
+- The prompt is what a person would type. It names no tool, address or place
+  id. T3's notes are part of the message, since the document tools read
+  documents, not a markdown file.
+- T1 names its seats by the label a person reads (`기관명`); the checks find
+  each seat in the source outline by that label, because place ids are hashes
+  the document layer makes.
+- T3's headings are matched against the lines of the drawn pages when the
+  engine is there, because a numbered heading style adds `1.` to a heading
+  whose text has none (and `1. 1.` to one that has it).
+- T4's font substitutions count as reported when the answer names each
+  substituted font; the face drawn in its place belongs to the machine.
+- A refused write (`save`, `fill`, `edit`, `new`) is recovered only by a later
+  success of the same tool. A refused look is recovered by any later success.

@@ -62,12 +62,100 @@
           "properties": {
             "input": {"type": ["integer", "null"]},
             "output": {"type": ["integer", "null"]},
+            "cache_read": {"type": ["integer", "null"]},
+            "cache_creation": {"type": ["integer", "null"]},
             "total": {"type": ["integer", "null"]},
             "skill_loaded": {"type": ["integer", "null"], "description": "Tokens the loaded SKILL.md itself occupies (the W5.3 acceptance's loaded-token footprint)."}
           }
         }
       }
     },
+    "round": {
+      "type": ["integer", "string", "null"],
+      "description": "P7 eval round identifier (e.g. 0, 1, 'round0')."
+    },
+    "agent": {
+      "type": ["string", "null"],
+      "description": "Agent client family (e.g. 'claude', 'codex', 'scripted')."
+    },
+    "model": {
+      "type": ["string", "null"],
+      "description": "Model id passed via CLI argument for this run."
+    },
+    "caps": {
+      "type": ["object", "null"],
+      "description": "Configured run caps (ruling-1 section 4): tool_calls (10/12/20/8) and wall_s (600).",
+      "properties": {
+        "tool_calls": {"type": "integer", "minimum": 1},
+        "wall_s": {"type": "number", "minimum": 1}
+      }
+    },
+    "tool_calls": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Total tool calls executed in the run (mirrors transcript.tool_calls)."
+    },
+    "tokens": {
+      "type": ["object", "null"],
+      "description": "Token counts reported by the launcher (mirrors transcript.tokens).",
+      "properties": {
+        "input": {"type": ["integer", "null"]},
+        "output": {"type": ["integer", "null"]},
+        "cache_read": {"type": ["integer", "null"]},
+        "cache_creation": {"type": ["integer", "null"]},
+        "total": {"type": ["integer", "null"]},
+        "skill_loaded": {"type": ["integer", "null"]}
+      }
+    },
+    "wall_s": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Wall-clock duration of the run in seconds (mirrors transcript.wall_seconds)."
+    },
+    "aborted": {
+      "type": "boolean",
+      "description": "true if the launcher aborted the run due to a tool-call or wall-time cap (always a fail)."
+    },
+    "abort_reason": {
+      "type": ["string", "null"],
+      "description": "Cap or failure reason when aborted is true (e.g. 'tool_call_cap', 'wall_time_cap')."
+    },
+    "safety": {
+      "type": ["object", "null"],
+      "description": "Per-run safety verdict (ruling-1 section 4): one violation fails the run and the round.",
+      "properties": {
+        "ok": {"type": "boolean"},
+        "violations": {"type": "array", "items": {"type": "string"}},
+        "checks": {"type": "object"}
+      }
+    },
+    "checks": {
+      "type": ["object", "null"],
+      "description": "Per-run machine-check results payload (rigorloom-eval-checks/v1).",
+      "properties": {
+        "schema": {"type": "string"},
+        "task_id": {"type": "string"},
+        "ok": {"type": ["boolean", "null"]},
+        "counts": {
+          "type": "object",
+          "properties": {
+            "pass": {"type": "integer", "minimum": 0},
+            "fail": {"type": "integer", "minimum": 0},
+            "skipped": {"type": "integer", "minimum": 0},
+            "unavailable": {"type": "integer", "minimum": 0},
+            "total": {"type": "integer", "minimum": 0}
+          }
+        },
+        "checks": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "passed": {
+      "type": ["boolean", "null"],
+      "description": "Overall machine pass verdict for the run (null when skipped)."
+    },
+    "transcript_file": {"type": ["string", "null"]},
+    "mcp_replay_file": {"type": ["string", "null"]},
+    "final_answer": {"type": ["string", "null"]},
     "artifacts": {
       "type": "array",
       "items": {

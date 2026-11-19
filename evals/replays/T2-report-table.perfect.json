@@ -1,0 +1,73 @@
+{
+  "schema": "rigorloom-mcp-replay/v1",
+  "task_id": "T2-report-table",
+  "variant": "perfect",
+  "description": "Edits only target cells and 합계 in t1 on page 10, previews changed pages, and saves a new file.",
+  "simulated_tokens": {"input": 4600, "output": 510, "total": 5110},
+  "requests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "eval-scripted", "version": "1.0"}
+      }
+    },
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/call",
+      "params": {"name": "open", "arguments": {"path": "${SOURCE}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {"name": "read", "arguments": {"path": "${SOURCE}", "at": "t1"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {
+        "name": "edit",
+        "arguments": {
+          "path": "${SOURCE}",
+          "base": "${REV}",
+          "ops": [
+            {
+              "op": "table.set_cells",
+              "at": "t1/r2/c2",
+              "grid": [["16,800"], ["11,700"], ["69,000"]]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "tools/call",
+      "params": {"name": "preview", "arguments": {"path": "${SOURCE}", "pages": "changed"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "method": "tools/call",
+      "params": {"name": "save", "arguments": {"path": "${SOURCE}", "to": "${OUTPUT}"}}
+    }
+  ],
+  "expected_call_outcomes": [
+    {"id": 2, "tool": "open", "isError": false, "error_code": null},
+    {"id": 3, "tool": "read", "isError": false, "error_code": null},
+    {"id": 4, "tool": "edit", "isError": false, "error_code": null},
+    {"id": 5, "tool": "preview", "isError": false, "error_code": null},
+    {"id": 6, "tool": "save", "isError": false, "error_code": null}
+  ],
+  "final_answer": "제9절 예산 표(t1)의 재료비 집행액을 16,800, 연구활동비 집행액을 11,700, 합계 집행액을 69,000으로 수정하고 새 파일로 저장했습니다.",
+  "expected_passed": true,
+  "expected_failed_checks": []
+}
