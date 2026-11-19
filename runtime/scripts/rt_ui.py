@@ -24,7 +24,7 @@ import io
 import json
 import mimetypes
 import os
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 import queue
 import re
 import secrets
@@ -133,6 +133,32 @@ _MIME_OVERRIDES = {
 
 _SCRIPT_CLOSE_RE = re.compile(r"</head>", re.IGNORECASE)
 _BODY_CLOSE_RE = re.compile(r"</body>", re.IGNORECASE)
+
+
+_WINDOWS_SYSTEM_FOLDERS = frozenset({"windows", "program files", "program files (x86)", "programdata"})
+
+
+def system_folder_refusal(path: PurePath) -> str | None:
+    """Why `path` cannot be the 문서 폴더 for where it sits, or None.
+
+    A filesystem or drive root, and any folder directly under one (/etc,
+    /tmp, /home, /usr, /var; C:\\Users), is refused: each holds far more
+    than one person's documents. On Windows, Windows, Program Files,
+    Program Files (x86) and ProgramData are refused with everything inside
+    them. A network share's root is refused, a folder inside it is not.
+    """
+    if not path.anchor:
+        return None
+    below = path.parts[1:]
+    if not below:
+        return "a filesystem or drive root cannot be the document folder"
+    windows = isinstance(path, PureWindowsPath)
+    unc = windows and path.drive.startswith("\\\\")
+    if len(below) == 1 and not unc:
+        return "a folder directly under the filesystem root cannot be the document folder"
+    if windows and not unc and below[0].casefold() in _WINDOWS_SYSTEM_FOLDERS:
+        return "a Windows system folder cannot be the document folder"
+    return None
 
 
 class BridgeError(Exception):
@@ -1091,8 +1117,9 @@ class BridgeApplication:
     def doc_folder_refusal(self, raw: Any) -> tuple[Path | None, str | None]:
         """The 문서 폴더 a value names, or why it cannot be one.
 
-        Absolute, existing, a directory; not a filesystem or drive root, not
-        the person's whole home, and not the runtime's own store (sessions,
+        Absolute, existing, a directory; not a filesystem or drive root or a
+        folder directly under one (nor a Windows system folder), not the
+        person's whole home, and not the runtime's own store (sessions,
         candidates, receipts) or anything inside it.
         """
         if not isinstance(raw, str) or not raw.strip() or "\x00" in raw:
@@ -1106,8 +1133,11 @@ class BridgeApplication:
             return None, "the document folder does not exist"
         if not folder.is_dir():
             return None, "the document folder is not a directory"
-        if folder.parent == folder:
-            return None, "a filesystem or drive root cannot be the document folder"
+        # Both spellings: /tmp resolves to /private/tmp on macOS.
+        for spelled in (Path(os.path.normpath(given)), folder):
+            why = system_folder_refusal(spelled)
+            if why:
+                return None, why
         try:
             home = Path.home().resolve()
         except (OSError, RuntimeError):

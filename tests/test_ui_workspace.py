@@ -702,3 +702,58 @@ def test_the_doc_folder_is_set_through_its_own_checked_route(tmp_path: Path, mon
         assert call("GET", "/api/workspace/list")[0] == 404
     finally:
         srv.shutdown_bridge()
+
+
+def test_the_doc_folder_refuses_the_root_and_its_direct_children(tmp_path: Path):
+    """Finding 13 (residual): `/` was refused but `/etc`, `/tmp` and `/home`
+    were not, and each widens the workspace routes to far more than one
+    person's documents. A folder directly under a filesystem root is refused
+    like the root itself; a folder deeper down is not."""
+    srv = rt_ui.create_bridge_server(root=tmp_path / "rt-root", port=0, prefs_path=tmp_path / "prefs.json")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        for value in ("/etc", "/tmp", "/home", "/usr", "/var"):
+            if not Path(value).is_dir():
+                continue
+            folder, why = srv.bridge.doc_folder_refusal(value)
+            assert folder is None and why, (value, folder)
+            with pytest.raises(rt_ui.BridgeError) as err:
+                srv.bridge.set_doc_folder({"path": value})
+            assert err.value.code == "invalid_doc_folder", value
+        deeper = tmp_path / "문서"
+        deeper.mkdir()
+        folder, why = srv.bridge.doc_folder_refusal(str(deeper))
+        assert folder == deeper.resolve() and why is None, why
+    finally:
+        srv.shutdown_bridge()
+
+
+def test_the_doc_folder_refuses_windows_drive_roots_and_system_folders():
+    """The same rule on Windows paths: a drive root, a folder directly under
+    it, and anything inside Windows, Program Files, Program Files (x86) or
+    ProgramData. A folder in the person's own tree, or on a network share,
+    is not refused."""
+    from pathlib import PureWindowsPath
+
+    refused = [
+        "C:\\",
+        "D:\\",
+        "C:\\Users",
+        "C:\\Windows",
+        "c:\\windows\\System32",
+        "C:\\Program Files",
+        "C:\\Program Files\\Rigorloom",
+        "C:\\Program Files (x86)\\App",
+        "C:\\ProgramData",
+        "C:\\ProgramData\\Microsoft\\Windows",
+        "\\\\nas\\share",
+    ]
+    for value in refused:
+        assert rt_ui.system_folder_refusal(PureWindowsPath(value)), value
+    allowed = [
+        "C:\\Users\\kim\\Documents",
+        "D:\\공문\\2026",
+        "\\\\nas\\share\\문서",
+    ]
+    for value in allowed:
+        assert rt_ui.system_folder_refusal(PureWindowsPath(value)) is None, value
