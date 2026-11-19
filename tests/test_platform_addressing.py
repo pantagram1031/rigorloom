@@ -239,3 +239,45 @@ def test_check_still_warns_when_a_filled_value_changes(env, tmp_path, monkeypatc
     assert r["checks"]["guard"]["state"] == "failed", r
     found = [(f["at"], f["kind"], f["severity"]) for f in r["findings"]]
     assert found == [("t0/r1/c1", "changed", "warning")], found
+
+
+def test_check_names_the_anchor_of_a_merged_cell_that_changed(env, tmp_path, monkeypatch):
+    # t0/r0/c2 spans two rows; the covered t0/r1/c2 reads empty on both sides.
+    _filled_elsewhere(env, tmp_path, monkeypatch, [{"op": "set", "at": "t0/r0/c2", "text": "비고 3건"}])
+    rev = ok(call(env.ctx(), "open", {"path": str(env.doc)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(env.doc), "base": rev, "ops": [
+        {"op": "set", "at": "t0/r0/c2", "text": "비고 5건"}]}))
+    r = ok(call(env.ctx(), "check", {"path": str(env.doc), "only": ["guard"]}))
+    found = [(f["at"], f["kind"], f["severity"]) for f in r["findings"]]
+    assert found == [("t0/r0/c2", "changed", "warning")], found
+
+
+def test_check_compares_a_table_with_a_new_row_as_a_whole(env):
+    rev = ok(call(env.ctx(), "open", {"path": str(env.doc)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(env.doc), "base": rev, "ops": [
+        {"op": "table.add_row", "at": "t2", "after": 1}]}))
+    rev = ok(call(env.ctx(), "open", {"path": str(env.doc)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(env.doc), "base": rev, "ops": [
+        {"op": "set", "at": "t2/r2/c1", "text": "2026년 11월 19일"}]}))
+    r = ok(call(env.ctx(), "check", {"path": str(env.doc), "only": ["guard"]}))
+    found = [(f["at"], f["kind"], f["severity"]) for f in r["findings"]]
+    assert found == [("t2", "changed", "warning")], found
+
+
+def test_check_after_filling_the_eval_form_reports_only_added_values(env):
+    # The P7 T1 form (evals/agent_fixtures.py): filling every seat an agent
+    # may fill leaves the guard passing, with one notice per value.
+    sys.path.insert(0, str(ROOT / "evals"))
+    import agent_fixtures
+    form = env.work / "신청서.hwpx"
+    form.write_bytes(agent_fixtures.build_t1_hwpx())
+    opened = ok(call(env.ctx(), "open", {"path": str(form)}))
+    values = {"기관명": "한빛기술연구소", "사업자번호": "204-81-00102", "과제명": "정밀센서 시제품 개발",
+              "신청금액": "240,000,000원", "담당자": "김하늘", "신청일자": "2026년 11월 19일"}
+    by_label = {p["label"].replace(" ", ""): p["id"] for p in opened["places"]}
+    ok(call(env.ctx(), "fill", {"path": str(form), "values": {
+        f"place:{by_label[k]}": v for k, v in values.items()}}))
+    r = ok(call(env.ctx(), "check", {"path": str(form), "only": ["guard"]}))
+    assert r["checks"]["guard"]["state"] == "passed", r
+    assert r["findings"] and all(f["kind"] == "added" and f["severity"] == "notice"
+                                 and "/r" in f["at"] for f in r["findings"]), r["findings"]

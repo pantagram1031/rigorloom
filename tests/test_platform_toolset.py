@@ -1651,3 +1651,22 @@ def test_a_substituted_font_is_named_or_called_another_font():
     assert rt_toolset._face("본고딕") == "본고딕으로"
     assert rt_toolset._fonts_line({"substituted": [{"want": "함초롬바탕", "got": None}]}) == \
         "fonts substituted: 함초롬바탕→? (page breaks may differ from Hancom)"
+
+
+def test_a_table_of_the_same_shape_is_compared_cell_by_cell():
+    # Fable's review of the P7 round-2 change: an empty cell given a value is
+    # a fact added (a notice), a filled cell whose value changed is a warning
+    # at that cell, and an unchanged cell says nothing.
+    fidelity = rt_tools.sibling("rt_fidelity")
+    before = [["기관명", ""], ["신청금액", "1억원"], ["비고", "3건"]]
+    after = [["기관명", "한빛기술 204-81-00102"], ["신청금액", "2억원"], ["비고", "3건"]]
+    out = rt_toolset._cell_changes(fidelity, "t0", before, after)
+    assert [(c["at"], c["kind"], bool(c.get("notice"))) for c in out] == [
+        ("t0/r0/c1", "added", True), ("t0/r1/c1", "changed", False)]
+    assert out[1]["before"] == "1억원" and out[1]["after"] == "2억원"
+
+
+def test_a_table_that_changed_shape_is_compared_whole():
+    fidelity = rt_tools.sibling("rt_fidelity")
+    assert rt_toolset._cell_changes(fidelity, "t0", [["금액", "1"]], [["금액", "1"], ["합계", "2"]]) is None
+    assert rt_toolset._cell_changes(fidelity, "t0", [["금액", "1"]], [["금액", "1", "2"]]) is None
