@@ -1199,6 +1199,62 @@ def test_the_client_going_away_mid_question_ends_the_session_cleanly(env):
     assert path.read_bytes() == before
 
 
+# ---------------------------------------------------------------------------
+# Sol's re-check of 07d6997
+# ---------------------------------------------------------------------------
+
+def test_a_change_announced_right_after_yes_is_taken_before_the_write(env, monkeypatch):
+    # The client says yes and, in the same breath, takes the folder away. The
+    # announcement is already in the server's queue when it checks the
+    # folders for the write; it has to count.
+    a, b = env.tmp / "a", env.tmp / "b"
+    a.mkdir(), b.mkdir()
+    path = env.doc(folder=a)
+    before = path.read_bytes()
+    s = env.session(allow=[])
+    s.handshake(caps={"roots": {"listChanged": True}, **ELICIT})
+    s.reply(s.server_request("roots/list")["id"], {"roots": [{"uri": file_uri(a)}]})
+    _edited(s, path)
+    rid, ask = _save_and_get_question(s, path)
+    real = rt_mcp.overwrite_answer
+
+    def answer_once_the_change_is_queued(reply):
+        deadline = time.monotonic() + WAIT
+        while s.server._inbox.empty() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return real(reply)
+
+    monkeypatch.setattr(rt_mcp, "overwrite_answer", answer_once_the_change_is_queued)
+    yes = {"jsonrpc": "2.0", "id": ask["id"],
+           "result": {"action": "accept", "content": {"overwrite": True}}}
+    changed = {"jsonrpc": "2.0", "method": "notifications/roots/list_changed"}
+    s.cin.write((json.dumps(yes) + "\n" + json.dumps(changed) + "\n").encode("utf-8"))
+    s.reply(s.server_request("roots/list")["id"], {"roots": [{"uri": file_uri(b)}]})
+    r = s.response(rid)["result"]
+    assert r["structuredContent"]["error"]["code"] == "outside_roots"
+    assert path.read_bytes() == before
+
+
+def test_cancelling_after_yes_does_not_wait_for_the_folder_list(env):
+    a = env.tmp / "a"
+    a.mkdir()
+    path = env.doc(folder=a)
+    before = path.read_bytes()
+    s = env.session(allow=[], roots_timeout=30)
+    s.handshake(caps={"roots": {"listChanged": True}, **ELICIT})
+    s.reply(s.server_request("roots/list")["id"], {"roots": [{"uri": file_uri(a)}]})
+    _edited(s, path)
+    rid, ask = _save_and_get_question(s, path)
+    s.notify("notifications/roots/list_changed")
+    s.server_request("roots/list")                 # never answered
+    s.reply(ask["id"], {"action": "accept", "content": {"overwrite": True}})
+    s.notify("notifications/cancelled", {"requestId": rid, "reason": "user"})
+    listed = s.response(s.request("tools/list"))   # within WAIT, not the 30 s roots wait
+    assert "tools" in listed["result"]
+    assert not [f for f in s.nothing_pending(0.3) if f.get("id") == rid]
+    assert path.read_bytes() == before
+
+
 def test_mcp_is_a_product_verb_that_no_legacy_command_uses():
     import cli
     import rt_cli_product

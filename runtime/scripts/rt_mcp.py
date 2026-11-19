@@ -690,14 +690,28 @@ class McpServer:
         out.hint = self.no_roots_hint
         return out
 
+    def _drain(self) -> None:
+        """Take every message that has already arrived, without waiting."""
+        while True:
+            try:
+                item = self._inbox.get_nowait()
+            except queue.Empty:
+                return
+            self._receive(item)
+
     def _roots_now(self) -> ServerRoots:
         """The roots after any change the client announced has arrived.
 
-        Used by ``save`` once the person has answered. A cancelled call gets
-        no folders at all: nothing it does may reach a file any more.
+        Used by ``save`` once the person has answered, right before the
+        write: messages already received are taken first, so a folder the
+        client announced it took away is gone, and the write uses exactly the
+        folders returned here. A cancelled call gets no folders at all:
+        nothing it does may reach a file any more.
         """
-        if self._roots_pending is not None:
-            if not self._wait(lambda: self._roots_pending is None, self.roots_timeout):
+        self._drain()
+        if self._roots_pending is not None and not self._cancelled:
+            if not self._wait(lambda: self._roots_pending is None or self._cancelled,
+                              self.roots_timeout) and not self._cancelled:
                 self._roots_gave_up = True
         if self._cancelled:
             out = ServerRoots([])
