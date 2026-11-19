@@ -1408,3 +1408,74 @@
     font-size: var(--text-sm);
   }
 }
+
+/* ── Trust (UX11): tags, notes and the dialog's primary button ─────────────── */
+
+/* `.dialog-foot button` (styles.css) outranks `.review-btn--primary`, which
+   rendered the confirm 승인 white like 취소. Restore the primary fill there. */
+.dialog-foot .review-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--fg-on-accent);
+}
+
+.dialog-foot .review-btn--primary:not(:disabled):hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.review-prompt-note,
+.review-approve-blocked,
+.change-list-notice {
+  margin: 0;
+  padding: 4px var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+}
+
+.change-tag {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  border: 1px solid var(--border-strong);
+  color: var(--fg-secondary);
+  background: var(--bg-surface);
+}
+
+.change-tag--mock,
+.change-tag--returned {
+  background: var(--needs-look-bg);
+  border-color: transparent;
+  color: var(--needs-look-fg);
+}
+
+.change-row-hard-reason {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--text-sm);
+  color: var(--needs-look-fg);
+}
+
+.approval-meta-line,
+.approval-progress {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+}
+
+.approval-warn-lines {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--needs-look-bg);
+  color: var(--needs-look-fg);
+  font-size: var(--text-sm);
+  list-style: none;
+}
+
+.approval-hash-copy {
+  margin-left: 6px;
+}

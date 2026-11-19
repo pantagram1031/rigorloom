@@ -6,6 +6,7 @@ import vm from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import { loadTrustModule, trustStoreSelectors } from "./action-test-support.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -158,7 +159,9 @@ function renderChangeList(guardSummary, stateOverrides = {}) {
     useWorkspace: (sel) => sel(state),
     draftStaleness: () => null,
     headCandidate: () => null,
+    ...trustStoreSelectors,
   };
+  const trust = loadTrustModule(loadModule);
   const detailStub = {
     DetailDisclosure: ({ children }) => React.createElement("details", null, children),
   };
@@ -178,6 +181,7 @@ function renderChangeList(guardSummary, stateOverrides = {}) {
     react: React,
     "../actions": actionsStub,
     "../i18n/vocabulary": vocabulary,
+    "../workspace/trust": trust,
     "./DetailDisclosure": detailStub,
   });
   const { ChangeList } = loadModule("../src/components/ChangeList.tsx", {
@@ -185,6 +189,7 @@ function renderChangeList(guardSummary, stateOverrides = {}) {
     "../actions": actionsStub,
     "../i18n/vocabulary": vocabulary,
     "../store": storeStub,
+    "../workspace/trust": trust,
     "./ChangeRow": changeRowMod,
     "./DetailDisclosure": detailStub,
   });
@@ -213,14 +218,15 @@ function renderApprovalDialog(guardSummary, stateOverrides = {}) {
     activeInspect: (s) => s.inspects[s.activeSessionId] ?? null,
     activeText: (s) => s.texts[s.activeSessionId] ?? [],
     draftStaleness: () => null,
+    ...trustStoreSelectors,
   };
   const actionsStub = {
     approveAndApplyFromDialog: () => {},
     closeApprovalDialog: () => {},
-    loadPipelineGates: () => {},
+    rememberApprovedGuard: () => {},
     reproposeDraft: () => {},
-    resolvePipelineGateAction: () => {},
     resolveRecovery: () => {},
+    revisionNumberFor: () => 1,
   };
   const { ApprovalDialog } = loadModule("../src/components/ApprovalDialog.tsx", {
     react: React,
@@ -229,6 +235,7 @@ function renderApprovalDialog(guardSummary, stateOverrides = {}) {
     "../store": storeStub,
     "../workspace/externalPlan": { buildRegionTextMap: () => ({}) },
     "../workspace/guardHelper": createGuardStub(guardSummary),
+    "../workspace/trust": loadTrustModule(loadModule),
     "./DetailDisclosure": {
       DetailDisclosure: ({ children }) => React.createElement("details", null, children),
     },

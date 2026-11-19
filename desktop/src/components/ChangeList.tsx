@@ -16,7 +16,19 @@ import {
   setReturnPopoverOpen,
 } from "../actions";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
-import { draftStaleness, headCandidate, useWorkspace } from "../store";
+import {
+  draftStaleness,
+  headCandidate,
+  returnedDraftOps,
+  useWorkspace,
+} from "../store";
+import {
+  approveBlockedReason,
+  behindHeadFinding,
+  behindHeadMessage,
+  guardWarningCount,
+  isSupersededApproval,
+} from "../workspace/trust";
 import type { UiLanguage } from "../types";
 import type {
   IndexedChange,
@@ -77,6 +89,8 @@ export function ChangeList({
   const staleness = useWorkspace(draftStaleness);
   const reapprovalPrompt = useWorkspace((s) => s.reapprovalPrompt);
   const returnPopoverOpen = useWorkspace((s) => s.returnPopoverOpen);
+  const returnedOps = useWorkspace(returnedDraftOps);
+  const approvedGuard = useWorkspace((s) => s.approvedGuard);
 
   const [returnReason, setReturnReason] = useState("");
   const [returning, setReturning] = useState(false);
@@ -113,8 +127,27 @@ export function ChangeList({
     Boolean(draft.plan) &&
     draft.validation?.ok === true &&
     approval?.state !== "rejected" &&
+    returnedOps.length === 0 &&
     !isStale &&
     !busy;
+
+  // An outdated plan: it was made before the head 수정본 and would drop it.
+  const behindHead = behindHeadFinding(draft.validation);
+  const revisionOf = (runId: string) => revisionNumberFor(workspaceState, sessionId, runId);
+  const headRevision = head?.runId ? revisionOf(head.runId) : null;
+  const returnedIds = new Set(returnedOps.map((op) => op.opId));
+  const hardCount = changes.filter((ch) => ch.hasHardFailure).length;
+  const blockedReason =
+    changes.length > 0 && !canApprove && !busy && !isStale
+      ? approveBlockedReason(
+          {
+            hardCount: hardCount > 0 ? hardCount : (draft.validation?.hard.length ?? 0) - (behindHead ? 1 : 0),
+            returnedCount: returnedOps.length,
+            behindHead: behindHead !== null,
+          },
+          language,
+        )
+      : null;
 
   const changedFactCount = guardSummary.changedFactOpIds.length;
   const selectedChange = selectedChangeId
@@ -165,7 +198,15 @@ export function ChangeList({
     }
   };
 
-  const appliedAndEmpty = changes.length === 0 && activeApplied !== null;
+  // After an approval — including after a reload — the empty queue stands on
+  // the head 수정본, so the pane offers its export rather than an empty state.
+  const appliedAndEmpty = changes.length === 0 && (activeApplied !== null || head !== null);
+  const appliedPlanId = activeApplied?.planId ?? (head?.planId as string | undefined) ?? null;
+  const appliedGuard = appliedPlanId ? (approvedGuard[appliedPlanId] ?? null) : null;
+  const appliedGuardCount = appliedGuard ? guardWarningCount(appliedGuard) : 0;
+  const appliedChecksOpen =
+    activeApplied?.checks?.acceptance === false ||
+    (!activeApplied && head?.acceptance === false);
 
   return (
     <aside
@@ -294,6 +335,7 @@ export function ChangeList({
                   className="review-btn review-btn--primary"
                   data-testid="review-approve-btn"
                   disabled={!canApprove}
+                  title={blockedReason ?? undefined}
                   onClick={() => openApprovalDialog()}
                 >
                   {t("review_approve", language)}
@@ -302,6 +344,46 @@ export function ChangeList({
             )}
           </div>
         </div>
+
+        {blockedReason ? (
+          <p className="review-approve-blocked" data-testid="review-approve-blocked">
+            {blockedReason}
+          </p>
+        ) : null}
+
+        {behindHead && changes.length > 0 ? (
+          <div className="change-banner change-banner--warn" data-testid="review-behind-head-banner">
+            <p className="change-banner-text">
+              {behindHeadMessage(behindHead, revisionOf, language)}
+            </p>
+            <button
+              type="button"
+              className="review-btn review-btn--secondary"
+              data-testid="review-repropose-head-btn"
+              disabled={busy}
+              onClick={() => void reproposeDraft()}
+            >
+              {headRevision !== null
+                ? t("review_repropose_on_head", language, [headRevision])
+                : t("review_repropose_on_latest", language)}
+            </button>
+            <button
+              type="button"
+              className="review-btn review-btn--secondary"
+              data-testid="review-behind-head-return-btn"
+              disabled={busy}
+              onClick={() => setReturnPopoverOpen(true)}
+            >
+              {t("review_return", language)}
+            </button>
+          </div>
+        ) : null}
+
+        {isSupersededApproval(approval) ? (
+          <p className="change-list-notice" data-testid="review-superseded-notice">
+            {errorCodeMessage("superseded_by_newer_candidate", language)}
+          </p>
+        ) : null}
 
         {isStale && changes.length > 0 ? (
           <div className="change-banner change-banner--warn" data-testid="review-stale-banner">
@@ -407,6 +489,16 @@ export function ChangeList({
                 ? t("review_applied_ok", language)
                 : t("review_empty_changes", language)}
             </p>
+            {appliedAndEmpty && appliedGuardCount > 0 ? (
+              <p className="change-list-notice" data-testid="review-applied-guard">
+                {t("review_applied_guard_line", language, [appliedGuardCount])}
+              </p>
+            ) : null}
+            {appliedAndEmpty && appliedChecksOpen ? (
+              <p className="change-list-notice" data-testid="review-applied-checks">
+                {t("history_checks_open", language)}
+              </p>
+            ) : null}
             <div className="change-empty-actions">
               {appliedAndEmpty ? (
                 <button
@@ -443,6 +535,7 @@ export function ChangeList({
                 isExpanded={expandedChangeId === change.opId}
                 focusEditNonce={focusEditNonce}
                 disabled={busy}
+                returned={returnedIds.has(change.opId)}
                 language={language}
                 onSelect={onSelectChange}
                 onToggleExpand={onToggleExpand}

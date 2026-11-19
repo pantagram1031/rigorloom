@@ -54,6 +54,7 @@ import type {
   Turn,
   UiLanguage,
 } from "./types";
+import type { GuardWarningSummary, ParkedDraft, SavedDraft } from "./workspace/trust";
 
 export type View = "document" | "agent";
 
@@ -109,6 +110,12 @@ interface QueuedOpBase {
   origin: "user" | "agent";
   /** Who proposed it, when that is an agent. */
   proposer?: string;
+  /** `"mock"` when a bundled test agent proposed it. Shown, never hidden. */
+  provenance?: "mock";
+  /** The document this op was made for. A re-propose refuses any other. */
+  sessionId?: string;
+  /** Set when the body character shape was applied for the person (T30). */
+  autoCharPr?: boolean;
 }
 
 /** A value going into an empty cell. `fill-cells`, via `plan/propose`. */
@@ -183,6 +190,43 @@ export function opTargetId(op: QueuedOp): string {
   }
   if (op.kind === "set_run") return `p:${op.atPara}#${op.run}`;
   return `guides:${op.opId}`;
+}
+
+/**
+ * One string per (target, value), whatever the op id.
+ *
+ * Two plans that put the same value in the same place produce the same
+ * signature, which is how a change the person returned is recognised when an
+ * agent proposes it again (GPT review finding 1).
+ */
+export function opSignature(op: QueuedOp): string {
+  if (op.kind === "fill_cell" || op.kind === "replace_at_cell") {
+    return `c:${op.table}:${op.row}:${op.col}=${op.text}`;
+  }
+  if (op.kind === "set_run") return `p:${op.atPara}#${op.run}=${op.text}`;
+  return `guides:${op.color ?? ""}|${(op.charPrIds ?? []).join(",")}`;
+}
+
+const NO_OPS: QueuedOp[] = [];
+let returnedCache: { ops: QueuedOp[]; returned: string[]; result: QueuedOp[] } | null = null;
+
+/**
+ * The queued ops the person already returned for this document.
+ *
+ * Reference-stable, like every array selector here: a fresh array per call
+ * makes `useSyncExternalStore` loop (React #185, see `NO_CANDIDATES`).
+ */
+export function returnedDraftOps(s: WorkspaceState): QueuedOp[] {
+  const sessionId = s.draft.sessionId ?? s.activeSessionId;
+  const returned = sessionId ? s.returnedOps?.[sessionId] : undefined;
+  if (!returned || returned.length === 0 || s.draft.ops.length === 0) return NO_OPS;
+  if (returnedCache && returnedCache.ops === s.draft.ops && returnedCache.returned === returned) {
+    return returnedCache.result;
+  }
+  const hits = s.draft.ops.filter((op) => returned.includes(opSignature(op)));
+  const result = hits.length === 0 ? NO_OPS : hits;
+  returnedCache = { ops: s.draft.ops, returned, result };
+  return result;
 }
 
 /**
@@ -652,6 +696,31 @@ export interface WorkspaceState {
   returnPopoverOpen: boolean;
   /** Bumped when CommandPalette asks OpenView to expand and scroll to the samples list. */
   openSamplesRevealNonce: number;
+
+  // --- trust (UX11) ----------------------------------------------------------
+  /**
+   * Each other document's queue, put aside while it is not the active one.
+   *
+   * `draft` is the ACTIVE document's queue and nothing else. Switching
+   * documents parks it here under the session it names and brings the incoming
+   * document's own queue back, so a value typed for one file can never show up
+   * as a pending change in another (UX11 finding 3).
+   */
+  parkedDrafts: Record<string, ParkedDraft>;
+  /** Cell texts read out of a head candidate, keyed `sessionId:runId`. */
+  headTexts: Record<string, RegionText[]>;
+  /** 원본 보기: the page shows the source instead of the head 수정본. */
+  showOriginal: boolean;
+  /** Typed entries kept across reloads, per session (prefs key `drafts`). */
+  savedDrafts: Record<string, SavedDraft>;
+  /** The restored-count line, shown once after a reload brought entries back. */
+  restoredDraft: { sessionId: string; count: number } | null;
+  /** Signatures of changes the person returned, per session. */
+  returnedOps: Record<string, string[]>;
+  /** The guard warnings a plan was approved with, keyed by plan id. */
+  approvedGuard: Record<string, GuardWarningSummary>;
+  /** Receipts `receipt/read` refused, keyed by run id, with the refusal code. */
+  receiptFailures: Record<string, string>;
 }
 
 /**
@@ -857,6 +926,15 @@ const initial: WorkspaceState = {
   operatorModalOpen: false,
   returnPopoverOpen: false,
   openSamplesRevealNonce: 0,
+
+  parkedDrafts: {},
+  headTexts: {},
+  showOriginal: false,
+  savedDrafts: {},
+  restoredDraft: null,
+  returnedOps: {},
+  approvedGuard: {},
+  receiptFailures: {},
 };
 
 let state: WorkspaceState = initial;
@@ -1123,7 +1201,12 @@ export function composerBlocker(s: WorkspaceState): string | null {
   if (!s.activeSessionId) return "no_document";
   if (!s.agentHost?.available) return "no_host";
   if (s.activeTurn) return "busy";
-  if (s.provider.provider === "mock") return null;
+  // The mock is a developer's test double, not an agent. Without the
+  // developer setting the box says nothing is connected rather than running
+  // it silently and dressing its test value up as an agent proposal.
+  if (s.provider.provider === "mock") {
+    return s.agentHost?.mockAllowed === true ? null : "agent_not_connected";
+  }
   if (!activeStoreKey(s.provider)) return "no_credential_name";
   if (s.credential?.state !== "present") return "no_credential";
   if (s.provider.provider === "router" && s.provider.router.baseUrl.trim() === "") {
@@ -1183,6 +1266,27 @@ export function activeCandidates(s: WorkspaceState): Candidate[] {
 export function activeText(s: WorkspaceState): RegionText[] {
   if (!s.activeSessionId) return NO_TEXT;
   return s.texts[s.activeSessionId] ?? NO_TEXT;
+}
+
+/**
+ * The cell texts of the head 수정본, when they have been read; else null.
+ *
+ * After an approval the page must show what was approved, not the blank
+ * original (UX11 finding 4). The source's texts stay the answer for 원본 보기
+ * and for a document with no 수정본 yet.
+ */
+export function activeHeadTexts(s: WorkspaceState): RegionText[] | null {
+  if (!s.activeSessionId) return null;
+  const head = headCandidate(s);
+  if (!head?.runId) return null;
+  return s.headTexts[`${s.activeSessionId}:${head.runId}`] ?? null;
+}
+
+/** What the page draws: the head's texts unless 원본 보기 is on. */
+export function activeDisplayText(s: WorkspaceState): RegionText[] {
+  const head = activeHeadTexts(s);
+  if (head && !s.showOriginal) return head;
+  return activeText(s);
 }
 
 /** Whether the runtime advertises a way to produce a page raster. */
@@ -1286,6 +1390,7 @@ function computeStaleness(s: WorkspaceState): Staleness {
 export function canRequestApproval(s: WorkspaceState): boolean {
   return (
     s.draft.ops.length > 0 &&
+    returnedDraftOps(s).length === 0 &&
     s.draft.plan !== null &&
     s.draft.validation?.ok === true &&
     draftStaleness(s) === null &&

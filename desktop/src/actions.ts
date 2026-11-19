@@ -21,6 +21,7 @@ import {
 import {
   DEFAULT_PROVIDER,
   EMPTY_DRAFT,
+  activeHeadTexts,
   activeStoreKey,
   canRequestApproval,
   composerBlocker,
@@ -41,6 +42,7 @@ import {
   bumpEditIntent,
   bumpPlanGeneration,
   currentPlanGeneration,
+  opSignature,
   type Draft,
   type QueuedOp,
   type WorkspaceState,
@@ -63,7 +65,19 @@ import {
   type CaretRefusal as RevisionCaretRefusal,
   type ParagraphEditEffect,
 } from "./revision";
-import { opKindLabel, t, type VocabularyKey } from "./i18n/vocabulary";
+import { errorCodeMessage, opKindLabel, t, type VocabularyKey } from "./i18n/vocabulary";
+import {
+  autoCharPrFor,
+  foreignOps,
+  headTextsKey,
+  planOpsPayload,
+  restorableOps,
+  savableOps,
+  swapSessionDrafts,
+  undoBlockReason,
+  withoutSignatures,
+  type GuardWarningSummary,
+} from "./workspace/trust";
 import type {
   AppliedCandidate,
   ApprovalRecord,
@@ -245,6 +259,23 @@ export async function selectSession(sessionId: string) {
   const eventSelection = ++eventSelectionGeneration;
   const previous = getState().activeSessionId;
   if (previous !== sessionId) stopDocumentEvents();
+  // ONE QUEUE PER DOCUMENT. The outgoing queue is parked under the session it
+  // names and the incoming document gets its own back (or an empty one), so a
+  // value typed for one file can never be offered as a change to another.
+  const swapped =
+    previous !== sessionId && typeof swapSessionDrafts === "function"
+      ? swapSessionDrafts(
+          getState().parkedDrafts ?? {},
+          {
+            draft: getState().draft,
+            approval: getState().approval,
+            approvalPhase: getState().approvalPhase,
+            redoStack: getState().redoStack,
+          },
+          sessionId,
+          EMPTY_DRAFT,
+        )
+      : null;
   setState({
     activeSessionId: sessionId,
     screen: "review" as const,
@@ -290,6 +321,19 @@ export async function selectSession(sessionId: string) {
           eventSubscription: null,
           eventPhase: "starting" as const,
           eventError: null,
+          ...(swapped
+            ? {
+                parkedDrafts: swapped.parked,
+                draft: swapped.slot.draft,
+                approval: swapped.slot.approval,
+                approvalPhase: swapped.slot.approvalPhase,
+                approvalError: null,
+                reapprovalPrompt: null,
+                redoStack: swapped.slot.redoStack,
+                showOriginal: false,
+                restoredDraft: null,
+              }
+            : {}),
         }
       : {}),
   });
@@ -308,6 +352,15 @@ export async function selectSession(sessionId: string) {
   }
   rememberRecent(sessionId);
   await startEvents(sessionId);
+  if (typeof loadHeadTexts === "function") {
+    const headRun = headCandidate(getState())?.runId ?? null;
+    if (headRun && getState().activeSessionId === sessionId) {
+      await loadHeadTexts(sessionId, headRun);
+    }
+  }
+  if (typeof restoreSavedDraft === "function" && getState().activeSessionId === sessionId) {
+    await restoreSavedDraft(sessionId);
+  }
 }
 
 export async function refreshSessions(): Promise<void> {
@@ -315,6 +368,154 @@ export async function refreshSessions(): Promise<void> {
     setState({ sessions: await rt.sessions() });
   } catch (e) {
     setState({ fatal: rt.asRuntimeError(e) });
+  }
+}
+
+// --- trust: the head on screen, saved entries, returned changes ---------------
+
+/**
+ * Read the head 수정본's cell texts, so the page shows what was approved.
+ *
+ * Cells only, chunked like `loadText`: a cell is addressed by table, row and
+ * column, which a candidate keeps, while paragraph indices can move when guide
+ * text was deleted. A cell the read did not return falls back to the source's
+ * preview, which is the same honest partial `loadText` keeps.
+ */
+export async function loadHeadTexts(sessionId: string, runId: string): Promise<boolean> {
+  const key = headTextsKey(sessionId, runId);
+  if (getState().headTexts?.[key]) return true;
+  const inspect = getState().inspects[sessionId];
+  if (!inspect) return false;
+  const wanted = inspect.graph.tables.flatMap((tbl) =>
+    tbl.cells.map((c) => ({ table: tbl.index, row: c.addr.row, col: c.addr.col })),
+  );
+  const collected: RegionText[] = [];
+  let failures = 0;
+  for (let i = 0; i < wanted.length; i += REGION_CHUNK) {
+    try {
+      const res = await rt.readRegion(sessionId, wanted.slice(i, i + REGION_CHUNK), runId);
+      collected.push(...res.regions);
+    } catch {
+      failures += 1;
+    }
+  }
+  if (wanted.length > 0 && collected.length === 0 && failures > 0) return false;
+  setState({ headTexts: { ...getState().headTexts, [key]: collected } });
+  return true;
+}
+
+/**
+ * Keep the guard warnings a plan was approved with, so the applied state and
+ * the export still say what the guard flagged after the queue is gone.
+ */
+export function rememberApprovedGuard(planId: string, summary: GuardWarningSummary): void {
+  setState({ approvedGuard: { ...getState().approvedGuard, [planId]: summary } });
+}
+
+/** 원본 보기 ↔ 수정본 보기. Display only; never moves the head or the queue. */
+export function toggleShowOriginal(explicit?: boolean): void {
+  setState({ showOriginal: explicit ?? !getState().showOriginal });
+}
+
+/**
+ * Keep the person's typed entries for this document across a reload.
+ *
+ * Only `origin: "user"` ops: an agent's plan is a runtime record the event log
+ * brings back on its own. Written to prefs, which outlive the browser tab and
+ * the `rigorloom ui` process.
+ */
+function persistDraft(sessionId: string, draft: Draft | null): void {
+  const ops = draft && !draft.reverses ? savableOps(draft) : [];
+  const current = getState().savedDrafts ?? {};
+  if (ops.length === 0 && !current[sessionId]) return;
+  const next = { ...current };
+  if (ops.length === 0) {
+    delete next[sessionId];
+  } else {
+    next[sessionId] = { ops, savedUtc: new Date().toISOString().replace(/\.\d+Z$/, "Z") };
+  }
+  setState({ savedDrafts: next });
+  void rt.savePrefs({ drafts: next }).catch(() => undefined);
+}
+
+/**
+ * Bring back the entries a reload would have lost, re-proposed on the head.
+ *
+ * Also finishes a parked queue whose proposal was still in flight when the
+ * person switched away: its result was fenced out, so it is proposed again.
+ */
+async function restoreSavedDraft(sessionId: string): Promise<void> {
+  const state = getState();
+  if (state.activeSessionId !== sessionId) return;
+  if (state.draft.ops.length > 0) {
+    if (state.draft.sessionId === sessionId && !state.draft.plan && state.draft.phase === "starting") {
+      await setQueue(state.draft.ops);
+    }
+    return;
+  }
+  const ops = restorableOps(state.savedDrafts?.[sessionId]);
+  if (ops.length === 0) return;
+  await setQueue(ops, { baseRunId: headCandidate(getState())?.runId ?? null, reverses: null });
+  const after = getState();
+  if (after.activeSessionId === sessionId && after.draft.ops === ops) {
+    setState({ restoredDraft: { sessionId, count: ops.length } });
+  }
+}
+
+/** Remember changes the person returned, so a re-proposal cannot slip them back in. */
+function markReturned(ops: readonly QueuedOp[]): void {
+  const state = getState();
+  const sessionId = state.draft.sessionId ?? state.activeSessionId;
+  if (!sessionId || ops.length === 0) return;
+  const current = state.returnedOps?.[sessionId] ?? [];
+  const add = ops.map(opSignature).filter((sig) => !current.includes(sig));
+  if (add.length === 0) return;
+  setState({ returnedOps: { ...state.returnedOps, [sessionId]: [...current, ...add] } });
+}
+
+/** The person put these back themselves: they are no longer returned. */
+function clearReturned(ops: readonly QueuedOp[]): void {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  if (!sessionId) return;
+  const current = state.returnedOps?.[sessionId];
+  if (!current || current.length === 0) return;
+  const next = withoutSignatures(current, ops);
+  if (next.length === current.length) return;
+  setState({ returnedOps: { ...state.returnedOps, [sessionId]: next } });
+}
+
+/** 다시 넣기: keep a returned change that came back in a proposal. */
+export function readdReturnedOp(opId: string): void {
+  const op = getState().draft.ops.find((x) => x.opId === opId);
+  if (op) clearReturned([op]);
+}
+
+/**
+ * 돌려보내기. The proposal leaves the queue and stays returned.
+ *
+ * The runtime records the decision with the person's words as `reason` — the
+ * approver stays the host operator. Every op is remembered as returned, so the
+ * next value typed in Fill does not carry the returned ones along into one
+ * 변경 2건 approval (GPT review finding 1), and an agent that proposes the same
+ * value again gets it shown as returned.
+ */
+export async function returnDraft(reason: string): Promise<void> {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  if (!sessionId) return;
+  const draft = state.draft;
+  if (draft.plan?.planId) markExternalPlanDismissed(sessionId, draft.plan.planId);
+  markReturned(draft.ops);
+  const approval = state.approval;
+  if (approval?.state === "pending" && approval.planId === draft.plan?.planId) {
+    await resolveApprovalDecision("rejected", "host-operator", reason.trim() || null);
+  } else {
+    showToast(t("toast_proposal_returned", getState().language), 2000);
+  }
+  const after = getState();
+  if (after.activeSessionId === sessionId && (after.draft === draft || after.draft.plan?.planId === draft.plan?.planId)) {
+    await clearQueue();
   }
 }
 
@@ -558,7 +759,7 @@ export function beginEdit(
       table,
       row,
       col,
-      before: queued?.before ?? seatText(inspect, state.texts[sessionId] ?? [], table, row, col),
+      before: queued?.before ?? seatText(inspect, activeHeadTexts(state) ?? state.texts[sessionId] ?? [], table, row, col),
       charPr: queued?.charPr,
       opId: queued?.opId ?? null,
       multiline,
@@ -586,7 +787,7 @@ export function beginStaticCellEdit(
     return beginEdit(table, row, col, options);
   }
   const queued = queuedCellOpAt(state, table, row, col);
-  const before = queued?.before ?? seatText(inspect, state.texts[sessionId] ?? [], table, row, col);
+  const before = queued?.before ?? seatText(inspect, activeHeadTexts(state) ?? state.texts[sessionId] ?? [], table, row, col);
   setState({
     selection: { kind: "cell", table, row, col },
     inlineEdit: {
@@ -805,6 +1006,24 @@ export async function commitEdit(value: string): Promise<void> {
     return;
   }
   const ops = getState().draft.ops.filter((op) => op.opId !== edit.opId);
+  const commitState = getState();
+  const commitSession = commitState.activeSessionId ?? undefined;
+  const commitInspect = commitSession ? (commitState.inspects[commitSession] ?? null) : null;
+  // T30, done for the person: a blank whose own run is superscript or
+  // subscript would print the typed value small, and the engine already names
+  // the body shape to use. The row says it was applied.
+  const autoCharPr =
+    edit.kind === "cell" && !edit.replaceExisting
+      ? autoCharPrFor(seatAt(commitInspect, edit.table, edit.row, edit.col), edit.charPr)
+      : null;
+  // A blank the head 수정본 already filled is occupied; writing over it is the
+  // intent, and preedit refuses an occupied cell unless told so.
+  const headFilled =
+    edit.kind === "cell" &&
+    !edit.replaceExisting &&
+    edit.before.trim().length > 0 &&
+    activeHeadTexts(commitState) !== null &&
+    edit.before !== seatText(commitInspect, commitSession ? (commitState.texts[commitSession] ?? []) : [], edit.table, edit.row, edit.col);
   // ONE QUEUE, ONE PLAN PATH, TWO OP KINDS. A value typed into a seat and a
   // sentence typed into a paragraph differ by exactly the operation kind the
   // runtime's own registry names for each. Everything past this line —
@@ -835,9 +1054,12 @@ export async function commitEdit(value: string): Promise<void> {
             col: edit.col,
             text: trimmed,
             ...(trimmed.includes("\n") ? { lines: trimmed.split(/\r?\n/) } : {}),
-            charPr: edit.charPr,
+            charPr: autoCharPr ?? edit.charPr,
+            ...(autoCharPr ? { autoCharPr: true } : {}),
+            ...(headFilled ? { overwrite: true } : {}),
             before: edit.before,
             origin: "user",
+            ...(commitSession ? { sessionId: commitSession } : {}),
           }
       : {
           opId: edit.opId ?? `op-p${edit.atPara}r${edit.run}`,
@@ -848,6 +1070,7 @@ export async function commitEdit(value: string): Promise<void> {
           before: queuedRun?.before ?? edit.before,
           origin: "user",
         };
+  clearReturned([next]);
   await setQueue(
     [...ops, next],
     edit.kind === "run"
@@ -893,7 +1116,11 @@ export async function addQueueOp(op: QueuedOp): Promise<void> {
   const sessionId = state.activeSessionId;
   const inspect = sessionId ? (state.inspects[sessionId] ?? null) : null;
   const texts = sessionId ? (state.texts[sessionId] ?? []) : [];
-  let normalized: QueuedOp = { ...op, opId } as QueuedOp;
+  let normalized: QueuedOp = {
+    ...op,
+    opId,
+    ...(sessionId && !op.sessionId ? { sessionId } : {}),
+  } as QueuedOp;
   if (normalized.kind === "fill_cell" && normalized.before === "") {
     normalized = {
       ...normalized,
@@ -905,6 +1132,7 @@ export async function addQueueOp(op: QueuedOp): Promise<void> {
       before: seatText(inspect, texts, normalized.table, normalized.row, normalized.col),
     };
   }
+  if (normalized.origin === "user") clearReturned([normalized]);
   await setQueue([...state.draft.ops, normalized]);
 }
 
@@ -948,6 +1176,8 @@ export async function undoQueuedOp(opId: string): Promise<boolean> {
   const op = getState().draft.ops.find((x) => x.opId === opId);
   if (!op) return false;
   const rewritten = didRewriteAgent(opId);
+  // 빼기 on an agent's change is a return of that one change.
+  if (op.origin === "agent") markReturned([op]);
   setState({ redoStack: [...getState().redoStack, op] });
   await setQueue(
     getState().draft.ops.filter((x) => x.opId !== opId),
@@ -970,6 +1200,7 @@ export async function redoQueuedOp(): Promise<boolean> {
   const op = stack[stack.length - 1];
   if (!op) return false;
   setState({ redoStack: stack.slice(0, -1) });
+  clearReturned([op]);
   const ops = getState().draft.ops.filter((x) => x.opId !== op.opId);
   await setQueue([...ops, op]);
   return true;
@@ -983,6 +1214,8 @@ function didRewriteAgent(opId: string): boolean {
 
 export async function clearQueue(): Promise<void> {
   const prev = getState().draft;
+  const clearedSession = prev.sessionId ?? getState().activeSessionId;
+  if (clearedSession && typeof persistDraft === "function") persistDraft(clearedSession, null);
   if (typeof markExternalPlanDismissed === "function" && prev.sessionId && prev.plan?.planId) {
     markExternalPlanDismissed(prev.sessionId, prev.plan.planId);
   }
@@ -1050,6 +1283,7 @@ async function setQueue(
 
   if (ops.length === 0 || !sessionId) {
     setState({ draft: { ...EMPTY_DRAFT, rewrittenFromAgent: false } });
+    if (sessionId && typeof persistDraft === "function") persistDraft(sessionId, null);
     return;
   }
 
@@ -1154,6 +1388,7 @@ async function setQueue(
         reverses,
       },
     });
+    if (typeof persistDraft === "function") persistDraft(sessionId, getState().draft);
   } catch (e) {
     if (currentPlanGeneration() !== gen) return;
     if (!ownsDraft(owner)) return;
@@ -1174,14 +1409,33 @@ async function setQueue(
         reverses,
       },
     });
+    if (typeof persistDraft === "function") persistDraft(sessionId, getState().draft);
   }
 }
 
 /** Re-propose the queue against the document that is open now. */
 export async function reproposeDraft(): Promise<void> {
-  const ops = getState().draft.ops;
+  const state = getState();
+  const ops = state.draft.ops;
   if (ops.length === 0) return;
-  await setQueue(ops);
+  // A queue made for another document is never re-proposed onto this one.
+  const foreign = foreignOps(state.draft, state.activeSessionId);
+  if (foreign.length > 0) {
+    setState({
+      draft: {
+        ...state.draft,
+        phase: "failed",
+        error: {
+          code: "foreign_session_ops",
+          message: errorCodeMessage("foreign_session_ops", state.language),
+          data: { opIds: foreign.map((op) => op.opId), sessionId: state.draft.sessionId },
+        },
+      },
+    });
+    return;
+  }
+  // Re-proposing means "against the document as it is now": the head.
+  await setQueue(ops, { baseRunId: headCandidate(state)?.runId ?? null });
 }
 
 // --- undo, tier two: an applied candidate (E1.4) -----------------------------
@@ -1357,8 +1611,31 @@ export async function proposeUndoOf(runId: string): Promise<number> {
     // Chained onto the HEAD, not onto the candidate being reversed: undoing an
     // older edit must not throw away the newer ones on top of it.
     if (!ownsDraftFence(fence)) return 0;
+    const undoBase = headCandidate(getState())?.runId ?? null;
+    // A 되돌리기 제안 that would land in the queue already unfixable is not a
+    // proposal anybody can act on (GPT review finding 10). Validate it first;
+    // if it fails, say why and leave the queue alone.
+    const dryRun = await rt.proposePlan(sessionId, planOpsPayload(ops), {
+      baseRunId: undoBase,
+      reverses: runId,
+    });
+    markExternalPlanDismissed(sessionId, dryRun.planId);
+    const dryValidation = await rt.validatePlan(dryRun.planId);
+    if (!ownsDraftFence(fence)) return 0;
+    const blocked = undoBlockReason(dryValidation, getState().language);
+    if (blocked) {
+      setState({
+        undoPhase: "failed",
+        undoError: {
+          code: "undo_unfixable",
+          message: blocked,
+          data: { runId, hard: dryValidation.hard.map((row) => row.code) },
+        },
+      });
+      return 0;
+    }
     await setQueue(ops, {
-      baseRunId: headCandidate(getState())?.runId ?? null,
+      baseRunId: undoBase,
       reverses: runId,
     });
     if (getState().draft.ops !== ops) return 0;
@@ -1565,6 +1842,7 @@ export async function requestApprovalForDraft(): Promise<void> {
 export async function resolveApprovalDecision(
   decision: "approved" | "rejected",
   approver = "host-operator",
+  reason: string | null = null,
 ): Promise<void> {
   const state = getState();
   const approval = state.approval;
@@ -1578,6 +1856,7 @@ export async function resolveApprovalDecision(
       binding.planHash,
       decision,
       approver,
+      reason,
     );
     // The decision belongs only to the captured draft/approval. Its resolved
     // record may remain on that exact preserved queue after a session switch,
@@ -1736,12 +2015,24 @@ export async function applyApproved(): Promise<void> {
       head: applied.runId,
       historySelected: applied.runId,
       inverseProof: null,
+      showOriginal: false,
     } : {}),
   });
   if (ownsQueue && typeof markExternalPlanDismissed === "function") {
     markExternalPlanDismissed(sessionId, plan.planId);
   }
+  if (ownsQueue && typeof persistDraft === "function") persistDraft(sessionId, null);
+  // The applied queue may have been parked by a document switch mid-apply.
+  const parkedApplied = getState().parkedDrafts?.[sessionId];
+  if (parkedApplied && parkedApplied.draft.plan?.planId === plan.planId) {
+    const nextParked = { ...getState().parkedDrafts };
+    delete nextParked[sessionId];
+    setState({ parkedDrafts: nextParked });
+  }
   await loadCandidates(sessionId);
+  if (ownsPresentation && typeof loadHeadTexts === "function") {
+    await loadHeadTexts(sessionId, applied.runId);
+  }
   if (!ownsPresentation || getState().activeSessionId !== sessionId || getState().head !== applied.runId) return;
   if (reversed) await verifyReversal(applied.runId, reversed);
   if (getState().activeSessionId === sessionId && getState().head === applied.runId) {
@@ -2193,7 +2484,11 @@ export async function loadReceipt(
     // they are the interesting outcomes: the receipt refuses rather than
     // reporting a verdict about bytes that drifted.
     if (getState().activeSessionId !== sessionId || !ownsPublication()) return false;
-    setState({ receiptError: rt.asRuntimeError(e) });
+    const refusal = rt.asRuntimeError(e);
+    setState({
+      receiptError: refusal,
+      receiptFailures: { ...(getState().receiptFailures ?? {}), [runId]: refusal.code },
+    });
     return false;
   }
 }
@@ -2995,6 +3290,17 @@ export async function runAgentProposal(marker = "MOCK-AGENT-0001"): Promise<bool
   const state = getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return false;
+  // The test agent runs only with the developer setting on.
+  if (state.agentHost?.mockAllowed !== true) {
+    setState({
+      agentPhase: "failed",
+      agentError: {
+        code: "agent_not_connected",
+        message: errorCodeMessage("agent_not_connected", state.language),
+      },
+    });
+    return false;
+  }
   const owner = captureDraftOwner();
   setState({ agentPhase: "starting", agentError: null });
   try {
@@ -3432,6 +3738,9 @@ export async function boot(): Promise<void> {
     if (prefs.openedPaths && typeof prefs.openedPaths === "object") {
       setState({ openedPaths: prefs.openedPaths as Record<string, string> });
     }
+    if (prefs.drafts && typeof prefs.drafts === "object" && !Array.isArray(prefs.drafts)) {
+      setState({ savedDrafts: prefs.drafts as WorkspaceState["savedDrafts"] });
+    }
 
     const { status } = await rt.start(root);
     setState({
@@ -3527,6 +3836,17 @@ export async function refreshAgentHost(): Promise<void> {
       },
     });
   }
+}
+
+/**
+ * The developer setting that lets the bundled test agent run.
+ *
+ * Stored in prefs, which the browser bridge reads on every agent run; the
+ * status is re-read so the request box and Settings agree immediately.
+ */
+export async function setDevMockAgent(on: boolean): Promise<void> {
+  await rt.savePrefs({ devMockAgent: on ? true : null }).catch(() => undefined);
+  await refreshAgentHost();
 }
 
 /** Load the saved provider settings, and ask the store whether the key is there. */
@@ -3775,6 +4095,14 @@ async function adoptAgentPlan(
     }) as QueuedOp[];
   } else {
     ops = projectAgentPlan(authoritative, beforeCell) as QueuedOp[];
+  }
+  // A bundled test agent's ops say so on every surface that shows them.
+  const fromTestAgent =
+    authoritative.provenance === "mock" ||
+    authoritative.proposer === "agenthost-mock" ||
+    authoritative.proposer === "rigorloom-mock-agent";
+  if (fromTestAgent) {
+    ops = ops.map((op) => ({ ...op, provenance: "mock" as const }));
   }
   const draft: Draft = {
     ops,

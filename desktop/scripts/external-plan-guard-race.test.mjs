@@ -13,6 +13,7 @@ import vm from "node:vm";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import { loadTrustModule, trustStoreSelectors } from "./action-test-support.mjs";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -404,11 +405,14 @@ test("ChangeList exposes data-guard-state and data-guard-plan-id readiness marke
     useWorkspace: (sel) => sel(state),
     draftStaleness: () => null,
     headCandidate: () => null,
+    ...trustStoreSelectors,
   };
+  const trust = loadTrustModule(loadTsModule);
   const changeRowMod = loadTsModule("../src/components/ChangeRow.tsx", {
     react: React,
     "../actions": actionsStub,
     "../i18n/vocabulary": vocabulary,
+    "../workspace/trust": trust,
     "./DetailDisclosure": detailStub,
   });
   const { ChangeList } = loadTsModule("../src/components/ChangeList.tsx", {
@@ -416,6 +420,7 @@ test("ChangeList exposes data-guard-state and data-guard-plan-id readiness marke
     "../actions": actionsStub,
     "../i18n/vocabulary": vocabulary,
     "../store": storeStub,
+    "../workspace/trust": trust,
     "./ChangeRow": changeRowMod,
     "./DetailDisclosure": detailStub,
   });

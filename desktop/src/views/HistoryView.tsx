@@ -24,6 +24,7 @@ import type {
   UiLanguage,
 } from "../types";
 import { hasLiveUnappliedPlanInEvents } from "../workspace/externalPlan";
+import { historyProvenanceLine } from "../workspace/trust";
 import "./history.css";
 
 interface RevisionItem {
@@ -61,22 +62,13 @@ function formatDisplayTimestamp(
   return `${y}-${m}-${day} ${hh}:${mm}:${ss}`;
 }
 
-function formatApprovalMethod(
-  approver: string | null | undefined,
-  language: UiLanguage,
-): string {
-  const raw = (approver ?? "").trim().toLowerCase();
-  const directBase = t("history_approval_method_direct", language);
-  if (
-    !raw ||
-    raw === "host-operator" ||
-    raw === "rigorloom-desktop" ||
-    raw === "operator" ||
-    raw === "gongmun-walkthrough"
-  ) {
-    return directBase;
-  }
-  return `${directBase} (${approver?.trim()})`;
+/**
+ * The approval mode. Every approval this build records is a person's direct
+ * approval through the host; the raw approver string stays under 자세히, so no
+ * internal name reaches the surface.
+ */
+function formatApprovalMethod(language: UiLanguage): string {
+  return t("history_approval_method_direct", language);
 }
 
 export function HistoryView() {
@@ -90,6 +82,7 @@ export function HistoryView() {
   const undoPhase = useWorkspace((s) => s.undoPhase);
   const undoError = useWorkspace((s) => s.undoError);
   const language = useWorkspace((s) => s.language);
+  const receiptFailures = useWorkspace((s) => s.receiptFailures);
 
   const sessionId = session?.sessionId ?? null;
   const requestedReceiptsRef = useRef<Set<string>>(new Set());
@@ -425,7 +418,33 @@ export function HistoryView() {
                         className="history-approval-method"
                         data-testid={`history-approval-method-${revNum}`}
                       >
-                        {formatApprovalMethod(receipt?.approval?.approver, language)}
+                        {formatApprovalMethod(language)}
+                      </p>
+
+                      <p
+                        className="history-approval-method"
+                        data-testid={`history-provenance-${revNum}`}
+                      >
+                        {historyProvenanceLine(
+                          {
+                            proposer:
+                              receipt?.proposer ??
+                              (candidate.proposer as string | undefined) ??
+                              receipt?.approval?.requestedBy ??
+                              null,
+                            provenance:
+                              receipt?.provenance ??
+                              (candidate.provenance as string | undefined) ??
+                              null,
+                            receiptCheck: receipt
+                              ? "verified"
+                              : receiptFailures[runId]
+                                ? "failed"
+                                : "pending",
+                            acceptance: receipt?.checks?.acceptance ?? candidate.acceptance ?? null,
+                          },
+                          language,
+                        )}
                       </p>
 
                       {isInvertible ? (

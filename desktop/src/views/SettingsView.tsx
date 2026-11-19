@@ -3,6 +3,8 @@ import { useState, type FormEvent } from "react";
 
 import {
   isWorkspaceFolderLocked,
+  openOperatorModal,
+  setDevMockAgent,
   setLanguage,
   switchWorkspaceRoot,
   toggleTheme,
@@ -10,7 +12,7 @@ import {
 import { DetailDisclosure } from "../components/DetailDisclosure";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
 import * as rt from "../runtime";
-import { useWorkspace } from "../store";
+import { composerBlocker, useWorkspace } from "../store";
 import type { RuntimeError } from "../types";
 import "./settings.css";
 
@@ -28,6 +30,9 @@ export function SettingsView() {
   const root = useWorkspace((s) => s.root);
   const status = useWorkspace((s) => s.status);
   const folderLocked = useWorkspace(isWorkspaceFolderLocked);
+  const agentHost = useWorkspace((s) => s.agentHost);
+  const providerName = useWorkspace((s) => s.provider.provider);
+  const agentBlocker = useWorkspace(composerBlocker);
 
   const [editingFolder, setEditingFolder] = useState(false);
   const [folderInput, setFolderInput] = useState("");
@@ -83,6 +88,15 @@ export function SettingsView() {
   };
 
   const folderDisplayName = folderBasename(root);
+  const mockAllowed = agentHost?.mockAllowed === true;
+  const agentState =
+    providerName === "mock"
+      ? mockAllowed
+        ? t("settings_agent_mock", language)
+        : t("settings_agent_not_connected", language)
+      : agentBlocker === null || agentBlocker === "busy" || agentBlocker === "no_document"
+        ? t("settings_agent_connected", language)
+        : t("settings_agent_not_connected", language);
 
   return (
     <main className="settings-view" data-testid="settings-view">
@@ -167,6 +181,44 @@ export function SettingsView() {
           </div>
           <p className="settings-note" data-testid="settings-theme-note">
             {t("settings_theme_note", language)}
+          </p>
+        </section>
+
+        {/* Section: Agent connection — the approval boundary stated once. */}
+        <section
+          className="settings-card"
+          data-testid="settings-section-agent"
+          aria-label={t("settings_agent_label", language)}
+        >
+          <div className="settings-row-head">
+            <h2 className="settings-section-title">
+              {t("settings_agent_label", language)}
+            </h2>
+            <button
+              type="button"
+              className="settings-btn"
+              data-testid="settings-agent-open"
+              onClick={() => openOperatorModal()}
+            >
+              {t("review_prompt_connect", language)}
+            </button>
+          </div>
+          <p className="settings-note" data-testid="settings-agent-state">
+            {agentState}
+          </p>
+          {agentHost && agentHost.mockAllowed !== undefined ? (
+            <label className="settings-note" data-testid="settings-dev-mock">
+              <input
+                type="checkbox"
+                data-testid="settings-dev-mock-toggle"
+                checked={mockAllowed}
+                onChange={(e) => void setDevMockAgent(e.target.checked)}
+              />{" "}
+              {t("settings_agent_dev_mock", language)}
+            </label>
+          ) : null}
+          <p className="settings-note" data-testid="settings-agent-note">
+            {t("settings_agent_note", language)}
           </p>
         </section>
 

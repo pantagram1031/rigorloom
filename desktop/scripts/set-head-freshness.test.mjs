@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
+import { loadTrustModule } from "./action-test-support.mjs";
 
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 const headStart = source.indexOf("interface HeadSelectionLease {");
@@ -229,6 +230,7 @@ function renderHistory(statePatch) {
     "../runtime": {},
     "../store": store,
     "../workspace/externalPlan": externalPlan,
+    "../workspace/trust": loadTrustModule(loadComponentModule),
     "./history.css": {},
   });
   store.setState({

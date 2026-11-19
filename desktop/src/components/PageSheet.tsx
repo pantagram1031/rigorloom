@@ -20,6 +20,7 @@ import {
   renderCurrentPage,
   setInlineEditMultiline,
   togglePrintView,
+  toggleShowOriginal,
 } from "../actions";
 import {
   cellClassLabel,
@@ -344,6 +345,21 @@ interface PageSheetProps {
     col: number,
     committedValue: string,
   ) => void;
+  /**
+   * What the page is drawn from, as the sub-bar sentence: the head 수정본,
+   * the original, or a proposal on one of them. Defaults to the plain preview
+   * caveat for a document with no 수정본.
+   */
+  subjectLabel?: string;
+  /** Present once a head 수정본 exists: offers 원본 보기 / 수정본 보기. */
+  originalToggle?: { showingOriginal: boolean };
+  /**
+   * The source's own cell texts, when `texts` are a 수정본's. Body paragraphs
+   * come from the source graph, so the source's cell strings are what decide
+   * which of them live inside a cell; without this a header cell whose text
+   * the 수정본 changed would also be drawn again as loose paragraphs.
+   */
+  sourceTexts?: readonly RegionText[];
 }
 
 export function PageSheet({
@@ -365,6 +381,9 @@ export function PageSheet({
   onCycleBlank,
   onEscapeBlank,
   onAdvanceBlankAfterEnter,
+  subjectLabel,
+  originalToggle,
+  sourceTexts,
 }: PageSheetProps) {
   const isFillMode = mode === "fill";
   const zoom = useWorkspace((s) => s.zoom);
@@ -721,7 +740,7 @@ export function PageSheet({
   // Exclude cell paragraph strings from loose body paragraphs.
   const coveredCellStrings = useMemo(() => {
     const set = new Set<string>();
-    for (const region of texts) {
+    for (const region of sourceTexts && sourceTexts !== texts ? [...texts, ...sourceTexts] : texts) {
       if (!region.addr) continue;
       if (region.text) {
         set.add(region.text.trim());
@@ -740,7 +759,7 @@ export function PageSheet({
       }
     }
     return set;
-  }, [texts, inspect.graph.paragraphs]);
+  }, [texts, sourceTexts, inspect.graph.paragraphs]);
 
   const looseParagraphs = useMemo(
     () =>
@@ -1017,10 +1036,23 @@ export function PageSheet({
     <section className="page-sheet-pane" aria-label={t("review_mobile_sheet_tab", language)}>
       <div className="page-sheet-subbar">
         <p className="page-sheet-disclaimer" data-testid="page-sheet-disclaimer">
-          {t(isFillMode ? "page_label_fill" : "page_label_review", language)}
+          {subjectLabel ?? t(isFillMode ? "page_label_fill" : "page_label_review", language)}
         </p>
 
         <div className="page-sheet-controls">
+          {originalToggle ? (
+            <button
+              type="button"
+              className={`page-ctrl-btn${originalToggle.showingOriginal ? " page-ctrl-btn--active" : ""}`}
+              data-testid="toggle-original"
+              aria-pressed={originalToggle.showingOriginal}
+              onClick={() => toggleShowOriginal()}
+            >
+              {originalToggle.showingOriginal
+                ? t("page_show_revision", language)
+                : t("page_show_original", language)}
+            </button>
+          ) : null}
           <div
             className="page-sheet-zoom"
             data-testid="page-sheet-zoom"

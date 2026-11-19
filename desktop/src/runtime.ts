@@ -378,6 +378,7 @@ export const resolveApproval = (
   planHash: string,
   decision: "approved" | "rejected",
   approver: string,
+  reason: string | null = null,
 ) =>
   call<{ approval: ApprovalRecord }>("approval/resolve", {
     approvalId,
@@ -385,6 +386,8 @@ export const resolveApproval = (
     planHash,
     decision,
     approver,
+    // The person's words when returning. Its own field, never the approver.
+    ...(reason ? { reason } : {}),
   }).then((r) => r.approval);
 
 /** HOST ONLY. Cancellable between ops; see `callCancellable`. */
