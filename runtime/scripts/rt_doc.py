@@ -60,12 +60,17 @@ import difflib
 import hashlib
 import html
 import importlib.util
+import itertools
 import json
 import os
+import queue
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -78,6 +83,9 @@ except ImportError:  # run from a checkout with runtime/scripts on sys.path
 ENGINE_ENV = "RIGORLOOM_HWP_ENGINE"
 TIMEOUT_ENV = "RIGORLOOM_DOC_ENGINE_TIMEOUT"
 DEFAULT_TIMEOUT_S = 180.0
+ENGINE_API = 1          #: the kit_api envelope version this module speaks
+CACHE_ENV = "RIGORLOOM_DOC_CACHE"
+_LINEAGE = {}
 SCHEMA = "rigorloom/doc-core/v1"
 
 OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
@@ -86,7 +94,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
 _bopen = builtins.open
-_RETRYABLE = {"stale": False, "engine_timeout": True, "engine_unavailable": True, "internal": False}
+_RETRYABLE = {"stale": True, "busy": True, "engine_timeout": True, "engine_unavailable": True, "internal": False}
 
 
 # ============================================================================ errors
@@ -186,10 +194,12 @@ def _scratch() -> Path:
 
 # ============================================================================ engine
 def _engine_dir(env=None):
+    """(absolute engine folder, None) or (None, why). A relative RIGORLOOM_HWP_ENGINE is taken from the current
+    folder once, here, so the worker's own working directory cannot change what it means."""
     env = os.environ if env is None else env
     raw = (env.get(ENGINE_ENV) or "").strip()
     if raw:
-        d = Path(raw).expanduser()
+        d = Path(os.path.abspath(os.path.expanduser(raw)))
         return (d, None) if (d / "kit_api.py").is_file() else (None, "engine_path_missing")
     try:
         spec = importlib.util.find_spec("hwp_engine")
@@ -199,70 +209,238 @@ def _engine_dir(env=None):
         for loc in list(spec.submodule_search_locations or []) + (
                 [str(Path(spec.origin).parent)] if spec.origin else []):
             if (Path(loc) / "kit_api.py").is_file():
-                return Path(loc), None
+                return Path(os.path.abspath(loc)), None
         return None, "engine_package_without_kit_api"
     return None, "engine_not_configured"
 
 
-class _Engine:
-    """One lazily started ``kit_api.py serve`` worker on pipes, shared by the process."""
+class _Transport(Exception):
+    """The worker did not answer: it is gone, it timed out, or it spoke something that is not the protocol."""
+
+    def __init__(self, message, *, timeout=False):
+        super().__init__(message)
+        self.timeout = timeout
+
+
+class _Worker:
+    """One generation of the engine worker: ``kit_api.py serve`` on pipes (JSON lines, UTF-8 both ways).
+
+    A writer thread feeds stdin so a worker that stops reading can never block a caller past its deadline; a
+    reader thread hands answers to their waiting callers by id and wakes every caller when the pipe closes."""
 
     def __init__(self, kit_dir: Path):
-        self.dir = Path(kit_dir)
-        self.client = None
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"       # the worker reads sys.stdin with its default encoding
+        env["PYTHONUTF8"] = "1"
+        self.proc = subprocess.Popen([sys.executable, str(kit_dir / "kit_api.py"), "serve", "--threads", "4"],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, cwd=str(kit_dir), env=env)
+        self.ids = itertools.count(1)
+        self.wait = {}
         self.lock = threading.Lock()
-        self.kc = None
+        self.dead = None                        # why it stopped, once it has
+        self.ready = threading.Event()          # set once the handshake answered
+        self.settled = threading.Event()        # set once it is ready or dead
+        self.q = queue.Queue()
+        self.writer = threading.Thread(target=self._write, name="rt_doc-engine-writer", daemon=True)
+        self.reader = threading.Thread(target=self._read, name="rt_doc-engine-reader", daemon=True)
+        self.writer.start()
+        self.reader.start()
+
+    def _write(self):
+        while True:
+            data = self.q.get()
+            if data is None:
+                return
+            try:
+                self.proc.stdin.write(data)
+                self.proc.stdin.flush()
+            except (OSError, ValueError) as exc:
+                self._die("the engine worker stopped reading its requests (%s)" % exc)
+                return
+
+    def _read(self):
+        try:
+            for line in self.proc.stdout:
+                try:
+                    r = json.loads(line.decode("utf-8"))
+                except ValueError:
+                    continue                    # not a protocol line; the worker sends those to stderr
+                slot = self.wait.get(r.get("id")) if isinstance(r, dict) else None
+                if slot is not None:
+                    slot[1] = r
+                    slot[0].set()
+        except (OSError, ValueError):
+            pass
+        self._die("the engine worker closed the connection")
+
+    def _die(self, why):
+        with self.lock:
+            if self.dead is None:
+                self.dead = why
+            slots = list(self.wait.values())
+        self.settled.set()
+        for slot in slots:
+            slot[0].set()
+
+    def alive(self):
+        return self.dead is None and self.proc.poll() is None
+
+    def call(self, fn, args, kwargs, deadline):
+        i = next(self.ids)
+        data = (json.dumps({"id": i, "fn": fn, "args": list(args), "kwargs": dict(kwargs)}, ensure_ascii=False)
+                + "\n").encode("utf-8")        # TypeError / ValueError: an argument JSON cannot carry
+        slot = [threading.Event(), None]
+        with self.lock:
+            if self.dead is not None:
+                raise _Transport(self.dead)
+            self.wait[i] = slot
+        try:
+            self.q.put(data)
+            left = deadline - time.monotonic()
+            if left <= 0 or not slot[0].wait(left):
+                raise _Transport("no answer to %s within the engine timeout" % fn, timeout=True)
+            r = slot[1]
+            if r is None:
+                raise _Transport(self.dead or "the engine worker closed the connection")
+            if not isinstance(r.get("ok"), bool) or (not r["ok"] and not isinstance(r.get("error"), dict)):
+                raise _Transport("the engine worker answered %s with something that is not an envelope" % fn)
+            return r
+        finally:
+            with self.lock:
+                self.wait.pop(i, None)
+
+    def handshake(self, deadline):
+        r = self.call("ping", (), {}, deadline)
+        if not r.get("ok") or r.get("api") != ENGINE_API:
+            raise _Transport("the engine at hand does not speak kit_api protocol %s (ping: %s)"
+                             % (ENGINE_API, {k: r.get(k) for k in ("ok", "api", "error")}))
+        self.ready.set()
+        self.settled.set()
+
+    def kill(self):
+        """End this generation now: no lock of a caller is needed, every waiting caller wakes up."""
+        self._die("the engine worker was stopped")
+        try:
+            self.proc.kill()
+        except OSError:
+            pass
+        self._reap(5)
+
+    def close(self, wait=10.0):
+        """End this generation politely: close stdin, wait for the worker, kill it if it lingers."""
+        self.q.put(None)
+        self.writer.join(1.0)
+        try:
+            self.proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+        try:
+            self.proc.wait(wait)
+        except subprocess.TimeoutExpired:
+            try:
+                self.proc.kill()
+            except OSError:
+                pass
+        self._die("the engine worker was stopped")
+        self._reap(5)
+
+    def _reap(self, wait):
+        try:
+            self.proc.wait(wait)
+        except subprocess.TimeoutExpired:
+            pass
+        self.q.put(None)
+        for f in (self.proc.stdin, self.proc.stdout):
+            try:
+                f.close()
+            except (OSError, ValueError):
+                pass
+
+
+class _Engine:
+    """The process's engine: one worker generation at a time, started lazily, replaced when it fails.
+
+    Every call has ONE deadline (``RIGORLOOM_DOC_ENGINE_TIMEOUT`` seconds) covering starting the worker, sending
+    the request and waiting for the answer. A failure retires only the generation that failed, so a late failure
+    of an old worker never stops a newer one. Failed starts back off (0.5 s, doubling, at most 30 s)."""
+
+    def __init__(self, kit_dir: Path):
+        self.dir = Path(os.path.abspath(kit_dir))
+        self.lock = threading.Lock()
+        self.start_lock = threading.Lock()
+        self.worker = None
+        self.fails = 0
+        self.next_start = 0.0
         self.timeout = float(os.environ.get(TIMEOUT_ENV) or DEFAULT_TIMEOUT_S)
 
-    def _module(self):
-        if self.kc is None:
-            spec = importlib.util.spec_from_file_location("_rigorloom_kit_client", str(self.dir / "kit_client.py"))
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            self.kc = mod
-        return self.kc
-
-    def _client(self):
+    def _current(self, deadline):
         with self.lock:
-            c = self.client
-            if c is not None and c.proc is not None and c.proc.poll() is not None:
-                self.client = c = None          # the worker died: start a new one
-            if c is None:
-                kc = self._module()
-                c = self.client = kc.KitClient(kit_dir=str(self.dir), timeout=self.timeout)
-            return c
+            w = self.worker
+        if w is not None and w.alive():
+            if not w.settled.wait(max(0.0, deadline - time.monotonic())):
+                raise _Transport("the engine worker did not start in time", timeout=True)
+            if w.alive() and w.ready.is_set():
+                return w
+        if w is not None:
+            self._retire(w)
+        left = deadline - time.monotonic()
+        if left <= 0 or not self.start_lock.acquire(timeout=left):
+            raise _Transport("the engine worker did not start in time", timeout=True)
+        try:
+            with self.lock:
+                w = self.worker
+            if w is not None and w.alive() and w.ready.is_set():
+                return w
+            if time.monotonic() < self.next_start:
+                raise _Transport("the engine worker failed to start a moment ago; retry shortly")
+            w = None
+            try:
+                w = _Worker(self.dir)
+                with self.lock:
+                    self.worker = w
+                w.handshake(deadline)
+            except Exception as exc:  # noqa: BLE001 - OSError, _Transport, a protocol mismatch
+                self.fails += 1
+                self.next_start = time.monotonic() + min(30.0, 0.5 * 2 ** (self.fails - 1))
+                if w is not None:
+                    self._retire(w)
+                if isinstance(exc, _Transport):
+                    raise
+                raise _Transport("the engine worker did not start: %s" % exc)
+            self.fails = 0
+            return w
+        finally:
+            self.start_lock.release()
 
     def call(self, fn, *args, **kwargs):
         """The engine's envelope, or an envelope saying why there is none. Never raises."""
-        try:
-            c = self._client()
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": {"code": "engine_unavailable",
-                                           "message": "the engine worker did not start: %s" % exc}}
+        deadline = time.monotonic() + self.timeout
         args = [os.fspath(a) if isinstance(a, os.PathLike) else a for a in args]
         kwargs = {k: os.fspath(v) if isinstance(v, os.PathLike) else v for k, v in kwargs.items()}
+        w = None
         try:
-            return c.call(fn, *args, **kwargs)
-        except (TypeError, ValueError) as exc:     # an argument JSON cannot carry: the worker is fine
-            return {"ok": False, "error": {"code": "bad_input", "message": str(exc)}}
-        except Exception as exc:  # noqa: BLE001 - KitError: timeout or closed pipe
-            self.reset(kill=True)
-            code = "engine_timeout" if "no answer" in str(exc) else "engine_unavailable"
-            return {"ok": False, "error": {"code": code, "message": str(exc)}}
+            w = self._current(deadline)
+            return w.call(fn, args, kwargs, deadline)
+        except (TypeError, ValueError) as exc:          # an argument JSON cannot carry: the worker is fine
+            return {"ok": False, "error": {"code": "bad_input", "message": str(exc), "retryable": False}}
+        except _Transport as exc:
+            if w is not None:
+                self._retire(w)
+            return {"ok": False, "error": {"code": "engine_timeout" if exc.timeout else "engine_unavailable",
+                                           "message": str(exc), "retryable": True}}
+
+    def _retire(self, w):
+        """Stop generation w; the current worker is touched only when it IS w."""
+        with self.lock:
+            if self.worker is w:
+                self.worker = None
+        w.kill()
 
     def reset(self, kill=False):
         with self.lock:
-            c, self.client = self.client, None
-        if c is not None:
-            if kill and c.proc is not None:
-                try:
-                    c.proc.kill()
-                except OSError:
-                    pass
-            try:
-                c.close()
-            except Exception:  # noqa: BLE001
-                pass
+            w, self.worker = self.worker, None
+        if w is not None:
+            w.kill() if kill else w.close()
 
 
 _ENGINE = None
@@ -275,13 +453,16 @@ def _engine():
     global _ENGINE, _ENGINE_KEY
     d, _why = _engine_dir()
     key = str(d) if d else None
+    old = None
     with _ENGINE_LOCK:
         if key != _ENGINE_KEY:
-            if _ENGINE is not None:
-                _ENGINE.reset()
+            old = _ENGINE
             _ENGINE = _Engine(d) if d else None
             _ENGINE_KEY = key
-        return _ENGINE
+        e = _ENGINE
+    if old is not None:
+        old.reset()
+    return e
 
 
 def close():
@@ -303,16 +484,24 @@ def engine_status() -> dict:
     return {"available": True, "dir": str(d)}
 
 
+_RESERVED = ("code", "message", "at", "i", "retryable", "engine_fn")
+
+
 def _engine_error(env, fn=None, at=None, i=None):
-    """An engine failure envelope -> DocError keeping code, message, step and done."""
+    """An engine failure envelope -> DocError keeping code, message, step, done and the worker's own at /
+    retryable (ours win only when we have one)."""
     err = env.get("error") if isinstance(env.get("error"), dict) else {}
     code = str(err.get("code") or "internal")
     msg = str(err.get("message") or "the engine refused %s" % fn)
     if code == "unsupported" and msg.startswith("no such function"):
         return _unavailable("the installed engine has no %s yet" % fn, "engine_function_missing", fn=fn)
-    extra = {k: v for k, v in err.items() if k not in ("code", "message")}
-    retry = code in ("engine_timeout", "engine_unavailable")
-    return DocError(code, msg, at=at, i=i, retryable=retry, engine_fn=fn, **extra)
+    extra = {k: v for k, v in err.items() if k not in _RESERVED}
+    if isinstance(err.get("retryable"), bool):
+        retry = err["retryable"]
+    else:
+        retry = code in ("engine_timeout", "engine_unavailable", "busy")
+    return DocError(code, msg, at=at if at is not None else err.get("at"),
+                    i=i if i is not None else err.get("i"), retryable=retry, engine_fn=fn, **extra)
 
 
 def _need_engine(what):
