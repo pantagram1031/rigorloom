@@ -17,8 +17,9 @@ Covers:
    verifying Ruling D pills (`fill_cell` without pill, existing-text ops with guard
    pills, `change-added-numbers-*` for newly introduced numbers), collapsed row
    height <= 56 px, and row expansion (`change-detail-1`).
-6. `ApprovalDialog` full 64-hex `approval-plan-hash` and `approval-bound-hash`
-   and `approval-changed-facts-ack` gating before confirm.
+6. `ApprovalDialog` 12-character `approval-plan-hash` / `approval-bound-hash`
+   (full 64-hex in `data-full-hash`, under 자세히) and `approval-changed-facts-ack`
+   gating before confirm.
 7. External byte-drift `plan_stale` defense: runtime `/rpc` `plan/apply` refusal on
    an approved stale plan and UI `approval-stale-banner` -> `approval-repropose-btn`
    -> new 64-hex `approval-plan-hash` -> re-ack -> apply -> verified `.hwpx` export.
@@ -78,6 +79,9 @@ def _start_ui_server(tmp_path: Path) -> tuple[subprocess.Popen[str], str, Path]:
     xdg_dir = tmp_path / "xdg-data"
     env = os.environ.copy()
     env["XDG_DATA_HOME"] = str(xdg_dir)
+    # The agent request box is enabled only with a real provider or the
+    # developer test-agent setting; the Ruling H typing check below needs it.
+    env["RIGORLOOM_DEV_MOCK_AGENT"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     proc = subprocess.Popen(
@@ -472,10 +476,12 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
             page.click('[data-testid="review-approve-btn"]')
             page.wait_for_selector('[data-testid="approval-dialog"]', timeout=10000)
 
-            plan_hash_before = page.locator('[data-testid="approval-plan-hash"]').inner_text().strip()
-            bound_hash_before = page.locator('[data-testid="approval-bound-hash"]').inner_text().strip()
+            plan_hash_before = page.locator('[data-testid="approval-plan-hash"]').get_attribute("data-full-hash")
+            bound_hash_before = page.locator('[data-testid="approval-bound-hash"]').get_attribute("data-full-hash")
             assert re.fullmatch(r"[0-9a-f]{64}", plan_hash_before), plan_hash_before
             assert re.fullmatch(r"[0-9a-f]{64}", bound_hash_before), bound_hash_before
+            shown_hash = page.locator('[data-testid="approval-plan-hash"]').text_content().strip()
+            assert shown_hash == plan_hash_before[:12], shown_hash
 
             ack_box = page.locator('[data-testid="approval-changed-facts-ack"]')
             confirm_btn = page.locator('[data-testid="approval-confirm-btn"]')
@@ -559,13 +565,13 @@ def test_ui_playwright_e2e_ime_reapproval_and_screenshots(tmp_path: Path) -> Non
             page.wait_for_function(
                 """(prev) => {
                     const el = document.querySelector('[data-testid="approval-plan-hash"]');
-                    const txt = el ? el.textContent.trim() : '';
+                    const txt = el ? (el.getAttribute('data-full-hash') || '').trim() : '';
                     return /^[0-9a-f]{64}$/.test(txt) && txt !== prev;
                 }""",
                 arg=plan_hash_before,
                 timeout=15000,
             )
-            plan_hash_after = page.locator('[data-testid="approval-plan-hash"]').inner_text().strip()
+            plan_hash_after = page.locator('[data-testid="approval-plan-hash"]').get_attribute("data-full-hash")
             assert plan_hash_after != plan_hash_before
 
             # Confirm again after re-propose & check ack for newly reproposed plan
