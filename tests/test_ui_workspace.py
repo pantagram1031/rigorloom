@@ -384,7 +384,7 @@ def test_http_security_parity_token_host_origin_sec_fetch_and_body_caps(workspac
         assert json.loads(d_bad)["error"]["code"] == "unauthorized"
 
     # Invalid Host headers refused 403
-    for bad_host in ("evil.example:8080", "10.0.0.1:8765", "127.0.0.1@evil.example", "localhost:abc"):
+    for bad_host in ("evil.example:8080", "10.0.0.1:8765", "127.0.0.1@evil.example.com", "localhost:abc"):
         s, _, d = client.request("GET", "/api/workspace/list", headers={"Host": bad_host})
         assert s == 403 and json.loads(d)["error"]["code"] == "invalid_host"
 
@@ -402,7 +402,7 @@ def test_http_security_parity_token_host_origin_sec_fetch_and_body_caps(workspac
         "http://evil.example:8765",
         "null",
         "https://127.0.0.1:8765",
-        "http://127.0.0.1@evil.example",
+        "http://127.0.0.1@evil.example.com",
         "http://127.0.0.1:8765/extra",
     ):
         s_o, _, d_o = client.request("GET", "/api/workspace/list", headers={"Origin": bad_origin})
@@ -751,7 +751,7 @@ def test_the_doc_folder_refuses_windows_drive_roots_and_system_folders():
     for value in refused:
         assert rt_ui.system_folder_refusal(PureWindowsPath(value)), value
     allowed = [
-        "C:\\Users\\kim\\Documents",
+        "C:\\Users\\example\\Documents",
         "D:\\공문\\2026",
         "\\\\nas\\share\\문서",
     ]

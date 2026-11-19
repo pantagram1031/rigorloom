@@ -469,7 +469,7 @@ export function formatWindowTitle(
 
 /**
  * Format a compact folder breadcrumb for recent-document subtitles without
- * exposing raw OS prefixes such as `/home/...` or `C:\Users\...`.
+ * exposing raw OS prefixes such as `/home/...` or `C:\Users\<user>\...`.
  */
 export function formatFolderBreadcrumb(
   fullPath: string | null | undefined,
