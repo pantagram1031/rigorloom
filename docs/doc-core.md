@@ -28,6 +28,7 @@ list, text that is not text) is `bad_input`, never `internal`.
 | `rev` | `stale` | the file's current rev |
 | `total` | `ambiguous_match` | how many matches there were |
 | `expected`, `actual` | `expect_mismatch` | what `expect` said and what is there (text, or a match count) |
+| `found_at` | `expect_mismatch` on a table cell | the one other cell of the same table whose text is exactly `expected`, when there is exactly one (the address was off, as when rows are counted from 1) |
 | `reason` | `capability_unavailable` | why: `engine_not_configured`, `engine_path_missing`, `engine_function_missing`, `structural_edit_unsupported`, `hwp_binary_unsupported`, `rasterizer_missing`, `page_layout_unavailable`, ... |
 | `fn`, `engine_fn` | engine errors | the engine function involved |
 
@@ -39,7 +40,7 @@ list, text that is not text) is `bad_input`, never `internal`.
 | `stale` | yes | `base` is not the file's current rev (also when another writer replaced the file during an in-place edit); read again |
 | `busy` | yes | another rt_doc writer holds the destination's lock; retry |
 | `locked` | yes | another program has the file open (Windows sharing violation on read or replace) or the file is not accessible; close it and retry |
-| `expect_mismatch` | no | `expect` did not hold |
+| `expect_mismatch` | no | `expect` did not hold: the text at that place is not what was expected (a file that changed since it was read is `stale`) |
 | `ambiguous_match` | no | `replace` without `all: true` matched more than once |
 | `conflict` | no | two ops in one edit touch overlapping text or something another op removes |
 | `capability_unavailable` | no | this installation cannot do it; see `reason` |

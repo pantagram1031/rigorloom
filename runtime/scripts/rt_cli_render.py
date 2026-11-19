@@ -88,7 +88,8 @@ _DOC_ERRORS = {
     "not_found": ("찾지 못했습니다.", "open이나 find 결과에 나온 주소를 쓰세요."),
     "ambiguous_match": ("찾는 말이 여러 곳에 있어 고칠 곳을 정할 수 없습니다.",
                         'at에 고칠 곳의 주소를 지정하거나 "all": true를 추가하세요.'),
-    "expect_mismatch": ("읽은 뒤 내용이 바뀌어 고치지 않았습니다.", "다시 읽고 고치세요."),
+    "expect_mismatch": ("바꾸려는 문구가 예상한 내용과 다릅니다.",
+                        "아무것도 바꾸지 않았으니 read로 해당 주소의 내용을 확인한 뒤 편집 요청을 다시 보내세요."),
     "page_out_of_range": ("문서에 없는 쪽입니다.", "open 결과에서 쪽 수를 확인하세요."),
     "locked": ("다른 프로그램에서 이 파일을 열어 두었습니다.", "파일을 열어 둔 프로그램에서 닫은 뒤 다시 실행하세요."),
     "source_rejected": ("이 파일은 문서로 열 수 없습니다.", "hwpx 또는 docx 파일을 지정하세요."),
@@ -148,8 +149,11 @@ def person_error(err: dict, path: str | None = None) -> tuple[str, str | None]:
         else:
             base, default_hint = "범위를 벗어난 위치입니다.", f"위치는 {span[0]}부터 {span[1]}까지 지정할 수 있습니다."
         hint = None
-    if err.get("at") and err.get("code") in ("bad_address", "not_found"):
+    if err.get("at") and err.get("code") in ("bad_address", "not_found", "expect_mismatch"):
         base = f"{err['at']}: {base}"
+    if err.get("code") == "expect_mismatch" and err.get("found_at"):
+        # The document did not change since it was read (that is `stale`): the address was off.
+        hint, default_hint = None, f"예상한 문구는 {err['found_at']}에 있습니다. 그 칸을 바꾸려면 주소를 고쳐 다시 보내세요."
     if hint and not _HANGUL.search(_QUOTED.sub("", hint)):
         hint = None
     return base, hint or default_hint
