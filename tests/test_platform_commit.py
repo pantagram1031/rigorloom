@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "runtime" / "scripts"))
 
 import rt_commit  # noqa: E402
+import rt_paths  # noqa: E402
 from rt_paths import (  # noqa: E402
     PathRefused,
     Roots,
@@ -94,11 +95,110 @@ def test_long_korean_path(tmp_path):
 def test_commit_creates_and_undo_moves_our_file_away(tmp_path, home):
     target = tmp_path / KOREAN
     receipt = rt_commit.commit(_candidate(tmp_path, b"new"), target,
-                               expected=rt_commit.ABSENT, by="test", policy="policy:new-file")
+                               expected=rt_commit.ABSENT, by="test", policy="policy:new-file",
+                               draft="d1")
     assert receipt["replaced"] is None and target.read_bytes() == b"new"
-    assert rt_commit.owned(target)
+    assert rt_commit.owned(target, draft="d1")
+    assert not rt_commit.owned(target, draft="d2") and not rt_commit.owned(target)
     result = rt_commit.undo(target, by="test")
     assert result["removed"] and not target.exists()
+
+
+def test_a_persons_yes_is_for_that_save_alone(tmp_path, home):
+    # Sol H1: an approved replacement must not make the file "ours" for later saves.
+    target = tmp_path / "theirs.hwpx"
+    target.write_bytes(b"person")
+    rt_commit.commit(_candidate(tmp_path, b"v2"), target, expected=sha256_file(target),
+                     by="mcp:x", policy="person:elicitation", draft="d1")
+    assert target.read_bytes() == b"v2"
+    assert not rt_commit.owned(target, draft="d1")
+
+
+def test_only_the_approved_bytes_are_published(tmp_path, home):
+    # Sol H3: the candidate changed after approval: refuse, write nothing.
+    target = tmp_path / "new.hwpx"
+    candidate = _candidate(tmp_path, b"approved")
+    approved = sha256_file(candidate)
+    candidate.write_bytes(b"swapped")
+    with pytest.raises(ToolError) as exc:
+        rt_commit.commit(candidate, target, expected=rt_commit.ABSENT, by="t",
+                         policy="policy:new-file", candidate_sha256=approved)
+    assert exc.value.code == "stale" and not target.exists()
+
+
+def test_a_crash_after_publish_is_still_in_history(tmp_path, home, monkeypatch):
+    # Sol H5: the history entry is written before the file, so a crash right
+    # after publishing still leaves an undoable record.
+    target = tmp_path / "보고서.hwpx"
+    target.write_bytes(b"old")
+    real = rt_commit._save_index
+    calls = []
+
+    def flaky(folder, entries):
+        calls.append([e.get("state") for e in entries])
+        if len(calls) == 2:  # the "done" write after publishing
+            raise KeyboardInterrupt("killed")
+        return real(folder, entries)
+
+    monkeypatch.setattr(rt_commit, "_save_index", flaky)
+    with pytest.raises(KeyboardInterrupt):
+        rt_commit.commit(_candidate(tmp_path, b"new"), target, expected=sha256_file(target),
+                         by="t", policy="person:tty")
+    monkeypatch.setattr(rt_commit, "_save_index", real)
+    assert target.read_bytes() == b"new"
+    assert rt_commit.last_commit(target)["newSha256"] == sha256_file(target)
+    rt_commit.undo(target, by="t")
+    assert target.read_bytes() == b"old"
+
+
+def test_a_decline_is_shared_by_every_draft(tmp_path, home):
+    # Sol M1: finality is per {bytes, target}, not per draft record.
+    target = tmp_path / "a.hwpx"
+    assert not rt_commit.declined(target, "ab" * 32)
+    rt_commit.record_decline(target, "ab" * 32, by="mcp:x")
+    assert rt_commit.declined(target, "ab" * 32) and not rt_commit.declined(target, "cd" * 32)
+
+
+def test_undo_keeps_the_bytes_it_displaces(tmp_path, home):
+    # Sol M3: undo is a write too; what it replaces goes to history.
+    target = tmp_path / "b.hwpx"
+    target.write_bytes(b"old")
+    rt_commit.commit(_candidate(tmp_path, b"new"), target, expected=sha256_file(target),
+                     by="t", policy="person:tty")
+    rt_commit.undo(target, by="t")
+    kept = [p.read_bytes() for p in (home / "history").rglob("*-undone-*")]
+    assert kept == [b"new"]
+
+
+def test_a_long_target_name_still_saves(tmp_path, home):
+    # Sol L2: the temporary name no longer grows with the target's.
+    target = tmp_path / ("x" * 243 + ".hwpx")
+    rt_commit.commit(_candidate(tmp_path, b"long"), target, expected=rt_commit.ABSENT,
+                     by="t", policy="policy:new-file")
+    assert target.read_bytes() == b"long"
+
+
+@pytest.mark.parametrize("name", ["보고서.hwpx.", "보고서.hwpx ", "폴더. /a.hwpx"])
+def test_trailing_dots_and_spaces_are_refused(tmp_path, name):
+    # Sol M11: Windows drops them, so they alias another name.
+    with pytest.raises(rt_paths.PathRefused):
+        rt_paths.canonical(str(tmp_path / name))
+
+
+def test_a_failed_swap_leaves_no_empty_file(tmp_path, monkeypatch):
+    # Sol M2: without hard links the name is reserved first; a failed swap
+    # takes the empty placeholder back.
+    target = tmp_path / "c.hwpx"
+    temp = tmp_path / ".rl-temp.tmp"
+    temp.write_bytes(b"data")
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rt_paths.os, "replace", boom)
+    with pytest.raises(OSError):
+        rt_paths._publish_without_link(temp, target)
+    assert not target.exists()
 
 
 def test_commit_keeps_old_bytes_and_undo_restores_them(tmp_path, home):

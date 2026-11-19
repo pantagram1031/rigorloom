@@ -111,7 +111,7 @@ def confirm(question: str, *, stdin=None, stdout=None) -> bool | None:
     stdout = stdout if stdout is not None else sys.stderr
     if not (is_console(stdin) and is_console(stdout)):
         return None
-    stdout.write(f"{question} [y/N] ")
+    stdout.write(f"{safe_text(question)} [y/N] ")
     stdout.flush()
     try:
         answer = stdin.readline()

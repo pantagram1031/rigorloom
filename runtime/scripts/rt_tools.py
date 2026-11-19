@@ -280,6 +280,9 @@ class Context:
     allow_overwrite: bool = False
     #: Non-empty: this caller's edits go to a private draft (CLI ``-o``).
     draft_scope: str = ""
+    #: save may only create (CLI ``-o OUT`` without --force): an existing
+    #: target is refused, never asked about.
+    create_only: bool = False
     provenance: dict = field(default_factory=dict)
     #: ask(question, detail) -> bool. A person answers: MCP elicitation, a TTY
     #: prompt, or the UI. ``None`` = nobody can be asked.

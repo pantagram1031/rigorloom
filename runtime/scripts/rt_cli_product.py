@@ -31,14 +31,14 @@ try:  # installed as rigorloom_runtime
     from . import rt_commit, rt_toolset  # rt_toolset registers the tools
     from .rt_cli_render import SHOW
     from .rt_paths import PathRefused, canonical, state_home
-    from .rt_term import Term, confirm, is_console, pad, prepare_stdio
+    from .rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
     import rt_toolset
     from rt_cli_render import SHOW
     from rt_paths import PathRefused, canonical, state_home
-    from rt_term import Term, confirm, is_console, pad, prepare_stdio
+    from rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
@@ -127,8 +127,17 @@ def _common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse, but a wrong command line is a _Usage, not a print-and-exit."""
+
+    def error(self, message: str):  # noqa: D401 - argparse API
+        verb = self.prog.split()[-1] if " " in self.prog else ""
+        raise _Usage(f"명령을 해석하지 못했습니다: {message}",
+                     f"도움말: rigorloom {verb} --help".replace("  ", " "))
+
+
 def _parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="rigorloom", add_help=False)
+    root = _Parser(prog="rigorloom", add_help=False)
     sub = root.add_subparsers(dest="verb", required=True)
 
     p = sub.add_parser("open", help="문서 구조"); p.add_argument("path"); _common(p)
@@ -358,7 +367,7 @@ def _context(args) -> Context:
                               for s in detail["fontsSubstituted"])
             lines.append(f"  글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)")
         lines.append(f"  되돌리기: {detail.get('undo')}")
-        sys.stderr.write("\n".join(lines[1:]) + "\n")
+        sys.stderr.write(safe_text("\n".join(lines[1:])) + "\n")
         return confirm(lines[0])
     return Context(client="cli", roots=None, source=getattr(args, "source", "disk"),
                    ask=ask)
@@ -386,11 +395,12 @@ def _emit(term: Term, args, verb: str, envelope: dict) -> int:
             term.line(render_text(get(tool), envelope["result"]))
         return code
     err = envelope["error"]
-    sys.stderr.write(f"{err['message']}\n")
+    sys.stderr.write(f"{safe_text(err['message'])}\n")
     if err.get("hint"):
-        sys.stderr.write(f"  {err['hint']}\n")
+        sys.stderr.write(f"  {safe_text(err['hint'])}\n")
     if err.get("candidates"):
-        sys.stderr.write("  후보: " + ", ".join(err["candidates"][:8]) + "\n")
+        sys.stderr.write("  후보: " + ", ".join(one_line(str(c)) for c in err["candidates"][:8])
+                         + "\n")
     if getattr(args, "debug", False) and err.get("data"):
         sys.stderr.write(json.dumps(err["data"], ensure_ascii=False, indent=2) + "\n")
     return code
@@ -403,13 +413,22 @@ def _save_after(ctx: Context, args, path: str) -> dict:
     """``-o OUT`` on edit/fill/new: stage in a private draft, save to OUT, and
     drop that draft; the shared draft of the same file is never touched."""
     req = {"path": path, "to": args.out}
+    envelope = call(ctx, "save", req)
     try:
-        return call(ctx, "save", req)
-    finally:
-        try:
-            ctx.drafts.remove(rt_toolset.resolve(ctx, path))
-        except ToolError:
-            pass
+        ref = rt_toolset.resolve(ctx, path)
+    except ToolError:
+        return envelope
+    if envelope["ok"]:
+        ctx.drafts.remove(ref)
+    else:
+        # Not saved: keep the edited copy so the work is not lost.
+        head = ctx.drafts.load(ref) or {}
+        if head.get("head"):
+            kept = ctx.drafts.dir_for(ref) / head["head"]["file"]
+            envelope["error"].setdefault("data", {})["kept"] = str(kept)
+            envelope["error"]["hint"] = ((envelope["error"].get("hint") or "")
+                                         + f" 고친 내용은 {kept}에 남겨 두었습니다.").strip()
+    return envelope
 
 
 def _undo(term: Term, args) -> int:
@@ -440,7 +459,13 @@ def _undo(term: Term, args) -> int:
 
 
 def _convert(term: Term, args) -> int:
+    suffix = Path(args.out).suffix.lower().lstrip(".")
+    if suffix != args.to:
+        raise _Usage(f"--to {args.to}와 저장할 파일의 확장자(.{suffix or '없음'})가 다릅니다.",
+                     f"예: rigorloom convert {Path(args.path).name} --to {args.to} "
+                     f"-o {Path(args.out).stem or '결과'}.{args.to}")
     ctx = _context(args)
+    ctx.create_only = not args.force
     envelope = call(ctx, "save", {"path": args.path, "to": args.out})
     # Converting a file with no draft: save treats a format change as an export.
     return _emit(term, args, "convert", envelope)
@@ -561,6 +586,19 @@ def main(argv: list[str]) -> int:
         return EXIT_OK
 
 
+def _usage(exc: "_Usage", argv: list[str]) -> int:
+    hint = exc.hint or f"도움말: rigorloom {argv[0] if argv else ''} --help"
+    if "--json" in argv:
+        sys.stdout.write(json.dumps({"ok": False, "command": argv[0] if argv else None,
+                                     "error": {"code": "invalid_params",
+                                               "message": safe_text(str(exc)),
+                                               "hint": safe_text(hint), "retryable": False}},
+                                    ensure_ascii=False, indent=2) + "\n")
+    else:
+        sys.stderr.write(f"{safe_text(str(exc))}\n  {safe_text(hint)}\n")
+    return EXIT_USAGE
+
+
 def _main(argv: list[str]) -> int:
     prepare_stdio()
     if wants_product_help(argv):
@@ -569,8 +607,10 @@ def _main(argv: list[str]) -> int:
     parser = _parser()
     try:
         args = parser.parse_args(argv)
-    except SystemExit as exc:
+    except SystemExit as exc:  # --help
         return int(exc.code or 0) and EXIT_USAGE
+    except _Usage as exc:
+        return _usage(exc, argv)
     term = Term.detect(getattr(args, "color", "auto"))
     if getattr(args, "debug", False):
         os.environ["RIGORLOOM_DEBUG"] = "1"
@@ -588,11 +628,11 @@ def _main(argv: list[str]) -> int:
             return _discard(term, args)
         tool, req = request_for(args)
     except _Usage as exc:
-        sys.stderr.write(f"{exc}\n  {exc.hint or f'도움말: rigorloom {argv[0]} --help'}\n")
-        return EXIT_USAGE
+        return _usage(exc, argv)
     ctx = _context(args)
     out = getattr(args, "out", None)
     if out and not getattr(args, "force", False):
+        ctx.create_only = True
         # -o names a file to create; replacing one takes --force (the old
         # bytes still go to history first).
         try:

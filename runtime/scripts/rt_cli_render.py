@@ -46,7 +46,7 @@ WHY_KO = {
 def shown(path: str) -> str:
     """A path as a person typed it: relative to the current folder when inside it."""
     import os
-    text = str(path)
+    text = one_line(str(path))
     if text.startswith("draft:"):
         return text
     try:

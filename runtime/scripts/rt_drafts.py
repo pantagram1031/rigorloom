@@ -99,10 +99,12 @@ class Input:
 
 
 class _Lock:
-    """One writer per draft, across processes (CLI, MCP, UI)."""
+    """One writer per draft (or per saved file), across processes (CLI, MCP, UI)."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, code: str = "draft_busy",
+                 message: str = "다른 작업이 이 초안을 고치는 중입니다."):
         self.path = path
+        self.code, self.message = code, message
 
     def __enter__(self):
         deadline = time.monotonic() + LOCK_TIMEOUT_S
@@ -124,7 +126,7 @@ class _Lock:
                         pass
                     continue
                 if time.monotonic() > deadline:
-                    raise ToolError("draft_busy", "다른 작업이 이 초안을 고치는 중입니다.",
+                    raise ToolError(self.code, self.message,
                                     hint="잠시 뒤 다시 시도하세요.", retryable=True)
                 time.sleep(0.05)
 

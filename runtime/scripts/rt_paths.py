@@ -91,6 +91,11 @@ def _validate_components(path: Path) -> None:
             raise PathRefused("invalid_params",
                               f"파일이나 폴더 이름에 쓸 수 없는 쌍점(:)이 있습니다({part}).",
                               str(path))
+        if part not in (".", "..") and part != part.rstrip(". "):
+            # Windows drops them, so "보고서.hwpx." and "보고서.hwpx" are one file.
+            raise PathRefused("invalid_params",
+                              f"이름이 점이나 빈칸으로 끝납니다({part!r}).",
+                              str(path))
 
 
 def canonical(raw: str | os.PathLike, base: Path | None = None) -> Path:
@@ -151,7 +156,9 @@ def check_readable(path: Path) -> Path:
 
 
 def _temp_beside(target: Path) -> Path:
-    return target.with_name(f".{target.name}.{secrets.token_hex(6)}.tmp")
+    # Fixed length, whatever the target's name: a 250-byte name is legal on
+    # most filesystems, and appending to it would not be.
+    return target.with_name(f".rl-{secrets.token_hex(6)}.tmp")
 
 
 def create_new(target: Path, data: bytes) -> None:
@@ -213,8 +220,19 @@ def _publish_without_link(temp: Path, target: Path) -> None:
     two calls could lose its write.
     """
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    reserved = os.fstat(fd)
     os.close(fd)
-    os.replace(temp, target)
+    try:
+        os.replace(temp, target)
+    except BaseException:
+        # Take back our empty placeholder, and only ours (same file, still empty).
+        try:
+            now = os.stat(target)
+            if (now.st_ino, now.st_dev) == (reserved.st_ino, reserved.st_dev) and now.st_size == 0:
+                os.unlink(target)
+        except OSError:
+            pass
+        raise
 
 
 def replace_checked(target: Path, data: bytes, expected_sha256: str) -> None:

@@ -696,3 +696,131 @@ def test_people_read_korean_and_agents_read_english(env, monkeypatch):
         assert any("가" <= ch <= "힣" for ch in out), (argv, out)
         for word in agent_words:
             assert word not in out, (argv, word, out)
+
+
+# -- attack review (Sol, P0) ---------------------------------------------------------
+
+def test_new_never_reads_a_file_named_by_a_one_line_body(env):
+    # Sol H6: a one-line body naming a file is text, not that file.
+    secret = env.work / "비밀.md"
+    secret.write_text("# 비밀 내용\n", encoding="utf-8")
+    r = ok(call(env.ctx(), "new", {"markdown": str(secret)}))
+    text = ok(call(env.ctx(), "read", {"path": r["path"]}))["blocks"][0]["text"]
+    assert "비밀 내용" not in text
+
+
+def test_markdown_pictures_are_checked_in_every_form(env, tmp_path):
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"x")
+    for body in (f"![a]({outside})\n", f"![a][r]\n\n[r]: {outside}\n",
+                 f'<img src="{outside}">\n'):
+        err(call(env.ctx(), "new", {"markdown": body}), "outside_roots")
+    inside = env.work / "그림.png"
+    inside.write_bytes(b"x")
+    ok(call(env.ctx(), "new", {"markdown": "![a](그림.png)\n", "base_dir": str(env.work)}))
+    err(call(env.ctx(), "new", {"markdown": "![a](그림.png)\n", "base_dir": str(tmp_path)}),
+        "outside_roots")
+
+
+def test_edit_cannot_write_a_signature_seat(env):
+    # Sol M14: what fill may not do, edit may not either.
+    path = env.doc()
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    for op in ({"op": "fill", "place": "서명", "text": "홍길동"},
+               {"op": "set", "at": "place:서명", "text": "홍길동"}):
+        e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [op]}),
+                "person_only_seat")
+        assert e["candidates"] == ["place:서명"]
+
+
+def test_a_cursor_only_resumes_the_read_it_came_from(env):
+    # Sol M8: a cursor from a whole-document read does not resume a read of one block.
+    path = env.doc("긴글.fdoc", "\n\n".join(f"문단 {i} " + "가" * 300 for i in range(40)))
+    first = ok(call(env.ctx(), "read", {"path": str(path), "max_chars": 1000}))
+    err(call(env.ctx(), "read", {"path": str(path), "at": "p3", "cursor": first["next"]}),
+        "invalid_params")
+    rev = first["rev"]
+    err(call(env.ctx(), "read", {"path": str(path), "cursor": f"{rev}:{first['next'].split(':')[1]}:999:0"}),
+        "invalid_params")
+
+
+def test_layout_without_pages_is_not_a_pass(env, monkeypatch):
+    # Sol M6: no page list is no evidence.
+    path = env.doc()
+    monkeypatch.setattr(fake, "pages", lambda p: {"ok": True, "pages": []})
+    r = ok(call(env.ctx(), "check", {"path": str(path), "only": ["layout"]}))
+    assert r["checks"]["layout"]["state"] == "unavailable" and r["pass"] is None
+
+
+def test_guard_against_a_draft_compares_with_that_draft(env):
+    # Sol M7: `against: draft:<id>` is that draft's head, not this file's source.
+    path = env.doc()
+    other = ok(call(env.ctx(), "new", {"markdown": "# 전혀 다른 문서\n\n금액 1원\n"}))
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "고친 문장"}]}))
+    r = ok(call(env.ctx(), "check", {"path": str(path), "only": ["guard"],
+                                      "against": other["path"]}))
+    assert r["checks"]["guard"]["against"] != str(path)
+
+
+def test_cli_usage_errors_are_json_when_asked(env, monkeypatch):
+    # Sol L1: --json means stdout is one JSON document, even for a bad command line.
+    for argv in (["open", "--json"], ["edit", str(env.doc()), "--json"]):
+        code, out, _ = _cli(argv, monkeypatch)
+        assert code == 2 and json.loads(out)["error"]["code"] == "invalid_params"
+
+
+def test_cli_convert_checks_the_format_against_the_name(env, monkeypatch):
+    # Sol M10: --to pdf -o x.hwpx is a mistake, said as one.
+    path = env.doc()
+    code, out, _ = _cli(["convert", str(path), "--to", "pdf", "-o",
+                         str(env.work / "x.fdoc"), "--json"], monkeypatch)
+    assert code == 2 and json.loads(out)["error"]["code"] == "invalid_params"
+
+
+def test_cli_dash_o_keeps_the_edit_when_the_save_fails(env, monkeypatch):
+    # Sol M12: a failed save does not throw away the one-shot edit.
+    path = env.doc()
+    blocked = env.work / "없는폴더" / "out.fdoc"
+    code, out, _ = _cli(["edit", str(path), "--op",
+                         json.dumps({"op": "set", "at": "p1", "text": "남길 문장"}),
+                         "-o", str(blocked), "--json"], monkeypatch)
+    e = json.loads(out)["error"]
+    assert code != 0 and Path(e["data"]["kept"]).exists()
+
+
+def test_dash_o_is_create_only_all_the_way_to_the_commit(env):
+    # Sol M3: the CLI checks OUT is absent, then sets create_only; a file
+    # that appears in between is refused, not asked about.
+    path = env.doc()
+    target = env.work / "나중.fdoc"
+    ctx = env.ctx(client="cli", roots=None, ask=lambda q, d: True)
+    ctx.create_only = True
+    rev0 = ok(call(ctx, "open", {"path": str(path)}))["rev"]
+    ok(call(ctx, "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "x"}]}))
+    target.write_text("someone else's", encoding="utf-8")  # appeared after the check
+    err(call(ctx, "save", {"path": str(path), "to": str(target)}), "target_exists")
+    assert target.read_text(encoding="utf-8") == "someone else's"
+
+
+def test_save_rechecks_the_draft_after_asking(env):
+    # Sol H4: an edit that lands while the person decides is not lost or saved unseen.
+    path = env.doc()
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "처음 고침"}]}))
+
+    def meanwhile(question, detail):
+        head = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+        ok(call(env.ctx(), "edit", {"path": str(path), "base": head, "ops": [
+            {"op": "set", "at": "p1", "text": "그사이 고침"}]}))
+        return True
+
+    before = path.read_bytes()
+    e = err(call(env.ctx(ask=meanwhile), "save", {"path": str(path)}), "stale")
+    assert e["data"]["reason"] == "superseded_by_newer_candidate"
+    assert path.read_bytes() == before
+    shown = ok(call(env.ctx(), "changes", {"action": "show", "path": str(path)}))
+    assert len(shown["changesets"]) == 2

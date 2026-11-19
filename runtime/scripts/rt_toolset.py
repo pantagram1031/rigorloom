@@ -129,22 +129,49 @@ def _provenance(ctx: Context) -> dict:
     return out
 
 
-def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None) -> None:
-    """Pictures a markdown body pulls in must be inside the roots too."""
-    if ctx.roots is None:
-        return
-    for match in re.finditer(r"!\[[^\]]*\]\(([^)\s]+)", markdown):
-        target = match.group(1)
-        if re.match(r"^[a-z][a-z0-9+.-]*://", target, re.IGNORECASE):
+#: Every way markdown can pull in a file: inline images, reference
+#: definitions, and HTML <img>. Each target is checked and made absolute, so
+#: the document layer resolves exactly the file that was checked.
+_ASSET_PATTERNS = (
+    re.compile(r"(!\[[^\]]*\]\()(<[^>]*>|[^)\s]+)"),
+    re.compile(r"(?m)(^[ \t]{0,3}\[[^\]]+\]:[ \t]*)(<[^>]*>|\S+)"),
+    re.compile(r"""(<img\b[^>]*?\bsrc\s*=\s*["']?)([^"'\s>]+)""", re.IGNORECASE),
+)
+
+
+def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None) -> str:
+    """Markdown with every file it pulls in checked against the roots and absolute.
+
+    A reference definition can also be a plain link; it is checked the same
+    way, which may refuse a link that only looks like a path. That is the
+    safe side.
+    """
+    def fix(match: re.Match) -> str:
+        target = match.group(2).strip("<>")
+        if target.startswith("#"):
+            return match.group(0)
+        if re.match(r"^[a-z][a-z0-9+.-]*:", target, re.IGNORECASE) and \
+                not re.match(r"^[a-z]:[\\/]", target, re.IGNORECASE):
+            if re.match(r"^(https?|mailto):", target, re.IGNORECASE) and \
+                    not match.group(1).startswith(("!", "<")):
+                return match.group(0)  # a plain link in a reference definition
             raise ToolError("invalid_params",
                             f"그림을 파일 경로 대신 주소로 지정했습니다({target}).",
                             hint="허용한 폴더에 그림을 내려받고 그 파일의 경로를 입력하세요.")
         try:
-            ctx.roots.check(target, base=base)
+            path = (ctx.roots.check(target, base=base) if ctx.roots is not None
+                    else canonical(target, base=base))
         except PathRefused as exc:
             raise ToolError(exc.code, f"이 그림 경로는 사용할 수 없습니다({target}).",
                             hint="허용한 폴더 안에 있는 그림 파일의 경로를 입력하세요.",
                             at=exc.path) from exc
+        text = str(path).replace("\\", "/")
+        if " " in text and not match.group(1).lower().startswith("<img"):
+            text = f"<{text}>"  # CommonMark: a destination with spaces goes in <>
+        return match.group(1) + text
+    for pattern in _ASSET_PATTERNS:
+        markdown = pattern.sub(fix, markdown)
+    return markdown
 
 
 def is_person_only(place: dict) -> bool:
@@ -319,16 +346,27 @@ def _block_text(block: dict) -> str:
 _BULKY = frozenset({"text", "grid", "cells", "runs"})
 
 
-def _parse_cursor(cursor: str, rev: str) -> tuple[int, int]:
+def _scope(at: str | None) -> str:
+    """Which part of the document a cursor walks (the whole of it, or `at`)."""
+    import hashlib
+    return hashlib.sha256((at or "").encode("utf-8")).hexdigest()[:6]
+
+
+def _parse_cursor(cursor: str, rev: str, at: str | None, blocks: list) -> tuple[int, int]:
+    bad = ToolError("invalid_params", "이어 읽을 위치의 형식이 맞지 않습니다.",
+                    hint="이전 read 결과에 나온 다음 위치를 같은 주소(at)로 그대로 입력하세요.")
     try:
-        crev, index, offset = cursor.split(":")
+        crev, scope, index, offset = cursor.split(":")
         index_i, offset_i = int(index), int(offset)
     except ValueError:
-        raise ToolError("invalid_params", "이어 읽을 위치의 형식이 맞지 않습니다.",
-                        hint="이전 read 결과에 나온 다음 위치를 그대로 입력하세요.") from None
+        raise bad from None
     if crev != rev:
         raise ToolError("stale", "읽던 사이 문서가 바뀌었습니다.",
-                        hint="이어 읽을 위치를 지정하지 말고 처음부터 다시 읽으세요.", retryable=True)
+                        hint="이어 읽을 위치를 지정하지 말고 처음부터 다시 읽으세요.", retryable=True,
+                        data={"reason": "superseded_by_newer_candidate"})
+    if scope != _scope(at) or not 0 <= index_i < len(blocks) \
+            or not 0 <= offset_i <= len(_block_text(blocks[index_i])):
+        raise bad
     return index_i, offset_i
 
 
@@ -339,8 +377,9 @@ def _run_read(ctx: Context, args: dict) -> dict:
     data = doc_call(ctx.doc.read, str(inp.path), args.get("at"),
                     with_runs=bool(args.get("with_runs", False)))
     blocks = data.get("blocks", [])
-    start, offset = (_parse_cursor(args["cursor"], inp.rev)
+    start, offset = (_parse_cursor(args["cursor"], inp.rev, args.get("at"), blocks)
                      if args.get("cursor") else (0, 0))
+    scope = _scope(args.get("at"))
     out: list[dict] = []
     used = 0
     index = start
@@ -352,14 +391,14 @@ def _run_read(ctx: Context, args: dict) -> dict:
         room = budget - used
         if len(piece) > room:
             if out and room < 200:
-                next_cursor = f"{inp.rev}:{index}:{offset}"
+                next_cursor = f"{inp.rev}:{scope}:{index}:{offset}"
                 break
             take = max(room, 1)
             item = {k: v for k, v in block.items() if k not in _BULKY}
             item.update(text=piece[:take], part={"from": offset, "to": offset + take,
                                                  "of": len(text)})
             out.append(item)
-            next_cursor = f"{inp.rev}:{index}:{offset + take}"
+            next_cursor = f"{inp.rev}:{scope}:{index}:{offset + take}"
             break
         item = {k: v for k, v in block.items() if k not in _BULKY - {"runs"}}
         item["text"] = piece
@@ -591,11 +630,31 @@ def _run_edit(ctx: Context, args: dict) -> dict:
     ops = args["ops"]
     _check_ops(ops)
     ref = resolve(ctx, args["path"])
+    _refuse_person_seats(ctx, ref, ops)
     for op in ops:
         if op["op"] == "insert_after":
-            _gate_markdown_assets(ctx, str(op.get("markdown", "")),
-                                  ref.source.parent if ref.source else None)
+            op["markdown"] = _gate_markdown_assets(
+                ctx, str(op.get("markdown", "")), ref.source.parent if ref.source else None)
     return _stage(ctx, ref, args["base"], ops, "edit")
+
+
+def _refuse_person_seats(ctx: Context, ref: Ref, ops: list) -> None:
+    """edit cannot do what fill may not: write a signature, seal or approval-date seat."""
+    named = set()
+    for op in ops:
+        if op["op"] == "fill":
+            named.add(_place_id(str(op["place"])))
+        elif str(op.get("at", "")).startswith("place:"):
+            named.add(_place_id(str(op["at"])))
+    if not named:
+        return
+    outline = doc_call(ctx.doc.outline, str(current(ctx, ref).path))
+    blocked = sorted(f"place:{p['id']}" for p in outline.get("places", [])
+                     if p.get("id") in named and is_person_only(p))
+    if blocked:
+        raise ToolError("person_only_seat",
+                        "서명·날인·결재일 칸은 사람이 직접 채워야 합니다: " + ", ".join(blocked),
+                        hint="이 칸들은 비워 두고 사람에게 알리세요.", candidates=blocked)
 
 
 register(Tool(
@@ -694,8 +753,19 @@ def _run_new(ctx: Context, args: dict) -> dict:
     if args.get("form"):
         form_ref = resolve(ctx, args["form"])
         form_path = current(ctx, form_ref).path
-    base_dir = Path(args["base_dir"]) if args.get("base_dir") else None
-    _gate_markdown_assets(ctx, markdown, base_dir)
+    base_dir = None
+    if args.get("base_dir"):
+        try:
+            base_dir = (ctx.roots.check(args["base_dir"]) if ctx.roots is not None
+                        else canonical(args["base_dir"]))
+        except PathRefused as exc:
+            raise ToolError(exc.code, exc.message, hint=getattr(exc, "hint", None),
+                            at=exc.path) from exc
+    markdown = _gate_markdown_assets(ctx, markdown, base_dir)
+    if "\n" not in markdown:
+        # The document layer reads a one-line argument naming a file as that
+        # file. A body is never a file name.
+        markdown += "\n"
 
     def build(out_path: Path) -> dict:
         return doc_call(ctx.doc.new, markdown, str(out_path),
@@ -926,6 +996,10 @@ def _run_check(ctx: Context, args: dict) -> dict:
 
     if "layout" in only:
         state, data = _tri(lambda: doc_call(ctx.doc.pages, str(inp.path)))
+        if state != "unavailable" and not data.get("pages"):
+            # No page list is no evidence, not a clean layout.
+            state, data = "unavailable", {"reason": "no_pages",
+                                          "why": "the document layer returned no pages"}
         if state == "unavailable":
             checks["layout"] = {"state": "unavailable", **data}
         else:
@@ -957,8 +1031,14 @@ def _run_check(ctx: Context, args: dict) -> dict:
 
     against = args.get("against")
     if "guard" in only and (against or (inp.source == "draft" and ref.source)):
-        base_path = (resolve(ctx, against).source if against and not is_virtual(against)
-                     else ref.source)
+        if against:
+            # The document named, at the revision it names: a draft's head
+            # for draft:<id>, the file on disk otherwise. Never a fallback.
+            other = resolve(ctx, against)
+            base_path = (ctx.drafts.input_for(other, use_draft=True).path
+                         if is_virtual(against) else other.source)
+        else:
+            base_path = ref.source
         state, data = _tri(lambda: _guard(ctx, base_path, inp.path))
         if state == "unavailable":
             checks["guard"] = {"state": "unavailable", **data}
@@ -1131,8 +1211,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
     # A change set the person made at the terminal is reviewed by definition.
     unreviewed = sum(1 for c in (record or {}).get("changesets", [])
                      if c.get("status") == "proposed" and c.get("author") != "cli")
-    declines = (record or {}).get("declines", [])
-    if any(d.get("sha256") == digest and d.get("target") == str(target) for d in declines):
+    if rt_commit.declined(target, digest, ctx.drafts.home):
         raise ToolError("declined_by_person",
                         "사람이 이미 이 내용으로 이 파일을 덮어쓰지 않기로 했습니다.",
                         hint="저장이 필요하면 새 파일 이름을 지정하세요.",
@@ -1140,7 +1219,13 @@ def _run_save(ctx: Context, args: dict) -> dict:
 
     if not target.exists():
         expected, policy = rt_commit.ABSENT, "policy:new-file"
-    elif rt_commit.owned(target, ctx.drafts.home):
+    elif ctx.create_only:
+        # `-o OUT` without --force: the CLI checked OUT was absent; a file
+        # that appeared since is not ours to replace.
+        raise ToolError("target_exists", f"같은 이름이 이미 있어 저장하지 않았습니다({target}).",
+                        hint="덮어쓰려면 --force를 붙이세요. 이전 판은 저장 기록에 남습니다.",
+                        at=str(target))
+    elif rt_commit.owned(target, ctx.drafts.home, draft=ref.key):
         expected, policy = sha256_file(target), "policy:own-file"
     else:
         expected = sha256_file(target)
@@ -1159,11 +1244,9 @@ def _run_save(ctx: Context, args: dict) -> dict:
                             at=str(target), data=detail)
         answer = ctx.ask(question, detail)
         if answer is not True:
-            if record is not None and answer is False:
-                record.setdefault("declines", []).append(
-                    {"sha256": digest, "target": str(target)})
-                ctx.drafts.write(ref, record)
             if answer is False:
+                # Final for these bytes at this target, whichever draft asks next.
+                rt_commit.record_decline(target, digest, by=ctx.client, home=ctx.drafts.home)
                 raise ToolError("declined_by_person", "덮어쓰지 않았습니다.",
                                 hint="다른 이름(to)으로 저장할 수 있습니다.", at=str(target))
             raise ToolError("needs_person", "확인을 받지 못해 덮어쓰지 않았습니다.",
@@ -1171,25 +1254,46 @@ def _run_save(ctx: Context, args: dict) -> dict:
                                  "또는 다른 이름(to)으로 저장하세요.",
                             at=str(target), data=detail)
         policy = "person:" + ("tty" if ctx.client == "cli" else "elicitation")
+        # The answer may have taken minutes: the path must still name the same place.
+        again = _target(ctx, args["to"]) if args.get("to") else canonical(ref.source)
+        if not _same_path(again, target):
+            raise ToolError("target_changed", "확인하는 사이에 저장 위치가 바뀌었습니다.",
+                            hint="경로를 확인하고 다시 저장하세요.", at=str(target))
 
     provenance = _saved_provenance(record)
-    receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
-                               policy=policy, home=ctx.drafts.home, provenance=provenance)
-    if record is not None:
-        record.setdefault("saves", []).append({
-            "target": str(target), "sha256": receipt["sha256"],
-            "revision": head_input.revision, "policy": policy,
-            "unreviewed": unreviewed, "at": receipt["at"], "provenance": provenance})
-        for cs in record.get("changesets", []):
-            if cs.get("status") == "proposed":
-                cs["status"] = "applied"
-        if ref.source is not None and _same_path(target, ref.source):
-            # The person's file now holds the head, so the draft is based on
-            # these bytes; without this the next read would call the file
-            # "changed since the draft started".
-            record["source"]["sha256"] = receipt["sha256"]
-            record["source"]["rev"] = rev_of(receipt["sha256"])
-        ctx.drafts.write(ref, record)
+    if record is None:
+        receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
+                                   policy=policy, home=ctx.drafts.home,
+                                   provenance=provenance, candidate_sha256=digest,
+                                   draft=ref.key)
+    else:
+        with ctx.drafts.lock(ref):
+            # Re-read under the lock: an edit or another save may have landed
+            # while we asked. Writing the old record back would lose it.
+            record = ctx.drafts.load(ref) or record
+            head = record.get("head") or {}
+            if has_edits and head.get("sha256") != head_input.sha256:
+                raise ToolError("stale", "확인하는 사이에 초안이 바뀌어 저장하지 않았습니다.",
+                                hint="초안을 다시 확인하고 저장하세요.", retryable=True,
+                                data={"reason": "superseded_by_newer_candidate"})
+            receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
+                                       policy=policy, home=ctx.drafts.home,
+                                       provenance=provenance, candidate_sha256=digest,
+                                       draft=ref.key)
+            record.setdefault("saves", []).append({
+                "target": str(target), "sha256": receipt["sha256"],
+                "revision": head_input.revision, "policy": policy,
+                "unreviewed": unreviewed, "at": receipt["at"], "provenance": provenance})
+            for cs in record.get("changesets", []):
+                if cs.get("status") == "proposed":
+                    cs["status"] = "applied"
+            if ref.source is not None and _same_path(target, ref.source):
+                # The person's file now holds the head, so the draft is based on
+                # these bytes; without this the next read would call the file
+                # "changed since the draft started".
+                record["source"]["sha256"] = receipt["sha256"]
+                record["source"]["rev"] = rev_of(receipt["sha256"])
+            ctx.drafts.write(ref, record)
     return {"path": ref.label, "saved": str(target), "sha256": receipt["sha256"],
             "format": fmt, "replaced": receipt["replaced"] is not None,
             "acceptedVia": policy, "unreviewed": unreviewed, "lossy": lossy,
@@ -1358,4 +1462,3 @@ register(Tool(
     run=_run_guide, text=lambda r: r.get("text") or "topics: " + ", ".join(r.get("topics", [])),
     budget_chars=12000,
 ))
-
