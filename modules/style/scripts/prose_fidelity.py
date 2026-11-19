@@ -325,10 +325,10 @@ def _number_label(text: str, prev: re.Match[str], key: str, start: int) -> tuple
 # 3월 31일까지), a whole and a part of it (총 3건 중 1건, 3건 가운데 1건), and
 # a list read against a list of things with 각각 (현장 심사와 서면 심사를 각각
 # 2회, 5회). A swap moves the numbers between roles; a sentence reworded
-# around them keeps the roles. A source and a goal keep the words before the
-# pair, so two pairs in one sentence (금리를 3%에서 5%로, 세율을 10%에서
-# 12%로) stay apart. A 각각 list is read only when it has as many things as
-# numbers.
+# around them keeps the roles. A source and a goal, and a whole and a part,
+# keep the words before the pair, so two pairs in one sentence (금리를 3%에서
+# 5%로, 세율을 10%에서 12%로; 갑은 10건 중 3건, 을은 20건 중 5건) stay
+# apart. A 각각 list is read only when it has as many things as numbers.
 _SOURCE = ("에서", "에게서", "한테서", "부터")
 _GOAL = ("로", "까지", "에게", "한테")
 _SPACES = re.compile(r"[ \t\u00a0]+")
@@ -350,7 +350,9 @@ def _glued(text: str, m: re.Match[str]) -> str:
 
 def _roles(text: str, tokens: list[re.Match[str]], found: list[list]) -> None:
     """Name each number that has a role (see above) by that role, in place:
-    the label before it and how that reading shows it."""
+    the label before it and how that reading shows it. The second number of
+    a pair is shown with the whole pair (3%에서 5%로, 10건 중 3건), so two
+    pairs in one sentence read apart."""
     n = len(tokens)
 
     def joined(k: int) -> bool:         # 2025년 3월 1일: one date in parts
@@ -378,15 +380,16 @@ def _roles(text: str, tokens: list[re.Match[str]], found: list[list]) -> None:
                 head = found[first][0]
                 for k in range(first, last + 1):
                     found[k][0] = (head + (" #에서" if k <= i else " #로")).strip()
-                    found[k][4] = shown(first, i) if k <= i else shown(i + 1, last)
+                    found[k][4] = shown(first, i) if k <= i else shown(first, last)
                 i = done = last + 1
                 continue
         if i + 1 < n:
             of = _OF.fullmatch(text, m.end(), tokens[i + 1].start())
             if of:
-                found[i][0], found[i + 1][0] = "#전체", "#부분"
+                head = found[i][0]
+                found[i][0], found[i + 1][0] = (head + " #전체").strip(), (head + " #부분").strip()
                 found[i][4] = text[m.start():of.end()].rstrip()
-                found[i + 1][4] = found[i + 1][3]
+                found[i + 1][4] = text[m.start():tokens[i + 1].end()]
                 i = done = i + 2
                 continue
         lo = tokens[i - 1].end() if i else 0

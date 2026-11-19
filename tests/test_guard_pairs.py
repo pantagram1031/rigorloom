@@ -1,6 +1,6 @@
 """The guard on Sol's before/after pairs from the T180 and T183 reviews and
-the re-check of the T183 fixes, and on Fable's pairs from the review of the
-T183 head.
+the re-check of the T183 fixes, and on Fable's pairs from the reviews of the
+T183 head and the label-words rule.
 
 Every guard rule is measured on the same pairs instead of examples written for
 the rule. A pair whose fact is unchanged, or whose token the guard leaves alone
@@ -23,11 +23,11 @@ FIXTURES = REPO / "tests" / "fixtures" / "guard_pairs"
 #: fixture -> how many pairs it holds; T180's pairs are one line each, T183's
 #: may hold a table or a list on several lines (one paragraph still).
 SETS = {"sol-t180-pairs.json": 55, "sol-t183-pairs.json": 92, "sol-t183b-pairs.json": 79,
-        "fable-t183-pairs.json": 15}
+        "fable-t183-pairs.json": 15, "fable-t193-pairs.json": 3}
 PAIRS = {name: json.loads((FIXTURES / name).read_text(encoding="utf-8"))["pairs"] for name in SETS}
 GAPS = {"numbers-in-words", "fractions", "ranges", "phone-account-id", "list-labels",
         "leading-decimal", "year-month", "time-units", "date-forms", "clock-times",
-        "article-branches", "spaced-version", "table-columns"}
+        "article-branches", "spaced-version", "table-columns", "each-list-count"}
 
 
 @pytest.fixture(scope="module")
