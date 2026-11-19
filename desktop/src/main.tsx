@@ -5,6 +5,9 @@ import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./styles.css";
 
+// The v1 screens keep main's palette (v1-tokens.css applies under this mark).
+document.documentElement.dataset.ui = "v1";
+
 if (import.meta.env.DEV) {
   // Hot reload re-evaluates modules; let defineDocSlice accept a re-definition.
   (globalThis as { __RL_HMR__?: boolean }).__RL_HMR__ = true;
