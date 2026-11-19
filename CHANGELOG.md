@@ -23,6 +23,10 @@ the kernel's contract shape.
 - **T173:** the code of the old UI is gone: 23 unused screens and components were deleted, the agent operator dialog (opened from 명령창) is now a small panel with the provider settings and a raw event log, and every Korean word on screen now comes from the shared vocabulary, which a new test enforces. The web bundle is about 49 KB smaller.
 - **T172:** the local review UI has been rebuilt as five screens: Open, Review, Fill, History and Settings. Review shows the proposed form page next to a list of changes, Fill lets you type into blanks on the page itself, and History lists approved revisions and lets you compare or undo them. Approval and export work as before: you approve one plan hash and the runtime applies it; a test checks that exporting the 공문 example still gives the same file byte for byte. The old session list, plan view and structure tree screens are gone, and the screenshots in `docs/ui/` show the new screens in light and dark at desktop and phone width.
 
+### Fixed
+
+- **T180:** `rigorloom guard` and the fact check in `rigorloom check` now catch a number that changes right after a Korean syllable, such as `제17조` → `제18조` or `금500만원` → `금50만원`. Before, the number pattern skipped any digit that followed Hangul, so those edits passed. Numbers after a Latin letter, digit or dot (`v2`, `x86`, `1.5`) are read as before. The same number written another way is not a change: full-width digits (`１７` and `17`), thousands commas (`1,000` and `1000`) and a space before the unit (`20 ℃` and `20℃`) compare equal. The guard still compares the numbers in a paragraph without their order, so two amounts that swap places, Korean units of magnitude (`500만원` → `500원`) and numbers written in words (`제십칠조`) are not caught yet.
+
 ## v0.18.0 — 2026-11-15
 
 An agent or a person proposes an edit to a Korean official document. A person reviews exactly what will change and approves it before the HWPX file is modified. `RuntimeCore` owns the edit path, with the few remaining exceptions listed in [docs/architecture.md](docs/architecture.md).

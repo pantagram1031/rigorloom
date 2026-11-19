@@ -7,12 +7,17 @@ import hashlib
 import json
 import re
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
 
 PATTERNS = {
-    "numbers": re.compile(r"(?<![\w.])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s?(?:%|‰|℃|°[CF]?|[a-zA-ZμµΩ]+(?:/[a-zA-Z0-9²³μµ]+)?))?"),
+    # Not after a digit (any script), an ASCII letter, underscore or dot (so
+    # "v2", "x86" and "1.5" stay whole), but after Hangul: "제17조" holds the
+    # number 17. Python's \w includes Hangul, so (?<![\w.]) missed every number
+    # written right after a Korean syllable and a "제17조 → 제18조" edit passed.
+    "numbers": re.compile(r"(?<![\dA-Za-z_.])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s?(?:%|‰|℃|°[CF]?|[a-zA-ZμµΩ]+(?:/[a-zA-Z0-9²³μµ]+)?))?"),
     "dates": re.compile(r"(?<!\d)(?:\d{4}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}일?)(?!\d)"),
     "source_ids": re.compile(r"(?<![\w-])(?:SRC|SOURCE|REF|S|R)[-_]?\d+(?![\w-])", re.I),
     "citations": re.compile(r"(?:\[\d+(?:\s*[-,]\s*\d+)*\]|\([A-Z][A-Za-z-]+(?:\s+et\s+al\.)?,\s*\d{4}\))"),
@@ -129,10 +134,20 @@ def _qualifiers(text: str) -> Counter[str]:
     return _token_counts(text, QUALIFIERS)
 
 
+def _number_key(token: str) -> str:
+    """One spelling per number: ASCII digits, no thousands commas, no space
+    before the unit. "１７" and "17", "1,000" and "1000", "20 ℃" and "20℃"
+    are the same fact; flagging them would bury the real changes."""
+    digits = "".join(str(unicodedata.digit(c)) if c.isdigit() else c for c in token)
+    return re.sub(r"(?<=\d),(?=\d{3})|\s+", "", digits)
+
+
 def extract_protected(text: str) -> dict[str, object]:
     result: dict[str, object] = {}
     for name, pattern in PATTERNS.items():
         values = pattern.findall(text)
+        if name == "numbers":
+            values = [_number_key(v) for v in values]
         result[name] = values if name in {"tags", "markdown_links"} else dict(Counter(values))
     result["headings"] = _headings(text)
     result["qualifiers"] = dict(_qualifiers(text))
