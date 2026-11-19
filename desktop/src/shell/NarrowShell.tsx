@@ -3,7 +3,7 @@
  * sheet (`narrowSheet`); the shell owns the 48 px top bar, the drawer and the
  * page area, which shrinks so the sheet never covers the page.
  */
-import { Logo } from "../components/Logo";
+import { Mark } from "../brand";
 import { S } from "../i18n/v2/shell";
 import { useWorkspace } from "../store";
 import { openSettings } from "./bindings";
@@ -47,7 +47,7 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
           data-testid={TID.appMenu}
           onClick={() => setShell({ narrowDrawerOpen: !getShell().narrowDrawerOpen })}
         >
-          <Logo size={20} />
+          <Mark size={20} />
         </button>
         <div className="sh-narrow-title">
           <span className="sh-narrow-name">{title}</span>

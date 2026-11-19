@@ -5,7 +5,7 @@
  */
 import { useMemo, useState } from "react";
 
-import { Logo } from "../components/Logo";
+import { Mark } from "../brand";
 import { S } from "../i18n/v2/shell";
 import { useWorkspace } from "../store";
 import type { CorpusFileEntry, Recent } from "../types";
@@ -30,7 +30,7 @@ export function StartTab() {
     <div className="sh-start" data-testid={TID.start}>
       <div className="sh-start-col">
         <div className="sh-start-head">
-          <Logo size={40} className="sh-start-mark" />
+          <Mark size={40} className="sh-start-mark" />
           <h1 className="sh-start-word">{S.t("shell_app_name", lang)}</h1>
         </div>
         <p className="sh-start-boundary">{S.t("shell_start_boundary", lang)}</p>

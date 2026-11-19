@@ -6,7 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import { Logo } from "../components/Logo";
+import { Mark } from "../brand";
 import { errorCodeMessage } from "../i18n/vocabulary";
 import { S } from "../i18n/v2/shell";
 import * as rt from "../runtime";
@@ -198,7 +198,7 @@ function TitleBar({ bp, isDoc, docked }: { bp: Breakpoint; isDoc: boolean; docke
           data-testid={TID.appMenu}
           onClick={() => setShell({ appMenuOpen: !getShell().appMenuOpen, tabListOpen: false })}
         >
-          <Logo size={16} />
+          <Mark size={16} />
         </button>
         {appMenuOpen ? <AppMenu /> : null}
       </div>
