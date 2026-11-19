@@ -6,10 +6,10 @@ These are descriptive counts; they do not support a comparative finding.
 
 | Condition | Judge | Reference chosen | Rewrite chosen | TIE | CANNOT_TELL | Malformed | Ineligible |
 |---|---|---:|---:|---:|---:|---:|---:|
-| A | Astra | 3 | 2 | 2 | 0 | 0 | 13 |
-| A | GPT Sol | 4 | 2 | 1 | 0 | 0 | 13 |
-| B | Astra | 4 | 1 | 2 | 0 | 0 | 13 |
-| B | GPT Sol | 1 | 3 | 3 | 0 | 0 | 13 |
+| A | Judge A | 3 | 2 | 2 | 0 | 0 | 13 |
+| A | Judge B | 4 | 2 | 1 | 0 | 0 | 13 |
+| B | Judge A | 4 | 1 | 2 | 0 | 0 | 13 |
+| B | Judge B | 1 | 3 | 3 | 0 | 0 | 13 |
 
 The judges agreed on 9 of 14 jointly valid pairs. Each condition scheduled 20 pairs, with 19 valid inputs and 7 eligible outputs. The same 12 paragraph IDs failed the reference-to-final guard in both conditions; their draft-to-final guards and model semantic verifications passed. The failed fact card omitted the actor responsible for preparing the measures.
 
@@ -33,7 +33,7 @@ The corpus is a convenience sample, and publication age does not prove authorshi
 
 **Condition A**
 
-| Stratum | Scheduled | Card-excluded | Guard failures | Eligible | Astra reference | Astra rewrite | Astra TIE | Astra CANNOT_TELL | Sol reference | Sol rewrite | Sol TIE | Sol CANNOT_TELL |
+| Stratum | Scheduled | Card-excluded | Guard failures | Eligible | Judge A reference | Judge A rewrite | Judge A TIE | Judge A CANNOT_TELL | Judge B reference | Judge B rewrite | Judge B TIE | Judge B CANNOT_TELL |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 정책 보도 | 5 | 1 | 3 | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
 | 공개 문답 | 5 | 0 | 3 | 2 | 0 | 1 | 1 | 0 | 1 | 1 | 0 | 0 |
@@ -42,7 +42,7 @@ The corpus is a convenience sample, and publication age does not prove authorshi
 
 **Condition B**
 
-| Stratum | Scheduled | Card-excluded | Guard failures | Eligible | Astra reference | Astra rewrite | Astra TIE | Astra CANNOT_TELL | Sol reference | Sol rewrite | Sol TIE | Sol CANNOT_TELL |
+| Stratum | Scheduled | Card-excluded | Guard failures | Eligible | Judge A reference | Judge A rewrite | Judge A TIE | Judge A CANNOT_TELL | Judge B reference | Judge B rewrite | Judge B TIE | Judge B CANNOT_TELL |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 정책 보도 | 5 | 1 | 3 | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
 | 공개 문답 | 5 | 0 | 3 | 2 | 1 | 0 | 1 | 0 | 0 | 1 | 1 | 0 |

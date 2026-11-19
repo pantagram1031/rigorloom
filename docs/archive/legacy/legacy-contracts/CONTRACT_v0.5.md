@@ -132,7 +132,7 @@ iterations then blocked+reason.
 
 | Role | Model | Effort |
 |---|---|---|
-| Orchestrator / design judge / writer | main session (fable/opus) | high; max for judging+writing |
+| Orchestrator / design judge / writer | main session (top Claude tier or opus) | high; max for judging+writing |
 | Researchers R1(concepts) R2(data+images) R3(books+curriculum) | sonnet ×3 parallel | medium |
 | Cross-exam verifier | opus | high |
 | Design panel | sonnet ×2 + Codex | high |
@@ -144,7 +144,7 @@ iterations then blocked+reason.
 
 Swap ladder on severe failure (gate fail traced to agent, fabrication, or 2
 consecutive rejections): record via `pipeline_ctl trouble`, then retry with a
-DIFFERENT model: sonnet→opus→fable/Codex; Codex→opus; opus→fable+Codex second
+DIFFERENT model: sonnet→opus→top Claude tier/Codex; Codex→opus; opus→top Claude tier+Codex second
 opinion. Never silently retry the same model more than once.
 Codex sandbox rule: Codex cannot write outside repo roots — give it repo-path
 tasks or have a Claude agent apply its patch.

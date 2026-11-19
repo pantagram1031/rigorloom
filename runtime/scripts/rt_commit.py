@@ -90,7 +90,7 @@ def _settled(entries: list[dict], target: Path) -> list[dict]:
     last["state"] = "done" if current == last["newSha256"] else "failed"
     if last["state"] == "done":
         # Matching bytes cannot tell our publish from an identical copy put
-        # there by someone else (Sol re-check F4): such an entry never makes
+        # there by someone else (review re-check F4): such an entry never makes
         # the file "ours", and undo will not remove a file it may not own.
         last["settled"] = "digest"
     return entries
@@ -379,7 +379,7 @@ def undo(target: Path, *, by: str, home: Path | None = None,
             _save_index(folder, entries)
         except OSError as exc:
             # The file is already back; only the record failed. Say so, and
-            # where the bytes undo moved aside are (Sol re-check F3, round 3).
+            # where the bytes undo moved aside are (review re-check F3, round 3).
             raise ToolError("internal", "파일은 되돌렸지만 저장 기록에는 남기지 못했습니다.",
                             hint=f"되돌리기 전 파일은 여기에 보관했습니다: {kept}",
                             at=str(target), data={"kept": str(kept), "error": exc.strerror}) from exc

@@ -49,7 +49,7 @@ WHY_KO = {
 def shown(path: str) -> str:
     """A path as a person typed it: relative to the current folder when inside it.
 
-    Spaces are kept exactly (Sol re-check F5): a prompt must not show
+    Spaces are kept exactly (review re-check F5): a prompt must not show
     "review copy" for "review  copy".
     """
     import os

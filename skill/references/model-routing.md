@@ -128,8 +128,8 @@ tiers a retry.
    injected by an inline-command syntax). The non-Claude axis has **exactly one
    data point**, and it is not in the table because it was not run in this
    harness: an independent **Codex** harness ran the same A1 task across three
-   tiers (sol / terra / luna) after round 3. Its outcome, honestly:
-   - The luna tier **produced an accepted document** — so a second vendor can
+   tiers (A / B / C) after round 3. Its outcome, honestly:
+   - Tier C **produced an accepted document** — so a second vendor can
      drive the shipped surface. But it needed more retries than the Claude
      tiers on the same task, and it needed an auditing harness around it to get
      there. "A second vendor can drive this" is supported; "as cheaply" is not,
@@ -143,4 +143,4 @@ tiers a retry.
 
    One data point is not a trend, and it does not establish that the surface
    works on a third harness. Treat the routing table as Claude-measured, and
-   expect a non-Claude tier to need the auditing discipline luna needed.
+   expect a non-Claude tier to need the auditing discipline tier C needed.

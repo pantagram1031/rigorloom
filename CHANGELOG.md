@@ -20,6 +20,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T202:** Comments, fixture descriptions and docs (research, release notes, the model-routing reference, archived plans and older CHANGELOG entries) no longer use internal model aliases: the naturalness pilot's judges are A and B (its column and file names too) with the exact models in the run record kept outside the repository, the v0.17 clean-room tiers are A, B and C, and the plans name roles. The UI tests' forbidden-phrase lists drop three internal entries, and their path-leak check now catches a drive path written with one `\` (it needed two) or with `/`. Two pipeline tests are renamed (`test_tier_c_*`). No behaviour change; guard pair ids and goldens are as before.
 - **T201:** The editor v2 page model and canvas (a one-page projection of the document's cells until the engine's page source lands, margin marks with their toolbar, the scroll map, the document strip and the seat editor) are in `desktop/src/model/page.ts` and `desktop/src/canvas`, checked by `wp3-canvas.test.mjs`; nothing registers or shows them yet. The v1 screens, including the fill screen's seat editor, are unchanged.
 - **T199:** `guide` has a topic `ops` in every install: each `edit` op with its fields, what they hold and an example. The `edit` description spells out the text ops (`set`, `replace`, `insert_after`, `delete`), names the others (a family once: `table.{set_cells,add_row,delete_row}`) and points to `guide` `ops`, so a new op adds a name there instead of its fields; it now says that addresses count from 0. `guide` without a topic lists `ops`, and shows the guide pack's index only when a pack is installed. `table.delete_row` and `fill` in `edit` take `expect` (the row's text, cells joined by a tab; the place's current value), which the document layer already checked and `edit` refused as a field those ops do not take.
 - **T198:** The editor v2 shell (title bar with the 리을R mark, document tabs, the Start tab, the 파일 pane over a chosen 문서 폴더, the command palette, the app menu, a settings dialog and a narrow layout) is in `desktop/src/shell`. It is opt-in: the v1 screens stay the default, and editor v2 opens with `?ui=v2` or when the developer preference `devEditorV2` is `true`; `?ui=v1` always opens the v1 screens. File names and tab titles drop bidi control characters before they are shown.
@@ -1348,7 +1349,7 @@ The ledger, and the honest limits of what those runs prove, is
 - **#75 — T36: acceptance now requires the safety set, and no path exits 1.**
   Two P0 correctness-of-VERDICT defects found by the independent Codex
   clean-room harness. First, **`acceptance: true` while safety checks sat in
-  `skipped[]`**: the luna tier supplied a CLI `--fill-map` and still got
+  `skipped[]`**: tier C supplied a CLI `--fill-map` and still got
   `empty_cell_expected_fill`, `fill_charpr_script_mismatch` AND page parity
   into `deterministic.skipped[]`, then exit 0 with `acceptance: true`, because
   acceptance was computed as "no HARD finding" and never read the skip list.
@@ -1373,7 +1374,7 @@ The ledger, and the honest limits of what those runs prove, is
   artifact's own `<hp:lineseg vertpos>` layout cache (`derive_pages_document`,
   excluding cell-relative linesegs inside `hp:tc`/`hp:subList`), records
   `pages_document_source`, and skips only when all three fail. Fourth, the
-  **exit-code contract, all six rows**: sol and terra both saw exit **1** for
+  **exit-code contract, all six rows**: tiers A and B both saw exit **1** for
   `vision_pending` where the contract says **3**. 1 was not a code at all but
   an unhandled path — `emit_verdict` sat outside every guard in `main`, so an
   unwritable `--out` escaped as a traceback after a perfectly good verdict.
@@ -1449,7 +1450,7 @@ The ledger, and the honest limits of what those runs prove, is
   release preparation that last limit was corrected rather than left standing:
   the non-Claude axis now has **exactly one** data point (the independent Codex
   harness of #75), recorded in the document with what it does and does not
-  support — luna produced an accepted document, so a second vendor *can* drive
+  support — tier C produced an accepted document, so a second vendor *can* drive
   the shipped surface, but it needed more retries and an auditing harness to
   get there, and its numbers are not comparable with the table's.
 

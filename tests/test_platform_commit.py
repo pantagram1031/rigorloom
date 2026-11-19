@@ -105,7 +105,7 @@ def test_commit_creates_and_undo_moves_our_file_away(tmp_path, home):
 
 
 def test_a_persons_yes_is_for_that_save_alone(tmp_path, home):
-    # Sol H1: an approved replacement must not make the file "ours" for later saves.
+    # Review H1: an approved replacement must not make the file "ours" for later saves.
     target = tmp_path / "theirs.hwpx"
     target.write_bytes(b"person")
     rt_commit.commit(_candidate(tmp_path, b"v2"), target, expected=sha256_file(target),
@@ -115,7 +115,7 @@ def test_a_persons_yes_is_for_that_save_alone(tmp_path, home):
 
 
 def test_only_the_approved_bytes_are_published(tmp_path, home):
-    # Sol H3: the candidate changed after approval: refuse, write nothing.
+    # Review H3: the candidate changed after approval: refuse, write nothing.
     target = tmp_path / "new.hwpx"
     candidate = _candidate(tmp_path, b"approved")
     approved = sha256_file(candidate)
@@ -127,7 +127,7 @@ def test_only_the_approved_bytes_are_published(tmp_path, home):
 
 
 def test_a_crash_after_publish_is_still_in_history(tmp_path, home, monkeypatch):
-    # Sol H5: the history entry is written before the file, so a crash right
+    # Review H5: the history entry is written before the file, so a crash right
     # after publishing still leaves an undoable record.
     target = tmp_path / "보고서.hwpx"
     target.write_bytes(b"old")
@@ -152,7 +152,7 @@ def test_a_crash_after_publish_is_still_in_history(tmp_path, home, monkeypatch):
 
 
 def test_a_decline_is_shared_by_every_draft(tmp_path, home):
-    # Sol M1: finality is per {bytes, target}, not per draft record.
+    # Review M1: finality is per {bytes, target}, not per draft record.
     target = tmp_path / "a.hwpx"
     assert not rt_commit.declined(target, "ab" * 32)
     rt_commit.record_decline(target, "ab" * 32, by="mcp:x")
@@ -160,7 +160,7 @@ def test_a_decline_is_shared_by_every_draft(tmp_path, home):
 
 
 def test_a_decline_recorded_while_waiting_stops_the_publish(tmp_path, home):
-    # Sol P2 H3: the "no" is read again under the history lock, just before
+    # Review P2 H3: the "no" is read again under the history lock, just before
     # the bytes go out, so a session that asked earlier cannot overtake it.
     target, candidate = tmp_path / "a.hwpx", tmp_path / "cand"
     target.write_bytes(b"old")
@@ -179,7 +179,7 @@ def test_a_decline_recorded_while_waiting_stops_the_publish(tmp_path, home):
 
 
 def test_undo_keeps_the_bytes_it_displaces(tmp_path, home):
-    # Sol M3: undo is a write too; what it replaces goes to history.
+    # Review M3: undo is a write too; what it replaces goes to history.
     target = tmp_path / "b.hwpx"
     target.write_bytes(b"old")
     rt_commit.commit(_candidate(tmp_path, b"new"), target, expected=sha256_file(target),
@@ -190,7 +190,7 @@ def test_undo_keeps_the_bytes_it_displaces(tmp_path, home):
 
 
 def test_a_long_target_name_still_saves(tmp_path, home):
-    # Sol L2: the temporary name no longer grows with the target's.
+    # Review L2: the temporary name no longer grows with the target's.
     target = tmp_path / ("x" * 243 + ".hwpx")
     rt_commit.commit(_candidate(tmp_path, b"long"), target, expected=rt_commit.ABSENT,
                      by="t", policy="policy:new-file")
@@ -199,13 +199,13 @@ def test_a_long_target_name_still_saves(tmp_path, home):
 
 @pytest.mark.parametrize("name", ["보고서.hwpx.", "보고서.hwpx ", "폴더. /a.hwpx"])
 def test_trailing_dots_and_spaces_are_refused(tmp_path, name):
-    # Sol M11: Windows drops them, so they alias another name.
+    # Review M11: Windows drops them, so they alias another name.
     with pytest.raises(rt_paths.PathRefused):
         rt_paths.canonical(str(tmp_path / name))
 
 
 def test_a_failed_swap_leaves_no_empty_file(tmp_path, monkeypatch):
-    # Sol M2: without hard links the name is reserved first; a failed swap
+    # Review M2: without hard links the name is reserved first; a failed swap
     # takes the empty placeholder back.
     target = tmp_path / "c.hwpx"
     temp = tmp_path / ".rl-temp.tmp"
@@ -348,7 +348,7 @@ def test_a_folded_prefix_must_be_the_same_folder(tmp_path, monkeypatch):
 
 
 def test_a_folder_the_file_system_cannot_check_allows_nothing(tmp_path, monkeypatch):
-    # Sol's re-check of 07d6997: when the identity lookup failed, the match
+    # The reviewer's re-check of 07d6997: when the identity lookup failed, the match
     # fell back to comparing names and allowed the path.
     root = tmp_path / "root"
     root.mkdir()
@@ -445,7 +445,7 @@ def test_create_new_on_a_filesystem_without_hard_links(tmp_path, monkeypatch):
 
 
 def test_a_creation_settled_after_a_crash_is_not_ours(tmp_path, home, monkeypatch):
-    # Sol re-check F4: after a crash, matching bytes cannot prove we published
+    # Review re-check F4: after a crash, matching bytes cannot prove we published
     # them, so the file is not "ours" and undo will not remove it.
     target = tmp_path / "보고서.hwpx"
     real = rt_commit._save_index
@@ -470,7 +470,7 @@ def test_a_creation_settled_after_a_crash_is_not_ours(tmp_path, home, monkeypatc
 
 
 def test_undo_puts_a_created_file_back_when_it_cannot_check_it(tmp_path, home, monkeypatch):
-    # Sol re-check F3, round 2: a read error after the move must not strand the file.
+    # Review re-check F3, round 2: a read error after the move must not strand the file.
     target = tmp_path / "보고서.hwpx"
     rt_commit.commit(_candidate(tmp_path, b"new"), target, expected=rt_commit.ABSENT,
                      by="t", policy="policy:new-file", draft="d1")
@@ -488,7 +488,7 @@ def test_undo_puts_a_created_file_back_when_it_cannot_check_it(tmp_path, home, m
 
 
 def test_names_show_every_invisible_character():
-    # Sol re-check F5, round 2: zero-width and other invisible characters are
+    # Review re-check F5, round 2: zero-width and other invisible characters are
     # escaped and listed; a name that only contains the text "\u0009" is not.
     from rt_term import invisible_in, path_text
     assert path_text("a​b\tc  d") == "a\\u200bb\\u0009c  d"

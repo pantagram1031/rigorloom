@@ -23,7 +23,7 @@ side effects, or missing authority and report the smallest next decision.
 
 ## Session goals
 
-### Sol High coordinator
+### Coordinator (high reasoning)
 
 Goal: Coordinate the full M0-M6 product outcome through one reconciled ledger, bounded
 assignments, independent artifact verification, serialized native work, and truthful gates,
@@ -40,11 +40,11 @@ real strategic conflict. Do not resume stale cards by inference.
 ### Planning owner (strategy)
 
 Goal: Keep product architecture, milestone order, evidence boundaries, and unfreeze or
-release decisions coherent while leaving routine dispatch and implementation to Sol.
+release decisions coherent while leaving routine dispatch and implementation to the coordinator.
 
 First prompt addendum: Read the coordinator snapshot and report only strategic conflicts,
 missing product decisions, milestone dependency errors, or needed authorization gates. Do
-not create workers, edit source, or duplicate Sol's routine coordination.
+not create workers, edit source, or duplicate the coordinator's routine coordination.
 
 ### Claude routine lead and reviewers
 
@@ -52,8 +52,8 @@ Goal: Convert the reconciled queue into reviewable bounded cards, validate high-
 changes adversarially, and return evidence-backed recommendations without claiming
 acceptance from prose or stale receipts.
 
-First prompt addendum: Reconcile any old acting-lead or `Sol suspended` instruction against
-the now-active master plan. Do not continue an old card until Sol reissues it. Reviewers own
+First prompt addendum: Reconcile any old acting-lead or `coordinator suspended` instruction against
+the now-active master plan. Do not continue an old card until the coordinator reissues it. Reviewers own
 no source; an implementation Claude owns only the paths named on its current card.
 
 ### Cursor implementation
@@ -98,7 +98,7 @@ and process termination. `useG1Credits=false` prevents fallback to personal paid
 This exception is for existing interactive AGY sessions; the maintained external read-only
 runner stays sandboxed and must not run commands that need escalation.
 
-When Sol must relaunch the existing AGY pane to apply this unattended policy, it reuses the
+When the coordinator must relaunch the existing AGY pane to apply this unattended policy, it reuses the
 same terminal session and AGY conversation with `--continue`, selects
 `gemini-3.8-flash-high`, keeps `--mode accept-edits`, and may add
 `--dangerously-skip-permissions` because the user explicitly authorized unattended work.
@@ -122,7 +122,7 @@ on-demand remains OFF. Treat the current Cursor included-usage period end, 2026-
 as the stop boundary for deliberate quota consumption unless a later live account check
 changes it.
 
-Sol maintains `work/qa/cli-first-success-20260909/codex-review/usage-ledger.tsv`
+The coordinator maintains `work/qa/cli-first-success-20260909/codex-review/usage-ledger.tsv`
 with one row per card and `provider-usage-snapshots.tsv` with one row per live quota capture.
 The card ledger records provider, exact model ID, task class, start and end time,
 tool-reported token/context usage when available, receipt path, verdict, and whether the run
@@ -131,7 +131,7 @@ quota. When provider dashboards do not expose a machine-readable remaining perce
 allocate new non-overlapping cards by task class and elapsed share rather than inventing a
 quota number.
 
-At every card boundary Sol runs the following routing loop without asking the user:
+At every card boundary the coordinator runs the following routing loop without asking the user:
 
 1. Close the prior ledger row and capture each provider's live `/usage`, quota, or dashboard
    value when it is available. Record `unknown`, never a guessed percentage, when it is not.
@@ -157,13 +157,13 @@ For Cursor Pro+, treat the dashboard's `Cursor Models` and `Other Models` percen
 separate included pools. Route the next suitable card to the lower-used pool whenever their
 used percentages differ by more than 2 percentage points; once they are within 2 points,
 alternate by task fit and the lower current percentage. `cursor-grok-4.6-high` serves the
-Cursor Models pool. Opus, Sol, Gemini, and Sonnet quality variants serve the Other Models
+Cursor Models pool. Opus, GPT, Gemini, and Sonnet quality variants serve the Other Models
 pool unless the live dashboard classifies them differently. High/xhigh variants are the
 default; do not select a `fast` variant except for an explicitly latency-only card.
 
 The intended share of new applicable Cursor cards during the current included period is
-25% Opus architecture, 25% Sol implementation, 20% Grok verification, 20% Gemini Flash
-inventory, and 10% Sonnet/Luna mechanical or secondary review. These are pacing targets,
+25% Opus architecture, 25% GPT implementation, 20% Grok verification, 20% Gemini Flash
+inventory, and 10% Sonnet or GPT mechanical or secondary review. These are pacing targets,
 not reasons to assign unsuitable or redundant work. For Antigravity, start with 60% Gemini
 3.8 Flash high-volume work, 25% Gemini 3.1 Pro synthesis, and 15% Claude Opus independent
 high-risk review, again counting only applicable non-overlapping cards.
@@ -172,9 +172,11 @@ Cursor Pro+ quality pool, using non-fast variants by default:
 
 1. `claude-opus-5-thinking-xhigh` for architecture and adversarial review.
 2. `cursor-grok-4.6-xhigh` for independent verification and contradiction hunting.
-3. `gpt-5.6-sol-xhigh` for bounded implementation and integration reasoning.
+3. the pool's GPT xhigh implementation model (id in the project records) for bounded
+   implementation and integration reasoning.
 4. `gemini-3.8-flash-high` for large inventories and extraction.
-5. `claude-sonnet-5-thinking-xhigh` or `gpt-5.6-luna-xhigh` for a genuinely distinct
+5. `claude-sonnet-5-thinking-xhigh` or the pool's second GPT xhigh model (id in the project
+   records) for a genuinely distinct
    secondary review or mechanical verification.
 
 Antigravity pool:
@@ -191,14 +193,14 @@ route the next suitable high-risk independent question to Claude Opus 4.6 Thinki
 invent a high-risk question solely to consume that pool.
 
 For the Codex account, preserve the continuity protocol's 25% weekly coordinator reserve.
-Sol High remains the coordinator even when another Codex bucket has more unused quota; do
+The high-reasoning coordinator stays the coordinator even when another Codex bucket has more unused quota; do
 not swap in Spark or redeem a reset credit merely to increase consumption. Prefer applicable
-Cursor or AGY included capacity for independent cards before spending the Sol reserve.
+Cursor or AGY included capacity for independent cards before spending the coordinator reserve.
 
-### Luna mechanical verification
+### Mechanical verification
 
 Goal: Perform high-volume deterministic inventories, test-log classification, hashes, and
-receipt checks under a bounded card, leaving architecture and acceptance decisions to Sol
+receipt checks under a bounded card, leaving architecture and acceptance decisions to the coordinator
 and the planning owner.
 
 First prompt addendum: Accept only mechanical tasks with explicit inputs, outputs, and
@@ -207,13 +209,13 @@ acceptance from mechanical evidence.
 
 ## Dispatch order
 
-1. Sol performs and publishes the read-only discrepancy snapshot.
+1. The coordinator performs and publishes the read-only discrepancy snapshot.
 2. A planning owner resolves only material strategy or authorization conflicts found in that snapshot.
-3. Sol retires or reissues stale cards and records one owner per active task and lease.
-4. Sol dispatches independent read-only verification in parallel where it cannot race a
+3. The coordinator retires or reissues stale cards and records one owner per active task and lease.
+4. The coordinator dispatches independent read-only verification in parallel where it cannot race a
    writer; writing cards remain path-isolated.
 5. Native work waits for a fresh sole-COM lease and operates only on copies.
-6. Sol verifies real receipts and artifacts, integrates at most once, and updates the
+6. The coordinator verifies real receipts and artifacts, integrates at most once, and updates the
    canonical status before opening the next dependency.
 
 ## Goal acknowledgement

@@ -881,7 +881,7 @@ def test_cancel_for_a_queued_request_drops_it(env):
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Sol's review of a952543: consent, folders, wire
+# Review of a952543: consent, folders, wire
 # ---------------------------------------------------------------------------
 
 def test_cancelling_the_running_save_withdraws_the_question_and_writes_nothing(env):
@@ -1270,7 +1270,7 @@ def test_the_client_going_away_mid_question_ends_the_session_cleanly(env):
 
 
 # ---------------------------------------------------------------------------
-# Sol's re-check of 07d6997
+# The reviewer's re-check of 07d6997
 # ---------------------------------------------------------------------------
 
 def test_a_change_announced_right_after_yes_is_taken_before_the_write(env, monkeypatch):
@@ -1365,7 +1365,7 @@ def test_an_english_message_naming_a_korean_file_is_still_translated():
 
 
 def test_a_korean_sentence_ending_in_a_period_stays_korean():
-    # Fable's review of #393: the file-name rule took any word with a period,
+    # The advisor's review of #393: the file-name rule took any word with a period,
     # so a one-word Korean message ending its sentence read as English and was
     # replaced by the generic text.
     from rt_cli_render import korean_sentence
@@ -1598,7 +1598,7 @@ def test_stdio_server_end_to_end(tmp_path):
 
 
 def test_stdio_server_exits_cleanly_when_the_client_stops_reading(tmp_path):
-    # Sol's re-check of 07d6997: with the client's end of our stdout closed and
+    # The reviewer's re-check of 07d6997: with the client's end of our stdout closed and
     # its end of stdin still open, the reader thread held stdin's io lock and
     # the interpreter aborted on the way out (exit -6 instead of 0).
     work = tmp_path / "work"

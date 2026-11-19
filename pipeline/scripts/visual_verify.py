@@ -165,7 +165,7 @@ VISION_HARD_CLASSES = frozenset({"missing_glyphs"})
 #: the detector emits). ONE place: the waiver vocabulary, the skip bookkeeping
 #: and the acceptance rule all read this tuple, so they cannot drift.
 #:
-#: The v0.17 clean-room run is why this exists: the luna tier supplied a CLI
+#: The v0.17 clean-room run is why this exists: its tier C supplied a CLI
 #: ``--fill-map``, got ``empty_cell_expected_fill``, ``fill_charpr_script_
 #: mismatch`` AND ``page_parity`` into ``skipped[]``, and still received
 #: ``acceptance: true`` with exit 0 — a verdict claiming more than it checked,
@@ -285,8 +285,8 @@ def derive_pages_document(artifact):
     Page parity (the second leg of the W6.2 imposition mechanism) used to need
     ``conversion["pages_document"]`` — Hancom's ``hwp.PageCount``, which only
     exists when THIS script did the conversion. On the ``--pdf`` path there was
-    no source at all, so parity skipped by default and the v0.17 clean-room sol
-    tier had to hand-declare ``expectations.pages_document`` to get it back. A
+    no source at all, so parity skipped by default and the v0.17 clean-room
+    tier A had to hand-declare ``expectations.pages_document`` to get it back. A
     safety check that requires the caller to remember a number is a safety
     check that does not run.
 
@@ -1001,7 +1001,7 @@ def reconcile_fill_map(expectations, fill_map_path):
     inputs with materially different effects and nothing saying so: the CLI
     flag drove the residue keep derivation, while the expectations MEMBER was
     what activated the fill-value presence check and the T30 post-flight. A
-    caller who passed the flag (the v0.17 clean-room luna tier did) got a
+    caller who passed the flag (the v0.17 clean-room tier C did) got a
     verdict with both of those checks in ``skipped[]`` — and, before this fix,
     ``acceptance: true`` anyway.
 
@@ -2437,8 +2437,8 @@ def _out_target_error(out):
 
     An unwritable ``--out`` used to escape as an uncaught ``PermissionError``
     from ``emit_verdict`` — a traceback and process exit 1, which is not in this
-    script's contract at all and is exactly how the v0.17 clean-room sol/terra
-    tiers saw 1 where the contract says 3.
+    script's contract at all and is exactly how the v0.17 clean-room
+    tiers A and B saw 1 where the contract says 3.
     """
     if not out:
         return None
@@ -3092,7 +3092,7 @@ def main(argv=None):
         # verdict used to sit outside every guard, so an unwritable --out or an
         # unserializable value escaped as a traceback and process exit 1 — a
         # code this script's contract does not define, which is how the v0.17
-        # clean-room sol/terra tiers saw 1 where the table says 3. Degrade to
+        # clean-room tiers A and B saw 1 where the table says 3. Degrade to
         # the usage row (2) and say what was lost.
         fallback, usage_code = usage_error(
             str(args.artifact), "visual_verify",

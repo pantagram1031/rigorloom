@@ -803,7 +803,7 @@ def _main(argv: list[str]) -> int:
     except _Usage as exc:
         return _usage(exc, argv)
     if getattr(args, "out", None) == "" or (args.verb == "save" and args.to == ""):
-        # An empty name must not quietly mean "the source" (Sol re-check F6).
+        # An empty name must not quietly mean "the source" (review re-check F6).
         return _usage(_Usage("저장할 경로가 비어 있습니다.",
                              "보고서.hwpx처럼 파일 이름을 포함한 경로를 입력하세요."), argv)
     term = Term.detect(getattr(args, "color", "auto"))

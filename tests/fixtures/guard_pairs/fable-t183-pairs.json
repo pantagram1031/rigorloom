@@ -1,6 +1,6 @@
 {
  "_about": [
-  "Fable's pairs from the review of the T183 head (550dce3): a number whose only label is another number (1차, 2025년, 제1항, 1월) and swaps whose words sit around the numbers (3%에서 5%로, 총 3건 중 1건), with reordered and reworded controls.",
+  "The advisor's pairs from the review of the T183 head (550dce3): a number whose only label is another number (1차, 2025년, 제1항, 1월) and swaps whose words sit around the numbers (3%에서 5%로, 총 3건 중 1건), with reordered and reworded controls.",
   "fact: did the edit change a fact the person would care about.",
   "gap: the guard is wrong on this pair today; the name is the follow-up rule meant to close it. tests/test_guard_pairs.py runs these as strict xfails, so a rule that closes one must also delete its gap."
  ],
