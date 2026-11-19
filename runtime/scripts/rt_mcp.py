@@ -931,7 +931,11 @@ def overwrite_answer(reply: dict) -> bool | None:
     result = reply.get("result")
     if not isinstance(result, dict) or not set(result) <= {"action", "content", "_meta"}:
         return None
+    if "_meta" in result and not isinstance(result["_meta"], dict):
+        return None
     action = result.get("action")
+    if action in ("decline", "cancel") and "content" in result:
+        return None  # only accept carries content (2025-06-18 elicitation)
     if action == "decline":
         return False
     if action != "accept":

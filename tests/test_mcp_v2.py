@@ -1265,6 +1265,25 @@ def test_a_folder_whose_identity_cannot_be_read_grants_nothing(env, monkeypatch)
     assert r["structuredContent"]["error"]["code"] in ("no_roots", "outside_roots")
 
 
+@pytest.mark.parametrize("reply", [
+    {"result": {"action": "decline", "content": {"overwrite": False}}},
+    {"result": {"action": "cancel", "content": {}}},
+    {"result": {"action": "accept", "content": {"overwrite": True}, "_meta": "x"}},
+    {"result": {"action": "decline", "_meta": []}},
+])
+def test_content_on_a_decline_or_a_malformed_meta_is_no_answer(env, reply):
+    path = env.doc()
+    before = path.read_bytes()
+    s = env.session()
+    s.handshake(caps=ELICIT)
+    _edited(s, path)
+    rid, ask = _save_and_get_question(s, path)
+    s.send({"jsonrpc": "2.0", "id": ask["id"], **reply})
+    r = s.response(rid)["result"]
+    assert r["structuredContent"]["error"]["code"] == "needs_person"  # not a recorded "no"
+    assert path.read_bytes() == before
+
+
 def test_mcp_is_a_product_verb_that_no_legacy_command_uses():
     import cli
     import rt_cli_product
