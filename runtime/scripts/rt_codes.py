@@ -152,7 +152,27 @@ DOMAIN_CODES = frozenset({
     "ambiguous_fill_keys",
 })
 
-ERROR_CODES = TRANSPORT_CODES | DOMAIN_CODES
+#: doc_core (runtime/scripts/rt_doc.py, docs/doc-core.md "Errors"). The document layer under the CLI, the
+#: MCP tools and the UI answers these in its own envelopes. ``capability_unavailable`` is shared with
+#: DOMAIN_CODES and declared there. ``internal`` is doc_core's own spelling of an unexpected failure; an
+#: adapter that frames it for the transport reports ``internal_error``. ``bad_input`` and ``bad_address`` are
+#: usage errors (``cli.USAGE_CODES``, exit 2).
+DOC_CORE_CODES = frozenset({
+    "bad_input",
+    "bad_address",
+    "not_found",
+    "stale",
+    "busy",
+    "expect_mismatch",
+    "ambiguous_match",
+    "conflict",
+    "engine_timeout",
+    "engine_unavailable",
+    "engine_protocol",
+    "internal",
+})
+
+ERROR_CODES = TRANSPORT_CODES | DOMAIN_CODES | DOC_CORE_CODES
 
 #: Per-rule outcome, unchanged from pipeline/scripts/checker_base.py:41.
 RULE_STATES = ("hard", "warn", "skipped", "clean")

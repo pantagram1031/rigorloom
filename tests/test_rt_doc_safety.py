@@ -7,7 +7,6 @@ tests run when ``RIGORLOOM_HWP_ENGINE`` points at an engine folder.
 """
 from __future__ import annotations
 
-import io
 import os
 import re
 import shutil
@@ -334,7 +333,9 @@ def test_b5_adjacent_cell_paragraphs(kit, tmp_path):
     r = apply(two, [set_("t0/r0/c0/p1", "PATCH"),
                     {"op": "insert_after", "at": "t0/r0/c0/p0", "markdown": "ADDED"}], tmp_path / "three.hwpx")
     assert r["ok"], r
-    assert [b["text"] for b in D.read(r["out"], "t0/r0/c0")["blocks"]] == ["A", "ADDED", "PATCH"]
+    rest = [b["text"] for b in D.read(two, "t0/r0/c0")["blocks"]][2:]
+    assert [b["text"] for b in D.read(r["out"], "t0/r0/c0")["blocks"]] == ["A", "ADDED", "PATCH"] + rest
+    assert follow(r["remap"], "t0/r0/c0/p1") == "t0/r0/c0/p2"
 
 
 # ============================================================================ B6 overlapping spans
@@ -749,11 +750,108 @@ def test_s7_convert_png_and_pdf_records(kit, tmp_path):
 @engine
 def test_n1_engine_step_failure_names_the_op(kit, tmp_path):
     src = make(tmp_path, "source.hwpx", "BASE", "NEXT")
-    bad = tmp_path / "not-an-image.png"
-    bad.write_bytes(b"not a png")
+    real = D._set_para_steps
+
+    def steps(p, text):                         # op 1's paragraph gets a step the engine refuses
+        return [["goto", 99999, 0, p.si]] if text == "BROKEN" else real(p, text)
     out = tmp_path / "o.hwpx"
-    r = apply(src, [set_("p1", "X"), {"op": "insert_picture", "at": "p0", "path": str(bad)}], out)
-    assert not r["ok"]
+    with patch.object(D, "_set_para_steps", side_effect=steps):
+        r = apply(src, [set_("p1", "X"), set_("p0", "BROKEN")], out)
+    assert not r["ok"], r
     err = r["error"]
     assert err["i"] == 1 and err["at"] == "p0" and isinstance(err.get("step"), int)
-    assert err["done"] == [0] and err["retryable"] is False and not out.exists()
+    assert err["done"] == [0] and err["retryable"] is False and err["written"] is False and not out.exists()
+
+
+# ============================================================================ platform contract additions
+def _field_para(i, fid, name, direction, inner="<hp:t/>", before=""):
+    return (f'<hp:p id="{i}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+            f'<hp:run charPrIDRef="0">{before}<hp:ctrl><hp:fieldBegin id="{fid}" type="CLICK_HERE" name="{name}" '
+            f'editable="1" dirty="0" zorder="-1" fieldid="{fid}"><hp:parameters cnt="1" name="">'
+            f'<hp:stringParam name="Direction">{direction}</hp:stringParam></hp:parameters></hp:fieldBegin>'
+            f'</hp:ctrl>{inner}<hp:ctrl><hp:fieldEnd beginIDRef="{fid}" fieldid="{fid}"/></hp:ctrl></hp:run>'
+            f'{LSEG}</hp:p>')
+
+
+def _fields_doc(tmp_path, extra=""):
+    base = make(tmp_path, "base.hwpx", "신청서")
+
+    def change(xml):
+        end = xml.index("</hs:sec>")
+        return xml[:end] + _field_para(1, 11, "applicant", "신청인") + \
+            _field_para(2, 12, "date", "날짜", inner="<hp:t>여기에 입력</hp:t>", before="<hp:t>일자: </hp:t>") + \
+            extra + xml[end:]
+    return rewrite(tmp_path, "fields.hwpx", change, src=base)
+
+
+def test_click_here_fields_are_fill_places(no_engine, tmp_path):
+    src = _fields_doc(tmp_path)
+    ol = D.outline(src)
+    assert ol["ok"] and ol["places_complete"] is True and "places_reason" not in ol
+    pl = {p["id"]: p for p in ol["places"]}
+    assert pl["applicant"] == {"id": "applicant", "at": "p1", "label": "신청인", "kind": "field", "value": "",
+                               "filled": False}
+    assert pl["date"]["at"] == "p2" and pl["date"]["value"] == "여기에 입력" and pl["date"]["label"] == "날짜"
+    out = tmp_path / "filled.hwpx"
+    r = apply(src, [{"op": "fill", "place": "applicant", "text": "홍길동"},
+                    {"op": "fill", "place": "date", "text": "2026-11-19"}], out)
+    assert r["ok"], r
+    assert texts(out) == ["신청서", "홍길동", "일자: 2026-11-19"]
+    with zipfile.ZipFile(out) as z:
+        s = z.read(SECTION).decode()
+    assert re.search(r'name="applicant".*?</hp:ctrl><hp:t>홍길동</hp:t><hp:ctrl><hp:fieldEnd', s)
+    assert re.search(r'name="date".*?</hp:ctrl><hp:t>2026-11-19</hp:t><hp:ctrl><hp:fieldEnd', s)
+    after = {p["id"]: p for p in D.outline(out)["places"]}
+    assert after["applicant"]["value"] == "홍길동" and after["applicant"]["filled"] is True
+    assert D.read(out, "place:date")["blocks"][0]["text"] == "일자: 2026-11-19"
+    r2 = D.edit(out, [{"op": "fill", "place": "applicant", "text": "김철수"}], base=D.rev_of(out),
+                out=tmp_path / "again.hwpx")
+    assert r2["ok"] and texts(r2["out"])[1] == "김철수"
+
+
+def test_outline_says_when_places_are_incomplete(no_engine, tmp_path):
+    ctrl = ('<hp:p id="9" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+            '<hp:run charPrIDRef="0"><hp:checkBtn caption="동의"/></hp:run></hp:p>')
+    ol = D.outline(_fields_doc(tmp_path, extra=ctrl))
+    assert ol["places_complete"] is False and any("checkBtn" in w for w in ol["places_reason"])
+
+
+def test_outline_counts_paragraphs_and_titles_tables(no_engine):
+    ol = D.outline(GUARD)
+    assert ol["paragraphs"] == 154 and ol["paragraph_range"] == "p0..p153"
+    assert ol["tables"][0]["title"] == "표준근로계약서"
+    assert all(len(t.get("title", "")) <= 40 for t in ol["tables"])
+
+
+def test_unresolved_addresses_always_offer_candidates(no_engine, tmp_path):
+    src = make(tmp_path, "plain.hwpx", "only text", "more")
+    for at in ("place:nothing", "t3", "p99", 'h:"없음"', "t0/r0/c0"):
+        e = D.read(src, at)["error"]
+        assert e["code"] == "bad_address" and e["candidates"], (at, e)
+
+
+@pytest.mark.parametrize("call", [
+    lambda t: D.open(None), lambda t: D.open(123), lambda t: D.outline(["x"]), lambda t: D.read(None),
+    lambda t: D.find(GUARD, None), lambda t: D.find(None, "x"), lambda t: D.diff(None, GUARD),
+    lambda t: D.edit(None, [], base="x"), lambda t: D.edit(GUARD, "ops", base=D.rev_of(GUARD)),
+    lambda t: D.edit(GUARD, [{"op": "set", "at": "p2", "text": 5}], base=D.rev_of(GUARD), out=t / "o.hwpx"),
+    lambda t: D.edit(GUARD, [{"op": "set", "at": "p2", "text": "x"}], base=None, out=t / "o.hwpx"),
+    lambda t: D.edit(GUARD, [{"op": "set", "at": "p2", "text": "x"}], base=D.rev_of(GUARD), out=5),
+    lambda t: D.edit(GUARD, [{"op": "replace", "find": "근로", "with": "x", "all": "yes"}], base=D.rev_of(GUARD),
+                     out=t / "o.hwpx"),
+    lambda t: D.convert(GUARD, None, to="hwpx"), lambda t: D.convert(GUARD, t / "x.hwpx", to=None),
+    lambda t: D.new(None, t / "n.hwpx"), lambda t: D.render(None, 1), lambda t: D.pages(None),
+    lambda t: D.geometry(None, 1),
+])
+def test_bad_arguments_are_bad_input_not_internal(no_engine, tmp_path, call):
+    r = call(tmp_path)
+    assert r["ok"] is False and r["error"]["code"] in ("bad_input", "bad_address"), r
+
+
+def test_every_error_code_is_declared():
+    import rt_codes
+    src = (REPO / "runtime" / "scripts" / "rt_doc.py").read_text(encoding="utf-8")
+    used = set(re.findall(r'DocError\(\s*"([a-z_]+)"', src)) | {"capability_unavailable"}
+    assert used <= rt_codes.DOC_CORE_CODES | {"capability_unavailable"}
+    assert rt_codes.DOC_CORE_CODES & rt_codes.TRANSPORT_CODES == frozenset()
+    assert rt_codes.DOC_CORE_CODES <= rt_codes.ERROR_CODES

@@ -32,6 +32,13 @@ ENGINE_DIR = os.environ.get("RIGORLOOM_HWP_ENGINE", "").strip()
 HAS_ENGINE = bool(ENGINE_DIR) and (Path(ENGINE_DIR) / "kit_api.py").is_file()
 
 
+@pytest.fixture(autouse=True)
+def _private_cache(tmp_path_factory, monkeypatch):
+    """Place ids carried across edits live in a cache; keep the tests' own out of the user's."""
+    monkeypatch.setenv(D.CACHE_ENV, str(tmp_path_factory.mktemp("doc-cache")))
+    D._LINEAGE.clear()
+
+
 @pytest.fixture
 def no_engine(monkeypatch):
     """The built-in path, whatever the environment says."""
@@ -87,7 +94,8 @@ def test_open_outline_without_engine(no_engine):
     ol = D.outline(GUARD)
     assert [t["at"] for t in ol["tables"]] == ["t%d" % i for i in range(7)]
     assert ol["tables"][5] == {"at": "t5", "rows": 20, "cols": 6, "in": "p152"}
-    assert {"id": "취업장소", "at": "t5/r13/c2", "label": "2. 취업 장소", "kind": "cell"} in ol["places"]
+    assert {"id": "취업장소", "at": "t5/r13/c2", "label": "2. 취업 장소", "kind": "cell", "value": "",
+            "filled": False} in ol["places"]
 
 
 def test_outline_headings_and_heading_address(no_engine):
@@ -174,7 +182,8 @@ def test_text_edits_without_engine(no_engine, tmp_path):
     assert D.read(out, "t5/r13/c2")["blocks"][0]["text"] == "강남구"
     seat = next(p["at"] for p in D.outline(src)["places"] if p["id"] == "근로자Worker")
     assert D.read(out, seat)["blocks"][0]["text"] == "홍길동"
-    assert "근로자Worker" not in {p["id"] for p in D.outline(out)["places"]}     # a filled seat is no seat
+    filled = {p["id"]: p for p in D.outline(out)["places"]}["근로자Worker"]    # a filled seat keeps its id
+    assert filled["at"] == seat and filled["value"] == "홍길동" and filled["filled"] is True
     # the package: same members in the same order, mimetype first and stored, XML well-formed
     with zipfile.ZipFile(src) as a, zipfile.ZipFile(out) as b:
         assert [i.filename for i in a.infolist()] == [i.filename for i in b.infolist()]
