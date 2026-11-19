@@ -28,11 +28,13 @@ def test_composer_draft_is_workspace_state():
     store = STORE.read_text(encoding="utf-8")
     composer = _composer_block(OPERATOR_MODAL.read_text(encoding="utf-8"))
 
-    assert "composerDraft: { text: string };" in store
-    assert 'composerDraft: { text: "" }' in store
-    assert "composerDraft: s.composerDraft.text" in store
-    assert "useWorkspace((s) => s.composerDraft.text)" in composer
-    assert "setState({ composerDraft: { text: e.target.value } })" in composer
+    # One draft per document (a doc slice), so it cannot follow the person to
+    # another document either.
+    assert 'defineDocSlice<{ draft: ComposerDraft }>("workspace.composer"' in store
+    assert "composerDraft: composerDraftOf().text" in store
+    assert "composerDraft: { text: string };" not in store
+    assert "const text = useComposerDraftText();" in composer
+    assert "onChange={(e) => setComposerDraft(e.target.value)}" in composer
     assert "useState" not in composer
 
 
@@ -42,8 +44,8 @@ def test_late_send_reconciliation_is_wired():
 
     helper = (DESKTOP / "src/workspace/composerDraft.ts").read_text(encoding="utf-8")
     assert "await submitComposerDraft({" in composer
-    assert "read: () => getState().composerDraft" in composer
-    assert "write: (composerDraft) => setState({ composerDraft })" in composer
+    assert "read: () => composerDraftOf(doc)" in composer
+    assert "write: (draft) => writeComposerDraft(draft, doc)" in composer
     assert "port.read() === cleared" in helper
 
 

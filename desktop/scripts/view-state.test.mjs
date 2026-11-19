@@ -3,6 +3,7 @@ import test from "node:test";
 
 const {
   composerDraftAfterSend,
+  composerDraftOf,
   getState,
   setComposerDraft,
   setState,
@@ -10,16 +11,20 @@ const {
   sharedStateSignature,
 } = await import("../src/store.ts");
 
+/** What the composer shows: the active document's draft. */
+const shownDraft = () => composerDraftOf().text;
+
 test("an unsent composer draft survives a document-view round trip", () => {
   const before = getState();
   const original = {
     view: before.view,
-    composerDraft: before.composerDraft,
     editIntentGeneration: before.editIntentGeneration,
   };
+  const originalDraft = shownDraft();
 
   try {
-    setState({ view: "agent", composerDraft: { text: "검토할 표를 먼저 찾아 주세요." } });
+    setState({ view: "agent" });
+    setComposerDraft("검토할 표를 먼저 찾아 주세요.");
     const expected = sharedStateSignature();
 
     // Prove the signature actually covers this field; otherwise equality
@@ -29,14 +34,33 @@ test("an unsent composer draft survives a document-view round trip", () => {
     setComposerDraft("검토할 표를 먼저 찾아 주세요.");
 
     setView("document");
-    assert.equal(getState().composerDraft.text, "검토할 표를 먼저 찾아 주세요.");
+    assert.equal(shownDraft(), "검토할 표를 먼저 찾아 주세요.");
     assert.equal(sharedStateSignature(), expected);
 
     setView("agent");
-    assert.equal(getState().composerDraft.text, "검토할 표를 먼저 찾아 주세요.");
+    assert.equal(shownDraft(), "검토할 표를 먼저 찾아 주세요.");
     assert.equal(sharedStateSignature(), expected);
   } finally {
     setState(original);
+    setComposerDraft(originalDraft);
+  }
+});
+
+test("an unsent draft stays with the document it was typed for", () => {
+  const before = getState().activeSessionId;
+  try {
+    setState({ activeSessionId: "doc-A" });
+    setComposerDraft("A 문서의 수신자를 고쳐 주세요.");
+    setState({ activeSessionId: "doc-B" });
+    // Document B opens with its own, empty composer: A's instruction is not
+    // shown there, and a send there cannot carry it.
+    assert.equal(shownDraft(), "");
+    setComposerDraft("B 문서 지시");
+    setState({ activeSessionId: "doc-A" });
+    assert.equal(shownDraft(), "A 문서의 수신자를 고쳐 주세요.");
+    assert.equal(composerDraftOf("doc-B").text, "B 문서 지시");
+  } finally {
+    setState({ activeSessionId: before });
   }
 });
 

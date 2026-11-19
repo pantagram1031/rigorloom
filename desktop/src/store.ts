@@ -55,6 +55,7 @@ import type {
   UiLanguage,
 } from "./types";
 import type { GuardWarningSummary, ParkedDraft, SavedDraft } from "./workspace/trust";
+import type { ComposerDraft } from "./workspace/composerDraft";
 
 export type View = "document" | "agent";
 
@@ -629,8 +630,6 @@ export interface WorkspaceState {
   credential: CredentialStatus | null;
   /** The conversation, newest last. One process per turn. */
   turns: Turn[];
-  /** Unsent instruction, shared across view mounts; never persisted to prefs. */
-  composerDraft: { text: string };
   /** The turn in flight, if any. One at a time, enforced in Rust too. */
   activeTurn: string | null;
   /**
@@ -891,7 +890,6 @@ const initial: WorkspaceState = {
   probeError: null,
   credential: null,
   turns: [],
-  composerDraft: { text: "" },
   activeTurn: null,
   settingsOpen: false,
   agentTab: "conversation",
@@ -1223,7 +1221,12 @@ export function composerBlocker(s: WorkspaceState): string | null {
   return null;
 }
 
-export const setComposerDraft = (composerDraft: string) => setState({ composerDraft: { text: composerDraft } });
+/**
+ * Unsent instruction for a document (`composerDraftSlice`, defined with the
+ * per-document slices below). Shared across view mounts, never persisted to
+ * prefs, and never carried to another document.
+ */
+export const setComposerDraft = (text: string, doc?: string | null) => writeComposerDraft({ text }, doc);
 
 /**
  * Reconcile a send completion with whatever is in the composer now.
@@ -1620,7 +1623,7 @@ export function sharedStateSignature(s: WorkspaceState = state): string {
     // which turn is in flight, because a turn that lost its live events on
     // Ctrl+1 would be a second conversation in all but name.
     turns: s.turns.map((turn) => `${turn.id}:${turn.phase}:${turn.events.length}`),
-    composerDraft: s.composerDraft.text,
+    composerDraft: composerDraftOf().text,
     activeTurn: s.activeTurn,
     provider: s.provider.provider,
     agentTab: s.agentTab,
@@ -1802,6 +1805,37 @@ export function defineDocSlice<T>(key: string, initial: T | (() => T)): DocSlice
 }
 
 const NO_DOC = null;
+
+/**
+ * The composer's unsent instruction, one per document (finding 2): text typed
+ * for document A never appears, or is sent, in document B. The draft object is
+ * kept by identity inside the slice so `submitComposerDraft` can tell its own
+ * cleared value from newer typing.
+ */
+export const composerDraftSlice = defineDocSlice<{ draft: ComposerDraft }>("workspace.composer", () => ({ draft: { text: "" } }));
+
+/** Typing before any document is open keeps its own record. */
+const COMPOSER_NO_DOC = "\u0000none";
+
+function composerKey(doc?: string | null): string {
+  return (doc === undefined ? state.activeSessionId : doc) ?? COMPOSER_NO_DOC;
+}
+
+/** The unsent instruction for a document (the active one when omitted). */
+export function composerDraftOf(doc?: string | null): ComposerDraft {
+  return composerDraftSlice.get(composerKey(doc)).draft;
+}
+
+/** Replace a document's unsent instruction with this exact object. */
+export function writeComposerDraft(draft: ComposerDraft, doc?: string | null): void {
+  composerDraftSlice.set(composerKey(doc), { draft });
+}
+
+/** React: the active document's unsent instruction text. */
+export function useComposerDraftText(): string {
+  const active = useWorkspace((s) => s.activeSessionId);
+  return composerDraftSlice.use(active ?? COMPOSER_NO_DOC, (v) => v.draft.text);
+}
 
 /** React: the whole per-document record (or a selection of it). */
 export function useDoc(sessionId: string | null | undefined): DocState | null;

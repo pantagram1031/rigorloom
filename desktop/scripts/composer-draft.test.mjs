@@ -35,13 +35,14 @@ test("Workspace draft survives view replacement and remains in memory", () => {
     assert.equal(name, "react");
     return { useSyncExternalStore: (_subscribe, snapshot) => snapshot() };
   });
+  store.setState({ activeSessionId: "S" });
   const draft = { text: "아직 보내지 않은 문장" };
-  store.setState({ composerDraft: draft });
+  store.writeComposerDraft(draft);
   store.setView("agent");
   store.setView("document");
   store.setView("agent");
-  assert.equal(store.getState().composerDraft, draft);
-  assert.equal(store.useWorkspace((s) => s.composerDraft.text), draft.text);
+  assert.equal(store.composerDraftOf(), draft);
+  assert.equal(store.useComposerDraftText(), draft.text);
 });
 
 test("success submits the captured text and leaves the owned field empty", async () => {
