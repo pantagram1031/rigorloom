@@ -2,7 +2,8 @@
 """The v1 review UI is still main's v1, at the default URL and at `?ui=v1`.
 
 Editor v2 reaches main in several pull requests while v1 stays the default.
-`tests/fixtures/v1_main_ui_dist/` is main dbc1b18's bundle, copied unchanged.
+`tests/fixtures/v1_main_ui_dist/` is main's bundle after the brand pull
+request, copied unchanged.
 This test drives main's bundle and the committed bundle through the five v1
 screens (열기, 검토, 채우기, 기록, 설정) and the toast, 1440 px in light and
 dark, with the same runtime and browser, and requires the normalized DOM and
@@ -74,7 +75,7 @@ def expected(captures):
 @pytest.mark.parametrize("url", ["default", "?ui=v1"])
 def test_v1_screens_match_main(captures, expected, url):
     problems = v1.compare(expected, captures[url])
-    assert not problems, f"v1 at {url} differs from main dbc1b18:\n" + "\n".join(problems)
+    assert not problems, f"v1 at {url} differs from main after the brand PR:\n" + "\n".join(problems)
 
 
 def test_the_comparison_catches_a_restyled_toast(expected):
