@@ -845,18 +845,26 @@ def test_preview_edits_are_drafts_and_older_engines_are_asked_without(kit, tmp_p
         if fn == "edit":
             calls.append("draft" in kw)
         return real(self, fn, *a, **kw)
+    assert _prv(src) is not None
     with patch.object(D._Engine, "call", spy):
         r = D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서 양식 (안)"}], base=rev, preview=True)
     assert r.get("ok", True) is not False and Path(r["out"]).exists()
-    assert calls[0] is True and calls[-1] in (True, False)
-    if calls == [True]:                         # the engine took draft: the source's thumbnail, not redrawn
-        assert _prv(r["out"]) == _prv(src)
+    old_engine = calls == [True, False]
+    if not old_engine:                          # the engine took draft: the source's thumbnail, not redrawn
+        assert calls == [True] and _prv(r["out"]) == _prv(src)
     else:                                       # an older engine: asked again without draft, once per engine
-        assert calls == [True, False] and D._ENGINE_KEY in D._NO_DRAFT
+        assert (D._ENGINE_KEY or "") in D._NO_DRAFT
     calls.clear()
     with patch.object(D._Engine, "call", spy):
-        D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서"}], base=rev, out=str(tmp_path / "b.hwpx"))
+        b = D.edit(str(src), [{"op": "set", "at": "p0", "text": "신청서 양식 (안)"}], base=rev,
+                   out=str(tmp_path / "b.hwpx"))
     assert calls == [False]                     # a real edit is never a draft
+    assert _prv(b["out"]) != _prv(src)          # and it draws the changed page 1 into its thumbnail
+    if not old_engine:                          # the preview differs from the real output only by that thumbnail
+        with zipfile.ZipFile(r["out"]) as za, zipfile.ZipFile(b["out"]) as zb:
+            na = [n for n in za.namelist() if not n.lower().startswith("preview/prvimage")]
+            assert na == [n for n in zb.namelist() if not n.lower().startswith("preview/prvimage")]
+            assert all(za.read(n) == zb.read(n) for n in na if n.lower().endswith(".xml"))
 
 
 def test_older_engine_without_draft_is_asked_once(kit, tmp_path, monkeypatch):
@@ -879,12 +887,15 @@ def test_older_engine_without_draft_is_asked_once(kit, tmp_path, monkeypatch):
     assert calls == [True, False, False]
 
 
-def test_render_png_through_the_engine_matches_the_pdf_path_pixel_for_pixel(kit, tmp_path):
+@pytest.mark.parametrize("scale", [2.0, 1.37])
+def test_render_png_through_the_engine_matches_the_pdf_path_pixel_for_pixel(kit, tmp_path, scale):
     PIL = pytest.importorskip("PIL.Image")
     src = shutil.copyfile(FX_DOC, tmp_path / "doc.hwpx")
-    a = D.render(str(src), [1], out_dir=str(tmp_path / "a"))
+    a = D.render(str(src), [1], scale=scale, out_dir=str(tmp_path / "a"))
+    assert a["via"] == "engine_png"             # the engine has png(): the new path ran, not the fallback twice
     with patch.object(D, "_engine_png", lambda *a_, **k: None):
-        b = D.render(str(src), [1], out_dir=str(tmp_path / "b"))
+        b = D.render(str(src), [1], scale=scale, out_dir=str(tmp_path / "b"))
+    assert b["via"] == "engine_pdf+pypdfium2"
     pa, pb = a["pages"][0], b["pages"][0]
     assert {k: pa[k] for k in ("n", "width_pt", "height_pt", "px_w", "px_h")} == \
         {k: pb[k] for k in ("n", "width_pt", "height_pt", "px_w", "px_h")}

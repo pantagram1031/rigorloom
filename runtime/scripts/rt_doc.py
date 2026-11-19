@@ -3717,7 +3717,7 @@ def _render(doc, sel, scale, fmt, names, pdf_name=None):
     want = sorted(sel)
     stage = Path(tempfile.mkdtemp(prefix="render-", dir=str(_scratch())))
     try:
-        if fmt == "png":
+        if fmt == "png" and pdf_name is None:
             got = _engine_png(e, f, sel, want, scale, names, stage)
             if got is not None:
                 return got
@@ -3788,7 +3788,12 @@ def _engine_png(e, f, sel, want, scale, names, stage):
         if not isinstance(p, dict) or not isinstance(p.get("file"), str):
             return None
         fp = Path(p["file"])
-        if fp.parent.resolve() != pdir.resolve() or not fp.is_file():
+        if not fp.is_absolute() or fp.parent.resolve() != pdir.resolve() or not fp.is_file() or fp.is_symlink():
+            return None
+        with fp.open("rb") as fh:
+            if fh.read(8) != b"\x89PNG\r\n\x1a\n":
+                return None
+        if not all(_num(p.get(k)) for k in ("width_pt", "height_pt", "px_w", "px_h")):
             return None
         got[p.get("n")] = p
     if sorted(n for n in got if isinstance(n, int)) != want:
