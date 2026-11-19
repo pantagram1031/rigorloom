@@ -68,7 +68,7 @@ def _validate_text(raw: str) -> None:
     if not raw or not raw.strip():
         raise PathRefused("invalid_params", "경로가 비어 있습니다.")
     if "\x00" in raw:
-        raise PathRefused("invalid_params", "경로에 NUL 문자가 있습니다.", raw)
+        raise PathRefused("invalid_params", "경로에 널 문자(문자 코드 0)가 있습니다.", raw)
 
 
 def _validate_components(path: Path) -> None:
@@ -85,11 +85,11 @@ def _validate_components(path: Path) -> None:
         stem = part.split(".", 1)[0].rstrip(" ").upper()
         if stem in _WINDOWS_RESERVED:
             raise PathRefused("invalid_params",
-                              f"'{part}'는 Windows에서 장치 이름이라 쓸 수 없습니다.",
+                              f"경로에 윈도우 장치 이름이 들어 있습니다({part}).",
                               str(path))
         if ":" in part:
             raise PathRefused("invalid_params",
-                              f"'{part}'에 콜론이 있습니다(대체 데이터 스트림).",
+                              f"파일이나 폴더 이름에 쓸 수 없는 쌍점(:)이 있습니다({part}).",
                               str(path))
 
 
@@ -146,7 +146,7 @@ def check_readable(path: Path) -> Path:
     if not path.exists():
         raise PathRefused("not_found", f"파일이 없습니다: {path}", str(path))
     if not path.is_file():
-        raise PathRefused("invalid_params", f"파일이 아닙니다: {path}", str(path))
+        raise PathRefused("invalid_params", f"파일을 가리키는 경로가 아닙니다({path}).", str(path))
     return path
 
 
@@ -161,10 +161,10 @@ def create_new(target: Path, data: bytes) -> None:
     same-volume link or rename, never a copy that can be seen half-written.
     """
     if not target.parent.is_dir():
-        raise PathRefused("not_found", f"폴더가 없습니다: {target.parent}",
+        raise PathRefused("not_found", f"이 경로에 저장할 폴더가 없습니다({target.parent}).",
                           str(target))
     if target.exists() or target.is_symlink():
-        raise PathRefused("target_exists", f"이미 있는 파일입니다: {target}",
+        raise PathRefused("target_exists", f"같은 이름이 이미 있어 새 파일을 만들 수 없습니다({target}).",
                           str(target))
     temp = _temp_beside(target)
     with open(temp, "xb") as handle:
@@ -186,7 +186,7 @@ def create_new(target: Path, data: bytes) -> None:
                 os.unlink(temp)
     except FileExistsError as exc:
         _quiet_unlink(temp)
-        raise PathRefused("target_exists", f"이미 있는 파일입니다: {target}",
+        raise PathRefused("target_exists", f"같은 이름이 이미 있어 새 파일을 만들 수 없습니다({target}).",
                           str(target)) from exc
     except PermissionError as exc:
         _quiet_unlink(temp)
@@ -226,7 +226,7 @@ def replace_checked(target: Path, data: bytes, expected_sha256: str) -> None:
     kept by the caller (history) before this runs.
     """
     if not target.exists():
-        raise PathRefused("target_changed", f"파일이 사라졌습니다: {target}",
+        raise PathRefused("target_changed", f"덮어쓸 파일을 찾을 수 없습니다({target}).",
                           str(target))
     temp = _temp_beside(target)
     with open(temp, "xb") as handle:

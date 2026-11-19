@@ -56,7 +56,7 @@ HELP = """\
 rigorloom — 한글·워드·마크다운 문서를 사람과 에이전트가 같이 고치는 도구
 
 읽기
-  open FILE            문서 구조: 쪽, 글꼴, 제목, 표, 입력란과 주소
+  open FILE            문서 구조: 쪽, 글꼴, 제목, 표, 채울 칸과 주소
   read FILE [--at 주소] 본문 읽기 (긴 글은 --cursor로 이어 읽기)
   find FILE 말          찾은 곳마다 주소
   preview FILE         쪽 그림 (PNG)
@@ -134,7 +134,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--ops-file")
     p.add_argument("--base", help="읽었던 rev (생략하면 지금 판)")
     p.add_argument("-o", "--out", help="고친 결과를 이 파일로 저장")
-    p.add_argument("--force", action="store_true", help="-o 대상이 있으면 덮어씀 (이전 판은 이력에)")
+    p.add_argument("--force", action="store_true", help="-o 대상이 있으면 덮어씀 (이전 판은 저장 기록에)")
     _common(p)
 
     p = sub.add_parser("fill", help="양식 채우기")
@@ -166,7 +166,7 @@ def _parser() -> argparse.ArgumentParser:
     p = sub.add_parser("save", help="초안 저장")
     p.add_argument("path"); p.add_argument("--to")
     p.add_argument("--force", action="store_true",
-                   help="있는 파일을 묻지 않고 덮어씀 (이전 판은 이력에 남음)")
+                   help="있는 파일을 묻지 않고 덮어씀 (이전 판은 저장 기록에 남음)")
     _common(p)
 
     p = sub.add_parser("changes", help="초안과 변경 기록")
@@ -191,7 +191,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 class _Usage(Exception):
-    pass
+    """A wrong command line: one line of what, one line of what to type."""
+
+    def __init__(self, message: str, hint: str | None = None):
+        super().__init__(message)
+        self.hint = hint
 
 
 def _read_text_arg(value: str) -> str:
@@ -200,7 +204,8 @@ def _read_text_arg(value: str) -> str:
     try:
         return Path(value).read_text(encoding="utf-8-sig")
     except OSError as exc:
-        raise _Usage(f"읽을 수 없습니다: {value} ({exc.strerror or exc})") from exc
+        raise _Usage(f"입력 파일을 읽을 수 없습니다({value}, {exc.strerror or exc}).",
+                     "파일 이름과 위치를 확인하세요.") from exc
 
 
 def _ops(args) -> list:
@@ -209,18 +214,22 @@ def _ops(args) -> list:
         try:
             payload = json.loads(_read_text_arg(args.ops_file))
         except ValueError as exc:
-            raise _Usage(f"--ops-file이 JSON이 아닙니다: {exc}") from exc
+            raise _Usage(f"--ops-file로 지정한 입력의 문법이 맞지 않습니다({exc}).",
+                         "오류에 나온 위치에서 작업 목록의 JSON 문법을 고치세요.") from exc
         payload = payload.get("ops", payload) if isinstance(payload, dict) else payload
         if not isinstance(payload, list):
-            raise _Usage("--ops-file에는 작업 배열이 있어야 합니다.")
+            raise _Usage("--ops-file로 지정한 작업 목록의 형식이 맞지 않습니다.",
+                         '작업을 [{"op": "set", ...}, ...]처럼 대괄호로 묶어 주세요.')
         ops.extend(payload)
     for index, text in enumerate(args.op):
         try:
             ops.append(json.loads(text))
         except ValueError as exc:
-            raise _Usage(f"--op {index + 1}번째가 JSON이 아닙니다: {exc}") from exc
+            raise _Usage(f"--op로 입력한 {index + 1}번째 작업의 문법이 맞지 않습니다({exc}).",
+                         """예: --op '{"op":"set","at":"p1","text":"제목"}'""") from exc
     if not ops:
-        raise _Usage("고칠 내용이 없습니다. --op '{\"op\":\"set\",...}' 또는 --ops-file")
+        raise _Usage("고칠 내용을 지정하지 않았습니다.",
+                     """--op '{"op":"set","at":"p1","text":"…"}' 또는 --ops-file 파일로 주세요.""")
     return ops
 
 
@@ -230,17 +239,20 @@ def _values(args) -> dict:
         try:
             loaded = json.loads(_read_text_arg(args.values))
         except ValueError as exc:
-            raise _Usage(f"--values가 JSON이 아닙니다: {exc}") from exc
+            raise _Usage(f"--values로 지정한 입력의 문법이 맞지 않습니다({exc}).",
+                         '칸과 값을 {"성명": "홍길동"}처럼 적으세요.') from exc
         if not isinstance(loaded, dict):
-            raise _Usage("--values에는 {칸: 값} 객체가 있어야 합니다.")
+            raise _Usage("--values로 지정한 입력의 형식이 맞지 않습니다.",
+                         '칸과 값을 {"성명": "홍길동"}처럼 적으세요.')
         values.update(loaded)
     for item in args.set:
         key, sep, value = item.partition("=")
         if not sep or not key.strip():
-            raise _Usage(f"--set은 칸=값 꼴이어야 합니다: {item}")
+            raise _Usage(f"--set 뒤의 값이 칸=값 형식에 맞지 않습니다({item}).",
+                         "예: --set 성명=홍길동")
         values[key.strip()] = value
     if not values:
-        raise _Usage("채울 값이 없습니다. --set 칸=값 또는 --values 파일")
+        raise _Usage("채울 값이 없습니다.", "--set 성명=홍길동처럼 칸과 값을 주세요.")
     return values
 
 
@@ -300,7 +312,7 @@ def request_for(args) -> tuple[str, dict]:
         return "changes", req
     if v == "guide":
         return "guide", ({"topic": args.topic} if args.topic else {})
-    raise _Usage(f"모르는 명령: {v}")
+    raise _Usage(f"지원하지 않는 명령입니다({v}).", "명령 목록: rigorloom --help")
 
 
 # --------------------------------------------------------------------------
@@ -386,7 +398,7 @@ def _undo(term: Term, args) -> int:
     if answer is None:
         envelope = {"ok": False, "error": ToolError(
             "needs_person", "되돌리기는 사람이 터미널에서 직접 확인해야 합니다.",
-            hint=f'터미널에서 실행: rigorloom undo "{target}"').to_dict()}
+            hint=f'터미널에서 직접 rigorloom undo "{target}" 명령을 실행하세요.').to_dict()}
     elif not answer:
         envelope = {"ok": False, "error": ToolError(
             "declined_by_person", "되돌리지 않았습니다.").to_dict()}
@@ -398,7 +410,7 @@ def _undo(term: Term, args) -> int:
     if envelope["ok"] and not args.json:
         r = envelope["result"]
         term.line(f"되돌렸습니다: {r['target']}" if not r["removed"]
-                  else f"Rigorloom이 만든 파일을 이력으로 옮겼습니다: {r['target']}")
+                  else f"Rigorloom이 만든 파일을 저장 기록으로 옮겼습니다: {r['target']}")
         return EXIT_OK
     return _emit(term, args, "undo", envelope)
 
@@ -438,13 +450,13 @@ def _clear(term: Term, args) -> int:
         term.line("지울 것이 없습니다.")
         return EXIT_OK
     if not args.yes:
-        sys.stderr.write(f"  위치: {home}\n  저장 이력도 지워져 undo를 할 수 없게 됩니다.\n")
-        answer = confirm("초안, 미리보기, 저장 이력을 모두 지울까요?")
+        sys.stderr.write(f"  위치: {home}\n  저장 기록도 지워져 undo를 할 수 없게 됩니다.\n")
+        answer = confirm("초안, 미리보기, 저장 기록을 모두 지울까요?")
         if answer is not True:
             code = "declined_by_person" if answer is False else "needs_person"
             return _emit(term, args, "changes", {"ok": False, "error": ToolError(
-                code, "지우지 않았습니다.",
-                hint="터미널에서 확인하거나 --yes를 붙이세요." if answer is None else None,
+                code, "초안, 미리보기, 저장 기록을 지우지 않았습니다.",
+                hint="모두 지우려면 같은 명령에 --yes를 붙이세요." if answer is None else None,
             ).to_dict()})
     for folder in present:
         shutil.rmtree(folder)
@@ -490,11 +502,12 @@ def _main(argv: list[str]) -> int:
             return _clear(term, args)
         if args.verb == "changes" and args.action == "discard":
             if not args.path:
-                raise _Usage("버릴 초안의 파일을 적어 주세요.")
+                raise _Usage("어느 초안을 버릴지 지정하지 않았습니다.",
+                             "예: rigorloom changes discard 보고서.hwpx")
             return _discard(term, args)
         tool, req = request_for(args)
     except _Usage as exc:
-        sys.stderr.write(f"{exc}\n  도움말: rigorloom {argv[0]} --help\n")
+        sys.stderr.write(f"{exc}\n  {exc.hint or f'도움말: rigorloom {argv[0]} --help'}\n")
         return EXIT_USAGE
     ctx = _context(args)
     out = getattr(args, "out", None)
@@ -508,8 +521,8 @@ def _main(argv: list[str]) -> int:
                 exc.code, exc.message, at=exc.path).to_dict()})
         if exists:
             return _emit(term, args, args.verb, {"ok": False, "error": ToolError(
-                "target_exists", f"이미 있는 파일입니다: {out}",
-                hint="덮어쓰려면 --force를 붙이세요. 이전 판은 이력에 남아 undo로 되돌릴 수 있습니다.",
+                "target_exists", f"저장하려는 이름의 파일이나 폴더가 이미 있습니다({out}).",
+                hint="덮어쓰려면 --force를 붙이세요. 이전 판은 저장 기록에 남아 undo로 되돌릴 수 있습니다.",
                 at=out).to_dict()})
     if out and tool in ("edit", "fill", "new"):
         import secrets

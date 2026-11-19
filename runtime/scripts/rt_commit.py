@@ -96,7 +96,7 @@ def commit(candidate: Path, target: Path, *, expected: str, by: str,
             kept = folder / f"{entry['at'].replace(':', '')}-{expected[:12]}{target.suffix}"
             kept.write_bytes(target.read_bytes())
             if sha256_file(kept) != expected:
-                raise ToolError("internal", "이전 내용을 이력에 보관하지 못했습니다.")
+                raise ToolError("internal", "저장 기록에 이전 판을 보관하지 못했습니다.")
             entry["oldSha256"] = expected
             entry["kept"] = kept.name
             replace_checked(target, data, expected)
@@ -138,19 +138,20 @@ def undo(target: Path, *, by: str, home: Path | None = None) -> dict:
     current = sha256_file(target) if target.exists() else None
     if current != entry["newSha256"]:
         raise ToolError("target_changed",
-                        "Rigorloom이 저장한 뒤 파일이 다시 바뀌어 되돌리지 않았습니다.",
-                        hint="지금 내용을 지키려면 그대로 두세요. 이전 판은 이력 폴더에 남아 있습니다.",
+                        "마지막으로 저장했을 때와 파일 상태가 달라 되돌리지 않았습니다.",
+                        hint="지금 내용을 지키려면 그대로 두세요. 이전 판은 저장 기록에 남아 있습니다.",
                         at=str(target), data={"history": str(folder)})
     try:
         if entry["oldSha256"] is None:
             # We created this file; undo removes it by moving it into history.
-            kept = private_dir(folder) / f"{_now().replace(':', '')}-created-{current[:12]}{target.suffix}"
+            stamp = _now().replace(":", "")
+            kept = private_dir(folder) / f"{stamp}-created-{current[:12]}{target.suffix}"
             os.replace(target, kept)
             restored = None
         else:
             old = (folder / entry["kept"]).read_bytes()
             if sha256_bytes(old) != entry["oldSha256"]:
-                raise ToolError("internal", "이력의 이전 판이 손상되었습니다.",
+                raise ToolError("internal", "보관한 이전 판이 저장 기록과 달라 되돌릴 수 없습니다.",
                                 at=str(folder / entry["kept"]))
             replace_checked(target, old, current)
             restored = entry["oldSha256"]

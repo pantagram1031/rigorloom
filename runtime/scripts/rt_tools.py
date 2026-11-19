@@ -124,15 +124,15 @@ def validate(schema: dict, value: Any, where: str = "") -> None:
     if "type" in schema and not _type_ok(value, schema["type"]):
         expected = schema["type"]
         raise ToolError("invalid_params",
-                        f"{label}: {expected} 값이어야 합니다.", at=where or None)
+                        f"{label}: 값이 {expected} 형식이어야 합니다.", at=where or None)
     if "enum" in schema and value not in schema["enum"]:
         raise ToolError("invalid_params",
-                        f"{label}: 다음 중 하나여야 합니다: "
-                        + ", ".join(map(str, schema["enum"])),
+                        f"{label}: 허용한 값(" + ", ".join(map(str, schema["enum"])) + ")과 일치하지 않습니다.",
+                        hint="목록에서 값 하나를 골라 입력하세요.",
                         at=where or None, candidates=[str(v) for v in schema["enum"]])
     if isinstance(value, str):
         if "minLength" in schema and len(value) < schema["minLength"]:
-            raise ToolError("invalid_params", f"{label}: 비어 있습니다.",
+            raise ToolError("invalid_params", f"{label}: 비어 있습니다.", hint="이 항목에 내용을 더 입력하세요.",
                             at=where or None)
         if "maxLength" in schema and len(value) > schema["maxLength"]:
             raise ToolError("invalid_params",
@@ -168,13 +168,14 @@ def validate(schema: dict, value: Any, where: str = "") -> None:
         for key in schema.get("required", []):
             if key not in value:
                 path = f"{where}.{key}" if where else key
-                raise ToolError("invalid_params", f"{path}: 꼭 필요한 값입니다.",
+                raise ToolError("invalid_params", f"{path}: 필수 항목이 빠졌습니다.", hint="이 항목에 값을 입력하세요.",
                                 at=path)
         if schema.get("additionalProperties") is False:
             extra = sorted(set(value) - set(props))
             if extra:
                 path = f"{where}.{extra[0]}" if where else extra[0]
-                raise ToolError("invalid_params", f"{path}: 모르는 항목입니다.",
+                raise ToolError("invalid_params", f"{path}: 사용할 수 없는 항목입니다.",
+                                hint="요청에서 이 항목을 빼세요.",
                                 at=path, candidates=sorted(props))
         for key, sub in props.items():
             if key in value:
@@ -242,7 +243,7 @@ def get(name: str) -> Tool:
     try:
         return REGISTRY[name]
     except KeyError:
-        raise ToolError("unknown_tool", f"'{name}'라는 도구는 없습니다.",
+        raise ToolError("unknown_tool", f"'{name}' 도구를 찾을 수 없습니다.", hint="도구 목록에서 이름을 확인하세요.",
                         candidates=sorted(REGISTRY)) from None
 
 
@@ -306,8 +307,8 @@ def load_doc():
     except ImportError as exc:
         raise ToolError(
             "capability_unavailable",
-            "문서 처리 모듈(rt_doc)을 불러오지 못했습니다.",
-            hint="설치를 확인하세요: rigorloom doctor",
+            "문서 처리 기능을 불러오지 못했습니다.",
+            hint="rigorloom doctor 명령으로 설치 상태를 확인하세요.",
             data={"reason": str(exc)}) from exc
     return rt_doc
 
@@ -323,7 +324,7 @@ def call(ctx: Context, name: str, args: dict | None) -> dict:
         validate(tool.input_schema, args)
         result = tool.run(ctx, args)
         if not isinstance(result, dict):
-            raise ToolError("internal", f"{name}: 결과가 객체가 아닙니다.")
+            raise ToolError("internal", f"{name}: 도구가 잘못된 형식으로 결과를 보냈습니다.")
         return {"ok": True, "result": result}
     except ToolError as exc:
         return {"ok": False, "error": exc.to_dict()}
@@ -334,7 +335,7 @@ def call(ctx: Context, name: str, args: dict | None) -> dict:
             import traceback
             trace = {"trace": traceback.format_exc(limit=6)}
         return {"ok": False, "error": ToolError(
-            "internal", f"{name}: 내부 오류 ({type(exc).__name__}).",
+            "internal", f"{name}: 내부 오류가 났습니다({type(exc).__name__}).",
             hint="--debug로 다시 실행하면 자세한 내용이 나옵니다.",
             data=trace).to_dict()}
 
@@ -348,7 +349,7 @@ def doc_call(fn: Callable, *args, **kwargs) -> dict:
     """
     out = fn(*args, **kwargs)
     if not isinstance(out, dict):
-        raise ToolError("internal", "문서 처리 모듈이 잘못된 값을 돌려주었습니다.")
+        raise ToolError("internal", "문서 처리 결과의 형식이 맞지 않습니다.")
     if out.get("ok", True):
         return out
     err = out.get("error") or {}
@@ -373,7 +374,7 @@ def doc_call(fn: Callable, *args, **kwargs) -> dict:
         "internal_error": "internal",
     }.get(code, "engine_refused")
     raise ToolError(
-        mapped, err.get("message") or "문서 처리 중 거절되었습니다.",
+        mapped, err.get("message") or "문서 처리를 마치지 못했습니다.",
         hint=err.get("hint"), at=err.get("at"),
         done=err.get("done"), candidates=err.get("candidates"),
         retryable=bool(err.get("retryable", False)),

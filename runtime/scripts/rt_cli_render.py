@@ -30,7 +30,7 @@ SIGNAL_KO = {
     "widow": "다음 쪽 첫 줄에 남은 한 줄", "orphan": "쪽 끝에 남은 한 줄",
     "top_blank": "쪽 위 빈 줄", "approx": "글꼴 대체",
 }
-KIND_KO = {"heading": "제목", "para": "문단", "table": "표", "place": "입력란",
+KIND_KO = {"heading": "제목", "para": "문단", "table": "표", "place": "칸",
            "cell": "칸", "page": "쪽"}
 
 
@@ -90,11 +90,11 @@ def show_open(term: Term, r: dict) -> None:
         head.append(f"{r['pages']}쪽")
     head.append(_rev(r))
     if r.get("source") == "draft":
-        head.append(f"초안 수정본 {r.get('revision')}")
+        head.append(f"초안 {r.get('revision')}판")
     term.line("  ·  ".join(head))
     draft = r.get("draft") or {}
     if r.get("source") == "disk" and draft.get("unsaved"):
-        term.line(term.style(f"초안 있음: 수정본 {draft['revision']}, 저장 안 됨", "yellow")
+        term.line(term.style(f"저장 안 한 초안 있음 ({draft['revision']}판)", "yellow")
                   + term.dim(f"  (초안 보기: rigorloom open {_q(r['path'])} --source draft)"))
     _fonts(term, r.get("fonts") or {})
     if r.get("headings"):
@@ -110,7 +110,7 @@ def show_open(term: Term, r: dict) -> None:
                      safe_text(str(t.get("caption") or ""))] for t in r["tables"]], shrink=3)
     if r.get("places"):
         term.line()
-        term.line(term.bold("입력란"))
+        term.line(term.bold("채울 칸"))
         term.table([[f"place:{p['id']}", p.get("at", ""), safe_text(str(p.get("label", "")))]
                     for p in r["places"]], shrink=2)
     if r.get("personOnly"):
@@ -119,7 +119,7 @@ def show_open(term: Term, r: dict) -> None:
         term.table([[f"place:{p['id']}", safe_text(str(p.get("label", "")))]
                     for p in r["personOnly"]], shrink=1)
     if r.get("omitted"):
-        parts = {"headings": "제목", "tables": "표", "places": "입력란"}
+        parts = {"headings": "제목", "tables": "표", "places": "칸"}
         term.line(term.dim("길어서 뺀 것: " + ", ".join(
             f"{parts.get(k, k)} {v}개" for k, v in r["omitted"].items())
             + " (rigorloom read, find로 보세요)"))
@@ -153,7 +153,7 @@ def show_find(term: Term, r: dict) -> None:
 
 
 def show_staged(term: Term, r: dict) -> None:
-    term.line(f"초안에 반영했습니다. 수정본 {r['revision']}, {_rev(r)}"
+    term.line(f"초안에 반영했습니다. {r['revision']}판, {_rev(r)}"
               + term.dim("  아직 파일에는 저장하지 않았습니다."))
     if r.get("changedPages"):
         term.line("바뀐 쪽: " + ", ".join(map(str, r["changedPages"])))
@@ -231,13 +231,13 @@ def show_changes(term: Term, r: dict) -> None:
             return
         term.table([[safe_text(shown(d["source"]) if d.get("source")
                                else str(d.get("name") or "(새 문서)")),
-                     f"수정본 {d['revision']}", f"저장 안 한 변경 {d['pending']}",
+                     f"{d['revision']}판", f"저장 안 한 변경 {d['pending']}",
                      f"저장 {d['saved']}번"] for d in r["drafts"]], shrink=0)
         return
     if not r.get("draft"):
         term.line(f"{shown(r['path'])}: 초안이 없습니다.")
         return
-    term.line(f"{shown(r['path'])}: 수정본 {r['draft']['revision']}, "
+    term.line(f"{shown(r['path'])}: 초안 {r['draft']['revision']}판, "
               f"변경 묶음 {len(r['changesets'])}개")
     status = {"proposed": "검토 대기", "applied": "저장됨", "rejected": "거절됨",
               "withdrawn": "철회됨"}

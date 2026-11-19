@@ -149,10 +149,11 @@ class DraftStore:
         if is_virtual(target):
             key = str(target)[len(VIRTUAL_PREFIX):]
             if not key or not all(c.isalnum() or c == "-" for c in key):
-                raise ToolError("invalid_params", f"초안 이름이 잘못되었습니다: {target}")
+                raise ToolError("invalid_params", f"초안 주소의 형식이 맞지 않습니다({target}).",
+                                hint="new 결과에 나온 초안 주소를 그대로 입력하세요.")
             if self.load(Ref(key, None)) is None:
-                raise ToolError("not_found", f"그런 초안이 없습니다: {target}",
-                                hint="초안 목록: rigorloom changes")
+                raise ToolError("not_found", f"이 주소에서 초안을 찾을 수 없습니다({target}).",
+                                hint="rigorloom changes 명령으로 초안 목록을 확인하세요.")
             return Ref(key, None)
         path = Path(target)
         key = key_for_path(path)
@@ -172,7 +173,7 @@ class DraftStore:
             raise ToolError("internal", f"초안 기록을 읽지 못했습니다: {path}",
                             data={"reason": str(exc)}) from exc
         if record.get("schema") != DRAFT_SCHEMA:
-            raise ToolError("internal", f"알 수 없는 초안 형식입니다: {path}")
+            raise ToolError("internal", f"이 초안 기록은 지원하지 않는 형식입니다({path}).")
         return record
 
     def write(self, ref: Ref, record: dict) -> None:
@@ -205,7 +206,8 @@ class DraftStore:
         record = self.load(ref)
         if ref.source is None:
             if record is None or not record.get("head"):
-                raise ToolError("not_found", f"그런 초안이 없습니다: {ref.label}")
+                raise ToolError("not_found", f"이 주소에서 초안을 찾을 수 없습니다({ref.label}).",
+                                hint="new 결과에 나온 초안 주소를 확인하세요.")
             return self._head_input(ref, record)
         source_sha = sha256_file(ref.source)
         if use_draft and record and record.get("head"):
@@ -227,8 +229,7 @@ class DraftStore:
             raise ToolError(
                 "source_changed",
                 "초안을 만든 뒤 원본 파일이 바뀌었습니다.",
-                hint="원본을 기준으로 다시 시작하려면 초안을 버리세요: "
-                     "rigorloom changes discard <파일>",
+                hint="바뀐 원본으로 다시 시작하려면 rigorloom changes discard <파일> 명령으로 초안을 버리세요.",
                 data={"draftSource": record["source"]["rev"],
                       "diskSource": rev_of(source_sha)})
 
@@ -243,7 +244,8 @@ class DraftStore:
         never edits bytes it has not seen.
         """
         if ref.source is None and self.load(ref) is None:
-            raise ToolError("not_found", f"그런 초안이 없습니다: {ref.label}")
+            raise ToolError("not_found", f"이 주소에서 초안을 찾을 수 없습니다({ref.label}).",
+                            hint="new 결과에 나온 초안 주소를 확인하세요.")
         with self.lock(ref):
             folder = self.dir_for(ref)
             record = self.load(ref)
@@ -264,14 +266,14 @@ class DraftStore:
             if base is not None and base != in_rev:
                 raise ToolError(
                     "stale",
-                    f"문서가 그 사이 바뀌었습니다(읽은 판 {base}, 지금 판 {in_rev}).",
-                    hint="다시 읽고(open 또는 read) 새 rev로 고치세요.",
+                    f"읽은 판({base})과 현재 판({in_rev})이 다릅니다.",
+                    hint="고칠 문서를 다시 읽고 그때 나온 판을 입력하세요.",
                     retryable=True, data={"base": base, "current": in_rev})
             out_name = f"rev-{revision + 1:04d}{_work_suffix(in_path)}"
             out_path = folder / out_name
             result = apply(in_path, in_rev, out_path)
             if not out_path.exists():
-                raise ToolError("internal", "편집 결과 파일이 만들어지지 않았습니다.")
+                raise ToolError("internal", "고친 내용을 파일로 만들지 못했습니다.")
             changeset = self._append(record, kind=kind, ops=ops, author=author,
                                      provenance=provenance, base_kind=base_kind,
                                      base_revision=revision, base_rev=in_rev,
@@ -298,7 +300,7 @@ class DraftStore:
             out_path = self.dir_for(ref) / out_name
             result = build(out_path)
             if not out_path.exists():
-                raise ToolError("internal", "새 문서 파일이 만들어지지 않았습니다.")
+                raise ToolError("internal", "새 문서 파일을 만들지 못했습니다.")
             changeset = self._append(record, kind="new", ops=[], author=author,
                                      provenance=provenance, base_kind="empty",
                                      base_revision=0, base_rev=None,

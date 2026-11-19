@@ -106,8 +106,8 @@ def resolve(ctx: Context, raw: str) -> Ref:
     fmt = path.suffix.lower().lstrip(".")
     if fmt not in FORMATS_IN:
         raise ToolError("unsupported_format",
-                        f"'{path.suffix or '(확장자 없음)'}' 파일은 열 수 없습니다.",
-                        hint="지원 형식: .hwpx .hwp .docx .md", at=str(path))
+                        f"'{path.suffix or '(확장자 없음)'}' 형식의 파일은 열 수 없습니다.",
+                        hint=".hwpx, .hwp, .docx, .md 중 한 형식으로 된 파일을 선택하세요.", at=str(path))
     return ctx.drafts.ref(path, scope=ctx.draft_scope)
 
 
@@ -135,12 +135,13 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None) -> Non
         target = match.group(1)
         if re.match(r"^[a-z][a-z0-9+.-]*://", target, re.IGNORECASE):
             raise ToolError("invalid_params",
-                            f"원격 그림은 쓸 수 없습니다: {target}",
-                            hint="그림을 내려받아 허용한 폴더에 둔 뒤 경로로 적으세요.")
+                            f"그림을 파일 경로 대신 주소로 지정했습니다({target}).",
+                            hint="허용한 폴더에 그림을 내려받고 그 파일의 경로를 입력하세요.")
         try:
             ctx.roots.check(target, base=base)
         except PathRefused as exc:
-            raise ToolError(exc.code, f"그림 경로가 허용한 폴더 밖입니다: {target}",
+            raise ToolError(exc.code, f"이 그림 경로는 사용할 수 없습니다({target}).",
+                            hint="허용한 폴더 안에 있는 그림 파일의 경로를 입력하세요.",
                             at=exc.path) from exc
 
 
@@ -320,11 +321,11 @@ def _parse_cursor(cursor: str, rev: str) -> tuple[int, int]:
         crev, index, offset = cursor.split(":")
         index_i, offset_i = int(index), int(offset)
     except ValueError:
-        raise ToolError("invalid_params", "cursor 형식이 잘못되었습니다.",
-                        hint="이전 read 결과의 next 값을 그대로 넘기세요.") from None
+        raise ToolError("invalid_params", "이어 읽을 위치의 형식이 맞지 않습니다.",
+                        hint="이전 read 결과에 나온 다음 위치를 그대로 입력하세요.") from None
     if crev != rev:
         raise ToolError("stale", "읽던 사이 문서가 바뀌었습니다.",
-                        hint="처음부터 다시 읽으세요(cursor 없이).", retryable=True)
+                        hint="이어 읽을 위치를 지정하지 말고 처음부터 다시 읽으세요.", retryable=True)
     return index_i, offset_i
 
 
@@ -416,7 +417,8 @@ def _run_find(ctx: Context, args: dict) -> dict:
         try:
             re.compile(args["query"])
         except re.error as exc:
-            raise ToolError("invalid_params", f"정규식이 잘못되었습니다: {exc}") from None
+            raise ToolError("invalid_params", f"검색에 쓴 정규식의 문법이 맞지 않습니다({exc}).",
+                            hint="오류 설명을 보고 정규식을 고치세요.") from None
     data = doc_call(ctx.doc.find, str(inp.path), args["query"],
                     regex=bool(args.get("regex", False)), scope=args.get("scope"))
     hits = data.get("hits", [])
@@ -461,7 +463,8 @@ def _add_context(ctx: Context, path: Path, hits: list[dict]) -> None:
         if not text or not isinstance(start, int) or not isinstance(end, int):
             continue
         lo, hi = max(0, start - FIND_CONTEXT_CHARS), min(len(text), end + FIND_CONTEXT_CHARS)
-        hit["context"] = ("…" if lo else "") + one_line(text[lo:hi]) + ("…" if hi < len(text) else "")
+        tail = "…" if hi < len(text) else ""
+        hit["context"] = ("…" if lo else "") + one_line(text[lo:hi]) + tail
 
 
 def _find_text(r: dict) -> str:
@@ -515,20 +518,24 @@ def _check_ops(ops: list) -> None:
     for index, op in enumerate(ops):
         where = f"ops[{index}]"
         if not isinstance(op, dict):
-            raise ToolError("invalid_params", f"{where}: 객체여야 합니다.", at=where)
+            raise ToolError("invalid_params", f"{where}: 작업의 입력 형식이 맞지 않습니다.",
+                            hint="작업 이름과 필요한 값을 중괄호로 묶어 입력하세요.", at=where)
         kind = op.get("op")
         if kind not in OP_FIELDS:
-            raise ToolError("invalid_params", f"{where}.op: 모르는 작업입니다: {kind!r}",
+            raise ToolError("invalid_params", f"{where}.op: 지원하지 않는 작업입니다({kind!r}).",
+                            hint="목록에서 사용할 작업 이름을 고르세요.",
                             at=where, candidates=sorted(OP_FIELDS))
         required, optional = OP_FIELDS[kind]
         for key in required:
             if key not in op:
-                raise ToolError("invalid_params", f"{where}.{key}: 꼭 필요한 값입니다.",
+                raise ToolError("invalid_params", f"{where}.{key}: 필수 항목이 빠졌습니다.",
+                                hint="이 항목에 값을 입력하세요.",
                                 at=f"{where}.{key}")
         extra = set(op) - {"op", *required, *optional}
         if extra:
             raise ToolError("invalid_params",
-                            f"{where}: 모르는 항목 {sorted(extra)[0]!r}",
+                            f"{where}: 이 작업에 쓸 수 없는 항목이 있습니다({sorted(extra)[0]!r}).",
+                            hint="작업에서 이 항목을 빼세요.",
                             at=where, candidates=sorted({*required, *optional}))
 
 
@@ -627,21 +634,22 @@ def _run_fill(ctx: Context, args: dict) -> dict:
             near = [f"place:{p}" for p in places if pid in p or p in pid][:5] or \
                 [f"place:{p}" for p in list(places)[:5]]
             raise ToolError("not_found", f"'{pid}' 칸을 찾지 못했습니다.",
-                            hint="칸 목록은 open 결과의 places에 있습니다.",
+                            hint="open 결과에서 채울 칸의 주소를 확인하세요.",
                             at=f"place:{pid}", candidates=near)
         if is_person_only(place):
             blocked.append(f"place:{pid}")
             continue
         if not isinstance(text, str):
-            raise ToolError("invalid_params", f"place:{pid}: 글자로 적어야 합니다.",
+            raise ToolError("invalid_params", f"place:{pid} 칸에는 값을 글자로 입력해야 합니다.",
+                            hint="칸에 넣을 값을 큰따옴표로 감싸서 입력하세요.",
                             at=f"place:{pid}")
         ops.append({"op": "fill", "place": pid, "text": text})
     if blocked:
         raise ToolError("person_only_seat",
-                        "서명·날인 칸은 사람이 직접 채워야 합니다: " + ", ".join(blocked),
-                        hint="이 칸들은 빼고 다시 채우세요.", candidates=blocked)
+                        "다음 서명·날인 칸은 사람이 직접 채워야 합니다: " + ", ".join(blocked),
+                        hint="나열한 칸을 빼고 나머지 칸만 채우세요.", candidates=blocked)
     if not ops:
-        raise ToolError("invalid_params", "채울 값이 없습니다.")
+        raise ToolError("invalid_params", "채울 값이 없습니다.", hint="채울 칸과 값을 한 쌍 이상 입력하세요.")
     result = _stage(ctx, ref, args.get("base") or inp.rev, ops, "fill")
     filled = {op["place"] for op in ops}
     result["personOnly"] = [f"place:{p['id']}" for p in places.values()
@@ -729,7 +737,8 @@ def _run_preview(ctx: Context, args: dict) -> dict:
         if not pages:
             pages = [1]
     if not isinstance(pages, list) or not all(isinstance(p, int) and p >= 1 for p in pages):
-        raise ToolError("invalid_params", "pages는 1부터 세는 쪽 번호 목록이거나 \"changed\"입니다.")
+        raise ToolError("invalid_params", "미리 볼 쪽을 잘못 지정했습니다.",
+                        hint="1 이상인 쪽 번호를 [1, 2]처럼 입력하거나 바뀐 쪽을 보려면 \"changed\"를 입력하세요.")
     asked = sorted(set(pages))
     shown = asked[:PREVIEW_MAX_PAGES]
     data = doc_call(ctx.doc.render, str(inp.path), shown,
@@ -1064,8 +1073,9 @@ def _target(ctx: Context, raw: str) -> Path:
     fmt = path.suffix.lower().lstrip(".")
     if fmt not in FORMATS_OUT:
         raise ToolError("unsupported_format",
-                        f"'{path.suffix or '(확장자 없음)'}'로는 저장할 수 없습니다.",
-                        hint="저장 형식: " + ", ".join("." + f for f in FORMATS_OUT))
+                        f"'{path.suffix or '(확장자 없음)'}' 형식으로는 저장할 수 없습니다.",
+                        hint="저장할 파일의 확장자는 "
+                        + ", ".join("." + f for f in FORMATS_OUT) + " 중 하나로 지정하세요.")
     return path
 
 
@@ -1084,13 +1094,13 @@ def _run_save(ctx: Context, args: dict) -> dict:
     elif ref.source is not None:
         target = ref.source
     else:
-        raise ToolError("invalid_params", "새 문서는 저장할 경로(to)가 필요합니다.",
-                        hint="예: save(path=\"draft:…\", to=\"보고서.hwpx\")")
+        raise ToolError("invalid_params", "새 문서를 저장할 경로가 빠졌습니다.",
+                        hint="저장할 파일의 경로를 보고서.hwpx처럼 파일 이름까지 입력하세요.")
     fmt = target.suffix.lower().lstrip(".")
     has_edits = head_input.source == "draft"
     if not has_edits and fmt == (ref.source.suffix.lower().lstrip(".") if ref.source else ""):
-        raise ToolError("no_draft", "저장할 변경이 없습니다.",
-                        hint="edit나 fill로 고친 뒤 저장하세요.")
+        raise ToolError("no_draft", "저장할 변경 사항이 없습니다.",
+                        hint="먼저 edit나 fill로 문서를 고치세요.")
 
     # Candidate bytes: the head, converted when the target format differs.
     candidate = head_input.path
@@ -1108,7 +1118,7 @@ def _run_save(ctx: Context, args: dict) -> dict:
 
     digest = sha256_file(candidate)
     if target.exists() and sha256_file(target) == digest:
-        raise ToolError("no_draft", "파일이 이미 이 내용입니다. 저장할 변경이 없습니다.",
+        raise ToolError("no_draft", "저장하려는 내용과 파일 내용이 같습니다.",
                         at=str(target))
     # A change set the person made at the terminal is reviewed by definition.
     unreviewed = sum(1 for c in (record or {}).get("changesets", [])
@@ -1116,8 +1126,8 @@ def _run_save(ctx: Context, args: dict) -> dict:
     declines = (record or {}).get("declines", [])
     if any(d.get("sha256") == digest and d.get("target") == str(target) for d in declines):
         raise ToolError("declined_by_person",
-                        "사람이 이 내용으로 이 파일에 저장하는 것을 거절했습니다.",
-                        hint="다른 이름으로 저장하거나, 내용을 고친 뒤 다시 물어보세요.",
+                        "사람이 이미 이 내용으로 이 파일을 덮어쓰지 않기로 했습니다.",
+                        hint="저장이 필요하면 새 파일 이름을 지정하세요.",
                         at=str(target))
 
     if not target.exists():
@@ -1220,7 +1230,7 @@ def _run_changes(ctx: Context, args: dict) -> dict:
     if action == "list" and not args.get("path"):
         return {"action": "list", "drafts": ctx.drafts.list()}
     if not args.get("path"):
-        raise ToolError("invalid_params", "path가 필요합니다.")
+        raise ToolError("invalid_params", "변경 기록을 볼 문서의 경로가 빠졌습니다.", hint="문서 경로를 입력하세요.")
     ref = resolve(ctx, args["path"])
     record = ctx.drafts.load(ref)
     if record is None:
@@ -1229,7 +1239,8 @@ def _run_changes(ctx: Context, args: dict) -> dict:
     if args.get("id"):
         sets = [c for c in sets if c["id"] == args["id"]]
         if not sets:
-            raise ToolError("not_found", f"그런 변경 묶음이 없습니다: {args['id']}",
+            raise ToolError("not_found", f"번호가 {args['id']}인 변경 묶음을 찾을 수 없습니다.",
+                            hint="이 문서의 변경 기록에서 변경 묶음 번호를 확인하세요.",
                             candidates=[c["id"] for c in record.get("changesets", [])][-10:])
     slim = [{k: c.get(k) for k in ("id", "kind", "revision", "rev", "status", "author",
                                    "changedPages", "created", "items", "notes")}
@@ -1247,7 +1258,8 @@ def _changes_text(r: dict) -> str:
                          for d in r["drafts"])
     if not r.get("draft"):
         return f"{r['path']}: no draft"
-    lines = [f"{r['path']}: revision {r['draft']['revision']}, {len(r['changesets'])} change set(s)"]
+    lines = [f"{r['path']}: revision {r['draft']['revision']}, "
+             f"{len(r['changesets'])} change set(s)"]
     for c in r["changesets"]:
         lines.append(f"  {c['id']}  {c['kind']}  {c['status']}  ops {c['ops']}  "
                      f"pages {c.get('changedPages') or []}")
@@ -1287,14 +1299,15 @@ def _topics() -> dict[str, Path]:
 def _run_guide(ctx: Context, args: dict) -> dict:
     topics = _topics()
     if not topics:
-        raise ToolError("capability_unavailable", "문서 작성 안내가 이 설치에 없습니다.")
+        raise ToolError("capability_unavailable", "설치한 프로그램에 문서 작성 안내가 없습니다.")
     topic = args.get("topic")
     if not topic:
         index = KNOWLEDGE_DIR / "_index.md"
         return {"topics": sorted(topics),
                 "text": index.read_text(encoding="utf-8") if index.exists() else ""}
     if topic not in topics:
-        raise ToolError("not_found", f"'{topic}' 안내는 없습니다.", candidates=sorted(topics))
+        raise ToolError("not_found", f"'{topic}' 주제의 작성 안내가 없습니다.",
+                        hint="주제를 빼고 guide를 실행해 주제 목록을 확인하세요.", candidates=sorted(topics))
     return {"topic": topic, "text": topics[topic].read_text(encoding="utf-8")}
 
 
