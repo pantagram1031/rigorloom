@@ -184,9 +184,10 @@ def _number_key(token: str) -> str:
     with localcontext() as exact:
         # Every digit counts: 0.1234…781 and 0.1234…782 are different numbers.
         exact.prec = len(text) + 40
-        for group in _GROUP.finditer(text):
-            if group.start() != end:
-                break
+        # Each group starts where the last one ended. A search over the whole
+        # text would try every digit of a long run as a start: 20,000 digits
+        # took seconds.
+        while group := _GROUP.match(text, end):
             mags = group.group(2)
             block += Decimal(group.group(1)).scaleb(sum(_SMALL.get(c, 0) for c in mags))
             large = sum(_LARGE.get(c, 0) for c in mags)

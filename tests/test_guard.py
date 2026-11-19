@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -168,6 +169,24 @@ def test_a_minus_written_as_a_word_or_a_math_sign_and_every_digit_count(tmp_path
                ("0.12345678901234567890123456781", "0.12345678901234567890123456782")]
     assert _changed([f"잔액은 {x}이다." for x, _ in changed], [f"잔액은 {y}이다." for _, y in changed],
                     tmp_path) == [1, 2, 3]
+
+
+def test_a_long_run_of_digits_is_read_in_one_pass():
+    # The guard, check, the MCP check tool and the review screen read untrusted
+    # text. The number key once tried every digit of a run as the start of a
+    # group: 20,000 digits took 13 s, 100,000 several minutes.
+    sys.path.insert(0, str(REPO / "runtime" / "scripts"))
+    import rt_fidelity
+
+    amounts = [("7" * 100_000 + "원", "7" * 99_999 + "8원"),
+               ("1" + ",234" * 3_000 + "원", "1" + ",234" * 2_999 + ",235원"),
+               ("1억 " * 3_000 + "원", "1억 " * 2_999 + "2억 원")]
+    started = time.perf_counter()
+    for x, y in amounts:
+        result = rt_fidelity.audit_text(f"금액은 {x}이다.", f"금액은 {y}이다.")
+        assert [c["kind"] for c in result["changes"]] == ["numbers"]
+        assert len(rt_fidelity.number_keys(f"금액은 {x}이다.")) == 1
+    assert time.perf_counter() - started < 5
 
 
 def test_a_unit_is_not_the_first_letter_of_another_word(tmp_path):
