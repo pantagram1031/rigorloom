@@ -1146,3 +1146,81 @@ def test_an_empty_save_path_is_refused_not_read_as_the_source(env, monkeypatch):
         code, _, errs = _cli(argv, monkeypatch)
         assert code == 2 and "저장할 경로가 비어 있습니다" in errs, argv
     assert path.read_bytes() == before
+
+
+def test_a_no_on_record_is_asked_again_even_over_the_drafts_own_file(env):
+    # F1, round 2: decline, put the draft's own bytes back, save again: ask.
+    path = _edited(env)
+    copy = env.work / "사본.fdoc"
+    ok(call(env.ctx(), "save", {"path": str(path), "to": str(copy)}))
+    mine = copy.read_bytes()
+    head = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": head, "ops": [
+        {"op": "set", "at": "p1", "text": "또 고친 문장"}]}))
+    copy.write_bytes(b"someone else")
+    err(call(env.ctx(client="cli", ask=lambda q, d: False), "save",
+             {"path": str(path), "to": str(copy)}), "declined_by_person")
+    copy.write_bytes(mine)
+    asked = []
+    err(call(env.ctx(client="cli", ask=lambda q, d: asked.append(q) or None), "save",
+             {"path": str(path), "to": str(copy)}), "needs_person")
+    assert asked and copy.read_bytes() == mine
+
+
+def test_a_draft_replaced_while_saving_is_not_saved_as_the_old_one(env, monkeypatch):
+    # F2, round 2: the instance checked for ownership must still be the draft
+    # under the lock.
+    path = _edited(env)
+    copy = env.work / "사본.fdoc"
+    ok(call(env.ctx(), "save", {"path": str(path), "to": str(copy)}))
+    head = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": head, "ops": [
+        {"op": "set", "at": "p1", "text": "또 고친 문장"}]}))
+    before = copy.read_bytes()
+    real = DraftStore.input_for
+
+    def swapped(self, ref, **kw):
+        result = real(self, ref, **kw)
+        record = self.load(ref)
+        record["instance"] = "someone-else"
+        self.write(ref, record)
+        return result
+
+    monkeypatch.setattr(DraftStore, "input_for", swapped)
+    err(call(env.ctx(), "save", {"path": str(path), "to": str(copy)}), "stale")
+    assert copy.read_bytes() == before
+
+
+def test_a_draft_without_an_instance_never_owns_what_it_saved(env):
+    # F2, round 2: records from before the instance id (and plain conversions)
+    # are asked about every time.
+    path = _edited(env)
+    ctx = env.ctx()
+    ref = rt_toolset.resolve(ctx, str(path))
+    record = ctx.drafts.load(ref)
+    record.pop("instance")
+    ctx.drafts.write(ref, record)
+    copy = env.work / "사본.fdoc"
+    ok(call(env.ctx(), "save", {"path": str(path), "to": str(copy)}))
+    head = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": head, "ops": [
+        {"op": "set", "at": "p1", "text": "또 고친 문장"}]}))
+    asked = []
+    err(call(env.ctx(ask=lambda q, d: asked.append(q) or None), "save",
+             {"path": str(path), "to": str(copy)}), "needs_person")
+    assert len(asked) == 1
+
+
+def test_undo_reports_a_file_error_as_json(env, monkeypatch):
+    # F3, round 2: an OS error during undo is an error envelope, not a traceback.
+    import rt_commit
+    path = _edited(env)
+    ok(call(env.ctx(ask=lambda q, d: True), "save", {"path": str(path)}))
+    monkeypatch.setattr(rt_cli_product, "confirm", lambda *a, **k: True)
+
+    def denied(*a, **k):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(rt_commit, "undo", denied)
+    code, out, _ = _cli(["undo", str(path), "--json"], monkeypatch)
+    assert code == 4 and json.loads(out)["error"]["code"] == "internal"

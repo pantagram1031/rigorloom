@@ -1228,9 +1228,14 @@ def _person_line(ref: Ref, target: Path) -> str:
 
 def _draft_id(ref: Ref, record: dict | None) -> str:
     """The draft as save history names it: its key plus the instance, so a
-    new draft on the same path is not the one that created a file."""
+    new draft on the same path is not the one that created a file. A save
+    with no draft record (a plain conversion) or a record without an instance
+    gets a name used once, so it never makes a file "ours" for a later save."""
     instance = (record or {}).get("instance")
-    return f"{ref.key}#{instance}" if instance else ref.key
+    if instance:
+        return f"{ref.key}#{instance}"
+    import secrets
+    return f"{ref.key}#once-{secrets.token_hex(6)}"
 
 
 def _run_save(ctx: Context, args: dict) -> dict:
@@ -1275,17 +1280,19 @@ def _run_save(ctx: Context, args: dict) -> dict:
     # A "no" is final for these bytes at this target when an agent would ask
     # again. A person at the terminal who runs save again is asking themself,
     # but only by answering the question again: --force does not undo a "no".
-    if rt_commit.declined(target, digest, ctx.drafts.home):
+    said_no = rt_commit.declined(target, digest, ctx.drafts.home)
+    if said_no:
         if ctx.client != "cli":
             raise ToolError("declined_by_person",
                             "이 내용으로 파일을 덮어쓰지 않기로 했습니다.",
                             hint="덮어쓸지 다시 묻지 마세요. 저장하려면 새 파일 이름을 먼저 받으세요.",
                             at=str(target))
         if ctx.force:
+            hint = ("다른 이름으로 저장하세요: -o 새이름" if ctx.draft_scope else
+                    f"--force 없이 저장하면 터미널에서 직접 확인할 수 있습니다: {_person_line(ref, target)}")
             raise ToolError("declined_by_person",
                             "이 내용으로는 덮어쓰지 않기로 한 기록이 있어 --force로 저장하지 않았습니다.",
-                            hint="--force 없이 터미널에서 다시 실행하면 직접 확인할 수 있습니다.",
-                            at=str(target))
+                            hint=hint, at=str(target))
 
     if not target.exists():
         expected, policy = rt_commit.ABSENT, "policy:new-file"
@@ -1295,7 +1302,10 @@ def _run_save(ctx: Context, args: dict) -> dict:
         raise ToolError("target_exists", f"같은 이름이 이미 있어 저장하지 않았습니다({target}).",
                         hint="덮어쓰려면 --force를 붙이세요. 이전 내용은 저장 기록에 남습니다.",
                         at=str(target))
-    elif (ours := rt_commit.owned_sha256(target, ctx.drafts.home, draft=writer)) is not None:
+    elif not said_no and (
+            ours := rt_commit.owned_sha256(target, ctx.drafts.home, draft=writer)) is not None:
+        # A "no" on record for these bytes means the person is asked, even
+        # over a file this draft created (Sol re-check F1, round 2).
         # The digest the ownership check matched, not a fresh hash: a foreign
         # write after the check fails the commit as target_changed.
         expected, policy = ours, "policy:own-file"
@@ -1342,6 +1352,11 @@ def _run_save(ctx: Context, args: dict) -> dict:
                             hint="경로를 확인하고 다시 저장하세요.", at=str(target))
 
     provenance = _saved_provenance(record)
+    if record is None and has_edits:
+        # A draft appeared while we decided: what we checked is not what we'd write.
+        raise ToolError("stale", "확인하는 사이에 초안이 바뀌어 저장하지 않았습니다.",
+                        hint="초안을 다시 확인하고 저장하세요.", retryable=True,
+                        data={"reason": "superseded_by_newer_candidate"})
     if record is None:
         receipt = rt_commit.commit(candidate, target, expected=expected, by=ctx.client,
                                    policy=policy, home=ctx.drafts.home,
@@ -1351,9 +1366,11 @@ def _run_save(ctx: Context, args: dict) -> dict:
         with ctx.drafts.lock(ref):
             # Re-read under the lock: an edit or another save may have landed
             # while we asked. Writing the old record back would lose it.
+            first = record
             record = ctx.drafts.load(ref) or record
             head = record.get("head") or {}
-            if has_edits and head.get("sha256") != head_input.sha256:
+            if record.get("instance") != first.get("instance") or (
+                    has_edits and head.get("sha256") != head_input.sha256):
                 raise ToolError("stale", "확인하는 사이에 초안이 바뀌어 저장하지 않았습니다.",
                                 hint="초안을 다시 확인하고 저장하세요.", retryable=True,
                                 data={"reason": "superseded_by_newer_candidate"})

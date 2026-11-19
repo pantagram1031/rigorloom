@@ -88,6 +88,11 @@ def _settled(entries: list[dict], target: Path) -> list[dict]:
     last = entries[-1]
     current = sha256_file(target) if target.exists() else None
     last["state"] = "done" if current == last["newSha256"] else "failed"
+    if last["state"] == "done":
+        # Matching bytes cannot tell our publish from an identical copy put
+        # there by someone else (Sol re-check F4): such an entry never makes
+        # the file "ours", and undo will not remove a file it may not own.
+        last["settled"] = "digest"
     return entries
 
 
@@ -215,7 +220,7 @@ def owned_sha256(target: Path, home: Path | None = None, *,
     if not created:
         return None
     since = entries[created[-1]:]
-    if any(e.get("draft") != draft or e.get("undone")
+    if any(e.get("draft") != draft or e.get("undone") or e.get("settled")
            or e.get("policy") not in ("policy:new-file", "policy:own-file") for e in since):
         return None
     last = since[-1]["newSha256"]
@@ -256,6 +261,11 @@ def _last_undoable(entries: list[dict], target: Path, folder: Path) -> dict:
     entry = done[-1]
     if entry.get("undone"):
         raise ToolError("not_found", "마지막 저장은 이미 되돌렸습니다.", at=str(target))
+    if entry.get("oldSha256") is None and entry.get("settled"):
+        raise ToolError("target_changed",
+                        "저장이 끝났는지 확인할 수 없어 되돌리지 않았습니다.",
+                        hint="Rigorloom이 만든 파일인지 확인한 뒤 직접 정리하세요.",
+                        at=str(target), data={"history": str(folder)})
     current = sha256_file(target) if target.exists() else None
     if current != entry["newSha256"]:
         raise ToolError("target_changed",
@@ -332,9 +342,13 @@ def undo(target: Path, *, by: str, home: Path | None = None,
                 # it and put back, never replacing, if it was not ours.
                 kept = folder / f"{stamp}-created-{mine[:12]}{target.suffix}"
                 os.replace(target, kept)
-                if sha256_file(kept) != mine:
+                try:
+                    ours = sha256_file(kept) == mine
+                except OSError:
+                    ours = False  # could not check what moved: treat it as not ours
+                if not ours:
                     if not _put_back(kept, target):
-                        changed.hint = f"바뀐 파일은 저장 기록 폴더에 보관했습니다: {kept}"
+                        changed.hint = f"옮긴 파일은 저장 기록 폴더에 보관했습니다: {kept}"
                     raise changed
                 restored = None
             else:

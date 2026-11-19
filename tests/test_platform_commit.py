@@ -378,3 +378,55 @@ def test_create_new_on_a_filesystem_without_hard_links(tmp_path, monkeypatch):
         create_new(target, b"y")
     assert err.value.code == "target_exists" and target.read_bytes() == b"x"
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_a_creation_settled_after_a_crash_is_not_ours(tmp_path, home, monkeypatch):
+    # Sol re-check F4: after a crash, matching bytes cannot prove we published
+    # them, so the file is not "ours" and undo will not remove it.
+    target = tmp_path / "보고서.hwpx"
+    real = rt_commit._save_index
+    calls = []
+
+    def flaky(folder, entries):
+        calls.append(1)
+        if len(calls) == 2:  # the "done" write after publishing
+            raise KeyboardInterrupt("killed")
+        return real(folder, entries)
+
+    monkeypatch.setattr(rt_commit, "_save_index", flaky)
+    with pytest.raises(KeyboardInterrupt):
+        rt_commit.commit(_candidate(tmp_path, b"new"), target, expected=rt_commit.ABSENT,
+                         by="t", policy="policy:new-file", draft="d1")
+    monkeypatch.setattr(rt_commit, "_save_index", real)
+    assert target.read_bytes() == b"new"
+    assert not rt_commit.owned(target, draft="d1")
+    with pytest.raises(ToolError) as caught:
+        rt_commit.undo(target, by="t")
+    assert caught.value.code == "target_changed" and target.read_bytes() == b"new"
+
+
+def test_undo_puts_a_created_file_back_when_it_cannot_check_it(tmp_path, home, monkeypatch):
+    # Sol re-check F3, round 2: a read error after the move must not strand the file.
+    target = tmp_path / "보고서.hwpx"
+    rt_commit.commit(_candidate(tmp_path, b"new"), target, expected=rt_commit.ABSENT,
+                     by="t", policy="policy:new-file", draft="d1")
+    real = rt_commit.sha256_file
+
+    def unreadable(path):
+        if "-created-" in Path(path).name:
+            raise PermissionError("denied")
+        return real(path)
+
+    monkeypatch.setattr(rt_commit, "sha256_file", unreadable)
+    with pytest.raises(ToolError) as caught:
+        rt_commit.undo(target, by="t")
+    assert caught.value.code == "target_changed" and target.read_bytes() == b"new"
+
+
+def test_names_show_every_invisible_character():
+    # Sol re-check F5, round 2: zero-width and other invisible characters are
+    # escaped and listed; a name that only contains the text "\u0009" is not.
+    from rt_term import invisible_in, path_text
+    assert path_text("a​b\tc  d") == "a\\u200bb\\u0009c  d"
+    assert invisible_in("a​b\tc ") == ["U+200B", "U+0009", "U+00A0"]
+    assert path_text("a\\u0009") == "a\\u0009" and invisible_in("a\\u0009") == []

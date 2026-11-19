@@ -32,14 +32,16 @@ try:  # installed as rigorloom_runtime
     from . import rt_commit, rt_toolset  # rt_toolset registers the tools
     from .rt_cli_render import SHOW, candidates_line, person_error, shown
     from .rt_paths import STATE_MARKER, PathRefused, canonical, state_home
-    from .rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text, width
+    from .rt_term import (Term, confirm, invisible_in, is_console, one_line, pad, prepare_stdio,
+                          safe_text, width)
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
     import rt_toolset
     from rt_cli_render import SHOW, candidates_line, person_error, shown
     from rt_paths import STATE_MARKER, PathRefused, canonical, state_home
-    from rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text, width
+    from rt_term import (Term, confirm, invisible_in, is_console, one_line, pad, prepare_stdio,
+                         safe_text, width)
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
@@ -483,6 +485,9 @@ def _context(args) -> Context:
         # The question first, then what the person needs to answer it, then y/N.
         pages = detail.get("changedPages") or []
         lines = [question]
+        hidden = invisible_in(str(detail.get("target") or ""))
+        if hidden:
+            lines.append(f"  파일 이름에 보이지 않는 문자가 있습니다: {', '.join(hidden)}")
         if detail.get("revision"):
             lines.append(f"  저장할 것: 초안 {detail['revision']}판")
         if pages:
@@ -599,6 +604,9 @@ def _undo(term: Term, args) -> int:
         sys.stderr.write(f"{name} 파일은 Rigorloom이 새로 만든 파일입니다. "
                          "되돌리면 파일을 저장 기록에 보관하고 현재 경로에서 삭제합니다.\n")
     when = (entry.get("at") or "").replace("T", " ").replace("Z", " UTC")
+    hidden = invisible_in(str(target))
+    if hidden:
+        sys.stderr.write(f"파일 이름에 보이지 않는 문자가 있습니다: {', '.join(hidden)}\n")
     answer = confirm(f'"{name}" 파일을 마지막 저장({when}) 전으로 되돌릴까요?')
     if answer is None:
         envelope = {"ok": False, "error": ToolError(
@@ -613,6 +621,10 @@ def _undo(term: Term, args) -> int:
                 target, by="cli", expect=rt_commit.entry_id(entry))}
         except ToolError as exc:
             envelope = {"ok": False, "error": exc.to_dict()}
+        except OSError as exc:
+            envelope = {"ok": False, "error": ToolError(
+                "internal", "파일을 읽거나 옮기지 못해 되돌리지 않았습니다.",
+                hint=safe_text(exc.strerror or type(exc).__name__), at=str(target)).to_dict()}
     if envelope["ok"] and not args.json:
         r = envelope["result"]
         term.line(f"되돌렸습니다: {shown(r['target'])}" if not r["removed"]

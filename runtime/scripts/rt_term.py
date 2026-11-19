@@ -203,14 +203,34 @@ def safe_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n").translate(_UNSAFE)
 
 
+def _invisible(ch: str) -> bool:
+    """Not drawn, or drawn like a plain space: control, format (zero-width,
+    bidi), separators other than ASCII space, private use, unassigned."""
+    if ch == " ":
+        return False
+    return (ch.isspace() or not ch.translate(_UNSAFE)
+            or unicodedata.category(ch) in ("Cc", "Cf", "Zs", "Zl", "Zp", "Co", "Cs", "Cn"))
+
+
 def path_text(path: str) -> str:
     """A path for a person to read: exact, with invisible characters escaped.
 
     Unlike one_line, runs of spaces stay as they are, so two names that differ
-    only in spacing never look alike in a question the person answers.
+    only in spacing never look alike in a question the person answers. A name
+    with escapes also gets an ``invisible_in`` line, so a name that really
+    contains the text ``\\u0009`` is not mistaken for one with a tab.
     """
-    return "".join(f"\\u{ord(ch):04x}" if ch in "\t\r\n" or not ch.translate(_UNSAFE) else ch
-                   for ch in str(path))
+    return "".join(f"\\u{ord(ch):04x}" if _invisible(ch) else ch for ch in str(path))
+
+
+def invisible_in(path: str) -> list[str]:
+    """The invisible characters ``path_text`` escaped, as U+XXXX, in order."""
+    seen: list[str] = []
+    for ch in str(path):
+        code = f"U+{ord(ch):04X}"
+        if _invisible(ch) and code not in seen:
+            seen.append(code)
+    return seen
 
 
 def one_line(text: str) -> str:
