@@ -528,6 +528,23 @@ async function main() {
           projectAgentPlan: projection.projectAgentPlan,
           opKindLabel: vocabulary.opKindLabel,
           t: vocabulary.t,
+          // Mirrors desktop/scripts/action-test-support.mjs.
+          loadTrustModule: (load) => {
+            const vocab = load("../src/i18n/vocabulary.ts", {});
+            const store = load("../src/store.ts", {
+              react: { useSyncExternalStore: (_subscribe, snapshot) => snapshot() },
+            });
+            return load("../src/workspace/trust.ts", {
+              "../i18n/vocabulary.ts": vocab,
+              "../store.ts": store,
+            });
+          },
+          trustStoreSelectors: {
+            returnedDraftOps: () => [],
+            activeDisplayText: (s) => (s.texts && s.texts[s.activeSessionId]) || [],
+            activeHeadTexts: () => null,
+            showToast: () => {},
+          },
         };
       }
       return require(spec);

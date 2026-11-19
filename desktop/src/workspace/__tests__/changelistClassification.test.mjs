@@ -19,9 +19,17 @@ function transpileTsCjs(relUrl) {
 function loadModules() {
   const cache = new Map();
 
-  function loadCjs(relUrl, extraRequires = {}) {
+  function loadCjs(relUrl, extraRequires = {}, jsx = false) {
     if (cache.has(relUrl)) return cache.get(relUrl);
-    const code = transpileTsCjs(relUrl);
+    const source = readFileSync(new URL(relUrl, import.meta.url), "utf8");
+    const code = ts.transpileModule(source, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        ...(jsx ? { jsx: ts.JsxEmit.ReactJSX } : {}),
+        esModuleInterop: true,
+      },
+    }).outputText;
     const module = { exports: {} };
     const req = (id) => {
       if (id in extraRequires) return extraRequires[id];
@@ -67,11 +75,23 @@ function loadModules() {
       }),
     },
   });
+  const pageSheet = loadCjs(
+    "../../components/PageSheet.tsx",
+    {
+      react: {},
+      "react/jsx-runtime": {},
+      "../actions": {},
+      "../i18n/vocabulary": vocabulary,
+      "../store": {},
+      "./SeatEditor": {},
+    },
+    true,
+  );
 
-  return { vocabulary, planProjection, fieldLabels, guardHelper };
+  return { vocabulary, planProjection, fieldLabels, guardHelper, pageSheet };
 }
 
-const { fieldLabels, guardHelper } = loadModules();
+const { fieldLabels, guardHelper, pageSheet } = loadModules();
 
 function loadGongmunFixtures() {
   const corpus = JSON.parse(
@@ -201,6 +221,216 @@ test("deriveCellFieldLabel returns body fallback for full-width body fill_target
   assert.equal(fieldLabels.deriveCellFieldLabel(inspect, textMap, 0, 2, 0, "ko"), "본문");
   assert.equal(fieldLabels.deriveCellFieldLabel(inspect, textMap, 0, 2, 0, "en"), "Body");
   assert.equal(fieldLabels.deriveCellFieldLabel(inspect, textMap, 0, 5, 1, "ko"), "협조자");
+});
+
+test("all 7 협조자 blanks on gianmun-byeolji-1ho inherit 협조자 in shared deriveCellFieldLabel while guide row stays fallback", () => {
+  const { inspect, textMap } = loadGongmunFixtures();
+  const coopCols = [1, 2, 4, 5, 8, 10, 13];
+  for (let i = 0; i < coopCols.length; i += 1) {
+    const col = coopCols[i];
+    assert.equal(
+      fieldLabels.deriveCellFieldLabel(inspect, textMap, 0, 5, col, "ko", i + 3),
+      "협조자",
+      `expected 협조자 at (0,5,${col})`,
+    );
+  }
+  // Guide cell (0,0,0) must not be inherited onto (0,0,14) as a static row header.
+  assert.equal(fieldLabels.deriveCellFieldLabel(inspect, textMap, 0, 0, 14, "ko", 1), "빈칸 1");
+  assert.equal(fieldLabels.deriveCellFieldLabel(inspect, textMap, 0, 0, 14, "en", 1), "Blank 1");
+});
+
+test("buildIndexedChanges on Review labels fill_cell ops on row 5 as 협조자 identically to Fill", () => {
+  const { inspect, textMap } = loadGongmunFixtures();
+  const coopCols = [1, 2, 4, 5, 8, 10, 13];
+  const draft = {
+    sessionId: "sess-coop",
+    boundSha256: inspect.documentHash,
+    phase: "ready",
+    plan: { planId: "plan-coop", backend: "preedit", boundSha256: inspect.documentHash, ops: [] },
+    validation: { ok: true, hard: [], warn: [], stale: false },
+    error: null,
+    ops: coopCols.map((col, idx) => ({
+      opId: `coop-${col}`,
+      kind: "fill_cell",
+      table: 0,
+      row: 5,
+      col,
+      text: `기관${idx + 1}`,
+      before: "",
+      origin: "user",
+    })),
+  };
+
+  const changes = guardHelper.buildIndexedChanges(draft, inspect, textMap, "ko");
+  assert.equal(changes.length, coopCols.length);
+  for (const ch of changes) {
+    assert.equal(ch.fieldLabel, "협조자", ch.opId);
+    assert.equal(ch.opKindText, "빈칸 채움", ch.opId);
+  }
+});
+
+test("column-header-above takes priority over row-header inheritance across sibling fill_target cells", () => {
+  const syntheticInspect = {
+    documentHash: "h-prio",
+    sessionId: "s-prio",
+    summary: {
+      documentHash: "h-prio",
+      sessionId: "s-prio",
+      anchors: [],
+      fillTargetCount: 3,
+      spacerCells: [],
+      scriptAnomalyTargets: [],
+      removalTargets: [],
+      formatHints: { table_count: 1, has_eq_placeholder: false, citation_example: null },
+      pageMetrics: {
+        width: 595,
+        height: 842,
+        chars_per_line: 40,
+        lines_per_page: 30,
+        usable_width: 480,
+        usable_height: 700,
+        margin: {},
+        assumptions: {},
+      },
+      constraints: { base_pt: 11, line_spacing_pct: 160, max_pages: null, min_pages: null },
+    },
+    graph: {
+      documentHash: "h-prio",
+      sessionId: "s-prio",
+      paragraphs: [],
+      tables: [
+        {
+          index: 0,
+          cells: [
+            { addr: { row: 0, col: 0 }, classification: "static", textPreview: "구분" },
+            { addr: { row: 0, col: 1 }, classification: "static", textPreview: "성명" },
+            { addr: { row: 0, col: 2 }, classification: "static", textPreview: "연락처" },
+            { addr: { row: 0, col: 3 }, classification: "fill_target", textPreview: "" },
+            { addr: { row: 1, col: 0 }, classification: "static", textPreview: "신청인" },
+            { addr: { row: 1, col: 1 }, classification: "fill_target", textPreview: "" },
+            { addr: { row: 1, col: 2 }, classification: "fill_target", textPreview: "" },
+            { addr: { row: 1, col: 3 }, classification: "fill_target", textPreview: "" },
+          ],
+        },
+      ],
+    },
+    regions: { documentHash: "h-prio", sessionId: "s-prio", regions: [] },
+  };
+
+  // (1,1) takes immediate left static header ("신청인").
+  assert.equal(fieldLabels.deriveCellFieldLabel(syntheticInspect, {}, 0, 1, 1, "ko", 1), "신청인");
+  // (1,2) hits (1,1) fill_target in Step 1, then finds column header above ("연락처") in Step 2 before Step 4.
+  assert.equal(fieldLabels.deriveCellFieldLabel(syntheticInspect, {}, 0, 1, 2, "ko", 2), "연락처");
+  // (1,3) has fill_target at (0,3) above so Step 2 breaks, and Step 4 inherits row header ("신청인").
+  assert.equal(fieldLabels.deriveCellFieldLabel(syntheticInspect, {}, 0, 1, 3, "ko", 3), "신청인");
+});
+
+test("all 24 Review labels on examples/gongmun/expected/plan.json remain unchanged", () => {
+  const { inspect, textMap, plan } = loadGongmunFixtures();
+  const draft = buildGongmunDraft(plan, textMap);
+  const changes = guardHelper.buildIndexedChanges(draft, inspect, textMap, "ko");
+
+  assert.equal(changes.length, 24);
+  const expectedLabels = [
+    ["op-1", "[별지 제1호서식]"],
+    ["op-2", "행정업무의 운영 및 혁신에 관한 규정…"],
+    ["op-3", "[별지 제1호서식]"],
+    ["op-4", "<개정 2016. 7. 11.>"],
+    ["op-5", "행정기관명"],
+    ["op-6", "수신"],
+    ["op-7", "제목"],
+    ["op-24", "본문"],
+    ["op-9", "기안자 직위(직급) 서명"],
+    ["op-10", "검토자 직위(직급) 서명"],
+    ["op-11", "결재권자 직위(직급) 서명"],
+    ["op-12", "처리과명-연도별 일련번호(시행일)"],
+    ["op-13", "처리과명-연도별 일련번호(접수일)"],
+    ["op-14", "우"],
+    ["op-15", "도로명주소"],
+    ["op-16", "홈페이지 주소"],
+    ["op-17", "전화번호( )"],
+    ["op-18", "팩스번호( )"],
+    ["op-19", "공무원의 전자우편주소"],
+    ["op-20", "공개 구분"],
+    ["op-21", "비고(이 난은 서식에 포함하지 아니한…"],
+    ["op-22", "비고(이 난은 서식에 포함하지 아니한…"],
+    ["op-23", "문서를 작성할 때 \"행정기관명\", \"…"],
+    ["op-8", "발신명의"],
+  ];
+  assert.deepEqual(
+    changes.map((c) => [c.opId, c.fieldLabel]),
+    expectedLabels,
+  );
+});
+
+test("computeEffectiveSheetZoom fits Fill on 390px, zooms to 100% on focus when blanks < 32px, and leaves Review unchanged", () => {
+  const baseInput = {
+    isFillMode: true,
+    isCompactMobile: true,
+    mobileExplicitFit: false,
+    pageFit: "width",
+    boxWidth: 374,
+    naturalWidthPx: 794,
+    zoom: 1,
+    isBlankFocused: false,
+    minBlankHeightPx: 36,
+  };
+
+  // Fill resting at 390px: width-fit (~0.471), fitted blank = 36 * 0.471 = 16.9px < 32px.
+  const resting = pageSheet.computeEffectiveSheetZoom(baseInput);
+  assert.equal(resting, 0.471);
+
+  // Focusing a blank whose fitted height < 32px auto-zooms to 100%.
+  assert.equal(
+    pageSheet.computeEffectiveSheetZoom({ ...baseInput, isBlankFocused: true }),
+    1,
+  );
+
+  // Leaving focus / Esc cancels editing returns to width-fit.
+  assert.equal(
+    pageSheet.computeEffectiveSheetZoom({ ...baseInput, isBlankFocused: false }),
+    0.471,
+  );
+
+  // If fitted blank is already >= 32px tall, focus stays at width-fit.
+  assert.equal(
+    pageSheet.computeEffectiveSheetZoom({
+      ...baseInput,
+      isBlankFocused: true,
+      minBlankHeightPx: 80,
+    }),
+    0.471,
+  );
+
+  // Review at 390px stays 100% by default unless mobileExplicitFit is true.
+  assert.equal(
+    pageSheet.computeEffectiveSheetZoom({
+      ...baseInput,
+      isFillMode: false,
+      isBlankFocused: true,
+    }),
+    1,
+  );
+  assert.equal(
+    pageSheet.computeEffectiveSheetZoom({
+      ...baseInput,
+      isFillMode: false,
+      mobileExplicitFit: true,
+      isBlankFocused: true,
+    }),
+    0.471,
+  );
+
+  // Free zoom respects explicit user zoom even when a blank is focused.
+  assert.equal(
+    pageSheet.computeEffectiveSheetZoom({
+      ...baseInput,
+      pageFit: "free",
+      zoom: 1.25,
+      isBlankFocused: true,
+    }),
+    1.25,
+  );
 });
 
 test("24-op gongmun plan classifies clearing ops and blank fills cleanly with zero 빈칸 N and zero auditable rows", () => {

@@ -16,6 +16,7 @@ import {
   navigateScreen,
   redoQueuedOp,
   reproposeDraft,
+  revisionNumberFor,
   seatAt,
   seatText,
   setInlineEditMultiline,
@@ -25,13 +26,17 @@ import { DetailDisclosure } from "../components/DetailDisclosure";
 import { PageSheet } from "../components/PageSheet";
 import { t } from "../i18n/vocabulary";
 import {
+  activeDisplayText,
+  activeHeadTexts,
   activeInspect,
   activeSession,
   activeText,
   cellKey,
+  headCandidate,
   queuedCellOpAt,
   useWorkspace,
 } from "../store";
+import { filledBlankCount, sheetSubjectLabel } from "../workspace/trust";
 import type { GraphCell } from "../types";
 import { buildRegionTextMap } from "../workspace/externalPlan";
 import { deriveCellFieldLabel } from "../workspace/fieldLabels";
@@ -54,7 +59,18 @@ const EMPTY_AUDITS: Record<string, RowGuardAudit> = {};
 export function FillView() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
+  // The page shows the head 수정본 once one exists, unless 원본 보기 is on.
+  const texts = useWorkspace(activeDisplayText);
+  const sourceTexts = useWorkspace(activeText);
+  const headTexts = useWorkspace(activeHeadTexts);
+  const showOriginal = useWorkspace((s) => s.showOriginal);
+  const restoredDraft = useWorkspace((s) => s.restoredDraft);
+  const headRevision = useWorkspace((s) => {
+    const h = headCandidate(s);
+    return h?.runId && s.activeSessionId
+      ? revisionNumberFor(s, s.activeSessionId, h.runId)
+      : null;
+  });
   const draft = useWorkspace((s) => s.draft);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const redoStack = useWorkspace((s) => s.redoStack);
@@ -124,15 +140,11 @@ export function FillView() {
     return buildIndexedChanges(draft, inspect, textMap, language);
   }, [draft, inspect, textMap, language]);
 
-  const doneCount = useMemo(() => {
-    const filledKeys = new Set<string>();
-    for (const op of draft.ops) {
-      if (op.kind === "fill_cell" && op.text.length > 0) {
-        filledKeys.add(cellKey(op.table, op.row, op.col));
-      }
-    }
-    return blanks.filter((b) => filledKeys.has(b.key)).length;
-  }, [draft.ops, blanks]);
+  // Typed into the queue, or already filled in the head 수정본: both are entries.
+  const doneCount = useMemo(
+    () => filledBlankCount(blanks.map((b) => b.key), draft.ops, sourceTexts, headTexts),
+    [draft.ops, blanks, sourceTexts, headTexts],
+  );
 
   const removalTargets = inspect?.summary?.removalTargets ?? [];
   const hasDeleteGuidesQueued = draft.ops.some((op) => op.kind === "delete_guides");
@@ -405,6 +417,17 @@ export function FillView() {
           onAdvanceBlankAfterEnter={(tbl, r, c, cur) =>
             void handleAdvanceAfterEnter(tbl, r, c, cur)
           }
+          subjectLabel={sheetSubjectLabel(
+            {
+              mode: "fill",
+              hasChanges: indexedChanges.length > 0,
+              headRevision: headTexts ? headRevision : null,
+              showingOriginal: showOriginal,
+            },
+            language,
+          )}
+          originalToggle={headTexts ? { showingOriginal: showOriginal } : undefined}
+          sourceTexts={sourceTexts}
         />
       </section>
 
@@ -419,6 +442,11 @@ export function FillView() {
             <p className="fill-counter" data-testid="fill-counter">
               {t("fill_counter", language, [doneCount, blanks.length])}
             </p>
+            {restoredDraft && restoredDraft.sessionId === sessionId ? (
+              <p className="fill-counter" data-testid="fill-restored">
+                {t("draft_restored", language, [restoredDraft.count])}
+              </p>
+            ) : null}
           </div>
 
           <div className="fill-header-actions">

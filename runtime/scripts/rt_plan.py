@@ -361,10 +361,20 @@ def _classify_foreign_kind(kind: str) -> str | None:
     return None
 
 
+#: The one provenance a plan can carry. Set from the identity of the connection
+#: a plan arrived on — the runtime the bundled test agents launch is started
+#: with ``--provider-identity mock`` — never from a ``proposer`` string, which
+#: any caller can spell. A plan from a test agent is a test value, not an
+#: agent's reading of the document, and it says so in its own payload so every
+#: surface that shows the plan can label it without guessing.
+PROVENANCES = frozenset({"mock"})
+
+
 def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
                bound_sha256: str, base: dict | None = None,
                reverses: dict | None = None, declares=None,
-               inventory: dict | None = None) -> OperationPlan:
+               inventory: dict | None = None,
+               provenance: str | None = None) -> OperationPlan:
     """Create a plan. Refuses an unservable backend or op kind before anything else.
 
     ``base`` is the published candidate these ops are chained onto, or ``None``
@@ -459,6 +469,13 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
                                        inventory=inventory),
         "state": "proposed",
     }
+    # Only present for a test agent's plan, so every other plan hashes exactly
+    # as it did before the field existed. Inside the hashed payload on purpose:
+    # an approval of a test value binds the fact that it was one.
+    if provenance is not None:
+        if provenance not in PROVENANCES:
+            raise RpcError("invalid_params", "unknown provenance", provenance=provenance)
+        payload["provenance"] = provenance
     payload["opsHash"] = ops_hash(backend, bound_sha256, normalised)
     payload["planHash"] = hashlib.sha256(
         canonical_bytes(payload, omit=("state",))).hexdigest()
@@ -754,7 +771,8 @@ def request_approval(plan: OperationPlan, requested_by: str) -> ApprovalRecord:
 
 
 def resolve_approval(record: ApprovalRecord, *, plan_id: str, plan_hash: str,
-                     decision: str, approver: str) -> ApprovalRecord:
+                     decision: str, approver: str, reason: str | None = None,
+                     reason_code: str | None = None) -> ApprovalRecord:
     """Bind the decision to an exact plan id AND plan hash, or refuse.
 
     The Runtime never fabricates approval and never approves something other
@@ -782,4 +800,12 @@ def resolve_approval(record: ApprovalRecord, *, plan_id: str, plan_hash: str,
     record.payload["decision"] = decision
     record.payload["approver"] = approver
     record.payload["resolvedUtc"] = now_utc()
+    # Why it was returned is its own field. It was once passed as the approver,
+    # which wrote a person's feedback into the record of who decided.
+    if reason is not None:
+        if not isinstance(reason, str):
+            raise RpcError("invalid_params", "reason must be a string")
+        record.payload["reason"] = reason
+    if reason_code is not None:
+        record.payload["reasonCode"] = reason_code
     return record

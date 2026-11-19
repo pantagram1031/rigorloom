@@ -7,6 +7,7 @@
 
 mod agenthost;
 mod credstore;
+mod devgate;
 mod digest;
 mod export;
 mod jobkill;
@@ -198,6 +199,28 @@ fn refuse(code: &str, message: String, data: Value) -> Value {
     json!({ "code": code, "message": message, "data": data })
 }
 
+/// The browser bridge's rule for the bundled test agent, applied natively:
+/// `RIGORLOOM_DEV_MOCK_AGENT` or the `devMockAgent` preference (devgate.rs).
+fn mock_agent_allowed(app: &AppHandle) -> bool {
+    let env = std::env::var(devgate::DEV_MOCK_AGENT_ENV).ok();
+    let pref = prefs::load(app)
+        .get(devgate::DEV_MOCK_AGENT_PREF)
+        .and_then(Value::as_bool);
+    devgate::mock_agent_allowed(env.as_deref(), pref)
+}
+
+fn require_mock_allowed(app: &AppHandle) -> Result<(), Value> {
+    if mock_agent_allowed(app) {
+        return Ok(());
+    }
+    Err(refuse(
+        "agent_not_connected",
+        "no agent provider is connected; the test agent runs only with the developer setting on"
+            .into(),
+        Value::Null,
+    ))
+}
+
 /// Copy a candidate and its receipt out of the workspace, hashing the copy.
 ///
 /// `artifact/exportTo` is GAP (protocol §11.5): everything the Runtime writes
@@ -345,10 +368,12 @@ fn agent_tool_status() -> Value {
 /// grant them and does not try.
 #[tauri::command]
 fn run_mock_agent(
+    app: AppHandle,
     state: State<'_, Runtime>,
     session_id: String,
     marker: String,
 ) -> Result<Value, Value> {
+    require_mock_allowed(&app)?;
     let script = mock_agent_script().ok_or_else(|| {
         refuse(
             "agent_unavailable",
@@ -418,7 +443,11 @@ fn resource_dir(app: &AppHandle) -> Option<PathBuf> {
 
 #[tauri::command]
 fn agent_host_status(app: AppHandle) -> Value {
-    agenthost::status(resource_dir(&app).as_deref(), &repo_root())
+    let mut status = agenthost::status(resource_dir(&app).as_deref(), &repo_root());
+    if let Some(map) = status.as_object_mut() {
+        map.insert("mockAllowed".into(), Value::Bool(mock_agent_allowed(&app)));
+    }
+    status
 }
 
 /// `--capabilities`: the three-state profile, keyless-honest.
@@ -488,6 +517,9 @@ fn agent_host_run(
     scenario: Option<String>,
     turn_id: String,
 ) -> Result<Value, Value> {
+    if devgate::provider_needs_dev_setting(&provider) {
+        require_mock_allowed(&app)?;
+    }
     let launch = agenthost::resolve_host(resource_dir(&app).as_deref(), &repo_root())
         .map_err(|m| refuse("agent_host_missing", m, Value::Null))?;
     let root = state.0.lock().unwrap().status().root.ok_or_else(|| {

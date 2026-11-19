@@ -3,6 +3,8 @@ import { useState, type FormEvent } from "react";
 
 import {
   isWorkspaceFolderLocked,
+  openOperatorModal,
+  setDevMockAgent,
   setLanguage,
   switchWorkspaceRoot,
   toggleTheme,
@@ -10,7 +12,7 @@ import {
 import { DetailDisclosure } from "../components/DetailDisclosure";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
 import * as rt from "../runtime";
-import { useWorkspace } from "../store";
+import { composerBlocker, useWorkspace } from "../store";
 import type { RuntimeError } from "../types";
 import "./settings.css";
 
@@ -28,6 +30,9 @@ export function SettingsView() {
   const root = useWorkspace((s) => s.root);
   const status = useWorkspace((s) => s.status);
   const folderLocked = useWorkspace(isWorkspaceFolderLocked);
+  const agentHost = useWorkspace((s) => s.agentHost);
+  const providerName = useWorkspace((s) => s.provider.provider);
+  const agentBlocker = useWorkspace(composerBlocker);
 
   const [editingFolder, setEditingFolder] = useState(false);
   const [folderInput, setFolderInput] = useState("");
@@ -83,6 +88,15 @@ export function SettingsView() {
   };
 
   const folderDisplayName = folderBasename(root);
+  const mockAllowed = agentHost?.mockAllowed === true;
+  const agentState =
+    providerName === "mock"
+      ? mockAllowed
+        ? t("settings_agent_mock", language)
+        : t("settings_agent_not_connected", language)
+      : agentBlocker === null || agentBlocker === "busy" || agentBlocker === "no_document"
+        ? t("settings_agent_connected", language)
+        : t("settings_agent_not_connected", language);
 
   return (
     <main className="settings-view" data-testid="settings-view">
@@ -95,28 +109,30 @@ export function SettingsView() {
           data-testid="settings-section-language"
           aria-label={t("settings_section_language", language)}
         >
-          <h2 className="settings-section-title">
-            {t("settings_section_language", language)}
-          </h2>
-          <div className="settings-segmented" role="group" aria-label={t("settings_section_language", language)}>
-            <button
-              type="button"
-              className={`settings-seg-btn${language === "ko" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-lang-ko"
-              aria-pressed={language === "ko"}
-              onClick={() => void setLanguage("ko")}
-            >
-              {t("lang_ko", "ko")}
-            </button>
-            <button
-              type="button"
-              className={`settings-seg-btn${language === "en" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-lang-en"
-              aria-pressed={language === "en"}
-              onClick={() => void setLanguage("en")}
-            >
-              English
-            </button>
+          <div className="settings-row-head">
+            <h2 className="settings-section-title">
+              {t("settings_section_language", language)}
+            </h2>
+            <div className="settings-segmented" role="group" aria-label={t("settings_section_language", language)}>
+              <button
+                type="button"
+                className={`settings-seg-btn${language === "ko" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-lang-ko"
+                aria-pressed={language === "ko"}
+                onClick={() => void setLanguage("ko")}
+              >
+                {t("lang_ko", "ko")}
+              </button>
+              <button
+                type="button"
+                className={`settings-seg-btn${language === "en" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-lang-en"
+                aria-pressed={language === "en"}
+                onClick={() => void setLanguage("en")}
+              >
+                English
+              </button>
+            </div>
           </div>
           <p className="settings-note" data-testid="settings-language-note">
             {t("settings_language_note", language)}
@@ -129,40 +145,80 @@ export function SettingsView() {
           data-testid="settings-section-theme"
           aria-label={t("settings_section_theme", language)}
         >
-          <h2 className="settings-section-title">
-            {t("settings_section_theme", language)}
-          </h2>
-          <div className="settings-segmented" role="group" aria-label={t("settings_section_theme", language)}>
-            <button
-              type="button"
-              className={`settings-seg-btn${theme === "light" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-theme-light"
-              aria-pressed={theme === "light"}
-              onClick={() => void toggleTheme("light")}
-            >
-              {t("theme_light", language)}
-            </button>
-            <button
-              type="button"
-              className={`settings-seg-btn${theme === "dark" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-theme-dark"
-              aria-pressed={theme === "dark"}
-              onClick={() => void toggleTheme("dark")}
-            >
-              {t("theme_dark", language)}
-            </button>
-            <button
-              type="button"
-              className={`settings-seg-btn${theme === "auto" ? " settings-seg-btn--active" : ""}`}
-              data-testid="settings-theme-auto"
-              aria-pressed={theme === "auto"}
-              onClick={() => void toggleTheme("auto")}
-            >
-              {t("theme_system", language)}
-            </button>
+          <div className="settings-row-head">
+            <h2 className="settings-section-title">
+              {t("settings_section_theme", language)}
+            </h2>
+            <div className="settings-segmented" role="group" aria-label={t("settings_section_theme", language)}>
+              <button
+                type="button"
+                className={`settings-seg-btn${theme === "light" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-theme-light"
+                aria-pressed={theme === "light"}
+                onClick={() => void toggleTheme("light")}
+              >
+                {t("theme_light", language)}
+              </button>
+              <button
+                type="button"
+                className={`settings-seg-btn${theme === "dark" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-theme-dark"
+                aria-pressed={theme === "dark"}
+                onClick={() => void toggleTheme("dark")}
+              >
+                {t("theme_dark", language)}
+              </button>
+              <button
+                type="button"
+                className={`settings-seg-btn${theme === "auto" ? " settings-seg-btn--active" : ""}`}
+                data-testid="settings-theme-auto"
+                aria-pressed={theme === "auto"}
+                onClick={() => void toggleTheme("auto")}
+              >
+                {t("theme_system", language)}
+              </button>
+            </div>
           </div>
           <p className="settings-note" data-testid="settings-theme-note">
             {t("settings_theme_note", language)}
+          </p>
+        </section>
+
+        {/* Section: Agent connection — the approval boundary stated once. */}
+        <section
+          className="settings-card"
+          data-testid="settings-section-agent"
+          aria-label={t("settings_agent_label", language)}
+        >
+          <div className="settings-row-head">
+            <h2 className="settings-section-title">
+              {t("settings_agent_label", language)}
+            </h2>
+            <button
+              type="button"
+              className="settings-btn"
+              data-testid="settings-agent-open"
+              onClick={() => openOperatorModal()}
+            >
+              {t("review_prompt_connect", language)}
+            </button>
+          </div>
+          <p className="settings-note" data-testid="settings-agent-state">
+            {agentState}
+          </p>
+          {agentHost && agentHost.mockAllowed !== undefined ? (
+            <label className="settings-note" data-testid="settings-dev-mock">
+              <input
+                type="checkbox"
+                data-testid="settings-dev-mock-toggle"
+                checked={mockAllowed}
+                onChange={(e) => void setDevMockAgent(e.target.checked)}
+              />{" "}
+              {t("settings_agent_dev_mock", language)}
+            </label>
+          ) : null}
+          <p className="settings-note" data-testid="settings-agent-note">
+            {t("settings_agent_note", language)}
           </p>
         </section>
 

@@ -193,8 +193,12 @@ def main(argv: list[str] | None = None) -> int:
 
     door = None
     try:
+        # The provider is chosen here, at launch, so the runtime learns it
+        # from its own argv: a mock turn's plans carry provenance "mock" no
+        # matter what the provider writes in ``proposer``.
         door = open_door(args.door, root, args.engine_root,
-                         Path(args.stderr_log) if args.stderr_log else None)
+                         Path(args.stderr_log) if args.stderr_log else None,
+                         identity="mock" if args.provider == "mock" else None)
         events = EventLog(args.events)
         host = AgentHost(door, provider, events, max_turns=args.max_turns)
         payload = host.run(args.instruction, args.session)

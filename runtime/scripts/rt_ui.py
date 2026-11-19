@@ -87,6 +87,12 @@ AGENTHOST_SECRET_KEYS = frozenset({
     "xapikey",
 })
 AGENTHOST_PROVIDERS = ("mock", "anthropic", "router")
+#: The bundled mock agent writes test values, not a reading of the document.
+#: It runs only when a developer turned it on, through this environment
+#: variable or the ``devMockAgent`` preference; otherwise a request with no
+#: real provider is refused as "not connected" instead of silently proposing.
+DEV_MOCK_AGENT_ENV = "RIGORLOOM_DEV_MOCK_AGENT"
+DEV_MOCK_AGENT_PREF = "devMockAgent"
 
 FALLBACK_INDEX_HTML = (
     "<!doctype html>\n"
@@ -1209,6 +1215,19 @@ class BridgeApplication:
 
     # --- Mock Agent & Agent Host ---------------------------------------------
 
+    def mock_agent_allowed(self) -> bool:
+        if os.environ.get(DEV_MOCK_AGENT_ENV, "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+        return self.get_prefs().get(DEV_MOCK_AGENT_PREF) is True
+
+    def _require_mock_allowed(self) -> None:
+        if not self.mock_agent_allowed():
+            raise BridgeError(
+                "agent_not_connected",
+                "no agent provider is connected; the test agent runs only with the developer setting on",
+                status=HTTPStatus.CONFLICT,
+            )
+
     def agent_tool_status(self) -> dict[str, Any]:
         root = self.current_root()
         if not MOCK_AGENT_SCRIPT.is_file():
@@ -1223,6 +1242,7 @@ class BridgeApplication:
         return {"available": True, "root": str(root), "script": str(MOCK_AGENT_SCRIPT), "reason": None}
 
     def run_mock_agent(self, body: dict[str, Any]) -> dict[str, Any]:
+        self._require_mock_allowed()
         if not MOCK_AGENT_SCRIPT.is_file():
             raise BridgeError("tool_unavailable", "mock_agent.py is unavailable", status=HTTPStatus.SERVICE_UNAVAILABLE)
         root = self.current_root()
@@ -1288,6 +1308,7 @@ class BridgeApplication:
             "running": running,
             "root": str(self.current_root()),
             "providers": list(AGENTHOST_PROVIDERS),
+            "mockAllowed": self.mock_agent_allowed(),
             "script": str(script) if script else None,
             "reason": None if script else "agenthost/scripts/host.py not available in this installation",
         }
@@ -1386,6 +1407,8 @@ class BridgeApplication:
         provider = str(body.get("provider") or "mock")
         if provider not in AGENTHOST_PROVIDERS:
             raise BridgeError("invalid_params", f"unsupported provider {provider!r}")
+        if provider == "mock":
+            self._require_mock_allowed()
         turn_id = str(body.get("turnId") or uuid.uuid4().hex[:12])
         root = self.current_root()
         root.mkdir(parents=True, exist_ok=True)

@@ -252,6 +252,8 @@ export interface OperationPlan {
   reverses: CandidateRef | null;
   createdUtc: string;
   proposer: string;
+  /** `"mock"` when a bundled test agent proposed it; absent otherwise. */
+  provenance?: string | null;
   implVersion: string;
   ops: PlanOp[];
   state: string;
@@ -301,6 +303,12 @@ export interface ApprovalRecord {
   resolvedUtc: string | null;
   approver: string | null;
   decision: string | null;
+  /** The person's own words when they returned it. Never the approver. */
+  reason?: string | null;
+  /** Set when the runtime returned it, e.g. `superseded_by_newer_candidate`. */
+  reasonCode?: string | null;
+  resolvedBy?: string | null;
+  supersededBy?: string | null;
 }
 
 /** One checker's row inside a VerificationReport. */
@@ -350,6 +358,10 @@ export interface Receipt {
   /** The candidate this one reverses, when its plan declared one. */
   reverses: CandidateRef | null;
   approval: ApprovalRecord;
+  /** Who proposed the plan this candidate applied. */
+  proposer?: string | null;
+  /** `"mock"` when that plan came from a bundled test agent. */
+  provenance?: string | null;
   steps: Array<{
     opId: string;
     kind: string;
@@ -993,6 +1005,8 @@ export interface CredentialStatus {
 /** Where the Agent Host is, if it is anywhere. */
 export interface AgentHostStatus {
   available: boolean;
+  /** The developer setting that lets the bundled test agent run. */
+  mockAllowed?: boolean;
   mode: "explicit" | "packaged" | "interpreter" | null;
   script: string | null;
   program: string | null;

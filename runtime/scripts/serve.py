@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rt_codes import EXIT_OK, EXIT_USAGE, IMPL_VERSION, PROTOCOL_VERSION  # noqa: E402
 from rt_jsonl import log  # noqa: E402
-from rt_server import ENTRIES, RuntimeServer  # noqa: E402
+from rt_server import ENTRIES, PROVIDER_IDENTITIES, RuntimeServer  # noqa: E402
 
 
 def utf8_stdio() -> None:
@@ -57,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine-root", default=None,
                         help="repo root holding engine/scripts and "
                              "pipeline/scripts (default: this checkout)")
+    parser.add_argument("--provider-identity", default=None,
+                        choices=list(PROVIDER_IDENTITIES),
+                        help="agent entry only: the identity of the provider "
+                             "that launched this connection. Every plan it "
+                             "proposes carries it as provenance; a request "
+                             "field cannot set or clear it.")
     parser.add_argument("--version", action="store_true",
                         help="print protocol and implementation version, exit")
     return parser
@@ -74,8 +80,12 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         log(f"--root is not usable: {exc}")
         return EXIT_USAGE
+    if args.provider_identity is not None and args.entry != "agent":
+        log("--provider-identity is only meaningful on the agent entry")
+        return EXIT_USAGE
     server = RuntimeServer(entry=args.entry, root=root,
-                           engine_root=args.engine_root)
+                           engine_root=args.engine_root,
+                           provider_identity=args.provider_identity)
     log(f"runtime ready: entry={args.entry} protocol={PROTOCOL_VERSION} "
         f"impl={IMPL_VERSION}")
     return server.serve()

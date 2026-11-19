@@ -39,7 +39,7 @@ from rt_apply import (  # noqa: E402
     read_receipt,
     verification_report,
 )
-from rt_apply_once import apply_once
+from rt_apply_once import apply_once, session_lock
 from rt_codes import (  # noqa: E402
     IMPL_VERSION,
     KNOWN_BACKENDS,
@@ -86,6 +86,7 @@ from rt_session import (  # noqa: E402
     forbidden_inventory,
     full_text_spec,
     load_profile,
+    now_utc,
     region_runs_with_faces,
     sha256_file,
 )
@@ -379,7 +380,8 @@ class RuntimeCore:
         return {"keepable": keepable, "guide": guide}
 
     def plan_propose(self, session_id, backend, ops, proposer,
-                     base_run_id=None, reverses=None, declares=None) -> dict:
+                     base_run_id=None, reverses=None, declares=None,
+                     provenance=None, replaces=None) -> dict:
         """Build a plan against the session source, or onto a published candidate.
 
         ``baseRunId`` is the chain. Without it every apply starts from the
@@ -391,8 +393,29 @@ class RuntimeCore:
         ``reverses`` is a claim, recorded next to the bytes that will back it:
         this plan undoes that candidate. It is checked afterwards with
         ``candidate/compare``, never taken on trust here.
+
+        ``provenance`` is NOT a caller field. It is the identity of the
+        connection the plan arrived on (``serve.py --provider-identity mock``
+        for the bundled test agents), passed in by the front end. A plain
+        ``proposer`` string no longer decides it. A plan that carries any op a
+        test agent proposed in this session stays ``mock`` even when a client
+        rebuilds and re-proposes it (``_inherited_provenance``).
+
+        ``replaces`` names a queued plan this proposal explicitly replaces. Its
+        pending or unconsumed approval is revoked under the session lock, in
+        the same step that records the new plan, so the replaced plan cannot be
+        approved or applied afterwards.
         """
         session = self.store.get(session_id)
+        if provenance not in (None, "mock"):
+            raise RpcError("invalid_params", "unknown provenance", provenance=provenance)
+        with session_lock(self.store.root, session.id):
+            return self._plan_propose_locked(session, backend, ops, proposer,
+                                             base_run_id, reverses, declares,
+                                             provenance, replaces)
+
+    def _plan_propose_locked(self, session, backend, ops, proposer, base_run_id,
+                             reverses, declares, provenance, replaces) -> dict:
         if not isinstance(backend, str) or not backend:
             raise RpcError("invalid_params", "backend must be a non-empty string")
         base = None
@@ -410,20 +433,102 @@ class RuntimeCore:
                                                      self._bare_run_id(reversal_id))
             reversal = {"runId": reversal_id,
                         "sha256": reversed_receipt["candidate"]["sha256"]}
+        replaced = None
+        if replaces is not None:
+            replaced = self.plan(self._bare_run_id(replaces))
+            if replaced.payload.get("sessionId") != session.id:
+                raise RpcError("unknown_plan",
+                               "the replaced plan belongs to another session",
+                               planId=replaced.id, sessionId=session.id)
         inventory = None
         if isinstance(declares, dict) and declares.get("keep"):
             inventory = self._declaration_inventory(session)
+        if provenance is None:
+            provenance = self._inherited_provenance(session, ops)
         plan = build_plan(session_id=session.id, backend=backend, ops=ops,
                           proposer=proposer, bound_sha256=bound,
                           base=base, reverses=reversal, declares=declares,
-                          inventory=inventory)
+                          inventory=inventory, provenance=provenance)
         self.save_plan(plan)
+        if provenance == "mock":
+            self._remember_mock_ops(session, plan.payload["ops"])
         append_event(session, "plan.proposed", planId=plan.id,
                      opsHash=plan.payload["opsHash"], backend=backend,
                      proposer=proposer, ops=len(plan.payload["ops"]),
+                     provenance=plan.payload.get("provenance"),
                      baseRunId=(base or {}).get("runId"),
-                     reversesRunId=(reversal or {}).get("runId"))
-        return {"plan": plan.public()}
+                     reversesRunId=(reversal or {}).get("runId"),
+                     **({"replaces": replaced.id} if replaced is not None else {}))
+        answer = {"plan": plan.public()}
+        if replaced is not None:
+            revoked = self._retire_approvals(
+                session, lambda candidate: candidate.id == replaced.id,
+                superseded_by=plan.id)
+            answer["replaced"] = {"planId": replaced.id,
+                                  "state": self.plan(replaced.id).state,
+                                  "revokedApprovals": revoked}
+        return answer
+
+    # -- provenance -----------------------------------------------------------
+    @staticmethod
+    def _op_identity(kind, params) -> str | None:
+        """What an op does, independent of how a client spelled it.
+
+        Target address plus the value written. Op ids, ``lines`` versus
+        ``text`` and incidental fields (``overwrite``, ``charPr``) are left out
+        on purpose: a client that rebuilds a test agent's op keeps its target
+        and value, and that is what makes it the test agent's value.
+        """
+        if not isinstance(params, dict):
+            return None
+        text = params.get("text")
+        if isinstance(params.get("lines"), list):
+            text = "\n".join(str(line) for line in params["lines"])
+        if kind in ("fill_cell", "replace_at_cell"):
+            key = ["cell", params.get("table", 0), params.get("row"), params.get("col")]
+        elif kind == "set_run":
+            key = ["para", params.get("atPara"), params.get("run")]
+        else:
+            return None
+        return json.dumps(key + [text], ensure_ascii=False, sort_keys=True)
+
+    def _mock_index_path(self, session) -> Path:
+        return self.store.root / "provenance" / f"{session.id}.json"
+
+    def _mock_identities(self, session) -> set[str]:
+        path = self._mock_index_path(session)
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return set()
+        rows = loaded.get("mockOps") if isinstance(loaded, dict) else None
+        return {row for row in rows if isinstance(row, str)} if isinstance(rows, list) else set()
+
+    def _remember_mock_ops(self, session, normalised_ops) -> None:
+        known = self._mock_identities(session)
+        for op in normalised_ops:
+            ident = self._op_identity(op.get("kind"), op.get("params"))
+            if ident is not None:
+                known.add(ident)
+        path = self._mock_index_path(session)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_bytes(path, (json.dumps({"mockOps": sorted(known)},
+                                             ensure_ascii=False) + "\n").encode("utf-8"))
+
+    def _inherited_provenance(self, session, ops) -> str | None:
+        """``"mock"`` when any op repeats a test agent's op in this session."""
+        if not isinstance(ops, list):
+            return None
+        known = self._mock_identities(session)
+        if not known:
+            return None
+        for op in ops:
+            if not isinstance(op, dict):
+                continue
+            params = {k: v for k, v in op.items() if k not in ("kind", "opId")}
+            if self._op_identity(op.get("kind"), params) in known:
+                return "mock"
+        return None
 
     def plan(self, plan_id) -> OperationPlan:
         payload = self.store.load_record("plans", plan_id)
@@ -461,13 +566,143 @@ class RuntimeCore:
                 # Degrade to the base profile; the validator then reports
                 # run_inventory_unavailable rather than assuming clean.
                 profile = base
-        return validate_plan(plan, profile=profile, current_sha256=current)
+        report = validate_plan(plan, profile=profile, current_sha256=current)
+        behind = self.behind_head(session, plan)
+        if behind is not None:
+            report["hard"].append(behind)
+            report["ok"] = False
+            report["verdict"] = "fail"
+            report["counts"]["hard"] = len(report["hard"])
+        return report
+
+    # -- the head -------------------------------------------------------------
+    @staticmethod
+    def head_run_id(session) -> str | None:
+        """The newest published candidate of a session, or ``None``.
+
+        The runtime keeps parents, not a head (§15.7), and a person can still
+        look at any candidate. But what a NEW plan may be applied onto is not a
+        matter of taste: applying onto anything older than the newest
+        candidate publishes a file that silently lacks the newest one's
+        changes. So for that one question the newest candidate is the head.
+        """
+        rows = list_candidates(session)
+        return rows[-1]["runId"] if rows else None
+
+    def behind_head(self, session, plan) -> dict | None:
+        """The ``plan_behind_head`` finding, when the plan predates the head.
+
+        A plan that was already applied is exempt: it IS the history, and its
+        base is older than the candidate it produced by construction.
+        """
+        if plan.state == "applied":
+            return None
+        head = self.head_run_id(session)
+        if head is None:
+            return None
+        base = plan.payload.get("base") or None
+        base_run = base.get("runId") if isinstance(base, dict) else None
+        if base_run == head:
+            return None
+        return {
+            "code": "plan_behind_head",
+            "msg": ("this plan was computed against "
+                    + ("the source" if base_run is None else f"candidate {base_run}")
+                    + f", but candidate {head} is newer; applying it would drop "
+                    "that candidate's changes. Re-propose on the head."),
+            "at": "plan",
+            "baseRunId": base_run,
+            "headRunId": head,
+        }
+
+    def _retire_approvals(self, session, select, *, superseded_by: str) -> list[str]:
+        """Revoke the open approvals of the selected plans of this session.
+
+        Open means pending, or approved and not yet consumed by an apply. The
+        record is resolved as returned (never approved) by the runtime, with
+        ``reasonCode: superseded_by_newer_candidate`` and ``supersededBy``, and
+        the matching ``approval.resolved`` event is written next to it. Callers
+        hold the session lock, so the record and its event cannot disagree with
+        a concurrent writer.
+        """
+        approvals_dir = self.store.root / "approvals"
+        if not approvals_dir.is_dir():
+            return []
+        retired: list[str] = []
+        # A plan with a published candidate consumed its approval, whatever
+        # its state field says now (plan/validate rewrites that field).
+        published = {row.get("planId") for row in list_candidates(session)}
+        for path in sorted(approvals_dir.glob("*.json")):
+            payload = self.store.load_record("approvals", path.stem)
+            if not payload or payload.get("state") not in ("pending", "approved"):
+                continue
+            plan_id = payload.get("planId")
+            plan_payload = self.store.load_record("plans", plan_id) if isinstance(plan_id, str) else None
+            if not plan_payload or plan_payload.get("sessionId") != session.id:
+                continue
+            plan = OperationPlan(plan_payload)
+            if plan.state == "applied" or plan.id in published or not select(plan):
+                continue
+            record = ApprovalRecord(payload)
+            previous = record.state
+            if previous == "pending":
+                resolve_approval(record, plan_id=plan_id,
+                                 plan_hash=payload.get("planHash"),
+                                 decision="rejected", approver=None,
+                                 reason_code="superseded_by_newer_candidate")
+            else:
+                # An approval nobody has applied yet is revoked, not re-decided:
+                # the person's decision stays on the record beside the reason
+                # it can no longer be used.
+                record.payload["state"] = "rejected"
+                record.payload["reasonCode"] = "superseded_by_newer_candidate"
+                record.payload["revokedFrom"] = previous
+                record.payload["revokedUtc"] = now_utc()
+            record.payload["resolvedBy"] = "runtime"
+            record.payload["supersededBy"] = superseded_by
+            self.save_approval(record)
+            plan.state = "rejected"
+            self.save_plan(plan)
+            append_event(session, "approval.resolved", planId=plan_id,
+                         approvalId=record.id, state="rejected",
+                         approver=None,
+                         reasonCode="superseded_by_newer_candidate",
+                         supersededBy=superseded_by,
+                         **({"revokedFrom": previous} if previous != "pending" else {}))
+            retired.append(record.id)
+        return retired
+
+    def _supersede_invalidated(self, session, applied_plan_id: str) -> list[str]:
+        """After a publication: retire approvals whose base is no longer the head.
+
+        Only plans the committed transition invalidated — those computed
+        against anything but the current head. A plan proposed on the new head
+        (even one proposed while reconciliation was still running) keeps its
+        approval. The head is read from the published candidates, never taken
+        from the run being reconciled, so reconciling an older publication
+        cannot retire approvals on a newer head.
+        """
+        head = self.head_run_id(session)
+        if head is None:
+            return []
+
+        def invalidated(plan) -> bool:
+            if plan.id == applied_plan_id:
+                return False
+            base = plan.payload.get("base") or None
+            base_run = base.get("runId") if isinstance(base, dict) else None
+            return base_run != head
+
+        return self._retire_approvals(session, invalidated, superseded_by=head)
 
     def plan_validate(self, plan_id) -> dict:
         plan = self.plan(plan_id)
         report = self.validated(plan)
-        plan.state = "validated" if report["ok"] else "invalid"
-        self.save_plan(plan)
+        # An applied plan stays applied: validation is a read, and the state
+        # field is what supersession and replay consult.
+        if plan.state != "applied":
+            plan.state = "validated" if report["ok"] else "invalid"
+            self.save_plan(plan)
         append_event(self.store.get(plan.payload["sessionId"]), "plan.validated",
                      planId=plan.id, verdict=report["verdict"], ok=report["ok"],
                      hard=[row["code"] for row in report["hard"]])
@@ -489,18 +724,30 @@ class RuntimeCore:
 
     def approval_request(self, plan_id, requested_by) -> dict:
         plan = self.plan(plan_id)
-        record = request_approval(plan, requested_by)
-        self.save_approval(record)
-        append_event(self.store.get(plan.payload["sessionId"]),
-                     "approval.requested", planId=plan.id,
-                     approvalId=record.id, requestedBy=requested_by)
+        session = self.store.get(plan.payload["sessionId"])
+        with session_lock(self.store.root, session.id):
+            plan = self.plan(plan_id)
+            record = request_approval(plan, requested_by)
+            self.save_approval(record)
+            append_event(session, "approval.requested", planId=plan.id,
+                         approvalId=record.id, requestedBy=requested_by)
         return {"approval": record.public()}
 
     def approval_get(self, approval_id) -> dict:
         return {"approval": self.approval(approval_id).public()}
 
     def approval_resolve(self, approval_id, plan_id, plan_hash, decision,
-                         approver) -> dict:
+                         approver, reason=None) -> dict:
+        plan = self.plan(plan_id)
+        session = self.store.get(plan.payload["sessionId"])
+        # The head check, the record replacement and its event are one step:
+        # another host's publication cannot land between them.
+        with session_lock(self.store.root, session.id):
+            return self._approval_resolve_locked(approval_id, plan_id, plan_hash,
+                                                 decision, approver, reason)
+
+    def _approval_resolve_locked(self, approval_id, plan_id, plan_hash, decision,
+                                 approver, reason) -> dict:
         record = self.approval(approval_id)
         plan = self.plan(plan_id)
         report = self.validated(plan)
@@ -510,15 +757,24 @@ class RuntimeCore:
                            "cannot be approved",
                            planId=plan.id, boundSha256=plan.payload["boundSha256"],
                            currentSha256=report["currentSha256"])
+        if decision == "approved":
+            # Returning an outdated plan stays possible; approving one does not.
+            behind = next((row for row in report["hard"]
+                           if row["code"] == "plan_behind_head"), None)
+            if behind is not None:
+                raise RpcError("plan_behind_head", behind["msg"],
+                               planId=plan.id, baseRunId=behind["baseRunId"],
+                               headRunId=behind["headRunId"])
         resolve_approval(record, plan_id=plan_id, plan_hash=plan_hash,
-                         decision=decision, approver=approver)
+                         decision=decision, approver=approver, reason=reason)
         plan.state = "approved" if record.state == "approved" else "rejected"
         self.save_approval(record)
         self.save_plan(plan)
         append_event(self.store.get(plan.payload["sessionId"]),
                      "approval.resolved", planId=plan.id,
                      approvalId=record.id, state=record.state,
-                     approver=approver)
+                     approver=approver,
+                     **({"reason": reason} if reason is not None else {}))
         return {"approval": record.public()}
 
     # -- apply --------------------------------------------------------------
@@ -533,11 +789,30 @@ class RuntimeCore:
                            boundPlanId=record.payload["planId"],
                            boundPlanHash=record.payload["planHash"],
                            planHash=plan.hash)
-        if record.state != "approved":
-            raise RpcError("plan_not_approved",
-                           f"the approval for this plan is {record.state}",
-                           planId=plan.id, approvalId=record.id, state=record.state)
         session = self.store.get(plan.payload["sessionId"])
+        # From the head check to the receipt, one writer per session: across
+        # threads and across host processes on this root.
+        with session_lock(self.store.root, session.id):
+            # Re-read under the lock: a transition that finished while this
+            # call waited may have applied this plan or revoked its approval.
+            plan = self.plan(plan_id)
+            record = self.approval(approval_id)
+            if record.state != "approved":
+                # Revoked because a newer candidate exists: say THAT, it is
+                # the actionable answer (re-propose on the head).
+                behind = (self.behind_head(session, plan)
+                          if record.payload.get("reasonCode") == "superseded_by_newer_candidate"
+                          else None)
+                if behind is not None:
+                    raise RpcError("plan_behind_head", behind["msg"],
+                                   planId=plan.id, baseRunId=behind["baseRunId"],
+                                   headRunId=behind["headRunId"])
+                raise RpcError("plan_not_approved",
+                               f"the approval for this plan is {record.state}",
+                               planId=plan.id, approvalId=record.id, state=record.state)
+            return self._plan_apply_locked(session, plan, record, checkpoint)
+
+    def _plan_apply_locked(self, session, plan, record, checkpoint) -> dict:
         def reconcile(result, *, emit_events):
             candidate = result["candidate"]
             if plan.state != "applied":
@@ -550,6 +825,9 @@ class RuntimeCore:
                              sha256=candidate["candidate"]["sha256"],
                              acceptance=candidate["checks"]["acceptance"],
                              ranAll=candidate["checks"]["ranAll"])
+            # Only approvals whose base this publication invalidated. A
+            # replay of a completed apply never gets here (rt_apply_once).
+            self._supersede_invalidated(session, plan.id)
 
         def execute(run_id):
             report = self.validated(plan)
@@ -558,6 +836,12 @@ class RuntimeCore:
                                "the source changed after this plan was approved",
                                planId=plan.id, boundSha256=plan.payload["boundSha256"],
                                currentSha256=report["currentSha256"])
+            behind = next((row for row in report["hard"]
+                           if row["code"] == "plan_behind_head"), None)
+            if behind is not None:
+                raise RpcError("plan_behind_head", behind["msg"],
+                               planId=plan.id, baseRunId=behind["baseRunId"],
+                               headRunId=behind["headRunId"])
             if not report["ok"]:
                 raise RpcError("plan_invalid",
                                "this plan does not validate against the current document",
@@ -870,7 +1154,10 @@ class RuntimeCore:
             "artifactEqual": left_facts["sha256"] == right_facts["sha256"],
             "regions": rows,
             "regionsCompared": len(compared),
-            "regionsEqual": (bool(compared) and all(row["equal"] for row in compared)
+            # A proof covers every address it was asked about. One unreadable
+            # region and the answer is "not proven" (null), never "equal".
+            "regionsEqual": ((all(row["equal"] for row in rows)
+                              if len(compared) == len(rows) else None)
                              if rows else None),
             "regionsUnreadable": [row["address"] for row in rows
                                   if row["equal"] is None],

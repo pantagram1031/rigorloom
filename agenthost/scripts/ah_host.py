@@ -93,6 +93,11 @@ class AgentHost:
 
         session_id = session_id or self._discover_session()
         context = {"sessionId": session_id, "surface": self.door.surface()}
+        # The newest 수정본, so a provider can propose on it. A plan on anything
+        # older is refused (plan_behind_head). Read-only, over the agent door.
+        head = self._newest_candidate(session_id)
+        if head is not None:
+            context["headRunId"] = head
         tools = tool_definitions()
 
         # Each entry carries the provider's own callId and arguments, not just
@@ -196,6 +201,14 @@ class AgentHost:
         return payload
 
     # -- helpers ------------------------------------------------------------
+    def _newest_candidate(self, session_id: str) -> str | None:
+        try:
+            rows = self.door.call("candidate/list",
+                                  {"sessionId": session_id})["candidates"]
+        except DoorRefusal:
+            return None
+        return rows[-1].get("runId") if rows else None
+
     def _discover_session(self) -> str:
         try:
             rows = self.door.call("session/list")["sessions"]

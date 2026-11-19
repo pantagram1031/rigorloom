@@ -11,11 +11,12 @@ import {
 import {
   adoptExternalPlan,
   attachExternalApproval,
-  clearQueue,
   navigateScreen,
   openApprovalDialog,
+  openOperatorModal,
   renderCurrentPage,
-  resolveApprovalDecision,
+  returnDraft,
+  revisionNumberFor,
   sendInstruction,
   setExpandedChangeId,
   setMobileReviewPane,
@@ -26,13 +27,18 @@ import { ChangeList } from "../components/ChangeList";
 import { PageSheet } from "../components/PageSheet";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
 import {
+  activeDisplayText,
+  activeHeadTexts,
   activeInspect,
   activeSession,
   activeText,
   composerBlocker,
   draftStaleness,
+  headCandidate,
+  returnedDraftOps,
   useWorkspace,
 } from "../store";
+import { sheetSubjectLabel } from "../workspace/trust";
 import {
   buildRegionTextMap,
   findAdoptableExternalPlan,
@@ -71,7 +77,20 @@ function isEditableElement(el: Element | null): boolean {
 export function ReviewView() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
+  // The head 수정본's text once one exists, unless 원본 보기 is on.
+  const texts = useWorkspace(activeDisplayText);
+  const headTexts = useWorkspace(activeHeadTexts);
+  const sourceTexts = useWorkspace(activeText);
+  const showOriginal = useWorkspace((s) => s.showOriginal);
+  const returnedOps = useWorkspace(returnedDraftOps);
+  const agentHost = useWorkspace((s) => s.agentHost);
+  const provider = useWorkspace((s) => s.provider.provider);
+  const headRevision = useWorkspace((s) => {
+    const h = headCandidate(s);
+    return h?.runId && s.activeSessionId
+      ? revisionNumberFor(s, s.activeSessionId, h.runId)
+      : null;
+  });
   const textsBySession = useWorkspace((s) => s.texts);
   const draft = useWorkspace((s) => s.draft);
   const events = useWorkspace((s) => s.events);
@@ -307,14 +326,11 @@ export function ReviewView() {
       if (draft.plan?.planId) {
         markExternalPlanDismissed(sessionId, draft.plan.planId);
       }
-      if (approval?.state === "pending" && approval.planId === draft.plan?.planId) {
-        await resolveApprovalDecision("rejected", reason || "host-operator");
-      } else {
-        await clearQueue();
-      }
+      // The reason is stored as the reason; the approver stays the operator.
+      await returnDraft(reason);
       setReturnPopoverOpen(false);
     },
-    [sessionId, draft.plan?.planId, approval],
+    [sessionId, draft.plan?.planId],
   );
 
   const isStale = Boolean(
@@ -335,6 +351,7 @@ export function ReviewView() {
     Boolean(draft.plan) &&
     draft.validation?.ok === true &&
     approval?.state !== "rejected" &&
+    returnedOps.length === 0 &&
     !isStale &&
     !busy;
 
@@ -457,6 +474,17 @@ export function ReviewView() {
   const selectedIndex = changes.findIndex((ch) => ch.opId === selectedChangeId);
   const currentOrdinal = selectedIndex >= 0 ? selectedIndex + 1 : changes.length > 0 ? 1 : 0;
   const promptBlockedReason = blocker && blocker !== "busy" ? errorCodeMessage(blocker, language) : null;
+  const promptDisabled = blocker !== null && blocker !== "busy";
+  const mockActive = provider === "mock" && agentHost?.mockAllowed === true;
+  const subjectLabel = sheetSubjectLabel(
+    {
+      mode: "review",
+      hasChanges: changes.length > 0,
+      headRevision: headTexts ? headRevision : null,
+      showingOriginal: showOriginal,
+    },
+    language,
+  );
 
   return (
     <div
@@ -507,6 +535,9 @@ export function ReviewView() {
           selectedChangeId={selectedChangeId}
           language={language}
           onSelectChange={handleSelectChange}
+          subjectLabel={subjectLabel}
+          originalToggle={headTexts ? { showingOriginal: showOriginal } : undefined}
+          sourceTexts={sourceTexts}
         />
       </div>
 
@@ -525,10 +556,11 @@ export function ReviewView() {
           onConfirmReturn={handleConfirmReturn}
         />
 
-        {blocker === null || blocker === "busy" ? (
+        {blocker !== "no_document" ? (
           <form
             className="review-prompt-bar"
             data-testid="review-prompt-bar"
+            data-blocked={promptDisabled ? blocker ?? undefined : undefined}
             onSubmit={handlePromptSubmit}
           >
             <input
@@ -536,9 +568,14 @@ export function ReviewView() {
               className="review-prompt-input"
               data-testid="review-prompt-input"
               value={promptText}
-              disabled={agentPhase === "starting"}
-              placeholder={t("review_prompt_placeholder", language)}
+              disabled={agentPhase === "starting" || promptDisabled}
+              placeholder={
+                promptDisabled
+                  ? t("review_prompt_not_connected", language)
+                  : t("review_prompt_placeholder", language)
+              }
               aria-label={t("review_prompt_placeholder", language)}
+              title={promptBlockedReason ?? undefined}
               onCompositionStart={() => {
                 promptComposingRef.current = true;
               }}
@@ -549,16 +586,35 @@ export function ReviewView() {
               onChange={(e) => setPromptText(e.target.value)}
               onKeyDown={handlePromptKeyDown}
             />
-            <button
-              type="submit"
-              className="review-btn review-btn--secondary"
-              data-testid="review-prompt-submit"
-              disabled={!promptText.trim() || agentPhase === "starting" || blocker === "busy"}
-              title={promptBlockedReason ?? undefined}
-            >
-              {t("review_prompt_submit", language)}
-            </button>
+            {promptDisabled ? (
+              <button
+                type="button"
+                className="review-btn review-btn--secondary"
+                data-testid="review-prompt-connect"
+                onClick={() => openOperatorModal()}
+              >
+                {t("review_prompt_connect", language)}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                className="review-btn review-btn--secondary"
+                data-testid="review-prompt-submit"
+                disabled={!promptText.trim() || agentPhase === "starting" || blocker === "busy"}
+              >
+                {t("review_prompt_submit", language)}
+              </button>
+            )}
           </form>
+        ) : null}
+        {promptDisabled && promptBlockedReason ? (
+          <p className="review-prompt-note" data-testid="review-prompt-blocked">
+            {promptBlockedReason}
+          </p>
+        ) : mockActive ? (
+          <p className="review-prompt-note" data-testid="review-prompt-mock-note">
+            {t("review_prompt_mock_note", language)}
+          </p>
         ) : null}
       </div>
 

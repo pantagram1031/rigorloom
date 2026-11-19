@@ -111,8 +111,7 @@
   line-height: 1.25;
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard);
+
 }
 
 .fill-btn:disabled {
@@ -186,10 +185,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: var(--space-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
+  padding: 0 0 var(--space-2);
+  border: 0;
+  border-bottom: var(--divider) solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
 }
 
 .fill-card-head {
@@ -370,17 +370,23 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
+  border-top: var(--divider) solid var(--border-subtle);
 }
 
 .fill-entry-row {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-surface);
+  padding: 10px 0;
+  border: 0;
+  border-bottom: var(--divider) solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+}
+
+.fill-entry-row:last-child {
+  border-bottom: 0;
 }
 
 .fill-entry-top {
