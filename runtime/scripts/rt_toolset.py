@@ -365,7 +365,8 @@ def _copy_picture(path: Path, folder: Path, n: int) -> tuple[Path, str]:
 
 
 def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None, *,
-                          commonmark: bool, addresses: str = "refuse") -> Pictures:
+                          commonmark: bool, addresses: str = "refuse",
+                          relative: bool = False) -> Pictures:
     """Check every picture the converter will read against the roots.
 
     Each picture is copied, once checked, into a private folder, and its
@@ -378,6 +379,10 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None, *,
     or not a file. A web address is refused too, unless ``addresses="keep"``
     (a person's own .md saved from the command line): the converter then
     reports it as not embedded.
+
+    ``relative=True`` writes each destination as the copy's own name, for a
+    markdown file saved into the copies' folder: the CommonMark converter
+    reads pictures only from beside the file.
     """
     confined = ctx.roots is not None
     pieces: list[str] = []
@@ -416,7 +421,7 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None, *,
                     staging = _picture_folder(ctx)
                 copy, digest = _copy_picture(path, staging, len(files) + 1)
                 files.append((str(path), digest))
-                text = str(copy).replace("\\", "/")
+                text = copy.name if relative else str(copy).replace("\\", "/")
             else:  # not there (command line only): the converter says so
                 text = str(path).replace("\\", "/")
             if not _representable(text, kind):
@@ -563,11 +568,21 @@ def _run_open(ctx: Context, args: dict) -> dict:
     return result
 
 
+def _face(got: str | None) -> str:
+    """The face drawn instead, with its particle; 다른 글꼴로 when the layer does not name it."""
+    if not got:
+        return "다른 글꼴로"
+    last = got.rstrip()[-1:]
+    if "가" <= last <= "힣" and (ord(last) - 0xAC00) % 28 not in (0, 8):
+        return f"{got}으로"  # a final consonant other than ㄹ takes 으로
+    return f"{got}로"
+
+
 def _fonts_line(fonts: dict) -> str | None:
     subs = fonts.get("substituted") or []
     if not subs:
         return None
-    pairs = ", ".join(f"{s.get('want')}→{s.get('got')}" for s in subs[:6])
+    pairs = ", ".join(f"{s.get('want')}→{s.get('got') or '?'}" for s in subs[:6])
     return f"fonts substituted: {pairs} (page breaks may differ from Hancom)"
 
 
@@ -916,6 +931,10 @@ OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
               "content": "text", "address": "at", "where": "at", "md": "markdown"}
 
 
+#: A GFM table's delimiter row: | --- | :---: |
+_GFM_TABLE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", re.M)
+
+
 def _check_ops(ops: list) -> None:
     for index, op in enumerate(ops):
         where = f"ops[{index}]"
@@ -923,6 +942,12 @@ def _check_ops(ops: list) -> None:
             raise ToolError("invalid_params", f"{where}: 작업의 입력 형식이 맞지 않습니다.",
                             hint="작업 이름과 필요한 값을 중괄호로 묶어 입력하세요.", at=where)
         kind = op.get("op")
+        if kind is None:
+            # {"insert_after": {...}}: the op's name written as the key.
+            named = [k for k in op if k in OP_FIELDS]
+            example = OP_EXAMPLES[named[0]] if named else OP_EXAMPLES["set"]
+            raise ToolError("invalid_params", f"{where}: 작업 이름을 지정하는 'op' 항목이 없습니다.",
+                            hint="예: " + example, at=f"{where}.op", candidates=sorted(OP_FIELDS))
         if kind not in OP_FIELDS:
             raise ToolError("invalid_params", f"{where}.op: 지원하지 않는 작업입니다({kind!r}).",
                             hint="목록에서 사용할 작업 이름을 고르세요.",
@@ -946,6 +971,14 @@ def _check_ops(ops: list) -> None:
                             f"{where}: {kind} 작업에 쓸 수 없는 항목입니다('{extra[0]}').",
                             hint="예: " + OP_EXAMPLES[kind],
                             at=where, candidates=sorted(allowed - {"op"}))
+        if kind == "insert_after" and _GFM_TABLE.search(str(op.get("markdown") or "")):
+            # The layer adds one plain paragraph per line: a pipe table would
+            # land in the document as its own pipes and dashes.
+            raise ToolError("invalid_params",
+                            f"{where}: insert_after는 각 줄을 일반 문단으로 넣습니다. 표는 만들 수 없습니다.",
+                            hint="new로 문서를 만들 때 마크다운 표를 넣으세요. 기존 표에는 table.add_row로 "
+                                 "행을 추가하거나 table.set_cells로 셀 값을 입력하세요.",
+                            at=f"{where}.markdown")
 
 
 def _stage(ctx: Context, ref: Ref, base: str | None, ops: list, kind: str) -> dict:
@@ -982,7 +1015,8 @@ def _edit_text(r: dict) -> str:
                      + " → look with preview(pages=\"changed\")")
     if r.get("signals"):
         lines.append("layout signals: " + ", ".join(
-            f"p.{s.get('page')} {s.get('kind')}" for s in r["signals"][:12]))
+            (f"p.{s.get('page')} {s.get('kind')}" if s.get("page") is not None
+             else str(s.get("kind"))) for s in r["signals"][:12]))
     if r.get("skipped"):
         lines.append("not filled, the person's to fill: " + ", ".join(r["skipped"]))
     if r.get("personOnly"):
@@ -1028,7 +1062,8 @@ register(Tool(
     description="Change the document with declarative ops, staged into its draft "
                 "(the person's file is not touched until `save`). Ops: set{at,text,"
                 "expect?}, replace{find,with,at?,all?,expect?}, insert_after{at,"
-                "markdown,like?}, delete{at,expect?}, table.set_cells{at,grid}, "
+                "markdown,like?} (one plain paragraph per line, no tables), "
+                "delete{at,expect?}, table.set_cells{at,grid}, "
                 "table.add_row{at,after,like?}, table.delete_row{at}, style{at,style}. "
                 "Pass the `rev` you read as `base`; use `expect` to guard the text "
                 "you are replacing. Returns changed pages: preview them.",
@@ -1181,14 +1216,35 @@ def _run_new(ctx: Context, args: dict) -> dict:
         except PathRefused as exc:
             raise ToolError(exc.code, exc.message, hint=getattr(exc, "hint", None),
                             at=exc.path) from exc
-    pictures = _gate_markdown_assets(ctx, markdown, base_dir, commonmark=False)
+    # CommonMark with GFM tables is the markdown agents and most people write:
+    # lists and tables come out as lists and tables, and a heading shows the
+    # number written in it and no other. The report dialect (□/○ markers,
+    # [그림 1] captions, TABLE:, \newpage, numbered headings) is asked for by
+    # name, and is the only one a form takes.
+    dialect = args.get("dialect") or ("report" if form_path is not None else "commonmark")
+    if dialect == "commonmark" and form_path is not None:
+        raise ToolError("invalid_params", "양식으로 문서를 만들 때는 보고서 문법(report)만 사용할 수 있습니다.",
+                        hint='dialect 값을 "report"로 지정하거나 dialect 항목을 생략하세요.', at="dialect")
+    commonmark = dialect == "commonmark"
+    pictures = _gate_markdown_assets(ctx, markdown, base_dir, commonmark=commonmark,
+                                     relative=commonmark)
     made_form = None
+    md_folder = None
     try:
         markdown = pictures.text
         if "\n" not in markdown:
             # The document layer reads a one-line argument naming a file as
             # that file. A body is never a file name.
             markdown += "\n"
+        source: str = markdown
+        if commonmark:
+            # Saved beside the picture copies, the only folder it may read.
+            folder = pictures.staging
+            if folder is None:
+                folder = md_folder = _picture_folder(ctx)
+            md_path = folder / "content.md"
+            md_path.write_text(markdown, encoding="utf-8")
+            source = str(md_path)
         allowed = pictures.digests
         if ctx.roots is not None and form_path is not None:
             # The form's own pictures are in the result too. A .hwp form is
@@ -1203,8 +1259,11 @@ def _run_new(ctx: Context, args: dict) -> dict:
             allowed = allowed | set(_package_pictures(form_path).values())
 
         def build(out_path: Path) -> dict:
-            result = doc_call(ctx.doc.new, markdown, str(out_path),
-                              form=str(form_path) if form_path else None)
+            if commonmark:
+                result = doc_call(ctx.doc.new, source, str(out_path), commonmark=True)
+            else:
+                result = doc_call(ctx.doc.new, source, str(out_path),
+                                  form=str(form_path) if form_path else None)
             if ctx.roots is not None:
                 _only_checked_pictures(out_path, allowed)
             return result
@@ -1213,6 +1272,8 @@ def _run_new(ctx: Context, args: dict) -> dict:
             build=build, suffix=getattr(ctx.doc, "NATIVE_SUFFIX", ".hwpx"))
     finally:
         pictures.remove()
+        if md_folder is not None:
+            shutil.rmtree(md_folder, ignore_errors=True)
         if made_form is not None:
             try:
                 made_form.unlink()
@@ -1227,11 +1288,17 @@ def _run_new(ctx: Context, args: dict) -> dict:
 register(Tool(
     name="new", title="새 문서",
     description="Write a new document from markdown (optionally on a form). "
+                "The markdown is CommonMark with GFM tables: lists and tables come out "
+                "as lists and tables, and headings get no automatic number, so write "
+                "\"1. 개요\" if you want 1. shown. dialect=\"report\" reads the "
+                "report dialect instead (□/○ markers, numbered headings); a form "
+                "always takes that one. "
                 "Returns draft:<id>, usable as `path` in every tool; `save` it to "
                 "a file when done.",
     group="write", read_only=False, idempotent=False,
     input_schema=_obj({
         "markdown": {"type": "string", "minLength": 1, "maxLength": 500000},
+        "dialect": {"type": "string", "enum": ["commonmark", "report"]},
         "form": S_PATH,
         "name": {"type": "string", "maxLength": 200},
         "base_dir": {"type": "string", "maxLength": 4096},
@@ -1479,8 +1546,8 @@ def _run_check(ctx: Context, args: dict) -> dict:
             for s in subs:
                 findings.append({"check": "fonts", "rule": "fonts.substituted",
                                  "severity": "notice",
-                                 "message": f"{s.get('want')} 글꼴이 없어 {s.get('got')}로 그렸습니다. "
-                                            "쪽 나눔이 한글과 다를 수 있습니다."})
+                                 "message": f"{s.get('want')} 글꼴이 없어 {_face(s.get('got'))} 글자를 표시했습니다. "
+                                            "한컴 한글에서는 쪽이 나뉘는 위치가 다를 수 있습니다."})
 
     against = args.get("against")
     if "guard" in only and (against or (inp.source == "draft" and ref.source)):
@@ -2073,11 +2140,33 @@ def _run_guide(ctx: Context, args: dict) -> dict:
     return {"topic": topic, "text": topics[topic].read_text(encoding="utf-8")}
 
 
+#: What each guide covers, for the tool description. Only installed topics are named.
+GUIDE_TOPICS = {
+    "gongmun": "공문 항목 기호, 날짜 표기, ‘끝.’ 표시, 붙임",
+    "report": "보고서",
+    "forms": "양식",
+    "layout": "쪽과 표 배치",
+    "writing": "문장",
+    "workflow": "작업 순서",
+}
+
+
+def _guide_description() -> str:
+    """Name only the topics this install has: an agent that reads of a topic
+    asks for it, and a build without the guides would answer every such call
+    with a refusal."""
+    topics = _topics()
+    if not topics:
+        return ("Korean document conventions. This build has no guides installed, "
+                "so there is nothing to read here.")
+    named = ", ".join(f"{t} ({GUIDE_TOPICS[t]})" if t in GUIDE_TOPICS else t for t in topics)
+    return ("Korean document conventions with sources: " + named
+            + ". Read the one that fits before writing.")
+
+
 register(Tool(
     name="guide", title="작성 안내",
-    description="Korean document conventions with sources: gongmun (공문 항목 기호, "
-                "날짜, 끝. 표시, 붙임), report (보고서), forms (양식), layout, writing, "
-                "workflow. Read the one that fits before writing.",
+    description=_guide_description(),
     group="help",
     input_schema=_obj({"topic": {"type": "string", "maxLength": 40}}),
     output_schema=_out({"topic": {"type": "string"}, "topics": {"type": "array"},

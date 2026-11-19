@@ -453,6 +453,36 @@ def test_engine_new_and_convert(kit, tmp_path):
 
 
 @engine
+def test_engine_new_reads_commonmark_tables_lists_and_written_numbers(kit, tmp_path):
+    # P7 round 0: agents write GFM tables and lists, and number their headings
+    # themselves; the report dialect gave them pipes, one merged paragraph and
+    # "1. 1. 개요".
+    md = "## 1. 개요\n\n- 첫째\n- 둘째\n\n| 구분 | 내용 |\n|---|---|\n| 시료 | 42건 |\n"
+    r = D.new(md, tmp_path / "c.hwpx", commonmark=True)
+    assert r["ok"], r
+    blocks = D.read(tmp_path / "c.hwpx")["blocks"]
+    assert [b["text"] for b in blocks if b["kind"] == "heading"] == ["1. 개요"]
+    assert [b["text"] for b in blocks if b["kind"] == "para" and b["text"]] == ["첫째", "둘째"]
+    tables = [b for b in blocks if b["kind"] == "table"]
+    assert len(tables) == 1 and tables[0]["cells"] == [["구분", "내용"], ["시료", "42건"]]
+    # That the heading style adds no number of its own is read on the drawn
+    # page by evals/agent_checks.py; this module's stand-in fonts draw no Hangul.
+    assert D.new(md, tmp_path / "f.hwpx", form=str(tmp_path / "c.hwpx"),
+                 commonmark=True)["error"]["code"] == "bad_input"
+
+
+def test_fonts_reads_the_engines_measured_with_note():
+    class _Doc:
+        fonts = ["함초롬바탕", "돋움"]
+    note = "font 함초롬바탕 measured with the system face Noto Serif CJK KR (no Hancom font installed)"
+    assert D._fonts(_Doc(), [note, "함초롬바탕", "돋움"]) == {
+        "used": ["함초롬바탕", "돋움"],
+        "substituted": [{"want": "함초롬바탕", "got": "Noto Serif CJK KR"},
+                        {"want": "돋움", "got": None}]}
+    assert D._fonts(_Doc(), ["바탕 → 나눔명조"])["substituted"] == [{"want": "바탕", "got": "나눔명조"}]
+
+
+@engine
 def test_engine_reads_and_edits_hwp(kit, tmp_path):
     f = _copy(kit / "tests" / "hwp5" / "written" / "kit_feat_lists.hwp", tmp_path)
     before = f.read_bytes()

@@ -769,16 +769,16 @@ def _layer_sees(monkeypatch, name):
 
 
 def test_new_checks_the_pictures_the_converter_reads(env, tmp_path):
-    # Plain mode (new): a line that is only a picture, or a [그림 n] line.
+    # The report dialect: a line that is only a picture, or a [그림 n] line.
     outside = tmp_path / "outside.png"
     outside.write_bytes(b"x")
     for body in (f"![a]({outside})\n", f"  ![a](<{outside}> \"제목\")\n",
                  f"[그림 1] 시험 ({outside})\n"):
-        err(call(env.ctx(), "new", {"markdown": body}), "outside_roots")
+        err(call(env.ctx(), "new", {"dialect": "report", "markdown": body}), "outside_roots")
     inside = env.work / "그림.png"
     inside.write_bytes(b"x")
-    ok(call(env.ctx(), "new", {"markdown": "![a](그림.png)\n", "base_dir": str(env.work)}))
-    err(call(env.ctx(), "new", {"markdown": "![a](그림.png)\n", "base_dir": str(tmp_path)}),
+    ok(call(env.ctx(), "new", {"dialect": "report", "markdown": "![a](그림.png)\n", "base_dir": str(env.work)}))
+    err(call(env.ctx(), "new", {"dialect": "report", "markdown": "![a](그림.png)\n", "base_dir": str(tmp_path)}),
         "outside_roots")
 
 
@@ -836,13 +836,13 @@ def test_a_picture_line_the_converter_would_not_read_is_refused(env):
     for line in ("![표지](sample (a).png)", "[그림 1] 캡션 (sample (a).png)",
                  "[그림 2] 캡션 (사진.PNG)", "[그림 3] 캡션 (<사진.png>)",
                  "![가](사진.PNG) ![나](사진.PNG)"):
-        e = err(call(env.ctx(), "new", {"markdown": f"# 제목\n\n{line}\n",
+        e = err(call(env.ctx(), "new", {"dialect": "report", "markdown": f"# 제목\n\n{line}\n",
                                         "base_dir": str(env.work)}), "invalid_params")
         assert e["message"] == f"다음 줄을 그림으로 읽을 수 없어 문서 생성을 중단했습니다({line})."
     # in a code block it is code, and from the command line it stays text
-    ok(call(env.ctx(), "new", {"markdown": "```\n![표지](sample (a).png)\n```\n",
+    ok(call(env.ctx(), "new", {"dialect": "report", "markdown": "```\n![표지](sample (a).png)\n```\n",
                                "base_dir": str(env.work)}))
-    ok(call(env.ctx(roots=None), "new", {"markdown": "![표지](sample (a).png)\n",
+    ok(call(env.ctx(roots=None), "new", {"dialect": "report", "markdown": "![표지](sample (a).png)\n",
                                          "base_dir": str(env.work)}))
 
 
@@ -859,7 +859,7 @@ def test_text_that_is_not_a_picture_is_passed_on_as_written(env, tmp_path, monke
                  f"```\n![a]({outside})\n```\n",
                  f"출처는 부록입니다 (부록 {outside})\n",
                  "[링크](../../밖.png)\n"):
-        ok(call(env.ctx(), "new", {"markdown": body}))
+        ok(call(env.ctx(), "new", {"dialect": "report", "markdown": body}))
         assert seen[-1] == body
 
 
@@ -869,7 +869,7 @@ def test_a_checked_picture_reaches_the_layer_as_a_copy_of_its_bytes(env, monkeyp
     folder.mkdir()
     (folder / "그림.png").write_bytes(b"\x89PNG first")
     body = "# 제목\n\n본문 (괄호) 그대로\n\n![설명](그림.png)\n\n[그림 1] 배치도 (그림.png)\n"
-    ok(call(env.ctx(), "new", {"markdown": body, "base_dir": str(folder)}))
+    ok(call(env.ctx(), "new", {"dialect": "report", "markdown": body, "base_dir": str(folder)}))
     sent = seen[-1]
     assert "본문 (괄호) 그대로" in sent and str(folder) not in sent
     copies = [line[line.index("(") + 1:-1] for line in sent.splitlines() if line.endswith(".png)")]
@@ -885,7 +885,7 @@ def test_a_state_folder_with_brackets_still_takes_pictures(env, tmp_path, monkey
     seen = _layer_sees(monkeypatch, "new")
     (env.work / "그림.png").write_bytes(b"x")
     ctx = env.ctx(_drafts=DraftStore(tmp_path / "상태 (회사)"))
-    ok(call(ctx, "new", {"markdown": "[그림 1] 배치도 (그림.png)\n", "base_dir": str(env.work)}))
+    ok(call(ctx, "new", {"dialect": "report", "markdown": "[그림 1] 배치도 (그림.png)\n", "base_dir": str(env.work)}))
     copy = seen[-1].rsplit("(", 1)[1].rstrip(")\n")
     assert copy.endswith(".png") and "상태" not in copy
 
@@ -914,10 +914,10 @@ def test_a_picture_the_check_did_not_see_stops_the_build(env, tmp_path, monkeypa
         return r
 
     monkeypatch.setattr(fake, "new", new)
-    ok(call(env.ctx(), "new", {"markdown": f"![a]({inside})\n"}))
+    ok(call(env.ctx(), "new", {"dialect": "report", "markdown": f"![a]({inside})\n"}))
     before = sorted(p.name for p in (env.home / "drafts").glob("*")) \
         if (env.home / "drafts").exists() else []
-    e = err(call(env.ctx(), "new", {"markdown": f'![a]({inside})\n\n<img src="{secret}">\n'}),
+    e = err(call(env.ctx(), "new", {"dialect": "report", "markdown": f'![a]({inside})\n\n<img src="{secret}">\n'}),
             "invalid_params")
     assert e["at"] == "BinData/image2.png"
     after = sorted(p.name for p in (env.home / "drafts").glob("*")) \
@@ -1540,3 +1540,114 @@ def test_undo_reports_an_unreadable_file_before_asking(env, monkeypatch):
     monkeypatch.setattr(rt_commit, "undoable", unreadable)
     code, out, _ = _cli(["undo", str(path), "--json"], monkeypatch)
     assert code == 4 and json.loads(out)["error"]["code"] == "internal"
+
+
+# -- new reads CommonMark unless asked for the report dialect (P7 round 1) ------
+
+def _new_calls(monkeypatch):
+    """Each call to the layer's new: (source given, markdown it read, kwargs, files beside it)."""
+    seen = []
+    real = fake.new
+
+    def spy(src, out, **kw):
+        path = Path(src) if "\n" not in str(src) else None
+        text = path.read_text(encoding="utf-8") if path else src
+        beside = sorted(p.name for p in path.parent.iterdir()) if path else []
+        seen.append((str(src), text, kw, beside))
+        return real(src, out, **kw)
+
+    monkeypatch.setattr(fake, "new", spy)
+    return seen
+
+
+def test_new_reads_commonmark_from_a_file_beside_its_pictures(env, monkeypatch):
+    # In round 0 every agent that wrote a report put a GFM table and a list in
+    # new's markdown and got their pipes and dashes back as text. CommonMark is
+    # read from a .md file, and the converter takes pictures only from its folder.
+    seen = _new_calls(monkeypatch)
+    (env.work / "그림.png").write_bytes(b"\x89PNG x")
+    body = ("# 1. 개요\n\n- 첫째\n- 둘째\n\n| 구분 | 내용 |\n|---|---|\n| 가 | 나 |\n\n"
+            "![배치도](그림.png)\n")
+    ok(call(env.ctx(), "new", {"markdown": body, "base_dir": str(env.work)}))
+    src, text, kw, beside = seen[-1]
+    assert kw == {"commonmark": True} and src.endswith("content.md")
+    assert text.startswith("# 1. 개요\n\n- 첫째\n- 둘째\n\n| 구분 | 내용 |\n|---|---|\n| 가 | 나 |")
+    assert "![배치도](1.png)" in text and beside == ["1.png", "content.md"]
+    assert not Path(src).exists()  # the file and the copies are gone once the draft is made
+
+
+def test_new_in_commonmark_checks_a_picture_inside_a_sentence(env, tmp_path):
+    # Text in the report dialect, a picture in CommonMark: so it is checked.
+    outside = tmp_path / "밖.png"
+    outside.write_bytes(b"x")
+    err(call(env.ctx(), "new", {"markdown": f"참고 그림은 ![a]({outside})에 있습니다.\n"}),
+        "outside_roots")
+    ok(call(env.ctx(), "new", {"markdown": f"참고 그림은 ![a]({outside})에 있습니다.\n",
+                               "dialect": "report"}))
+
+
+def test_new_reads_the_report_dialect_when_asked(env, monkeypatch):
+    seen = _new_calls(monkeypatch)
+    ok(call(env.ctx(), "new", {"markdown": "□ 개요\n", "dialect": "report"}))
+    src, text, kw, _ = seen[-1]
+    assert src == "□ 개요\n" and "commonmark" not in kw
+
+
+def test_a_form_takes_only_the_report_dialect(env):
+    form = env.doc()
+    e = err(call(env.ctx(), "new", {"markdown": "# 제목\n", "form": str(form),
+                                    "dialect": "commonmark"}), "invalid_params")
+    assert e["message"] == "양식으로 문서를 만들 때는 보고서 문법(report)만 사용할 수 있습니다."
+
+
+def test_the_cli_passes_the_dialect(env):
+    (env.work / "보고서.md").write_text("□ 개요\n", encoding="utf-8")
+    args = rt_cli_product._parser().parse_args(
+        ["new", str(env.work / "보고서.md"), "--dialect", "report"])
+    assert rt_cli_product.request_for(args)[1]["dialect"] == "report"
+
+
+# -- messages an agent tripped on in round 0 -----------------------------------
+
+def test_an_op_named_as_a_key_is_told_where_the_name_goes(env):
+    path = env.doc()
+    rev = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev, "ops": [
+        {"insert_after": {"at": "p1", "markdown": "x"}}]}), "invalid_params")
+    assert e["message"] == "ops[0]: 작업 이름을 지정하는 'op' 항목이 없습니다."
+    assert e["hint"] == "예: " + rt_toolset.OP_EXAMPLES["insert_after"]
+
+
+def test_insert_after_refuses_a_table_it_would_write_as_text(env):
+    path = env.doc()
+    rev = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev, "ops": [
+        {"op": "insert_after", "at": "p1",
+         "markdown": "| 구분 | 결과 |\n| --- | --- |\n| 시료 | 42건 |"}]}), "invalid_params")
+    assert e["message"].startswith("ops[0]: insert_after는 각 줄을 일반 문단으로 넣습니다.")
+    # a line with a dash in it is not a table
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev, "ops": [
+        {"op": "insert_after", "at": "p1", "markdown": "기간: 11. 3. - 11. 5."}]}))
+
+
+def test_guide_names_only_the_topics_it_has(monkeypatch, tmp_path):
+    empty = tmp_path / "none"
+    empty.mkdir()
+    monkeypatch.setattr(rt_toolset, "KNOWLEDGE_DIR", empty)
+    assert rt_toolset._guide_description() == (
+        "Korean document conventions. This build has no guides installed, "
+        "so there is nothing to read here.")
+    (empty / "gongmun.md").write_text("# 공문\n", encoding="utf-8")
+    (empty / "extra.md").write_text("# 기타\n", encoding="utf-8")
+    assert rt_toolset._guide_description() == (
+        "Korean document conventions with sources: extra, gongmun (공문 항목 기호, 날짜 표기, "
+        "‘끝.’ 표시, 붙임). Read the one that fits before writing.")
+
+
+def test_a_substituted_font_is_named_or_called_another_font():
+    assert rt_toolset._face(None) == "다른 글꼴로"
+    assert rt_toolset._face("Noto Serif CJK KR") == "Noto Serif CJK KR로"
+    assert rt_toolset._face("나눔명조") == "나눔명조로"
+    assert rt_toolset._face("본고딕") == "본고딕으로"
+    assert rt_toolset._fonts_line({"substituted": [{"want": "함초롬바탕", "got": None}]}) == \
+        "fonts substituted: 함초롬바탕→? (page breaks may differ from Hancom)"

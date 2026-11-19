@@ -159,8 +159,8 @@ class FakeReplayDoc:
     def edit(self, path: str, ops: list, *, base: str, out=None, in_place: bool = False, preview: bool = False) -> dict:
         return self._fake.edit(path, ops, base=base, out=out, in_place=in_place, preview=preview)
 
-    def new(self, markdown_path_or_text, out, *, form=None) -> dict:
-        return self._fake.new(markdown_path_or_text, out, form=form)
+    def new(self, markdown_path_or_text, out, *, form=None, commonmark=False) -> dict:
+        return self._fake.new(markdown_path_or_text, out, form=form, commonmark=commonmark)
 
     def convert(self, src: str, out: str, *, to: str) -> dict:
         res = self._fake.convert(src, out, to=to)

@@ -35,7 +35,7 @@ A client configured with JSON takes the same command and arguments:
 | `find` | where a phrase occurs, with addresses |
 | `edit` | stage changes in the draft; the person's file is untouched |
 | `fill` | fill form places; signature, seal and approval-date places are left for the person |
-| `new` | a new document from markdown, as `draft:<id>` |
+| `new` | a new document from markdown (CommonMark by default; `dialect: "report"` for the report dialect, the only one a `form` takes), as `draft:<id>` |
 | `preview` | page images of the draft |
 | `check` | style, layout, font and changed-number checks; numbers that traded places come with `swapped`, each side's numbers with the words that name them |
 | `save` | write the draft to a file |
@@ -54,13 +54,16 @@ the same name, stops counting too. A `draft:<id>` of a file is confined like
 the file.
 
 Pictures that markdown names are checked against the same roots, in the places
-the converter reads a picture: in `new`, a line that is only `![설명](경로)`
-or a `[그림 1] 설명 (그림.png)` line; in a `.md` file saved to another format,
-also `![설명](경로)` anywhere outside code. Each must be an existing file inside
+the converter reads a picture: in `new` with the report dialect, a line that
+is only `![설명](경로)` or a `[그림 1] 설명 (그림.png)` line; in CommonMark
+`new` (the default) and in a `.md` file saved to another format,
+`![설명](경로)` anywhere outside code. Each must be an existing file inside
 the roots. The converter reads a private copy of it, so a folder name with
 brackets in it works and the person's path does not end up in the document.
 Everything else, a link or a file name in brackets, stays text exactly as
-written, and `edit`'s `insert_after` adds text only. A line written as a
+written, and `edit`'s `insert_after` adds one plain paragraph per line: a
+markdown table sent to it is refused with `invalid_params`, since a table
+belongs in `new` or in `table.add_row` and `table.set_cells`. A line written as a
 picture that the converter would take as text (brackets in the file name, two
 pictures on one line, `[그림 1] 설명 (그림.PNG)`) is refused with
 `invalid_params` rather than left in the document as markdown. If the built
