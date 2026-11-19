@@ -34,9 +34,6 @@ export const SHELL_BINDINGS: KeymapEntry[] = [
   { id: "shell.pane.blanks", chords: ["Alt+3"] },
   { id: "shell.pane.find", chords: ["Alt+4"] },
   { id: "shell.pane.history", chords: ["Alt+5"] },
-  { id: "shell.panel.changes", chords: ["Alt+6"] },
-  { id: "shell.panel.agent", chords: ["Alt+7"] },
-  { id: "shell.panel.checks", chords: ["Alt+8", "Ctrl+Shift+M"] },
   { id: "shell.toggleLeft", chords: ["Ctrl+B"] },
   { id: "shell.toggleRight", chords: ["Ctrl+Alt+B"] },
   { id: "shell.settings", chords: ["Ctrl+,"] },
@@ -61,30 +58,32 @@ export const SHELL_BINDINGS: KeymapEntry[] = [
   { id: "canvas.redo", chords: ["Ctrl+Shift+Z", "Ctrl+Y"], inEditable: false },
   { id: "canvas.edit", chords: ["F2"], when: "docOpen" },
 
-  // global: panel (WP4) and history (WP5)
-  { id: "panel.composer", chords: ["Ctrl+L"] },
-  { id: "panel.styleCheck", chords: ["F8"] },
-  { id: "history.export", chords: ["Ctrl+E", "Alt+V"] },
-  { id: "history.exportPdf", chords: ["Ctrl+P", "Alt+P"] },
-
-  // review (WP4); single keys, blocked in editable targets and during composition
-  { id: "review.next", chords: ["J", "ArrowDown"], when: "review" },
-  { id: "review.prev", chords: ["K", "ArrowUp"], when: "review" },
-  { id: "review.nextAnywhere", chords: ["Alt+ArrowDown"], inEditable: true },
-  { id: "review.prevAnywhere", chords: ["Alt+ArrowUp"], inEditable: true },
-  { id: "review.accept", chords: ["Y"], when: "review" },
-  { id: "review.exclude", chords: ["N"], when: "review" },
-  { id: "review.edit", chords: ["E"], when: "review" },
-  { id: "review.undecide", chords: ["U"], when: "review" },
-  { id: "review.open", chords: ["Enter"], when: "review" },
-  { id: "review.acceptAll", chords: ["Ctrl+Shift+Y"], when: "review" },
-  { id: "review.return", chords: ["R"], when: "review" },
-  { id: "review.cycleView", chords: ["V"], when: "review" },
-  { id: "review.approve", chords: ["Ctrl+Shift+Enter"], when: "review" },
+  // panel (WP4). Ids and chords are WP4's (panel/keys.ts PANEL_CHORDS);
+  // WP4 registers them with its own `when` predicates, replacing these entries.
+  { id: "panel.changes", chords: ["Alt+6"] },
+  { id: "panel.agent", chords: ["Alt+7"] },
+  { id: "panel.checks", chords: ["Alt+8", "Ctrl+Shift+M"] },
+  { id: "composer.focus", chords: ["Ctrl+L"] },
+  { id: "checks.style", chords: ["F8"] },
+  { id: "change.next", chords: ["J", "ArrowDown", "Alt+ArrowDown"], when: "review" },
+  { id: "change.prev", chords: ["K", "ArrowUp", "Alt+ArrowUp"], when: "review" },
+  { id: "change.accept", chords: ["Y"], when: "review" },
+  { id: "change.reject", chords: ["N"], when: "review" },
+  { id: "change.edit", chords: ["E"], when: "review" },
+  { id: "change.undo", chords: ["U"], when: "review" },
+  { id: "change.open", chords: ["Enter"], when: "review" },
+  { id: "change.acceptAll", chords: ["Ctrl+Shift+Y"], when: "review" },
+  { id: "proposal.return", chords: ["R"], when: "review" },
+  { id: "approval.open", chords: ["Ctrl+Shift+Enter"], when: "review" },
+  { id: "canvas.cycleView", chords: ["V"], when: "review" },
 
   // approval sheet (WP4)
   { id: "sheet.confirm", chords: ["Enter"], when: "sheet" },
   { id: "sheet.tick", chords: ["Space"], when: "sheet" },
+
+  // history (WP5)
+  { id: "history.export", chords: ["Ctrl+E", "Alt+V"] },
+  { id: "history.exportPdf", chords: ["Ctrl+P", "Alt+P"] },
 
   // palette (WP2)
   { id: "palette.down", chords: ["ArrowDown"], when: "palette", inEditable: true },

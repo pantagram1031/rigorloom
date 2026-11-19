@@ -37,6 +37,14 @@ What you can do there:
   dialog, which writes `APPROVALS.md` (see below). The gate routes are
   unchanged; none of the five screens shows them outside that section.
 
+### Editor v2 (opt-in)
+
+The five screens above stay the default. The editor v2 shell (tabs, the
+Start tab, the 파일 pane, the palette) opens instead with `?ui=v2` in the
+address, or, in the browser and the desktop app alike, when the developer
+preference `devEditorV2` is `true` in `prefs.json` (read through the same
+prefs route as `devMockAgent`). `?ui=v1` always opens the five screens.
+
 ## Security model
 
 The bridge is meant for one person on their own computer.
