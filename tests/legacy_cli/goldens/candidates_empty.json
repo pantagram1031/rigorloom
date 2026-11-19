@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "--root",
+    "<ROOT>",
+    "candidates",
+    "--session",
+    "<SESSION_ID>"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"candidates\",\n  \"ok\": true,\n  \"result\": {\n    \"candidates\": [],\n    \"sessionId\": \"<ID>\"\n  }\n}\n"
+}

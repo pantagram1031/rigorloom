@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "--root",
+    "<ROOT>",
+    "sessions"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"sessions\",\n  \"ok\": true,\n  \"result\": {\n    \"sessions\": []\n  }\n}\n"
+}

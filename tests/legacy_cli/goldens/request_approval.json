@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "--root",
+    "<ROOT>",
+    "request-approval",
+    "--plan",
+    "<PLAN_ID>"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"request-approval\",\n  \"ok\": true,\n  \"result\": {\n    \"approval\": {\n      \"approvalId\": \"<ID>\",\n      \"approver\": null,\n      \"decision\": null,\n      \"planHash\": \"<SHA256>\",\n      \"planId\": \"<ID>\",\n      \"requestedBy\": \"cli-client\",\n      \"requestedUtc\": \"<TS>\",\n      \"resolvedUtc\": null,\n      \"state\": \"pending\"\n    }\n  }\n}\n"
+}

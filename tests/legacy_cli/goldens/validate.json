@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "--root",
+    "<ROOT>",
+    "validate",
+    "--plan",
+    "<PLAN_ID>"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"validate\",\n  \"ok\": true,\n  \"result\": {\n    \"validation\": {\n      \"backend\": \"preedit\",\n      \"boundSha256\": \"52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf\",\n      \"counts\": {\n        \"hard\": 0,\n        \"ops\": 1,\n        \"warn\": 0\n      },\n      \"currentSha256\": \"52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf\",\n      \"hard\": [],\n      \"ok\": true,\n      \"planHash\": \"<SHA256>\",\n      \"planId\": \"<ID>\",\n      \"preflight\": {\n        \"deferred\": [\n          \"replace_key_ambiguous\",\n          \"at_cell_expect_mismatch\",\n          \"xml_wellformedness\"\n        ],\n        \"level\": \"structural+profile\",\n        \"note\": \"preedit raises its own refusals from inside its edit path and ships no dry run; a clean validation is not a promise that apply cannot refuse\",\n        \"source\": \"engine/scripts/form_inspect.py preflight fields\"\n      },\n      \"stale\": false,\n      \"verdict\": \"pass\",\n      \"warn\": []\n    }\n  }\n}\n"
+}

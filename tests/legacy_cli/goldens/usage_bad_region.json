@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "--root",
+    "<ROOT>",
+    "read-region",
+    "--session",
+    "<SESSION_ID>",
+    "--region",
+    "nope"
+  ],
+  "exit": 2,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"read-region\",\n  \"error\": {\n    \"code\": \"invalid_params\",\n    \"message\": \"--region 'nope': expected T:R,C, R,C or para:N\"\n  },\n  \"ok\": false\n}\n"
+}

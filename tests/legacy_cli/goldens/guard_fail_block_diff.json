@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "guard",
+    "examples/guard/before.hwpx",
+    "examples/guard/after.hwpx",
+    "--mode",
+    "block-diff"
+  ],
+  "exit": 3,
+  "stderr_is_empty": true,
+  "stdout_normalized": "paragraphs: 295, edited: 3, changed a protected fact: 2\n\n¶3 kept\n-                 (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 체결한다.\n+                 (이하 “사업주”라 함)과(와)            (이하 “근로자”라 함)은 다음과 같이 근로계약을 맺는다.\n\n¶4 CHANGED: number/unit\n- 1. 근로계약기간 :      년   월   일부터      년   월   일까지\n+ 2. 근로계약기간 :      년   월   일부터      년   월   일까지\n  lost   number/unit  1\n  added  number/unit  2\n\n¶5 CHANGED: negation/hedge/bound\n-   ※ 근로계약기간을 정하지 않는 경우에는 “근로개시일”만 기재\n+   ※ 근로계약기간을 정한 경우에는 “근로개시일”만 기재\n  lost   negation/hedge/bound  않\n\nCHANGED: restore or review the paragraphs above.\n"
+}
