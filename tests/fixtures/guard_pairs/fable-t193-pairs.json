@@ -1,0 +1,12 @@
+{
+ "_about": [
+  "Fable's pairs from the review of the label-words head (36933b4): two whole-and-part pairs in one sentence with the parts traded, and a 각각 list that names more things than it has numbers.",
+  "fact: did the edit change a fact the person would care about.",
+  "gap: the guard is wrong on this pair today; the name is the follow-up rule meant to close it. tests/test_guard_pairs.py runs these as strict xfails, so a rule that closes one must also delete its gap."
+ ],
+ "pairs": [
+  {"case": "whole-part-two-pairs-swap", "before": "갑은 10건 중 3건, 을은 20건 중 5건을 승인했다.", "after": "갑은 10건 중 5건, 을은 20건 중 3건을 승인했다.", "fact": "changed"},
+  {"case": "whole-part-two-pairs-reorder", "before": "갑은 10건 중 3건, 을은 20건 중 5건을 승인했다.", "after": "을은 20건 중 5건, 갑은 10건 중 3건을 승인했다.", "fact": "same"},
+  {"case": "each-list-count-swap", "before": "현장 심사와 서면 심사, 서류 확인을 각각 2회, 5회 실시한다.", "after": "현장 심사와 서면 심사, 서류 확인을 각각 5회, 2회 실시한다.", "fact": "changed", "gap": "each-list-count"}
+ ]
+}
