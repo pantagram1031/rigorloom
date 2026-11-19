@@ -117,7 +117,7 @@ SURFACE_LEAK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 def test_a_drive_path_is_a_leak_and_a_url_is_not() -> None:
     raw_path = dict(SURFACE_LEAK_PATTERNS)["raw_path"]
-    for leak in ("C:\\Users\\kim", "F:/", "c:/Users/x", "저장 위치 D:/작업"):
+    for leak in ("D:\\문서\\보고서.hwpx", "F:/", "c:/work/x", "저장 위치 D:/작업"):
         assert raw_path.search(leak), leak
     for url in ("http://example.com", "https://a.b/c", "file:///x"):
         assert not raw_path.search(url), url
