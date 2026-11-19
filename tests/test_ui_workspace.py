@@ -83,7 +83,8 @@ def workspace_env(tmp_path: Path):
     # Supported files inside root
     (root / "기안문(별지 제1호서식).hwpx").write_bytes(b"PK\x03\x04hwpx-sample")
     (root / "표준근로계약서.docx").write_bytes(b"PK\x03\x04docx-sample")
-    (root / "협조요청_개요.md").write_text("# 개요\n공문 초안\n", encoding="utf-8")
+    # Bytes, not write_text: on Windows text mode would turn \n into \r\n.
+    (root / "협조요청_개요.md").write_bytes("# 개요\n공문 초안\n".encode("utf-8"))
     (sub / "정보공개 청구서.HWP").write_bytes(b"hwp5-sample")
 
     # Unsupported and hidden files inside root (must never be listed or readable)
