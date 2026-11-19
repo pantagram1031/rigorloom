@@ -119,7 +119,9 @@ VERB_HELP = {
               'rigorloom find 계약서.hwpx "제[0-9]+조" --regex')),
     "edit": ("초안을 고칩니다. 원본 파일은 save 전까지 그대로입니다.\n"
              "작업: set, replace, insert_after, delete, table.set_cells, table.add_row, "
-             "table.delete_row, style, char_shape(글자 모양), para_shape(문단 모양)",
+             "table.delete_row, style, char_shape(글자 모양), para_shape(문단 모양), "
+             "numbering(개요·문단 번호, 글머리표), table.merge·table.split(셀 합치기·나누기), "
+             "table.add_col·table.delete_col(칸 넣기·지우기), table.size(셀 너비·높이)",
              ("""rigorloom edit 보고서.hwpx --op '{"op":"replace","at":"p3","find":"사본하여","with":"복사하여"}'""",
               """rigorloom edit 보고서.hwpx --op '{"op":"set","at":"p0","text":"2027년 업무계획"}' -o 보고서-수정.hwpx""")),
     "fill": ("양식의 빈칸을 채웁니다. 서명·날인·결재일 칸은 비워 두고 어떤 칸인지 알려 줍니다.",

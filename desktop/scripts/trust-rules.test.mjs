@@ -57,7 +57,7 @@ test("a plan behind the head is named with the revision it would drop", () => {
   assert.equal(finding.code, "plan_behind_head");
   const text = behindHeadMessage(finding, (runId) => (runId === "run-1" ? 1 : null), "ko");
   assert.match(text, /수정본 1 이전 문서/);
-  assert.match(text, /수정본 1의 변경이 빠집니다/);
+  assert.match(text, /수정본 1 변경 내용이 빠집니다/);
   assert.equal(behindHeadFinding({ ok: true, hard: [] }), null);
   assert.equal(
     approveBlockedReason({ hardCount: 1, returnedCount: 0, behindHead: true }, "ko"),

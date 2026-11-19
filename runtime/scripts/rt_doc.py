@@ -99,7 +99,8 @@ SCHEMA = "rigorloom/doc-core/v1"
 
 OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
-       "char_shape", "para_shape")
+       "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
+       "table.delete_col", "table.size")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -782,6 +783,11 @@ def _engine_error(env, fn=None, at=None, i=None):
     msg = str(err.get("message") or "the engine refused %s" % fn)
     if code == "unsupported" and msg.startswith("no such function"):
         return _unavailable("the installed engine has no %s yet" % fn, "engine_function_missing", fn=fn)
+    m = re.search(r"unknown hnc_edit operation '([A-Za-z_]\w*)'", msg) if code == "bad_input" else None
+    if m:       # an older engine without an edit step an op needs: the op lights up once the engine has it
+        return _unavailable("the installed engine has no %s yet; update the HWP engine" % m.group(1),
+                            "engine_function_missing", fn=m.group(1), engine_fn=fn,
+                            at=at if at is not None else err.get("at"), i=i if i is not None else err.get("i"))
     extra = {k: v for k, v in err.items() if k not in _RESERVED}
     if isinstance(err.get("retryable"), bool):
         retry = err["retryable"]
@@ -2461,6 +2467,12 @@ class _Act:
         self.tbl_dels = []      # base table gs removed
         self.row_adds = []      # (table g, after)
         self.row_dels = []      # (table g, row)
+        self.col_adds = []      # (table g, after)
+        self.col_dels = []      # (table g, col)
+        self.merges = []        # (table g, first Cell, [Cells merged into it, reading order], (rs, cs))
+        self.splits = []        # (table g, Cell, rows, cols)
+        self.resized = []       # table gs whose sizes alone change
+        self.cell_delta = []    # (table g, cells table.add_col adds)
         self.text_of = None     # the base paragraph whose text this act changes
 
 
@@ -2508,7 +2520,16 @@ class _Claims:
         self.removed.append((si, start, end, i, op, at))
 
 
-EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape")
+def _no_list_twice(cl, q, i, name, at):
+    """style and numbering both read the paragraph's base style and list state: one of them per paragraph."""
+    for s2, pos, j, op2, at2 in cl.touched:
+        if j != i and s2 == q.si and pos == q.start and op2 in ("style", "numbering"):
+            cl._conflict(i, name, j, op2, at)
+    cl.touch(q.si, q.start, i, name, at)
+
+
+EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape", "numbering",
+              "table.delete_col")
 RANGE_OPS = ("set", "replace", "char_shape")
 
 
@@ -2598,6 +2619,90 @@ def _shape_fmt(name, op, i, at):
     return out
 
 
+NUMBERING_KINDS = ("outline", "number", "bullet", "none")
+
+
+def _numbering_set(op, i, at):
+    """The checked ``set`` of a numbering op: kind, level 1-7, and char / start / restart where they apply."""
+    v = op.get("set")
+    if not isinstance(v, dict) or "kind" not in v:
+        raise DocError("bad_input", "numbering needs set: {kind: outline|number|bullet|none, level?}", i=i, at=at)
+    allowed = {"outline": ("kind", "level"), "number": ("kind", "level", "start", "restart"),
+               "bullet": ("kind", "level", "char"), "none": ("kind",)}
+    kind = v.get("kind")
+    if kind not in allowed:
+        raise DocError("bad_input", "numbering: kind is one of %s" % ", ".join(NUMBERING_KINDS), i=i, at=at,
+                       candidates=list(NUMBERING_KINDS))
+    extra = sorted(str(k) for k in v if k not in allowed[kind])
+    if extra:
+        raise DocError("bad_input", "numbering %s takes %s, not %s" % (kind, ", ".join(allowed[kind]),
+                                                                        ", ".join(extra)), i=i, at=at)
+    lv = v.get("level", 1 if kind == "outline" else None)
+    if lv is not None and not (_is_int(lv) and 1 <= lv <= 7):
+        raise DocError("bad_input", "numbering: level is 1 to 7", i=i, at=at)
+    ch = v.get("char")
+    if ch is not None and not (isinstance(ch, str) and len(ch) == 1 and not _CTRL.search(ch) and not ch.isspace()):
+        raise DocError("bad_input", "numbering: char is one visible character", i=i, at=at)
+    st = v.get("start")
+    if st is not None and not (_is_int(st) and 1 <= st <= 9999):
+        raise DocError("bad_input", "numbering: start is 1 to 9999", i=i, at=at)
+    if "restart" in v and not isinstance(v["restart"], bool):
+        raise DocError("bad_input", "numbering: restart is true or false", i=i, at=at)
+    if st is not None and v.get("restart"):
+        raise DocError("bad_input", "numbering: give start or restart, not both", i=i, at=at)
+    return {"kind": kind, "level": lv, "char": ch, "start": st, "restart": bool(v.get("restart"))}
+
+
+def _outline_style(doc, n):
+    """The id of the document's 개요 n style (engName "Outline n"), or None."""
+    for sid, s in doc.styles.items():
+        if (s.get("engName") or "") == "Outline %d" % n:
+            return sid
+    return None
+
+
+def _numbering_steps(doc, q, want):
+    """Engine steps that bring paragraph q from its base list state to `want` (no steps when it is there)."""
+    st = doc.styles.get(q.style) or {}
+    outline = (st.get("engName") or "").startswith("Outline")
+    typ, lv = doc.para_heading.get(q.pr, ("NONE", 0))
+    kind, level = want["kind"], want["level"]
+    go = ["goto", q.k, 0, q.si]
+    if kind == "outline":
+        if outline and st.get("engName") == "Outline %d" % level:
+            return []
+        return [go, ["apply_style", "Outline %d" % level]]
+    steps = [go]
+    if outline:                                  # out of the 개요 style first, as Hancom's toggle does
+        steps.append(["apply_style", "0"])
+        typ, lv = "NONE", 0
+    if kind == "none":
+        if typ == "NUMBER":
+            steps.append(["put_para_number"])
+        elif typ == "BULLET":
+            steps.append(["put_bullet"])
+        return steps if len(steps) > 1 else []
+    if kind == "number":
+        if typ != "NUMBER":
+            steps.append(["put_para_number"])
+            lv = lv if typ in ("NUMBER", "NONE", "BULLET") else 0
+    else:
+        if typ == "BULLET" and want["char"] is not None:
+            steps.append(["put_bullet"])         # off, then on with the asked character
+            typ = "NONE"
+        if typ != "BULLET":
+            steps.append(["put_bullet", want["char"]] if want["char"] is not None else ["put_bullet"])
+            lv = lv or 1
+    if level is not None and lv != level - 1:   # level n is the XML's level n-1
+        steps.append(["para_level", level - 1 - lv])
+    if kind == "number":
+        if want["restart"]:
+            steps.append(["put_new_para_number"])
+        elif want["start"] is not None:
+            steps.append({"op": "set_numbering", "kwargs": {"start": want["start"]}})
+    return steps if len(steps) > 1 else []
+
+
 def _shape_hint(kind):
     t = kind[0]
     if t in ("num", "int"):
@@ -2610,10 +2715,15 @@ def _shape_hint(kind):
             "spacing": "a percent 50-500 or {type: FIXED|BETWEEN_LINES|AT_LEAST|PERCENT, value}"}[t]
 
 
-def _check_expect(op, i, at, actual):
+def _check_expect(op, i, at, actual, table=None):
+    """``expect`` must be the text at ``at``. For a cell, a mismatch names the
+    one other cell of the same table that holds exactly the expected text
+    (``found_at``): an agent that counted rows from 1 gets told where it meant."""
     if op.get("expect") is not None and op["expect"] != actual:
+        found = [c for c in table.cells if _cell_text(c) == op["expect"]] if table is not None else []
         raise DocError("expect_mismatch", "the text at %s is not what the op expected" % at, at=at, i=i,
-                       expected=op["expect"], actual=actual[:500])
+                       expected=op["expect"], actual=actual[:500],
+                       found_at=cell_address(table, found[0]) if len(found) == 1 else None)
 
 
 def _cell_text(c):
@@ -2707,6 +2817,52 @@ def _tables_within(doc, si, start, end):
     return [t.g for t in doc.sec_tables[si] if start <= t.start < end]
 
 
+TABLE_SHAPE_OPS = ("table.merge", "table.split", "table.add_col", "table.delete_col", "table.size")
+SPLIT_MAX = 20
+SIZE_MM = (1, 1000)
+
+
+def _col_cells(t, c):
+    return sorted((x for x in t.cells if x.col == c), key=lambda x: x.row)
+
+
+def _merge_rect(t, r0, c0, r1, c1):
+    """The block from corners (r0, c0) and (r1, c1), grown until no merged cell crosses its edge."""
+    ra, rb, ca, cb = min(r0, r1), max(r0, r1), min(c0, c1), max(c0, c1)
+    changed = True
+    while changed:
+        changed = False
+        for x in t.cells:
+            if x.row <= rb and x.row + x.rs - 1 >= ra and x.col <= cb and x.col + x.cs - 1 >= ca:
+                na, nb = min(ra, x.row), max(rb, x.row + x.rs - 1)
+                nc, nd = min(ca, x.col), max(cb, x.col + x.cs - 1)
+                if (na, nb, nc, nd) != (ra, rb, ca, cb):
+                    ra, rb, ca, cb = na, nb, nc, nd
+                    changed = True
+    return ra, rb, ca, cb
+
+
+def _mm_value(v, what, i, at, none_ok=False):
+    if v is None and none_ok:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not SIZE_MM[0] <= v <= SIZE_MM[1]:
+        raise DocError("bad_input", "%s is a number of millimetres from %d to %d" % ((what,) + SIZE_MM),
+                       i=i, at=at, range=list(SIZE_MM))
+    return float(v)
+
+
+def _merge_paras(inside):
+    """id(paragraph) -> its index in the merged cell. The engine keeps the paragraphs that hold anything, in
+    reading order; when none does, the first cell keeps its own (an empty dict)."""
+    keep = [q for x in inside for q in x.paras if q.chars]
+    return {id(q): k for k, q in enumerate(keep)}
+
+
+def _shape_claim(cl, t, i, name, at):
+    """A structural op owns the whole table: any other op on it, its cells or what they hold is a conflict."""
+    cl.remove(t.si, t.start, t.end, i, name, at)
+
+
 def _adds_for(doc, act, p, n):
     """Record n new paragraphs right after paragraph p."""
     if not n:
@@ -2795,7 +2951,7 @@ def _plan_op(doc, cl, i, name, op, at):
         text = _clean(op.get("text"), "set: text", i, at)
         r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
         if r.get("cell") is not None and r["kind"] in ("cell", "place"):
-            _check_expect(op, i, at, _cell_text(r["cell"]))
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
             set_cell(r["cell"], text, at)
         else:
             p = r["para"]
@@ -2899,7 +3055,7 @@ def _plan_op(doc, cl, i, name, op, at):
             a.tbl_dels = _tables_within(doc, t.si, t.start, t.end)
             acts.append(a)
         elif r.get("cell") is not None and r["kind"] in ("cell", "place"):
-            _check_expect(op, i, at, _cell_text(r["cell"]))
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
             set_cell(r["cell"], "", at)
         else:
             p = r["para"]
@@ -2995,6 +3151,143 @@ def _plan_op(doc, cl, i, name, op, at):
             a.row_dels = [(t.g, row)]
             a.tbl_dels = [g for g in _tables_within(doc, t.si, reg[0], reg[1]) if g != t.g]
             acts.append(a)
+    elif name in TABLE_SHAPE_OPS:
+        known = {"table.merge": ("to",), "table.split": ("rows", "cols"), "table.add_col": ("after", "like"),
+                 "table.delete_col": ("col", "expect"),
+                 "table.size": ("width_mm", "height_mm", "col_widths_mm", "row_heights_mm")}[name]
+        extra = sorted(set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "%s takes %s, not %s" % (name, ", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=list(known))
+        r = resolve(doc, at, allow=("table", "row", "cell") if name == "table.size" else
+                    ("cell",) if name in ("table.merge", "table.split") else ("table", "cell"))
+        t = r["table"]
+        if t.addr is None:
+            raise DocError("bad_address", "%s only works on a body table" % name, i=i, at=at)
+        here = r["cell"] if r.get("cell") is not None else None
+        a = None
+        if name == "table.merge":
+            to = op.get("to")
+            if not isinstance(to, str):
+                raise DocError("bad_input", "table.merge needs to: the cell at the block's other corner", i=i, at=at)
+            r2 = resolve(doc, to, allow=("cell",))
+            if r2["table"] is not t:
+                raise DocError("bad_address", "to must be a cell of %s" % t.addr, i=i, at=to)
+            c2 = r2["cell"]
+            ra, rb, ca, cb = _merge_rect(t, here.row, here.col, c2.row, c2.col)
+            inside = sorted((x for x in t.cells if ra <= x.row <= rb and ca <= x.col <= cb),
+                            key=lambda x: (x.row, x.col))
+            if len(inside) < 2:
+                raise DocError("bad_input", "%s and %s are one cell already" % (at, to), i=i, at=at)
+            first = inside[0]
+            for x in inside[1:]:
+                if any(t2.parent is x for t2 in doc.tables):
+                    raise DocError("bad_input", "%s holds a table; merging cells that hold a table is not "
+                                   "supported" % cell_address(t, x), i=i, at=cell_address(t, x))
+            a = _Act(i, name, at, first.paras[0], t.start, steps=[
+                ["goto_cell", t.lt, ra, ca, False, t.si], ["cell_block", rb, cb], ["merge_cells"]])
+            a.merges = [(t.g, first, inside, (rb - ra + 1, cb - ca + 1))]
+        elif name == "table.split":
+            n = {}
+            for k in ("rows", "cols"):
+                v = op.get(k, 1)
+                if not _is_int(v) or not 1 <= v <= SPLIT_MAX:
+                    raise DocError("bad_input", "%s is a whole number from 1 to %d" % (k, SPLIT_MAX),
+                                   i=i, at=at, range=[1, SPLIT_MAX])
+                n[k] = v
+            if n["rows"] == n["cols"] == 1:
+                raise DocError("bad_input", "table.split needs rows or cols above 1", i=i, at=at)
+            for k, span in (("rows", here.rs), ("cols", here.cs)):
+                if span > 1 and span % n[k]:
+                    ok = [d for d in range(1, span + 1) if span % d == 0]
+                    raise DocError("bad_input", "%s spans %d %s; it splits into %s %s" % (
+                        at, span, k, " or ".join(map(str, ok)), k), i=i, at=at, candidates=ok)
+            a = _Act(i, name, at, here.paras[0], t.start, steps=[
+                ["goto_cell", t.lt, here.row, here.col, False, t.si],
+                {"op": "split_cell", "kwargs": {"rows": n["rows"], "cols": n["cols"]}}])
+            a.splits = [(t.g, here, n["rows"], n["cols"])]
+            if here.rs == 1:
+                a.row_adds = [(t.g, here.row)] * (n["rows"] - 1)
+            if here.cs == 1:
+                a.col_adds = [(t.g, here.col)] * (n["cols"] - 1)
+        elif name == "table.add_col":
+            after = op.get("after", here.col + here.cs - 1 if here is not None else None)
+            if not _is_int(after) or not 0 <= after < t.cols:
+                raise DocError("bad_address", "table.add_col: after must be a column of %s (0..%d)"
+                               % (t.addr, t.cols - 1), at=at, i=i, range=[0, t.cols - 1])
+            like = op.get("like", after)
+            if not _is_int(like) or like not in (after, after + 1) or like >= t.cols:
+                raise DocError("bad_input", "table.add_col: like must be the column before or after the new "
+                               "one (%d or %d)" % (after, after + 1), at=at, i=i)
+            cands = [x for x in _col_cells(t, like) if x.cs == 1]
+            if not cands:
+                raise DocError("bad_address", "no cell of %s sits in column %d alone" % (t.addr, like),
+                               at=at, i=i)
+            c = cands[0]
+            a = _Act(i, name, at, c.paras[0], t.start, steps=[
+                ["goto_cell", t.lt, c.row, c.col, False, t.si], ["insert_column", like == after]])
+            a.col_adds = [(t.g, after)]
+            ref = {id(x): x for x in (t.at(rr, like) for rr in range(t.rows)) if x is not None}
+            a.cell_delta = [(t.g, sum(1 for x in ref.values() if not x.col < after + 1 < x.col + x.cs))]
+        elif name == "table.delete_col":
+            col = op.get("col", here.col if here is not None else None)
+            if not _is_int(col) or not 0 <= col < t.cols:
+                raise DocError("bad_address", "table.delete_col needs a column of %s (col 0..%d, or a cell)"
+                               % (t.addr, t.cols - 1), at=at, i=i, range=[0, t.cols - 1])
+            if t.cols == 1:
+                raise DocError("bad_input", "%s has one column; delete the table instead" % t.addr, at=at, i=i)
+            cands = [x for x in _col_cells(t, col) if x.cs == 1]
+            if not cands:
+                raise DocError("bad_address", "no cell of %s sits in column %d alone" % (t.addr, col),
+                               at=at, i=i)
+            grid = _table_block(None, t)["cells"]
+            _check_expect(op, i, at, "\n".join(grid[rr][col] for rr in range(t.rows)))
+            c = cands[0]
+            a = _Act(i, name, at, c.paras[0], t.start, steps=[
+                ["goto_cell", t.lt, c.row, c.col, False, t.si], ["delete_column"]])
+            a.col_dels = [(t.g, col)]
+            a.tbl_dels = [g for x in _col_cells(t, col) if x.cs == 1
+                          for g in _tables_within(doc, t.si, x.start, x.end)]
+        else:   # table.size
+            ws, hs = {}, {}
+            for k, sizes, what, lst in (("width_mm", ws, "column", "col_widths_mm"),
+                                        ("height_mm", hs, "row", "row_heights_mm")):
+                if k not in op:
+                    continue
+                if here is None and not (k == "height_mm" and r["kind"] == "row"):
+                    raise DocError("bad_address", "%s sets the %s of the cell at; address a cell, or use %s on "
+                                   "the table" % (k, what, lst), i=i, at=at)
+                if here is not None and (here.cs if what == "column" else here.rs) > 1:
+                    raise DocError("bad_address", "%s spans more than one %s; use %s on the table"
+                                   % (at, what, lst), i=i, at=at)
+                idx = r["row"] if here is None else (here.col if what == "column" else here.row)
+                sizes[idx] = _mm_value(op[k], k, i, at)
+            for k, sizes, count in (("col_widths_mm", ws, t.cols), ("row_heights_mm", hs, t.rows)):
+                if k in op:
+                    v = op[k]
+                    if r["kind"] != "table":
+                        raise DocError("bad_address", "%s goes on the table (%s), not a row or cell" % (k, t.addr),
+                                       i=i, at=at, candidates=[t.addr])
+                    if not isinstance(v, list) or not v or len(v) > count:
+                        raise DocError("bad_input", "%s is a list of 1 to %d sizes in millimetres (null keeps "
+                                       "one)" % (k, count), i=i, at=at, range=[1, count])
+                    for j, x in enumerate(v):
+                        x = _mm_value(x, "%s[%d]" % (k, j), i, at, none_ok=True)
+                        if x is not None:
+                            if j in sizes:
+                                raise DocError("bad_input", "%s[%d] is set twice" % (k, j), i=i, at=at)
+                            sizes[j] = x
+            if not ws and not hs:
+                raise DocError("bad_input", "table.size needs width_mm, height_mm, col_widths_mm or "
+                               "row_heights_mm", i=i, at=at)
+            c0 = here or t.cells[0]
+            steps = [["goto_cell", t.lt, c0.row, c0.col, False, t.si]]
+            steps += [["set_column_width", w, j] for j, w in sorted(ws.items())]
+            steps += [["set_row_height", h, j] for j, h in sorted(hs.items())]
+            a = _Act(i, name, at, c0.paras[0], t.start, steps=steps)
+            a.resized = [t.g]
+        _shape_claim(cl, t, i, name, at)
+        acts.append(a)
     elif name == "fill":
         pid = op.get("place")
         if not isinstance(pid, str) or not pid:
@@ -3061,7 +3354,7 @@ def _plan_op(doc, cl, i, name, op, at):
                            candidates=_cands_near([s["name"] for s in doc.styles.values()], sty))
         r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
         for q in r["paras"]:
-            cl.touch(q.si, q.start, i, name, at)
+            _no_list_twice(cl, q, i, name, at)
             acts.append(_Act(i, name, at, q, q.start, side=2, steps=[["goto", q.k, 0, q.si], ["apply_style", sty]]))
     elif name in ("char_shape", "para_shape"):
         fmt = _shape_fmt(name, op, i, at)
@@ -3071,7 +3364,7 @@ def _plan_op(doc, cl, i, name, op, at):
         if r["kind"] == "table":
             _check_expect(op, i, at, _table_text(r["table"]))
         elif r.get("cell") is not None and r["kind"] in ("cell", "place"):
-            _check_expect(op, i, at, _cell_text(r["cell"]))
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
         elif len(paras) == 1:
             p0 = paras[0]
             _check_expect(op, i, at, p0.text[rng[0]:rng[1]] if rng else p0.text)
@@ -3104,6 +3397,27 @@ def _plan_op(doc, cl, i, name, op, at):
                 acts.append(_Act(i, name, at, q, q.start, side=2, intra=a0, steps=st))
             if not any(a.i == i for a in acts):
                 raise DocError("bad_input", "%s has no characters to shape" % at, i=i, at=at)
+    elif name == "numbering":
+        want = _numbering_set(op, i, at)
+        if want["kind"] == "outline" and _outline_style(doc, want["level"]) is None:
+            raise DocError("bad_input", "this document has no 개요 %d style" % want["level"], i=i, at=at,
+                           candidates=[s["name"] for s in doc.styles.values()
+                                       if (s.get("engName") or "").startswith("Outline")][:7])
+        r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
+        if r.get("range"):
+            raise DocError("bad_address", "numbering takes whole paragraphs, not a character range", i=i, at=at)
+        paras = [q for q in r["paras"] if q is not None]
+        if len(paras) == 1:
+            _check_expect(op, i, at, paras[0].text)
+        elif r.get("cell") is not None:
+            _check_expect(op, i, at, _cell_text(r["cell"]))
+        elif op.get("expect") is not None:
+            raise DocError("bad_input", "expect works on one paragraph or cell", i=i, at=at)
+        for q in paras:
+            _no_list_twice(cl, q, i, name, at)
+            st = _numbering_steps(doc, q, want)
+            if st:
+                acts.append(_Act(i, name, at, q, q.start, side=2, steps=st))
     elif name in ("insert_table", "insert_picture", "insert_equation"):
         r = resolve(doc, at, allow=("para", "cellpara", "heading", "cell", "place"))
         p = r["cell"].paras[-1] if (r.get("cell") is not None and r["kind"] in ("cell", "place")) else r["para"]
@@ -3214,6 +3528,27 @@ def _structure(doc, acts):
         if r in rdels.get(g, ()):
             return None
         return r + sum(1 for x in radds.get(g, ()) if x < r) - sum(1 for x in rdels.get(g, ()) if x < r)
+    coladds, coldels, merged = {}, {}, {}
+    for a in acts:
+        for g, after in a.col_adds:
+            coladds.setdefault(g, []).append(after)
+        for g, c in a.col_dels:
+            coldels.setdefault(g, set()).add(c)
+        for g, first, inside, _span in a.merges:
+            for x in inside[1:]:
+                merged[id(x)] = first
+
+    def newcell(g, x):
+        """(row, col) of base cell x of table g in the output; None when it was deleted or merged away."""
+        if id(x) in merged:
+            return None
+        r = newrow(g, x.row)
+        if r is None:
+            return None
+        c = x.col
+        if c in coldels.get(g, ()) and x.cs == 1:
+            return None
+        return r, c + sum(1 for k in coladds.get(g, ()) if k < c) - sum(1 for k in coldels.get(g, ()) if k < c)
     cadds, cdels = {}, {}
     for a in acts:
         for c, k, n in a.cell_adds:
@@ -3240,12 +3575,13 @@ def _structure(doc, acts):
             else:
                 pt = doc.table_of(host)
                 pa = newaddr(pt) if pt is not None else None
-                nr = newrow(pt.g, host.row) if pa is not None else None
-                res = None if nr is None else "%s/r%d/c%d/t%d" % (pa, nr, host.col, k)
+                nc = newcell(pt.g, host) if pa is not None else None
+                res = None if nc is None else "%s/r%d/c%d/t%d" % (pa, nc[0], nc[1], k)
         addr_memo[t.g] = res
         return res
     return {"newtop": newtop, "newt": newt, "newrow": newrow, "adds": adds, "dels": dels, "tadds": tadds,
-            "tdels": tdels, "radds": radds, "rdels": rdels, "cadds": cadds, "cdels": cdels, "newaddr": newaddr}
+            "tdels": tdels, "radds": radds, "rdels": rdels, "cadds": cadds, "cdels": cdels, "newaddr": newaddr,
+            "coladds": coladds, "coldels": coldels, "newcell": newcell}
 
 
 def _remap(doc, acts):
@@ -3270,6 +3606,35 @@ def _remap(doc, acts):
             to = None if nr is None else "%s/r%d" % (ta, nr)
             if to != "%s/r%d" % (t.addr, r):
                 out.append({"from": "%s/r%d" % (t.addr, r), "to": to})
+    for g in sorted(set(st["coladds"]) | set(st["coldels"])):
+        t = doc.tables[g]
+        ta = st["newaddr"](t)
+        if ta is None or t.addr is None:
+            continue
+        for x in sorted(t.cells, key=lambda x: (x.row, x.col)):
+            base = cell_address(t, x)
+            nc = st["newcell"](g, x)
+            to = None if nc is None else "%s/r%d/c%d" % (ta, nc[0], nc[1])
+            if to != follow_remap(out, base):
+                out.append({"from": base, "to": to})
+    for a in acts:
+        for g, first, inside, _span in a.merges:
+            t = doc.tables[g]
+            ta = st["newaddr"](t)
+            if ta is None or t.addr is None:
+                continue
+            fa = follow_remap(out, cell_address(t, first))
+            moved = _merge_paras(inside)
+            for x in inside:
+                base = cell_address(t, x)
+                if x is not first:
+                    out.append({"from": base, "to": None})
+                for k, q in enumerate(x.paras):
+                    nk = moved.get(id(q), k if (x is first and not moved) else None)
+                    if x is first and nk == k:
+                        continue
+                    out.append({"from": "%s/p%d" % (base, k), "to": None if (nk is None or fa is None)
+                                else "%s/p%d" % (fa, nk)})
     for key in set(st["cadds"]) | set(st["cdels"]):
         c = (st["cadds"].get(key) or st["cdels"].get(key))[0]
         adds = st["cadds"].get(key, (c, []))[1]
@@ -3327,6 +3692,8 @@ def _verify(doc, newdoc, acts):
         elif t.g not in touched:
             if (nt.rows, nt.cols) != (t.rows, t.cols) or _table_text(nt) != _table_text(t):
                 return False
+    if not _verify_shapes(doc, newdoc, acts, st):
+        return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
         ng = st["newt"][t.g]
@@ -3347,12 +3714,55 @@ def _verify(doc, newdoc, acts):
     return True
 
 
+def _verify_shapes(doc, newdoc, acts, st):
+    """The tables the table.* shape ops changed have the grid, cell count and merged cells they planned."""
+    want = {}               # g -> expected change in the number of cells
+    for a in acts:
+        for g, delta in a.cell_delta:
+            want[g] = want.get(g, 0) + delta
+        for g, c in a.col_dels:
+            want[g] = want.get(g, 0) - sum(1 for x in doc.tables[g].cells if x.col == c and x.cs == 1)
+        for g, first, inside, _span in a.merges:
+            want[g] = want.get(g, 0) - (len(inside) - 1)
+        for g, x, rows, cols in a.splits:
+            want[g] = want.get(g, 0) + rows * cols - 1
+        for g in a.resized:
+            want.setdefault(g, 0)
+    for g, delta in want.items():
+        t, ng = doc.tables[g], st["newt"][g]
+        if ng is None:
+            return False
+        nt = newdoc.tables[ng]
+        rows = t.rows + len(st["radds"].get(g, ())) - len(st["rdels"].get(g, ()))
+        cols = t.cols + len(st["coladds"].get(g, ())) - len(st["coldels"].get(g, ()))
+        if (nt.rows, nt.cols) != (rows, cols) or len(nt.cells) != len(t.cells) + delta:
+            return False
+    for a in acts:
+        for g in a.resized:
+            nt = newdoc.tables[st["newt"][g]]
+            if _table_text(nt) != _table_text(doc.tables[g]):
+                return False
+        for g, first, inside, (rs, cs) in a.merges:
+            nt, rc = newdoc.tables[st["newt"][g]], st["newcell"](g, first)
+            y = nt.at(*rc) if rc else None
+            n = len(_merge_paras(inside)) or len(first.paras)
+            if y is None or (y.row, y.col, y.rs, y.cs) != (rc[0], rc[1], rs, cs) or len(y.paras) != n:
+                return False
+        for g, x, rows, cols in a.splits:
+            nt, rc = newdoc.tables[st["newt"][g]], st["newcell"](g, x)
+            y = nt.at(*rc) if rc else None
+            span = (x.rs // rows if x.rs > 1 else 1, x.cs // cols if x.cs > 1 else 1)
+            if y is None or (y.row, y.col) != rc or (y.rs, y.cs) != span or _cell_text(y) != _cell_text(x):
+                return False
+    return True
+
+
 def _remap_result(doc, newdoc, acts):
     """(remap, approx): the exact remap when the output confirms it, else a text alignment flagged approx."""
     remap = _remap(doc, acts)
     if newdoc is None or _verify(doc, newdoc, acts):
         return remap, False
-    dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels]
+    dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges]
     if dels:        # a removal the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) removes; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)

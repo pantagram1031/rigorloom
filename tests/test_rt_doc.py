@@ -212,6 +212,30 @@ def test_text_edits_without_engine(no_engine, tmp_path):
     assert {"p1", "p2", "t0/r0/c0", "t5/r13/c2"} <= {c["at"] for c in ch} and len(ch) == 5
 
 
+
+def test_expect_on_a_cell_names_where_the_expected_text_is(no_engine, tmp_path):
+    # P7 round 3: an agent counted rows from 1 (t1/r3/c2 for the row at r2).
+    # The document had not changed, so the refusal says where the expected
+    # text is when exactly one other cell of the same table holds it.
+    src = tmp_path / "a.hwpx"
+    shutil.copyfile(REPO / "tests" / "fixtures" / "doc_core" / "addressing.hwpx", src)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def refused(op):
+        e = D.edit(src, [op], base=rev, out=out)["error"]
+        assert e["code"] == "expect_mismatch" and not out.exists()
+        return e
+    e = refused({"op": "set", "at": "t0/r2/c0", "text": "주소지", "expect": "주소"})
+    assert (e["at"], e["actual"], e["found_at"]) == ("t0/r2/c0", "연락", "t0/r1/c0")
+    e = refused({"op": "delete", "at": "t0/r0/c2", "expect": "끝"})
+    assert e["found_at"] == "t0/r2/c2"
+    e = refused({"op": "char_shape", "at": "t0/r0/c0", "set": {"bold": True}, "expect": "연락"})
+    assert e["found_at"] == "t0/r2/c0"      # checked before the engine is needed
+    # Nowhere in the table, or in more than one cell (the empty ones): no guess.
+    assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": "없는 글"})
+    assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": ""})
+
+
 def test_edit_refusals(no_engine, tmp_path):
     src = _copy(GUARD, tmp_path)
     rev = D.rev_of(src)
@@ -1104,3 +1128,253 @@ def test_engine_char_and_para_shape(kit, tmp_path):
         sec = z.read("Contents/section0.xml").decode("utf-8")
         assert "markpenBegin" not in sec and "markpenEnd" not in sec
         assert 'height="1400"' in _char_pr(z, text[:4], "XY" + text[8:12])[0]
+
+
+# ============================================================================ 개요 번호 / 문단 번호 / 글머리표
+def test_numbering_is_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(op):
+        return D.edit(src, [op] if isinstance(op, dict) else op, base=rev, out=out)["error"]
+    e = err({"op": "numbering", "at": "p2", "set": {"kind": "roman"}})
+    assert e["code"] == "bad_input" and "outline" in e["candidates"]
+    assert err({"op": "numbering", "at": "p2"})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "number", "level": 8}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "number", "level": True}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "bullet", "char": "ab"}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "outline", "char": "*"}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "none", "level": 2}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "number", "start": 0}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "number", "start": 3, "restart": True}})["code"] \
+        == "bad_input"
+    assert err({"op": "numbering", "at": "p2:0-3", "set": {"kind": "number"}})["code"] == "bad_address"
+    e = err([{"op": "numbering", "at": "p2", "set": {"kind": "number"}}, {"op": "style", "at": "p2", "style": "본문"}])
+    assert e["code"] == "conflict"
+
+
+@engine
+def test_engine_numbering_sets_the_list_state(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    out, out2 = tmp_path / "n.hwpx", tmp_path / "n2.hwpx"
+    texts = {a: D.read(f, a)["blocks"][0]["text"] for a in ("p3", "p4", "p6")}
+    r = D.edit(f, [
+        {"op": "numbering", "at": "p3", "set": {"kind": "number", "level": 2}},
+        {"op": "numbering", "at": "p4", "set": {"kind": "bullet", "char": "■", "level": 3}},
+        {"op": "numbering", "at": "p5", "set": {"kind": "outline", "level": 2}},
+        {"op": "numbering", "at": "p6", "set": {"kind": "number", "start": 5}},
+    ], base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == []
+
+    def state(path, a):
+        d = D._load(path)
+        q = D.resolve(d, a)["para"]
+        return d.para_heading.get(q.pr, ("NONE", 0)), (d.styles.get(q.style) or {}).get("engName"), q.text
+    assert state(out, "p3") == (("NUMBER", 1), "Normal", texts["p3"])     # level 2 = the XML's level 1
+    assert state(out, "p4")[0] == ("BULLET", 2)
+    assert state(out, "p5")[:2] == (("OUTLINE", 1), "Outline 2")
+    assert state(out, "p6")[0] == ("NUMBER", 0) and state(out, "p6")[2] == texts["p6"]
+    assert state(out, "p7")[0] == ("NONE", 0)
+    with zipfile.ZipFile(out) as z:
+        head = z.read("Contents/header.xml").decode("utf-8")
+        assert re.search(r'<hh:paraHead start="5" level="1"', head)
+        assert "■" in head
+    # an op that finds the paragraph already there adds no step; none takes each list off; number -> bullet
+    r = D.edit(out, [
+        {"op": "numbering", "at": "p3", "set": {"kind": "number", "level": 2}},
+        {"op": "numbering", "at": "p4", "set": {"kind": "none"}},
+        {"op": "numbering", "at": "p5", "set": {"kind": "none"}},
+        {"op": "numbering", "at": "p6", "set": {"kind": "bullet"}},
+    ], base=D.rev_of(out), out=out2)
+    assert r["ok"], r
+    assert state(out2, "p3")[0] == ("NUMBER", 1)
+    assert state(out2, "p4")[0][0] == "NONE"
+    assert state(out2, "p5")[:2] == (("NONE", 0), "Normal")
+    assert state(out2, "p6")[0][0] == "BULLET" and state(out2, "p6")[2] == texts["p6"]
+
+    # outline -> number, and bullet -> number restarted (새 번호로 시작: a numbering of its own from 1)
+    out3 = tmp_path / "n3.hwpx"
+    r = D.edit(out, [
+        {"op": "numbering", "at": "p5", "set": {"kind": "number"}},
+        {"op": "numbering", "at": "p4", "set": {"kind": "number", "restart": True}},
+    ], base=D.rev_of(out), out=out3)
+    assert r["ok"], r
+    assert state(out3, "p5")[0][0] == "NUMBER" and state(out3, "p5")[1] != "Outline 2"
+    assert state(out3, "p4")[0][0] == "NUMBER"
+
+    def num_ref(path, a):
+        d = D._load(path)
+        q = D.resolve(d, a)["para"]
+        with zipfile.ZipFile(path) as z:
+            head = z.read("Contents/header.xml").decode("utf-8")
+        pp = re.search(r'<hh:paraPr id="%s".*?</hh:paraPr>' % q.pr, head, re.S).group(0)
+        ref = re.search(r'<hh:heading type="NUMBER" idRef="(\d+)"', pp).group(1)
+        return ref, re.search(r'<hh:numbering id="%s"[^>]*\bstart="(\d+)"' % ref, head).group(1)
+    assert num_ref(out3, "p4")[0] != num_ref(out3, "p5")[0]
+    assert num_ref(out3, "p4")[1] == "1"
+
+
+# ============================================================================ 표 구조: 셀 합치기·나누기, 칸, 크기
+def test_table_shape_ops_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(op):
+        return D.edit(src, [op] if isinstance(op, dict) else op, base=rev, out=out)["error"]
+    assert err({"op": "table.merge", "at": "t5/r4/c0"})["code"] == "bad_input"                 # no to
+    assert err({"op": "table.merge", "at": "t5/r4/c0", "to": "t6/r0/c0"})["code"] == "bad_address"
+    assert err({"op": "table.merge", "at": "t5", "to": "t5/r1/c0"})["code"] == "bad_address"
+    assert err({"op": "table.merge", "at": "t5/r4/c0", "to": "t5/r5/c0"})["code"] == "bad_input"  # one cell
+    e = err({"op": "table.merge", "at": "t5/r4/c0", "too": "t5/r4/c1"})
+    assert e["code"] == "bad_input" and e["candidates"] == ["to"]
+    assert err({"op": "table.split", "at": "t5/r0/c5"})["code"] == "bad_input"               # 1 x 1
+    assert err({"op": "table.split", "at": "t5/r0/c5", "cols": 21})["code"] == "bad_input"
+    assert err({"op": "table.split", "at": "t5/r0/c5", "rows": True})["code"] == "bad_input"
+    e = err({"op": "table.split", "at": "t5/r4/c0", "rows": 2})                                # spans 3 rows
+    assert e["code"] == "bad_input" and e["candidates"] == [1, 3]
+    assert err({"op": "table.add_col", "at": "t5"})["code"] == "bad_address"                  # no after
+    assert err({"op": "table.add_col", "at": "t5", "after": 6})["code"] == "bad_address"
+    assert err({"op": "table.add_col", "at": "t5", "after": 0, "like": 2})["code"] == "bad_input"
+    assert err({"op": "table.add_col", "at": "t5", "after": 1})["code"] == "bad_address"      # no lone cell
+    assert err({"op": "table.delete_col", "at": "t5", "col": 1})["code"] == "bad_address"
+    assert err({"op": "table.delete_col", "at": "t0", "col": 0})["code"] == "bad_input"        # one column
+    assert err({"op": "table.delete_col", "at": "t5/r0/c5", "expect": "x"})["code"] == "expect_mismatch"
+    assert err({"op": "table.size", "at": "t5"})["code"] == "bad_input"
+    assert err({"op": "table.size", "at": "t5", "width_mm": 20})["code"] == "bad_address"
+    assert err({"op": "table.size", "at": "t5/r4/c1", "width_mm": 20})["code"] == "bad_address"  # spans 2
+    assert err({"op": "table.size", "at": "t5/r0/c5", "width_mm": 0})["code"] == "bad_input"
+    assert err({"op": "table.size", "at": "t5", "col_widths_mm": [10] * 7})["code"] == "bad_input"
+    assert err({"op": "table.size", "at": "t5", "row_heights_mm": [None, "5"]})["code"] == "bad_input"
+    assert err({"op": "table.size", "at": "t5/r0/c0:0-2", "height_mm": 5})["code"] == "bad_address"
+    e = err({"op": "table.size", "at": "t5/r0/c5", "col_widths_mm": [10]})       # lists go on the table
+    assert e["code"] == "bad_address" and e["candidates"] == ["t5"]
+    assert err({"op": "table.size", "at": "t5/r1", "row_heights_mm": [10]})["code"] == "bad_address"
+    # a shape op owns its table: any other op on it, or a second shape op, is a conflict
+    assert err([{"op": "table.size", "at": "t5", "col_widths_mm": [10]},
+                {"op": "table.set_cells", "at": "t5/r0/c5", "grid": [["x"]]}])["code"] == "conflict"
+    assert err([{"op": "table.split", "at": "t5/r0/c5", "cols": 2},
+                {"op": "table.add_row", "at": "t5", "after": 1}])["code"] == "conflict"
+    assert err([{"op": "table.size", "at": "t6", "col_widths_mm": [10]},
+                {"op": "table.size", "at": "t6", "row_heights_mm": [10]}])["code"] == "conflict"
+    # valid, but only the engine changes a table's shape
+    assert err({"op": "table.size", "at": "t5/r0/c5", "height_mm": 12})["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+def test_table_shape_ops_on_an_older_engine_write_nothing(no_engine, tmp_path, monkeypatch):
+    """An engine that predates an edit step answers 'unknown hnc_edit operation': the op is unavailable on it
+    (engine_function_missing), and nothing is written."""
+    class Old:
+        def call(self, fn, *a, **k):
+            if fn == "edit":
+                return {"ok": False, "error": {"code": "bad_input", "step": 1,
+                                               "message": "step 1: unknown hnc_edit operation 'merge_cells'"}}
+            return {"ok": True, "pages": [], "count": 0}
+    monkeypatch.setattr(D, "_engine", lambda: Old())
+    src = _copy(GUARD, tmp_path)
+    out = tmp_path / "o.hwpx"
+    r = D.edit(src, [{"op": "table.merge", "at": "t5/r4/c0", "to": "t5/r4/c1"}], base=D.rev_of(src), out=out)
+    e = r["error"]
+    assert e["code"] == "capability_unavailable" and e["reason"] == "engine_function_missing", e
+    assert e["fn"] == "merge_cells" and e["written"] is False and e["retryable"] is False
+    assert not out.exists()
+
+
+def _cells(path, g=0):
+    t = D._load(path).tables[g]
+    return sorted((c.row, c.col, c.rs, c.cs) for c in t.cells), t.rows, t.cols
+
+
+def _tc_xml(z):
+    sec = z.read("Contents/section0.xml").decode("utf-8")
+    tbl = sec[sec.index("<hp:tbl "):]
+    return tbl[:tbl.index("</hp:tbl>")]
+
+
+@engine
+def test_engine_table_merge_and_split(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    texts = {a: D.read(f, a)["blocks"][0]["text"] for a in ("t0/r1/c0", "t0/r1/c1", "t0/r2/c0", "t0/r2/c1")}
+    out = tmp_path / "m.hwpx"
+    r = D.edit(f, [{"op": "table.merge", "at": "t0/r1/c0", "to": "t0/r2/c1"}], base=D.rev_of(f), out=out)
+    assert r["ok"] and not r.get("remap_approx"), r
+    cells, rows, cols = _cells(out)
+    assert (rows, cols, len(cells)) == (4, 4, 12) and (1, 0, 2, 2) in cells
+    with zipfile.ZipFile(out) as z:
+        assert '<hp:cellAddr colAddr="0" rowAddr="1"/><hp:cellSpan colSpan="2" rowSpan="2"/>' in _tc_xml(z)
+    assert [b["text"] for b in D.read(out, "t0/r1/c0")["blocks"]] == [
+        texts["t0/r1/c0"], texts["t0/r1/c1"], texts["t0/r2/c0"], texts["t0/r2/c1"]]
+    remap = {m["from"]: m["to"] for m in r["remap"]}
+    assert remap["t0/r1/c1"] is None and remap["t0/r2/c1/p0"] == "t0/r1/c0/p3"
+    assert D.follow_remap(r["remap"], "t0/r2/c0/p0") == "t0/r1/c0/p2"
+    # 셀 나누기: a 1 x 1 cell into 2 x 2 adds a grid row and a grid column; the cells after them move
+    out2 = tmp_path / "s.hwpx"
+    r = D.edit(f, [{"op": "table.split", "at": "t0/r1/c1", "rows": 2, "cols": 2}], base=D.rev_of(f), out=out2)
+    assert r["ok"] and not r.get("remap_approx"), r
+    cells, rows, cols = _cells(out2)
+    assert (rows, cols, len(cells)) == (5, 5, 15 + 3)
+    assert {(1, 1, 1, 1), (1, 2, 1, 1), (2, 1, 1, 1), (2, 2, 1, 1), (1, 0, 2, 1), (1, 3, 2, 1)} <= set(cells)
+    assert D.read(out2, "t0/r1/c1")["blocks"][0]["text"] == texts["t0/r1/c1"]
+    assert D.read(out2, "t0/r2/c2")["blocks"][0]["text"] == ""
+    assert D.follow_remap(r["remap"], "t0/r2/c3") == "t0/r3/c4"
+    assert D.read(out2, "t0/r3/c4")["blocks"][0]["text"].startswith("R2C3")
+
+
+@engine
+def test_engine_table_columns_and_sizes(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    out = tmp_path / "c.hwpx"
+    r = D.edit(f, [{"op": "table.add_col", "at": "t0", "after": 1}], base=D.rev_of(f), out=out)
+    assert r["ok"] and not r.get("remap_approx"), r
+    cells, rows, cols = _cells(out)
+    assert (rows, cols, len(cells)) == (4, 5, 19) and (0, 0, 1, 2) in cells
+    assert D.follow_remap(r["remap"], "t0/r2/c3/p0") == "t0/r2/c4/p0"
+    assert D.read(out, "t0/r2/c4")["blocks"][0]["text"].startswith("R2C3")
+    assert D.read(out, "t0/r2/c2")["blocks"][0]["text"] == ""
+    col = D.read(f, "t0")["blocks"][0]["cells"]
+    out2 = tmp_path / "d.hwpx"
+    r = D.edit(f, [{"op": "table.delete_col", "at": "t0/r1/c2",
+                    "expect": "\n".join(col[k][2] for k in range(4))}], base=D.rev_of(f), out=out2)
+    assert r["ok"] and not r.get("remap_approx"), r
+    cells, rows, cols = _cells(out2)
+    assert (rows, cols, len(cells)) == (4, 3, 11)
+    remap = {m["from"]: m["to"] for m in r["remap"]}
+    assert remap["t0/r1/c2"] is None and remap["t0/r1/c3"] == "t0/r1/c2"
+    assert "R1C2" not in D.read(out2, "t0")["blocks"][0]["text"]
+    # a column inside the merged (0,0) cell (columns 0-1): the merged cell widens, then narrows again
+    head = D.read(f, "t0/r0/c0")["blocks"][0]["text"]
+    out4, out5 = tmp_path / "w.hwpx", tmp_path / "n.hwpx"
+    r = D.edit(f, [{"op": "table.add_col", "at": "t0", "after": 0}], base=D.rev_of(f), out=out4)
+    assert r["ok"] and not r.get("remap_approx"), r
+    cells, rows, cols = _cells(out4)
+    assert (rows, cols, len(cells)) == (4, 5, 15 + 3) and (0, 0, 1, 3) in cells
+    assert D.read(out4, "t0/r0/c0")["blocks"][0]["text"] == head
+    assert D.follow_remap(r["remap"], "t0/r0/c2") == "t0/r0/c3"
+    assert D.follow_remap(r["remap"], "t0/r1/c1") == "t0/r1/c2"
+    r = D.edit(f, [{"op": "table.delete_col", "at": "t0", "col": 0}], base=D.rev_of(f), out=out5)
+    assert r["ok"] and not r.get("remap_approx"), r
+    cells, rows, cols = _cells(out5)
+    assert (rows, cols, len(cells)) == (4, 3, 15 - 3) and (0, 0, 1, 1) in cells
+    remap = {m["from"]: m["to"] for m in r["remap"]}
+    assert remap["t0/r1/c0"] is None and remap.get("t0/r0/c0", "t0/r0/c0") == "t0/r0/c0"
+    assert D.read(out5, "t0/r0/c0")["blocks"][0]["text"] == head
+    assert D.follow_remap(r["remap"], "t0/r1/c1") == "t0/r1/c0"
+    # 셀 크기: grid column widths and one row's height, in HWPUNIT (7200 per inch)
+    out3 = tmp_path / "z.hwpx"
+    r = D.edit(f, [{"op": "table.size", "at": "t0", "col_widths_mm": [20, None, 30], "row_heights_mm": [None, 15]}],
+               base=D.rev_of(f), out=out3)
+    assert r["ok"] and r["remap"] == [] and not r.get("remap_approx"), r
+    hu = lambda mm: int(round(mm * 7200 / 25.4))       # noqa: E731
+    with zipfile.ZipFile(f) as z0, zipfile.ZipFile(out3) as z:
+        before, after = _tc_xml(z0), _tc_xml(z)
+
+    def size(xml, row, col):
+        m = re.search(r'<hp:cellAddr colAddr="%d" rowAddr="%d"/><hp:cellSpan [^>]*/><hp:cellSz width="(\d+)" '
+                      r'height="(\d+)"' % (col, row), xml)
+        return int(m.group(1)), int(m.group(2))
+    assert size(after, 1, 0)[0] == hu(20) and size(after, 1, 2)[0] == hu(30)
+    assert size(after, 1, 1)[0] == size(before, 1, 1)[0]
+    assert size(after, 0, 0)[0] == hu(20) + size(before, 1, 1)[0]       # the merged cell spans columns 0 and 1
+    assert size(after, 1, 3)[1] == hu(15) and size(after, 0, 2)[1] == size(before, 0, 2)[1]
+    assert D.read(out3, "t0")["blocks"][0]["cells"] == D.read(f, "t0")["blocks"][0]["cells"]

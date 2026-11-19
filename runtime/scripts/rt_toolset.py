@@ -912,6 +912,12 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "style": (("at", "style"), ()),
     "char_shape": (("at", "set"), ("expect",)),
     "para_shape": (("at", "set"), ("expect",)),
+    "numbering": (("at", "set"), ("expect",)),
+    "table.merge": (("at", "to"), ()),
+    "table.split": (("at",), ("rows", "cols")),
+    "table.add_col": (("at",), ("after", "like")),
+    "table.delete_col": (("at",), ("col", "expect")),
+    "table.size": (("at",), ("width_mm", "height_mm", "col_widths_mm", "row_heights_mm")),
 }
 
 
@@ -928,6 +934,12 @@ OP_EXAMPLES = {
     "style": '{"op":"style","at":"p1","style":"개요 1"}',
     "char_shape": '{"op":"char_shape","at":"p1:0-6","set":{"bold":true,"size":12}}',
     "para_shape": '{"op":"para_shape","at":"p1","set":{"align":"CENTER","after":6}}',
+    "numbering": '{"op":"numbering","at":"p1","set":{"kind":"outline","level":2}}',
+    "table.merge": '{"op":"table.merge","at":"t0/r1/c0","to":"t0/r2/c1"}',
+    "table.split": '{"op":"table.split","at":"t0/r1/c1","cols":2}',
+    "table.add_col": '{"op":"table.add_col","at":"t0","after":1}',
+    "table.delete_col": '{"op":"table.delete_col","at":"t0/r0/c2"}',
+    "table.size": '{"op":"table.size","at":"t0","col_widths_mm":[30,null,45]}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1069,8 +1081,9 @@ register(Tool(
                 "markdown,like?} (one plain paragraph per line, no tables), "
                 "delete{at,expect?}, table.set_cells{at,grid}, "
                 "table.add_row{at,after,like?}, table.delete_row{at}, style{at,style}, "
-                "char_shape{at,set} (at: paragraph, range p3:5-9, cell or table; set: {bold,size,color,...}), "
-                "para_shape{at,set} (set: {align,indent,before,after,line_spacing,...}). "
+                "char_shape{at,set} (at: paragraph, range p3:5-9, cell, table; set: {bold,size,color,...}), "
+                "para_shape{at,set} (set: {align,before,after,...}), "
+                "numbering{at,set} (set: {kind: outline|number|bullet|none, level}). "
                 "Pass the `rev` you read as `base`; `expect` guards the text you change. "
                 "Returns changed pages: preview them.",
     group="write", read_only=False, idempotent=False,

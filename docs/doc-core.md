@@ -28,6 +28,7 @@ list, text that is not text) is `bad_input`, never `internal`.
 | `rev` | `stale` | the file's current rev |
 | `total` | `ambiguous_match` | how many matches there were |
 | `expected`, `actual` | `expect_mismatch` | what `expect` said and what is there (text, or a match count) |
+| `found_at` | `expect_mismatch` on a table cell | the one other cell of the same table whose text is exactly `expected`, when there is exactly one (the address was off, as when rows are counted from 1) |
 | `reason` | `capability_unavailable` | why: `engine_not_configured`, `engine_path_missing`, `engine_function_missing`, `structural_edit_unsupported`, `hwp_binary_unsupported`, `rasterizer_missing`, `page_layout_unavailable`, ... |
 | `fn`, `engine_fn` | engine errors | the engine function involved |
 
@@ -39,7 +40,7 @@ list, text that is not text) is `bad_input`, never `internal`.
 | `stale` | yes | `base` is not the file's current rev (also when another writer replaced the file during an in-place edit); read again |
 | `busy` | yes | another rt_doc writer holds the destination's lock; retry |
 | `locked` | yes | another program has the file open (Windows sharing violation on read or replace) or the file is not accessible; close it and retry |
-| `expect_mismatch` | no | `expect` did not hold |
+| `expect_mismatch` | no | `expect` did not hold: the text at that place is not what was expected (a file that changed since it was read is `stale`) |
 | `ambiguous_match` | no | `replace` without `all: true` matched more than once |
 | `conflict` | no | two ops in one edit touch overlapping text or something another op removes |
 | `capability_unavailable` | no | this installation cannot do it; see `reason` |
@@ -72,7 +73,10 @@ pages, rendering, conversion) answers `capability_unavailable` with a
 conversion need engine functions that are still being added; until the engine
 has them they answer `capability_unavailable` with reason
 `engine_function_missing`, and they start working without a change here once
-it does.
+it does. The same holds for an edit op whose engine step the installed engine
+predates (the engine answers "unknown hnc_edit operation"): the edit answers
+`capability_unavailable`, reason `engine_function_missing`, `fn` naming the
+step, and nothing is written.
 
 ## Addresses
 
@@ -208,8 +212,9 @@ rt_doc.edit("보고서.hwpx", [
 - Every op is checked before anything is written: address kinds, ranges
   (`p3:2-5` only for `set`, `replace` and `char_shape`), `expect`
   (`expect_mismatch`; only `set`, `replace`, `delete`, `fill`,
-  `table.delete_row`, `char_shape` and `para_shape` take one, others
-  refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
+  `table.delete_row`, `table.delete_col`, `char_shape`, `para_shape` and
+  `numbering` take one,
+  others refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
   and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
   or an op on something another op deletes (a paragraph, table or row; one
   row deleted twice).
@@ -248,6 +253,46 @@ rt_doc.edit("보고서.hwpx", [
   are fields of the 글자 모양 / 문단 모양 dialogs. They change no addresses,
   and run before text edits in the same paragraph, so a range means what it
   meant in `base`.
+- `numbering` puts whole paragraphs into 개요 번호, 문단 번호 or 글머리표, or
+  takes them out: `set` is `{"kind": "outline"|"number"|"bullet"|"none"}`
+  with `level` 1 to 7 (the XML's level 0 to 6; `outline` defaults to 1 and
+  applies the document's 개요 n style, which must exist), `char` for a
+  bullet, and `start` (1 to 9999) or `restart: true` for numbers. The op
+  reads each paragraph's base state and sends only the engine steps that
+  bring it there (none when it already is). `none` takes off the number or
+  bullet and moves a 개요 paragraph back to 바탕글. A `style` and a
+  `numbering` op on one paragraph in one edit are a `conflict`; send them
+  separately. Needs the engine; addresses do not change.
+- Table shape ops (표 > 셀 합치기, 셀 나누기, 칸 넣기·지우기, 셀 크기) need the
+  engine. Each owns its whole table for the edit: any other op on that table,
+  its cells or what they hold, including a second shape op, is a `conflict`;
+  send them in separate edits.
+  - `table.merge` at a cell with `to`, the cell at the block's other corner.
+    The block grows until no merged cell crosses its edge. The top-left cell
+    takes the block and the paragraphs of every merged cell that hold
+    anything, in reading order. Cells that hold a table cannot be merged
+    away. The remap sends the merged-away cells to null and each of their
+    paragraphs to its place in the merged cell.
+  - `table.split` at a cell with `rows` and `cols` (1 to 20, not both 1). A
+    cell that spans several rows or columns splits along its grid lines, so
+    the count must divide the span; a single cell adds grid rows or columns
+    and the cells across them span them. The cell keeps its text; the new
+    cells are empty; the cells after them move in the remap.
+  - `table.add_col` with `after` (a column) and `like` (the column before or
+    after the new one, default `after`), as `table.add_row`; `at` a cell
+    defaults `after` to its last column. `table.delete_col` with `col` or `at`
+    a cell; `expect` is the column's cells by `\n`. Both need a cell that
+    sits in that column alone. A deleted column's cells map to null in the
+    remap and the cells after it move left.
+  - `table.size` sets grid column widths and row heights in millimetres (1 to
+    1000): `width_mm` / `height_mm` for the column or row of the cell at (or
+    `height_mm` at a row), or `col_widths_mm` / `row_heights_mm` lists, which
+    go on the table address only (`bad_address` at a row or cell), null
+    keeping one. Merged cells across a column or row change with it. No
+    address changes.
+  - A column added or deleted inside a merged cell widens or narrows that
+    cell; its address and text stay.
+  - 셀 너비·높이 같게 (distribute) has no op yet.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is

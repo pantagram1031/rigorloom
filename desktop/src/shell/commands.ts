@@ -13,8 +13,8 @@ export type CommandGroup = "file" | "edit" | "view" | "document" | "review" | "h
 export interface Command {
   /** Stable id, e.g. `shell.openFile`. */
   id: string;
-  /** Display name, from the caller's i18n/v2 table. */
-  title: (lang: UiLanguage) => string;
+  /** Display name, from the caller's i18n/v2 table. A plain string is accepted too. */
+  title: string | ((lang: UiLanguage) => string);
   group?: CommandGroup;
   /** Extra search words (both languages). */
   keywords?: (lang: UiLanguage) => string[];
@@ -36,6 +36,10 @@ let version = 0;
 function changed() {
   version += 1;
   for (const l of listeners) l();
+}
+
+export function commandTitle(c: Command, lang: UiLanguage): string {
+  return typeof c.title === "function" ? c.title(lang) : c.title;
 }
 
 export function registerCommand(command: Command): () => void {
