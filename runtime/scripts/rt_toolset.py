@@ -188,25 +188,33 @@ _ALMOST_FIGURE = re.compile(r"^\s*\[그림\s*\d+\].*\.(?:png|jpe?g|gif|bmp)>?\s*
                             re.IGNORECASE)
 #: md2spec.CM_INLINE_RE, copied so a picture is found exactly where the
 #: converter finds one: group 5 is a picture's destination, groups 19 and 20
-#: (**bold**) are read again for what is inside them.
+#: (**bold**) are read again for what is inside them. No span reaches past
+#: _CM_SPAN characters or the next opener of its own kind, and no target past
+#: _CM_URL, so an unclosed opener costs only the text up to the next one: a
+#: paragraph of a million "[a" is scanned in linear time.
+_CM_SPAN = 1000
+_CM_URL = 2048
 _CM_INLINE = re.compile(
     r"\\([\\`*_{}\[\]()#+\-.!~|<>])"
-    r"|(`+)(.+?)\2"
-    r"|!\[([^\]]*)\]\(([^)]+)\)"
-    r"|==(.+?)=="
-    r"|~~(.+?)~~"
-    r"|\{\{찾아보기:([^}|]+)(?:\|([^}]+))?\}\}"
-    r"|\{\{덧말:([^}|]+)\|([^}]+)\}\}"
-    r"|\[([^\]]+)\]\(([^)\s]+(?:\s+(?:\"[^\"]*\"|'[^']*'))?)\)"
-    r"|\[([^\]]+)\]\[([^\]]*)\]"
-    r"|<((?:https?://|mailto:)[^>\s]+)>"
-    r"|\*\*\*(.+?)\*\*\*|___(.+?)___"
-    r"|\*\*(.+?)\*\*|(?<![\w])__(.+?)__(?![\w])"
-    r"|(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)"
-    r"|(?<![\w])_(?!\s)(.+?)(?<!\s)_(?![\w])"
-    r"|(<br\s*/?>)"
-    r"|<sup>(.*?)</sup>|<sub>(.*?)</sub>"
-    r"|<(/?[A-Za-z][A-Za-z0-9]*(?:\s+[^>]*)?/?)>"
+    r"|(`{1,32})(.{1,%(S)d}?)\2"
+    r"|!\[([^\[\]\n]{0,%(S)d})\]\(([^()\n]{1,%(U)d})\)"
+    r"|(?!)(=)"
+    r"|~~(.{1,%(S)d}?)~~"
+    r"|(?!)(\{)(\{)"
+    r"|(?!)(\{)(\{)"
+    r"|\[([^\[\]\n]{1,%(S)d})\]\((%(URL)s(?:\s{1,8}(?:\"[^\"\n]{0,%(S)d}\"|'[^'\n]{0,%(S)d}'))?)\)"
+    r"|\[([^\[\]\n]{1,%(S)d})\]\[([^\[\]\n]{0,%(S)d})\]"
+    r"|<((?:https?://|mailto:)[^>\s]{1,%(U)d})>"
+    r"|\*\*\*(.{1,%(S)d}?)\*\*\*|___(.{1,%(S)d}?)___"
+    r"|\*\*(.{1,%(S)d}?)\*\*|(?<![\w])__((?:[^_\n]|_(?!_)){1,%(S)d}?)__(?![\w])"
+    r"|(?<!\*)\*(?!\s)([^*\n]{1,%(S)d}?)(?<!\s)\*(?!\*)"
+    r"|(?<![\w])_(?!\s)([^_\n]{1,%(S)d}?)(?<!\s)_(?![\w])"
+    r"|(<br\s{0,8}/?>)"
+    r"|<sup>([^<\n]{0,%(S)d})</sup>|<sub>([^<\n]{0,%(S)d})</sub>"
+    r"|<(/?[A-Za-z][A-Za-z0-9]{0,32}(?:\s[^<>\n]{0,%(S)d})?/?)>"
+    % {"S": _CM_SPAN, "U": _CM_URL,
+       "URL": r"(?=[^)\s])[^()\s]{0,%d}(?:\([^()\s]{0,%d}\)[^()\s]{0,%d}){0,4}"
+              % (_CM_URL, _CM_URL, _CM_URL)}
 )
 _TITLE = re.compile(r'^(\S+)\s+(?:"[^"]*"|\'[^\']*\')$')
 _REMOTE = re.compile(r"^(?:https?://|data:)", re.IGNORECASE)
@@ -214,8 +222,18 @@ _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 _DRIVE = re.compile(r"^[a-z]:[\\/]", re.IGNORECASE)
 
 
+#: The start of an inline picture. One that no match of the converter's
+#: pattern takes (a name with brackets in it, ![a](그림(1).png)) is written
+#: into the document as text, and the picture is missing without a word.
+_IMAGE_OPEN = re.compile(r"!\[[^\]\n]{0,%d}\]\(" % _CM_SPAN)
+
+
 def _inline_pictures(text: str, offset: int):
-    for m in _CM_INLINE.finditer(text):
+    found = list(_CM_INLINE.finditer(text))
+    taken = [(m.start(), m.end()) for m in found]
+    if any(not any(a <= o.start() < b for a, b in taken) for o in _IMAGE_OPEN.finditer(text)):
+        yield offset, offset + len(text), "unread"
+    for m in found:
         if m.group(5) is not None:
             yield offset + m.start(5), offset + m.end(5), "image"
         elif m.group(19) is not None or m.group(20) is not None:

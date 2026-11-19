@@ -4,7 +4,8 @@
 md2spec's own patterns, so it checks a file exactly where the converter will
 open one. When the converter changes a pattern, the copy has to change with
 it; this test reads md2spec's source (it does not import the engine) and fails
-on any difference. Without the engine it is skipped.
+on any difference. A pattern built from module-level numbers (``SPAN``,
+``URL``) is computed from them. Without the engine it is skipped.
 """
 from __future__ import annotations
 
@@ -49,22 +50,34 @@ def _md2spec() -> Path | None:
 
 
 def _compiled(source: Path) -> dict[str, tuple[str, str]]:
-    """Every module-level ``NAME = re.compile(literal[, flags])``: (pattern, flags)."""
+    """Every module-level ``NAME = re.compile(pattern[, flags])``: (pattern, flags).
+
+    The pattern is a literal, or an expression over literals and module-level
+    constants (``"...{0,%(S)d}..." % {"S": SPAN}``), computed with no
+    builtins.
+    """
+    consts: dict[str, object] = {}
     out = {}
     for node in ast.parse(source.read_text(encoding="utf-8")).body:
         if not (isinstance(node, ast.Assign) and len(node.targets) == 1
                 and isinstance(node.targets[0], ast.Name)):
             continue
-        call = node.value
+        name, call = node.targets[0].id, node.value
+        try:
+            consts[name] = ast.literal_eval(call)
+            continue
+        except (ValueError, TypeError, SyntaxError):
+            pass
         if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
                 and call.func.attr == "compile" and call.args):
             continue
         try:
-            pattern = ast.literal_eval(call.args[0])
-        except ValueError:
+            pattern = eval(compile(ast.Expression(call.args[0]), str(source), "eval"),  # noqa: S307
+                           {"__builtins__": {}}, dict(consts))
+        except Exception:  # noqa: BLE001 - anything but literals and constants: not a copy we keep
             continue
-        flags = " ".join(ast.unparse(a) for a in call.args[1:])
-        out[node.targets[0].id] = (pattern, flags)
+        if isinstance(pattern, str):
+            out[name] = (pattern, " ".join(ast.unparse(a) for a in call.args[1:]))
     return out
 
 

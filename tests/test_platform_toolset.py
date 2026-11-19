@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -782,19 +783,37 @@ def test_new_checks_the_pictures_the_converter_reads(env, tmp_path):
 
 
 def test_a_picture_the_converter_cannot_open_is_refused_not_dropped(env):
-    # Sol's re-check (with N5): in a .md file, ![a](그림(1).png) reads as the
-    # picture "그림(1", which the converter dropped without a word. The agent
-    # is told instead, as for a folder named as a picture.
+    # Sol's re-check (with N5): a picture the converter would not embed must
+    # not go missing without a word. In a .md file, ![a](그림(1).png) is text
+    # to the converter (a destination holds no brackets), and a folder named
+    # as a picture cannot be opened; the agent is told either way.
     (env.work / "그림(1).png").write_bytes(b"x")
     (env.work / "폴더").mkdir()
     source = env.work / "본문.md"
-    for body, code, shown in (("본문 ![a](그림(1).png) 끝\n", "not_found", "그림(1"),
-                              ("![a](폴더)\n", "invalid_params", "폴더")):
+    for body, message in (
+            ("본문 ![a](그림(1).png) 끝\n",
+             "다음 줄을 그림으로 읽을 수 없어 문서 생성을 중단했습니다(본문 ![a](그림(1).png) 끝)."),
+            ("**굵게 ![a](그림(1).png)**\n",
+             "다음 줄을 그림으로 읽을 수 없어 문서 생성을 중단했습니다(굵게 ![a](그림(1).png))."),
+            ("![a](폴더)\n", "이 그림 경로는 사용할 수 없습니다(폴더).")):
         source.write_text(body, encoding="utf-8")
         e = err(call(env.ctx(), "save", {"path": str(source), "to": str(env.work / "a.hwpx")}),
-                code)
-        assert e["message"] == f"이 그림 경로는 사용할 수 없습니다({shown})."
+                "invalid_params")
+        assert e["message"] == message
         assert not (env.work / "a.hwpx").exists()
+    # in a code span it is code
+    source.write_text("문법은 `![a](그림(1).png)` 처럼 쓴다\n", encoding="utf-8")
+    ok(call(env.ctx(), "save", {"path": str(source), "to": str(env.work / "a.hwpx")}))
+
+
+def test_a_long_run_of_unclosed_openers_is_scanned_in_linear_time(env):
+    # The converter's pattern bounds every span (md2spec on engine main): the old
+    # copy here tried each "[a" against the rest of the text.
+    source = env.work / "긴글.md"
+    source.write_text("[a" * 200_000 + "\n", encoding="utf-8")
+    started = time.perf_counter()
+    assert list(rt_toolset._picture_spans(source.read_text("utf-8"), commonmark=True)) == []
+    assert time.perf_counter() - started < 5
 
 
 def test_a_picture_line_the_converter_would_not_read_is_refused(env):
