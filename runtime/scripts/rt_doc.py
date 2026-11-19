@@ -100,7 +100,8 @@ SCHEMA = "rigorloom/doc-core/v1"
 OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
-       "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number")
+       "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
+       "table.cell_style", "table.style")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2484,6 +2485,7 @@ class _Act:
         self.merges = []        # (table g, first Cell, [Cells merged into it, reading order], (rs, cs))
         self.splits = []        # (table g, Cell, rows, cols)
         self.resized = []       # table gs whose sizes alone change
+        self.restyled = []      # table gs whose cells or table properties alone change (grid and cells kept)
         self.cell_delta = []    # (table g, cells table.add_col adds)
         self.text_of = None     # the base paragraph whose text this act changes
 
@@ -2497,6 +2499,7 @@ class _Claims:
         self.spans = {}         # id(para) -> [(a, b, whole, i, op)]
         self.removed = []       # (si, start, end, i, op, at)
         self.touched = []       # (si, pos, i, op, at)
+        self.tables = {}        # table g -> [(i, op, at, kind, rect, border)]: row and style ops on one table
 
     def _conflict(self, i, op, j, op2, at):
         raise DocError("conflict", "ops %d (%s) and %d (%s) both change %s; send them in separate edits or as "
@@ -2868,6 +2871,136 @@ def _merge_paras(inside):
     reading order; when none does, the first cell keeps its own (an empty dict)."""
     keep = [q for x in inside for q in x.paras if q.chars]
     return {id(q): k for k, q in enumerate(keep)}
+
+
+CELL_VALIGN = ("TOP", "CENTER", "BOTTOM")
+#: 선 종류 as the engine writes them (Hancom's HwpLineType 0..17)
+LINE_TYPES = ("SOLID", "DOT", "DASH", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE", "DOUBLE_SLIM",
+              "SLIM_THICK", "THICK_SLIM", "SLIM_THICK_SLIM", "WAVE", "DOUBLEWAVE", "THICK3D", "THICKREV3D", "3D",
+              "REV3D")
+#: 선 굵기 in millimetres, the list Hancom offers (HwpLineWidth 0..15)
+LINE_WIDTHS_MM = (0.1, 0.12, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0)
+BORDER_SIDES = ("left", "right", "top", "bottom")
+CELL_MARGIN_MM = (0, 50)
+TABLE_PAGE_BREAK = ("CELL", "TABLE", "NONE")
+CELL_STYLE_KEYS = ("border", "fill", "valign", "margin_mm", "header")
+TABLE_STYLE_KEYS = ("repeat_header", "page_break")
+
+
+def _enum(v, allowed, what, i, at):
+    if not isinstance(v, str) or v.upper() not in allowed:
+        raise DocError("bad_input", "%s is one of %s" % (what, ", ".join(allowed)), i=i, at=at,
+                       candidates=list(allowed))
+    return v.upper()
+
+
+def _bool(v, what, i, at):
+    if not isinstance(v, bool):
+        raise DocError("bad_input", "%s is true or false" % what, i=i, at=at)
+    return v
+
+
+def _line(v, what, i, at):
+    """One border line: "none", or {type, width, color} with at least one of them."""
+    if isinstance(v, str) and v.lower() == "none":
+        return "NONE"
+    if not isinstance(v, dict) or not v:
+        raise DocError("bad_input", '%s is "none" or {type, width, color}' % what, i=i, at=at)
+    extra = sorted(set(v) - {"type", "width", "color"})
+    if extra:
+        raise DocError("bad_input", "%s takes type, width and color, not %s" % (what, extra[0]), i=i, at=at,
+                       candidates=["type", "width", "color"])
+    out = {}
+    if "type" in v:
+        out["type"] = _enum(v["type"], LINE_TYPES + ("NONE",), what + ".type", i, at)
+    if "width" in v:
+        w = v["width"]
+        if isinstance(w, str):
+            try:
+                w = float(w.lower().replace("mm", "").strip())
+            except ValueError:
+                w = None
+        if isinstance(w, bool) or not isinstance(w, (int, float)) or \
+                not any(abs(w - x) < 1e-9 for x in LINE_WIDTHS_MM):
+            raise DocError("bad_input", "%s.width is one of Hancom's line widths in millimetres" % what, i=i, at=at,
+                           candidates=list(LINE_WIDTHS_MM))
+        out["width"] = float(w)
+    if "color" in v:
+        if not isinstance(v["color"], str) or not _COLOR.match(v["color"]):
+            raise DocError("bad_input", "%s.color is #RRGGBB" % what, i=i, at=at)
+        out["color"] = v["color"].upper()
+    return out
+
+
+def _border_sides(v, i, at):
+    """border -> {side: "NONE" | {type, width, color}} for the four sides."""
+    if isinstance(v, dict) and v and set(v) <= set(BORDER_SIDES) | {"all"}:
+        sides = {}
+        if "all" in v:
+            line = _line(v["all"], "border.all", i, at)
+            sides = {k: line for k in BORDER_SIDES}
+        for k in BORDER_SIDES:
+            if k in v:
+                sides[k] = _line(v[k], "border." + k, i, at)
+        return sides
+    if isinstance(v, dict) and v and set(v) & (set(BORDER_SIDES) | {"all"}):
+        raise DocError("bad_input", "border is one line for every side ({type, width, color} or \"none\") or "
+                       "{all, left, right, top, bottom}, not both", i=i, at=at)
+    line = _line(v, "border", i, at)
+    return {k: line for k in BORDER_SIDES}
+
+
+def _margin(v, i, at):
+    def one(x, what):
+        if isinstance(x, bool) or not isinstance(x, (int, float)) or not CELL_MARGIN_MM[0] <= x <= CELL_MARGIN_MM[1]:
+            raise DocError("bad_input", "%s is a number of millimetres from %d to %d" % ((what,) + CELL_MARGIN_MM),
+                           i=i, at=at, range=list(CELL_MARGIN_MM))
+        return float(x)
+    if isinstance(v, dict):
+        extra = sorted(set(v) - set(BORDER_SIDES))
+        if extra or not v:
+            raise DocError("bad_input", "margin_mm is a number or {left, right, top, bottom}", i=i, at=at,
+                           candidates=list(BORDER_SIDES))
+        return {k: one(x, "margin_mm." + k) for k, x in v.items()}
+    return one(v, "margin_mm")
+
+
+def _style_set(op, keys, i, at, name):
+    want = op.get("set")
+    if not isinstance(want, dict) or not want:
+        raise DocError("bad_input", "%s needs set: {%s}" % (name, ", ".join(keys)), i=i, at=at,
+                       candidates=list(keys))
+    extra = sorted(set(want) - set(keys))
+    if extra:
+        raise DocError("bad_input", "%s set takes %s, not %s" % (name, ", ".join(keys), extra[0]), i=i, at=at,
+                       candidates=list(keys))
+    return want
+
+
+def _table_mark(cl, t, i, name, at, kind, rect=None, border=False):
+    """Row and style ops on one table: a style op's cells are read by row and column of the base table, so a
+    row added or deleted in the same edit is a conflict; two cell styles may share a table when their blocks do
+    not overlap (nor touch, when either sets a border: a border is shared with the neighbour across it)."""
+    for j, op2, at2, kind2, rect2, border2 in cl.tables.get(t.g, []):
+        if j == i:
+            continue
+        clash = False
+        if "rows" in (kind, kind2) and "cell" in (kind, kind2):
+            clash = True
+        elif kind == kind2 == "table":
+            clash = True
+        elif kind == kind2 == "cell":
+            grow = 1 if (border or border2) else 0
+            ra, rb, ca, cb = rect
+            xa, xb, ya, yb = rect2
+            clash = ra - grow <= xb and xa <= rb + grow and ca - grow <= yb and ya <= cb + grow
+            if clash and grow and not (ra <= xb and xa <= rb and ca <= yb and ya <= cb):
+                # touching only at a corner shares no edge
+                clash = (ra - 1 <= xb and xa <= rb + 1 and ca <= yb and ya <= cb) or \
+                        (ra <= xb and xa <= rb and ca - 1 <= yb and ya <= cb + 1)
+        if clash:
+            cl._conflict(i, name, j, op2, at)
+    cl.tables.setdefault(t.g, []).append((i, name, at, kind, rect, border))
 
 
 def _shape_claim(cl, t, i, name, at):
@@ -3294,6 +3427,7 @@ def _plan_op(doc, cl, i, name, op, at):
     elif name in ("table.add_row", "table.delete_row"):
         r = resolve(doc, at, allow=("table", "row", "cell"))
         t = r["table"]
+        _table_mark(cl, t, i, name, at, "rows")
         here = r.get("row", r["cell"].row if r.get("cell") is not None else None)
         if name == "table.add_row":
             after = op.get("after", here)
@@ -3344,6 +3478,83 @@ def _plan_op(doc, cl, i, name, op, at):
             a.row_dels = [(t.g, row)]
             a.tbl_dels = [g for g in _tables_within(doc, t.si, reg[0], reg[1]) if g != t.g]
             acts.append(a)
+    elif name == "table.cell_style":
+        extra = sorted(set(op) - {"op", "at", "to", "set"})
+        if extra:
+            raise DocError("bad_input", "table.cell_style takes at, to, set, not %s" % extra[0], i=i, at=at,
+                           candidates=["at", "to", "set"])
+        want = _style_set(op, CELL_STYLE_KEYS, i, at, name)
+        kw, sides = {}, None
+        if "border" in want:
+            sides = _border_sides(want["border"], i, at)
+        if "fill" in want:
+            f = want["fill"]
+            if f is not None and not (isinstance(f, str) and (_COLOR.match(f) or f.lower() == "none")):
+                raise DocError("bad_input", 'fill is #RRGGBB, or null / "none" for no fill', i=i, at=at)
+            kw["fill"] = None if f is None or f.lower() == "none" else f.upper()
+        if "valign" in want:
+            kw["valign"] = _enum(want["valign"], CELL_VALIGN, "valign", i, at)
+        if "margin_mm" in want:
+            kw["margin_mm"] = _margin(want["margin_mm"], i, at)
+        if "header" in want:
+            kw["header"] = _bool(want["header"], "header", i, at)
+        r = resolve(doc, at, allow=("table", "row", "cell"))
+        t = r["table"]
+        if t.addr is None:
+            raise DocError("bad_address", "%s only works on a body table" % name, i=i, at=at)
+        if r["kind"] == "table":
+            ra, rb, ca, cb = 0, t.rows - 1, 0, t.cols - 1
+        elif r["kind"] == "row":
+            ra, rb, ca, cb = _merge_rect(t, r["row"], 0, r["row"], t.cols - 1)
+        else:
+            c1 = r["cell"]
+            ra, rb, ca, cb = _merge_rect(t, c1.row, c1.col, c1.row + c1.rs - 1, c1.col + c1.cs - 1)
+        if "to" in op:
+            if r["kind"] != "cell" or not isinstance(op["to"], str):
+                raise DocError("bad_input", "to (the block's other corner cell) goes with at a cell", i=i, at=at)
+            r2 = resolve(doc, op["to"], allow=("cell",))
+            if r2["table"] is not t:
+                raise DocError("bad_address", "to must be a cell of %s" % t.addr, i=i, at=op["to"])
+            c2 = r2["cell"]
+            ra, rb, ca, cb = _merge_rect(t, min(ra, c2.row), min(ca, c2.col),
+                                         max(rb, c2.row + c2.rs - 1), max(cb, c2.col + c2.cs - 1))
+        _table_mark(cl, t, i, name, at, "cell", (ra, rb, ca, cb), border=sides is not None)
+        block = [x for x in t.cells if ra <= x.row <= rb and ca <= x.col <= cb]
+        for x in block:
+            cl.touch(t.si, x.start, i, name, at)
+        first = t.at(ra, ca)
+        head = [["goto_cell", t.lt, ra, ca, False, t.si], ["cell_block", rb, cb]]
+        steps = []
+        if sides is not None:
+            # as Hancom's 셀 테두리: each block cell's sides, and the neighbour across a side gets it too
+            steps += head + [{"op": "cell_border_fill", "kwargs": {"sides": sides}}]
+        if kw:
+            steps += head + [{"op": "set_cell", "kwargs": kw}]
+        a = _Act(i, name, at, first.paras[0], t.start, steps=steps)
+        a.restyled = [t.g]
+        acts.append(a)
+    elif name == "table.style":
+        extra = sorted(set(op) - {"op", "at", "set"})
+        if extra:
+            raise DocError("bad_input", "table.style takes at, set, not %s" % extra[0], i=i, at=at,
+                           candidates=["at", "set"])
+        want = _style_set(op, TABLE_STYLE_KEYS, i, at, name)
+        kw = {}
+        if "repeat_header" in want:
+            kw["repeat_header"] = _bool(want["repeat_header"], "repeat_header", i, at)
+        if "page_break" in want:
+            kw["page_break"] = _enum(want["page_break"], TABLE_PAGE_BREAK, "page_break", i, at)
+        r = resolve(doc, at, allow=("table",))
+        t = r["table"]
+        if t.addr is None:
+            raise DocError("bad_address", "%s only works on a body table" % name, i=i, at=at)
+        _table_mark(cl, t, i, name, at, "table")
+        cl.touch(t.si, t.start, i, name, at)
+        c0 = t.cells[0]
+        a = _Act(i, name, at, c0.paras[0], t.start,
+                 steps=[["goto_cell", t.lt, c0.row, c0.col, False, t.si], {"op": "set_table", "kwargs": kw}])
+        a.restyled = [t.g]
+        acts.append(a)
     elif name in TABLE_SHAPE_OPS:
         known = {"table.merge": ("to",), "table.split": ("rows", "cols"), "table.add_col": ("after", "like"),
                  "table.delete_col": ("col", "expect"),
@@ -4039,7 +4250,7 @@ def _verify_shapes(doc, newdoc, acts, st):
             want[g] = want.get(g, 0) - (len(inside) - 1)
         for g, x, rows, cols in a.splits:
             want[g] = want.get(g, 0) + rows * cols - 1
-        for g in a.resized:
+        for g in a.resized + a.restyled:
             want.setdefault(g, 0)
     for g, delta in want.items():
         t, ng = doc.tables[g], st["newt"][g]

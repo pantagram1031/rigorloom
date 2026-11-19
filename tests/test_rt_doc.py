@@ -1660,3 +1660,132 @@ def test_engine_header_goes_in_the_paragraphs_section(kit, tmp_path):
     e = D.edit(f, [{"op": "header", "at": "p13", "kind": "footer", "text": "x"},
                    {"op": "break", "at": "p15", "kind": "section"}], base=D.rev_of(f), out=out2)["error"]
     assert e["code"] == "conflict" and not out2.exists()
+
+
+# ============================================================================ 표·셀 꾸미기: 테두리, 배경, 정렬, 여백, 제목 줄
+def test_table_style_ops_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(op):
+        return D.edit(src, [op] if isinstance(op, dict) else op, base=rev, out=out)["error"]
+    cs = "table.cell_style"
+    e = err({"op": cs, "at": "t5/r0"})
+    assert e["code"] == "bad_input" and "fill" in e["candidates"]                          # no set
+    e = err({"op": cs, "at": "t5/r0", "set": {"colour": "#FF0000"}})
+    assert e["code"] == "bad_input" and "fill" in e["candidates"]
+    assert err({"op": cs, "at": "t5/r0", "set": {"fill": "grey"}})["code"] == "bad_input"
+    e = err({"op": cs, "at": "t5/r0", "set": {"valign": "MIDDLE"}})
+    assert e["code"] == "bad_input" and e["candidates"] == ["TOP", "CENTER", "BOTTOM"]
+    assert err({"op": cs, "at": "t5/r0", "set": {"margin_mm": 51}})["code"] == "bad_input"
+    assert err({"op": cs, "at": "t5/r0", "set": {"margin_mm": {"inner": 1}}})["code"] == "bad_input"
+    assert err({"op": cs, "at": "t5/r0", "set": {"header": 1}})["code"] == "bad_input"
+    e = err({"op": cs, "at": "t5/r0", "set": {"border": {"width": 0.33}}})
+    assert e["code"] == "bad_input" and 0.3 in e["candidates"]                             # Hancom's widths only
+    e = err({"op": cs, "at": "t5/r0", "set": {"border": {"type": "THIN"}}})
+    assert e["code"] == "bad_input" and "THICK_SLIM" in e["candidates"]           # nearest names first
+    assert err({"op": cs, "at": "t5/r0", "set": {"border": {"color": "black"}}})["code"] == "bad_input"
+    assert err({"op": cs, "at": "t5/r0", "set": {"border": {"all": "none", "width": 1}}})["code"] == "bad_input"
+    assert err({"op": cs, "at": "t5/r0", "to": "t5/r1/c0", "set": {"fill": "#FFFFFF"}})["code"] == "bad_input"
+    assert err({"op": cs, "at": "t5/r0/c0", "to": "t6/r1/c0", "set": {"fill": "#FFFFFF"}})["code"] == \
+        "bad_address"
+    assert err({"op": cs, "at": "t5/r0", "expect": "x", "set": {"fill": "#FFFFFF"}})["code"] == "bad_input"
+    assert err({"op": cs, "at": "p2", "set": {"fill": "#FFFFFF"}})["code"] == "bad_address"
+    e = err({"op": "table.style", "at": "t5", "set": {"repeat_header": "yes"}})
+    assert e["code"] == "bad_input"
+    e = err({"op": "table.style", "at": "t5", "set": {"page_break": "ROW"}})
+    assert e["code"] == "bad_input" and e["candidates"] == ["CELL", "TABLE", "NONE"]
+    assert err({"op": "table.style", "at": "t5/r0", "set": {"repeat_header": True}})["code"] == "bad_address"
+    # conflicts: overlapping blocks; touching blocks when one sets a border; a row added in the same table;
+    # a shape op on the table; two table.style ops
+    fill = {"fill": "#EEEEEE"}
+    line = {"border": {"type": "SOLID"}}
+    assert err([{"op": cs, "at": "t5/r1", "set": fill},
+                {"op": cs, "at": "t5/r1/c0", "to": "t5/r2/c0", "set": fill}])["code"] == "conflict"
+    assert err([{"op": cs, "at": "t5/r1", "set": line}, {"op": cs, "at": "t5/r2", "set": fill}])["code"] == \
+        "conflict"
+    assert err([{"op": cs, "at": "t5/r1", "set": fill},
+                {"op": "table.add_row", "at": "t5", "after": 3}])["code"] == "conflict"
+    assert err([{"op": "table.size", "at": "t5", "row_heights_mm": [10]},
+                {"op": cs, "at": "t5/r1", "set": fill}])["code"] == "conflict"
+    assert err([{"op": "table.style", "at": "t5", "set": {"repeat_header": True}},
+                {"op": "table.style", "at": "t5", "set": {"page_break": "TABLE"}}])["code"] == "conflict"
+    # valid, but only the engine styles a table
+    e = err([{"op": cs, "at": "t5/r1", "set": fill}, {"op": cs, "at": "t5/r3", "set": line},
+             {"op": "table.style", "at": "t5", "set": {"repeat_header": True}},
+             {"op": "table.set_cells", "at": "t5/r2/c0", "grid": [["x"]]}])
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+def _cells_xml(z, k=0):
+    """(tbl open tag, [(row, col, tc open tag, subList open tag, cellMargin tag)]) of the k-th table, and the
+    header XML."""
+    sec = z.read("Contents/section0.xml").decode("utf-8")
+    head = z.read("Contents/header.xml").decode("utf-8")
+    a = [m.start() for m in re.finditer("<hp:tbl ", sec)][k]
+    t = sec[a:sec.index("</hp:tbl>", a)]          # a table with no table inside it
+    assert "<hp:tbl " not in t[1:]
+    open_ = t[:t.index(">") + 1]
+    cells = []
+    for m in re.finditer(r'(<hp:tc [^>]*>).*?(<hp:subList [^>]*>)', t, re.S):
+        body = t[m.start():t.index("</hp:tc>", m.start())]
+        addr = re.search(r'<hp:cellAddr colAddr="(\d+)" rowAddr="(\d+)"', body)
+        mg = re.search(r"<hp:cellMargin [^>]*>", body)
+        cells.append((int(addr.group(2)), int(addr.group(1)), m.group(1), m.group(2), mg.group(0) if mg else ""))
+    return open_, cells, head
+
+
+def _border_fill(head, tc):
+    i = re.search(r'borderFillIDRef="(\d+)"', tc).group(1)
+    bf = re.search(r'<hh:borderFill id="%s".*?</hh:borderFill>' % i, head, re.S).group(0)
+    sides = {m.group(1): (m.group(2), m.group(3), m.group(4))
+             for m in re.finditer(r'<hh:(\w+)Border type="(\w+)" width="([^"]+)" color="([^"]+)"', bf)}
+    face = re.search(r'faceColor="([^"]+)"', bf)
+    return sides, face.group(1) if face else None
+
+
+@engine
+def test_engine_table_cell_and_table_style(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    out = tmp_path / "st.hwpx"
+    before = D.read(f, "t0")["blocks"][0]
+    r = D.edit(f, [
+        {"op": "table.cell_style", "at": "t0/r0", "set": {
+            "fill": "#D9D9D9", "valign": "top", "header": True,
+            "border": {"bottom": {"type": "DOUBLE_SLIM", "width": 0.5, "color": "#1F3864"}}}},
+        {"op": "table.cell_style", "at": "t0/r2/c0", "to": "t0/r3/c1", "set": {"margin_mm": 2}},
+        {"op": "table.cell_style", "at": "t0/r2/c3", "set": {"border": "none", "valign": "BOTTOM"}},
+        {"op": "table.style", "at": "t0", "set": {"repeat_header": True, "page_break": "TABLE"}},
+        {"op": "table.set_cells", "at": "t0/r1/c0", "grid": [["값"]]},
+    ], base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    after = D.read(out, "t0")["blocks"][0]
+    assert after["cells"][1][0] == "값" and after["cells"][0] == before["cells"][0]
+    with zipfile.ZipFile(out) as z:
+        open_, cells, head = _cells_xml(z)
+    assert 'repeatHeader="1"' in open_ and 'pageBreak="TABLE"' in open_
+    by = {(rr, cc): (tc, sub, mg) for rr, cc, tc, sub, mg in cells}
+    for (rr, cc), (tc, sub, mg) in by.items():
+        sides, face = _border_fill(head, tc)
+        if rr == 0:             # 제목 줄: header cells, gray, top-aligned, a double line under them
+            assert 'header="1"' in tc and 'vertAlign="TOP"' in sub and face == "#D9D9D9"
+            assert sides["bottom"] == ("DOUBLE_SLIM", "0.5 mm", "#1F3864")
+        else:
+            assert 'header="0"' in tc
+        if rr == 1 and (0, cc) in by and (1, cc) in by:
+            assert sides["top"] == ("DOUBLE_SLIM", "0.5 mm", "#1F3864")     # the shared edge, as Hancom
+        if rr in (2, 3) and cc in (0, 1):
+            assert 'hasMargin="1"' in tc and 'left="566"' in mg and 'top="566"' in mg   # 2 mm in HWPUNIT
+        if (rr, cc) == (2, 3):
+            assert all(v[0] == "NONE" for v in sides.values()) and 'vertAlign="BOTTOM"' in sub
+    # repeat_header off again; nothing else changes
+    out2 = tmp_path / "st2.hwpx"
+    r = D.edit(out, [{"op": "table.style", "at": "t0", "set": {"repeat_header": False}}],
+               base=D.rev_of(out), out=out2)
+    assert r["ok"], r
+    with zipfile.ZipFile(out2) as z:
+        open2, cells2, _ = _cells_xml(z)
+    assert 'repeatHeader="0"' in open2 and 'pageBreak="TABLE"' in open2
+    assert [c[2] for c in cells2] == [c[2] for c in cells]
