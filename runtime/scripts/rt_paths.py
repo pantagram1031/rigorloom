@@ -296,14 +296,41 @@ def state_home() -> Path:
 
 
 def private_dir(path: Path) -> Path:
-    """Create ``path`` (and parents) readable only by this user where we can."""
+    """Create ``path`` (and parents) readable only by this user where we can.
+
+    Every folder this call creates is owner-only, not just the last one, so
+    a fresh state directory is never left world-readable above its contents.
+    """
+    created = []
+    probe = path
+    while not probe.exists() and probe.parent != probe:
+        created.append(probe)
+        probe = probe.parent
     path.mkdir(parents=True, exist_ok=True)
     if os.name != "nt":
+        for folder in [path, *created]:
+            try:
+                os.chmod(folder, 0o700)
+            except OSError:
+                pass
+    return path
+
+
+#: Written into the state directory the first time Rigorloom writes there.
+#: ``changes clean`` deletes only inside a folder that carries it.
+STATE_MARKER = ".rigorloom-state"
+
+
+def mark_state(home: Path) -> Path:
+    private_dir(home)
+    marker = home / STATE_MARKER
+    if not marker.exists():
         try:
-            os.chmod(path, 0o700)
+            marker.write_text("Rigorloom state: drafts, previews, history. "
+                              "Remove with `rigorloom changes clean`.\n", encoding="utf-8")
         except OSError:
             pass
-    return path
+    return home
 
 
 if __name__ == "__main__":  # pragma: no cover - manual probe

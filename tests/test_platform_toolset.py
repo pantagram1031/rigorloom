@@ -824,3 +824,50 @@ def test_save_rechecks_the_draft_after_asking(env):
     assert path.read_bytes() == before
     shown = ok(call(env.ctx(), "changes", {"action": "show", "path": str(path)}))
     assert len(shown["changesets"]) == 2
+
+
+def test_clean_refuses_a_folder_that_is_not_ours(env, monkeypatch, tmp_path):
+    # Sol M13: RIGORLOOM_HOME pointed at the wrong folder must not lose its "drafts".
+    other = tmp_path / "someone"
+    (other / "drafts").mkdir(parents=True)
+    (other / "drafts" / "keep.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("RIGORLOOM_HOME", str(other))
+    code, out, _ = _cli(["changes", "clean", "--all", "--yes", "--json"], monkeypatch)
+    assert code == 2 and (other / "drafts" / "keep.txt").exists()
+
+
+def test_a_client_lists_only_drafts_inside_its_roots(env, tmp_path):
+    # Sol M5: one state folder, two differently scoped clients.
+    mine = env.doc()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    theirs = elsewhere / "남의.fdoc"
+    theirs.write_text(FORM, encoding="utf-8")
+    for path, roots in ((mine, Roots.of([env.work])), (theirs, Roots.of([elsewhere]))):
+        ctx = env.ctx(roots=roots)
+        rev0 = ok(call(ctx, "open", {"path": str(path)}))["rev"]
+        ok(call(ctx, "edit", {"path": str(path), "base": rev0, "ops": [
+            {"op": "set", "at": "p1", "text": "x"}]}))
+    listed = ok(call(env.ctx(), "changes", {}))["drafts"]
+    assert [Path(d["source"]).name for d in listed] == [mine.name]
+
+
+def test_disk_view_says_when_the_file_moved_under_the_draft(env):
+    # Sol M9: status comes from the file as it is now.
+    path = env.doc()
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "x"}]}))
+    path.write_text(FORM + "\n밖에서 고침\n", encoding="utf-8")
+    seen = ok(call(env.ctx(source="disk"), "open", {"path": str(path)}))
+    assert seen["draft"]["sourceChanged"] is True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_the_state_folder_is_owner_only(env):
+    path = env.doc()
+    rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    ok(call(env.ctx(), "edit", {"path": str(path), "base": rev0, "ops": [
+        {"op": "set", "at": "p1", "text": "x"}]}))
+    for folder in (env.home, env.home / "drafts"):
+        assert folder.stat().st_mode & 0o077 == 0, oct(folder.stat().st_mode)

@@ -40,10 +40,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 try:  # installed as rigorloom_runtime
-    from .rt_paths import private_dir, sha256_file, state_home
+    from .rt_paths import mark_state, private_dir, sha256_file, state_home
     from .rt_tools import ToolError
 except ImportError:  # a checkout, runtime/scripts on sys.path
-    from rt_paths import private_dir, sha256_file, state_home
+    from rt_paths import mark_state, private_dir, sha256_file, state_home
     from rt_tools import ToolError
 
 DRAFT_SCHEMA = "rigorloom/draft/1"
@@ -164,6 +164,7 @@ class DraftStore:
         return Ref(f"{key}-{scope}" if scope else key, path)
 
     def dir_for(self, ref: Ref) -> Path:
+        mark_state(self.home)
         return self.home / "drafts" / ref.key
 
     # -- records -----------------------------------------------------------
@@ -219,7 +220,7 @@ class DraftStore:
             return self._head_input(ref, record)
         return Input(path=ref.source, rev=rev_of(source_sha), sha256=source_sha,
                      source="disk", revision=0,
-                     draft=summary(record) if record else None)
+                     draft=summary(record, disk_sha256=source_sha) if record else None)
 
     def _head_input(self, ref: Ref, record: dict) -> Input:
         head = record["head"]
@@ -394,9 +395,16 @@ def new_record(*, source: Path | None, sha256: str | None,
     }
 
 
-def summary(record: dict) -> dict[str, Any]:
+def summary(record: dict, disk_sha256: str | None = None) -> dict[str, Any]:
+    """What a person or agent needs to know about a draft.
+
+    ``disk_sha256`` is the file as it is now, when the caller just hashed it:
+    then ``unsaved`` compares the head with the real file, and
+    ``sourceChanged`` says the file moved under the draft.
+    """
     head = record.get("head") or {}
     source = record["source"]
+    on_disk = disk_sha256 or source.get("sha256")
     return {
         "source": source.get("path"),
         "name": source.get("name"),
@@ -409,5 +417,6 @@ def summary(record: dict) -> dict[str, Any]:
         "updated": record.get("updated"),
         "saved": len(record.get("saves", [])),
         # The head differs from the person's file: there is work not in it yet.
-        "unsaved": bool(head) and head.get("sha256") != source.get("sha256"),
+        "unsaved": bool(head) and head.get("sha256") != on_disk,
+        "sourceChanged": bool(disk_sha256) and disk_sha256 != source.get("sha256"),
     }

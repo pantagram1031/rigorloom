@@ -93,7 +93,10 @@ def show_open(term: Term, r: dict) -> None:
         head.append(f"초안 {r.get('revision')}판")
     term.line("  ·  ".join(head))
     draft = r.get("draft") or {}
-    if r.get("source") == "disk" and draft.get("unsaved"):
+    if r.get("source") == "disk" and draft.get("sourceChanged"):
+        term.line(term.style("초안을 만든 뒤 파일이 바뀌었습니다. 초안은 더 고칠 수 없습니다.", "yellow")
+                  + term.dim(f"  (버리기: rigorloom changes discard {_q(r['path'])})"))
+    elif r.get("source") == "disk" and draft.get("unsaved"):
         term.line(term.style(f"저장 안 한 초안 있음 ({draft['revision']}판)", "yellow")
                   + term.dim(f"  (초안 보기: rigorloom open {_q(r['path'])} --source draft)"))
     _fonts(term, r.get("fonts") or {})

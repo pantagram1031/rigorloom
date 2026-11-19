@@ -25,13 +25,15 @@ from typing import Any
 try:  # installed as rigorloom_runtime
     from . import rt_commit
     from .rt_drafts import Input, Ref, is_virtual, rev_of, summary
-    from .rt_paths import PathRefused, canonical, check_readable, private_dir, sha256_file
+    from .rt_paths import (PathRefused, canonical, check_readable, mark_state, private_dir,
+                           sha256_file)
     from .rt_term import one_line, safe_text
     from .rt_tools import Context, Tool, ToolError, doc_call, register, sibling
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
     from rt_drafts import Input, Ref, is_virtual, rev_of, summary
-    from rt_paths import PathRefused, canonical, check_readable, private_dir, sha256_file
+    from rt_paths import (PathRefused, canonical, check_readable, mark_state, private_dir,
+                          sha256_file)
     from rt_term import one_line, safe_text
     from rt_tools import Context, Tool, ToolError, doc_call, register, sibling
 
@@ -801,6 +803,7 @@ register(Tool(
 # ---------------------------------------------------------------------------
 
 def _preview_dir(ctx: Context, ref: Ref, rev: str) -> Path:
+    mark_state(ctx.drafts.home)
     return private_dir(ctx.drafts.home / "previews" / ref.key / rev)
 
 
@@ -1366,7 +1369,19 @@ register(Tool(
 def _run_changes(ctx: Context, args: dict) -> dict:
     action = args.get("action", "list")
     if action == "list" and not args.get("path"):
-        return {"action": "list", "drafts": ctx.drafts.list()}
+        drafts = ctx.drafts.list()
+        if ctx.roots is not None:
+            # A client sees drafts of files inside its own roots, and new ones.
+            def visible(d: dict) -> bool:
+                if not d.get("source"):
+                    return True
+                try:
+                    ctx.roots.check(d["source"])
+                    return True
+                except PathRefused:
+                    return False
+            drafts = [d for d in drafts if visible(d)]
+        return {"action": "list", "drafts": drafts}
     if not args.get("path"):
         raise ToolError("invalid_params", "변경 기록을 볼 문서의 경로가 빠졌습니다.", hint="문서 경로를 입력하세요.")
     ref = resolve(ctx, args["path"])

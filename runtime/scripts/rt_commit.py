@@ -21,12 +21,12 @@ from pathlib import Path
 
 try:  # installed as rigorloom_runtime
     from .rt_drafts import _Lock, key_for_path
-    from .rt_paths import (PathRefused, create_new, private_dir, replace_checked,
+    from .rt_paths import (PathRefused, create_new, mark_state, private_dir, replace_checked,
                            sha256_bytes, sha256_file, state_home)
     from .rt_tools import ToolError
 except ImportError:  # a checkout, runtime/scripts on sys.path
     from rt_drafts import _Lock, key_for_path
-    from rt_paths import (PathRefused, create_new, private_dir, replace_checked,
+    from rt_paths import (PathRefused, create_new, mark_state, private_dir, replace_checked,
                           sha256_bytes, sha256_file, state_home)
     from rt_tools import ToolError
 
@@ -38,6 +38,7 @@ def _now() -> str:
 
 
 def _history_dir(home: Path, target: Path) -> Path:
+    mark_state(home)
     return home / "history" / key_for_path(target)
 
 

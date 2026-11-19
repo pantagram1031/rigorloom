@@ -30,14 +30,14 @@ from pathlib import Path
 try:  # installed as rigorloom_runtime
     from . import rt_commit, rt_toolset  # rt_toolset registers the tools
     from .rt_cli_render import SHOW
-    from .rt_paths import PathRefused, canonical, state_home
+    from .rt_paths import STATE_MARKER, PathRefused, canonical, state_home
     from .rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
     import rt_toolset
     from rt_cli_render import SHOW
-    from rt_paths import PathRefused, canonical, state_home
+    from rt_paths import STATE_MARKER, PathRefused, canonical, state_home
     from rt_term import Term, confirm, is_console, one_line, pad, prepare_stdio, safe_text
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
@@ -541,6 +541,11 @@ def _clean(term: Term, args) -> int:
     if args.older_than < 0:
         raise _Usage("--older-than에는 0 이상의 날수를 입력해야 합니다.", "예: --older-than 30")
     home = state_home()
+    if any((home / part).exists() for part in STATE_PARTS) and \
+            not (home / STATE_MARKER).exists():
+        return _emit(term, args, "changes", {"ok": False, "error": ToolError(
+            "invalid_params", f"Rigorloom 상태 폴더가 아닌 것 같아 지우지 않았습니다({home}).",
+            hint="RIGORLOOM_HOME이 가리키는 폴더를 확인하세요.").to_dict()})
     remove, kept = _clean_plan(home, args.older_than, args.all)
     scope = "모두" if args.all else f"{args.older_than}일 넘게 쓰지 않은 것"
     if not remove:
