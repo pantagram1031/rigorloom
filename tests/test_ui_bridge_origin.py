@@ -45,9 +45,13 @@ def bridge(tmp_path: Path):
         t.join(timeout=5)
 
 
-def _request(srv, method: str, path: str, origin: str | None, body: dict | None = None) -> tuple[int, dict]:
+def _request(
+    srv, method: str, path: str, origin: str | None, body: dict | None = None, *, token: bool = True
+) -> tuple[int, dict]:
     conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
-    headers = {"X-Rigorloom-Token": srv.token, "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-Rigorloom-Token"] = srv.token
     if origin is not None:
         headers["Origin"] = origin
     raw = json.dumps(body or {}).encode("utf-8") if method == "POST" else None
@@ -100,3 +104,17 @@ def test_a_loopback_page_and_the_desktop_webview_pass(bridge):
     ):
         status, data = _request(bridge, "GET", "/api/prefs", origin)
         assert status == 200, (origin, status, data)
+
+
+def test_the_origin_guard_runs_before_the_token_is_looked_at(bridge):
+    """Without a token, a foreign page still gets `invalid_origin`, while a
+    loopback page gets the token refusal: the Origin check comes first."""
+    for method, path, body in (
+        ("GET", "/api/prefs", None),
+        ("POST", "/rpc", {"method": "session/list", "params": {}}),
+        ("POST", "/api/approval/confirmation", {}),
+    ):
+        status, data = _request(bridge, method, path, "https://evil.example", body, token=False)
+        assert status == 403 and data["error"]["code"] == "invalid_origin", (path, status, data)
+        status, data = _request(bridge, method, path, f"http://127.0.0.1:{bridge.port}", body, token=False)
+        assert status == 403 and data["error"]["code"] == "unauthorized", (path, status, data)

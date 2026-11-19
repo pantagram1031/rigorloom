@@ -97,6 +97,13 @@ If the document's bytes or the queued edits change after you approved, the
 approval no longer matches: the queue shows a re-approval banner and apply is
 refused until you approve again.
 
+An approval sent through the bridge carries a single-use confirmation token
+that the sheet asks for when it shows the plan (`POST /api/approval/confirmation`,
+valid for 120 s). The token ties the approval to the plan record (session,
+plan hash, base digest) as the runtime held it, and each token works once. It
+is not a second factor and does not prove that a person used the sheet: any
+holder of the bridge token can ask for one and then approve.
+
 ## Pipeline gates and `APPROVALS.md`
 
 Resolving a human gate from the UI appends a line such as
