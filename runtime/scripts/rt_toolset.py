@@ -438,9 +438,9 @@ def _representable(text: str, kind: str) -> bool:
 
 def _unread_picture_line(line: str) -> ToolError:
     shown = line if len(line) <= 80 else line[:79] + "…"
-    return ToolError("invalid_params", f"그림 줄을 읽지 못했습니다({shown}).",
+    return ToolError("invalid_params", f"다음 줄을 그림으로 읽을 수 없어 문서 생성을 중단했습니다({shown}).",
                      hint="그림은 한 줄에 하나씩 ![설명](그림 파일 경로) 형식으로 적으세요. "
-                          "파일 이름이나 경로에 괄호가 있으면 이름을 바꿔 달라고 사용자에게 요청하세요.")
+                          "파일이나 폴더 이름에 괄호가 있으면 사용자에게 괄호 없는 경로를 알려 달라고 요청하세요.")
 
 
 def _unusable_picture(target: str) -> ToolError:

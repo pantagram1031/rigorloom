@@ -60,8 +60,11 @@ also `![설명](경로)` anywhere outside code. Each must be an existing file in
 the roots. The converter reads a private copy of it, so a folder name with
 brackets in it works and the person's path does not end up in the document.
 Everything else, a link or a file name in brackets, stays text exactly as
-written, and `edit`'s `insert_after` adds text only. If the built document
-still holds a picture that was not checked, the call stops with
+written, and `edit`'s `insert_after` adds text only. A line written as a
+picture that the converter would take as text (brackets in the file name, two
+pictures on one line, `[그림 1] 설명 (그림.PNG)`) is refused with
+`invalid_params` rather than left in the document as markdown. If the built
+document still holds a picture that was not checked, the call stops with
 `invalid_params` and nothing is kept.
 
 ## Saving over a file

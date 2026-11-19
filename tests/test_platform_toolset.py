@@ -791,7 +791,7 @@ def test_a_picture_line_the_converter_would_not_read_is_refused(env):
                  "![가](사진.PNG) ![나](사진.PNG)"):
         e = err(call(env.ctx(), "new", {"markdown": f"# 제목\n\n{line}\n",
                                         "base_dir": str(env.work)}), "invalid_params")
-        assert e["message"] == f"그림 줄을 읽지 못했습니다({line})."
+        assert e["message"] == f"다음 줄을 그림으로 읽을 수 없어 문서 생성을 중단했습니다({line})."
     # in a code block it is code, and from the command line it stays text
     ok(call(env.ctx(), "new", {"markdown": "```\n![표지](sample (a).png)\n```\n",
                                "base_dir": str(env.work)}))
