@@ -27,7 +27,29 @@ Every listed role was filled by a model. No human served in the listed preparati
 
 The judges are from the same model family as the generator.
 
-The corpus is a convenience sample, and publication age does not prove authorship. The `checker_doc_type` field maps each stratum to a checker type, not a genre. The protocol and run lock are in [the protocol](ko-naturalness-ab.md). Run artefacts, including the index, ledger and unblinded records, live at `/home/ubuntu/hub/ax/rl-swarm-run/out/phase3/wp7/` on the server.
+The corpus is a convenience sample, and publication age does not prove authorship. The `checker_doc_type` field maps each stratum to a checker type, not a genre. The protocol and run lock are in [the protocol](ko-naturalness-ab.md). Run artefacts (index, ledger, unblinded records) are kept outside the repository and are available on request.
+
+## By stratum
+
+**Condition A**
+
+| Stratum | Scheduled | Card-excluded | Guard failures | Eligible | Astra reference | Astra rewrite | Astra TIE | Astra CANNOT_TELL | Sol reference | Sol rewrite | Sol TIE | Sol CANNOT_TELL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 정책 보도 | 5 | 1 | 3 | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| 공개 문답 | 5 | 0 | 3 | 2 | 0 | 1 | 1 | 0 | 1 | 1 | 0 | 0 |
+| 인사 | 5 | 0 | 3 | 2 | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 0 |
+| 보조금 | 5 | 0 | 3 | 2 | 1 | 0 | 1 | 0 | 1 | 0 | 1 | 0 |
+
+**Condition B**
+
+| Stratum | Scheduled | Card-excluded | Guard failures | Eligible | Astra reference | Astra rewrite | Astra TIE | Astra CANNOT_TELL | Sol reference | Sol rewrite | Sol TIE | Sol CANNOT_TELL |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 정책 보도 | 5 | 1 | 3 | 1 | 1 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| 공개 문답 | 5 | 0 | 3 | 2 | 1 | 0 | 1 | 0 | 0 | 1 | 1 | 0 |
+| 인사 | 5 | 0 | 3 | 2 | 1 | 1 | 0 | 0 | 0 | 2 | 0 | 0 |
+| 보조금 | 5 | 0 | 3 | 2 | 1 | 0 | 1 | 0 | 0 | 0 | 2 | 0 |
+
+The per-pair data are in [pairs.csv](../../evals/ko-naturalness-ab/2026-11-16/pairs.csv).
 
 ## What this means for Rigorloom
 

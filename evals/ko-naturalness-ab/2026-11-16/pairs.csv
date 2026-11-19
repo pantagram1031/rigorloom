@@ -1,0 +1,41 @@
+paragraph_id,stratum,condition,input_status,guard_reference_to_final,guard_draft_to_final,unchanged,eligible,astra_choice,astra_reason_codes,sol_choice,sol_reason_codes
+25cd7eb9e15ab26009c0a1e81e772830f445068bc2ac7d8e32dbccea03f884b0,정책 보도,A,valid,fail,pass,false,false,,,,
+25cd7eb9e15ab26009c0a1e81e772830f445068bc2ac7d8e32dbccea03f884b0,정책 보도,B,valid,fail,pass,true,false,,,,
+c0fcab5f0dc9a5edfd72e89eb109aa633cfee93a6d3f24e71eacdc33a8dc0b2f,공개 문답,A,valid,fail,pass,true,false,,,,
+c0fcab5f0dc9a5edfd72e89eb109aa633cfee93a6d3f24e71eacdc33a8dc0b2f,공개 문답,B,valid,fail,pass,true,false,,,,
+9f485c6cd29b78905a4a143c69fa27a8644c71f2da6dca3e0e347f1c2e1ec0da,인사,A,valid,pass,pass,true,true,rewrite,SYNTAX;REPETITION,rewrite,SYNTAX;REPETITION
+9f485c6cd29b78905a4a143c69fa27a8644c71f2da6dca3e0e347f1c2e1ec0da,인사,B,valid,pass,pass,true,true,rewrite,SYNTAX;REPETITION,rewrite,SYNTAX;REPETITION
+f7da41ad8566c495e097ea4bc79f0c5a0c34f2e21beb2ad2edecb97ba649f8b4,보조금,A,valid,pass,pass,true,true,reference,WORDING;FLOW,reference,FLOW;REPETITION
+f7da41ad8566c495e097ea4bc79f0c5a0c34f2e21beb2ad2edecb97ba649f8b4,보조금,B,valid,pass,pass,true,true,reference,WORDING;FLOW,TIE,FLOW;REGISTER
+90c7620244fcd0a1ce87d3dad162acfa950af6f145e251265f429255b9acb7b7,정책 보도,A,valid,fail,pass,true,false,,,,
+90c7620244fcd0a1ce87d3dad162acfa950af6f145e251265f429255b9acb7b7,정책 보도,B,valid,fail,pass,true,false,,,,
+c88b8a490db1c92ca08d7aa8c644bfc3154c1f265a73ce7ab8fb3d70b0828dd5,공개 문답,A,valid,pass,pass,false,true,rewrite,WORDING;FLOW,reference,FLOW;REPETITION
+c88b8a490db1c92ca08d7aa8c644bfc3154c1f265a73ce7ab8fb3d70b0828dd5,공개 문답,B,valid,pass,pass,true,true,reference,FLOW;REPETITION,rewrite,WORDING;FLOW
+658eff67d888a2f6175457d2ec59d88bf1766bf3f812f233682043a51345bcc3,인사,A,valid,fail,pass,false,false,,,,
+658eff67d888a2f6175457d2ec59d88bf1766bf3f812f233682043a51345bcc3,인사,B,valid,fail,pass,true,false,,,,
+caed51eb726cce03321dde6c98b690913df0c9e95fb6ca0465ab7d1232d2ef62,보조금,A,valid,fail,pass,true,false,,,,
+caed51eb726cce03321dde6c98b690913df0c9e95fb6ca0465ab7d1232d2ef62,보조금,B,valid,fail,pass,true,false,,,,
+75c4c59f6e48c5dc0dd6b60926034251e179e826e02b831e92e045ed9d013581,정책 보도,A,card_excluded,na,na,na,false,,,,
+75c4c59f6e48c5dc0dd6b60926034251e179e826e02b831e92e045ed9d013581,정책 보도,B,card_excluded,na,na,na,false,,,,
+6bc82a1a3b8d6e43187d53dc4cdf232230ff676f1ab18019dec7af1ea8b0b940,공개 문답,A,valid,fail,pass,true,false,,,,
+6bc82a1a3b8d6e43187d53dc4cdf232230ff676f1ab18019dec7af1ea8b0b940,공개 문답,B,valid,fail,pass,true,false,,,,
+4b66896b9f98ce69aff9e8ba7d7634ab66552c58aa090b078700994e458f3613,인사,A,valid,fail,pass,true,false,,,,
+4b66896b9f98ce69aff9e8ba7d7634ab66552c58aa090b078700994e458f3613,인사,B,valid,fail,pass,true,false,,,,
+9f0e099f35a429282fd82b8689c549a1aded2962b298fb44c8f7e625195fcbba,보조금,A,valid,pass,pass,true,true,TIE,WORDING;REGISTER,TIE,FLOW;REGISTER
+9f0e099f35a429282fd82b8689c549a1aded2962b298fb44c8f7e625195fcbba,보조금,B,valid,pass,pass,true,true,TIE,SYNTAX;REGISTER,TIE,WORDING;REGISTER
+c55709db7f5f2c24fceaec5c2af31c38824dc546d5df0d6656c0c564cdaf8a7d,정책 보도,A,valid,fail,pass,true,false,,,,
+c55709db7f5f2c24fceaec5c2af31c38824dc546d5df0d6656c0c564cdaf8a7d,정책 보도,B,valid,fail,pass,true,false,,,,
+dae45aeca5a98de28f20f7db9fe1051946317099e3558c7a31ff69aa66079e43,공개 문답,A,valid,pass,pass,false,true,TIE,WORDING;REGISTER,rewrite,SYNTAX;WORDING
+dae45aeca5a98de28f20f7db9fe1051946317099e3558c7a31ff69aa66079e43,공개 문답,B,valid,pass,pass,true,true,TIE,WORDING;REGISTER,TIE,REGISTER;FLOW
+57faa3f20c2b770b05a5049f51093a39f5b2b543040ac7f240bf9d32da10bb92,인사,A,valid,pass,pass,true,true,reference,FLOW;REPETITION,reference,REPETITION;FLOW
+57faa3f20c2b770b05a5049f51093a39f5b2b543040ac7f240bf9d32da10bb92,인사,B,valid,pass,pass,true,true,reference,FLOW;REPETITION,rewrite,SYNTAX;FLOW
+87d4a2f44f0502aa9c26c2a2cfca0915dd4220f2037ecbd0ac79f311f1c70019,보조금,A,valid,fail,pass,true,false,,,,
+87d4a2f44f0502aa9c26c2a2cfca0915dd4220f2037ecbd0ac79f311f1c70019,보조금,B,valid,fail,pass,true,false,,,,
+e50de51eaaab9420a057f088f9c9679074915c1e3128dd007ded1e28bbee027f,정책 보도,A,valid,pass,pass,true,true,reference,SYNTAX;FLOW,reference,SYNTAX;FLOW
+e50de51eaaab9420a057f088f9c9679074915c1e3128dd007ded1e28bbee027f,정책 보도,B,valid,pass,pass,true,true,reference,SYNTAX;FLOW,reference,SYNTAX
+125b1e5d0d92ec478d5c2e3723512c7af72cd3182bcc3628dfc1db5d5e47b046,공개 문답,A,valid,fail,pass,true,false,,,,
+125b1e5d0d92ec478d5c2e3723512c7af72cd3182bcc3628dfc1db5d5e47b046,공개 문답,B,valid,fail,pass,true,false,,,,
+0881f4b1d21e6e848017604fc6449a4f181b7cb842663f175df43de6cea913a6,인사,A,valid,fail,pass,false,false,,,,
+0881f4b1d21e6e848017604fc6449a4f181b7cb842663f175df43de6cea913a6,인사,B,valid,fail,pass,true,false,,,,
+2b604504e92cd98b100e58cf357d33edb7c16c862e0526be9d8164b42d15c36a,보조금,A,valid,fail,pass,false,false,,,,
+2b604504e92cd98b100e58cf357d33edb7c16c862e0526be9d8164b42d15c36a,보조금,B,valid,fail,pass,true,false,,,,
