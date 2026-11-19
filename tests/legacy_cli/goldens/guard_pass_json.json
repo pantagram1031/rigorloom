@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "guard",
+    "examples/guard/before.hwpx",
+    "examples/guard/before.hwpx"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"guard\",\n  \"ok\": true,\n  \"result\": {\n    \"after\": \"before.hwpx\",\n    \"before\": \"before.hwpx\",\n    \"changed\": [],\n    \"edited\": 0,\n    \"paragraphs\": {\n      \"after\": 295,\n      \"before\": 295\n    },\n    \"pass\": true,\n    \"reason\": null,\n    \"schema\": \"rigorloom/guard-v1\"\n  }\n}\n"
+}

@@ -198,6 +198,11 @@ TOOL_SCHEMAS: dict[str, dict] = {
                                    "checkable afterwards with candidate/compare",
                 },
                 "proposer": {"type": "string"},
+                "replaces": {
+                    "type": "string",
+                    "description": "planId of a queued plan this proposal "
+                                   "replaces; its open approval is revoked",
+                },
             },
             "required": ["sessionId", "backend", "ops"],
         },
@@ -423,8 +428,11 @@ class McpAdapter:
     """JSON-RPC 2.0 over stdio, dispatching onto the shared domain core."""
 
     def __init__(self, *, root: Path, engine_root: Path | None = None,
-                 stdin=None, stdout=None):
+                 stdin=None, stdout=None, provider_identity: str | None = None):
         self.core = RuntimeCore(root, engine_root)
+        # Launch-time identity, as on ``serve.py --entry agent``: provenance of
+        # every plan this adapter proposes, never a tool argument.
+        self.provider_identity = provider_identity
         self._in = stdin if stdin is not None else sys.stdin.buffer
         self._out = stdout if stdout is not None else sys.stdout.buffer
         self.initialized = False
@@ -462,7 +470,9 @@ class McpAdapter:
                                      arguments.get("proposer") or CLIENT,
                                      base_run_id=arguments.get("baseRunId"),
                                      reverses=arguments.get("reverses"),
-                                     declares=arguments.get("declares"))
+                                     declares=arguments.get("declares"),
+                                     provenance=self.provider_identity,
+                                     replaces=arguments.get("replaces"))
         if method == "plan/validate":
             return core.plan_validate(arguments.get("planId"))
         if method == "plan/get":
@@ -650,6 +660,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--engine-root", default=None,
                         help="repo root holding engine/scripts and "
                              "pipeline/scripts (default: this checkout)")
+    parser.add_argument("--provider-identity", default=None, choices=["mock"],
+                        help="identity of the provider that launched this "
+                             "adapter; every plan it proposes carries it")
     parser.add_argument("--list-tools", action="store_true",
                         help="print the tool surface as JSON and exit")
     return parser
@@ -671,7 +684,8 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         log(f"--root is not usable: {exc}")
         return EXIT_USAGE
-    adapter = McpAdapter(root=root, engine_root=args.engine_root)
+    adapter = McpAdapter(root=root, engine_root=args.engine_root,
+                         provider_identity=args.provider_identity)
     log(f"{SERVER_NAME} mcp adapter ready: {len(EXPOSED_METHODS)} tools, "
         f"impl {IMPL_VERSION}")
     return adapter.serve()

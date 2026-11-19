@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "style",
+    "check",
+    "examples/gongmun/expected/filled.hwpx"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "{\n  \"command\": \"style check\",\n  \"ok\": true,\n  \"result\": {\n    \"counts\": {\n      \"error\": 0,\n      \"notice\": 0\n    },\n    \"docType\": \"any\",\n    \"file\": \"filled.hwpx\",\n    \"findings\": [],\n    \"pass\": true,\n    \"rulesApplied\": [\n      \"ko.double-passive\",\n      \"ko.e-isseoseo\",\n      \"ko.e-dareum-anida\",\n      \"ko.ji-anhumyeon-an-doenda\",\n      \"ko.hayeogeum\",\n      \"ko.e-uihae\",\n      \"ko.gajigo-itda\",\n      \"ko.geot-i-pilyohada\",\n      \"ko.para-opener-summary\",\n      \"ko.filler-opener\",\n      \"ko.contrast-frame\",\n      \"ko.md-bold\",\n      \"ko.exclamation\"\n    ],\n    \"ruleset\": \"ko-style/1\",\n    \"schema\": \"rigorloom/style-check-v1\",\n    \"unit\": \"paragraph\"\n  }\n}\n"
+}

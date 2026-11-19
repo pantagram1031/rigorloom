@@ -65,6 +65,8 @@
   --bg-seat-empty: #FAF9F5;
   --bg-hover: rgba(24, 24, 23, 0.04);
   --bg-selected: #F7F9FE;
+  --seg-track: #ECECE8;
+  --seg-thumb: #FFFFFF;
 
   --fg-primary: #181817;
   --fg-secondary: #575653;
@@ -115,6 +117,8 @@
   --bg-seat-empty: #252521;
   --bg-hover: rgba(238, 238, 235, 0.05);
   --bg-selected: #1B2436;
+  --seg-track: #1C1C1A;
+  --seg-thumb: #2E2E2B;
 
   --fg-primary: #EEEEEB;
   --fg-secondary: #C2C1BC;
@@ -161,6 +165,8 @@
     --bg-seat-empty: #252521;
     --bg-hover: rgba(238, 238, 235, 0.05);
     --bg-selected: #1B2436;
+    --seg-track: #1C1C1A;
+    --seg-thumb: #2E2E2B;
 
     --fg-primary: #EEEEEB;
     --fg-secondary: #C2C1BC;

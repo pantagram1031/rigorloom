@@ -8,6 +8,7 @@ import {
 import {
   declareSuggestedCharPr,
   editOpValue,
+  readdReturnedOp,
   undoQueuedOp,
 } from "../actions";
 import {
@@ -19,6 +20,13 @@ import {
 } from "../i18n/vocabulary";
 import type { PlanFinding, UiLanguage } from "../types";
 import type { IndexedChange, RowGuardAudit } from "../workspace/guardHelper";
+import {
+  guardTagFor,
+  guardTagLabel,
+  hardReason,
+  opProposerKind,
+  proposerLabel,
+} from "../workspace/trust";
 import { DetailDisclosure } from "./DetailDisclosure";
 
 function collapseOneLine(text: string): string {
@@ -47,6 +55,8 @@ interface ChangeRowProps {
   isExpanded: boolean;
   focusEditNonce: number;
   disabled?: boolean;
+  /** The person returned this exact change before; it is back in a proposal. */
+  returned?: boolean;
   language: UiLanguage;
   onSelect: (opId: string) => void;
   onToggleExpand: (opId: string) => void;
@@ -60,6 +70,7 @@ export function ChangeRow({
   isExpanded,
   focusEditNonce,
   disabled = false,
+  returned = false,
   language,
   onSelect,
   onToggleExpand,
@@ -171,6 +182,13 @@ export function ChangeRow({
               }
             : null;
 
+  // Every failing guard paragraph is tagged on the collapsed row. A true change
+  // keeps its 바뀐 사실 pill above; the expected kinds get a neutral tag here.
+  const guardTag = guardTagFor(change, audit);
+  const neutralGuardTag = guardTag && guardTag.kind !== "changed" ? guardTag : null;
+  const isTestProposal = opProposerKind(op) === "mock";
+  const collapsedHardReason = hardReason(change.hardFindings, language);
+
   const rowClasses = [
     "change-row",
     isSelected ? "change-row--selected" : "",
@@ -213,6 +231,31 @@ export function ChangeRow({
           </span>
           <span className="change-row-field">{change.fieldLabel}</span>
           <span className="change-row-kind">{change.opKindText}</span>
+          {isTestProposal ? (
+            <span
+              className="change-tag change-tag--mock"
+              data-testid={`change-mock-tag-${change.ordinal}`}
+            >
+              {proposerLabel("mock", language)}
+            </span>
+          ) : null}
+          {returned ? (
+            <span
+              className="change-tag change-tag--returned"
+              data-testid={`change-returned-tag-${change.ordinal}`}
+            >
+              {t("review_returned_tag", language)}
+            </span>
+          ) : null}
+          {neutralGuardTag ? (
+            <span
+              className="change-tag"
+              data-testid={`change-guard-tag-${change.ordinal}`}
+              data-guard-tag={neutralGuardTag.kind}
+            >
+              {guardTagLabel(neutralGuardTag, language)}
+            </span>
+          ) : null}
           {pill ? (
             <span
               className={pill.cls}
@@ -253,6 +296,21 @@ export function ChangeRow({
               {addedNumbersLabel}
             </span>
           ) : null}
+          {collapsedHardReason ? (
+            <span
+              className="change-row-hard-reason"
+              data-testid={`change-hard-reason-${change.ordinal}`}
+            >
+              {collapsedHardReason}
+            </span>
+          ) : op.autoCharPr ? (
+            <span
+              className="change-row-added-numbers"
+              data-testid={`change-auto-charpr-${change.ordinal}`}
+            >
+              {t("review_char_shape_applied", language)}
+            </span>
+          ) : null}
         </div>
       </button>
 
@@ -274,7 +332,9 @@ export function ChangeRow({
             ) : null}
             {op.origin === "agent" ? (
               <p className="change-origin-note">
-                {t("review_agent_suggestion", language)}
+                {isTestProposal
+                  ? proposerLabel("mock", language)
+                  : t("review_agent_suggestion", language)}
               </p>
             ) : null}
           </div>
@@ -364,6 +424,17 @@ export function ChangeRow({
           ) : null}
 
           <div className="change-expanded-actions">
+            {returned ? (
+              <button
+                type="button"
+                className="review-btn review-btn--secondary"
+                data-testid={`change-readd-${change.opId}`}
+                disabled={disabled}
+                onClick={() => readdReturnedOp(change.opId)}
+              >
+                {t("review_readd", language)}
+              </button>
+            ) : null}
             {isEditableValue && !editing ? (
               <button
                 type="button"
@@ -421,7 +492,7 @@ export function ChangeRow({
               )}
               {allFindings.map((f, idx) => (
                 <div key={`raw-${idx}`}>
-                  {`${f.code} @ ${f.at}: ${f.msg}`}
+                  {`${errorCodeMessage(f.code, language)} (${f.code} @ ${f.at})`}
                 </div>
               ))}
               {audit.paragraph ? (

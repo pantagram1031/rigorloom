@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "guard",
+    "examples/guard/before.hwpx",
+    "examples/guard/before.hwpx",
+    "--format",
+    "text"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "paragraphs: 295, edited: 0, changed a protected fact: 0\n\nOK: every protected fact is unchanged.\n"
+}

@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "guard",
+    "examples/guard/before.hwpx",
+    "examples/guard/after.hwpx",
+    "--format",
+    "text"
+  ],
+  "exit": 3,
+  "stderr_is_empty": true,
+  "stdout_normalized": "paragraphs: 295, edited: 3, changed a protected fact: 2\n\n¶4\n  number/unit           1  ->  2\n\n¶5\n  negation/hedge/bound  않  ->  (gone)\n\nCHANGED: restore or review the paragraphs above.\n"
+}

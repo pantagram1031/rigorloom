@@ -206,6 +206,14 @@
 | `agent_plan_before_unreadable` | 에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다. | Could not display the agent’s proposal. Request it again. |
 | `agent_plan_projection_unsupported` | 에이전트 제안을 표시할 수 없습니다. 다시 요청해야 합니다. | Could not display the agent’s proposal. Request it again. |
 | `file_too_large` | 파일 크기가 너무 커서 열 수 없습니다. | The file is too large to open. |
+| `plan_behind_head` | 이 변경 제안은 최신 수정본 이전 문서를 기준으로 만들어졌습니다. 그대로 적용하면 최신 수정본의 변경이 빠집니다. | This proposal was made against a document older than the latest revision. Applying it would drop the latest revision's changes. |
+| `agent_not_connected` | 에이전트가 아직 연결되지 않았습니다. 명령창의 에이전트 연결에서 설정하면 요청을 보낼 수 있습니다. | No agent is connected yet. Set one up under Agent connection in the command palette to send requests. |
+| `superseded_by_newer_candidate` | 더 새 수정본이 생겨 이 변경 제안을 돌려보냈습니다. | Returned because a newer revision exists. |
+| `foreign_session_ops` | 다른 문서에서 만든 변경이 섞여 있어 이 문서에 다시 제안할 수 없습니다. | Changes made for another document are mixed in, so they cannot be proposed for this document. |
+| `undo_unfixable` | 되돌리기 제안을 만들지 않았습니다. 그대로 만들면 승인할 수 없는 항목이 생깁니다. | No undo proposal was created. It would contain items that cannot be approved. |
+| `confirmation_changed` | 승인을 누른 뒤 변경 제안이 바뀌어 적용하지 않았습니다. 바뀐 내용을 보고 다시 승인해야 합니다. | The proposal changed after you approved it, so nothing was applied. Review the new proposal and approve again. |
+| `invalid_queue_ops` | 형식이 맞지 않는 변경이 섞여 있어 제안하지 않았습니다. | Some changes are malformed, so nothing was proposed. |
+| `undo_conflict` | 되돌리기 제안을 만들지 않았습니다. 이후 수정본에서 같은 자리를 다시 고쳐서, 되돌리면 그 변경이 지워집니다. | No undo proposal was created. A later revision changed the same place, and undoing would erase that change. |
 
 ## 5. 화면 일반 문구 (`VOCABULARY`)
 
@@ -294,7 +302,7 @@
 | `review_zoom_label` | 배율 {0}% | Zoom {0}% |
 | `review_page_counter` | {0} / {1}쪽 | Page {0} of {1} |
 | `review_empty_changes` | 검토할 변경 제안이 없습니다. | No proposed changes to review. |
-| `review_approve_dialog_title` | 변경 {0}건 적용 승인 | Approve {0} changes |
+| `review_approve_dialog_title` | 변경 {0}건을 적용할까요? | Apply {0} changes? |
 | `review_plan_hash_label` | 변경 제안 검증값 | Plan verification value |
 | `review_doc_hash_label` | 문서 검증값 | Document verification value |
 | `review_date_change_preview` | {0}번 항목의 날짜가 {1}에서 {2}로 바뀝니다. | Item {0} date changes from {1} to {2}. |
@@ -700,3 +708,72 @@
 | `operator_event_check_pass` | 통과 | passed |
 | `operator_event_check_fail` | 미통과 | not passed |
 | `operator_event_pdf` | 인쇄 화면용 문서를 준비했습니다 | Prepared print view document |
+| `review_behind_head_banner` | 이 변경 제안은 수정본 {0} 이전 문서를 기준으로 만들어졌습니다. 그대로 적용하면 수정본 {0}의 변경이 빠집니다. | This proposal was made against a document older than revision {0}. Applying it would drop the changes in revision {0}. |
+| `review_repropose_on_head` | 수정본 {0} 기준으로 다시 제안 | Re-propose on revision {0} |
+| `review_repropose_on_latest` | 최신 수정본 기준으로 다시 제안 | Re-propose on the latest revision |
+| `proposer_mock` | 시험용 제안 | Test proposal |
+| `proposer_agent` | 에이전트 | Agent |
+| `proposer_user` | 직접 입력 | Typed by you |
+| `review_prompt_not_connected` | 에이전트가 연결되지 않았습니다 | No agent connected |
+| `review_prompt_connect` | 연결 설정 | Connection settings |
+| `review_prompt_mock_note` | 시험용 에이전트가 시험용 값을 제안합니다 | The test agent proposes test values |
+| `page_label_original` | 원본 · 미리보기 · 실제 인쇄 결과와 다를 수 있습니다. | Original · Preview · May differ from printed output. |
+| `page_label_revision` | 수정본 {0} (현재) · 미리보기 · 실제 인쇄 결과와 다를 수 있습니다. | Revision {0} (current) · Preview · May differ from printed output. |
+| `page_label_review_on_revision` | 수정본 {0}에 제안을 적용한 모습 · 미리보기 · 실제 인쇄 결과와 다를 수 있습니다. | Revision {0} with proposed changes · Preview · May differ from printed output. |
+| `page_show_original` | 원본 보기 | Show original |
+| `page_show_revision` | 수정본 보기 | Show revision |
+| `guard_tag_new_values` | 새로 넣은 숫자·날짜 | New numbers or dates |
+| `guard_tag_removed_with_guide` | 안내문과 함께 빠진 표현 | Removed with guide text |
+| `guard_value_gone` | 없어짐 | gone |
+| `approval_warn_changed` | 바뀐 사실 {0}곳: {1}. | {0} changed facts: {1}. |
+| `approval_warn_removed` | 안내문과 함께 빠지는 표현 {0}곳: {1}. | {0} expressions removed with guide text: {1}. |
+| `approval_warn_added` | 새로 넣은 숫자·날짜 {0}곳: {1}. | {0} new numbers or dates: {1}. |
+| `approval_warn_unattributed` | 어느 변경에서 생겼는지 알 수 없는 차이 {0}곳. | {0} differences not tied to any change. |
+| `approval_warn_show_all` | 경고 {0}건 모두 보기 | Show all {0} warnings |
+| `approval_warn_full_changed` | 바뀐 사실 · {0} | Changed fact · {0} |
+| `approval_warn_full_removed` | 안내문과 함께 빠지는 표현 · {0} | Removed with guide text · {0} |
+| `approval_warn_full_added` | 새로 넣은 숫자·날짜 · {0} | New number or date · {0} |
+| `approval_warn_full_unattributed` | 변경과 연결되지 않은 차이 · 문단 {0} {1} | Untied difference · Paragraph {0} {1} |
+| `undo_conflict_item` | {0}: 지금 ‘{1}’, 되돌릴 변경이 넣은 값 ‘{2}’ | {0}: now ‘{1}’, the reversed change wrote ‘{2}’ |
+| `undo_before_after` | {0}: ‘{1}’ → ‘{2}’ | {0}: ‘{1}’ → ‘{2}’ |
+| `base_source` | 원본 | Original |
+| `base_revision` | 수정본 {0} | Revision {0} |
+| `base_revision_unknown` | 이전 수정본 | Earlier revision |
+| `approval_meta_line` | 제안: {0} · 기준: {1} | Proposed by: {0} · Based on: {1} |
+| `approval_step_checking` | 변경 제안을 다시 확인하는 중입니다 | Re-checking the proposal |
+| `approval_step_recording` | 승인을 기록하는 중입니다 | Recording the approval |
+| `approval_step_applying` | 수정본을 만들고 점검하는 중입니다 | Creating and checking the revision |
+| `approval_copy_hash` | 복사 | Copy |
+| `toast_hash_copied` | 검증값을 복사했습니다 | Copied the verification value |
+| `approval_mock_ack` | 시험용 값임을 확인했습니다 | I understand these are test values |
+| `review_char_shape_applied` | 본문 글자 모양에 맞춤 | Matched to body text style |
+| `review_blocked_hard` | {0}건을 고쳐야 승인할 수 있습니다 | Fix {0} items to approve |
+| `review_blocked_returned` | 돌려보낸 변경 {0}건을 빼거나 다시 넣어야 승인할 수 있습니다 | Remove or re-add {0} returned changes to approve |
+| `review_blocked_behind_head` | 최신 수정본 기준으로 다시 제안해야 승인할 수 있습니다 | Re-propose on the latest revision to approve |
+| `review_returned_tag` | 돌려보낸 변경 | Returned change |
+| `review_readd` | 다시 넣기 | Re-add |
+| `draft_restored` | 입력해 둔 값 {0}개를 불러왔습니다 | Restored {0} values you had entered |
+| `history_proposer_line` | 제안: {0} | Proposed by: {0} |
+| `history_receipt_verified` | 영수증을 확인했습니다 | Receipt verified |
+| `history_receipt_failed` | 영수증이 수정본과 맞지 않습니다 | Receipt does not match the revision |
+| `history_receipt_checking` | 영수증을 확인하고 있습니다 | Checking the receipt |
+| `history_checks_open` | 자동 점검에서 확인할 항목이 남아 있습니다 | Automatic checks left items to review |
+| `review_applied_guard_line` | 사실 점검에서 확인할 변경 {0}건을 함께 적용했습니다 | Applied with {0} changes flagged by the fact check |
+| `err_undo_unfixable` | 되돌리기 제안을 만들지 않았습니다. 그대로 만들면 승인할 수 없는 항목이 생깁니다. {0} | No undo proposal was created. It would contain items that cannot be approved. {0} |
+| `settings_agent_label` | 에이전트 | Agent |
+| `settings_agent_not_connected` | 연결되지 않았습니다 | Not connected |
+| `settings_agent_mock` | 시험용 에이전트를 쓰고 있습니다 | Using the test agent |
+| `settings_agent_connected` | 연결되어 있습니다 | Connected |
+| `settings_agent_dev_mock` | 시험용 에이전트 쓰기 (개발자 설정) | Use the test agent (developer setting) |
+| `settings_agent_note` | 에이전트는 변경을 제안만 하며 승인할 수 없습니다. | Agents can only propose changes; they cannot approve them. |
+| `guard_noun_numbers` | 숫자 | number |
+| `guard_noun_dates` | 날짜 | date |
+| `guard_noun_direct_quotes` | 인용문 | quotation |
+| `guard_noun_qualifiers` | 부정·한정 표현 | negation or qualifier |
+| `guard_noun_quantifiers` | 수량 표현 | quantity expression |
+| `guard_noun_causal_markers` | 인과 표현 | causal phrasing |
+| `guard_noun_direction_words` | 증감·방향 표현 | direction word |
+| `guard_noun_urls` | 웹 주소 | web address |
+| `guard_noun_citations` | 출처 표기 | citation |
+| `guard_noun_inline_math` | 수식 | formula |
+| `guard_noun_headings` | 제목·보호 문구 | heading or protected text |

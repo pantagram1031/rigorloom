@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeternaxis.com/rigorloom/schemas/events.schema.json",
+  "title": "Agent and change events",
+  "description": "One line of the JSONL event stream the agent writes and the desktop panel renders as-is (UI 요구 6). Extends the agent host's existing events (seq, kind) with turn_id, ts and changeset_id. Raw model reasoning is never an event.",
+  "type": "object",
+  "required": ["schema", "seq", "kind", "ts", "turn_id"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {"const": "rigorloom.events/1"},
+    "seq": {"type": "integer", "minimum": 0, "description": "Strictly increasing within a turn."},
+    "kind": {"enum": [
+      "run.started", "run.finished",
+      "provider.selected", "provider.request", "provider.response", "provider.failed",
+      "tool.requested", "tool.refused", "tool.compiled",
+      "runtime.result", "runtime.refused", "host.note",
+      "message.delta", "step",
+      "change.proposed", "change.applied", "change.rejected", "change.stale",
+      "approval.requested"
+    ]},
+    "ts": {"type": "string", "format": "date-time"},
+    "turn_id": {"type": "string", "minLength": 1},
+    "changeset_id": {"type": "string", "pattern": "^cs-"},
+    "provenance": {"$ref": "changeset.schema.json#/$defs/provenance"},
+    "text": {"type": "string", "description": "message.delta: assistant text to append in the panel."},
+    "step": {"type": "string", "description": "step: a vocabulary key such as rendering_pages; the UI translates it."},
+    "item_ids": {"type": "array", "items": {"type": "string"}},
+    "reason": {"$ref": "changeset.schema.json#/$defs/staleReason"},
+    "path": {"type": "string"}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "message.delta"}}}, "then": {"required": ["text"]}},
+    {"if": {"properties": {"kind": {"const": "step"}}}, "then": {"required": ["step"]}},
+    {"if": {"properties": {"kind": {"enum": ["change.proposed", "change.applied", "change.rejected", "change.stale", "approval.requested"]}}},
+     "then": {"required": ["changeset_id"]}},
+    {"if": {"properties": {"kind": {"const": "change.stale"}}}, "then": {"required": ["reason"]}},
+    {"if": {"properties": {"kind": {"enum": ["change.proposed", "approval.requested"]}}}, "then": {"required": ["provenance"]}}
+  ]
+}

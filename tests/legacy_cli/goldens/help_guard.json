@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "guard",
+    "--help"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "usage: runtime/scripts/cli.py guard [-h] [--format {json,text}]\n                                    [--mode {verdict,block-diff}]\n                                    before after\n\npositional arguments:\n  before                the original file\n  after                 the edited file, same type\n\noptions:\n  -h, --help            show this help message and exit\n  --format {json,text}  json (default, one document on stdout) or a readable\n                        table\n  --mode {verdict,block-diff}\n                        block-diff prints each edited paragraph's old and new\n                        text (always text; see docs/guard-block-diff.md)\n"
+}

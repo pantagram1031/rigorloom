@@ -104,6 +104,35 @@ def three_plans(root, session):
     return plans
 
 
+@pytest.fixture()
+def apart(root, source):
+    """The same op through the three front ends, each in its own session.
+
+    The sessions are opened from the same bytes, so every plan binds the same
+    digest. They have to be separate sessions once two of them are APPLIED:
+    the second source-based plan in one session is behind the first one's
+    candidate and is refused with ``plan_behind_head`` — which is the
+    runtime refusing to drop an approved edit, not a parity difference.
+    """
+    sessions = {name: run_cli(root, "open", "--path", str(source)).result["sessionId"]
+                for name in ("server", "cli", "mcp")}
+    plans = {}
+    with RuntimeClient(root, entry="host") as server:
+        server.initialize()
+        plans["server"] = server.ok("plan/propose", {
+            "sessionId": sessions["server"], "backend": "preedit",
+            "ops": [OP]})["plan"]
+    plans["cli"] = run_cli(
+        root, "propose", "--session", sessions["cli"],
+        "--op", '{"kind":"fill_cell","table":0,"row":5,"col":1,"text":"\\ud55c\\ube5b"}'
+    ).result["plan"]
+    with McpClient(root) as mcp:
+        mcp.initialize()
+        plans["mcp"] = mcp.ok("plan_propose", {
+            "sessionId": sessions["mcp"], "backend": "preedit", "ops": [OP]})["plan"]
+    return plans
+
+
 # --- the plan ---------------------------------------------------------------
 
 def test_the_three_front_ends_agree_on_the_intent_hash(three_plans):
@@ -247,9 +276,9 @@ def _approve_and_apply_over_cli(root, plan):
                    "--approval", approval["approvalId"]).result
 
 
-def test_server_and_cli_produce_the_same_candidate_bytes(root, three_plans):
-    from_server = _approve_and_apply_over_server(root, three_plans["server"])
-    from_cli = _approve_and_apply_over_cli(root, three_plans["cli"])
+def test_server_and_cli_produce_the_same_candidate_bytes(root, apart):
+    from_server = _approve_and_apply_over_server(root, apart["server"])
+    from_cli = _approve_and_apply_over_cli(root, apart["cli"])
     assert (from_server["candidate"]["candidate"]["sha256"]
             == from_cli["candidate"]["candidate"]["sha256"])
     assert (from_server["candidate"]["candidate"]["bytes"]
@@ -257,9 +286,9 @@ def test_server_and_cli_produce_the_same_candidate_bytes(root, three_plans):
 
 
 def test_an_mcp_authored_plan_applied_by_a_host_lands_on_the_same_bytes(
-        root, three_plans):
+        root, apart):
     """The cross-front-end handoff: MCP proposes, CLI approves, server applies."""
-    mcp_plan = three_plans["mcp"]
+    mcp_plan = apart["mcp"]
     approval = run_cli(root, "request-approval",
                        "--plan", mcp_plan["planId"]).result["approval"]
     run_cli(root, "approve", "--approval", approval["approvalId"],
@@ -269,21 +298,20 @@ def test_an_mcp_authored_plan_applied_by_a_host_lands_on_the_same_bytes(
         server.initialize()
         applied = server.ok("plan/apply", {"planId": mcp_plan["planId"],
                                            "approvalId": approval["approvalId"]})
-    from_cli = _approve_and_apply_over_cli(root, three_plans["cli"])
+    from_cli = _approve_and_apply_over_cli(root, apart["cli"])
     assert (applied["candidate"]["candidate"]["sha256"]
             == from_cli["candidate"]["candidate"]["sha256"])
 
 
-def test_the_receipts_agree_on_everything_but_identity(root, three_plans):
-    from_server = _approve_and_apply_over_server(root, three_plans["server"])
-    from_cli = _approve_and_apply_over_cli(root, three_plans["cli"])
-    session = three_plans["server"]["sessionId"]
+def test_the_receipts_agree_on_everything_but_identity(root, apart):
+    from_server = _approve_and_apply_over_server(root, apart["server"])
+    from_cli = _approve_and_apply_over_cli(root, apart["cli"])
     with RuntimeClient(root, entry="host") as server:
         server.initialize()
         server_receipt = server.ok("receipt/read", {
-            "sessionId": session,
+            "sessionId": apart["server"]["sessionId"],
             "runId": from_server["candidate"]["runId"]})["receipt"]
-    cli_receipt = run_cli(root, "receipt", "--session", session,
+    cli_receipt = run_cli(root, "receipt", "--session", apart["cli"]["sessionId"],
                           "--run", from_cli["candidate"]["runId"]
                           ).result["receipt"]
     for receipt in (server_receipt, cli_receipt):

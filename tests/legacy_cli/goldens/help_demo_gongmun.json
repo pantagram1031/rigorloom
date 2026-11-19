@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "demo",
+    "gongmun",
+    "--help"
+  ],
+  "exit": 0,
+  "stderr_is_empty": true,
+  "stdout_normalized": "usage: runtime/scripts/cli.py demo gongmun [-h] --out OUT [--brief BRIEF]\n                                           [--form FORM] [--polished POLISHED]\n                                           [--deterministic]\n\noptions:\n  -h, --help           show this help message and exit\n  --out OUT            output directory for filled.hwpx, plan.json,\n                       verdict.json, and approval.json\n  --brief BRIEF        path to brief JSON (default: <engine-\n                       root>/examples/gongmun/brief.json)\n  --form FORM          path to blank form HWPX (default: <engine-\n                       root>/tests/corpus/forms/converted/gianmun-\n                       byeolji-1ho.hwpx)\n  --polished POLISHED  optional polished body draft file for Policy (ii)\n                       fidelity audit\n  --deterministic      pin timestamps, UUIDs, and volatile metadata (or set\n                       RIGORLOOM_DETERMINISTIC=1)\n"
+}

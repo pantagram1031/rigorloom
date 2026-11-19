@@ -109,6 +109,7 @@ DOMAIN_CODES = frozenset({
     "unknown_op_kind",
     "unsupported_backend",
     "plan_stale",
+    "plan_behind_head",
     "plan_not_approved",
     "apply_in_progress",
     "apply_outcome_unknown",

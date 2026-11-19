@@ -176,10 +176,13 @@ class ProtocolDoor(_ChildDoor):
 
     name = "protocol"
 
-    def __init__(self, root: Path, engine_root: Path | None, stderr_path=None):
+    def __init__(self, root: Path, engine_root: Path | None, stderr_path=None,
+                 identity: str | None = None):
         argv = [sys.executable, str(SERVE), "--entry", "agent", "--root", str(root)]
         if engine_root is not None:
             argv += ["--engine-root", str(engine_root)]
+        if identity is not None:
+            argv += ["--provider-identity", identity]
         super().__init__(argv, stderr_path)
         self._next = 0
         self.handshake = self._request("initialize", {
@@ -210,10 +213,13 @@ class McpDoor(_ChildDoor):
 
     name = "mcp"
 
-    def __init__(self, root: Path, engine_root: Path | None, stderr_path=None):
+    def __init__(self, root: Path, engine_root: Path | None, stderr_path=None,
+                 identity: str | None = None):
         argv = [sys.executable, str(MCP), "--root", str(root)]
         if engine_root is not None:
             argv += ["--engine-root", str(engine_root)]
+        if identity is not None:
+            argv += ["--provider-identity", identity]
         super().__init__(argv, stderr_path)
         self._next = 0
         self._rpc("initialize", {
@@ -250,12 +256,28 @@ class McpDoor(_ChildDoor):
         return sorted(self._tools)
 
 
+def newest_candidate(door, session_id: str) -> str | None:
+    """The session's newest published candidate, read over the agent door."""
+    try:
+        rows = door.call("candidate/list", {"sessionId": session_id})["candidates"]
+    except DoorRefusal:
+        return None
+    return rows[-1]["runId"] if rows else None
+
+
 def open_door(door: str, root: Path, engine_root: Path | None,
-              stderr_path: Path | None = None):
+              stderr_path: Path | None = None, identity: str | None = None):
+    """Start the runtime the agent talks to.
+
+    ``identity`` is the launched provider's identity (``"mock"`` for the
+    bundled test agents). It is a launch argument of the runtime process, so
+    what the agent then sends — its ``proposer`` label included — cannot
+    change the provenance its plans carry.
+    """
     if door == "protocol":
-        return ProtocolDoor(root, engine_root, stderr_path)
+        return ProtocolDoor(root, engine_root, stderr_path, identity)
     if door == "mcp":
-        return McpDoor(root, engine_root, stderr_path)
+        return McpDoor(root, engine_root, stderr_path, identity)
     raise RpcError("invalid_params", f"unknown door {door!r}", known=list(DOORS))
 
 
@@ -361,9 +383,15 @@ def run_scenario(door, args) -> tuple[dict, int]:
     record("target", target)
 
     op = build_op(target, args.marker)
-    plan = door.call("plan/propose", {
-        "sessionId": session_id, "backend": "preedit", "ops": [op],
-        "proposer": AGENT_NAME})["plan"]
+    propose = {"sessionId": session_id, "backend": "preedit", "ops": [op],
+               "proposer": AGENT_NAME}
+    # Propose on the newest 수정본, as any agent must: a plan on anything older
+    # is refused with plan_behind_head, because applying it would drop the
+    # newer candidate's changes.
+    head = newest_candidate(door, session_id)
+    if head is not None:
+        propose["baseRunId"] = head
+    plan = door.call("plan/propose", propose)["plan"]
     record("plan/propose", {"opsHash": plan["opsHash"]})
 
     validation = door.call("plan/validate", {"planId": plan["planId"]})["validation"]
@@ -502,7 +530,10 @@ def main(argv: list[str] | None = None) -> int:
     stderr_path = Path(args.stderr_log) if args.stderr_log else None
     door = None
     try:
-        door = open_door(args.door, root, args.engine_root, stderr_path)
+        # This script IS the bundled test agent: its runtime is launched
+        # with the mock identity, whatever it later calls itself.
+        door = open_door(args.door, root, args.engine_root, stderr_path,
+                         identity="mock")
         payload, code = run_scenario(door, args)
     except DoorRefusal as exc:
         return emit({"ok": False, "agent": AGENT_NAME, "door": args.door,

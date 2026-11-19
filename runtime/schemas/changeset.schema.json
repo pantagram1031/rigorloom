@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeternaxis.com/rigorloom/schemas/changeset.schema.json",
+  "title": "Change set",
+  "description": "One proposal against one document draft: who proposed it, what it was based on, what it changes item by item, and where it stands. The CLI, the MCP server, the agent and the desktop UI all read and write this shape. P0 writes the required fields; items, per-item guard results, returned_items and supersedes arrive with P3 and are optional until then. A field change goes to the UI thread and the advisor before it lands.",
+  "type": "object",
+  "required": ["schema", "id", "kind", "created", "author", "provenance", "base", "revision", "rev", "sha256", "status"],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {"const": "rigorloom.changeset/1"},
+    "id": {"type": "string", "pattern": "^cs-[0-9]{4}-[0-9a-f]{6}$"},
+    "kind": {"enum": ["edit", "fill", "new", "style", "table", "accept"],
+             "description": "What made it. `accept` is a re-proposal from the accepted subset of another set (P3)."},
+    "created": {"type": "string", "format": "date-time"},
+    "author": {"type": "string", "description": "The client: cli, mcp:<client name>, agent, ui."},
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "base": {
+      "type": "object",
+      "description": "What the proposal was made against. Used for 기준 labels and to refuse an old proposal once a newer candidate exists.",
+      "required": ["kind", "revision"],
+      "properties": {
+        "kind": {"enum": ["source", "candidate", "empty"]},
+        "revision": {"type": "integer", "minimum": 0},
+        "rev": {"type": ["string", "null"], "pattern": "^[0-9a-f]{12}$"},
+        "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "ops": {"type": "array", "items": {"type": "object"}},
+    "revision": {"type": "integer", "minimum": 1, "description": "The draft revision this set produced (판)."},
+    "rev": {"type": "string", "pattern": "^[0-9a-f]{12}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "changedPages": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+    "signals": {"type": "array", "items": {"type": "object"}},
+    "remap": {"type": "array", "items": {"type": "object"}},
+    "applied": {"type": "array"},
+    "status": {"enum": ["proposed", "applied", "rejected", "withdrawn", "stale"]},
+    "reason": {"$ref": "#/$defs/staleReason"},
+    "items": {
+      "type": "array",
+      "description": "UI 요구 1: one entry per reviewable change. People accept or reject per item.",
+      "items": {
+        "type": "object",
+        "required": ["item_id", "address", "kind", "status"],
+        "properties": {
+          "item_id": {"type": "string"},
+          "ops": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "Indexes into the set's ops."},
+          "address": {"type": "string", "description": "doc-core address: p12, t3/r2/c1/p0, place:성명."},
+          "kind": {"enum": ["fill", "replace", "insert", "delete", "format"]},
+          "before": {"type": ["string", "null"]},
+          "after": {"type": ["string", "null"]},
+          "page": {"type": ["integer", "null"], "minimum": 1},
+          "rects": {"type": "array", "items": {"$ref": "#/$defs/rect"}},
+          "status": {"enum": ["pending", "accepted", "rejected"]},
+          "note": {"type": ["string", "null"], "description": "The person's note. Stored apart from who decided."},
+          "decided_by": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "properties": {
+        "guard": {
+          "type": "object",
+          "description": "UI 요구 4: guard per item with the real values, so the approval sheet can show them.",
+          "properties": {
+            "pass": {"type": ["boolean", "null"]},
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["item_id", "pass", "category"],
+                "properties": {
+                  "item_id": {"type": "string"},
+                  "pass": {"type": "boolean"},
+                  "category": {"enum": ["changed", "expected"]},
+                  "values": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["kind"],
+                      "properties": {
+                        "kind": {"enum": ["number", "date", "money", "quote", "negation", "direction", "name"]},
+                        "before": {"type": ["string", "null"]},
+                        "after": {"type": ["string", "null"]}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "returned_items": {"type": "array", "items": {"type": "string"},
+                       "description": "UI 요구 5: items a person rejected before that this set proposes again, named so it is never silent."},
+    "supersedes": {"type": "array", "items": {"type": "string", "pattern": "^cs-"}},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "description": "UI 요구 3. When mock is true every surface labels the proposal 시험용; the flag follows the bytes into events, the save receipt and history.",
+      "required": ["mock"],
+      "properties": {
+        "client": {"type": "string"},
+        "agent": {"type": "string"},
+        "provider": {"type": "string"},
+        "mock": {"type": "boolean"}
+      }
+    },
+    "staleReason": {"enum": ["superseded_by_newer_candidate", "source_changed", "target_changed", "declined_by_person"]},
+    "rect": {
+      "type": "object",
+      "required": ["page", "x", "y", "w", "h"],
+      "description": "Page coordinates in points from the top-left of the page.",
+      "properties": {
+        "page": {"type": "integer", "minimum": 1},
+        "x": {"type": "number"}, "y": {"type": "number"},
+        "w": {"type": "number", "minimum": 0}, "h": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

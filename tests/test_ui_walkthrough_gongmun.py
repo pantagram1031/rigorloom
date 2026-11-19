@@ -964,8 +964,11 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             page.click('[data-testid="review-approve-btn"]')
             page.wait_for_selector('[data-testid="approval-dialog"]', timeout=10000)
 
-            plan_hash = page.locator('[data-testid="approval-plan-hash"]').inner_text().strip()
+            plan_hash = page.locator('[data-testid="approval-plan-hash"]').get_attribute("data-full-hash")
             assert re.fullmatch(r"[0-9a-f]{64}", plan_hash), plan_hash
+            assert page.locator('[data-testid="approval-plan-hash"]').text_content().strip() == plan_hash[:12]
+            meta_line = page.locator('[data-testid="approval-meta-line"]').inner_text().strip()
+            assert meta_line == "제안: 에이전트 · 기준: 원본", meta_line
 
             page.wait_for_function(
                 "() => !document.querySelector('.approval-guard-note:not(.approval-guard-note--warn)')",

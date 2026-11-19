@@ -545,6 +545,52 @@ engine's nearest existing relative is `--at-cell-expect`
 on mismatch, and `form_hash` (`engine/scripts/form_inspect.py:1418`) is the
 document-level hash a plan should bind to.
 
+`plan_behind_head` is its lineage sibling. A plan whose `base` is missing or
+names anything other than the session's newest candidate validates with this
+hard finding, and `approval/resolve` (decision `approved`) and `plan/apply`
+refuse with the same code: applying it would publish a file without the newest
+candidate's changes. Returning such a plan stays possible. `approval/resolve`
+takes an optional `reason` string, stored as the record's `reason` and never as
+its `approver`.
+
+Transitions are serialised per session across threads and host processes on
+one root: a lock file `locks/session-<id>.lock` under the root is held from the
+head check through the receipt and candidate write, and around every
+approval-record replacement and its `approval.resolved` event. Two plans on the
+same base can therefore never both publish.
+
+`plan/apply` (and the read-only preview) copies its input, the session source
+or the base candidate, once into a private file under the session's `work/`,
+hashes that copy against `boundSha256` (`plan_stale` otherwise), and validates,
+executes and grades from the copy alone, so a later change to the runtime's own
+copy cannot reach the candidate; the receipt's `input: {kind, sha256, bytes}`
+records the digest that ran.
+
+When a plan is applied, the open approvals (pending, or approved and not yet
+applied) of plans whose base is no longer the newest candidate are resolved as
+`rejected` with `reasonCode: "superseded_by_newer_candidate"`, `approver: null`,
+`resolvedBy: "runtime"` and `supersededBy: <runId>`; an approved one also
+carries `revokedFrom: "approved"`. Approvals on the new head are untouched.
+Replaying an apply whose journal already says `published` is side-effect free:
+it returns the same candidate and writes no event and no approval.
+
+`plan/propose` takes an optional `replaces: <planId>` for an explicit
+replacement of a queued plan of the same session. The replaced plan's open
+approval is revoked in the same locked step with the same reason code and
+`supersededBy: <new planId>`, and the answer carries
+`replaced: {planId, state, revokedApprovals}`.
+
+`provenance: "mock"` is set from the identity of the connection, never from
+`proposer`: `serve.py --entry agent --provider-identity mock` (and
+`mcp_server.py --provider-identity mock`) are how the bundled test agents are
+launched. A plan that repeats a test agent's op (same target and value) in the
+same session inherits `mock`, so a client that rebuilds the queue cannot drop
+it.
+
+`candidate/compare` reports `regionsEqual: true` only when every requested
+region was readable on both sides and equal; one unreadable region makes it
+`null`.
+
 ### 5.3 Severity mapping
 
 `hard` → error frame, exit-3-class · `warn` → carried in the response, never

@@ -3,18 +3,34 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   approveAndApplyFromDialog,
   closeApprovalDialog,
-  loadPipelineGates,
+  rememberApprovedGuard,
   reproposeDraft,
-  resolvePipelineGateAction,
   resolveRecovery,
+  revisionNumberFor,
 } from "../actions";
 import { errorCodeMessage, opKindLabel, t } from "../i18n/vocabulary";
 import {
+  activeDisplayText,
   activeInspect,
-  activeText,
   draftStaleness,
+  returnedDraftOps,
+  showToast,
   useWorkspace,
 } from "../store";
+import {
+  applyStep,
+  applyStepLabel,
+  baseLabel,
+  behindHeadFinding,
+  captureConfirmation,
+  draftProposerKind,
+  guardWarningFullLines,
+  guardWarningLines,
+  guardWarningSummary,
+  proposerLabel,
+  requiredGuardAcks,
+  shortHash,
+} from "../workspace/trust";
 import { buildRegionTextMap } from "../workspace/externalPlan";
 import {
   buildIndexedChanges,
@@ -29,7 +45,7 @@ export function ApprovalDialog() {
   const language = useWorkspace((s) => s.language);
   const activeSessionId = useWorkspace((s) => s.activeSessionId);
   const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
+  const texts = useWorkspace(activeDisplayText);
   const draft = useWorkspace((s) => s.draft);
   const approval = useWorkspace((s) => s.approval);
   const approvalPhase = useWorkspace((s) => s.approvalPhase);
@@ -40,17 +56,15 @@ export function ApprovalDialog() {
   const applyOutcomes = useWorkspace((s) => s.applyOutcomes);
   const staleness = useWorkspace(draftStaleness);
   const reapprovalPrompt = useWorkspace((s) => s.reapprovalPrompt);
-
-  const pipelineWorkspace = useWorkspace((s) => s.pipelineWorkspace);
-  const pipelineGatesResult = useWorkspace((s) => s.pipelineGatesResult);
-  const pipelineGatesPhase = useWorkspace((s) => s.pipelineGatesPhase);
-  const pipelineGatesError = useWorkspace((s) => s.pipelineGatesError);
+  const returnedOps = useWorkspace(returnedDraftOps);
+  const candidatesBySession = useWorkspace((s) => s.candidates);
+  const appliedNow = useWorkspace((s) => s.applied);
 
   const guardSummary = useReviewGuardSummary();
 
   const [ackChecked, setAckChecked] = useState(false);
+  const [mockAckChecked, setMockAckChecked] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [wsInput, setWsInput] = useState(pipelineWorkspace);
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
@@ -67,18 +81,16 @@ export function ApprovalDialog() {
   latestDraftRef.current = draft;
   latestChangesRef.current = changes;
 
-  useEffect(() => {
-    setWsInput(pipelineWorkspace);
-  }, [pipelineWorkspace]);
-
   // Move focus into the modal on open without activating confirm prematurely.
   useEffect(() => {
     if (!open) {
       setSubmitting(false);
       setAckChecked(false);
+      setMockAckChecked(false);
       return;
     }
     setAckChecked(false);
+    setMockAckChecked(false);
     setSubmitting(false);
     const id = window.setTimeout(() => dialogRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
@@ -157,7 +169,38 @@ export function ApprovalDialog() {
     : [];
   const changedFactCount = changedFactItems.length;
 
-  const requiresChangedFactAck = changedFactCount > 0;
+  // From the WHOLE guard result: changed facts on rows, plus failing
+  // paragraphs no row could be tied to. Either one needs the acknowledgement.
+  const guardAcks = guardMatchesPlan
+    ? requiredGuardAcks(guardSummary)
+    : { changedFacts: 0, unattributed: 0, total: 0 };
+  const requiresChangedFactAck = guardAcks.total > 0;
+  const unattributedParas = guardMatchesPlan ? guardSummary.unattributedFailing ?? [] : [];
+
+  // Every failing guard paragraph, with the values that moved: one or two
+  // lines to scan, and the complete list one click away.
+  const warningSummary = guardMatchesPlan
+    ? guardWarningSummary(changes, guardSummary.rowAudits, language, {
+        paragraphsByOp: guardSummary.paragraphsByOp,
+        unattributedFailing: guardSummary.unattributedFailing,
+      })
+    : null;
+  const warningLines = warningSummary ? guardWarningLines(warningSummary, language) : [];
+  const warningFullLines = warningSummary ? guardWarningFullLines(warningSummary, language) : [];
+
+  const proposerKind = draftProposerKind(draft);
+  const requiresMockAck = proposerKind === "mock";
+  const revisionOf = (runId: string) =>
+    revisionNumberFor(
+      { candidates: candidatesBySession, applied: appliedNow } as Parameters<typeof revisionNumberFor>[0],
+      sessionId,
+      runId,
+    );
+  const metaLine = t("approval_meta_line", language, [
+    proposerLabel(proposerKind, language),
+    baseLabel(plan?.base?.runId ?? draft.baseRunId, revisionOf, language),
+  ]);
+  const behindHead = behindHeadFinding(validation);
 
   const busy =
     submitting ||
@@ -176,16 +219,53 @@ export function ApprovalDialog() {
     !busy &&
     !guardChecking &&
     approval?.state !== "rejected" &&
-    (!requiresChangedFactAck || ackChecked);
+    returnedOps.length === 0 &&
+    behindHead === null &&
+    (!requiresChangedFactAck || ackChecked) &&
+    (!requiresMockAck || mockAckChecked);
+
+  const stepLabel = applyStepLabel(
+    applyStep({ submitting, approvalPhase, applyPhase }),
+    language,
+  );
 
   const handleConfirm = async () => {
     if (!canConfirm) return;
+    // The binding is taken from the sheet AS RENDERED — this plan, this
+    // document, these boxes — not from whatever the store holds after the
+    // waits that follow.
+    const acknowledgements = [
+      ...(requiresChangedFactAck && ackChecked ? ["changed_facts"] : []),
+      ...(requiresMockAck && mockAckChecked ? ["mock"] : []),
+    ];
+    const confirmed = captureConfirmation(
+      { activeSessionId: activeSessionId ?? null, draft },
+      acknowledgements,
+    );
+    if (!confirmed) return;
     setSubmitting(true);
+    if (plan && warningSummary) {
+      // Kept past the queue, so the applied state still names what was flagged.
+      rememberApprovedGuard(plan.planId, warningSummary);
+    }
     try {
-      await approveAndApplyFromDialog("host-operator");
+      const done = await approveAndApplyFromDialog(confirmed, "host-operator");
+      if (!done) {
+        // A broken binding asks for a fresh confirmation: the boxes clear.
+        setAckChecked(false);
+        setMockAckChecked(false);
+      }
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const copyHash = (value: string | null | undefined) => {
+    if (!value) return;
+    void navigator.clipboard
+      ?.writeText(value)
+      .then(() => showToast(t("toast_hash_copied", language), 1600))
+      .catch(() => undefined);
   };
 
   return (
@@ -211,15 +291,6 @@ export function ApprovalDialog() {
           <h2 id="approval-dialog-title">
             {t("review_approve_dialog_title", language, [changes.length])}
           </h2>
-          <button
-            type="button"
-            className="review-btn review-btn--ghost"
-            data-testid="approval-close-btn"
-            disabled={busy}
-            onClick={() => closeApprovalDialog()}
-          >
-            {t("review_cancel", language)}
-          </button>
         </div>
 
         <div className="dialog-body approval-dialog-body">
@@ -282,6 +353,21 @@ export function ApprovalDialog() {
             </div>
           ) : null}
 
+          <p className="approval-meta-line" data-testid="approval-meta-line">
+            {metaLine}
+          </p>
+
+          {behindHead ? (
+            <div
+              className="approval-banner approval-banner--warn"
+              data-testid="approval-behind-head-banner"
+            >
+              <p className="approval-banner-text">
+                {errorCodeMessage("plan_behind_head", language)}
+              </p>
+            </div>
+          ) : null}
+
           <section className="approval-summary-box" data-testid="approval-breakdown">
             <ul className="approval-kind-list">
               {kindCounts.map(([label, count]) => (
@@ -305,14 +391,16 @@ export function ApprovalDialog() {
               >
                 {t("approve_dialog_guard_skipped", language)}
               </p>
-            ) : changedFactCount > 0 ? (
+            ) : requiresChangedFactAck ? (
               <div
                 className="approval-changed-facts-box"
                 data-testid="approval-changed-facts"
               >
-                <p className="approval-changed-facts-title">
-                  {t("review_changed_facts_header", language, [changedFactCount])}
-                </p>
+                {changedFactCount > 0 ? (
+                  <p className="approval-changed-facts-title">
+                    {t("review_changed_facts_header", language, [changedFactCount])}
+                  </p>
+                ) : null}
                 {changedFactItems.length > 0 ? (
                   <ul className="approval-changed-facts-list">
                     {changedFactItems.map((item) => (
@@ -322,7 +410,43 @@ export function ApprovalDialog() {
                     ))}
                   </ul>
                 ) : null}
+                {unattributedParas.length > 0 ? (
+                  <>
+                    <p className="approval-changed-facts-title">
+                      {t("approval_warn_unattributed", language, [unattributedParas.length])}
+                    </p>
+                    <ul
+                      className="approval-changed-facts-list"
+                      data-testid="approval-unattributed"
+                    >
+                      {unattributedParas.map((para) => (
+                        <li key={para.paragraph}>
+                          <span>{t("addr_paragraph", language, [para.paragraph])}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
               </div>
+            ) : null}
+
+            {warningLines.length > 0 ? (
+              <ul className="approval-warn-lines" data-testid="approval-guard-warnings">
+                {warningLines.map((line, idx) => (
+                  <li key={idx}>{line}</li>
+                ))}
+              </ul>
+            ) : null}
+
+            {warningFullLines.length > 0 ? (
+              <details className="approval-warn-all" data-testid="approval-guard-warnings-all">
+                <summary>{t("approval_warn_show_all", language, [warningFullLines.length])}</summary>
+                <ul className="approval-warn-lines">
+                  {warningFullLines.map((line, idx) => (
+                    <li key={idx}>{line}</li>
+                  ))}
+                </ul>
+              </details>
             ) : null}
 
             <p className="approval-effect-note" data-testid="approval-effect-note">
@@ -330,30 +454,24 @@ export function ApprovalDialog() {
             </p>
           </section>
 
-          <section className="approval-hashes" aria-label={t("review_plan_hash_label", language)}>
-            <div className="approval-hash-row">
-              <span className="approval-hash-label">
-                {t("review_plan_hash_label", language)}
-              </span>
-              <code
-                className="approval-hash"
-                data-testid="approval-plan-hash"
-              >
-                {plan?.planHash ?? "—"}
-              </code>
-            </div>
-            <div className="approval-hash-row">
-              <span className="approval-hash-label">
-                {t("review_doc_hash_label", language)}
-              </span>
-              <code
-                className="approval-hash"
-                data-testid="approval-bound-hash"
-              >
-                {plan?.boundSha256 ?? draft.boundSha256 ?? "—"}
-              </code>
-            </div>
-          </section>
+          {requiresMockAck ? (
+            <label className="approval-ack-row">
+              <input
+                type="checkbox"
+                data-testid="approval-mock-ack"
+                checked={mockAckChecked}
+                disabled={busy}
+                onChange={(e) => setMockAckChecked(e.target.checked)}
+              />
+              <span>{t("approval_mock_ack", language)}</span>
+            </label>
+          ) : null}
+
+          {stepLabel ? (
+            <p className="approval-progress" data-testid="approval-progress" role="status">
+              {stepLabel}
+            </p>
+          ) : null}
 
           {requiresChangedFactAck ? (
             <label className="approval-ack-row">
@@ -369,8 +487,55 @@ export function ApprovalDialog() {
           ) : null}
 
           <DetailDisclosure testId="approval-details">
+            <section className="approval-hashes" aria-label={t("review_plan_hash_label", language)}>
+              <div className="approval-hash-row">
+                <span className="approval-hash-label">
+                  {t("review_plan_hash_label", language)}
+                </span>
+                <code
+                  className="approval-hash"
+                  data-testid="approval-plan-hash"
+                  data-full-hash={plan?.planHash ?? ""}
+                  title={plan?.planHash ?? undefined}
+                >
+                  {shortHash(plan?.planHash)}
+                </code>
+                <button
+                  type="button"
+                  className="review-btn review-btn--ghost approval-hash-copy"
+                  data-testid="approval-copy-plan-hash"
+                  disabled={!plan?.planHash}
+                  onClick={() => copyHash(plan?.planHash)}
+                >
+                  {t("approval_copy_hash", language)}
+                </button>
+              </div>
+              <div className="approval-hash-row">
+                <span className="approval-hash-label">
+                  {t("review_doc_hash_label", language)}
+                </span>
+                <code
+                  className="approval-hash"
+                  data-testid="approval-bound-hash"
+                  data-full-hash={plan?.boundSha256 ?? draft.boundSha256 ?? ""}
+                  title={plan?.boundSha256 ?? draft.boundSha256 ?? undefined}
+                >
+                  {shortHash(plan?.boundSha256 ?? draft.boundSha256)}
+                </code>
+                <button
+                  type="button"
+                  className="review-btn review-btn--ghost approval-hash-copy"
+                  data-testid="approval-copy-bound-hash"
+                  disabled={!(plan?.boundSha256 ?? draft.boundSha256)}
+                  onClick={() => copyHash(plan?.boundSha256 ?? draft.boundSha256)}
+                >
+                  {t("approval_copy_hash", language)}
+                </button>
+              </div>
+            </section>
             <div className="approval-tech-details">
               <div>{`planId: ${plan?.planId ?? "none"}`}</div>
+              <div>{`proposer: ${plan?.proposer ?? "none"}`}</div>
               <div>
                 {`approval: ${
                   approval ? `${approval.approvalId} (${approval.state})` : "none"
@@ -388,77 +553,6 @@ export function ApprovalDialog() {
                   {`[${ch.ordinal}] ${ch.opId} (${opKindLabel(ch.op.kind, language)})`}
                 </div>
               ))}
-
-              <div className="approval-gates-subpanel" data-testid="pipeline-gates-section">
-                <div className="approval-gates-row">
-                  <input
-                    type="text"
-                    value={wsInput}
-                    onChange={(e) => setWsInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (!e.nativeEvent.isComposing && e.keyCode !== 229) {
-                        e.stopPropagation();
-                      }
-                    }}
-                    placeholder="/abs/path/to/workspace"
-                    data-testid="pipeline-workspace-input"
-                  />
-                  <button
-                    type="button"
-                    className="review-btn review-btn--secondary"
-                    data-testid="pipeline-load-gates"
-                    disabled={pipelineGatesPhase === "starting"}
-                    onClick={() => void loadPipelineGates(wsInput)}
-                  >
-                    {pipelineGatesPhase === "starting"
-                      ? t("pipeline_checking_gates", language)
-                      : t("pipeline_load_gates", language)}
-                  </button>
-                </div>
-                {pipelineGatesError ? (
-                  <div>{`${pipelineGatesError.code}: ${pipelineGatesError.message}`}</div>
-                ) : null}
-                {pipelineGatesResult ? (
-                  <div>
-                    <div>{`nextStage: ${pipelineGatesResult.nextStage} · mode: ${pipelineGatesResult.mode}`}</div>
-                    {pipelineGatesResult.gates.map((g) => (
-                      <div key={`${g.stage}-${g.gate}`} className="approval-gate-item">
-                        <span>{`${g.gate} · ${g.stage} (${g.state})`}</span>
-                        {g.resolvable && g.state !== "approved" ? (
-                          <span className="approval-gate-btns">
-                            <button
-                              type="button"
-                              className="review-btn review-btn--secondary"
-                              onClick={() =>
-                                void resolvePipelineGateAction(
-                                  pipelineGatesResult.workspace,
-                                  g.gate,
-                                  "approved",
-                                )
-                              }
-                            >
-                              {t("review_approve", language)}
-                            </button>
-                            <button
-                              type="button"
-                              className="review-btn review-btn--secondary"
-                              onClick={() =>
-                                void resolvePipelineGateAction(
-                                  pipelineGatesResult.workspace,
-                                  g.gate,
-                                  "rejected",
-                                )
-                              }
-                            >
-                              {t("review_return", language)}
-                            </button>
-                          </span>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
             </div>
           </DetailDisclosure>
         </div>

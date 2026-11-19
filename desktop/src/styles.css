@@ -99,9 +99,8 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
-  border-radius: 3px;
 }
 
 /* Tracking is allowed on exactly one class, and it is Latin-only by
@@ -3817,8 +3816,7 @@ body,
   font-weight: var(--weight-regular);
   color: var(--fg-secondary);
   white-space: nowrap;
-  transition: background var(--duration-fast) var(--ease-standard),
-    color var(--duration-fast) var(--ease-standard);
+
 }
 
 .topbar-tab:hover:not(:disabled) {
@@ -4219,8 +4217,8 @@ body,
     font-size: var(--text-sm);
   }
 
-  [data-testid="nav-fill"],
-  [data-testid="nav-history"] {
+  [data-testid="nav-fill"]:not([aria-current="page"]),
+  [data-testid="nav-history"]:not([aria-current="page"]) {
     display: none;
   }
 
@@ -4237,5 +4235,16 @@ body,
     height: 30px;
     padding: 0 10px;
     font-size: var(--text-sm);
+  }
+
+  .topbar-menu-trigger--active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .topbar-menu-item[aria-current="page"] {
+    background: var(--accent-soft);
+    font-weight: var(--weight-semibold);
   }
 }
