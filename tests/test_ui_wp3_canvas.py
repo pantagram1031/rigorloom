@@ -26,13 +26,17 @@ from urllib.parse import urlparse
 
 import pytest
 
+from _browser_gate import no_browser  # noqa: E402
+
 if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
     _default_pw = Path("/home/ubuntu/.cache/ms-playwright")
     if _default_pw.is_dir():
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_default_pw)
 
-playwright = pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import sync_playwright  # noqa: E402
+try:
+    from playwright.sync_api import sync_playwright  # noqa: E402
+except ImportError as _exc:  # pragma: no cover - environment dependent
+    no_browser(f"playwright Python package unavailable: {_exc}", module_level=True)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_ROOT = REPO_ROOT / "desktop"
