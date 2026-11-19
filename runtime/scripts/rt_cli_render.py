@@ -97,13 +97,22 @@ _DOC_ERRORS = {
 }
 _HANGUL = re.compile(r"[\uac00-\ud7a3]")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|“[^”]*”|‘[^’]*’")
+#: Quoted document text, a parenthesised value, or a file name or path: none
+#: of them makes an English sentence Korean ("could not open 보고서.hwpx").
+_NAMES = re.compile(_QUOTED.pattern + r"|\([^()]*\)|\S*[./\\]\S*")
+
+
+def korean_sentence(message: str) -> bool:
+    """Is the message itself Korean, apart from the names it quotes?"""
+    return bool(_HANGUL.search(_NAMES.sub(" ", message)))
 
 
 def person_error(err: dict, path: str | None = None) -> tuple[str, str | None]:
     """(message, hint) for a person. Korean errors pass through unchanged."""
     message, hint = err.get("message") or "", err.get("hint")
-    # Quoted document text ('근로') does not make an English sentence Korean.
-    if _HANGUL.search(_QUOTED.sub("", message)):
+    # Quoted document text ('근로') or a file name does not make an English
+    # sentence Korean.
+    if korean_sentence(message):
         return message, hint
     low = message.lower()
     name = f'"{shown(path)}"' if path else "FILE"

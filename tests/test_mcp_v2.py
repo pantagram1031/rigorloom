@@ -1291,6 +1291,16 @@ def test_content_on_a_decline_or_a_malformed_meta_is_no_answer(env, reply):
     assert path.read_bytes() == before
 
 
+def test_an_english_message_naming_a_korean_file_is_still_translated():
+    original = "could not open document 보고서.hwpx: it is open in another program"
+    out = rt_mcp.agent_error({"code": "locked", "message": original, "retryable": True})
+    assert out["message"] != original and rt_mcp._HANGUL.search(out["message"])
+    assert out["data"]["detail"] == original
+    korean = {"code": "invalid_params", "message": "이 그림 경로는 사용할 수 없습니다(a.png).",
+              "retryable": False}
+    assert rt_mcp.agent_error(korean) == korean
+
+
 def test_mcp_is_a_product_verb_that_no_legacy_command_uses():
     import cli
     import rt_cli_product

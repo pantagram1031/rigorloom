@@ -54,7 +54,7 @@ try:  # installed as rigorloom_runtime
     from . import rt_toolset  # noqa: F401 - registers the tools
     from . import rt_tools
     from .rt_codes import MAX_FRAME_BYTES
-    from .rt_cli_render import person_error
+    from .rt_cli_render import korean_sentence, person_error
     from .rt_jsonl import (READ_EOF, READ_LINE, READ_TRUNCATED, StrictJsonError,
                            dumps_frame, loads_strict, read_raw_frame)
     from .rt_paths import PathRefused, Roots, canonical
@@ -63,7 +63,7 @@ except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_toolset  # noqa: F401
     import rt_tools
     from rt_codes import MAX_FRAME_BYTES
-    from rt_cli_render import person_error
+    from rt_cli_render import korean_sentence, person_error
     from rt_jsonl import (READ_EOF, READ_LINE, READ_TRUNCATED, StrictJsonError,
                           dumps_frame, loads_strict, read_raw_frame)
     from rt_paths import PathRefused, Roots, canonical
@@ -958,7 +958,7 @@ def agent_error(error: dict) -> dict:
     ``data.detail``.
     """
     message = str(error.get("message") or "")
-    if _HANGUL.search(message):
+    if korean_sentence(message):
         return error
     data = dict(error.get("data") or {})
     korean, hint = person_error({**data, **error})
