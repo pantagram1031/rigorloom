@@ -69,10 +69,9 @@ import _rt_doc_contract_fixtures as fx  # noqa: E402
 REV = re.compile(r"[0-9a-f]{12}")
 
 #: gap -> what the real rt_doc, without the engine, does instead of what the platform needs.
-KNOWN_GAPS = {
-    "fill_seats": "without the engine rt_doc does not list CLICK_HERE fields (누름틀) as fill places: "
-                  "outline() answers places: [] for basic.hwpx's two seats, not capability_unavailable",
-}
+#: None at the moment: #388 (baf5e10) lists CLICK_HERE fields as places without the engine,
+#: which closed "fill_seats".
+KNOWN_GAPS: dict[str, str] = {}
 #: (implementation, test, gap) marked strict-xfail. Printed at module teardown.
 GAPS: list[str] = []
 
@@ -310,7 +309,6 @@ def test_outline_addresses_read_back_with_the_same_text(impl, doc):
 
 
 def test_outline_lists_the_fill_seats_and_they_read_back(impl, doc, request):
-    known_gap(impl, request, "fill_seats")
     places = call(impl, "outline", doc)["places"]
     assert len(places) == len(fx.BASIC["places"]), places
     for p in places:
@@ -489,7 +487,6 @@ def test_remap_after_delete_agrees_with_a_following_read(impl, doc, tmp_path, re
 
 
 def test_fill_every_place(impl, doc, tmp_path, request):
-    known_gap(impl, request, "fill_seats")
     rev0 = call(impl, "open", doc)["rev"]
     places = call(impl, "outline", doc)["places"]
     assert len(places) == len(fx.BASIC["places"]), f"outline listed {places}"

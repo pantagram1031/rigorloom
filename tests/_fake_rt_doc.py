@@ -518,8 +518,10 @@ def outline(path) -> dict:
                      for b in doc.headings()],
         "tables": [{"at": doc.addr(b), "rows": len(b.rows), "cols": len(b.rows[0]) if b.rows else 0,
                     "page": doc.page(b)} for b in doc.tables],
+        # Filled places stay listed, with their value (doc-core ruling 2026-11-19).
         "places": [{"id": b.place_id, "at": doc.addr(b), "label": b.label, "kind": b.place_kind,
-                    "page": doc.page(b)} for b in doc.places()],
+                    "page": doc.page(b), "value": b.text, "filled": bool(b.text.strip())}
+                   for b in doc.places()],
     }
 
 

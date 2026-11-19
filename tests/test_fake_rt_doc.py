@@ -88,8 +88,10 @@ def test_fdoc_structure_and_addresses(doc):
         ("p0", 1, "개요", 1), ("p2", 2, "배경", 1), ("p4", 3, "맺는 제목", 1), ("p7", 2, "배경 설명", 2)]
     assert o["tables"] == [{"at": "t0", "rows": 3, "cols": 2, "page": 1}]
     assert o["places"] == [
-        {"id": "name", "at": "p5", "label": "성명", "kind": "text", "page": 2},
-        {"id": "sign", "at": "p6", "label": "서명", "kind": "signature", "page": 2}]
+        {"id": "name", "at": "p5", "label": "성명", "kind": "text", "page": 2,
+         "value": "", "filled": False},
+        {"id": "sign", "at": "p6", "label": "서명", "kind": "signature", "page": 2,
+         "value": "홍길동", "filled": True}]
     assert text(doc, "p1") == "첫 문단은 2026년에 쓴다.\n같은 문단의 둘째 줄."
     assert text(doc, "t0/r0/c0") == "항목"          # the header row is row 0
     assert text(doc, "t0/r2/c1/p0") == "2"

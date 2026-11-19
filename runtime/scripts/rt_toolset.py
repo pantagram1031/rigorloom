@@ -754,7 +754,7 @@ def _run_fill(ctx: Context, args: dict) -> dict:
                             if is_person_only(p)]
     result["skipped"] = blocked
     result["unfilled"] = [f"place:{pid}" for pid, p in places.items()
-                          if pid not in filled and not is_person_only(p)
+                          if pid not in filled and not is_person_only(p) and not p.get("filled")
                           and not str(p.get("value") or "").strip()]
     return result
 
