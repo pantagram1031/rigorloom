@@ -1655,8 +1655,8 @@ def test_guide_names_only_the_topics_it_has(monkeypatch, tmp_path):
 
 def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeypatch, tmp_path):
     # The edit description holds at most 700 characters and every new op
-    # would add its fields there; it spells out only the ops agents send
-    # nearly every time and names the rest. The guide topic `ops`, built from
+    # would add its fields there; it spells out only the text ops and names
+    # the rest, a family once. The guide topic `ops`, built from
     # the same tables, has every op's fields and a working example, in every
     # install, with or without the knowledge pack.
     description = rt_tools.REGISTRY["edit"].description

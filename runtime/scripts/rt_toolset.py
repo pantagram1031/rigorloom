@@ -955,7 +955,8 @@ OP_NOTES = {
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
-#: The ops the edit description spells out: what agents send nearly every time.
+#: The ops the edit description spells out: the text ops (P7 agents sent set,
+#: insert_after and delete; replace is the other one).
 #: The rest are named there, with their fields in the `ops` guide topic.
 OPS_SPELLED = ("set", "replace", "insert_after", "delete")
 #: The guide topic built from OP_FIELDS, OP_NOTES and OP_EXAMPLES, in every install.
