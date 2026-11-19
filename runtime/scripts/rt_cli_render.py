@@ -99,7 +99,10 @@ _HANGUL = re.compile(r"[\uac00-\ud7a3]")
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|“[^”]*”|‘[^’]*’")
 #: Quoted document text, a parenthesised value, or a file name or path: none
 #: of them makes an English sentence Korean ("could not open 보고서.hwpx").
-_NAMES = re.compile(_QUOTED.pattern + r"|\([^()]*\)|\S*[./\\]\S*")
+#: A file name is a word with an extension (보고서.hwpx); a sentence's own
+#: period is not one, so "저장했습니다." stays Korean.
+_NAMES = re.compile(_QUOTED.pattern + r"|\([^()]*\)|\S*[/\\]\S*"
+                    r"|\S*?\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9])")
 
 
 def korean_sentence(message: str) -> bool:

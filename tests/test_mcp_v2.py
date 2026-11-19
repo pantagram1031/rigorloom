@@ -1301,6 +1301,22 @@ def test_an_english_message_naming_a_korean_file_is_still_translated():
     assert rt_mcp.agent_error(korean) == korean
 
 
+def test_a_korean_sentence_ending_in_a_period_stays_korean():
+    # Fable's review of #393: the file-name rule took any word with a period,
+    # so a one-word Korean message ending its sentence read as English and was
+    # replaced by the generic text.
+    from rt_cli_render import korean_sentence
+    assert korean_sentence("저장했습니다.")
+    assert korean_sentence("파일을 열 수 없습니다(/tmp/x.hwpx).")
+    assert korean_sentence("보고서.hwpx를 열 수 없습니다.")
+    assert not korean_sentence("could not open 보고서.hwpx")
+    assert not korean_sentence("could not open 보고서.hwpx.")
+    assert not korean_sentence("could not open document 보고서.hwpx (locked)")
+    assert not korean_sentence("bad path C:\\문서\\보고서")
+    one_word = {"code": "locked", "message": "잠겼습니다.", "retryable": True}
+    assert rt_mcp.agent_error(one_word) == one_word
+
+
 def test_a_draft_stays_readable_after_its_source_is_moved(env):
     path = env.doc()
     s = env.session()
