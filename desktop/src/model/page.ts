@@ -870,7 +870,7 @@ export function extractDocumentOutline(
           }
         }
 
-        // Insert closing/sender table right after body if table 2 exists (matches M-opus order)
+        // Insert closing/sender table right after body if table 2 exists (matches the base mockup's order)
         const closingTable = inspect.graph.tables.find((t) => t.index === 2);
         if (closingTable) {
           const ck = legacyCellKey(closingTable.index, 0, 0);
