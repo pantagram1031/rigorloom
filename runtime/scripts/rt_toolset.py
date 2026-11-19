@@ -26,14 +26,14 @@ from typing import Any
 
 try:  # installed as rigorloom_runtime
     from . import rt_commit
-    from .rt_drafts import Input, Ref, is_virtual, rev_of, summary
+    from .rt_drafts import Input, Ref, is_virtual, rev_of, source_missing, summary
     from .rt_paths import (PathRefused, canonical, check_readable, mark_state, private_dir,
                            sha256_file)
     from .rt_term import one_line, path_text, safe_text, shell_arg
     from .rt_tools import Context, Tool, ToolError, doc_call, register, sibling
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
-    from rt_drafts import Input, Ref, is_virtual, rev_of, summary
+    from rt_drafts import Input, Ref, is_virtual, rev_of, source_missing, summary
     from rt_paths import (PathRefused, canonical, check_readable, mark_state, private_dir,
                           sha256_file)
     from rt_term import one_line, path_text, safe_text, shell_arg
@@ -1277,6 +1277,8 @@ def _run_save(ctx: Context, args: dict) -> dict:
     if args.get("to"):
         target = _target(ctx, args["to"])
     elif ref.source is not None:
+        if not ref.source.exists():
+            raise source_missing(ref.source)  # the draft is still there to save elsewhere
         target = ref.source
     else:
         raise ToolError("invalid_params", "새 문서를 저장할 경로가 빠졌습니다.",

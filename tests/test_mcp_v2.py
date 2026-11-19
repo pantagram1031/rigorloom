@@ -1301,6 +1301,31 @@ def test_an_english_message_naming_a_korean_file_is_still_translated():
     assert rt_mcp.agent_error(korean) == korean
 
 
+def test_a_draft_stays_readable_after_its_source_is_moved(env):
+    path = env.doc()
+    s = env.session()
+    s.handshake(caps=ELICIT)
+    _edited(s, path)
+    import rt_drafts
+    alias = "draft:" + rt_drafts.key_for_path(path.resolve())
+    moved = path.with_name("옮김.fdoc")
+    path.rename(moved)
+    r = s.tool("read", {"path": alias})
+    assert r["isError"] is False and "480,000원" in text_of(r)
+    rev = r["structuredContent"]["rev"]
+    r = s.tool("save", {"path": alias})
+    error = r["structuredContent"]["error"]
+    assert error["code"] == "not_found" and "원본" in error["message"]
+    assert not path.exists()
+    r = s.tool("edit", {"path": alias, "base": rev, "ops": [
+        {"op": "replace", "find": "480,000원", "with": "490,000원"}]})
+    assert r["structuredContent"]["error"]["code"] == "not_found"
+    target = env.work / "다른 이름.fdoc"
+    r = s.tool("save", {"path": alias, "to": str(target)})
+    assert r["isError"] is False, text_of(r)
+    assert "480,000원" in target.read_text(encoding="utf-8")
+
+
 def test_mcp_is_a_product_verb_that_no_legacy_command_uses():
     import cli
     import rt_cli_product
