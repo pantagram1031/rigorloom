@@ -14,10 +14,12 @@ from pathlib import Path
 
 
 _NUM = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
-# Where a unit word ends: a particle or a counting suffix may follow it, but
-# no other syllable (5 명이, 3 개월간, 8 차분, 1조원대; not 18 인원, 원장, 원칙).
-_WORD_END = (r"(?=(?:은|는|이[가-힣]*|을|를|의|에서|에게|에|으로|로|과|와|도|만|까지|부터"
-             r"|씩|간|째|당|분|차|대|가량|어치|짜리)?(?![가-힣]))")
+# Where a unit word ends: a counting suffix, then a particle, may follow it,
+# but no other syllable (5 명이, 3 개월간, 8 차분, 1조원대이다, 30평대의; not
+# 18 인원, 원장, 원칙).
+_WORD_END = (r"(?=(?:씩|간|째|당|분|차|대|가량|어치|짜리)?"
+             r"(?:은|는|이[가-힣]*|을|를|의|에서|에게|에|으로|로|과|와|도|만|까지|부터)?"
+             r"(?![가-힣]))")
 # Korean magnitudes: 500만, 2천만, 1억 2천만. 조 is one only when an amount goes
 # on (1조원, 1조 2천억); in 제1조 it is an article, and so it is in 제12조 원장은
 # and 제5조 원칙, where the 원 starts another word.

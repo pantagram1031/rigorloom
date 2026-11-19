@@ -216,14 +216,18 @@ def test_an_article_before_a_word_that_starts_with_won_is_not_trillions(tmp_path
 
 def test_an_amount_in_the_range_of_trillions_keeps_its_won(tmp_path):
     # Fable's review of #396: 대 after 원 (1조원대, 3억 원대) is a counting
-    # suffix, so the 조 is a trillion and a space before 원대 changes nothing.
-    b = ["1조원대 사업을 맡았다.", "3억원대 아파트를 샀다.", "1조원대 사업을 맡았다."]
-    a = ["1조 원대 사업을 맡았다.", "3억 원대 아파트를 샀다.", "2조원대 사업을 맡았다."]
-    assert _changed(b, a, tmp_path) == [3]
+    # suffix, and a particle or 이다 may follow it, so the 조 is a trillion and
+    # a space before 원대 changes nothing.
+    b = ["1조원대 사업을 맡았다.", "3억원대 아파트를 샀다.", "예산은 1조원대이다.", "예산은 3억원대이다.",
+         "1조원대의 사업이다.", "30평대의 집이다.", "1조원대 사업을 맡았다.", "예산은 1조원대이다."]
+    a = ["1조 원대 사업을 맡았다.", "3억 원대 아파트를 샀다.", "예산은 1조 원대이다.", "예산은 3억 원대이다.",
+         "1조 원대의 사업이다.", "30 평대의 집이다.", "2조원대 사업을 맡았다.", "예산은 2조원대이다."]
+    assert _changed(b, a, tmp_path) == [7, 8]
     sys.path.insert(0, str(REPO / "runtime" / "scripts"))
     import rt_fidelity
-    assert rt_fidelity._number_change(b[2], a[2]) == {
-        "kind": "numbers", "before": {"1조원": 1}, "after": {"2조원": 1}}
+    for x, y in zip(b[6:], a[6:]):
+        assert rt_fidelity._number_change(x, y) == {
+            "kind": "numbers", "before": {"1조원": 1}, "after": {"2조원": 1}}
 
 
 def test_a_number_and_its_unit_on_a_line_of_their_own_are_not_a_heading(tmp_path):
