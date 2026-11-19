@@ -523,6 +523,12 @@ def test_guard_diff_text_and_hwpx_plan_preview_and_export_safety(started_bridge,
     # Approve & apply, then test staged export + export-download + alias/tamper refusal.
     assert client.rpc("plan/validate", {"planId": plan["planId"]})["ok"] is True
     appr = client.rpc("approval/request", {"planId": plan["planId"]})["result"]["approval"]
+    # The bridge records an approval only with the sheet's single-use token.
+    s_tok, issued = client.post_json("/api/approval/confirmation", {
+        "sessionId": session_id, "planId": plan["planId"],
+        "planHash": plan["planHash"], "baseDigest": plan["boundSha256"],
+    })
+    assert s_tok == 200, issued
     assert client.rpc(
         "approval/resolve",
         {
@@ -531,6 +537,7 @@ def test_guard_diff_text_and_hwpx_plan_preview_and_export_safety(started_bridge,
             "planHash": plan["planHash"],
             "decision": "approved",
             "approver": "bridge-test",
+            "confirmationToken": issued["confirmationToken"],
         },
     )["ok"] is True
     applied = client.rpc("plan/apply", {"planId": plan["planId"], "approvalId": appr["approvalId"]})
