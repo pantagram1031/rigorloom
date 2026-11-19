@@ -263,6 +263,44 @@ def test_a_number_whose_only_label_is_another_number(tmp_path):
         "before": ["제1항은 3일", "제2항은 5일"], "after": ["제1항은 5일", "제2항은 3일"]}
 
 
+
+def test_numbers_paired_by_the_words_between_them_keep_their_roles(tmp_path):
+    # Fable's and Sol's label-words pairs: 3%에서 5%로 is a source and a goal
+    # (so is a date written in parts, 3월 1일부터 3월 31일까지), 총 3건 중 1건
+    # a whole and a part, and 각각 2회, 5회 reads the numbers against 현장
+    # 심사 and 서면 심사 in order. Trading the numbers between roles is a swap;
+    # a sentence reworded around them, both lists reordered together, or two
+    # source-and-goal pairs reordered stays quiet.
+    b = ["기준 금리를 3%에서 5%로 조정했다.", "총 3건 중 1건을 승인했다.",
+         "회의록 초안은 참관인 3명에게서 5명에게로 전달됐다.",
+         "현장 심사와 서면 심사를 각각 2회, 5회 실시한다.",
+         "금리를 3%에서 5%로, 세율을 10%에서 12%로 바꿨다.",
+         "3월 1일부터 3월 31일까지 접수한다.", "서울, 부산, 대구에 각각 1명, 2명, 3명을 둔다.",
+         "기준 금리를 3%에서 5%로 조정했다.", "총 3건 중 1건을 승인했다.",
+         "기관은 현장 심사와 서면 심사를 각각 2회, 5회 실시한다.",
+         "금리를 3%에서 5%로, 세율을 10%에서 12%로 바꿨다.",
+         "서울, 부산, 대구에 각각 1명, 2명, 3명을 둔다."]
+    a = ["기준 금리를 5%에서 3%로 조정했다.", "총 1건 중 3건을 승인했다.",
+         "회의록 초안은 참관인 5명에게서 3명에게로 전달됐다.",
+         "현장 심사와 서면 심사를 각각 5회, 2회 실시한다.",
+         "금리를 3%에서 12%로, 세율을 10%에서 5%로 바꿨다.",
+         "3월 31일부터 3월 1일까지 접수한다.", "서울, 부산, 대구에 각각 2명, 1명, 3명을 둔다.",
+         "기준 금리를 기존 3%에서 5%로 조정했다.", "전체 3건 가운데 1건을 승인했다.",
+         "기관은 서면 심사와 현장 심사를 각각 5회, 2회 실시한다.",
+         "세율을 10%에서 12%로, 금리를 3%에서 5%로 바꿨다.",
+         "부산, 서울, 대구에 각각 2명, 1명, 3명을 둔다."]
+    assert _changed(b, a, tmp_path) == [1, 2, 3, 4, 5, 6, 7]
+    sys.path.insert(0, str(REPO / "runtime" / "scripts"))
+    import rt_fidelity
+    shown = [rt_fidelity._number_change(x, y) for x, y in zip(b[:4], a[:4])]
+    assert [(s["before"], s["after"]) for s in shown] == [
+        (["3%에서", "5%로"], ["5%에서", "3%로"]),
+        (["3건 중", "1건"], ["1건 중", "3건"]),
+        (["3명에게서", "5명에게로"], ["5명에게서", "3명에게로"]),
+        (["현장 심사 2회", "서면 심사 5회"], ["현장 심사 5회", "서면 심사 2회"])]
+    # A date in parts is shown once, as written.
+    assert rt_fidelity._number_change(b[5], a[5])["before"] == ["3월 1일부터", "3월 31일까지"]
+
 def test_a_unit_declared_in_the_header_applies_to_the_bare_amounts(tmp_path):
     b = ["| 비목 | 금액 |\n|---|---|\n| 재료비 | 7,000천원 |",
          "| 비목 | 금액(천원) |\n|---|---|\n| 외주비 | 7,000 |",

@@ -320,6 +320,100 @@ def _number_label(text: str, prev: re.Match[str], key: str, start: int) -> tuple
     return "#" + key + word, text[head:prev.end() + len(glued)]
 
 
+# Numbers that the words between them pair up, each named by its role there:
+# a source and a goal (3%에서 5%로, 참관인 3명에게서 5명에게로, 3월 1일부터
+# 3월 31일까지), a whole and a part of it (총 3건 중 1건, 3건 가운데 1건), and
+# a list read against a list of things with 각각 (현장 심사와 서면 심사를 각각
+# 2회, 5회). A swap moves the numbers between roles; a sentence reworded
+# around them keeps the roles. A source and a goal keep the words before the
+# pair, so two pairs in one sentence (금리를 3%에서 5%로, 세율을 10%에서
+# 12%로) stay apart. A 각각 list is read only when it has as many things as
+# numbers.
+_SOURCE = ("에서", "에게서", "한테서", "부터")
+_GOAL = ("로", "까지", "에게", "한테")
+_SPACES = re.compile(r"[ \t\u00a0]+")
+_OF = re.compile(r"[ \t\u00a0]+(?:중|가운데)(?:에서|서)?[ \t\u00a0]+")
+_EACH = re.compile(r"(?<![가-힣])각각[ \t\u00a0]+")
+_NEXT_IN_LIST = re.compile(r"(?:과|와)?[ \t\u00a0]*(?:,|및)?[ \t\u00a0]*")
+# 현장 심사와 서면 심사: split at 와/과 after a word of two letters or more (결과,
+# 효과 and 성과 are words), at a comma and at 및.
+_LIST_SPLIT = re.compile(r"(?<=[가-힣]{2})(?:와|과)[ \t\u00a0]+"
+                         r"|[ \t\u00a0]*(?:,|(?<![가-힣])및(?![가-힣]))[ \t\u00a0]*")
+_SENTENCE_END = re.compile(r"[;!?\n]|(?<!\d)\.(?!\d)")
+_TOPIC = ("에서는", "께서는", "에는", "께서", "은", "는")
+_HANGUL_RUN = re.compile(r"[가-힣]*")
+
+
+def _glued(text: str, m: re.Match[str]) -> str:
+    return _HANGUL_RUN.match(text, m.end()).group(0)
+
+
+def _roles(text: str, tokens: list[re.Match[str]], found: list[list]) -> None:
+    """Name each number that has a role (see above) by that role, in place:
+    the label before it and how that reading shows it."""
+    n = len(tokens)
+
+    def joined(k: int) -> bool:         # 2025년 3월 1일: one date in parts
+        return (k + 1 < n and _glued(text, tokens[k]) in ("", "년", "월", "일", "시", "분")
+                and bool(_SPACES.fullmatch(text, tokens[k].end() + len(_glued(text, tokens[k])),
+                                           tokens[k + 1].start())))
+
+    def shown(lo: int, hi: int) -> str:
+        return text[tokens[lo].start():tokens[hi].end() + len(_glued(text, tokens[hi]))]
+
+    done = 0
+    i = 0
+    while i < n:
+        m = tokens[i]
+        glued = _glued(text, m)
+        if glued.endswith(_SOURCE) and i + 1 < n and _SPACES.fullmatch(
+                text, m.end() + len(glued), tokens[i + 1].start()):
+            first = i
+            while first > done and joined(first - 1):
+                first -= 1
+            last = i + 1
+            while joined(last):
+                last += 1
+            if _glued(text, tokens[last]).endswith(_GOAL):
+                head = found[first][0]
+                for k in range(first, last + 1):
+                    found[k][0] = (head + (" #에서" if k <= i else " #로")).strip()
+                    found[k][4] = shown(first, i) if k <= i else shown(i + 1, last)
+                i = done = last + 1
+                continue
+        if i + 1 < n:
+            of = _OF.fullmatch(text, m.end(), tokens[i + 1].start())
+            if of:
+                found[i][0], found[i + 1][0] = "#전체", "#부분"
+                found[i][4] = text[m.start():of.end()].rstrip()
+                found[i + 1][4] = found[i + 1][3]
+                i = done = i + 2
+                continue
+        lo = tokens[i - 1].end() if i else 0
+        each = _EACH.search(text, lo, m.start())
+        if each and each.end() == m.start():
+            j = i
+            while j + 1 < n and _NEXT_IN_LIST.fullmatch(text, tokens[j].end(), tokens[j + 1].start()) \
+                    and text[tokens[j].end():tokens[j + 1].start()].strip():
+                j += 1
+            cuts = list(_SENTENCE_END.finditer(text, lo, each.start()))
+            things = text[cuts[-1].end() if cuts else lo:each.start()].strip()
+            things = re.sub(r"(?:을|를|은|는|이|가|에|의|도|에는|에서)$", "", things)
+            items = [x for x in _LIST_SPLIT.split(things) if x.strip()]
+            if items:
+                words = items[0].split()
+                topic = [k for k, w in enumerate(words[:-1])
+                         if len(w) > 1 and w.endswith(_TOPIC)]
+                items[0] = " ".join(words[topic[-1] + 1:] if topic else words)
+            if j > i and len(items) == j - i + 1:
+                for k, item in enumerate(items):
+                    found[i + k][0] = " ".join(_stem(w) for w in item.split())
+                    found[i + k][4] = f"{item} {found[i + k][3]}"
+                i = done = j + 1
+                continue
+        i += 1
+
+
 # A unit declared once for amounts written without one. 연구비(천원)는 75:
 # the field's unit, for the next number only. 단위: 백만원 and 천원 단위로:
 # for every bare amount after it, up to the next declaration. In a table, a
@@ -473,8 +567,9 @@ def _number_change(before: str, after: str) -> dict[str, object] | None:
             if not pre and i:
                 pre, pre_shown = _number_label(text, tokens[i - 1], keys[i - 1], m.start())
             post, post_shown = _label(text, m.end(), next_start, True, after=True)
-            found.append((pre, key, post, raw, pre_shown, post_shown))
-        sides.append(found)
+            found.append([pre, key, post, raw, f"{pre_shown} {raw}", f"{raw} {post_shown}"])
+        _roles(text, tokens, found)
+        sides.append([tuple(t) for t in found])
     b, a = sides
     keys_b, keys_a = Counter(t[1] for t in b), Counter(t[1] for t in a)
     if keys_b != keys_a:
@@ -499,7 +594,7 @@ def _number_change(before: str, after: str) -> dict[str, object] | None:
     else:
         return None
     a = a0 if at == 0 else a2
-    show = (lambda t: f"{t[4]} {t[3]}") if at == 0 else (lambda t: f"{t[3]} {t[5]}")
+    show = (lambda t: t[4]) if at == 0 else (lambda t: t[5])
     pb, pa = _pairs(b, at, keys), _pairs(a, at, keys)
 
     def only(side: list[tuple], extra: Counter) -> list[str]:
@@ -507,7 +602,8 @@ def _number_change(before: str, after: str) -> dict[str, object] | None:
         for t in side:                  # in the order the text has them
             if t[at] and extra[(t[at], t[1])] > 0:
                 extra[(t[at], t[1])] -= 1
-                out.append(show(t))
+                if not out or out[-1] != show(t):   # 3월 1일부터: one date, shown once
+                    out.append(show(t))
         return out
     return {"kind": "numbers", "order": True,
             "before": only(b, pb - pa), "after": only(a, pa - pb)}
