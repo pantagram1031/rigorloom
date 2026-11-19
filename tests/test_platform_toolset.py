@@ -411,7 +411,7 @@ def test_check_is_tri_state(env, monkeypatch):
 
     monkeypatch.setattr(fake, "pages", unavailable)
     r = ok(call(env.ctx(), "check", {"path": str(path), "only": ["layout"]}))
-    assert r["checks"]["layout"]["state"] == "unavailable" and r["pass"] is True
+    assert r["checks"]["layout"]["state"] == "unavailable" and r["pass"] is None
 
 
 # -- changes and guide ----------------------------------------------------------------

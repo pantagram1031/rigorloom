@@ -250,6 +250,19 @@ def get(name: str) -> Tool:
 # Calling
 # --------------------------------------------------------------------------
 
+def sibling(name: str):
+    """Import a runtime module the same way this one was imported.
+
+    Installed, the runtime is the package ``rigorloom_runtime``; in a checkout
+    its folder is on ``sys.path`` and modules are top-level. Mixing the two
+    would load a module twice (two registries, two error classes).
+    """
+    import importlib
+    if __package__:
+        return importlib.import_module(f"{__package__}.{name}")
+    return importlib.import_module(name)
+
+
 @dataclass
 class Context:
     """Who is calling and what they may touch. Built once per surface."""
@@ -282,15 +295,14 @@ class Context:
     @property
     def drafts(self):
         if self._drafts is None:
-            from rt_drafts import DraftStore  # noqa: WPS433 - lazy on purpose
-            self._drafts = DraftStore()
+            self._drafts = sibling("rt_drafts").DraftStore()
         return self._drafts
 
 
 def load_doc():
     """The document layer, or a refusal that says what is missing."""
     try:
-        import rt_doc  # type: ignore[import-not-found]
+        rt_doc = sibling("rt_doc")
     except ImportError as exc:
         raise ToolError(
             "capability_unavailable",

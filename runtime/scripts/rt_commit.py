@@ -19,17 +19,16 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
-from rt_drafts import key_for_path
-from rt_paths import (
-    PathRefused,
-    create_new,
-    private_dir,
-    replace_checked,
-    sha256_bytes,
-    sha256_file,
-    state_home,
-)
-from rt_tools import ToolError
+try:  # installed as rigorloom_runtime
+    from .rt_drafts import key_for_path
+    from .rt_paths import (PathRefused, create_new, private_dir, replace_checked,
+                           sha256_bytes, sha256_file, state_home)
+    from .rt_tools import ToolError
+except ImportError:  # a checkout, runtime/scripts on sys.path
+    from rt_drafts import key_for_path
+    from rt_paths import (PathRefused, create_new, private_dir, replace_checked,
+                          sha256_bytes, sha256_file, state_home)
+    from rt_tools import ToolError
 
 ABSENT = "absent"
 

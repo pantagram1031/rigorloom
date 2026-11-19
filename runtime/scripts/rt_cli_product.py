@@ -27,9 +27,17 @@ import os
 import sys
 from pathlib import Path
 
-import rt_toolset  # noqa: F401 - registers the tools
-from rt_term import Term, confirm, prepare_stdio
-from rt_tools import Context, ToolError, call, get, render_text
+try:  # installed as rigorloom_runtime
+    from . import rt_commit, rt_toolset  # rt_toolset registers the tools
+    from .rt_paths import PathRefused, canonical, state_home
+    from .rt_term import Term, confirm, prepare_stdio
+    from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
+except ImportError:  # a checkout, runtime/scripts on sys.path
+    import rt_commit
+    import rt_toolset
+    from rt_paths import PathRefused, canonical, state_home
+    from rt_term import Term, confirm, prepare_stdio
+    from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
 #: cli.main sends ``open`` here only when no global --root/--engine-root
@@ -314,10 +322,10 @@ def _context(args) -> Context:
 def _emit(term: Term, args, verb: str, envelope: dict) -> int:
     if envelope["ok"]:
         code = EXIT_OK
-        if verb == "check" and not envelope["result"].get("pass", True):
+        if verb == "check" and envelope["result"].get("pass") is not True:
             code = EXIT_REFUSED
     else:
-        code = _codes().get(envelope["error"]["code"], EXIT_INTERNAL)
+        code = ERROR_EXIT.get(envelope["error"]["code"], EXIT_INTERNAL)
     if args.json:
         payload = {"ok": envelope["ok"], "command": verb}
         payload["result" if envelope["ok"] else "error"] = (
@@ -342,11 +350,6 @@ def _emit(term: Term, args, verb: str, envelope: dict) -> int:
 _TOOL_OF = {"outline": "open"}
 
 
-def _codes():
-    from rt_tools import ERROR_EXIT
-    return ERROR_EXIT
-
-
 def _save_after(ctx: Context, args, path: str) -> dict:
     """``-o OUT`` on edit/fill/new: stage in a private draft, save to OUT, and
     drop that draft; the shared draft of the same file is never touched."""
@@ -363,8 +366,6 @@ def _save_after(ctx: Context, args, path: str) -> dict:
 
 
 def _undo(term: Term, args) -> int:
-    import rt_commit
-    from rt_paths import PathRefused, canonical
     try:
         target = canonical(args.path)
     except PathRefused as exc:
@@ -420,8 +421,6 @@ STATE_PARTS = ("drafts", "drafts-discarded", "previews", "exports", "history")
 
 def _clear(term: Term, args) -> int:
     import shutil
-
-    from rt_paths import state_home
     home = state_home()
     present = [home / part for part in STATE_PARTS if (home / part).exists()]
     if not present:
@@ -480,7 +479,6 @@ def main(argv: list[str]) -> int:
     if out and not getattr(args, "force", False):
         # -o names a file to create; replacing one takes --force (the old
         # bytes still go to history first).
-        from rt_paths import PathRefused, canonical
         try:
             exists = canonical(out).exists()
         except PathRefused as exc:

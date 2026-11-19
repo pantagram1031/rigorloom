@@ -22,11 +22,18 @@ import re
 from pathlib import Path
 from typing import Any
 
-import rt_commit
-from rt_drafts import Input, Ref, is_virtual, rev_of, summary
-from rt_paths import PathRefused, canonical, check_readable, private_dir, sha256_file
-from rt_term import one_line, safe_text
-from rt_tools import Context, Tool, ToolError, doc_call, register
+try:  # installed as rigorloom_runtime
+    from . import rt_commit
+    from .rt_drafts import Input, Ref, is_virtual, rev_of, summary
+    from .rt_paths import PathRefused, canonical, check_readable, private_dir, sha256_file
+    from .rt_term import one_line, safe_text
+    from .rt_tools import Context, Tool, ToolError, doc_call, register, sibling
+except ImportError:  # a checkout, runtime/scripts on sys.path
+    import rt_commit
+    from rt_drafts import Input, Ref, is_virtual, rev_of, summary
+    from rt_paths import PathRefused, canonical, check_readable, private_dir, sha256_file
+    from rt_term import one_line, safe_text
+    from rt_tools import Context, Tool, ToolError, doc_call, register, sibling
 
 READ_DEFAULT_CHARS = 6000
 READ_MAX_CHARS = 20000
@@ -768,7 +775,7 @@ def _style_findings(ctx: Context, path: Path, pack: str | None) -> list[dict]:
     own = getattr(ctx.doc, "style", None)
     if callable(own):
         return doc_call(own, str(path), **({"pack": pack} if pack else {})).get("findings", [])
-    import rt_style
+    rt_style = sibling("rt_style")
     try:
         rules = rt_style.rules_for("any")
         if pack:
@@ -799,7 +806,7 @@ def _guard(ctx: Context, before: Path, after: Path) -> dict:
         return doc_call(own, str(before), str(after))
     import difflib
 
-    from rt_guard import fidelity
+    fidelity = sibling("rt_fidelity")
     a, b = _units(ctx, before), _units(ctx, after)
     matcher = difflib.SequenceMatcher(a=[t for _, t in a], b=[t for _, t in b],
                                       autojunk=False)
@@ -910,9 +917,13 @@ def _run_check(ctx: Context, args: dict) -> dict:
                     **{k: v for k, v in c.items() if k != "notice"}})
 
     total = len(findings)
+    states = [c["state"] for c in checks.values()]
+    # None when nothing could run: "no check failed" is not "it passed".
+    verdict = (all(s != "failed" for s in states)
+               if any(s != "unavailable" for s in states) else None)
     result = {**_docref(ref, inp), "checks": checks,
               "findings": findings[:CHECK_MAX_FINDINGS], "total": total,
-              "pass": all(c["state"] != "failed" for c in checks.values())}
+              "pass": verdict}
     if total > CHECK_MAX_FINDINGS:
         result["truncated"] = total - CHECK_MAX_FINDINGS
     return result
@@ -974,6 +985,8 @@ def _check_text(r: dict) -> str:
                      f"{one_line(str(f.get('message', '')))[:160]}{fix}{src}")
     if r.get("truncated"):
         lines.append(f"  … {r['truncated']} more")
+    if r.get("pass") is None:
+        lines.append("no check could run on this file here")
     return "\n".join(lines)
 
 
@@ -992,7 +1005,8 @@ register(Tool(
                                             "enum": ["style", "layout", "fonts", "guard"]}},
     }, ["path"]),
     output_schema=_out({**O_DOCREF, "checks": {"type": "object"},
-                        "findings": {"type": "array"}, "pass": {"type": "boolean"}}),
+                        "findings": {"type": "array"},
+                        "pass": {"type": ["boolean", "null"]}}),
     run=_run_check, text=_check_text,
 ))
 

@@ -39,8 +39,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from rt_paths import private_dir, sha256_file, state_home
-from rt_tools import ToolError
+try:  # installed as rigorloom_runtime
+    from .rt_paths import private_dir, sha256_file, state_home
+    from .rt_tools import ToolError
+except ImportError:  # a checkout, runtime/scripts on sys.path
+    from rt_paths import private_dir, sha256_file, state_home
+    from rt_tools import ToolError
 
 DRAFT_SCHEMA = "rigorloom/draft/1"
 VIRTUAL_PREFIX = "draft:"
