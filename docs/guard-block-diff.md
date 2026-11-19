@@ -63,8 +63,10 @@ Rules:
    (added). A kind with nothing lost (or nothing added) omits that line.
    When every number is still there but two numbers traded the words they
    follow (`기본급은 300만원, 수당은 50만원` → `기본급은 50만원, 수당은 300만원`), the
-   label is `swapped numbers` and each value is shown with its word:
-   `lost   swapped numbers  기본급 300만원, 수당 50만원`.
+   label is `swapped numbers` and each value is shown with its words as
+   that side writes them: `lost   swapped numbers  기본급은 300만원, 수당은 50만원`.
+   When the words come after the numbers (`3건 승인, 5건 보류`), they are
+   shown after them.
 5. Blocks are separated by one blank line. The closing line is the same as
    the default text output's last line: `OK: every protected fact is
    unchanged.` or `CHANGED: restore or review the paragraphs above.`

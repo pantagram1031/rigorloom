@@ -17,9 +17,13 @@ _NUM = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
 # Korean magnitudes: 500만, 2천만, 1억 2천만. 조 is one only when an amount goes
 # on (1조원, 1조 2천억); in 제1조 it is an article.
 _MAG = r"(?:[십백천만억]|조(?=\s?원|\s?\d[\d,.]*[십백천만억]))+"
-# Units a Korean amount or count is written with. 달 is the same unit as 개월.
-_UNIT_KO = r"(?:개월|원|명|개|건|회|일|년|달)"
-_UNIT_OTHER = r"(?:%|‰|℃|°[CF]?|[\u3380-\u33df]|[a-zA-ZμµΩ]+[²³]?(?:/[a-zA-Z0-9²³μµ]+)?)"
+# Spaces between the groups of one amount: 1억 2천만원, 2억  7천만원.
+_GAP = r"[ \t\u00a0]{0,2}"
+# Units a Korean amount or count is written with. 달 is the same unit as 개월,
+# 인 as 명, 제곱미터 as m².
+_UNIT_KO = r"(?:개월|원|명|인|개|건|회|일|년|달|평|분기|차|제곱미터)"
+_UNIT_OTHER = (r"(?:%(?:p|포인트)?|‰|℃|°[CF]?|[\u3380-\u33df]|[kcm]?m[23²³](?!\d)"
+               r"|[a-zA-ZμµΩ]+[²³]?(?:/[a-zA-Z0-9²³μµ]+)?)")
 
 PATTERNS = {
     # Not after a digit (any script), a Latin letter, underscore or dot (so
@@ -29,7 +33,8 @@ PATTERNS = {
     # The token takes its Korean magnitude and its unit, so 500만원 and 500원
     # are different numbers and 500만원 and 5,000,000원 the same one.
     "numbers": re.compile(r"(?<![\dA-Za-zＡ-Ｚａ-ｚ_.])[+-]?" + _NUM
-                          + r"(?:" + _MAG + r"(?:\s?" + _NUM + _MAG + r")*)?"
+                          + r"(?:" + _MAG + r"(?:" + _GAP + _NUM + _MAG + r")*"
+                          + r"(?:" + _GAP + _NUM + r"(?=\s?원))?)?"
                           + r"(?:\s?(?:" + _UNIT_KO + r"|" + _UNIT_OTHER + r"))?"),
     "dates": re.compile(r"(?<!\d)(?:\d{4}[-./년]\s*\d{1,2}[-./월]\s*\d{1,2}일?)(?!\d)"),
     "source_ids": re.compile(r"(?<![\w-])(?:SRC|SOURCE|REF|S|R)[-_]?\d+(?![\w-])", re.I),
@@ -149,7 +154,8 @@ def _qualifiers(text: str) -> Counter[str]:
 
 _SMALL = {"십": 1, "백": 2, "천": 3}
 _LARGE = {"만": 4, "억": 8, "조": 12}
-_GROUP = re.compile(r"([+-]?\d+(?:\.\d+)?)([십백천만억조]+)")
+_GROUP = re.compile(r"(\d+(?:\.\d+)?)([십백천만억조]+)")
+_SAME_UNIT = (("달", "개월"), ("인", "명"), ("제곱미터", "m2"), ("%포인트", "%p"))
 
 
 def _number_key(token: str) -> str:
@@ -159,6 +165,9 @@ def _number_key(token: str) -> str:
     "10㎡" and "10 m²" are the same fact; flagging them would bury the real
     changes."""
     text = re.sub(r"(?<=\d),(?=\d{3})|\s+", "", unicodedata.normalize("NFKC", token))
+    # The sign belongs to the whole amount: -1억 2천만 is -120,000,000.
+    sign = "-" if text.startswith("-") else ""
+    text = text.lstrip("+-")
     total, block, end = Decimal(0), Decimal(0), 0
     for group in _GROUP.finditer(text):
         if group.start() != end:
@@ -170,24 +179,31 @@ def _number_key(token: str) -> str:
             total += block.scaleb(large)
             block = Decimal(0)
         end = group.end()
-    if end:
-        number = format((total + block).normalize(), "f")
-    else:
-        number = re.match(r"[+-]?[\d.]*", text).group(0)
-        end = len(number)
+    rest = re.match(r"\d+(?:\.\d+)?", text[end:])
+    if rest and (not end or text[end + rest.end():].startswith("원")):
+        block += Decimal(rest.group(0))  # 1억 2,000만 3,500원: the won after the last group
+        end += rest.end()
+    number = format((total + block).normalize(), "f") if end else ""
     unit = text[end:]
-    return number + ("개월" + unit[1:] if unit.startswith("달") else unit)
+    for spelling, same in _SAME_UNIT:
+        if unit.startswith(spelling):
+            unit = same + unit[len(spelling):]
+            break
+    return (sign if number.strip("0.") else "") + number + unit
 
 
 def _number_tokens(text: str) -> list[re.Match[str]]:
     return list(PATTERNS["numbers"].finditer(text))
 
 
-# Which number goes with which word. The label of a number is the last word
-# before it, after the previous number: 기본급은 300만원, 수당 50만원 pairs
-# 300만원 with 기본급 and 50만원 with 수당. A word glued to the previous number
-# (조 in 제17조) belongs to that number; particles are dropped so 수당은 and
-# 수당 are one label; words that carry no subject are skipped.
+# Which number goes with which word. A number is read two ways: with the
+# words before it, after the previous number (기본급은 300만원, 수당은 50만원
+# pairs 300만원 with 기본급 and 50만원 with 수당), and with the words after
+# it, up to the next number (3건 승인, 5건 보류 pairs 3건 with 승인). A word
+# glued to a number (조 in 제17조) belongs to that number; particles are
+# dropped so 수당은 and 수당 are one label; words that carry no subject are
+# skipped (a single Latin letter is a label: A반, B동); up to three words
+# make a label, so 서부권 지원금 and 동부권 지원금 differ.
 _WORD = re.compile(r"[가-힣]+|[A-Za-z]+")
 _PARTICLES = sorted((
     "은", "는", "이", "가", "을", "를", "의", "에", "에서", "에게", "께서", "로", "으로",
@@ -196,24 +212,67 @@ _PARTICLES = sorted((
 ), key=len, reverse=True)
 _NOT_A_LABEL = {
     "금", "약", "총", "각", "및", "제", "또는", "그리고", "등", "중", "단", "대략", "최소", "최대",
-    "a", "an", "the", "is", "was", "were", "are", "be", "been", "of", "to", "in", "on",
+    "an", "the", "is", "was", "were", "are", "be", "been", "of", "to", "in", "on",
     "at", "by", "for", "and", "or", "with", "about", "around", "approximately", "than", "as",
 }
+_LABEL_WORDS = 3
 
 
-def _label(segment: str, glued: bool) -> str:
-    words = _WORD.findall(segment)
-    if glued and words and "가" <= segment[:1] <= "힣":
+def _stem(word: str) -> str:
+    word = word.lower()
+    for particle in _PARTICLES:
+        # 평가 is a word, not 평 + 가: keep at least two letters.
+        if word.endswith(particle) and len(word) - len(particle) >= 2:
+            return word[: -len(particle)]
+    return word
+
+
+def _label(segment: str, glued: bool, *, after: bool = False) -> tuple[str, str]:
+    """(label, the words as written) for the number before or after ``segment``."""
+    words = [m for m in _WORD.finditer(segment)]
+    if glued and words and words[0].start() == 0 and "가" <= segment[:1] <= "힣":
         words = words[1:]
-    for word in reversed(words):
-        word = word.lower()
-        for particle in _PARTICLES:
-            if word.endswith(particle) and len(word) > len(particle):
-                word = word[: -len(particle)]
-                break
-        if word not in _NOT_A_LABEL:
-            return word
-    return ""
+    kept = [w for w in words if _stem(w.group(0)) not in _NOT_A_LABEL
+            and w.group(0) not in _PARTICLES]
+    kept = kept[:_LABEL_WORDS] if after else kept[-_LABEL_WORDS:]
+    if not kept:
+        return "", ""
+    return (" ".join(_stem(w.group(0)) for w in kept),
+            segment[kept[0].start():kept[-1].end()])
+
+
+#: A unit declared for a whole table or paragraph: 금액(천원), (단위: 백만원).
+_DECLARED = re.compile(r"(?:\(\s*|단위\s*[:：]\s*)((?:천|백만|천만|만|억|십억)?원)\s*\)?")
+
+
+def _declared_unit(text: str) -> str:
+    units = {m.group(1) for m in _DECLARED.finditer(text)}
+    return units.pop() if len(units) == 1 else ""
+
+
+def _pairs(side: list[tuple], at: int, keys: set[str] | None = None) -> Counter:
+    return Counter((t[at], t[1]) for t in side if t[at] and (keys is None or t[1] in keys))
+
+
+def _swapped(b: list[tuple], a: list[tuple], at: int) -> set[str]:
+    """The numbers one reading (``at`` picks it) sees trade words: the same
+    labels and the same numbers on both sides, paired differently."""
+    pb, pa = _pairs(b, at), _pairs(a, at)
+    if (pb == pa
+            or Counter(lab for lab, _ in pb.elements()) != Counter(lab for lab, _ in pa.elements())
+            or Counter(k for _, k in pb.elements()) != Counter(k for _, k in pa.elements())):
+        return set()
+    return {k for _, k in (pb - pa).elements()}
+
+
+def _kept(b: list[tuple], a: list[tuple], at: int, keys: set[str]) -> bool:
+    """Does the other reading keep those numbers with their words? Only a
+    reading that tells them apart counts: 30만원을 청구한다 and 70만원을
+    청구한다 share their words after the number, so that reading says nothing."""
+    labels = [t[at] for t in b if t[1] in keys]
+    if not all(labels) or len(set(labels)) < 2:
+        return False
+    return _pairs(b, at, keys) == _pairs(a, at, keys)
 
 
 def _number_change(before: str, after: str) -> dict[str, object] | None:
@@ -221,43 +280,60 @@ def _number_change(before: str, after: str) -> dict[str, object] | None:
     the document's own spelling, or None.
 
     Two kinds: a number appears a different number of times (500만원 became
-    50만원), or every number is still there but two labelled numbers traded
-    words (기본급은 300만원, 수당은 50만원 → 기본급은 50만원, 수당은 300만원).
-    The second is reported only when the same words label the same numbers on
-    both sides, so a sentence that is merely reordered stays quiet."""
+    50만원), or every number is still there but labelled numbers traded words
+    (기본급은 300만원, 수당은 50만원 → 기본급은 50만원, 수당은 300만원). The
+    second is reported when one reading of the labels (the words before each
+    number, or the words after it) pairs the same words and numbers
+    differently and the other reading, where it tells those numbers apart,
+    does not keep them with their words: a sentence that is merely reordered
+    (기본급은 300만원 ↔ 수당은 50만원, or 3건 승인 ↔ 5건 보류) stays quiet.
+
+    A bare number in a text that declares its unit once (금액(천원)) is read
+    in that unit, so moving 천원 from the cell to the header is no change and
+    changing the header is."""
     sides = []
     for text in (before, after):
-        found, end = [], 0
-        for m in _number_tokens(text):
-            found.append((m.group(0), _number_key(m.group(0)), _label(text[end:m.start()], end > 0)))
-            end = m.end()
+        declared, tokens = _declared_unit(text), _number_tokens(text)
+        found = []
+        for i, m in enumerate(tokens):
+            key = _number_key(m.group(0))
+            if declared and re.fullmatch(r"-?[\d.]+", key):
+                key = _number_key(m.group(0) + declared)
+            prev_end = tokens[i - 1].end() if i else 0
+            next_start = tokens[i + 1].start() if i + 1 < len(tokens) else len(text)
+            pre, pre_shown = _label(text[prev_end:m.start()], i > 0)
+            post, post_shown = _label(text[m.end():next_start], True, after=True)
+            found.append((pre, key, post, m.group(0), pre_shown, post_shown))
         sides.append(found)
     b, a = sides
-    shown: dict[str, str] = {}
-    for token, key, _ in b + a:
-        shown.setdefault(key, token)
-    keys_b, keys_a = Counter(k for _, k, _ in b), Counter(k for _, k, _ in a)
+    keys_b, keys_a = Counter(t[1] for t in b), Counter(t[1] for t in a)
     if keys_b != keys_a:
+        shown: dict[str, str] = {}
+        for t in b + a:
+            shown.setdefault(t[1], t[3])
+        # A number on both sides is shown in one spelling, so a dropped comma
+        # is not listed as lost and added; a new one as the edit wrote it.
         return {"kind": "numbers",
-                "before": dict(Counter(shown[k] for _, k, _ in b)),
-                "after": dict(Counter(shown[k] for _, k, _ in a))}
-    labelled_b = [(lab, k) for _, k, lab in b if lab]
-    labelled_a = [(lab, k) for _, k, lab in a if lab]
-    pairs_b, pairs_a = Counter(labelled_b), Counter(labelled_a)
-    if (pairs_b == pairs_a
-            or Counter(lab for lab, _ in labelled_b) != Counter(lab for lab, _ in labelled_a)
-            or Counter(k for _, k in labelled_b) != Counter(k for _, k in labelled_a)):
+                "before": dict(Counter(shown[t[1]] for t in b)),
+                "after": dict(Counter(shown[t[1]] for t in a))}
+    pre, post = _swapped(b, a, 0), _swapped(b, a, 2)
+    if pre and not _kept(b, a, 2, pre):
+        at, show = 0, lambda t: f"{t[4]} {t[3]}"
+    elif post and not _kept(b, a, 0, post):
+        at, show = 2, lambda t: f"{t[3]} {t[5]}"
+    else:
         return None
-    def only(pairs: list[tuple[str, str]], extra: Counter) -> list[str]:
+    pb, pa = _pairs(b, at), _pairs(a, at)
+
+    def only(side: list[tuple], extra: Counter) -> list[str]:
         out = []
-        for lab, k in pairs:            # in the order the text has them
-            if extra[(lab, k)] > 0:
-                extra[(lab, k)] -= 1
-                out.append(f"{lab} {shown[k]}")
+        for t in side:                  # in the order the text has them
+            if t[at] and extra[(t[at], t[1])] > 0:
+                extra[(t[at], t[1])] -= 1
+                out.append(show(t))
         return out
     return {"kind": "numbers", "order": True,
-            "before": only(labelled_b, pairs_b - pairs_a),
-            "after": only(labelled_a, pairs_a - pairs_b)}
+            "before": only(b, pb - pa), "after": only(a, pa - pb)}
 
 
 def extract_protected(text: str) -> dict[str, object]:
