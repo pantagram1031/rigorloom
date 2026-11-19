@@ -84,3 +84,16 @@ def test_confirm_reads_a_yes_only_from_a_console(monkeypatch):
         return
     assert confirm("?", stdin=FakeTty("예\n"), stdout=FakeTty()) is True
     assert confirm("?", stdin=FakeTty("\n"), stdout=FakeTty()) is False
+
+
+
+def test_help_descriptions_start_at_one_column():
+    from rt_cli_product import HELP_SECTIONS, help_text
+
+    text = help_text().splitlines()
+    for _, rows in HELP_SECTIONS:
+        for usage, what in rows:
+            if not what:
+                continue
+            line = next(x for x in text if x.startswith("  " + usage + " "))
+            assert width(line[: line.index(what)]) == 24, line

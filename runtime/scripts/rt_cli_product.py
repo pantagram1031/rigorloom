@@ -31,14 +31,14 @@ try:  # installed as rigorloom_runtime
     from . import rt_commit, rt_toolset  # rt_toolset registers the tools
     from .rt_cli_render import SHOW
     from .rt_paths import PathRefused, canonical, state_home
-    from .rt_term import Term, confirm, is_console, prepare_stdio
+    from .rt_term import Term, confirm, is_console, pad, prepare_stdio
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
     import rt_toolset
     from rt_cli_render import SHOW
     from rt_paths import PathRefused, canonical, state_home
-    from rt_term import Term, confirm, is_console, prepare_stdio
+    from rt_term import Term, confirm, is_console, pad, prepare_stdio
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
@@ -52,28 +52,30 @@ LEGACY_ALWAYS = ("install", "doctor", "guard", "style", "engine", "ui", "demo")
 
 EXIT_OK, EXIT_USAGE, EXIT_REFUSED, EXIT_INTERNAL = 0, 2, 3, 4
 
-HELP = """\
-rigorloom — 한글·워드·마크다운 문서를 사람과 에이전트가 같이 고치는 도구
-
-읽기
-  open FILE            문서 구조: 쪽, 글꼴, 제목, 표, 채울 칸과 주소
-  read FILE [--at 주소] 본문 읽기 (긴 글은 --cursor로 이어 읽기)
-  find FILE 말          찾은 곳마다 주소
-  preview FILE         쪽 그림 (PNG)
-
-쓰기 (원본은 save 전까지 그대로)
-  edit FILE --op JSON  고치기: set, replace, insert_after, delete, table.*
-  fill FILE --set 칸=값  양식 채우기 (서명·날인 칸은 사람 몫)
-  new 내용.md            마크다운으로 새 문서
-  save FILE [--to 경로]  초안을 파일로 저장 (덮어쓰기는 물어봄, undo 가능)
-  convert FILE --to pdf -o OUT
-
-점검과 기록
-  check FILE           문체·쪽 배치·글꼴·숫자 바뀜 점검
-  changes [FILE]       초안과 변경 기록
-  undo FILE            마지막 저장 되돌리기
-  guide [주제]           공문·보고서·양식 작성 안내
-
+#: The top-level help, one (usage, what it does) row per verb. Usage columns
+#: are padded by terminal width, so Korean in a usage still lines up.
+HELP_SECTIONS = (
+    ("읽기", (
+        ("open FILE", "문서 구조: 쪽, 글꼴, 제목, 표, 채울 칸과 주소"),
+        ("read FILE [--at 주소]", "본문 읽기 (긴 글은 --cursor로 이어 읽기)"),
+        ("find FILE 말", "찾은 곳마다 주소"),
+        ("preview FILE", "쪽 그림 (PNG)"),
+    )),
+    ("쓰기 (원본은 save 전까지 그대로)", (
+        ("edit FILE --op JSON", "고치기: set, replace, insert_after, delete, table.*"),
+        ("fill FILE --set 칸=값", "양식 채우기 (서명·날인 칸은 사람 몫)"),
+        ("new 내용.md", "마크다운으로 새 문서"),
+        ("save FILE [--to 경로]", "초안을 파일로 저장 (덮어쓰기는 물어봄, undo 가능)"),
+        ("convert FILE --to pdf -o OUT", ""),
+    )),
+    ("점검과 기록", (
+        ("check FILE", "문체·쪽 배치·글꼴·숫자 바뀜 점검"),
+        ("changes [FILE]", "초안과 변경 기록"),
+        ("undo FILE", "마지막 저장 되돌리기"),
+        ("guide [주제]", "공문·보고서·양식 작성 안내"),
+    )),
+)
+HELP_TAIL = """\
 공통 옵션: --json (기계용 출력)  --source disk|draft  --color auto|always|never
 
 앱·설치: ui  doctor  engine  install  demo  guard  style
@@ -82,6 +84,20 @@ rigorloom — 한글·워드·마크다운 문서를 사람과 에이전트가 �
   approval approve reject apply candidates compare receipt verify
   자세히: rigorloom protocol --help
 """
+HELP_USAGE_COLUMNS = 21
+
+
+def help_text() -> str:
+    lines = ["rigorloom — 한글·워드·마크다운 문서를 사람과 에이전트가 같이 고치는 도구", ""]
+    for title, rows in HELP_SECTIONS:
+        lines.append(title)
+        for usage, what in rows:
+            if not what:
+                lines.append(f"  {usage}")
+                continue
+            lines.append(f"  {pad(usage, HELP_USAGE_COLUMNS)} {what}")
+        lines.append("")
+    return "\n".join(lines) + HELP_TAIL
 
 
 def is_product(argv: list[str]) -> bool:
@@ -483,7 +499,7 @@ def main(argv: list[str]) -> int:
 def _main(argv: list[str]) -> int:
     prepare_stdio()
     if wants_product_help(argv):
-        sys.stdout.write(HELP)
+        sys.stdout.write(help_text())
         return EXIT_OK
     parser = _parser()
     try:
