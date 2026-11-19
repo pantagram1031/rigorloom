@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -968,3 +969,90 @@ def test_render_and_geometry_of_a_preview_copy_skip_the_form_analysis(kit, tmp_p
     with patch.object(D._Engine, "call", spy):
         D.read(r["out"])                        # an address-resolving call still loads the form analysis
     assert "analyze" in calls
+
+
+# ============================================================================ 글자 모양 / 문단 모양
+def test_shape_ops_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(op):
+        return D.edit(src, [op], base=rev, out=out)["error"]
+    e = err({"op": "char_shape", "at": "p2", "set": {"bolt": True}})
+    assert e["code"] == "bad_input" and "bold" in e["candidates"]
+    assert err({"op": "char_shape", "at": "p2", "set": {}})["code"] == "bad_input"
+    assert err({"op": "char_shape", "at": "p2", "set": {"size": 0}})["code"] == "bad_input"
+    assert err({"op": "char_shape", "at": "p2", "set": {"ratio": 300}})["code"] == "bad_input"
+    assert err({"op": "char_shape", "at": "p2", "set": {"color": "red"}})["code"] == "bad_input"
+    assert err({"op": "char_shape", "at": "p2", "set": {"bold": 1}})["code"] == "bad_input"
+    assert err({"op": "char_shape", "at": "p2", "set": {"sup": True, "sub": True}})["code"] == "bad_input"
+    assert err({"op": "para_shape", "at": "p2", "set": {"align": "middle"}})["code"] == "bad_input"
+    assert err({"op": "para_shape", "at": "p2", "set": {"line_spacing": {"type": "FIXED"}}})["code"] == "bad_input"
+    assert err({"op": "para_shape", "at": "p2:0-3", "set": {"align": "CENTER"}})["code"] == "bad_address"
+    text = D.read(src, "p2")["blocks"][0]["text"]
+    assert err({"op": "char_shape", "at": "p2", "set": {"bold": True}, "expect": text + "x"})["code"] == \
+        "expect_mismatch"
+    e = err({"op": "char_shape", "at": "p2", "set": {"bold": True}, "expect": text})
+    assert e["code"] == "capability_unavailable"           # valid, but only the engine shapes text
+    e = D.edit(src, [{"op": "char_shape", "at": "p2:0-4", "set": {"bold": True}},
+                     {"op": "set", "at": "p2:2-6", "text": "x"}], base=rev, out=out)["error"]
+    assert e["code"] == "conflict"
+    assert not out.exists()
+
+
+def _char_pr(z, text, near=None):
+    """The charPr element of the run that starts with `text` (in the paragraph that holds `near`, when given),
+    the paraPr of its paragraph, and the XML from that run on."""
+    sec = z.read("Contents/section0.xml").decode("utf-8")
+    head = z.read("Contents/header.xml").decode("utf-8")
+    lo = 0
+    if near:
+        at = sec.index(near)
+        lo = sec.rindex("<hp:p ", 0, at)
+    m = re.compile(r'<hp:run charPrIDRef="(\d+)"[^>]*><hp:t>(?:<hp:markpenBegin[^>]*/>)?'
+                   + re.escape(text)).search(sec, lo)
+    assert m, text
+    cp = re.search(r'<hh:charPr id="%s".*?</hh:charPr>' % m.group(1), head, re.S).group(0)
+    pid = re.findall(r'<hp:p [^>]*paraPrIDRef="(\d+)"', sec[:m.start()])[-1]
+    pp = re.search(r'<hh:paraPr id="%s".*?</hh:paraPr>' % pid, head, re.S).group(0)
+    return cp, pp, sec[m.start():m.start() + 300]
+
+
+@engine
+def test_engine_char_and_para_shape(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    rev = D.rev_of(f)
+    text = D.read(f, "p3")["blocks"][0]["text"]
+    out = tmp_path / "s.hwpx"
+    r = D.edit(f, [
+        {"op": "char_shape", "at": "p3:0-4", "set": {"bold": True, "size": 14, "color": "#C00000",
+                                                     "markpen": "#FFFF00"}, "expect": text[:4]},
+        {"op": "para_shape", "at": "p3", "set": {"align": "center", "before": 6,
+                                                 "line_spacing": {"type": "fixed", "value": 20}}},
+        {"op": "char_shape", "at": "t0", "set": {"italic": True}},
+        {"op": "set", "at": "p3:6-8", "text": "XY"},
+    ], base=rev, out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and r["changed_pages"]
+    assert D.read(out, "p3")["blocks"][0]["text"] == text[:6] + "XY" + text[8:]
+    with zipfile.ZipFile(out) as z:
+        near = "<hp:markpenBegin"            # the paragraph repeats; the marked copy is p3
+        cp, pp, run = _char_pr(z, text[:4], near)
+        assert 'height="1400"' in cp and 'textColor="#C00000"' in cp and "<hh:bold/>" in cp
+        assert '<hp:markpenBegin color="#FFFF00"/>' + text[:4] + "<hp:markpenEnd/>" in run
+        assert 'horizontal="CENTER"' in pp and '<hc:prev value="600"' in pp and 'type="FIXED"' in pp
+        rest, _, _ = _char_pr(z, text[4:6], near)
+        assert "<hh:bold/>" not in rest and 'height="1400"' not in rest
+        cell = D.read(out, "t0/r0/c0")["blocks"][0]["text"]
+        if cell:
+            assert "<hh:italic/>" in _char_pr(z, cell[:2])[0]
+    assert D.rev_of(f) == rev
+    # null takes the 형광펜 off again
+    rev2 = D.rev_of(out)
+    out2 = tmp_path / "s2.hwpx"
+    r = D.edit(out, [{"op": "char_shape", "at": "p3:0-4", "set": {"markpen": None}}], base=rev2, out=out2)
+    assert r["ok"], r
+    with zipfile.ZipFile(out2) as z:
+        sec = z.read("Contents/section0.xml").decode("utf-8")
+        assert "markpenBegin" not in sec and "markpenEnd" not in sec
+        assert 'height="1400"' in _char_pr(z, text[:4], "XY" + text[8:12])[0]
