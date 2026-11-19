@@ -404,7 +404,7 @@ def _gate_markdown_assets(ctx: Context, markdown: str, base: Path | None, *,
 def _picture_folder(ctx: Context) -> Path:
     """An owner-only folder for this call's picture copies, whose path the
     converter reads back as written: in the state folder, or, when that path
-    has a bracket in it (C:/Users/홍길동 (회사)/...), in the system's temp."""
+    has a bracket in it (a profile folder named "홍길동 (회사)"), in the system's temp."""
     mark_state(ctx.drafts.home)
     folder = private_dir(ctx.drafts.home / "pictures" / secrets.token_hex(6))
     if _representable(str(folder / "1.jpeg").replace("\\", "/"), "figure"):

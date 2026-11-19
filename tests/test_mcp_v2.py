@@ -560,7 +560,7 @@ def test_root_uris(monkeypatch):
     assert f("file:///home/kim/%EB%AC%B8%EC%84%9C", windows=False) == "/home/kim/문서"
     assert f("file:///home/kim/my%20docs", windows=False) == "/home/kim/my docs"
     assert f("file://localhost/srv/x", windows=False) == "/srv/x"
-    assert f("file:///C:/Users/kim/%EB%AC%B8%EC%84%9C", windows=True) == "C:\\Users\\kim\\문서"
+    assert f("file:///C:/Work/kim/%EB%AC%B8%EC%84%9C", windows=True) == "C:\\Work\\kim\\문서"
     assert f("file:///c:/", windows=True) == "C:\\"
     assert f("file:///C|/x", windows=True) == "C:\\x"
     assert f("file:///C:/x", windows=False) is None        # a drive path on POSIX

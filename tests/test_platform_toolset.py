@@ -816,7 +816,7 @@ def test_a_checked_picture_reaches_the_layer_as_a_copy_of_its_bytes(env, monkeyp
 
 def test_a_state_folder_with_brackets_still_takes_pictures(env, tmp_path, monkeypatch):
     # The copies go where the converter can read their path back; a state
-    # folder such as "C:/Users/홍길동 (회사)" cannot be one of those places.
+    # folder inside a profile named "홍길동 (회사)" cannot be one of those places.
     seen = _layer_sees(monkeypatch, "new")
     (env.work / "그림.png").write_bytes(b"x")
     ctx = env.ctx(_drafts=DraftStore(tmp_path / "상태 (회사)"))
