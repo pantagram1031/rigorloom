@@ -1391,6 +1391,38 @@ def test_stdio_server_end_to_end(tmp_path):
     assert not marker.exists(), "something imported PyMuPDF"
 
 
+def test_stdio_server_exits_cleanly_when_the_client_stops_reading(tmp_path):
+    # Sol's re-check of 07d6997: with the client's end of our stdout closed and
+    # its end of stdin still open, the reader thread held stdin's io lock and
+    # the interpreter aborted on the way out (exit -6 instead of 0).
+    work = tmp_path / "work"
+    work.mkdir()
+    env = _child_env(tmp_path, RIGORLOOM_TEST_DOC_MODULE=str(SEAM))
+    p = subprocess.Popen([sys.executable, str(SCRIPTS / "cli.py"), "mcp", "--allow", str(work)],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         env=env, cwd=str(work))
+    try:
+        p.stdout.close()                    # the client stops reading
+        for i in range(1, 4):               # and keeps sending, stdin open
+            p.stdin.write((json.dumps({"jsonrpc": "2.0", "id": i, "method": "ping"}) + "\n")
+                          .encode("utf-8"))
+            p.stdin.flush()
+        rc = p.wait(timeout=60)
+        err = p.stderr.read().decode("utf-8", "replace")
+    except BaseException:
+        p.kill()
+        p.wait(timeout=30)
+        raise
+    finally:
+        for stream in (p.stdin, p.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
+    assert rc == 0, err
+    assert "closed the connection" in err and "Fatal Python error" not in err
+
+
 def test_stdio_server_with_no_roots_refuses_with_the_allow_line(tmp_path):
     home = Path.home()
     env = _child_env(tmp_path, RIGORLOOM_TEST_DOC_MODULE=str(SEAM))

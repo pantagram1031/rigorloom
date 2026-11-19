@@ -294,6 +294,42 @@ def _encodable(message: dict) -> bool:
     return True
 
 
+class RawLines:
+    """Lines read from a file descriptor with ``os.read``.
+
+    The reader thread waits here for the client's next message. A thread
+    waiting inside ``sys.stdin.buffer`` holds the io module's lock, and if the
+    session ends for another reason (the client stopped reading our output)
+    the interpreter aborts at exit when it finds that lock busy. ``os.read``
+    holds no such lock, so the process can always exit.
+    """
+
+    def __init__(self, fd: int):
+        self._fd = fd
+        self._buf = bytearray()
+        self._eof = False
+
+    def readline(self, limit: int = -1) -> bytes:
+        while True:
+            cut = self._buf.find(b"\n")
+            if cut >= 0 and (limit < 0 or cut < limit):
+                end = cut + 1
+                break
+            if 0 <= limit <= len(self._buf):
+                end = limit
+                break
+            if self._eof:
+                end = len(self._buf)
+                break
+            chunk = os.read(self._fd, 65536)
+            if not chunk:
+                self._eof = True
+            self._buf += chunk
+        line = bytes(self._buf[:end])
+        del self._buf[:end]
+        return line
+
+
 class McpServer:
     """One MCP session over a pair of byte streams.
 
@@ -956,7 +992,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError, OSError):
         pass
-    stdin = sys.stdin.buffer
+    stdin = RawLines(sys.stdin.fileno())
     stdout = sys.stdout.buffer
     sys.stdout = sys.stderr  # stdout is frames only; stray prints go to stderr
     try:
