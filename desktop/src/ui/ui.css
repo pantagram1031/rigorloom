@@ -1094,3 +1094,23 @@
     gap: var(--s-8);
   }
 }
+
+/* The 리을R mark draws its one thread in: stem, top, bowl, back, down, foot. */
+.rl-mark-draw .rl-thread {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: rl-thread-in 520ms var(--ease, cubic-bezier(0.2, 0, 0, 1)) forwards;
+}
+
+@keyframes rl-thread-in {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rl-mark-draw .rl-thread {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}

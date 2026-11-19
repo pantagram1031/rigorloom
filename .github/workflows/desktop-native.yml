@@ -1,0 +1,43 @@
+name: Desktop native
+
+# The Tauri shell compiles the icon set, the CSP and the window config into
+# the Windows binary, so a change there is checked on Windows itself. The
+# Python sidecar is not built here: an empty placeholder stands in for
+# resources/rigorloomd, which only the packaging step fills.
+on:
+  pull_request:
+    paths:
+      - "desktop/src-tauri/**"
+      - "desktop/package.json"
+      - "desktop/package-lock.json"
+      - ".github/workflows/desktop-native.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo:
+    name: cargo check and test (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Frontend the shell embeds
+        run: npm ci --prefix desktop && npm --prefix desktop run build
+      - name: Sidecar placeholder
+        shell: bash
+        run: |
+          mkdir -p desktop/src-tauri/resources/rigorloomd
+          echo "placeholder for cargo check" > desktop/src-tauri/resources/rigorloomd/README.txt
+      - name: cargo check
+        working-directory: desktop/src-tauri
+        run: cargo check --locked
+      - name: cargo test
+        working-directory: desktop/src-tauri
+        run: cargo test --locked
