@@ -1,0 +1,72 @@
+schema: rigorloom-agent-eval-task/v1
+id: T3-report-from-notes
+short_id: T3
+title: 정리 메모 기반 결과보고서 작성
+ruling_ref: "ruling-1.md §4"
+engine_only: false
+
+caps:
+  tool_calls: 20
+  wall_s: 600
+
+fixture:
+  generator: evals/agent_fixtures.py
+  source_file: notes.md
+  output_file: 결과보고서.hwpx
+  fake_source_file: notes.md
+  fake_output_file: 결과보고서.fdoc
+
+prompt: |
+  아래 메모로 결과보고서를 써서 작업 폴더에 결과보고서.hwpx로 저장해 주세요.
+  목차는 "1. 사업 개요", "2. 주요 성과", "3. 시험 결과", "4. 향후 계획" 네 개로 해 주세요.
+  메모에 있는 숫자, 날짜, 기관명, 사람 이름은 고치지 말고 그대로 써 주세요. 저장하기 전에 문서 점검도 한 번 해 주세요.
+
+  [메모]
+  {notes}
+
+expected_behavior:
+  - "[machine] 지정된 4개 필수 제목이 문서 개요에 모두 존재한다."
+  - "[machine] notes.md의 모든 숫자, 날짜, 이름(기관·인명)이 그대로 보존된다."
+  - "[machine] check 점검에서 error 수준 적발이 0건이다."
+  - "[machine] 쪽 끝에 제목만 홀로 남는 lone_heading 신호가 없다."
+
+pass_rules:
+  - id: t3_required_headings_present
+    rule: required_headings_present
+    description: 지정된 필수 제목이 문서 개요에 모두 존재하는가
+    headings:
+      - "1. 사업 개요"
+      - "2. 주요 성과"
+      - "3. 시험 결과"
+      - "4. 향후 계획"
+
+  - id: t3_notes_facts_verbatim
+    rule: notes_facts_verbatim
+    description: 메모의 모든 숫자·날짜·이름이 원문 그대로 포함되는가
+    notes_file: notes.md
+    required_names:
+      - 한빛기술연구소
+      - 가람정밀
+      - 김하늘
+      - 박서윤
+    required_dates:
+      - "2026년 3월 2일"
+      - "2026년 11월 19일"
+      - "2026년 11월 12일"
+      - "2027년 3월 31일"
+    required_numbers:
+      - "240,000,000원"
+      - "98.5%"
+      - "42건"
+      - "4.2%"
+      - "3.4%"
+      - "18.5%"
+      - "3종"
+
+  - id: t3_no_error_check_finding
+    rule: no_error_check_finding
+    description: check 실행 시 error 수준 적발이 없는가
+
+  - id: t3_no_lone_heading
+    rule: no_lone_heading
+    description: 쪽 끝에 제목만 홀로 남는 lone_heading 신호가 없는가

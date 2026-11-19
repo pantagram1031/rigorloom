@@ -1,0 +1,63 @@
+schema: rigorloom-agent-eval-task/v1
+id: T2-report-table
+short_id: T2
+title: 20쪽 연차보고서 예산 표 수정 및 합계 정합성 유지
+ruling_ref: "ruling-1.md §4"
+engine_only: false
+
+caps:
+  tool_calls: 12
+  wall_s: 600
+
+fixture:
+  generator: evals/agent_fixtures.py
+  source_file: 연차보고서_20쪽.hwpx
+  output_file: 연차보고서_수정.hwpx
+  fake_source_file: 연차보고서_20쪽.fdoc
+  fake_output_file: 연차보고서_수정.fdoc
+
+prompt: |
+  연차보고서의 "9. 세부 예산 집행 현황" 표에서 집행액이 바뀌었습니다.
+  재료비는 16,800천원, 연구활동비는 11,700천원으로 고쳐 주시고, 합계 행도 거기에 맞춰 주세요.
+  다른 표나 본문은 손대지 말아 주세요. 원본은 그대로 두고 연차보고서_수정.hwpx로 저장해 주세요.
+
+expected_behavior:
+  - "[machine] 예산 표(t1)의 대상 셀과 합계 셀이 정확한 값으로 수정된다."
+  - "[machine] 예산 표의 합계 행이 비목별 금액 합과 일치한다."
+  - "[machine] 원본 대비 변경이 대상 표(t1) 내부에만 국한된다."
+  - "[machine] 수정으로 인한 새 레이아웃 경고 신호가 생기지 않는다."
+
+pass_rules:
+  - id: t2_target_cells_correct
+    rule: target_cells_correct
+    description: 대상 셀과 합계 셀이 요청된 값과 일치하는가
+    table: t1
+    cells:
+      - row: 2
+        col: 2
+        expected: "16,800"
+      - row: 3
+        col: 2
+        expected: "11,700"
+      - row: 4
+        col: 2
+        expected: "69,000"
+
+  - id: t2_sum_consistent
+    rule: sum_consistent
+    description: 합계 행의 계획액·집행액이 각 항목 행의 합과 일치하는가
+    table: t1
+    sum_row: 4
+    label_col: 0
+    label_expected: 합계
+    addend_rows: [1, 2, 3]
+    sum_cols: [1, 2]
+
+  - id: t2_diff_confined_to_table
+    rule: diff_confined_to_table
+    description: 원본 대비 변경이 대상 표(t1) 내부에만 국한되는가
+    table: t1
+
+  - id: t2_no_new_layout_signal
+    rule: no_new_layout_signal
+    description: 수정 전과 비교해 새로운 레이아웃 경고 신호가 생기지 않았는가

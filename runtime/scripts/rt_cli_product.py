@@ -294,6 +294,8 @@ def _parser() -> argparse.ArgumentParser:
     p = _verb(sub, "new", "새 문서")
     p.add_argument("markdown", metavar="내용.md", help="마크다운 파일 (파일 대신 -를 쓰면 표준 입력)")
     p.add_argument("--form", metavar="양식", help="새 문서 작성에 사용할 양식")
+    p.add_argument("--dialect", choices=("commonmark", "report"),
+                   help="마크다운 문법: commonmark(기본값, 표와 목록) 또는 report(□/○ 기호, 번호가 붙은 제목)")
     p.add_argument("--name", metavar="이름", help="초안 이름 (changes 목록에 보임)")
     p.add_argument("-o", "--out", metavar="OUT", help="만든 문서를 이 새 파일로 바로 저장")
     p.add_argument("--force", action="store_true", help="OUT이 있으면 덮어씀 (이전 내용은 저장 기록에 보관)")
@@ -450,6 +452,7 @@ def request_for(args) -> tuple[str, dict]:
         if args.markdown != "-":
             req["base_dir"] = str(Path(args.markdown).resolve().parent)
         if args.form: req["form"] = args.form
+        if args.dialect: req["dialect"] = args.dialect
         if args.name: req["name"] = args.name
         return "new", req
     if v == "preview":

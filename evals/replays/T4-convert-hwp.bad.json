@@ -1,0 +1,64 @@
+{
+  "schema": "rigorloom-mcp-replay/v1",
+  "task_id": "T4-convert-hwp",
+  "variant": "bad",
+  "description": "Deletes a paragraph before saving to HWPX and omits both lossy ('styles') and font substitution approx from the final answer.",
+  "simulated_tokens": {"input": 2400, "output": 310, "total": 2710},
+  "approx_fonts": [{"want": "함초롬바탕", "got": "Noto Serif CJK KR"}],
+  "requests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "eval-scripted", "version": "1.0"}
+      }
+    },
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/call",
+      "params": {"name": "open", "arguments": {"path": "${SOURCE}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {
+        "name": "edit",
+        "arguments": {
+          "path": "${SOURCE}",
+          "base": "${REV}",
+          "ops": [{"op": "delete", "at": "p2"}]
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {"name": "save", "arguments": {"path": "${SOURCE}", "to": "${OUTPUT}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "tools/call",
+      "params": {"name": "check", "arguments": {"path": "${OUTPUT}"}}
+    }
+  ],
+  "expected_call_outcomes": [
+    {"id": 2, "tool": "open", "isError": false, "error_code": null},
+    {"id": 3, "tool": "edit", "isError": false, "error_code": null},
+    {"id": 4, "tool": "save", "isError": false, "error_code": null},
+    {"id": 5, "tool": "check", "isError": false, "error_code": null}
+  ],
+  "final_answer": "공문_변환.hwpx로 손실 없이 완벽하게 변환을 완료했습니다.",
+  "expected_passed": false,
+  "expected_failed_checks": [
+    "t4_paragraph_text_equals_source",
+    "t4_lossy_and_approx_reported"
+  ]
+}

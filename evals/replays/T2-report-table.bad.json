@@ -1,0 +1,81 @@
+{
+  "schema": "rigorloom-mcp-replay/v1",
+  "task_id": "T2-report-table",
+  "variant": "bad",
+  "description": "Leaves 합계 stale (inconsistent), modifies an unrelated paragraph outside t1, and introduces a lone_heading signal.",
+  "simulated_tokens": {"input": 4900, "output": 590, "total": 5490},
+  "requests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "eval-scripted", "version": "1.0"}
+      }
+    },
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/call",
+      "params": {"name": "open", "arguments": {"path": "${SOURCE}"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {"name": "read", "arguments": {"path": "${SOURCE}", "at": "t1"}}
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {
+        "name": "edit",
+        "arguments": {
+          "path": "${SOURCE}",
+          "base": "${REV}",
+          "ops": [
+            {
+              "op": "table.set_cells",
+              "at": "t1/r2/c2",
+              "grid": [["16,800"], ["11,700"], ["66,500"]]
+            },
+            {
+              "op": "set",
+              "at": "p1",
+              "text": "표 밖의 요약 문단도 임의로 수정했습니다."
+            },
+            {
+              "op": "insert_after",
+              "at": "p2",
+              "markdown": "## 홀로 남은 제목"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "tools/call",
+      "params": {"name": "save", "arguments": {"path": "${SOURCE}", "to": "${OUTPUT}"}}
+    }
+  ],
+  "expected_call_outcomes": [
+    {"id": 2, "tool": "open", "isError": false, "error_code": null},
+    {"id": 3, "tool": "read", "isError": false, "error_code": null},
+    {"id": 4, "tool": "edit", "isError": false, "error_code": null},
+    {"id": 5, "tool": "save", "isError": false, "error_code": null}
+  ],
+  "final_answer": "예산 표를 수정해 저장했습니다.",
+  "expected_passed": false,
+  "expected_failed_checks": [
+    "t2_target_cells_correct",
+    "t2_sum_consistent",
+    "t2_diff_confined_to_table",
+    "t2_no_new_layout_signal"
+  ]
+}

@@ -1265,7 +1265,7 @@ def convert(src, out, *, to) -> dict:
 
 
 @_public
-def new(markdown_path_or_text, out, *, form=None) -> dict:
+def new(markdown_path_or_text, out, *, form=None, commonmark=False) -> dict:
     if form is not None:
         raise _Refusal("capability_unavailable", "가짜 rt_doc은 양식 위에 만들지 못합니다")
     if not isinstance(markdown_path_or_text, (str, Path)):

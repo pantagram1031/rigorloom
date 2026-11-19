@@ -1148,6 +1148,19 @@ def test_saved_is_the_exact_path_and_undo_is_safe_to_paste(env):
         assert shlex.split(r["undo"]) == ["rigorloom", "undo", str(quoted.resolve())]
 
 
+def test_ops_that_change_the_same_place_are_named_in_korean():
+    # P7 round 0: "문서를 처리하지 못했습니다." told the agent nothing; it sent
+    # the same two ops again.
+    out = rt_mcp.agent_error({"code": "conflict", "at": "p6", "message":
+                              "ops 0 (insert_after) and 1 (delete) both change p6; "
+                              "send them in separate edits or as one op"})
+    assert out["message"] == "ops[0](insert_after), ops[1](delete) 두 작업이 같은 위치(p6)를 지정했습니다."
+    assert out["hint"] == "두 작업을 나눠서 차례로 보내세요."
+    other = rt_mcp.agent_error({"code": "conflict", "message": "row 2 is deleted twice"})
+    assert other["message"] == "한 번에 보낸 작업 중 둘 이상이 같은 위치를 지정했습니다."
+    assert other["data"]["detail"] == "row 2 is deleted twice"
+
+
 def test_document_layer_refusals_reach_the_agent_in_korean():
     error = rt_mcp.agent_error({"code": "bad_address", "message": "p0 is 5 characters long",
                                 "retryable": False, "at": "p0:999-1000",
