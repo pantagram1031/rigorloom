@@ -244,9 +244,10 @@ rt_doc.edit("보고서.hwpx", [
   or `{"type": "FIXED"|"BETWEEN_LINES"|"AT_LEAST"|"PERCENT", "value": pt}`),
   `keep_next`, `keep_lines`, `widow_orphan`, `page_break_before`. An unknown
   key or a value out of range is `bad_input` before anything runs. Both need
-  the engine, which applies them as Hancom's 글자 모양 / 문단 모양 dialogs do
-  on a selection. They change no addresses, and run before text edits in the
-  same paragraph, so a range means what it meant in `base`.
+  the engine, which applies them to the selected text or paragraphs; the keys
+  are fields of the 글자 모양 / 문단 모양 dialogs. They change no addresses,
+  and run before text edits in the same paragraph, so a range means what it
+  meant in `base`.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is

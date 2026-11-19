@@ -1047,3 +1047,12 @@ def test_engine_char_and_para_shape(kit, tmp_path):
         if cell:
             assert "<hh:italic/>" in _char_pr(z, cell[:2])[0]
     assert D.rev_of(f) == rev
+    # null takes the 형광펜 off again
+    rev2 = D.rev_of(out)
+    out2 = tmp_path / "s2.hwpx"
+    r = D.edit(out, [{"op": "char_shape", "at": "p3:0-4", "set": {"markpen": None}}], base=rev2, out=out2)
+    assert r["ok"], r
+    with zipfile.ZipFile(out2) as z:
+        sec = z.read("Contents/section0.xml").decode("utf-8")
+        assert "markpenBegin" not in sec and "markpenEnd" not in sec
+        assert 'height="1400"' in _char_pr(z, text[:4], "XY" + text[8:12])[0]
