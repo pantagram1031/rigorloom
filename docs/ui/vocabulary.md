@@ -408,7 +408,7 @@
 | `fill_delete_guides_queued` | 안내문 지움 {0}건을 제안에 포함했습니다 | Guide deletion queued ({0}) |
 | `fill_undo_removed` | ‘{0}’ 항목을 변경 제안에서 뺐습니다 | Removed entry for '{0}'. |
 | `fill_undo_restore` | 방금 뺀 항목 되살리기 | Undo remove |
-| `fill_undo_empty` | ‘{0}’의 입력을 지워 변경 제안에서 뺐습니다 | Removed the proposed entry for '{0}' after clearing its input. |
+| `fill_undo_empty` | ‘{0}’ 입력을 지워 변경 제안에서 뺐습니다 | Removed the proposed entry for '{0}' after clearing its input. |
 | `fill_ambiguous_warning` | 이름이 ‘{0}’인 빈칸이 {1}개 있습니다. 입력할 칸의 위치를 확인해야 합니다. | There are {1} blanks named '{0}'. Confirm the selected slot below. |
 | `fill_ambiguous_slot_option` | {0}번째 빈칸 · {1} | Blank #{0} · {1} |
 | `fill_clear_value` | 입력 지우기 | Clear entry |

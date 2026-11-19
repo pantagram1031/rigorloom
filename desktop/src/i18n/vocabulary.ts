@@ -903,7 +903,7 @@ export const VOCABULARY = {
   },
   fill_undo_restore: { ko: "방금 뺀 항목 되살리기", en: "Undo remove" },
   fill_undo_empty: {
-    ko: "‘{0}’의 입력을 지워 변경 제안에서 뺐습니다",
+    ko: "‘{0}’ 입력을 지워 변경 제안에서 뺐습니다",
     en: "Removed the proposed entry for '{0}' after clearing its input.",
   },
   fill_ambiguous_warning: {

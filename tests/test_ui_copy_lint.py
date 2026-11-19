@@ -3,12 +3,15 @@
 desktop/src, docs/ui/v2, and packaging metadata.
 
 Enforces:
-- CONTEXT translationese bans (`진행합니다`, `하는 것이 가능`, `해당 `, `에 대한`, `되어집/되어진`)
-- J1 §3.6: no Korean particle (조사) adjacent to any placeholder (`{0}을`, `{0}이(가)`, etc.)
+- CONTEXT translationese bans (`진행합니다/진행됩니다`, `하는 것이 가능`, `해당 `/`해당문서`,
+  `에 대한`, `되어집/되어진`, `통해`)
+- J1 §3.6: no Korean particle (조사) adjacent to any placeholder (`{0}을`, `{0}이(가)`,
+  `‘{0}’을`, `{0})를`, `{0} 을`, etc.)
 - J1 §3.11 / §3.3: no `결재` anywhere in UI copy; no `영수증` in v2 copy (`검증 기록`)
 - J1 §3.13: Korean strings contain no Latin letters outside the allowlist
   (`Rigorloom`, file extensions, key names, `PDF`, `HWPX`, `A4`)
-- No emoji and no exclamation marks (`!`)
+- No emoji and no exclamation marks (`!`, `！`)
+- The Latin and `!` checks read the NFKC form, so full-width letters (`ＡＰＩ`) count
 - `ko` and `en` non-empty parity with matching placeholder sets
 - Advisor ruling G: forbidden-phrase grep across `desktop/src`, `docs/ui/v2`,
   and packaging metadata
@@ -22,6 +25,7 @@ import re
 import shutil
 import subprocess
 from typing import Mapping
+import unicodedata
 
 import pytest
 
@@ -44,19 +48,24 @@ FORBIDDEN_PHRASES = (
 )
 
 TRANSLATIONESE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("translationese_jinhaeng", re.compile(r"진행(?:합니다|하겠|해\s*주세요|할\s*수)")),
+    ("translationese_jinhaeng", re.compile(r"진행(?:합니다|하겠|해\s*주세요|할\s*수|됩니다|됨|되었|돼|중입니다)")),
     ("translationese_ganeung", re.compile(r"는\s*것이\s*가능")),
-    ("translationese_haedang", re.compile(r"해당\s")),
+    # `해당 칸`, `해당문서`; the verb (`해당하는`, `해당합니다`) is plain Korean.
+    ("translationese_haedang", re.compile(r"해당(?:\s|(?![하합한할했되됩된될])[가-힣])")),
     ("translationese_daehan", re.compile(r"에\s*대(?:한|해)")),
     ("translationese_double_passive", re.compile(r"되어(?:집|진|지)")),
+    ("translationese_tonghae", re.compile(r"통해")),
 )
 
 UNRESOLVED_JOSA_RE = re.compile(
     r"(?:이\(가\)|은\(는\)|을\(를\)|과\(와\)|\(으\)로|\(이\)라|\(이\)나)"
 )
 
+# A particle after a placeholder counts even past a closing quote or bracket
+# (`‘{0}’을`, `{0})를`) or a space (`{0} 을`).
 PLACEHOLDER_PARTICLE_RE = re.compile(
     r"\{(?:\d+|[A-Za-z_]\w*)\}"
+    r"[’”」』)\]'\"]*[ \t]?"
     r"(?:이\(가\)|은\(는\)|을\(를\)|과\(와\)|\(으\)로|"
     r"으로서|으로써|으로부터|으로|에서|에게|께서|부터|까지|처럼|보다|이랑|이나|이란|이라|"
     r"(?:은|는|이|가|을|를|과|와|로|의|도|만|께|랑|나)(?=$|[\s,.·…:;)\]」』”’]))"
@@ -197,8 +206,10 @@ def lint_copy_entry(
             )
         )
 
-    for lang, text in (("ko", ko), ("en", en)):
-        if EMOJI_RE.search(text):
+    for lang, raw_text in (("ko", ko), ("en", en)):
+        # Full-width forms (`！`, `ＡＰＩ`) read as what they look like.
+        text = unicodedata.normalize("NFKC", raw_text)
+        if EMOJI_RE.search(raw_text):
             violations.append(
                 CopyViolation(source, key, "no_emoji", f"emoji found in {lang}: {text!r}")
             )
@@ -222,7 +233,7 @@ def lint_copy_entry(
                     )
                 )
 
-    bad_latin = _disallowed_latin_tokens(ko)
+    bad_latin = _disallowed_latin_tokens(unicodedata.normalize("NFKC", ko))
     if bad_latin:
         violations.append(
             CopyViolation(
@@ -400,6 +411,15 @@ def test_copy_lint_rules_catch_all_banned_patterns_and_accept_valid_copy() -> No
         ("l2", "mock 제안입니다.", "Mock proposal.", "latin_outside_allowlist"),
         ("m1", "변경 {0}건", "Changes {0} of {1}", "placeholder_mismatch"),
         ("f1", "정확도 100% 보장", "Guaranteed", "forbidden_phrase"),
+        # Holes found by the integrated review (finding 9).
+        ("p6", "‘{0}’을 열지 못했습니다.", "Could not open “{0}”.", "placeholder_particle"),
+        ("p7", "{0})를 지웠습니다.", "Removed {0}).", "placeholder_particle"),
+        ("p8", "{0} 을 지웠습니다.", "Removed {0}.", "placeholder_particle"),
+        ("l3", "ＡＰＩ 키가 없습니다", "No API key", "latin_outside_allowlist"),
+        ("t6", "에이전트를 통해 보냅니다.", "Sent via the agent.", "translationese_tonghae"),
+        ("t7", "변경이 진행됩니다.", "Changes apply.", "translationese_jinhaeng"),
+        ("t8", "해당문서가 없습니다", "No such document", "translationese_haedang"),
+        ("x2", "완료했습니다！", "Done.", "no_exclamation"),
     ]
     for key, ko, en, expected_rule in bad_cases:
         found = lint_copy_entry("self-test", key, ko, en, is_v2=True)
@@ -418,6 +438,9 @@ def test_copy_lint_rules_catch_all_banned_patterns_and_accept_valid_copy() -> No
         ("ok7", "PDF 내보내기 · A4 기준", "Export PDF · A4"),
         ("ok8", "검증 기록 일치", "Verification record matches"),
         ("ok9", "명령창 Ctrl+Shift+P", "Command palette Ctrl+Shift+P"),
+        ("ok11", "‘{0}’ 문서를 열었습니다.", "Opened “{0}”."),
+        ("ok12", "{0} 이후 변경 {1}건", "{1} changes after {0}"),
+        ("ok13", "해당하는 변경이 없습니다.", "No matching changes."),
         ("ok10", "에이전트는 제안하고, 사람이 승인합니다. 승인한 변경만 새 수정본이 되고 원본은 바뀌지 않습니다.",
          "Agents propose and a person approves. Only approved changes become a new revision; the original never changes."),
     ]
