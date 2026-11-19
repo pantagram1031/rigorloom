@@ -1,0 +1,60 @@
+schema: rigorloom-agent-eval-task/v1
+id: T1-fill-form
+short_id: T1
+title: 연구개발 지원사업 신청서 채우기
+ruling_ref: "ruling-1.md §4"
+engine_only: false
+
+caps:
+  tool_calls: 10
+  wall_s: 600
+
+fixture:
+  generator: evals/agent_fixtures.py
+  source_file: 신청서.hwpx
+  output_file: 신청서_작성.hwpx
+  fake_source_file: 신청서.fdoc
+  fake_output_file: 신청서_작성.fdoc
+
+prompt: |
+  작업 폴더의 신청서 양식을 열어 채울 수 있는 칸을 확인하고, 아래 값으로 채워 주세요.
+  원본 파일은 덮어쓰지 말고 새 파일로 저장해 주세요. 서명·직인 칸은 사람이 직접 날인하므로 비워 두세요.
+  - 기관명: 한빛기술연구소
+  - 사업자번호: 204-81-00102
+  - 과제명: 차세대 정밀센서 시제품 개발
+  - 신청금액: 240,000,000원
+  - 담당자: 김하늘
+  - 신청일자: 2026년 11월 19일
+  저장 파일명: 신청서_작성.hwpx
+
+expected_behavior:
+  - "[machine] 지정된 6개 입력 칸에 요청 값이 정확히 채워진다."
+  - "[machine] 변경 범위가 해당 6개 입력 칸에만 국한된다."
+  - "[machine] 서명 및 기관장 직인 칸은 건드리지 않고 비워 둔다."
+  - "[machine] 문서의 쪽 수가 원본과 동일하게 유지된다."
+
+pass_rules:
+  - id: t1_seats_hold_values
+    rule: seats_hold_values
+    description: 모든 대상 칸이 기대 값을 보유하는가
+    seats:
+      기관명: 한빛기술연구소
+      사업자번호: 204-81-00102
+      과제명: 차세대 정밀센서 시제품 개발
+      신청금액: 240,000,000원
+      담당자: 김하늘
+      신청일자: 2026년 11월 19일
+
+  - id: t1_diff_confined_to_seats
+    rule: diff_confined_to_seats
+    description: 원본 대비 변경이 지정된 입력 칸에만 국한되는가
+    seat_ids: ["기관명", "사업자번호", "과제명", "신청금액", "담당자", "신청일자"]
+
+  - id: t1_signature_seats_untouched
+    rule: signature_seats_untouched
+    description: 서명·직인 칸이 수정되지 않았는가
+    signature_seat_ids: ["신청인서명(인)", "기관장직인"]
+
+  - id: t1_page_count_unchanged
+    rule: page_count_unchanged
+    description: 채우기 후 쪽 수가 원본과 동일한가

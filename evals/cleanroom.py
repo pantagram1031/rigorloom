@@ -57,11 +57,31 @@ from xml.etree import ElementTree
 HARNESS_ROOT = Path(__file__).resolve().parent
 SOURCE_CHECKOUT = HARNESS_ROOT.parent
 TASKS_DIR = HARNESS_ROOT / "tasks"
+AGENT_TASKS_DIR = TASKS_DIR / "agent"
 DEFAULT_CORPUS_ROOT = SOURCE_CHECKOUT / "tests" / "corpus" / "forms"
 
 INSTALL_REPORT_SCHEMA = "rigorloom-cleanroom-install/v1"
 CHECKS_SCHEMA = "rigorloom-eval-checks/v1"
 TASK_SCHEMA = "rigorloom-eval-task/v1"
+AGENT_TASK_SCHEMA = "rigorloom-agent-eval-task/v1"
+
+AGENT_PASS_RULES = frozenset({
+    "seats_hold_values",
+    "diff_confined_to_seats",
+    "signature_seats_untouched",
+    "page_count_unchanged",
+    "target_cells_correct",
+    "sum_consistent",
+    "diff_confined_to_table",
+    "no_new_layout_signal",
+    "required_headings_present",
+    "notes_facts_verbatim",
+    "no_error_check_finding",
+    "no_lone_heading",
+    "output_valid",
+    "paragraph_text_equals_source",
+    "lossy_and_approx_reported",
+})
 
 # Text files worth scanning for an embedded source-checkout path. Binaries are
 # covered by the bundle manifest hashes, not by a string search.
@@ -503,6 +523,93 @@ def load_tasks(tasks_dir: Path | str = TASKS_DIR) -> list[dict[str, Any]]:
     duplicates = {i for i in ids if ids.count(i) > 1}
     if duplicates:
         raise CleanroomError(f"duplicate task ids across files: {sorted(duplicates)}")
+    return tasks
+
+
+def validate_agent_task(task: dict[str, Any], source: str = "<agent-task>") -> None:
+    """Validate one P7 agent-eval task definition (``rigorloom-agent-eval-task/v1``)."""
+    def fail(message: str) -> None:
+        raise CleanroomError(f"{source}: {message}")
+
+    if task.get("schema") != AGENT_TASK_SCHEMA:
+        fail(f"schema must be {AGENT_TASK_SCHEMA!r} (got {task.get('schema')!r})")
+    for field in ("id", "short_id", "title", "prompt"):
+        if not isinstance(task.get(field), str) or not task[field].strip():
+            fail(f"{field} is required and must be a non-empty string")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", task["id"]):
+        fail(f"id {task['id']!r} must be a filesystem-safe token")
+    if not isinstance(task.get("engine_only", False), bool):
+        fail("engine_only must be a boolean")
+
+    caps = task.get("caps")
+    if not isinstance(caps, dict):
+        fail("caps mapping is required (tool_calls, wall_s)")
+    for cap_key in ("tool_calls", "wall_s"):
+        val = caps.get(cap_key)
+        if isinstance(val, bool) or not isinstance(val, int) or val <= 0:
+            fail(f"caps.{cap_key} must be a positive integer")
+
+    fixture = task.get("fixture")
+    if not isinstance(fixture, dict):
+        fail("fixture mapping is required")
+    for fkey in ("generator", "source_file", "output_file"):
+        if not isinstance(fixture.get(fkey), str) or not fixture[fkey].strip():
+            fail(f"fixture.{fkey} is required and must be a non-empty string")
+    if fixture.get("corpus_source"):
+        cs = fixture["corpus_source"]
+        if (PurePosixPath(cs).is_absolute() or PureWindowsPath(cs).is_absolute()
+                or cs.startswith("..")):
+            fail(f"fixture.corpus_source must be repo-relative: {cs!r}")
+
+    behaviors = task.get("expected_behavior")
+    if not isinstance(behaviors, list) or not behaviors:
+        fail("expected_behavior must be a non-empty list of rubric strings")
+
+    rules = task.get("pass_rules")
+    if not isinstance(rules, list) or not rules:
+        fail("pass_rules must be a non-empty list")
+    seen: set[str] = set()
+    for row in rules:
+        if not isinstance(row, dict):
+            fail("pass_rules entries must be mappings")
+        rid = row.get("id")
+        if not isinstance(rid, str) or not rid.strip():
+            fail("every pass_rule needs a non-empty id")
+        if rid in seen:
+            fail(f"duplicate pass_rule id {rid!r}")
+        seen.add(rid)
+        rule = row.get("rule")
+        if rule not in AGENT_PASS_RULES:
+            fail(f"pass_rule {rid!r}: unknown rule {rule!r}; expected one of "
+                 f"{sorted(AGENT_PASS_RULES)}")
+
+
+def load_agent_task(path: Path | str) -> dict[str, Any]:
+    """Parse and validate one P7 agent-eval task YAML."""
+    path = Path(path)
+    if not path.is_file():
+        raise CleanroomError(f"agent task definition not found: {path}")
+    try:
+        raw = parse_yaml(path.read_text(encoding="utf-8"))
+    except CleanroomError as exc:
+        raise CleanroomError(f"{path.name}: unparseable agent task YAML: {exc}")
+    if not isinstance(raw, dict):
+        raise CleanroomError(f"{path.name}: agent task root must be a mapping")
+    validate_agent_task(raw, source=path.name)
+    raw["_source"] = str(path)
+    return raw
+
+
+def load_agent_tasks(tasks_dir: Path | str = AGENT_TASKS_DIR) -> list[dict[str, Any]]:
+    """Load all P7 agent-eval task definitions under ``evals/tasks/agent/``."""
+    tasks_dir = Path(tasks_dir)
+    if not tasks_dir.is_dir():
+        raise CleanroomError(f"agent tasks directory not found: {tasks_dir}")
+    tasks = [load_agent_task(path) for path in sorted(tasks_dir.glob("*.yaml"))]
+    ids = [task["id"] for task in tasks]
+    duplicates = {i for i in ids if ids.count(i) > 1}
+    if duplicates:
+        raise CleanroomError(f"duplicate agent task ids across files: {sorted(duplicates)}")
     return tasks
 
 
@@ -1858,6 +1965,8 @@ def main(argv: list[str] | None = None) -> int:
 
     lst = sub.add_parser("list-tasks", help="JSON inventory of task definitions")
     lst.add_argument("--tasks-dir", default=str(TASKS_DIR))
+    lst.add_argument("--suite", choices=("cleanroom", "agent", "all"),
+                     default="cleanroom")
 
     args = parser.parse_args(argv)
 
@@ -1898,13 +2007,36 @@ def main(argv: list[str] | None = None) -> int:
             _emit(payload)
             return 0 if payload["ok"] else 3
         if args.command == "list-tasks":
-            tasks = load_tasks(args.tasks_dir)
-            _emit({"ok": True, "count": len(tasks), "tasks": [
-                {"id": t["id"], "family": t["family"],
-                 "blocked_on": t.get("blocked_on"),
-                 "checks": len(t["machine_checks"]),
-                 "rubric_lines": len(t["expected_behavior"])}
-                for t in tasks]})
+            if args.suite == "cleanroom":
+                tasks = load_tasks(args.tasks_dir)
+                _emit({"ok": True, "count": len(tasks), "tasks": [
+                    {"id": t["id"], "family": t["family"],
+                     "blocked_on": t.get("blocked_on"),
+                     "checks": len(t["machine_checks"]),
+                     "rubric_lines": len(t["expected_behavior"])}
+                    for t in tasks]})
+                return 0
+            agent_dir = (Path(args.tasks_dir)
+                         if args.suite == "agent" and args.tasks_dir != str(TASKS_DIR)
+                         else AGENT_TASKS_DIR)
+            rows: list[dict[str, Any]] = []
+            if args.suite == "all":
+                for t in load_tasks(args.tasks_dir):
+                    rows.append({
+                        "suite": "cleanroom", "id": t["id"], "family": t["family"],
+                        "blocked_on": t.get("blocked_on"),
+                        "checks": len(t["machine_checks"]),
+                        "rubric_lines": len(t["expected_behavior"]),
+                    })
+            for t in load_agent_tasks(agent_dir):
+                rows.append({
+                    "suite": "agent", "id": t["id"], "short_id": t["short_id"],
+                    "engine_only": bool(t.get("engine_only", False)),
+                    "caps": t["caps"],
+                    "checks": len(t["pass_rules"]),
+                    "rubric_lines": len(t["expected_behavior"]),
+                })
+            _emit({"ok": True, "count": len(rows), "tasks": rows})
             return 0
     except CleanroomError as exc:
         _emit({"ok": False, "error": str(exc)})

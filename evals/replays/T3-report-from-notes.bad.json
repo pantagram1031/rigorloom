@@ -1,0 +1,50 @@
+{
+  "schema": "rigorloom-mcp-replay/v1",
+  "task_id": "T3-report-from-notes",
+  "variant": "bad",
+  "description": "Omits required heading '4. 향후 계획', alters 18.5% to 19.0% and omits 박서윤, introduces double-passive error ('되어진'), and leaves a lone heading before a page break.",
+  "simulated_tokens": {"input": 5100, "output": 760, "total": 5860},
+  "requests": [
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "eval-scripted", "version": "1.0"}
+      }
+    },
+    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/call",
+      "params": {
+        "name": "new",
+        "arguments": {
+          "name": "결과보고서",
+          "markdown": "# 차세대 정밀센서 시제품 개발 결과보고서\n\n## 1. 사업 개요\n\n한빛기술연구소와 가람정밀이 2026년 3월 2일부터 2026년 11월 19일까지 수행했습니다. 연구책임자는 김하늘입니다. 총 사업비는 240,000,000원입니다.\n\n## 2. 주요 성과\n\n1단계에서 기본 센서 모듈 3종이 제작되어진 결과를 확인했습니다. 2026년 11월 12일 기준 목표 달성률은 98.5%입니다.\n\n## 3. 시험 결과\n\n---page---\n\n2단계 시험 평가에서 시료 42건을 점검했고 불량률은 4.2%에서 3.4%로 19.0% 감소했습니다. 3단계 양산 준비는 2027년 3월 31일까지 진행합니다.\n"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {"name": "save", "arguments": {"path": "${DRAFT}", "to": "${OUTPUT}"}}
+    }
+  ],
+  "expected_call_outcomes": [
+    {"id": 2, "tool": "new", "isError": false, "error_code": null},
+    {"id": 3, "tool": "save", "isError": false, "error_code": null}
+  ],
+  "final_answer": "결과보고서를 작성해 저장했습니다.",
+  "expected_passed": false,
+  "expected_failed_checks": [
+    "t3_required_headings_present",
+    "t3_notes_facts_verbatim",
+    "t3_no_error_check_finding",
+    "t3_no_lone_heading"
+  ]
+}

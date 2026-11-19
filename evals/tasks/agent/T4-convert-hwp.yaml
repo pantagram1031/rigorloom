@@ -1,0 +1,42 @@
+schema: rigorloom-agent-eval-task/v1
+id: T4-convert-hwp
+short_id: T4
+title: HWP 문서 HWPX 변환 및 점검
+ruling_ref: "ruling-1.md §4"
+engine_only: true
+
+caps:
+  tool_calls: 8
+  wall_s: 600
+
+fixture:
+  generator: evals/agent_fixtures.py
+  corpus_source: tests/corpus/forms/gongmun/gianmun-byeolji-1ho.hwp
+  source_file: gianmun-byeolji-1ho.hwp
+  output_file: 공문_변환.hwpx
+  fake_source_file: 공문_원본.fdoc
+  fake_output_file: 공문_변환.hwpx
+
+prompt: |
+  작업 폴더의 원본 문서를 HWPX 형식(공문_변환.hwpx)으로 변환하고 check로 점검해 주세요.
+  원본 파일은 덮어쓰지 말고, 변환 과정에서 손실된 요소(lossy)나 글꼴 대체(approx)가 있으면
+  최종 답변에 항목을 빠짐없이 보고해 주세요.
+  저장 파일명: 공문_변환.hwpx
+
+expected_behavior:
+  - "[machine] 변환 결과 파일이 유효한 문서로 열리고 읽힌다."
+  - "[machine] 변환된 문서의 문단 텍스트가 원본과 동일하다."
+  - "[machine] lossy 항목이나 글꼴 대체(approx)가 존재할 때 최종 답변에 보고한다."
+
+pass_rules:
+  - id: t4_output_valid
+    rule: output_valid
+    description: 변환된 산출물이 유효한 문서인가
+
+  - id: t4_paragraph_text_equals_source
+    rule: paragraph_text_equals_source
+    description: 변환 결과의 문단 텍스트가 원본과 동일한가
+
+  - id: t4_lossy_and_approx_reported
+    rule: lossy_and_approx_reported
+    description: lossy 항목 및 글꼴 대체(approx)가 있을 때 최종 답변에 보고되었는가
