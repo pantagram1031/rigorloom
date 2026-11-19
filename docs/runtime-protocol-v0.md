@@ -585,7 +585,12 @@ approval is revoked in the same locked step with the same reason code and
 `mcp_server.py --provider-identity mock`) are how the bundled test agents are
 launched. A plan that repeats a test agent's op (same target and value) in the
 same session inherits `mock`, so a client that rebuilds the queue cannot drop
-it.
+it. Such a plan also carries `mockOps: [opId, ...]`, the ops that repeat a
+test value; the others (a person's own typing beside them) are not test
+values. Only the ops of a plan that arrived on the test agent's connection
+are remembered as test values, so an inherited plan never turns a person's
+typing into one. A plan with `provenance: "mock"` and no `mockOps` is a test
+agent's own plan: every op in it is a test value.
 
 `candidate/compare` reports `regionsEqual: true` only when every requested
 region was readable on both sides and equal; one unreadable region makes it

@@ -254,6 +254,12 @@ export interface OperationPlan {
   proposer: string;
   /** `"mock"` when a bundled test agent proposed it; absent otherwise. */
   provenance?: string | null;
+  /**
+   * With `provenance: "mock"`: the ops that repeat a test value, when the plan
+   * did not come from the test agent itself (the others are a person's own
+   * typing). Absent: every op of a mock plan is a test value.
+   */
+  mockOps?: string[] | null;
   implVersion: string;
   ops: PlanOp[];
   state: string;

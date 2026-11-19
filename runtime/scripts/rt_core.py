@@ -401,7 +401,11 @@ class RuntimeCore:
         for the bundled test agents), passed in by the front end. A plain
         ``proposer`` string no longer decides it. A plan that carries any op a
         test agent proposed in this session stays ``mock`` even when a client
-        rebuilds and re-proposes it (``_inherited_provenance``).
+        rebuilds and re-proposes it (``_inherited_mock_ops``). Such a plan
+        names, in ``mockOps``, exactly which of its ops repeat a test value;
+        the others (the person's own typing) stay the person's, and only ops
+        that arrived on the test agent's own connection are remembered as test
+        values for later plans.
 
         ``replaces`` names a queued plan this proposal explicitly replaces. Its
         pending or unconsumed approval is revoked under the session lock, in
@@ -445,14 +449,24 @@ class RuntimeCore:
         inventory = None
         if isinstance(declares, dict) and declares.get("keep"):
             inventory = self._declaration_inventory(session)
+        # Only a plan that arrived on the test agent's own connection is a test
+        # agent's plan; every op in it is a test value and is remembered. A
+        # plan that merely repeats some of those values is labelled mock (the
+        # safe direction) with the repeating ops named, and remembers nothing:
+        # the person's own typing in it never becomes a "test value".
+        from_test_agent = provenance == "mock"
+        mock_ops = None
         if provenance is None:
-            provenance = self._inherited_provenance(session, ops)
+            mock_ops = self._inherited_mock_ops(session, ops) or None
+            if mock_ops:
+                provenance = "mock"
         plan = build_plan(session_id=session.id, backend=backend, ops=ops,
                           proposer=proposer, bound_sha256=bound,
                           base=base, reverses=reversal, declares=declares,
-                          inventory=inventory, provenance=provenance)
+                          inventory=inventory, provenance=provenance,
+                          mock_ops=mock_ops)
         self.save_plan(plan)
-        if provenance == "mock":
+        if from_test_agent:
             self._remember_mock_ops(session, plan.payload["ops"])
         append_event(session, "plan.proposed", planId=plan.id,
                      opsHash=plan.payload["opsHash"], backend=backend,
@@ -517,20 +531,23 @@ class RuntimeCore:
         atomic_write_bytes(path, (json.dumps({"mockOps": sorted(known)},
                                              ensure_ascii=False) + "\n").encode("utf-8"))
 
-    def _inherited_provenance(self, session, ops) -> str | None:
-        """``"mock"`` when any op repeats a test agent's op in this session."""
+    def _inherited_mock_ops(self, session, ops) -> list[str]:
+        """The op ids (as ``build_plan`` assigns them) that repeat a test agent's op."""
         if not isinstance(ops, list):
-            return None
+            return []
         known = self._mock_identities(session)
         if not known:
-            return None
-        for op in ops:
+            return []
+        hits: list[str] = []
+        for index, op in enumerate(ops):
             if not isinstance(op, dict):
                 continue
             params = {k: v for k, v in op.items() if k not in ("kind", "opId")}
             if self._op_identity(op.get("kind"), params) in known:
-                return "mock"
-        return None
+                op_id = op.get("opId") or f"op-{index + 1}"
+                if isinstance(op_id, str):
+                    hits.append(op_id)
+        return hits
 
     def plan(self, plan_id) -> OperationPlan:
         payload = self.store.load_record("plans", plan_id)
