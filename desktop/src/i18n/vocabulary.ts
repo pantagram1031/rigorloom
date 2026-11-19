@@ -1789,7 +1789,7 @@ export const VOCABULARY = {
     en: "Prepared print view document",
   },
   review_behind_head_banner: {
-    ko: "이 변경 제안은 수정본 {0} 이전 문서를 기준으로 만들어졌습니다. 그대로 적용하면 수정본 {0}의 변경이 빠집니다.",
+    ko: "이 변경 제안은 수정본 {0} 이전 문서를 기준으로 만들어졌습니다. 그대로 적용하면 수정본 {0} 변경 내용이 빠집니다.",
     en: "This proposal was made against a document older than revision {0}. Applying it would drop the changes in revision {0}.",
   },
   review_repropose_on_head: {

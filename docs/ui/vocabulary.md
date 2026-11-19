@@ -712,7 +712,7 @@
 | `operator_event_check_pass` | 통과 | passed |
 | `operator_event_check_fail` | 미통과 | not passed |
 | `operator_event_pdf` | 인쇄 화면용 문서를 준비했습니다 | Prepared print view document |
-| `review_behind_head_banner` | 이 변경 제안은 수정본 {0} 이전 문서를 기준으로 만들어졌습니다. 그대로 적용하면 수정본 {0}의 변경이 빠집니다. | This proposal was made against a document older than revision {0}. Applying it would drop the changes in revision {0}. |
+| `review_behind_head_banner` | 이 변경 제안은 수정본 {0} 이전 문서를 기준으로 만들어졌습니다. 그대로 적용하면 수정본 {0} 변경 내용이 빠집니다. | This proposal was made against a document older than revision {0}. Applying it would drop the changes in revision {0}. |
 | `review_repropose_on_head` | 수정본 {0} 기준으로 다시 제안 | Re-propose on revision {0} |
 | `review_repropose_on_latest` | 최신 수정본 기준으로 다시 제안 | Re-propose on the latest revision |
 | `proposer_mock` | 시험용 제안 | Test proposal |
