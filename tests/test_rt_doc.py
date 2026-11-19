@@ -87,7 +87,7 @@ def test_rev_is_sha256_prefix():
 
 def place_of(src, key):
     """The outline place whose label reads `key` (numbering and spaces aside)."""
-    pls = [p for p in D.outline(src)["places"] if D._norm_key(p["label"] or "") == key]
+    pls = [p for p in D.outline(src)["places"] if D._heading_key(p["label"] or "") == key]
     assert len(pls) == 1, pls
     return pls[0]
 
@@ -578,7 +578,19 @@ def test_filling_one_form_moves_no_id_of_the_other(no_engine, tmp_path):
 
 
 # ============================================================================ errors and offsets
-def test_offsets_count_code_points(no_engine, tmp_path):
+@pytest.fixture(params=["builtin", pytest.param("engine", marks=pytest.mark.skipif(
+    not HAS_ENGINE, reason="RIGORLOOM_HWP_ENGINE is not set to an engine"))])
+def either(request):
+    """Run the test on the built-in path and, when an engine is set, on the engine."""
+    if request.param == "engine":
+        request.getfixturevalue("kit")
+        D.close()
+    else:
+        request.getfixturevalue("no_engine")
+    return request.param
+
+
+def test_offsets_count_code_points(either, tmp_path):
     src = _fx_copy(tmp_path)
     out = tmp_path / "cp.hwpx"
     r = D.edit(src, [{"op": "set", "at": "p3", "text": "a😀b한c"}], base=D.rev_of(src), out=out)
@@ -612,13 +624,13 @@ def test_engine_agrees_on_tables_and_place_ids(kit):
     ol = D.outline(FX_DOC)
     assert ol["ok"], ol
     assert [t["at"] for t in ol["tables"]] == [t["at"] for t in FX_WANT["tables"]]
-    by_at = {p["at"]: p for p in ol["places"]}
-    for p in FX_WANT["cell_places"]:
-        if p["at"] in by_at and by_at[p["at"]]["kind"] == "cell":
-            assert by_at[p["at"]]["id"] == p["id"], (p, by_at[p["at"]])
-    for p in FX_WANT["label_lines"]:
-        if p["at"] in by_at:
-            assert by_at[p["at"]]["id"] == p["id"], (p, by_at[p["at"]])
+    want = {p["at"]: p["id"] for p in FX_WANT["cell_places"] + FX_WANT["label_lines"]}
+    got = {p["at"]: p["id"] for p in ol["places"]}
+    # the engine's analysis does not look inside nested tables; everything else it must list, with these ids
+    assert set(got) == set(want) - {"t0/r2/c1/t0/r0/c1", "t0/r2/c1/t0/r1/c1"}, got
+    for at, pid in got.items():
+        assert pid == want[at], (at, pid)
+    assert "t0/r2/c1" not in got                    # a cell holding a table is no seat
 
 
 @engine
@@ -643,3 +655,78 @@ def test_engine_page_out_of_range_is_bad_address_with_range(kit):
     assert n["ok"], n
     e = D.render(FX_DOC, [n["count"] + 1])["error"]
     assert e["code"] == "bad_address" and e["range"] == [1, n["count"]]
+
+
+def test_builtin_lists_blank_label_lines(no_engine):
+    ol = D.outline(FX_DOC)
+    got = {p["at"]: p for p in ol["places"]}
+    for p in FX_WANT["label_lines"]:
+        assert got[p["at"]]["id"] == p["id"] and got[p["at"]]["label"] == "성명", got.get(p["at"])
+    assert ol["places_complete"] is True
+
+
+@pytest.mark.parametrize("line, filled", [("성명: ", "성명: 둘째"), ("성명:", "성명: 둘째"), ("성명:  ___", "성명:  둘째"),
+                                          ("성명: 첫째", "성명: 둘째")])
+def test_label_line_fill_types_after_the_blank(either, tmp_path, line, filled):
+    src = _fx_copy(tmp_path)
+    mid = tmp_path / "mid.hwpx"
+    r = D.edit(src, [{"op": "set", "at": "p5", "text": line}], base=D.rev_of(src), out=mid)
+    assert r["ok"], r
+    pid = D.place_id("field", "성명", 0)        # the line's id does not depend on what it holds
+    assert pid in {p["id"] for p in D.outline(mid)["places"]}
+    out = tmp_path / "out.hwpx"
+    r = D.edit(mid, [{"op": "fill", "place": pid, "text": "둘째"}], base=D.rev_of(mid), out=out)
+    assert r["ok"], r
+    assert _fx_text(out, "p5") == filled
+
+
+def test_label_line_rule():
+    ll = D.label_line
+    assert ll("  성 명 : 홍길동 ") == {"label": "성 명", "key": "성명", "at": 8, "value": "홍길동", "blank": False}
+    assert ll("성명：")["blank"] is True and ll("Name: __")["blank"] is True
+    assert ll("주민등록번호: 1")["key"] == "주민등록번호"
+    for no in ("1. 성명: x", ": x", "아주아주아주아주아주아주아주아주: x", "성명 x", "(성명): x", "성명-1: x"):
+        assert ll(no) is None, no
+
+
+def test_heading_key_rule():
+    hk = D._heading_key
+    assert hk("Ⅰ. 연구 목적 및 방법") == "연구목적및방법"
+    assert hk("1.2. 추진 배경") == hk("가. 추진 배경") == hk("(3) 추진 배경") == "추진배경"
+    assert hk("IV. 결론: 요약") == "결론요약"
+    assert hk("Item 1") == "Item1"
+
+
+@engine
+def test_engine_unverified_removal_is_refused_not_reported(kit, tmp_path):
+    """review fable-388 #2: removing the hp:switch table must be done or refused, never reported done."""
+    D.close()
+    src = _fx_copy(tmp_path)
+    for i, op in enumerate([{"op": "delete", "at": "t1"}, {"op": "table.delete_row", "at": "t1/r0"}]):
+        out = tmp_path / ("del%d.hwpx" % i)
+        r = D.edit(src, [op], base=D.rev_of(src), out=out)
+        if r["ok"]:                     # an engine that does remove it: the output shows exactly that
+            assert not r.get("remap_approx"), r
+            assert len(D.outline(out)["tables"]) == (3 if op["op"] == "delete" else 4), r
+        else:
+            assert r["error"]["code"] == "internal" and r["error"]["written"] is False, r
+            assert not out.exists()
+    out = tmp_path / "del-t2.hwpx"     # an ordinary removal still goes through, with its exact remap
+    r = D.edit(src, [{"op": "delete", "at": "t2"}], base=D.rev_of(src), out=out)
+    assert r["ok"] and r["remap"] == [{"from": "t2", "to": None}] and not r.get("remap_approx"), r
+    assert [t["at"] for t in D.outline(out)["tables"]] == ["t0", "t0/r2/c1/t0", "t1"]
+
+
+@pytest.mark.parametrize("op", [{"op": "delete", "at": "t1"}, {"op": "table.delete_row", "at": "t2/r0"},
+                                {"op": "delete", "at": "p3"}])
+def test_unverified_removal_is_refused(no_engine, op):
+    """An output that does not show a planned removal is refused, never published as done."""
+    doc = D._load(FX_DOC)
+    acts = D._plan(doc, [op])
+    with patch.object(D, "_verify", return_value=False):
+        with pytest.raises(D.DocError) as exc:
+            D._remap_result(doc, doc, acts)
+    assert exc.value.code == "internal" and exc.value.extra["written"] is False
+    with patch.object(D, "_verify", return_value=False):        # without a removal: a flagged guess, as before
+        _remap, approx = D._remap_result(doc, doc, D._plan(doc, [{"op": "set", "at": "p3", "text": "x"}]))
+    assert approx is True

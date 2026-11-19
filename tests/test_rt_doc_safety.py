@@ -78,7 +78,8 @@ def _mini_section():
     with zipfile.ZipFile(GUARD) as z:
         s = z.read(SECTION).decode("utf-8")
     root = s[:s.index(">", s.index("<hs:sec")) + 1]
-    secpr = re.search(r"<hp:secPr\b.*?</hp:secPr>", s, re.S).group(0)
+    a = s.index("<hp:secPr ")
+    secpr = s[a:s.index("</hp:secPr>", a) + len("</hp:secPr>")]
     col = re.search(r"<hp:ctrl><hp:colPr[^>]*/></hp:ctrl>", s).group(0)
     return (root + '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
             '<hp:run charPrIDRef="0">' + secpr + col + "</hp:run></hp:p></hs:sec>")
@@ -545,7 +546,7 @@ def _places(f):
 
 
 def _by_label(f, key):
-    pls = [p for p in D.outline(f)["places"] if D._norm_key(p["label"] or "") == key]
+    pls = [p for p in D.outline(f)["places"] if D._heading_key(p["label"] or "") == key]
     assert len(pls) == 1, pls
     return pls[0]
 
@@ -868,3 +869,108 @@ def test_every_error_code_is_declared():
     assert used <= rt_codes.DOC_CORE_CODES | {"capability_unavailable"}
     assert rt_codes.DOC_CORE_CODES & rt_codes.TRANSPORT_CODES == frozenset()
     assert rt_codes.DOC_CORE_CODES <= rt_codes.ERROR_CODES
+
+
+# ============================================================================ fable-388 follow-ups
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_outputs_keep_the_destination_mode_or_the_umask(no_engine, tmp_path):
+    src = make(tmp_path, "source.hwpx", "BASE")
+    os.chmod(src, 0o664)
+    r = D.edit(src, [set_("p0", "NEW")], base=D.rev_of(src), in_place=True)
+    assert r["ok"], r
+    assert os.stat(src).st_mode & 0o777 == 0o664
+    out = tmp_path / "new.hwpx"
+    old = os.umask(0o027)
+    try:
+        D._UMASK = None
+        r = D.edit(src, [set_("p0", "NEWER")], base=D.rev_of(src), out=out)
+    finally:
+        os.umask(old)
+        D._UMASK = None
+    assert r["ok"] and os.stat(out).st_mode & 0o777 == 0o640
+
+
+def test_worker_starts_without_a_console_window(tmp_path):
+    seen = {}
+
+    def fake_popen(*a, **k):
+        seen.update(k)
+        raise OSError("stop here")
+    with patch.object(D.subprocess, "Popen", side_effect=fake_popen):
+        with pytest.raises(OSError):
+            D._Worker(tmp_path)
+    want = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    assert seen["creationflags"] == want and (os.name != "nt" or want == 0x08000000)
+
+
+def test_a_stale_lock_is_broken_by_rename_and_a_fresh_one_is_kept(no_engine, tmp_path):
+    src = make(tmp_path, "source.hwpx", "BASE")
+    lock = D._lock_path(src)
+    lock.write_text("1 dead\n")
+    old = time.time() - D.LOCK_STALE_S - 60
+    os.utime(lock, (old, old))
+    r = D.edit(src, [set_("p0", "NEW")], base=D.rev_of(src), in_place=True)
+    assert r["ok"], r
+    assert not lock.exists() and not list(tmp_path.glob("*.stale"))
+    lock.write_text("2 alive\n")                   # a live writer's lock is never broken
+    with patch.dict(os.environ, {D.LOCK_TIMEOUT_ENV: "0.2"}):
+        r = D.edit(src, [set_("p0", "AGAIN")], base=D.rev_of(src), in_place=True)
+    assert r["error"]["code"] == "busy" and lock.read_text() == "2 alive\n"
+
+
+def test_staged_files_left_by_a_killed_writer_are_swept(no_engine, tmp_path):
+    src = make(tmp_path, "source.hwpx", "BASE")
+    dead, fresh = tmp_path / ".rtdoc-dead.tmp", tmp_path / ".rtdoc-busy.tmp"
+    dead.write_bytes(b"x")
+    fresh.write_bytes(b"y")
+    old = time.time() - D.TMP_STALE_S - 60
+    os.utime(dead, (old, old))
+    r = D.edit(src, [set_("p0", "NEW")], base=D.rev_of(src), out=tmp_path / "out.hwpx")
+    assert r["ok"], r
+    assert not dead.exists() and fresh.exists()     # another writer's staged file is left alone
+
+
+def test_the_lineage_cache_is_pruned(no_engine, tmp_path, monkeypatch):
+    monkeypatch.setattr(D, "LINEAGE_MAX", 3)
+    d = D._cache_dir() / "places"
+    d.mkdir(parents=True, exist_ok=True)
+    old = d / ("%s.json" % ("0" * 64))
+    old.write_text("[]")
+    t = time.time() - D.LINEAGE_MAX_AGE_S - 60
+    os.utime(old, (t, t))
+    for k in range(6):
+        D._lineage_put(("%x" % k) * 64, [])
+        time.sleep(0.01)
+    left = sorted(x.name for x in d.glob("*.json"))
+    assert len(left) == 3 and old.name not in left
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a real Windows sharing violation")
+def test_windows_a_file_open_without_delete_sharing_is_locked(no_engine, tmp_path):
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    GENERIC_READ, SHARE_READ, SHARE_WRITE, OPEN_EXISTING = 0x80000000, 1, 2, 3
+    src = make(tmp_path, "source.hwpx", "BASE")
+    base = D.rev_of(src)
+
+    def hold(share):
+        h = k32.CreateFileW(str(src), GENERIC_READ, share, None, OPEN_EXISTING, 0, None)
+        assert h not in (None, wintypes.HANDLE(-1).value), ctypes.get_last_error()
+        return h
+    h = hold(SHARE_READ | SHARE_WRITE)                 # as Hancom holds an open document: no FILE_SHARE_DELETE
+    try:
+        r = D.edit(src, [set_("p0", "NEW")], base=base, in_place=True)
+    finally:
+        k32.CloseHandle(h)
+    assert r["error"]["code"] == "locked" and r["error"]["retryable"] is True, r
+    assert D.rev_of(src) == base and leftovers(tmp_path) == []
+    h = hold(0)                                        # no sharing at all: even reading is refused
+    try:
+        e = D.outline(src)["error"]
+    finally:
+        k32.CloseHandle(h)
+    assert e["code"] == "locked" and e["retryable"] is True

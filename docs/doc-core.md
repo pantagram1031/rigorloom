@@ -95,7 +95,10 @@ when it was deleted). An address below a listed one follows its longest listed
 prefix (`t1 -> t2` makes `t1/r0/c3` `t2/r0/c3`); `rt_doc.follow_remap(remap,
 at)` does that. The map is computed from the ops, not guessed, and checked
 against the written document; if the document does not confirm it, the result
-says `remap_approx: true` and the map is a text alignment. When typed text has
+says `remap_approx: true` and the map is a text alignment, except that an edit
+which removes something (a paragraph, table, row or cell paragraph) the
+document does not show removed is refused with `internal` and `written: false`
+instead of being reported done. When typed text has
 line breaks, the paragraph keeps its address (it holds the first line) and the
 new paragraphs follow it.
 
@@ -121,7 +124,14 @@ nearest headings, place ids or valid addresses.
   `Direction` text, kind `field`, at = the paragraph that holds it; `fill`
   types inside the field;
 - an empty table cell labelled by the cell to its left (else above), kind `cell`;
-- a blank paragraph right under a heading: kind `body`.
+- a blank paragraph right under a heading: kind `body`;
+- a blank label line (`성명: `, `성명: ___`; the rule is in doc-core-api.md,
+  "Label lines and heading keys"): kind `cover_field`, or `cell_field` in a
+  cell. `fill` keeps the label, the colon and the white space after it and
+  replaces the rest (`성명: ` becomes `성명: 둘째`).
+
+With the engine, a cell whose paragraphs hold a table or picture is not
+listed (fill cannot type there).
 
 With the engine they are its form analysis (`analyze`), plus click-here
 fields it does not list.
@@ -150,7 +160,8 @@ failed engine analysis). A filled seat stays listed: when rt_doc writes a
 document (`edit`, `fill`), the seats of the document it started from are
 carried into the result through the exact remap and kept in a small cache
 (`RIGORLOOM_DOC_CACHE`, default `~/.cache/rigorloom/doc-core`, keyed by the
-output's sha256), so a filled seat keeps its id and shows its `value` with
+output's sha256; entries older than 90 days, or beyond the newest 5000, are
+pruned), so a filled seat keeps its id and shows its `value` with
 `filled: true`. In a document filled outside rt_doc, a seat discovery no
 longer recognises as empty is not listed, and every other seat keeps its id.
 
@@ -224,10 +235,13 @@ rt_doc.edit("보고서.hwpx", [
   `convert` and `new`.
 - Writing: the whole result (remap, signals, preview data) is built and the
   output parsed back before anything is published. The file is staged as a
-  unique temp file in the target folder, flushed, and moved into place with
+  unique temp file in the target folder (with the destination's file mode, or
+  0666 less the umask for a new file), flushed, and moved into place with
   `os.replace` under the destination's lock (a thread lock and a
   `.~<name>.rtdoc-lock` file, held only for the final check and move; a lock
-  older than two minutes is taken as left by a crashed writer). An in-place
+  older than two minutes is taken as left by a crashed writer and is broken by
+  renaming it to a unique name first, so two waiters cannot both break it;
+  staged `.rtdoc-*.tmp` files older than an hour are swept). An in-place
   edit checks the rev again under that lock right before the move, so of two
   edits from the same base one wins and the other gets `stale`. Writers that
   do not use rt_doc (Hancom saving the file) are only detected by that check.

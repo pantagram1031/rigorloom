@@ -311,7 +311,18 @@ class _PathLock:
                 except (FileExistsError, PermissionError):     # Windows: a lock file being deleted
                     try:
                         if time.time() - os.stat(self.file).st_mtime > LOCK_STALE_S:
-                            os.remove(self.file)
+                            # break it by renaming to a name of our own first: of two waiters only one
+                            # rename succeeds, so neither can remove a lock the other has just taken
+                            gone = self.file.with_name("%s.%d.%s.stale" % (self.file.name, os.getpid(),
+                                                                          os.urandom(4).hex()))
+                            os.rename(self.file, gone)
+                            if time.time() - os.stat(gone).st_mtime > LOCK_STALE_S:
+                                os.remove(gone)
+                            else:           # it was replaced by a fresh lock between stat and rename
+                                try:
+                                    os.rename(gone, self.file)
+                                except OSError:
+                                    os.remove(gone)
                             continue
                     except OSError:
                         pass
@@ -370,10 +381,51 @@ def _fsync_dir(d):
         os.close(fd)
 
 
-def _stage(dest, data=None, src=None):
-    """A unique temp file next to dest holding data (bytes) or a copy of src, flushed to disk."""
-    fd, tmp = tempfile.mkstemp(prefix=".rtdoc-", suffix=".tmp", dir=str(Path(dest).parent))
+def _umask():
+    """The process umask (read once: os.umask can only be read by setting it)."""
+    global _UMASK
+    if _UMASK is None:
+        with _TLOCKS_GUARD:
+            if _UMASK is None:
+                old = os.umask(0o022)
+                os.umask(old)
+                _UMASK = old
+    return _UMASK
+
+
+_UMASK = None
+TMP_STALE_S = 3600.0        #: a staged .rtdoc-*.tmp older than this was left by a writer that died
+
+
+def _sweep_tmp(folder: Path):
+    """Remove staged files a killed writer left in folder (best effort)."""
     try:
+        now = time.time()
+        for x in folder.glob(".rtdoc-*.tmp"):
+            try:
+                if now - x.stat().st_mtime > TMP_STALE_S:
+                    x.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def _stage(dest, data=None, src=None):
+    """A unique temp file next to dest holding data (bytes) or a copy of src, flushed to disk. It gets the
+    destination's mode (a new file: 0666 less the umask), not mkstemp's 0600."""
+    folder = Path(dest).parent
+    _sweep_tmp(folder)
+    fd, tmp = tempfile.mkstemp(prefix=".rtdoc-", suffix=".tmp", dir=str(folder))
+    try:
+        try:
+            mode = os.stat(dest).st_mode & 0o7777
+        except OSError:
+            mode = 0o666 & ~_umask()
+        try:
+            os.chmod(tmp, mode)
+        except OSError:
+            pass
         with os.fdopen(fd, "wb") as f:
             if data is not None:
                 f.write(data)
@@ -464,8 +516,10 @@ class _Worker:
         env = dict(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"       # the worker reads sys.stdin with its default encoding
         env["PYTHONUTF8"] = "1"
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0   # no console flash
         self.proc = subprocess.Popen([sys.executable, str(kit_dir / "kit_api.py"), "serve", "--threads", "4"],
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, cwd=str(kit_dir), env=env)
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, cwd=str(kit_dir), env=env,
+                                     creationflags=flags)
         self.ids = itertools.count(1)
         self.wait = {}
         self.lock = threading.Lock()
@@ -1622,10 +1676,19 @@ def _numbered_level(t):
     return 2
 
 
-def _norm_key(s):
-    s = re.sub(r"^[\sⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩIVX\d.)(]+(?=\S)", "", s.strip()) if not re.match(r"^\(\d+\)", s.strip()) else s
-    s = re.sub(r"^\(\d+\)\s*", "", s.strip())
-    return re.sub(r"[\s:：<>〈〉]+", "", s)
+#: one leading enumerator of a heading (doc-core-api.md, "Label lines and heading keys")
+_ENUMERATOR = re.compile(r"\(?\s*(?:[\u2160-\u216B]+|[IVX]+|\d+(?:\.\d+)*|[가나다라마바사아자차카타파하])\s*[.)]\s+")
+
+
+def _heading_key(text):
+    """A heading's key: its text without leading enumerators, letters and digits only."""
+    rest = (text or "").strip()
+    while True:
+        m = _ENUMERATOR.match(rest)
+        if not m:
+            break
+        rest = rest[m.end():]
+    return "".join(ch for ch in rest if ch.isalnum())
 
 
 def _discover(doc):
@@ -1647,8 +1710,8 @@ def _discover(doc):
                     continue
                 t = ts[pl["table"]]
                 c = t.at(pl["row"], pl["col"])
-                if c is None or not c.paras:
-                    continue
+                if c is None or not c.paras or (pl["kind"] == "cell" and any(q.objs for q in c.paras)):
+                    continue                    # a cell holding a table or picture is not a seat fill can type in
                 rec.update(table=t, cell=c)
                 idx = pl.get("index")
                 p = doc.sec_paras[si][idx] if _is_int(idx) and 0 <= idx < len(doc.sec_paras[si]) else c.paras[0]
@@ -1679,7 +1742,7 @@ def _discover(doc):
                         break
                 if not label or len(label) > 40:
                     continue
-                pid = _norm_key(label)
+                pid = _heading_key(label)
                 if pid:
                     out.append({"id": pid, "at": cell_address(t, c), "label": label,
                                 "kind": "cell", "table": t, "cell": c, "para": c.paras[0]})
@@ -1688,9 +1751,15 @@ def _discover(doc):
         for h in heads:
             k = h["para"].gp + 1
             if k < len(doc.top) and k not in hk and not doc.top[k].text.strip() and not doc.top[k].objs:
-                pid = _norm_key(h["text"])
+                pid = _heading_key(h["text"])
                 if pid:
                     out.append({"id": pid, "at": "p%d" % k, "label": h["text"], "kind": "body", "para": doc.top[k]})
+        for p in doc.paras:                     # blank label lines ("성명: ", doc-core-api.md)
+            ll = label_line(p.text) if not p.objs else None
+            at = para_address(doc, p) if ll and ll["blank"] else None
+            if at:
+                out.append({"id": ll["key"], "at": at, "label": ll["label"],
+                            "kind": "cell_field" if p.cell is not None else "cover_field", "para": p})
     have = {r["at"] for r in out}
     for f in _click_fields(doc):
         p = f["para"]
@@ -1716,8 +1785,29 @@ def _discover(doc):
     return out
 
 
-#: a label line ("성명: 홍길동"), as the engine's form_model.LABEL_RE reads one
-_LABEL_LINE = re.compile(r"^\s*([가-힣A-Za-z][가-힣A-Za-z ·]{0,14}?)\s*[:：]\s*(.*?)\s*$")
+def _label_char(ch, first=False):
+    if "\uac00" <= ch <= "\ud7a3" or ("a" <= ch <= "z") or ("A" <= ch <= "Z"):
+        return True
+    return not first and ch in (" ", "\u00b7")
+
+
+def label_line(text):
+    """The label line in `text` (doc-core-api.md, "Label lines and heading keys"): {"label", "key", "at",
+    "value", "blank"} where `at` is the position after the colon and the white space that follows it; None when
+    the text is not a label line."""
+    lead = len(text) - len(text.lstrip())
+    cut = min((i for i in (text.find(":", lead), text.find("\uff1a", lead)) if i >= 0), default=-1)
+    if cut < 0:
+        return None
+    label = text[lead:cut].rstrip()
+    if not 1 <= len(label) <= 15 or not _label_char(label[0], True) or not all(_label_char(c) for c in label):
+        return None
+    at = cut + 1
+    while at < len(text) and text[at].isspace():
+        at += 1
+    value = text[at:].strip()
+    return {"label": label, "key": "".join(label.split()), "at": at, "value": value,
+            "blank": not value.replace("_", "").strip()}
 
 
 def place_id(*parts):
@@ -1742,9 +1832,9 @@ def _identity_ids(doc, recs):
     gps = sorted(head_at)
     lines, seen = {}, {}
     for p in doc.paras:
-        m = _LABEL_LINE.match(p.text)
-        if m:
-            lab = re.sub(r"\s+", "", m.group(1))
+        ll = label_line(p.text)
+        if ll:
+            lab = ll["key"]
             n = seen.get(lab, 0)
             seen[lab] = n + 1
             lines[id(p)] = (lab, n)
@@ -1836,8 +1926,33 @@ def _lineage_put(sha, places):
             os.replace(tmp, d / ("%s.json" % sha))
         finally:
             _unlink(tmp)
+        _prune_lineage(d)
     except OSError:
         pass                                # a cache: without it the ids fall back to discovery
+
+
+LINEAGE_MAX_AGE_S = 90 * 86400.0    #: lineage entries older than this are dropped
+LINEAGE_MAX = 5000                  #: and only this many of the newest are kept
+
+
+def _prune_lineage(d: Path):
+    try:
+        ents = []
+        for x in d.glob("*.json"):
+            try:
+                ents.append((x.stat().st_mtime, x))
+            except OSError:
+                pass
+        ents.sort(reverse=True)
+        cut = time.time() - LINEAGE_MAX_AGE_S
+        for k, (mt, x) in enumerate(ents):
+            if k >= LINEAGE_MAX or mt < cut:
+                try:
+                    x.unlink()
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
 
 def _seat_value(doc, rec):
@@ -1850,8 +1965,8 @@ def _seat_value(doc, rec):
     if kind == "field" and rec.get("field") is not None and isinstance(rec["field"]["e"], int):
         return "".join(c for c in p.chars[rec["field"]["b"]:rec["field"]["e"]] if c != OBJ)
     if kind in ("cover_field", "cell_field"):
-        m = re.search(r"[:：]", p.text)
-        return p.text[m.end():].strip() if m else ""
+        ll = label_line(p.text)
+        return ll["value"] if ll else ""
     return p.text
 
 
@@ -1988,8 +2103,8 @@ def _resolve(doc, addr, allow):
         if not exact:
             exact = [h for h in heads if h["text"].startswith(want)]
         if not exact:   # numbering and spaces aside
-            nk = _norm_key(want)
-            exact = [h for h in heads if nk and _norm_key(h["text"]) == nk]
+            nk = _heading_key(want)
+            exact = [h for h in heads if nk and _heading_key(h["text"]) == nk]
         if len(exact) != 1:
             why = "no heading matches %r" % want if not exact else "%d headings match %r" % (len(exact), want)
             pool = [h["text"] for h in (exact or heads)]
@@ -2142,7 +2257,7 @@ def read(path, at=None, *, with_runs=False):
         for p in ps:
             blocks.append(_para_block(doc, p, with_runs))
             for t in doc.tables_in(p):
-                if doc.top_of(t.host) is p and (t.host is p or t.host.cell is not None):
+                if t.addr is not None and doc.top_of(t.host) is p and (t.host is p or t.host.cell is not None):
                     blocks.append(_table_block(doc, t))
 
     if at is None:
@@ -2734,10 +2849,13 @@ def _plan_op(doc, cl, i, name, op, at):
                 _adds_for(doc, a, p, text.count("\n"))
                 a.text_of = p
                 acts.append(a)
-            else:   # "label: ___" — typed after the colon (replacing what an earlier fill typed there)
-                m = re.search(r"[:：]", pt)
-                j = m.end() if m else len(pt)
-                b = len(pt) if pt[j:].strip() else j
+            else:   # a label line: keep "label:" and the white space after it, replace what follows
+                ll = label_line(pt)
+                if ll is None:
+                    raise DocError("bad_address", "%s is no longer a label line" % at, at=at, i=i)
+                j, b = ll["at"], len(pt)
+                if not pt[j - 1:j].isspace():
+                    text = " " + text
                 if any(ch == OBJ for ch in p.chars[j:b]):
                     raise DocError("bad_input", "the value of %s holds an object" % at, at=at, i=i)
                 cl.span(p, j, b, i, name)
@@ -3007,6 +3125,10 @@ def _remap_result(doc, newdoc, acts):
     remap = _remap(doc, acts)
     if newdoc is None or _verify(doc, newdoc, acts):
         return remap, False
+    dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels]
+    if dels:        # a removal the output does not show was not done: never report it applied
+        raise DocError("internal", "the output does not show what op %d (%s) removes; nothing was written"
+                       % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
     return _align_remap(doc, newdoc), True
 
 
