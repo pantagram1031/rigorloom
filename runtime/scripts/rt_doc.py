@@ -99,7 +99,7 @@ SCHEMA = "rigorloom/doc-core/v1"
 
 OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
-       "char_shape", "para_shape")
+       "char_shape", "para_shape", "numbering")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2508,7 +2508,15 @@ class _Claims:
         self.removed.append((si, start, end, i, op, at))
 
 
-EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape")
+def _no_list_twice(cl, q, i, name, at):
+    """style and numbering both read the paragraph's base style and list state: one of them per paragraph."""
+    for s2, pos, j, op2, at2 in cl.touched:
+        if j != i and s2 == q.si and pos == q.start and op2 in ("style", "numbering"):
+            cl._conflict(i, name, j, op2, at)
+    cl.touch(q.si, q.start, i, name, at)
+
+
+EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape", "numbering")
 RANGE_OPS = ("set", "replace", "char_shape")
 
 
@@ -2596,6 +2604,90 @@ def _shape_fmt(name, op, i, at):
     if out.get("sup") and out.get("sub"):
         raise DocError("bad_input", "char_shape: sup and sub cannot both be on", i=i, at=at)
     return out
+
+
+NUMBERING_KINDS = ("outline", "number", "bullet", "none")
+
+
+def _numbering_set(op, i, at):
+    """The checked ``set`` of a numbering op: kind, level 1-7, and char / start / restart where they apply."""
+    v = op.get("set")
+    if not isinstance(v, dict) or "kind" not in v:
+        raise DocError("bad_input", "numbering needs set: {kind: outline|number|bullet|none, level?}", i=i, at=at)
+    allowed = {"outline": ("kind", "level"), "number": ("kind", "level", "start", "restart"),
+               "bullet": ("kind", "level", "char"), "none": ("kind",)}
+    kind = v.get("kind")
+    if kind not in allowed:
+        raise DocError("bad_input", "numbering: kind is one of %s" % ", ".join(NUMBERING_KINDS), i=i, at=at,
+                       candidates=list(NUMBERING_KINDS))
+    extra = sorted(str(k) for k in v if k not in allowed[kind])
+    if extra:
+        raise DocError("bad_input", "numbering %s takes %s, not %s" % (kind, ", ".join(allowed[kind]),
+                                                                        ", ".join(extra)), i=i, at=at)
+    lv = v.get("level", 1 if kind == "outline" else None)
+    if lv is not None and not (_is_int(lv) and 1 <= lv <= 7):
+        raise DocError("bad_input", "numbering: level is 1 to 7", i=i, at=at)
+    ch = v.get("char")
+    if ch is not None and not (isinstance(ch, str) and len(ch) == 1 and not _CTRL.search(ch) and not ch.isspace()):
+        raise DocError("bad_input", "numbering: char is one visible character", i=i, at=at)
+    st = v.get("start")
+    if st is not None and not (_is_int(st) and 1 <= st <= 9999):
+        raise DocError("bad_input", "numbering: start is 1 to 9999", i=i, at=at)
+    if "restart" in v and not isinstance(v["restart"], bool):
+        raise DocError("bad_input", "numbering: restart is true or false", i=i, at=at)
+    if st is not None and v.get("restart"):
+        raise DocError("bad_input", "numbering: give start or restart, not both", i=i, at=at)
+    return {"kind": kind, "level": lv, "char": ch, "start": st, "restart": bool(v.get("restart"))}
+
+
+def _outline_style(doc, n):
+    """The id of the document's 개요 n style (engName "Outline n"), or None."""
+    for sid, s in doc.styles.items():
+        if (s.get("engName") or "") == "Outline %d" % n:
+            return sid
+    return None
+
+
+def _numbering_steps(doc, q, want):
+    """Engine steps that bring paragraph q from its base list state to `want` (no steps when it is there)."""
+    st = doc.styles.get(q.style) or {}
+    outline = (st.get("engName") or "").startswith("Outline")
+    typ, lv = doc.para_heading.get(q.pr, ("NONE", 0))
+    kind, level = want["kind"], want["level"]
+    go = ["goto", q.k, 0, q.si]
+    if kind == "outline":
+        if outline and st.get("engName") == "Outline %d" % level:
+            return []
+        return [go, ["apply_style", "Outline %d" % level]]
+    steps = [go]
+    if outline:                                  # out of the 개요 style first, as Hancom's toggle does
+        steps.append(["apply_style", "0"])
+        typ, lv = "NONE", 0
+    if kind == "none":
+        if typ == "NUMBER":
+            steps.append(["put_para_number"])
+        elif typ == "BULLET":
+            steps.append(["put_bullet"])
+        return steps if len(steps) > 1 else []
+    if kind == "number":
+        if typ != "NUMBER":
+            steps.append(["put_para_number"])
+            lv = lv if typ in ("NUMBER", "NONE", "BULLET") else 0
+    else:
+        if typ == "BULLET" and want["char"] is not None:
+            steps.append(["put_bullet"])         # off, then on with the asked character
+            typ = "NONE"
+        if typ != "BULLET":
+            steps.append(["put_bullet", want["char"]] if want["char"] is not None else ["put_bullet"])
+            lv = lv or 1
+    if level is not None and lv != level - 1:   # level n is the XML's level n-1
+        steps.append(["para_level", level - 1 - lv])
+    if kind == "number":
+        if want["restart"]:
+            steps.append(["put_new_para_number"])
+        elif want["start"] is not None:
+            steps.append({"op": "set_numbering", "kwargs": {"start": want["start"]}})
+    return steps if len(steps) > 1 else []
 
 
 def _shape_hint(kind):
@@ -3066,7 +3158,7 @@ def _plan_op(doc, cl, i, name, op, at):
                            candidates=_cands_near([s["name"] for s in doc.styles.values()], sty))
         r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
         for q in r["paras"]:
-            cl.touch(q.si, q.start, i, name, at)
+            _no_list_twice(cl, q, i, name, at)
             acts.append(_Act(i, name, at, q, q.start, side=2, steps=[["goto", q.k, 0, q.si], ["apply_style", sty]]))
     elif name in ("char_shape", "para_shape"):
         fmt = _shape_fmt(name, op, i, at)
@@ -3109,6 +3201,27 @@ def _plan_op(doc, cl, i, name, op, at):
                 acts.append(_Act(i, name, at, q, q.start, side=2, intra=a0, steps=st))
             if not any(a.i == i for a in acts):
                 raise DocError("bad_input", "%s has no characters to shape" % at, i=i, at=at)
+    elif name == "numbering":
+        want = _numbering_set(op, i, at)
+        if want["kind"] == "outline" and _outline_style(doc, want["level"]) is None:
+            raise DocError("bad_input", "this document has no 개요 %d style" % want["level"], i=i, at=at,
+                           candidates=[s["name"] for s in doc.styles.values()
+                                       if (s.get("engName") or "").startswith("Outline")][:7])
+        r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
+        if r.get("range"):
+            raise DocError("bad_address", "numbering takes whole paragraphs, not a character range", i=i, at=at)
+        paras = [q for q in r["paras"] if q is not None]
+        if len(paras) == 1:
+            _check_expect(op, i, at, paras[0].text)
+        elif r.get("cell") is not None:
+            _check_expect(op, i, at, _cell_text(r["cell"]))
+        elif op.get("expect") is not None:
+            raise DocError("bad_input", "expect works on one paragraph or cell", i=i, at=at)
+        for q in paras:
+            _no_list_twice(cl, q, i, name, at)
+            st = _numbering_steps(doc, q, want)
+            if st:
+                acts.append(_Act(i, name, at, q, q.start, side=2, steps=st))
     elif name in ("insert_table", "insert_picture", "insert_equation"):
         r = resolve(doc, at, allow=("para", "cellpara", "heading", "cell", "place"))
         p = r["cell"].paras[-1] if (r.get("cell") is not None and r["kind"] in ("cell", "place")) else r["para"]

@@ -70,7 +70,7 @@ FOREIGN = (
     "null",
     "file://",
     "https://127.0.0.1:8765",
-    "http://127.0.0.1@evil.example",
+    "http://127.0.0.1@evil.example.com",
     "http://127.0.0.1:8765/extra",
     "tauri://evil.example",
     "http://tauri.localhost.evil.example",

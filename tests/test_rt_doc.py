@@ -1128,3 +1128,88 @@ def test_engine_char_and_para_shape(kit, tmp_path):
         sec = z.read("Contents/section0.xml").decode("utf-8")
         assert "markpenBegin" not in sec and "markpenEnd" not in sec
         assert 'height="1400"' in _char_pr(z, text[:4], "XY" + text[8:12])[0]
+
+
+# ============================================================================ 개요 번호 / 문단 번호 / 글머리표
+def test_numbering_is_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(op):
+        return D.edit(src, [op] if isinstance(op, dict) else op, base=rev, out=out)["error"]
+    e = err({"op": "numbering", "at": "p2", "set": {"kind": "roman"}})
+    assert e["code"] == "bad_input" and "outline" in e["candidates"]
+    assert err({"op": "numbering", "at": "p2"})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "number", "level": 8}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "number", "level": True}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "bullet", "char": "ab"}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "outline", "char": "*"}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "none", "level": 2}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "number", "start": 0}})["code"] == "bad_input"
+    assert err({"op": "numbering", "at": "p2", "set": {"kind": "number", "start": 3, "restart": True}})["code"] \
+        == "bad_input"
+    assert err({"op": "numbering", "at": "p2:0-3", "set": {"kind": "number"}})["code"] == "bad_address"
+    e = err([{"op": "numbering", "at": "p2", "set": {"kind": "number"}}, {"op": "style", "at": "p2", "style": "본문"}])
+    assert e["code"] == "conflict"
+
+
+@engine
+def test_engine_numbering_sets_the_list_state(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    out, out2 = tmp_path / "n.hwpx", tmp_path / "n2.hwpx"
+    texts = {a: D.read(f, a)["blocks"][0]["text"] for a in ("p3", "p4", "p6")}
+    r = D.edit(f, [
+        {"op": "numbering", "at": "p3", "set": {"kind": "number", "level": 2}},
+        {"op": "numbering", "at": "p4", "set": {"kind": "bullet", "char": "■", "level": 3}},
+        {"op": "numbering", "at": "p5", "set": {"kind": "outline", "level": 2}},
+        {"op": "numbering", "at": "p6", "set": {"kind": "number", "start": 5}},
+    ], base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == []
+
+    def state(path, a):
+        d = D._load(path)
+        q = D.resolve(d, a)["para"]
+        return d.para_heading.get(q.pr, ("NONE", 0)), (d.styles.get(q.style) or {}).get("engName"), q.text
+    assert state(out, "p3") == (("NUMBER", 1), "Normal", texts["p3"])     # level 2 = the XML's level 1
+    assert state(out, "p4")[0] == ("BULLET", 2)
+    assert state(out, "p5")[:2] == (("OUTLINE", 1), "Outline 2")
+    assert state(out, "p6")[0] == ("NUMBER", 0) and state(out, "p6")[2] == texts["p6"]
+    assert state(out, "p7")[0] == ("NONE", 0)
+    with zipfile.ZipFile(out) as z:
+        head = z.read("Contents/header.xml").decode("utf-8")
+        assert re.search(r'<hh:paraHead start="5" level="1"', head)
+        assert "■" in head
+    # an op that finds the paragraph already there adds no step; none takes each list off; number -> bullet
+    r = D.edit(out, [
+        {"op": "numbering", "at": "p3", "set": {"kind": "number", "level": 2}},
+        {"op": "numbering", "at": "p4", "set": {"kind": "none"}},
+        {"op": "numbering", "at": "p5", "set": {"kind": "none"}},
+        {"op": "numbering", "at": "p6", "set": {"kind": "bullet"}},
+    ], base=D.rev_of(out), out=out2)
+    assert r["ok"], r
+    assert state(out2, "p3")[0] == ("NUMBER", 1)
+    assert state(out2, "p4")[0][0] == "NONE"
+    assert state(out2, "p5")[:2] == (("NONE", 0), "Normal")
+    assert state(out2, "p6")[0][0] == "BULLET" and state(out2, "p6")[2] == texts["p6"]
+
+    # outline -> number, and bullet -> number restarted (새 번호로 시작: a numbering of its own from 1)
+    out3 = tmp_path / "n3.hwpx"
+    r = D.edit(out, [
+        {"op": "numbering", "at": "p5", "set": {"kind": "number"}},
+        {"op": "numbering", "at": "p4", "set": {"kind": "number", "restart": True}},
+    ], base=D.rev_of(out), out=out3)
+    assert r["ok"], r
+    assert state(out3, "p5")[0][0] == "NUMBER" and state(out3, "p5")[1] != "Outline 2"
+    assert state(out3, "p4")[0][0] == "NUMBER"
+
+    def num_ref(path, a):
+        d = D._load(path)
+        q = D.resolve(d, a)["para"]
+        with zipfile.ZipFile(path) as z:
+            head = z.read("Contents/header.xml").decode("utf-8")
+        pp = re.search(r'<hh:paraPr id="%s".*?</hh:paraPr>' % q.pr, head, re.S).group(0)
+        ref = re.search(r'<hh:heading type="NUMBER" idRef="(\d+)"', pp).group(1)
+        return ref, re.search(r'<hh:numbering id="%s"[^>]*\bstart="(\d+)"' % ref, head).group(1)
+    assert num_ref(out3, "p4")[0] != num_ref(out3, "p5")[0]
+    assert num_ref(out3, "p4")[1] == "1"
