@@ -7,6 +7,7 @@ pair publish. They do not exercise own_render IoU or rematch.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -67,27 +68,28 @@ def test_export_safety_rust_matrix(tmp_path):
     if rustc is None:
         pytest.skip("rustc is not installed")
     binary = tmp_path / "export_safety"
-    compiled = subprocess.run(
-        [rustc, "--test", "--edition", "2021", "-o", str(binary), str(HARNESS)],
-        cwd=str(REPO),
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    if compiled.returncode != 0:
-        sys.stderr.write(compiled.stdout)
-        sys.stderr.write(compiled.stderr)
-    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
-    completed = subprocess.run(
-        [str(binary), "--test-threads=1"],
-        cwd=str(REPO),
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    if completed.returncode != 0:
-        sys.stderr.write(completed.stdout)
-        sys.stderr.write(completed.stderr)
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    compiled = _run_to_files(
+        [rustc, "--test", "--edition", "2021", "-o", str(binary), str(HARNESS)], tmp_path, "rustc")
+    assert compiled[0] == 0, compiled[1]
+    completed = _run_to_files([str(binary), "--test-threads=1"], tmp_path, "matrix")
+    assert completed[0] == 0, completed[1]
+
+
+def _run_to_files(cmd, tmp_path, name):
+    """Run cmd with its output in files, not pipes.
+
+    On Windows, rustc's MSVC linker can start vctip.exe (Visual Studio
+    telemetry), which inherits the output handles and outlives the link.
+    With pipes, subprocess then waits for that child to close them and the
+    call times out although rustc finished long before. Files have no such
+    wait, and VSCMD_SKIP_SENDTELEMETRY asks the linker not to start it.
+    """
+    env = dict(os.environ, VSCMD_SKIP_SENDTELEMETRY="1")
+    out_path = tmp_path / f"{name}.out"
+    with open(out_path, "wb") as out:
+        proc = subprocess.run(cmd, cwd=str(REPO), stdout=out, stderr=subprocess.STDOUT,
+                              stdin=subprocess.DEVNULL, env=env, timeout=180, check=False)
+    text = out_path.read_text(encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        sys.stderr.write(text)
+    return proc.returncode, text
