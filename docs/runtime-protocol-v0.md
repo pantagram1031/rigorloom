@@ -691,7 +691,7 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
 7. **Browser HTTP surface versus the Runtime (resolved by `rigorloom ui`).**
    The retired legacy dashboard has been replaced by `rigorloom ui`
    (`runtime/scripts/rt_ui.py`, `docs/web-ui.md`), a loopback HTTP/SSE bridge
-   that forwards JSON-RPC to `serve.py --entry host` with `Host`,
+   that forwards JSON-RPC to `serve.py --entry host` with `Host`, `Origin`,
    `Sec-Fetch-Site`, and `X-Rigorloom-Token` guards.
    The bridge credential alone does not record an approval. When the
    approval sheet renders a plan, the client asks

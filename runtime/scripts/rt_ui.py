@@ -201,6 +201,34 @@ def _valid_host_header(host_value: str | None) -> bool:
     return host.lower() in ALLOWED_HOSTS
 
 
+# The webview origins of the native shell. The shell talks to the runtime
+# directly, but its webview may still reach a bridge on this machine.
+TAURI_ORIGINS = frozenset({"tauri://localhost", "http://tauri.localhost"})
+
+
+def _valid_origin_header(origin_value: str | None) -> bool:
+    """Allow a request with no Origin, a loopback http origin, or the Tauri webview.
+
+    A page served from anywhere else (or an opaque "null" origin: sandboxed
+    frames, file://, data:) never reaches a route, token or no token.
+    """
+    if origin_value is None:
+        return True
+    raw = origin_value.strip()
+    if not raw or raw.lower() == "null":
+        return False
+    if raw.lower() in TAURI_ORIGINS:
+        return True
+    parsed = urlsplit(raw)
+    if parsed.scheme.lower() != "http":
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        return False
+    return _valid_host_header(parsed.netloc)
+
+
 def _inject_bootstrap(html: str, payload: dict[str, Any]) -> str:
     """Inject window.__RIGORLOOM_UI__ before </head> with script-breakout escaping."""
     serialized = (
@@ -2260,6 +2288,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         self._send_bytes(status, encoded, "application/json; charset=utf-8", extra_headers=headers)
 
     def _reject_forbidden(self, code: str, message: str) -> None:
+        # A refused request's body is never read; do not parse it as the next request.
+        self.close_connection = True
         self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": {"code": code, "message": message}})
 
     def _check_origin_guards(self) -> bool:
@@ -2268,6 +2298,9 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             return False
         if (self.headers.get("Sec-Fetch-Site") or "").strip().lower() == "cross-site":
             self._reject_forbidden("cross_site_refused", "cross-site requests are forbidden")
+            return False
+        if not _valid_origin_header(self.headers.get("Origin")):
+            self._reject_forbidden("invalid_origin", "Origin header must be a loopback page or the desktop app")
             return False
         return True
 
