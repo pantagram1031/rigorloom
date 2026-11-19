@@ -49,7 +49,7 @@ try:  # installed as rigorloom_runtime
     from .rt_jsonl import (READ_EOF, READ_LINE, StrictJsonError, dumps_frame,
                            loads_strict, read_raw_frame)
     from .rt_paths import PathRefused, Roots, canonical
-    from .rt_term import one_line, safe_text
+    from .rt_term import one_line, safe_text, save_question
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_toolset  # noqa: F401
     import rt_tools
@@ -57,7 +57,7 @@ except ImportError:  # a checkout, runtime/scripts on sys.path
     from rt_jsonl import (READ_EOF, READ_LINE, StrictJsonError, dumps_frame,
                           loads_strict, read_raw_frame)
     from rt_paths import PathRefused, Roots, canonical
-    from rt_term import one_line, safe_text
+    from rt_term import one_line, safe_text, save_question
 
 LATEST = "2025-06-18"
 OLDER = "2025-03-26"
@@ -687,17 +687,8 @@ def output_schema(tool) -> dict:
 
 
 def elicitation_message(question: str, detail: dict) -> str:
-    """The overwrite question in Korean, with everything a person should weigh."""
-    target = detail.get("target") or ""
-    pages = detail.get("changedPages") or []
-    lossy = detail.get("lossy") or []
-    lines = [f"이 파일을 덮어쓸까요?\n{target}" if target else question,
-             "바뀐 쪽: " + (", ".join(map(str, pages)) if pages else "알 수 없음"),
-             f"사람이 아직 검토하지 않은 변경 묶음: {int(detail.get('unreviewed') or 0)}개",
-             "형식 변환에서 잃는 것: " + (", ".join(map(str, lossy)) if lossy else "없음")]
-    if detail.get("undo"):
-        lines.append(f"되돌리기: {detail['undo']}")
-    return safe_text("\n".join(lines))
+    """The overwrite question, worded as in the terminal, one fact per line."""
+    return safe_text("\n".join(save_question(question, detail)))
 
 
 def _result(mid, result: dict) -> dict:

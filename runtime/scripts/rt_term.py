@@ -247,6 +247,35 @@ def invisible_in(path: str) -> list[str]:
     return seen
 
 
+def save_question(question: str, detail: dict, *, shown=None) -> list[str]:
+    """The overwrite question, then each thing to weigh before answering.
+
+    One wording for the terminal prompt and the MCP elicitation, so a person
+    sees the same facts whichever client asks. ``shown`` renders a path
+    (default ``path_text``; the terminal passes one relative to its folder).
+    """
+    shown = shown or path_text
+    target = str(detail.get("target") or "")
+    lines = [question]
+    hidden = invisible_in(target)
+    if hidden:
+        lines.append(f"파일 이름에 보이지 않는 문자가 있습니다: {', '.join(hidden)}")
+    if detail.get("revision"):
+        lines.append(f"저장할 것: 초안 {detail['revision']}판")
+    pages = detail.get("changedPages") or []
+    if pages:
+        lines.append(f"바뀐 쪽: {', '.join(map(str, pages))}")
+    if detail.get("unreviewed"):
+        lines.append(f"에이전트가 고치고 아직 아무도 확인하지 않은 변경: {detail['unreviewed']}건")
+    if detail.get("lossy"):
+        lines.append("변환하면 빠지는 항목: " + ", ".join(map(str, detail["lossy"])))
+    if detail.get("fontsSubstituted"):
+        pairs = ", ".join(f"{s.get('want')} → {s.get('got')}" for s in detail["fontsSubstituted"])
+        lines.append(f"글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)")
+    lines.append(f'이전 내용은 저장 기록에 남습니다. 되돌리기: rigorloom undo "{shown(target)}"')
+    return lines
+
+
 def one_line(text: str) -> str:
     """Collapse line breaks and tabs so a preview stays on one row."""
     return " ".join(safe_text(text).replace("\t", " ").split())

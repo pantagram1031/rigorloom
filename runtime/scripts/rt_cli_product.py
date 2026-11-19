@@ -33,7 +33,7 @@ try:  # installed as rigorloom_runtime
     from .rt_cli_render import SHOW, candidates_line, person_error, shown
     from .rt_paths import STATE_MARKER, PathRefused, canonical, state_home
     from .rt_term import (Term, confirm, invisible_in, is_console, one_line, pad, prepare_stdio,
-                          safe_text, width)
+                          safe_text, save_question, width)
     from .rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 except ImportError:  # a checkout, runtime/scripts on sys.path
     import rt_commit
@@ -41,7 +41,7 @@ except ImportError:  # a checkout, runtime/scripts on sys.path
     from rt_cli_render import SHOW, candidates_line, person_error, shown
     from rt_paths import STATE_MARKER, PathRefused, canonical, state_home
     from rt_term import (Term, confirm, invisible_in, is_console, one_line, pad, prepare_stdio,
-                         safe_text, width)
+                         safe_text, save_question, width)
     from rt_tools import ERROR_EXIT, Context, ToolError, call, get, render_text
 
 #: Verbs this module owns. ``open`` collides with the legacy protocol verb;
@@ -487,27 +487,8 @@ def _context(args) -> Context:
         if not (is_console(sys.stdin) and is_console(sys.stderr)):
             return None
         # The question first, then what the person needs to answer it, then y/N.
-        pages = detail.get("changedPages") or []
-        lines = [question]
-        hidden = invisible_in(str(detail.get("target") or ""))
-        if hidden:
-            lines.append(f"  파일 이름에 보이지 않는 문자가 있습니다: {', '.join(hidden)}")
-        if detail.get("revision"):
-            lines.append(f"  저장할 것: 초안 {detail['revision']}판")
-        if pages:
-            lines.append(f"  바뀐 쪽: {', '.join(map(str, pages))}")
-        if detail.get("unreviewed"):
-            lines.append(f"  에이전트가 고치고 아직 아무도 확인하지 않은 변경: "
-                         f"{detail['unreviewed']}건")
-        if detail.get("lossy"):
-            lines.append("  변환하면 빠지는 항목: " + ", ".join(detail["lossy"]))
-        if detail.get("fontsSubstituted"):
-            pairs = ", ".join(f"{s.get('want')} → {s.get('got')}"
-                              for s in detail["fontsSubstituted"])
-            lines.append(f"  글꼴 대체: {pairs} (쪽 나눔이 한글과 다를 수 있음)")
-        lines.append("  이전 내용은 저장 기록에 남습니다. 되돌리기: "
-                     f'rigorloom undo "{shown(str(detail.get("target")))}"')
-        sys.stderr.write(safe_text(lines[0] + " [y/N]\n" + "\n".join(lines[1:])) + "\n")
+        lines = save_question(question, detail, shown=shown)
+        sys.stderr.write(safe_text(lines[0] + " [y/N]\n" + "\n".join("  " + x for x in lines[1:])) + "\n")
         return confirm("", prompt="> ")
     return Context(client="cli", roots=None, source=getattr(args, "source", "disk"),
                    ask=ask, force=bool(getattr(args, "force", False)))

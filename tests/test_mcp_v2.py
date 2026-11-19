@@ -759,17 +759,33 @@ def test_elicitation_accept_overwrites(env):
         "type": "object",
         "properties": {"overwrite": {"type": "boolean", "title": "덮어쓰기"}},
         "required": ["overwrite"]}
-    message = params["message"]
-    assert str(path.resolve()) in message
+    message = params["message"].splitlines()
+    assert message[0] == f'"{path.resolve()}" 파일을 덮어쓸까요?'
     assert "바뀐 쪽: 1" in message
-    assert "검토하지 않은 변경 묶음: 1개" in message
-    assert "형식 변환에서 잃는 것: 없음" in message
-    assert f'rigorloom undo "{path.resolve()}"' in message
+    assert "에이전트가 고치고 아직 아무도 확인하지 않은 변경: 1건" in message
+    assert not any(line.startswith("변환하면 빠지는 항목") for line in message)
+    assert message[-1] == f'이전 내용은 저장 기록에 남습니다. 되돌리기: rigorloom undo "{path.resolve()}"'
     s.reply(ask["id"], {"action": "accept", "content": {"overwrite": True}})
     r = s.response(rid)["result"]
     assert r["isError"] is False
     assert r["structuredContent"]["acceptedVia"] == "person:elicitation"
     assert "480,000원" in path.read_text(encoding="utf-8")
+
+
+def test_elicitation_names_a_file_with_an_invisible_character(env):
+    # The same escape and warning line as the terminal prompt: a zero-width
+    # space must not let one file pass for another in the question.
+    path = env.doc(name="신청서\u200b.fdoc")
+    s = env.session()
+    s.handshake(caps=ELICIT)
+    _edited(s, path)
+    rid, ask = _save_and_get_question(s, path)
+    message = ask["params"]["message"].splitlines()
+    shown = str(path.resolve()).replace("\\", "\\\\").replace("\u200b", "\\u200b")
+    assert message[0] == f'"{shown}" 파일을 덮어쓸까요?'
+    assert message[1] == "파일 이름에 보이지 않는 문자가 있습니다: U+200B"
+    s.reply(ask["id"], {"action": "decline"})
+    assert s.response(rid)["result"]["isError"] is True
 
 
 @pytest.mark.parametrize("answer,code", [
