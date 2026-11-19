@@ -173,7 +173,7 @@
 | `fill_charpr_script_anomaly` | 위첨자나 아래첨자 서식이 있는 칸입니다. 글자 크기 확인이 필요합니다. | This blank uses superscript or subscript formatting. Check the text size. |
 | `script_anomaly_target` | 위첨자나 아래첨자 서식이 있는 칸입니다. 글자 크기 확인이 필요합니다. | This blank uses superscript or subscript formatting. Check the text size. |
 | `run_color_anomaly` | 바꾸려는 문구에 강조색이 있습니다. | The text to replace contains an emphasis colour. |
-| `at_cell_expect_mismatch` | 처음 읽은 뒤 칸의 문구가 바뀌었습니다. | The cell text has changed since it was read. |
+| `at_cell_expect_mismatch` | 칸의 문구가 예상한 내용과 다릅니다. | The cell text differs from what was expected. |
 | `replace_key_ambiguous` | 같은 칸에 같은 문구가 여러 번 있어 바꿀 위치를 찾을 수 없습니다. | The same text appears more than once in this cell. Could not identify which occurrence to change. |
 | `at_cell_run_ambiguous` | 같은 칸에 같은 문구가 여러 번 있어 바꿀 위치를 찾을 수 없습니다. | The same text appears more than once in this cell. Could not identify which occurrence to change. |
 | `run_inventory_unavailable` | 이 문구의 위치나 서식 정보를 확인할 수 없어 직접 고칠 수 없습니다. | Could not find the text or its formatting information. Inline editing is unavailable. |

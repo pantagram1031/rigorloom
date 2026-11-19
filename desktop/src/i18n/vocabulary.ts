@@ -369,8 +369,8 @@ export const ERROR_CODE_VOCAB = {
     en: "The text to replace contains an emphasis colour.",
   },
   at_cell_expect_mismatch: {
-    ko: "처음 읽은 뒤 칸의 문구가 바뀌었습니다.",
-    en: "The cell text has changed since it was read.",
+    ko: "칸의 문구가 예상한 내용과 다릅니다.",
+    en: "The cell text differs from what was expected.",
   },
   replace_key_ambiguous: MSG_REPLACE_AMBIGUOUS,
   at_cell_run_ambiguous: MSG_REPLACE_AMBIGUOUS,
