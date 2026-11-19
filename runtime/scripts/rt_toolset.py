@@ -994,16 +994,27 @@ def _ops_guide() -> str:
     return "\n".join(lines) + "\n"
 
 
+def _op_names(names: list[str]) -> str:
+    """Op names with a shared family written once: table.{set_cells,add_row}.
+    Every op the engine work adds is one more name, so the description has
+    to stay short as the list grows."""
+    families: dict[str, list[str]] = {}
+    for name in names:
+        family, dot, rest = name.partition(".")
+        families.setdefault(family if dot else name, []).append(rest if dot else "")
+    return ", ".join(f"{f}.{{{','.join(r)}}}" if r != [""] and len(r) > 1
+                     else (f"{f}.{r[0]}" if r != [""] else f) for f, r in families.items())
+
+
 def _edit_description() -> str:
     spelled = ", ".join(_op_signature(n) + (" (one plain paragraph per line, no tables)"
                                             if n == "insert_after" else "") for n in OPS_SPELLED)
-    named = ", ".join(n for n in OP_FIELDS if n not in OPS_SPELLED and n != "fill")
-    return ("Change the document with declarative ops, staged into its draft (the "
-            "person's file is not touched until `save`). Ops: " + spelled + "; also "
-            + named + ". Each op's fields and an example: guide topic `ops`. Addresses "
-            "count from 0 (t0/r0/c0 is the first cell). Pass the `rev` you read as "
-            "`base`; use `expect` to guard the text you are replacing. Returns changed "
-            "pages: preview them.")
+    named = _op_names([n for n in OP_FIELDS if n not in OPS_SPELLED and n != "fill"])
+    return ("Change the document with declarative ops, staged into a draft; the person's "
+            "file changes only on `save`. Ops: " + spelled + "; also " + named + ". Each "
+            "op's fields and an example: guide topic `ops`. Addresses count from 0 "
+            "(t0/r0/c0 is the first cell). Pass the `rev` you read as `base`; `expect` "
+            "guards the text you change. Returns changed pages: preview them.")
 
 
 #: A GFM table's delimiter row: | --- | :---: |

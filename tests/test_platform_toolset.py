@@ -1660,12 +1660,17 @@ def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeyp
     # the same tables, has every op's fields and a working example, in every
     # install, with or without the knowledge pack.
     description = rt_tools.REGISTRY["edit"].description
-    for name in rt_toolset.OP_FIELDS:
-        if name != "fill":                          # the fill tool is its own entry
-            assert re.search(r"(?<![\w.])" + re.escape(name) + r"(?!\w)", description), name
+    assert len(description) < 700
+    named = set()                                   # table.{set_cells,add_row} -> both names
+    for family, rest in re.findall(r"(\w+)\.\{([^}]*)\}", description):
+        named |= {f"{family}.{r}" for r in rest.split(",")}
+    named |= set(re.findall(r"(?<![\w.{,])[a-z_]+(?:\.[a-z_]+)?(?![\w{])",
+                            re.sub(r"\w+\.\{[^}]*\}", "", description)))
     for name in rt_toolset.OPS_SPELLED:
         assert rt_toolset._op_signature(name) in description
+    assert set(rt_toolset.OP_FIELDS) - {"fill"} - set(rt_toolset.OPS_SPELLED) <= named
     assert "count from 0" in description
+    assert rt_toolset._op_names(["table.a", "style", "table.b", "x.y"]) == "table.{a,b}, style, x.y"
 
     empty = tmp_path / "none"
     empty.mkdir()
