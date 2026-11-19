@@ -251,7 +251,7 @@ def test_engine_error_keeps_fields():
     assert miss["code"] == "capability_unavailable" and miss["reason"] == "engine_function_missing"
 
 
-def test_equation_op_converts_latex():
+def test_equation_op_converts_latex(no_engine):
     doc = D._load(GUARD)
     acts = D._plan(doc, [{"op": "insert_equation", "at": "p2", "latex": r"\frac{a}{b}", "base_pt": 11}])
     step = acts[0].steps[-1]

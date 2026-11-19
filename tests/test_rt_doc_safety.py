@@ -500,26 +500,23 @@ def test_b10_page_n_is_page_n_and_failures_publish_nothing(kit, tmp_path):
 
 # ============================================================================ B11 built-in XML fidelity
 def test_b11_other_prefix_and_char_refs(no_engine, tmp_path):
-    src = make(tmp_path, "source.hwpx", "a &#x80; z", "b", lseg=True)
+    src = make(tmp_path, "source.hwpx", "x", "a &#x80; z", "b", lseg=True)
     renamed = rewrite(tmp_path, "renamed.hwpx",
                       lambda x: re.sub(r"(</?|xmlns:)hp(?=:|=)", r"\1other", x), src=src)
-    assert D.open(renamed)["paragraphs"] == D.open(src)["paragraphs"] == 2
-    assert texts(renamed) == ["a \x80 z", "b"]
-    r = apply(renamed, [replacement("z", "Z", at="p0")], tmp_path / "r-out.hwpx")
+    assert D.open(renamed)["paragraphs"] == D.open(src)["paragraphs"] == 3
+    assert texts(renamed) == ["x", "a \x80 z", "b"]
+    r = apply(renamed, [replacement("z", "Z", at="p1")], tmp_path / "r-out.hwpx")
     assert r["ok"], r
-    assert texts(r["out"]) == ["a \x80 Z", "b"]
+    assert texts(r["out"]) == ["x", "a \x80 Z", "b"]
     with zipfile.ZipFile(r["out"]) as z:
         s = z.read(SECTION).decode()
-    assert "<hp:" not in s.split("?>", 1)[1].split(">", 1)[1]           # no hp: tags were invented
-    r = apply(src, [replacement("z", "Z", at="p0")], tmp_path / "out.hwpx")
+    assert "<hp:" not in s and "<other:t>a &#x80; Z</other:t>" in s      # no hp: tags were invented
+    r = apply(src, [replacement("z", "Z", at="p1")], tmp_path / "out.hwpx")
     with zipfile.ZipFile(src) as a, zipfile.ZipFile(r["out"]) as b:
         sa, sb = a.read(SECTION).decode(), b.read(SECTION).decode()
-    assert "a &#x80; Z" in sb
-    assert ascii(ET.fromstring(sb.encode()).find(".//{*}t").text) == ascii("a \x80 Z")
-    # only the changed paragraph lost its linesegarray
-    assert sa.count("<hp:linesegarray>") == sb.count("<hp:linesegarray>") + 1
-    assert sb.replace("a &#x80; Z", "a &#x80; z") == sa.replace(LSEG, "", 1) or \
-        sb.replace("a &#x80; Z", "a &#x80; z").count(LSEG) == sa.count(LSEG) - 1
+    assert ascii(ET.fromstring(sb.encode()).findall(".//{*}t")[1].text) == ascii("a \x80 Z")
+    # the one changed text node and that paragraph's own linesegarray; every other byte as it was
+    assert sb == sa.replace("a &#x80; z</hp:t></hp:run>" + LSEG, "a &#x80; Z</hp:t></hp:run>")
 
 
 def test_b11_comments_do_not_create_paragraphs(no_engine, tmp_path):

@@ -58,20 +58,22 @@ import builtins
 import bisect
 import difflib
 import hashlib
-import html
 import importlib.util
+import io
 import itertools
 import json
 import os
 import queue
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import zipfile
+import zlib
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -138,6 +140,10 @@ def _api(fn):
 
 
 # ============================================================================ rev / files
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def rev_of(path) -> str:
     """First 12 hex of the sha256 of the file's bytes."""
     h = hashlib.sha256()
@@ -147,16 +153,22 @@ def rev_of(path) -> str:
     return h.hexdigest()[:12]
 
 
+def _read_bytes(path) -> bytes:
+    """The file's bytes in one read: every rev this module reports is the rev of the bytes it parsed."""
+    with _bopen(path, "rb") as f:
+        return f.read()
+
+
 def _need_file(path):
+    if not isinstance(path, (str, os.PathLike)) or not os.fspath(path):
+        raise DocError("bad_input", "a document path is a non-empty string")
     p = Path(path)
     if not p.is_file():
         raise DocError("not_found", "no such file: %s" % path)
     return p.resolve()
 
 
-def _format_of(path) -> str:
-    with _bopen(path, "rb") as f:
-        head = f.read(8)
+def _format_of_bytes(head: bytes, path) -> str:
     if head.startswith(b"PK"):
         return "hwpx"
     if head.startswith(b"\xd0\xcf\x11\xe0"):
@@ -167,29 +179,233 @@ def _format_of(path) -> str:
     raise DocError("bad_input", "not a .hwpx or .hwp document: %s" % Path(path).name)
 
 
-def _atomic_copy(src, dst):
-    dst = Path(dst)
-    fd, tmp = tempfile.mkstemp(prefix=".rtdoc-", suffix=dst.suffix, dir=str(dst.parent))
-    os.close(fd)
-    try:
-        shutil.copyfile(src, tmp)
-        os.replace(tmp, dst)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+def _format_of(path) -> str:
+    with _bopen(path, "rb") as f:
+        return _format_of_bytes(f.read(8), path)
 
 
 _SCRATCH = None
 _SCRATCH_LOCK = threading.Lock()
+SCRATCH_TTL_S = 3600.0      #: previews and renders older than this are removed from the scratch folder
 
 
 def _scratch() -> Path:
+    """This process's private scratch folder (0700, removed at exit)."""
     global _SCRATCH
     with _SCRATCH_LOCK:
         if _SCRATCH is None or not Path(_SCRATCH).is_dir():
             _SCRATCH = tempfile.mkdtemp(prefix="rigorloom-doc-")
             atexit.register(shutil.rmtree, _SCRATCH, True)
         return Path(_SCRATCH)
+
+
+def _scratch_sub(name) -> Path:
+    d = _scratch() / name
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _prune(folder: Path, ttl=None):
+    """Long-lived hosts: drop what an earlier preview or render left in a scratch subfolder."""
+    cut = time.time() - (SCRATCH_TTL_S if ttl is None else ttl)
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return
+    for ent in entries:
+        try:
+            if ent.stat(follow_symlinks=False).st_mtime < cut:
+                shutil.rmtree(ent.path, True) if ent.is_dir(follow_symlinks=False) else os.remove(ent.path)
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------- output paths
+def _real(path) -> str:
+    return os.path.normcase(os.path.realpath(os.fspath(path)))
+
+
+def _same_file(a, b) -> bool:
+    """True when a and b name the same file: same path after links, or the same inode (hard links)."""
+    try:
+        if os.path.exists(a) and os.path.exists(b) and os.path.samefile(a, b):
+            return True
+    except OSError:
+        pass
+    return _real(a) == _real(b)
+
+
+def _check_out(out, inputs=(), *, suffixes=None, what="out"):
+    """The absolute output path. Refused (bad_input) when it is a link, a folder, or any of the inputs (also
+    through a hard or symbolic link); not_found when its folder does not exist."""
+    if not isinstance(out, (str, os.PathLike)) or not os.fspath(out):
+        raise DocError("bad_input", "%s: an output path is required" % what)
+    raw = Path(os.path.abspath(os.fspath(out)))
+    parent = raw.parent
+    if not parent.is_dir():
+        raise DocError("not_found", "the output folder does not exist: %s" % parent)
+    o = Path(os.path.realpath(parent)) / raw.name
+    if os.path.islink(o):
+        raise DocError("bad_input", "%s is a symbolic link; name the file itself" % what, at=str(raw))
+    if o.is_dir():
+        raise DocError("bad_input", "%s is a folder: %s" % (what, raw), at=str(raw))
+    if suffixes and o.suffix.lower() not in suffixes:
+        raise DocError("bad_input", "%s must end in %s" % (what, " or ".join(suffixes)), at=str(raw))
+    for src in inputs:
+        if src is not None and _same_file(o, src):
+            raise DocError("bad_input", "%s is the input file %s (or a link to it); write somewhere else%s"
+                           % (what, Path(src).name, " or pass in_place=True" if what == "out" else ""),
+                           at=str(raw))
+    return o
+
+
+# ---------------------------------------------------------------------------- locks and publication
+LOCK_TIMEOUT_ENV = "RIGORLOOM_DOC_LOCK_TIMEOUT"
+LOCK_TIMEOUT_S = 10.0
+LOCK_STALE_S = 120.0        #: a lock file older than this was left by a writer that died; it is broken
+_REPLACE_TRIES = 6
+_TLOCKS = {}
+_TLOCKS_GUARD = threading.Lock()
+
+
+def _lock_path(target) -> Path:
+    t = Path(os.path.realpath(Path(target).parent)) / Path(target).name
+    return t.parent / (".~%s.rtdoc-lock" % t.name)
+
+
+class _PathLock:
+    """Serializes writers of one destination: a thread lock for this process and an O_EXCL lock file next to
+    the destination for every cooperating process (CLI, MCP, UI). Held only for the final check and replace."""
+
+    def __init__(self, target):
+        self.file = _lock_path(target)
+        key = os.path.normcase(str(self.file))
+        with _TLOCKS_GUARD:
+            self.tl = _TLOCKS.setdefault(key, threading.Lock())
+        self.timeout = float(os.environ.get(LOCK_TIMEOUT_ENV) or LOCK_TIMEOUT_S)
+
+    def __enter__(self):
+        deadline = time.monotonic() + self.timeout
+        if not self.tl.acquire(timeout=self.timeout):
+            raise self._busy()
+        try:
+            while True:
+                try:
+                    fd = os.open(str(self.file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                except (FileExistsError, PermissionError):     # Windows: a lock file being deleted
+                    try:
+                        if time.time() - os.stat(self.file).st_mtime > LOCK_STALE_S:
+                            os.remove(self.file)
+                            continue
+                    except OSError:
+                        pass
+                    if time.monotonic() > deadline:
+                        raise self._busy()
+                    time.sleep(0.02)
+                    continue
+                with os.fdopen(fd, "w") as f:
+                    f.write("%d %s\n" % (os.getpid(), time.strftime("%Y-%m-%dT%H:%M:%S")))
+                return self
+        except BaseException:
+            self.tl.release()
+            raise
+
+    def __exit__(self, *exc):
+        try:
+            os.remove(self.file)
+        except OSError:
+            pass
+        self.tl.release()
+
+    def _busy(self):
+        return DocError("busy", "another writer is saving %s; retry in a moment" % self.file.name[2:-11],
+                        retryable=True)
+
+
+def _before_publish(dest):
+    """Called after the output is staged and before the destination lock is taken (a test hook)."""
+
+
+def _replace(tmp, dest):
+    """os.replace, retried while Windows reports a sharing violation (the file is open elsewhere)."""
+    for n in range(_REPLACE_TRIES):
+        try:
+            os.replace(tmp, dest)
+            return
+        except PermissionError:
+            if n + 1 < _REPLACE_TRIES:
+                time.sleep(0.02 * (2 ** n))
+    raise DocError("busy", "%s is open in another program (or not writable); close it and retry" % Path(dest).name,
+                   at=str(dest), retryable=True)
+
+
+def _fsync_dir(d):
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(str(d), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _stage(dest, data=None, src=None):
+    """A unique temp file next to dest holding data (bytes) or a copy of src, flushed to disk."""
+    fd, tmp = tempfile.mkstemp(prefix=".rtdoc-", suffix=".tmp", dir=str(Path(dest).parent))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            if data is not None:
+                f.write(data)
+            else:
+                with _bopen(src, "rb") as s:
+                    shutil.copyfileobj(s, f, 1 << 20)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        _unlink(tmp)
+        raise
+    return tmp
+
+
+def _unlink(p):
+    try:
+        os.remove(p)
+    except OSError:
+        pass
+
+
+def _publish(dest, data=None, src=None, check=None):
+    """Write dest atomically: stage next to it, then under dest's lock run check (the compare-and-swap of an
+    in-place edit; it raises to refuse) and os.replace. The temp file goes on every failure path."""
+    return _publish_many([(dest, data, src)], check)
+
+
+def _publish_many(items, check=None):
+    """[(dest, data, src)] staged first (all of them), then each replaced under its lock. Nothing is replaced
+    unless everything staged."""
+    staged = []
+    try:
+        for dest, data, src in items:
+            staged.append((Path(dest), _stage(dest, data, src)))
+        for dest, _tmp in staged:
+            _before_publish(dest)
+        for dest, tmp in staged:
+            with _PathLock(dest):
+                if check is not None:
+                    check()
+                _replace(tmp, dest)
+        for d in {dest.parent for dest, _ in staged}:
+            _fsync_dir(d)
+    finally:
+        for _dest, tmp in staged:
+            if os.path.exists(tmp):
+                _unlink(tmp)
+    return [str(d) for d, _ in staged]
 
 
 # ============================================================================ engine
@@ -521,24 +737,193 @@ def _ecall(fn, *args, **kwargs):
     return r
 
 
+# ============================================================================ the .hwpx package
+class _Zip:
+    """A ZIP read from bytes, kept as raw entries so a rewrite copies every untouched member byte for byte
+    (local header, compressed data, data descriptor, central record, order, archive comment)."""
+    _CD = struct.Struct("<4sHHHHHHIIIHHHHHII")
+    _LH = struct.Struct("<4sHHHHHIIIHH")
+
+    def __init__(self, raw: bytes, name="document"):
+        self.raw = raw
+        bad = lambda why: DocError("bad_input", "%s is not a readable .hwpx (%s)" % (name, why))  # noqa: E731
+        i = raw.rfind(b"PK\x05\x06", max(0, len(raw) - 22 - 65535))
+        if i < 0 or len(raw) < i + 22:
+            raise bad("no zip directory")
+        (_sig, disk, cd_disk, n_disk, n, cd_size, cd_off, clen) = struct.unpack("<4sHHHHIIH", raw[i:i + 22])
+        if disk or cd_disk or n_disk != n or n == 0xFFFF or cd_off == 0xFFFFFFFF:
+            raise bad("multi-part or zip64 archives are not supported")
+        if n > _codes.MAX_ZIP_MEMBERS:
+            raise DocError("bad_input", "too many zip members in %s" % name)
+        self.comment = raw[i + 22:i + 22 + clen]
+        self.entries, seen, pos, total = [], set(), cd_off, 0
+        for _ in range(n):
+            if raw[pos:pos + 4] != b"PK\x01\x02":
+                raise bad("a damaged zip directory")
+            f = self._CD.unpack(raw[pos:pos + 46])
+            flags, method, crc, csize, usize, nlen, xlen, mlen, off = f[3], f[4], f[7], f[8], f[9], f[10], f[11], \
+                f[12], f[16]
+            bname = raw[pos + 46:pos + 46 + nlen]
+            name_ = bname.decode("utf-8" if flags & 0x800 else "cp437", "replace")
+            if 0xFFFFFFFF in (csize, usize, off):
+                raise bad("zip64 members are not supported")
+            if flags & 1:
+                raise bad("encrypted members")
+            if name_ in seen:
+                raise DocError("bad_input", "%s has two members named %s; which one is the document is ambiguous"
+                               % (name, name_))
+            seen.add(name_)
+            if raw[off:off + 4] != b"PK\x03\x04":
+                raise bad("a damaged member header")
+            lh = self._LH.unpack(raw[off:off + 30])
+            start = off + 30 + lh[9] + lh[10]
+            end = start + csize
+            if flags & 8:                       # data descriptor after the data
+                end += 16 if raw[end:end + 4] == b"PK\x07\x08" else 12
+            if end > len(raw):
+                raise bad("a truncated member")
+            total += usize
+            self.entries.append({"name": name_, "cd": raw[pos:pos + 46 + nlen + xlen + mlen], "off": off,
+                                 "start": start, "end": end, "method": method, "flags": flags, "crc": crc,
+                                 "csize": csize, "usize": usize})
+            pos += 46 + nlen + xlen + mlen
+        if total > _codes.MAX_ZIP_TOTAL_UNCOMPRESSED:
+            raise DocError("bad_input", "the document is too large when unpacked")
+        self.by_name = {e["name"]: e for e in self.entries}
+
+    def names(self):
+        return [e["name"] for e in self.entries]
+
+    def read(self, name):
+        e = self.by_name[name]
+        data = self.raw[e["start"]:e["start"] + e["csize"]]
+        if e["method"] == 8:
+            try:
+                data = zlib.decompressobj(-15).decompress(data, e["usize"] + 1)
+            except zlib.error as exc:
+                raise DocError("bad_input", "member %s does not decompress: %s" % (name, exc))
+        elif e["method"] != 0:
+            raise DocError("bad_input", "member %s uses compression method %d" % (name, e["method"]))
+        if len(data) != e["usize"] or (zlib.crc32(data) & 0xFFFFFFFF) != e["crc"]:
+            raise DocError("bad_input", "member %s is damaged (size or CRC)" % name)
+        return data
+
+    def require_hwpx(self, name="document"):
+        if "mimetype" not in self.by_name or not self.read("mimetype").startswith(b"application/hwp"):
+            raise DocError("bad_input", "%s is a zip but not an HWPX package (no hwp mimetype)" % name)
+        if not any(SECTION_RE.match(n) for n in self.by_name):
+            raise DocError("bad_input", "%s is not an HWPX package (no Contents/section*.xml)" % name)
+
+    def rewrite(self, replace: dict) -> bytes:
+        """The archive with the members in `replace` ({name: bytes}) recompressed the way they were stored and
+        everything else copied as it is."""
+        out, cds = bytearray(), {}
+        for e in sorted(self.entries, key=lambda x: x["off"]):
+            new_off = len(out)
+            cd = bytearray(e["cd"])
+            if e["name"] in replace:
+                data = replace[e["name"]]
+                crc = zlib.crc32(data) & 0xFFFFFFFF
+                if e["method"] == 8:
+                    co = zlib.compressobj(6, zlib.DEFLATED, -15)
+                    comp = co.compress(data) + co.flush()
+                else:
+                    comp = data
+                lh = bytearray(self.raw[e["off"]:e["start"]])
+                flags = e["flags"] & ~8
+                struct.pack_into("<H", lh, 6, flags)
+                struct.pack_into("<III", lh, 14, crc, len(comp), len(data))
+                out += lh + comp
+                struct.pack_into("<H", cd, 8, flags)
+                struct.pack_into("<III", cd, 16, crc, len(comp), len(data))
+            else:
+                out += self.raw[e["off"]:e["end"]]
+            struct.pack_into("<I", cd, 42, new_off)
+            cds[id(e)] = bytes(cd)
+        cd_off = len(out)
+        for e in self.entries:
+            out += cds[id(e)]
+        out += struct.pack("<4sHHHHIIH", b"PK\x05\x06", 0, 0, len(self.entries), len(self.entries),
+                           len(out) - cd_off, cd_off, len(self.comment)) + self.comment
+        return bytes(out)
+
+
+def _check_zip_bytes(data: bytes, names):
+    """The staged archive opens, every member passes its CRC, and the members are the expected ones."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            if z.testzip() is not None or z.namelist() != list(names):
+                raise DocError("internal", "the rewritten package did not verify; nothing was written")
+    except zipfile.BadZipFile as exc:
+        raise DocError("internal", "the rewritten package is not a zip (%s); nothing was written" % exc)
+
+
 # ============================================================================ HWPX reading
-TAG = re.compile(r'<(/?)([A-Za-z][\w:.-]*)((?:[^>"]|"[^"]*")*?)(/?)>')     # = hnc_edit.TAG
-INLINE_W = {"hp:tab": "\t", "hp:lineBreak": "\n", "hp:fwSpace": "\u3000", "hp:nbSpace": " ", "hp:hyphen": " "}
-ZERO_CTRL = ("hp:colPr", "hp:fieldBegin", "hp:fieldEnd", "hp:bookmark", "hp:pageNum", "hp:pageHiding",
-             "hp:newNum", "hp:indexmark", "hp:header", "hp:footer", "hp:autoNum")
-_ZERO_CTRL_RE = re.compile(r"\s*<(%s)\b" % "|".join(re.escape(n) for n in ZERO_CTRL))
-OBJ = "\ufffc"
-TAB_XML = '<hp:tab width="0" leader="0" type="0"/>'
+HP_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
+_TOKEN = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|<![A-Za-z][^>]*>"
+                    r"|<(/?)([A-Za-z_][\w:.-]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)(/?)>", re.S)
+_XMLNS = re.compile(r"\sxmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
+_XCHAR = re.compile(r"&(?:#[xX]([0-9A-Fa-f]{1,8})|#([0-9]{1,10})|(lt|gt|amp|quot|apos));|.", re.S)
+_ENT = {"lt": "<", "gt": ">", "amp": "&", "quot": '"', "apos": "'"}
+_NEXT_TAG = re.compile(r"\s*<([A-Za-z_][\w:.-]*)")
+INLINE_W = {"hp:tab": "\t", "hp:lineBreak": "\n", "hp:fwSpace": "　", "hp:nbSpace": " ", "hp:hyphen": " "}
+ZERO_CTRL = {"hp:colPr", "hp:fieldBegin", "hp:fieldEnd", "hp:bookmark", "hp:pageNum", "hp:pageHiding",
+             "hp:newNum", "hp:indexmark", "hp:header", "hp:footer", "hp:autoNum"}
+OBJ = "￼"
 SECTION_RE = re.compile(r"^Contents/section(\d+)\.xml$")
 
 
+def _xml_char(m):
+    if m.group(1) or m.group(2):
+        try:
+            return chr(int(m.group(1), 16) if m.group(1) else int(m.group(2)))
+        except (ValueError, OverflowError):
+            return m.group(0)
+    if m.group(3):
+        return _ENT[m.group(3)]
+    return m.group(0)
+
+
 def _attr(tag, name):
-    m = re.search(r'\b%s="([^"]*)"' % re.escape(name), tag)
+    m = re.search(r'\b%s\s*=\s*"([^"]*)"' % re.escape(name), tag)
     return m.group(1) if m else None
 
 
+def _namespaces(s, name="section"):
+    """(canon(name) -> name with the paragraph namespace's prefix spelled hp:, the prefix to write new tags with).
+    Matching goes by namespace URI, not by the literal prefix."""
+    binds = {}
+    for m in _XMLNS.finditer(s):
+        pfx, uri = m.group(1) or "", m.group(2) if m.group(2) is not None else m.group(3)
+        if binds.setdefault(pfx, uri) != uri:
+            raise DocError("bad_input", "%s binds the XML prefix %r to two namespaces; the built-in reader cannot "
+                           "follow that" % (name, pfx))
+    hps = [p for p, u in binds.items() if u == HP_NS] or (["hp"] if "hp" not in binds else [])
+    hpset = set(hps)
+    cache = {}
+
+    def canon(n):
+        r = cache.get(n)
+        if r is None:
+            pfx, _, local = n.rpartition(":")
+            if pfx in hpset:
+                r = "hp:" + local
+            elif pfx == "hp":
+                r = "?hp:" + local            # an hp: prefix bound to some other namespace
+            else:
+                r = n
+            cache[n] = r
+        return r
+    write = "hp" if "hp" in hpset else (hps[0] if hps else "hp")
+    return canon, write
+
+
+def _q(pfx, local):
+    return "%s:%s" % (pfx, local) if pfx else local
+
+
 class Para:
-    __slots__ = ("si", "k", "start", "end", "parent", "cell", "top", "gp", "chars", "posmap", "tnodes",
+    __slots__ = ("si", "k", "start", "end", "parent", "cell", "top", "gp", "chars", "posmap", "xpos", "tnodes",
                  "runs", "objs", "head", "lineseg", "caption_of", "in_box")
 
     def __init__(self, si, k, start, head):
@@ -549,10 +934,11 @@ class Para:
         self.gp = None
         self.chars = []         # ptext: characters, tabs, breaks, OBJ for objects
         self.posmap = []        # per ptext position: (tnode index, piece index) or None for an object
-        self.tnodes = []        # own <hp:t>: {"a","b","open","self","pieces":[[kind, ch, xml]], "run"}
-        self.runs = []          # own <hp:run>: {"a","open_end","b","self","cp","text"}
+        self.xpos = []          # per ptext position: where its source starts in the section XML
+        self.tnodes = []        # own <hp:t>: {"a","b","open","self","pieces":[[kind, ch, src]], "run"}
+        self.runs = []          # own <hp:run>: {"a","open_end","close","b","self","cp"}
         self.objs = []          # own object tags (hp:tbl, hp:pic ...)
-        self.lineseg = None     # (a, b) of own <hp:linesegarray>
+        self.lineseg = None     # (a, b) of the own <hp:linesegarray> (a direct child)
         self.caption_of = None
         self.in_box = False
 
@@ -603,8 +989,10 @@ class Table:
         return sorted((x for x in self.cells if x.row == r), key=lambda x: x.col)
 
 
-def _scan_section(s, si):
+def _scan_section(s, si, canon=None):
     """Paragraphs and tables of one section XML (see the module docstring for the numbering)."""
+    if canon is None:
+        canon = _namespaces(s)[0]
     paras, tables = [], []
     stack = []              # [name, obj, extra]
     last = 0
@@ -615,51 +1003,64 @@ def _scan_section(s, si):
                 return fr
         return None
 
-    for m in TAG.finditer(s):
-        close, name, selfc = m.group(1), m.group(2), m.group(4)
+    def add_text(p, tn, text, base):
+        for x in _XCHAR.finditer(text):
+            tn["pieces"].append(["c", _xml_char(x), x.group(0)])
+            p.chars.append(tn["pieces"][-1][1])
+            p.posmap.append((len(p.tnodes) - 1, len(tn["pieces"]) - 1))
+            p.xpos.append(base + x.start())
+
+    for m in _TOKEN.finditer(s):
         top = stack[-1] if stack else None
-        if top is not None and top[0] == "hp:t" and top[2] is not None:
-            text = s[last:m.start()]
-            if text:
-                p, tn = top[2]
-                for ch in html.unescape(text):
-                    tn["pieces"].append(["c", ch, None])
-                    p.chars.append(ch)
-                    p.posmap.append((len(p.tnodes) - 1, len(tn["pieces"]) - 1))
+        intext = top is not None and top[0] == "hp:t" and top[2] is not None
+        if intext and m.start() > last:
+            add_text(top[2][0], top[2][1], s[last:m.start()], last)
         last = m.end()
+        if m.group(2) is None:                  # comment, CDATA, processing instruction, declaration
+            if intext:
+                p, tn = top[2]
+                tok = m.group(0)
+                if tok.startswith("<![CDATA["):
+                    for j, ch in enumerate(tok[9:-3]):
+                        tn["pieces"].append(["q", ch, None])
+                        p.chars.append(ch)
+                        p.posmap.append((len(p.tnodes) - 1, len(tn["pieces"]) - 1))
+                        p.xpos.append(m.start() + 9 + j)
+                else:
+                    tn["pieces"].append(["z", "", tok])
+            continue
+        close, name, selfc = m.group(1), canon(m.group(2)), m.group(4)
         if close:
+            if not any(fr[0] == name for fr in stack):
+                continue
             while stack and stack[-1][0] != name:
                 stack.pop()
-            if not stack:
-                continue
             fr = stack.pop()
-            if name == "hp:p":
-                fr[1].end = m.end()
-            elif name == "hp:tbl":
-                fr[1].end = m.end()
-            elif name == "hp:tc":
+            if name in ("hp:p", "hp:tbl", "hp:tc"):
                 fr[1].end = m.end()
             elif name == "hp:t" and fr[2] is not None:
                 fr[2][1]["b"] = m.end()
                 fr[2][1]["close"] = m.start()
             elif name == "hp:run" and fr[2] is not None:
                 fr[2]["b"] = m.end()
+                fr[2]["close"] = m.start()
+            elif name == "hp:linesegarray" and fr[1] is not None:
+                fr[1].lineseg = (fr[2], m.end())
             continue
         tag = m.group(0)
-        # text-level items inside an own <hp:t>
-        if top is not None and top[0] == "hp:t" and top[2] is not None:
+        if intext:                              # text-level items inside an own <hp:t>
             p, tn = top[2]
             if name in INLINE_W:
                 tn["pieces"].append(["x", INLINE_W[name], tag if selfc else None])
                 p.chars.append(INLINE_W[name])
                 p.posmap.append((len(p.tnodes) - 1, len(tn["pieces"]) - 1))
+                p.xpos.append(m.start())
             else:
                 tn["pieces"].append(["z", "", tag])
             if not selfc:
                 stack.append([name, None, None])
             continue
-        # direct children of an own run
-        if top is not None and top[0] == "hp:run" and top[2] is not None:
+        if top is not None and top[0] == "hp:run" and top[2] is not None:      # direct children of an own run
             p = top[1]
             if name == "hp:t":
                 tn = {"a": m.start(), "open": tag, "self": bool(selfc), "pieces": [], "run": top[2],
@@ -668,10 +1069,14 @@ def _scan_section(s, si):
                 if not selfc:
                     stack.append([name, None, (p, tn)])
                 continue
-            zero = name == "hp:secPr" or (name == "hp:ctrl" and not selfc and _ZERO_CTRL_RE.match(s, m.end()))
+            zero = name == "hp:secPr"
+            if name == "hp:ctrl" and not selfc:
+                nx = _NEXT_TAG.match(s, m.end())
+                zero = bool(nx) and canon(nx.group(1)) in ZERO_CTRL
             if not zero:
                 p.chars.append(OBJ)
                 p.posmap.append(None)
+                p.xpos.append(m.start())
                 p.objs.append(name)
             # fall through: the element itself is scanned for nested structure
         if name == "hp:p":
@@ -692,11 +1097,16 @@ def _scan_section(s, si):
                 p.in_box = True
             paras.append(p)
             stack.append([name, p, None])
+        elif name == "hp:linesegarray" and top is not None and top[0] == "hp:p":
+            if selfc:
+                top[1].lineseg = (m.start(), m.end())
+            else:
+                stack.append([name, top[1], m.start()])
         elif name == "hp:run":
             fr_p = innermost("hp:p")
             if fr_p is not None and stack[-1] is fr_p:
                 run = {"a": m.start(), "open_end": m.end(), "self": bool(selfc), "cp": _attr(tag, "charPrIDRef"),
-                       "b": m.end() if selfc else None}
+                       "b": m.end() if selfc else None, "close": None}
                 fr_p[1].runs.append(run)
                 if not selfc:
                     stack.append([name, fr_p[1], run])
@@ -738,24 +1148,64 @@ def _scan_section(s, si):
     return paras, tables
 
 
-_LINESEG_RE = re.compile(r"<hp:linesegarray\b[^>]*?(?:/>|>.*?</hp:linesegarray>)", re.S)
+def _local(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def _header_info(data: bytes):
+    """styles, paraPr heading kinds, bold charPrs and font faces of header.xml (namespace-aware)."""
+    styles, heads, bold, fonts = {}, {}, set(), []
+    try:
+        root = ET.fromstring(data) if data else None
+    except ET.ParseError:
+        root = None
+    if root is None:
+        return styles, heads, bold, fonts
+    for el in root.iter():
+        t = _local(el.tag)
+        if t == "style":
+            styles[el.get("id")] = {"name": el.get("name"), "engName": el.get("engName"), "type": el.get("type"),
+                                    "paraPr": el.get("paraPrIDRef"), "charPr": el.get("charPrIDRef")}
+        elif t == "paraPr":
+            for x in el.iter():
+                if _local(x.tag) == "heading" and x.get("type") and (x.get("level") or "").isdigit():
+                    heads[el.get("id")] = (x.get("type"), int(x.get("level")))
+                    break
+        elif t == "charPr":
+            if any(_local(x.tag) == "bold" for x in el.iter()):
+                bold.add(el.get("id"))
+        elif t == "font":
+            face = el.get("face")
+            if face and face not in fonts:
+                fonts.append(face)
+    return styles, heads, bold, fonts
 
 
 class Doc:
-    """A parsed .hwpx (or the engine's .hwpx of a .hwp): sections, paragraphs, tables, headings."""
+    """A parsed .hwpx (or the engine's .hwpx of a .hwp), immutable once built: sections, paragraphs, tables,
+    headings. `raw` are the exact .hwpx bytes it was parsed from; `sha` is the sha256 of the file's own bytes."""
 
-    def __init__(self, path, rev, fmt, hwpx_path):
-        self.path, self.rev, self.format, self.hwpx = Path(path), rev, fmt, Path(hwpx_path)
-        self.infos, self.contents = _read_zip(self.hwpx)
-        self.section_names = sorted((n for n in self.contents if SECTION_RE.match(n)),
+    def __init__(self, path, raw: bytes, fmt="hwpx", src_raw=None):
+        src_raw = raw if src_raw is None else src_raw
+        self.path, self.format, self.raw = Path(path), fmt, raw
+        self.sha = _sha(src_raw)
+        self.rev = self.sha[:12]
+        self.zip = _Zip(raw, Path(path).name)
+        self.zip.require_hwpx(Path(path).name)
+        self.section_names = sorted((n for n in self.zip.names() if SECTION_RE.match(n)),
                                     key=lambda n: int(SECTION_RE.match(n).group(1)))
-        self.secs = [self.contents[n].decode("utf-8") for n in self.section_names]
-        self.header = self.contents.get("Contents/header.xml", b"").decode("utf-8", "replace")
+        try:
+            self.secs = [self.zip.read(n).decode("utf-8") for n in self.section_names]
+            hdr = self.zip.read("Contents/header.xml") if "Contents/header.xml" in self.zip.by_name else b""
+        except UnicodeDecodeError as exc:
+            raise DocError("bad_input", "a section of %s is not UTF-8 (%s)" % (Path(path).name, exc))
+        self.canon, self.pfx = [], []
         self.paras, self.tables, self.sec_paras, self.sec_tables = [], [], [], []
         for si, s in enumerate(self.secs):
-            ps, ts = _scan_section(s, si)
-            for p in ps:
-                p.lineseg = _own_lineseg(s, p)
+            canon, pfx = _namespaces(s, self.section_names[si])
+            self.canon.append(canon)
+            self.pfx.append(pfx)
+            ps, ts = _scan_section(s, si, canon)
             self.sec_paras.append(ps)
             self.sec_tables.append(ts)
             self.paras.extend(ps)
@@ -769,12 +1219,15 @@ class Doc:
                 t.rows = max(c.row + c.rs for c in t.cells)
             if not t.cols and t.cells:
                 t.cols = max(c.col + c.cs for c in t.cells)
-        self.styles = _header_styles(self.header)
-        self.para_heading = _header_para_headings(self.header)
-        self.bold_cp = _header_bold_charprs(self.header)
-        self.engine_headings = None
+        self.styles, self.para_heading, self.bold_cp, self.fonts = _header_info(hdr)
+        self.meta_lock = threading.Lock()
+        self.meta_done = False
+        self.meta_errors = []
+        self.layout = None
+        self.engine_headings = None     # None: no engine analysis (not run, or it failed); [] : it found none
         self.engine_places = None
-        self.page_starts = None     # [flow para index of page n's first paragraph]
+        self.page_starts = None         # [flow para index of page n's first paragraph]
+        self._efile = None
 
     # -- helpers
     def top_of(self, p):
@@ -789,11 +1242,18 @@ class Doc:
     def tables_in(self, p):
         return [t for t in self.sec_tables[p.si] if p.start < t.start < p.end]
 
+    def table_of(self, cell):
+        return next((t for t in self.tables if cell in t.cells), None)
+
     def page_of(self, p):
         if not self.page_starts:
             return None
         gp = self.top_of(p).gp
         return bisect.bisect_right(self.page_starts, gp)
+
+    def page_count(self):
+        n = (self.layout or {}).get("pages")
+        return n if isinstance(n, int) and not isinstance(n, bool) else None
 
     def style_name(self, sid):
         st = self.styles.get(sid or "")
@@ -810,121 +1270,113 @@ class Doc:
             return (int(m.group(1)) if m.group(1) else 1), "style"
         return None
 
-
-def _own_lineseg(s, p):
-    """(a, b) of the paragraph's own linesegarray (a direct child after its runs), else None."""
-    if p.end is None:
-        return None
-    # the linesegarray of p sits after its last own run and before </hp:p>
-    tail_from = p.runs[-1]["b"] if p.runs and p.runs[-1]["b"] else p.start
-    close = p.end - len("</hp:p>")
-    m = _LINESEG_RE.search(s, tail_from, close)
-    if m and m.end() <= close:
-        # make sure no nested paragraph sits between (then it is not ours)
-        if "<hp:p " not in s[tail_from:m.start()]:
-            return (m.start(), m.end())
-    return None
-
-
-def _header_styles(h):
-    out = {}
-    for m in re.finditer(r"<hh:style\b[^>]*>", h):
-        t = m.group(0)
-        out[_attr(t, "id")] = {"name": _attr(t, "name"), "engName": _attr(t, "engName"),
-                               "type": _attr(t, "type"), "paraPr": _attr(t, "paraPrIDRef"),
-                               "charPr": _attr(t, "charPrIDRef")}
-    return out
-
-
-def _header_para_headings(h):
-    out = {}
-    for m in re.finditer(r'<hh:paraPr\b[^>]*\bid="(\d+)"[^>]*>(.*?)</hh:paraPr>', h, re.S):
-        hm = re.search(r'<hh:heading\b[^>]*type="(\w+)"[^>]*level="(\d+)"', m.group(2))
-        if hm:
-            out[m.group(1)] = (hm.group(1), int(hm.group(2)))
-    return out
-
-
-def _header_bold_charprs(h):
-    return {m.group(1) for m in re.finditer(r'<hh:charPr\b[^>]*\bid="(\d+)"[^>]*>(.*?)</hh:charPr>', h, re.S)
-            if "<hh:bold" in m.group(2)}
-
-
-def _read_zip(path):
-    with zipfile.ZipFile(path) as z:
-        infos = z.infolist()
-        if len(infos) > _codes.MAX_ZIP_MEMBERS:
-            raise DocError("bad_input", "too many zip members in %s" % Path(path).name)
-        total = sum(i.file_size for i in infos)
-        if total > _codes.MAX_ZIP_TOTAL_UNCOMPRESSED:
-            raise DocError("bad_input", "the document is too large when unpacked")
-        return infos, {i.filename: z.read(i.filename) for i in infos}
-
-
-def _write_zip(out, infos, contents):
-    out = Path(out)
-    fd, tmp = tempfile.mkstemp(prefix=".rtdoc-", suffix=".hwpx", dir=str(out.parent))
-    os.close(fd)
-    try:
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-            for info in infos:
-                z.writestr(info, contents[info.filename])
-        os.replace(tmp, out)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+    def engine_file(self) -> Path:
+        """A private file holding exactly `raw`, for the engine: it reads the bytes this Doc was parsed from,
+        never the live file (which may have changed since)."""
+        f = _scratch_sub("snap") / ("%s.hwpx" % _sha(self.raw)[:24])
+        try:
+            if f.stat().st_size == len(self.raw):
+                return f
+        except OSError:
+            pass
+        fd, tmp = tempfile.mkstemp(prefix=".rtdoc-", suffix=".hwpx", dir=str(f.parent))
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(self.raw)
+            os.replace(tmp, f)
+        finally:
+            _unlink(tmp)
+        return f
 
 
 _DOCS = {}
 _DOCS_LOCK = threading.Lock()
 _DOCS_MAX = 8
+_HWP_LOCK = threading.Lock()
 
 
-def _load(path, *, layout=False, places=False):
-    """The Doc of a file (cached by path and rev). .hwp is read through the engine's .hwpx of it."""
+def _hwp_to_hwpx(e, data: bytes, sha: str) -> bytes:
+    """The engine's .hwpx of a .hwp's bytes (converted once per content, in the private scratch folder)."""
+    d = _scratch_sub("hwp")
+    conv = d / ("%s.hwpx" % sha[:24])
+    with _HWP_LOCK:
+        if not conv.is_file():
+            snap = d / ("%s.hwp" % sha[:24])
+            snap.write_bytes(data)
+            tmp = d / ("%s.%d.tmp.hwpx" % (sha[:24], threading.get_ident()))
+            try:
+                r = e.call("to_hwpx", str(snap), str(tmp))
+                if not r.get("ok"):
+                    raise _engine_error(r, "to_hwpx")
+                lossy = ["%s x%d not converted" % (k, v) for k, v in (r.get("unsupported") or {}).items()]
+                conv.with_suffix(".json").write_text(json.dumps(lossy), encoding="utf-8")
+                os.replace(tmp, conv)
+            finally:
+                _unlink(tmp)
+                _unlink(snap)
+    return conv.read_bytes()
+
+
+def _load(path, *, meta=True):
+    """The Doc of a file's current bytes (cached by path, content and engine). The rev it carries is the rev of
+    exactly the bytes it parsed. With meta, the engine's layout and form analysis are loaded once per Doc, so
+    every function resolves addresses against the same metadata whatever ran before."""
     p = _need_file(path)
-    rev = rev_of(p)
-    fmt = _format_of(p)
+    data = _read_bytes(p)
+    fmt = _format_of_bytes(data[:8], p)
     if fmt == "md":
         raise DocError("bad_input", "a markdown file is not a document here; use new() or convert()")
-    key = (str(p), rev)
+    sha = _sha(data)
+    e = _engine()
+    key = (str(p), sha, id(e) if e is not None else None)
     with _DOCS_LOCK:
         d = _DOCS.get(key)
     if d is None:
-        hwpx = p
         if fmt == "hwp":
-            e = _engine()
             if e is None:
                 raise _unavailable(".hwp files need the HWP engine; only .hwpx is supported without it",
                                    "hwp_binary_unsupported")
-            conv = _scratch() / ("%s.hwpx" % rev)
-            if not conv.is_file():
-                r = e.call("to_hwpx", str(p), str(conv))
-                if not r.get("ok"):
-                    raise _engine_error(r, "to_hwpx")
-            hwpx = conv
-        try:
-            d = Doc(p, rev, fmt, hwpx)
-        except (zipfile.BadZipFile, KeyError, UnicodeDecodeError) as exc:
-            raise DocError("bad_input", "not a readable .hwpx: %s" % exc)
+            d = Doc(p, _hwp_to_hwpx(e, data, sha), "hwp", src_raw=data)
+        else:
+            d = Doc(p, data, "hwpx")
         with _DOCS_LOCK:
-            _DOCS[key] = d
+            d = _DOCS.setdefault(key, d)
             while len(_DOCS) > _DOCS_MAX:
                 _DOCS.pop(next(iter(_DOCS)))
-    e = _engine()
-    if layout and e is not None and d.page_starts is None:
-        r = e.call("pages", str(p))
-        if r.get("ok"):
-            d.page_starts = [s["para"] for s in r.get("page_starts", []) if s.get("para", -1) >= 0] or [0]
-            d.layout = r
-    if places and d.engine_places is None and e is not None:
-        r = e.call("analyze", str(p))
-        if r.get("ok"):
-            d.engine_places = r.get("places") or []
-            d.engine_headings = r.get("headings") or []
-        else:
-            d.engine_places, d.engine_headings = [], []
+    if meta and e is not None:
+        _ensure_meta(d, e)
     return d
+
+
+def _ensure_meta(d, e):
+    """Layout (pages) and form analysis (headings, places) from the engine, once per Doc. A transient failure
+    (timeout, worker gone) is retried by the next call; any other failure is kept, and the Doc then uses the
+    built-in analysis, the same for every caller."""
+    if d.meta_done:
+        return
+    with d.meta_lock:
+        if d.meta_done:
+            return
+        f = str(d.engine_file())
+        transient = False
+        if d.layout is None:
+            r = e.call("pages", f)
+            if r.get("ok"):
+                d.layout = r
+                d.page_starts = [s["para"] for s in r.get("page_starts") or []
+                                 if isinstance(s, dict) and isinstance(s.get("para"), int) and s["para"] >= 0] or [0]
+            else:
+                transient |= bool((r.get("error") or {}).get("retryable"))
+                d.meta_errors.append({"fn": "pages", **(r.get("error") or {})})
+        if d.engine_places is None:
+            a = e.call("analyze", f)
+            if a.get("ok") and isinstance(a.get("places", []), list):
+                d.engine_places = [x for x in a.get("places") or [] if isinstance(x, dict)]
+                d.engine_headings = [x for x in a.get("headings") or [] if isinstance(x, dict)]
+            else:
+                transient |= bool((a.get("error") or {}).get("retryable"))
+                d.meta_errors.append({"fn": "analyze", **(a.get("error") or {})})
+        d.meta_done = not transient
 
 
 # ============================================================================ addresses
@@ -1183,9 +1635,9 @@ def _engine_info():
 
 def _fonts(doc, approx=None):
     used = []
-    for m in re.finditer(r'<hh:font\b[^>]*\bface="([^"]*)"', doc.header):
-        if m.group(1) not in used:
-            used.append(m.group(1))
+    for f in doc.fonts:
+        if f not in used:
+            used.append(f)
     sub = []
     for a in approx or []:
         if "→" in a:
@@ -1199,7 +1651,7 @@ def _fonts(doc, approx=None):
 @_api
 def open(path):  # noqa: A001 - the doc_core verb
     """{rev, format, pages?, sections, fonts: {used, substituted}, engine}"""
-    doc = _load(path, layout=True)
+    doc = _load(path)
     out = {"rev": doc.rev, "format": doc.format, "sections": len(doc.secs), "paragraphs": len(doc.top),
            "tables": len(doc.tables), "engine": _engine_info()}
     lay = getattr(doc, "layout", None)
@@ -1213,7 +1665,7 @@ def open(path):  # noqa: A001 - the doc_core verb
 def outline(path):
     """{rev, headings: [{at, level, text, page?}], tables: [{at, rows, cols, caption?, page?}],
     places: [{id, at, label, kind, page?, rect?}]}"""
-    doc = _load(path, layout=True, places=True)
+    doc = _load(path)
     heads = [{"at": h["at"], "level": h["level"], "text": h["text"],
               **({"page": doc.page_of(h["para"])} if doc.page_starts else {})} for h in _headings(doc)]
     tables = []
@@ -1276,7 +1728,7 @@ def _table_block(doc, t):
 @_api
 def read(path, at=None, *, with_runs=False):
     """{rev, blocks: [{at, kind, text, runs?, style?}]}; a table also gives its cell grid."""
-    doc = _load(path, layout=True, places=isinstance(at, str) and at.startswith("place:"))
+    doc = _load(path)
     blocks = []
 
     def top_blocks(ps):
@@ -1327,7 +1779,7 @@ def find(path, query, *, regex=False, scope=None):
     """{rev, hits: [{at, start, end, text, page?}]} over every paragraph (cells included)."""
     if not isinstance(query, str) or not query:
         raise DocError("bad_input", "find needs a non-empty query")
-    doc = _load(path, layout=True)
+    doc = _load(path)
     paras = doc.paras
     if scope:
         r = resolve(doc, scope)
@@ -1460,10 +1912,6 @@ def _plan(doc, ops):
         raise DocError("bad_input", "ops: a non-empty list of operations")
     acts = []
     text_touch = {}         # id(para) -> (i, op) for set/delete/replace targets
-    need_places = any(isinstance(o, dict) and (o.get("op") == "fill" or str(o.get("at", "")).startswith("place:"))
-                      for o in ops)
-    if need_places and doc.engine_places is None and _engine() is not None:
-        _load(doc.path, places=True)
 
     def touch(p, i, opname, exclusive):
         prev = text_touch.get(id(p))
@@ -1856,6 +2304,38 @@ def _signals(pl, doc=None, pages=None):
     return out
 
 
+def _remap_result(doc, newdoc, acts):
+    remap = _remap(doc, acts)
+    if newdoc is not None:
+        expect_top = len(doc.top) + sum(a.dtop for a in acts) - sum(len(a.dels) for a in acts)
+        if len(newdoc.top) != expect_top:
+            return _align_remap(doc, newdoc), True
+    return remap, False
+
+
+def _carry_places(doc, newdoc, res):
+    pass
+
+
+def follow_remap(remap, at):
+    """Where an address of the base document is after an edit: its own entry, else the longest listed prefix
+    (``t1 -> t2`` makes ``t1/r0/c3`` ``t2/r0/c3``); None when it was deleted."""
+    table = {m["from"]: m["to"] for m in remap}
+    rng = ""
+    if isinstance(at, str) and ":" in at and not at.startswith(("h:", "place:", "page:")):
+        at, rng = at.split(":", 1)
+        rng = ":" + rng
+    if at in table:
+        return None if table[at] is None else table[at] + rng
+    parts = at.split("/")
+    for n in range(len(parts) - 1, 0, -1):
+        pre = "/".join(parts[:n])
+        if pre in table:
+            to = table[pre]
+            return None if to is None else "/".join([to] + parts[n:]) + rng
+    return at + rng
+
+
 def _default_out(p):
     return p.with_name(p.stem + ".edited.hwpx")
 
@@ -1863,38 +2343,78 @@ def _default_out(p):
 @_api
 def edit(path, ops, *, base, out=None, in_place=False, preview=False):
     """Apply declarative ops; see the module docstring. Returns {rev_before, rev, out, applied, remap,
-    changed_pages, signals} (+ changed with preview=True)."""
-    src = _need_file(path)
-    cur = rev_of(src)
-    if base != cur:
-        raise DocError("stale", "the document changed since rev %s (it is now %s); read it again" % (base, cur),
-                       rev=cur, retryable=True)
-    doc = _load(src)
+    changed_pages, signals} (+ changed with preview=True).
+
+    One snapshot: the file's bytes are read once; base is checked against them and every op is planned on
+    them. The output is built, parsed back, remapped and described completely before anything is published,
+    so a failure leaves every file as it was (``written: false``). An in-place edit is a compare-and-swap:
+    under the destination's lock the file must still be ``base`` immediately before the atomic replace."""
+    if not isinstance(base, str) or not base:
+        raise DocError("bad_input", "base: the rev the ops were written against (open/read give it)")
+    doc = _load(path)
+    src = doc.path
+    if base != doc.rev:
+        raise DocError("stale", "the document changed since rev %s (it is now %s); read it again" % (base, doc.rev),
+                       rev=doc.rev, retryable=True)
     acts = _plan(doc, ops)
     if preview:
-        target = _scratch() / ("preview-%s-%d.hwpx" % (cur, len(os.listdir(_scratch()))))
+        pdir = _scratch_sub("preview")
+        _prune(pdir)
+        fd, t = tempfile.mkstemp(prefix="preview-%s-" % doc.rev, suffix=".hwpx", dir=str(pdir))
+        os.close(fd)
+        target = Path(t)
     elif in_place:
         target = src
     else:
-        target = Path(out).resolve() if out else _default_out(src)
-        if target == src:
-            raise DocError("bad_input", "out is the input file; pass in_place=True to overwrite it")
-    if not target.parent.is_dir():
-        raise DocError("not_found", "the output folder does not exist: %s" % target.parent)
+        target = _check_out(out if out is not None else _default_out(src), [src], suffixes=(".hwpx", ".hwp"))
     if target.suffix.lower() not in (".hwpx", ".hwp"):
         raise DocError("bad_input", "out must end in .hwpx or .hwp")
-    applied = [{"i": a.i, "op": a.op, "at": a.at, **({"warnings": a.info["warnings"]}
-                                                     if a.info.get("warnings") else {})} for a in acts]
-    seen, uniq = set(), []
-    for x in applied:
-        k = (x["i"], x["at"])
-        if k not in seen:
-            seen.add(k)
-            uniq.append(x)
-    applied = sorted(uniq, key=lambda x: x["i"])
+    try:
+        res, data, newdoc = _edit_build(doc, acts, target, preview)
+    except DocError as exc:
+        exc.extra.setdefault("written", False)
+        raise
+    except Exception as exc:  # noqa: BLE001 - reported with written: false
+        raise DocError("internal", "%s: %s" % (type(exc).__name__, exc), written=False)
+    check = None
+    if target == src:
+        def check():
+            now = _sha(_read_bytes(src))[:12]
+            if now != base:
+                raise DocError("stale", "the document changed while it was being edited (it is now %s); nothing "
+                               "was written" % now, rev=now, retryable=True)
+    try:
+        _publish(target, data=data, check=check)
+    except DocError as exc:
+        exc.extra.setdefault("written", False)
+        raise
+    res["out"] = str(target)
+    try:                                    # after publication nothing may turn the answer into a failure
+        _carry_places(doc, newdoc, res)
+    except Exception as exc:  # noqa: BLE001
+        res.setdefault("warnings", []).append("places: %s: %s" % (type(exc).__name__, exc))
+    return res
+
+
+def _applied(acts):
+    applied, seen = [], set()
+    for a in acts:
+        k = (a.i, a.at)
+        if k in seen:
+            continue
+        seen.add(k)
+        applied.append({"i": a.i, "op": a.op, "at": a.at,
+                        **({"warnings": a.info["warnings"]} if a.info.get("warnings") else {})})
+    return sorted(applied, key=lambda x: x["i"])
+
+
+def _edit_build(doc, acts, target, preview):
+    """(result without "out", the output's bytes, the output parsed or None). Writes nothing."""
     order = sorted(acts, key=lambda a: a.key, reverse=True)
+    res = {"rev_before": doc.rev, "applied": _applied(acts)}
+    warnings = []
     e = _engine()
-    res = {"rev_before": cur, "applied": applied, "remap": _remap(doc, acts)}
+    lay, before = {}, None
     if e is None:
         bad = [a for a in acts if a.fb is None or (a.fb[0] in ("set_para", "set_cell", "replace", "insert")
                                                     and "\n" in a.fb[-1])]
@@ -1903,72 +2423,96 @@ def edit(path, ops, *, base, out=None, in_place=False, preview=False):
             raise _unavailable("%s needs the HWP engine (built in without it: %s on .hwpx, text without line "
                                "breaks)" % (a.op if bad else ".hwp output", ", ".join(FALLBACK_OPS)),
                                "structural_edit_unsupported", at=a.at, i=a.i)
-        _fallback_apply(doc, order, target)
-        res.update(out=str(target), rev=rev_of(target), changed_pages=[], signals=[], engine=False)
-        if preview:
-            res["changed"] = [{"i": x["i"], "page": None, "rect": None} for x in applied]
-        return res
+        data = _fallback_apply(doc, order)
+    else:
+        data, lay, before = _engine_apply(e, doc, order, target)
+    newdoc = None
+    if target.suffix.lower() == ".hwpx":
+        try:
+            newdoc = Doc(target, data, "hwpx")
+        except DocError as exc:
+            raise DocError("internal", "the edited document does not read back (%s); nothing was written"
+                           % exc.message)
+    res["remap"], approx = _remap_result(doc, newdoc, acts)
+    if approx:
+        res["remap_approx"] = True
+        warnings.append("remap: the output's structure did not match the planned edit; remap is a best guess")
+    pl = lay.get("page_list") or []
+    old = [x.get("hash") for x in (before.get("page_list") or [])] if before and before.get("ok") else None
+    if e is not None:
+        if old is not None:
+            changed = [x["page"] for j, x in enumerate(pl) if j >= len(old) or x.get("hash") != old[j]]
+        else:
+            changed = [x["page"] for x in pl]
+    else:
+        changed = []
+    res["changed_pages"] = changed
+    try:
+        sig = _signals(pl, newdoc, set(changed)) if e is not None else []
+        if lay.get("approx"):
+            sig.append({"page": None, "kind": "approx", "fonts": list(lay["approx"])})
+    except Exception as exc:  # noqa: BLE001 - layout signals are advisory
+        sig = []
+        warnings.append("signals: %s: %s" % (type(exc).__name__, exc))
+    res["signals"] = sig
+    if preview:
+        try:
+            res["changed"] = _preview_changes(doc, acts, res["remap"], lay)
+        except Exception as exc:  # noqa: BLE001
+            res["changed"] = [{"i": x["i"], "page": None, "rect": None} for x in res["applied"]]
+            warnings.append("changed: %s: %s" % (type(exc).__name__, exc))
+    res["rev"] = _sha(data)[:12]
+    res["engine"] = e is not None
+    if warnings:
+        res["warnings"] = warnings
+    return res, data, newdoc
+
+
+def _engine_apply(e, doc, order, target):
+    """Run the ops as one engine script on the Doc's own bytes; (output bytes, layout, pages before)."""
     script, owner = [], []
     for a in order:
         for st in a.steps:
             script.append(st)
             owner.append(a)
-    before = e.call("pages", str(src), page_hash=True)
-    fd, tmp = tempfile.mkstemp(prefix=".rtdoc-", suffix=target.suffix, dir=str(target.parent))
-    os.close(fd)
-    os.remove(tmp)
+    f = str(doc.engine_file())
+    stage = Path(tempfile.mkdtemp(prefix="edit-", dir=str(_scratch())))
     try:
-        r = e.call("edit", str(src), script, out=tmp, layout=True, page_hash=True)
+        staged = stage / ("out" + target.suffix.lower())
+        before = e.call("pages", f, page_hash=True)
+        r = e.call("edit", f, script, out=str(staged), layout=True, page_hash=True)
         if not r.get("ok"):
             err = r.get("error") or {}
             step = err.get("step")
-            a = owner[step] if isinstance(step, int) and 0 <= step < len(owner) else None
-            done_ops = sorted({x.i for x in order[:order.index(a)]}) if a is not None else []
+            a = owner[step] if isinstance(step, int) and not isinstance(step, bool) and 0 <= step < len(owner) \
+                else None
+            done_ops = []
+            if a is not None:
+                ran = order[:order.index(a)]
+                done_ops = sorted({x.i for x in ran} - {a.i} - {x.i for x in order[order.index(a):]})
             exc = _engine_error(r, "edit", at=a.at if a else None, i=a.i if a else None)
             exc.extra["done"] = done_ops
             exc.extra["engine_done"] = err.get("done")
             exc.extra["written"] = False
             raise exc
-        if rev_of(src) != cur:
-            raise DocError("stale", "the document changed while it was being edited; nothing was written",
-                           retryable=True)
-        os.replace(tmp, target)
+        if not staged.is_file():
+            raise DocError("internal", "the engine reported success but wrote no output; nothing was written")
+        data = _read_bytes(staged)
     finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-    lay = r.get("layout") or {}
-    pl = lay.get("page_list") or []
-    old = [x.get("hash") for x in (before.get("page_list") or [])] if before.get("ok") else None
-    if old is not None:
-        changed = [x["page"] for j, x in enumerate(pl) if j >= len(old) or x.get("hash") != old[j]]
-    else:
-        changed = [x["page"] for x in pl]
-    res.update(out=str(target), rev=rev_of(target), changed_pages=changed)
-    try:
-        newdoc = _load(target) if target.suffix.lower() == ".hwpx" else None
-    except DocError:
-        newdoc = None
-    sig = _signals(pl, newdoc, set(changed))
-    if lay.get("approx"):
-        sig.append({"page": None, "kind": "approx", "fonts": list(lay["approx"])})
-    res["signals"] = sig
-    if newdoc is not None:
-        expect_top = len(doc.top) + sum(a.dtop for a in acts) - sum(len(a.dels) for a in acts)
-        if len(newdoc.top) != expect_top:
-            res["remap"] = _align_remap(doc, newdoc)
-            res["remap_approx"] = True
-    if preview:
-        starts = [s["para"] for s in lay.get("page_starts", []) if s.get("para", -1) >= 0] or [0]
-        moved = {m["from"]: m["to"] for m in res["remap"]}
-        ch = []
-        for a in acts:
-            p = doc.top_of(a.p)
-            addr = moved.get("p%d" % p.gp, "p%d" % p.gp)
-            pg = bisect.bisect_right(starts, int(addr[1:])) if addr else None
-            ch.append({"i": a.i, "page": pg, "rect": None})
-        res["changed"] = ch
-    res["engine"] = True
-    return res
+        shutil.rmtree(stage, True)
+    return data, r.get("layout") or {}, before
+
+
+def _preview_changes(doc, acts, remap, lay):
+    starts = [s["para"] for s in lay.get("page_starts", []) if isinstance(s, dict)
+              and isinstance(s.get("para"), int) and s["para"] >= 0] or None
+    out = []
+    for a in acts:
+        p = doc.top_of(a.p)
+        addr = follow_remap(remap, "p%d" % p.gp)
+        pg = bisect.bisect_right(starts, int(addr[1:])) if (starts and addr) else None
+        out.append({"i": a.i, "page": pg, "rect": None})
+    return out
 
 
 def _align_remap(a, b):
@@ -1987,35 +2531,42 @@ def _esc(ch):
     return {"&": "&amp;", "<": "&lt;", ">": "&gt;"}.get(ch, ch)
 
 
-def _piece_xml(pc):
-    kind, ch, xml = pc
+def _piece_xml(pc, pfx):
+    kind, ch, src = pc
     if kind == "c":
-        return _esc(ch)
+        return src if src is not None else _esc(ch)
     if kind == "x":
-        return xml or {"\t": TAB_XML, "\n": "<hp:lineBreak/>", "\u3000": "<hp:fwSpace/>"}.get(ch, " ")
+        if src:
+            return src
+        if ch == "\t":
+            return '<%s width="0" leader="0" type="0"/>' % _q(pfx, "tab")
+        return {"\n": "<%s/>" % _q(pfx, "lineBreak"), "　": "<%s/>" % _q(pfx, "fwSpace")}.get(ch, " ")
     return None
 
 
 def _new_pieces(text):
-    return [["x", "\t", TAB_XML] if ch == "\t" else ["c", ch, None] for ch in text]
+    return [["x", "\t", None] if ch == "\t" else ["c", ch, None] for ch in text]
 
 
-def _fb_edit_para(s, p, a, b, text):
-    """Section XML with ptext positions [a, b) of paragraph p replaced by text (no objects inside)."""
+def _fb_edit_para(s, p, a, b, text, pfx):
+    """Section XML with ptext positions [a, b) of paragraph p replaced by text (no objects inside). Untouched
+    characters keep their exact source (entities and character references included); only the changed
+    paragraph's own linesegarray (its cached line layout) is dropped."""
     if any(p.posmap[j] is None for j in range(a, b)):
         raise DocError("bad_input", "the range holds an object; the built-in path edits text only")
     reps = []      # (start, end, xml)
+    t_open, t_close = "<%s>" % _q(pfx, "t"), "</%s>" % _q(pfx, "t")
     if not p.tnodes:
         run = next((r for r in p.runs), None)
         if run is None:
             raise DocError("bad_input", "the paragraph has no run to type into")
-        tx = "<hp:t>%s</hp:t>" % "".join(_piece_xml(pc) for pc in _new_pieces(text))
+        tx = t_open + "".join(_piece_xml(pc, pfx) for pc in _new_pieces(text)) + t_close
         if run["self"]:
             open_tag = s[run["a"]:run["open_end"]]
-            reps.append((run["a"], run["open_end"], open_tag[:-2].rstrip() + ">" + tx + "</hp:run>"))
+            run_name = re.match(r"<([^\s/>]+)", open_tag).group(1)
+            reps.append((run["a"], run["open_end"], open_tag[:-2].rstrip() + ">" + tx + "</%s>" % run_name))
         else:
-            close = run["b"] - len("</hp:run>")
-            reps.append((close, close, tx))
+            reps.append((run["close"], run["close"], tx))
     else:
         # where does the insertion go: the node of position a (or the end of the last node before it)
         if a < len(p.posmap) and p.posmap[a] is not None:
@@ -2033,14 +2584,17 @@ def _fb_edit_para(s, p, a, b, text):
                 changed = changed or bool(text)
             if not changed:
                 continue
-            if any(pc[0] == "z" for pc in tn["pieces"]) or any(pc[0] == "x" and pc[2] is None and pc[1] != "\t"
-                                                                for pc in pieces):
+            if any(pc[0] in ("z", "q") for pc in tn["pieces"]) or any(
+                    pc[0] == "x" and pc[2] is None and pc[1] != "\t" for pc in tn["pieces"]):
                 raise DocError("bad_input", "the paragraph has marks inside its text; edit it with the engine")
-            inner = "".join(_piece_xml(pc) for pc in pieces)
+            inner = "".join(_piece_xml(pc, pfx) for pc in pieces)
             open_tag = tn["open"]
             if tn["self"]:
                 open_tag = open_tag[:-2].rstrip() + ">"
-            reps.append((tn["a"], tn["b"], open_tag + inner + "</hp:t>"))
+                close_tag = "</%s>" % re.match(r"<([^\s/>]+)", open_tag).group(1)
+            else:
+                close_tag = s[tn["close"]:tn["b"]]
+            reps.append((tn["a"], tn["b"], open_tag + inner + close_tag))
     if p.lineseg:
         reps.append((p.lineseg[0], p.lineseg[1], ""))
     for st, en, x in sorted(reps, key=lambda r: r[0], reverse=True):
@@ -2048,30 +2602,30 @@ def _fb_edit_para(s, p, a, b, text):
     return s
 
 
-def _fallback_apply(doc, order, target):
+def _fallback_apply(doc, order):
+    """The .hwpx bytes with the ops applied on the built-in XML path (untouched members copied as they are)."""
     secs = list(doc.secs)
     cache = {}
 
     def para_now(si, k):
         if si not in cache:
-            cache[si] = _scan_section(secs[si], si)[0]
-            for q in cache[si]:
-                q.lineseg = _own_lineseg(secs[si], q)
+            cache[si] = _scan_section(secs[si], si, doc.canon[si])[0]
         return cache[si][k]
 
     changed = set()
     for a in order:
         kind = a.fb[0]
         si = a.p.si
+        pfx = doc.pfx[si]
         if kind == "set_para":
             q = para_now(si, a.fb[1].k)
-            secs[si] = _fb_edit_para(secs[si], q, 0, len(q.chars), a.fb[2])
+            secs[si] = _fb_edit_para(secs[si], q, 0, len(q.chars), a.fb[2], pfx)
         elif kind == "replace":
             q = para_now(si, a.fb[1].k)
-            secs[si] = _fb_edit_para(secs[si], q, a.fb[2], a.fb[2] + a.fb[3], a.fb[4])
+            secs[si] = _fb_edit_para(secs[si], q, a.fb[2], a.fb[2] + a.fb[3], a.fb[4], pfx)
         elif kind == "insert":
             q = para_now(si, a.fb[1].k)
-            secs[si] = _fb_edit_para(secs[si], q, a.fb[2], a.fb[2], a.fb[3])
+            secs[si] = _fb_edit_para(secs[si], q, a.fb[2], a.fb[2], a.fb[3], pfx)
         elif kind == "set_cell":
             c = a.fb[1]
             ks = [q.k for q in c.paras]
@@ -2080,10 +2634,10 @@ def _fallback_apply(doc, order, target):
                 secs[si] = secs[si][:q.start] + secs[si][q.end:]
                 cache.pop(si, None)
             q = para_now(si, ks[0])
-            secs[si] = _fb_edit_para(secs[si], q, 0, len(q.chars), a.fb[2])
+            secs[si] = _fb_edit_para(secs[si], q, 0, len(q.chars), a.fb[2], pfx)
         cache.pop(si, None)
         changed.add(si)
-    contents = dict(doc.contents)
+    replace = {}
     for si in changed:
         data = secs[si].encode("utf-8")
         try:
@@ -2091,18 +2645,22 @@ def _fallback_apply(doc, order, target):
         except ET.ParseError as exc:
             raise DocError("internal", "the edited section would not be well-formed XML (%s); nothing written"
                            % exc)
-        contents[doc.section_names[si]] = data
-    _write_zip(target, doc.infos, contents)
+        replace[doc.section_names[si]] = data
+    out = doc.zip.rewrite(replace)
+    _check_zip_bytes(out, doc.zip.names())
+    return out
 
 
 # ============================================================================ pages, render, geometry
 @_api
 def pages(path):
     """{rev, count, pages: [{n, starts_with, signals}], approx}"""
-    src = _need_file(path)
-    doc = _load(src)
-    r = _ecall("pages", str(src))
-    starts = {s["page"]: s.get("para") for s in r.get("page_starts", [])}
+    doc = _load(path)
+    _need_engine("pages")
+    r = doc.layout
+    if r is None:
+        r = _ecall("pages", str(doc.engine_file()))
+    starts = {s["page"]: s.get("para") for s in r.get("page_starts") or [] if isinstance(s, dict) and "page" in s}
     sig = _signals(r.get("page_list"), doc)
     out = []
     for e in r.get("page_list") or []:
@@ -2114,22 +2672,35 @@ def pages(path):
     return {"rev": doc.rev, "count": r.get("pages"), "pages": out, "approx": r.get("approx") or []}
 
 
+def _is_int(x):
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
 def _page_list(pages_, count=None):
+    """Requested pages, in the caller's order: page numbers 1..count, each once."""
     if pages_ in (None, "all"):
         if count is None:
             raise DocError("bad_input", "pages: a page number, a list of them, or \"all\"")
         return list(range(1, count + 1))
     if isinstance(pages_, str):
-        a = parse_address(pages_) if pages_.startswith("page:") else {"kind": "page", "page": int(pages_)} \
-            if pages_.isdigit() else None
+        a = parse_address(pages_) if pages_.startswith("page:") else ({"kind": "page", "page": int(pages_)}
+                                                                      if pages_.isdigit() else None)
         if not a or a["kind"] != "page":
             raise DocError("bad_address", "pages: page:N, N, a list, or \"all\"", at=pages_)
-        return [a["page"]]
-    if isinstance(pages_, int):
-        return [pages_]
-    if isinstance(pages_, (list, tuple)) and all(isinstance(x, int) for x in pages_):
-        return list(pages_)
-    raise DocError("bad_input", "pages: a page number, a list of them, or \"all\"")
+        sel = [a["page"]]
+    elif _is_int(pages_):
+        sel = [pages_]
+    elif isinstance(pages_, (list, tuple)) and pages_ and all(_is_int(x) for x in pages_):
+        sel = list(pages_)
+    else:
+        raise DocError("bad_input", "pages: a page number, a list of them, or \"all\"")
+    if len(set(sel)) != len(sel):
+        raise DocError("bad_input", "pages: each page once (%s)" % sel)
+    for n in sel:
+        if n < 1 or (count is not None and n > count):
+            raise DocError("bad_address", "the document has %s pages" % (count if count is not None else "1.."),
+                           at="page:%d" % n, candidates=["page:%d" % count] if count else None)
+    return sel
 
 
 def _pdfium():
@@ -2140,156 +2711,288 @@ def _pdfium():
         return None
 
 
-@_api
-def render(path, pages, *, scale=2.0, fmt="png", out_dir=None):  # noqa: A002 - doc_core name
-    """{rev, pages: [{n, file, width_pt, height_pt, px_w, px_h}]}; fmt="pdf" writes one PDF."""
-    src = _need_file(path)
-    rev = rev_of(src)
+def _out_dir(out_dir, default):
+    if out_dir is None:
+        d = default
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    d = Path(os.path.abspath(os.fspath(out_dir)))
+    if d.exists() and not d.is_dir():
+        raise DocError("bad_input", "out_dir is a file: %s" % d)
+    if not d.parent.is_dir():
+        raise DocError("not_found", "the output folder's parent does not exist: %s" % d.parent)
+    d.mkdir(exist_ok=True)
+    return Path(os.path.realpath(d))
+
+
+def _render(doc, sel, scale, fmt, names, pdf_name=None):
+    """Render pages `sel` (in that order) of doc into the files `names` ({n: Path}, png) or `pdf_name` (pdf).
+    Everything is drawn into a private staging folder first; nothing is published unless every page drew."""
     e = _need_engine("render")
+    f = str(doc.engine_file())
+    want = sorted(sel)
+    stage = Path(tempfile.mkdtemp(prefix="render-", dir=str(_scratch())))
+    try:
+        spdf = stage / "pages.pdf"
+        r = e.call("pdf", f, str(spdf), pages=want)
+        if not r.get("ok"):
+            raise _engine_error(r, "pdf")
+        drawn = r.get("drawn", want)
+        if not isinstance(drawn, list) or sorted(drawn) != want or not spdf.is_file():
+            raise DocError("engine_protocol", "the engine drew pages %s for a request of %s" % (drawn, want))
+        pdfium = _pdfium()
+        if fmt == "pdf":
+            recs = [{"n": n, "index": j} for j, n in enumerate(drawn)]
+            if pdfium is not None:
+                d = pdfium.PdfDocument(str(spdf))
+                try:
+                    if len(d) != len(drawn):
+                        raise DocError("engine_protocol", "the PDF has %d pages, not %d" % (len(d), len(drawn)))
+                    for rec in recs:
+                        w, h = d[rec["index"]].get_size()
+                        rec.update(width_pt=round(w, 2), height_pt=round(h, 2))
+                finally:
+                    d.close()
+            _publish_many([(pdf_name, None, spdf)])
+            for rec in recs:
+                rec["file"] = str(pdf_name)
+            return {"file": str(pdf_name), "pages": recs, "via": "engine_pdf"}
+        if pdfium is None:
+            raise _unavailable("PNG pages need pypdfium2 (pip install pypdfium2)", "rasterizer_missing")
+        index = {n: j for j, n in enumerate(drawn)}
+        res, items = [], []
+        d = pdfium.PdfDocument(str(spdf))
+        try:
+            if len(d) != len(drawn):
+                raise DocError("engine_protocol", "the PDF has %d pages, not %d" % (len(d), len(drawn)))
+            for n in sel:
+                pg = d[index[n]]
+                w, h = pg.get_size()
+                img = pg.render(scale=float(scale)).to_pil()
+                tmp = stage / ("p%d.png" % n)
+                img.save(str(tmp), "PNG")
+                items.append((names[n], None, tmp))
+                res.append({"n": n, "file": str(names[n]), "width_pt": round(w, 2), "height_pt": round(h, 2),
+                            "px_w": img.width, "px_h": img.height})
+        finally:
+            d.close()
+        _publish_many(items)
+        return {"pages": res, "via": "engine_pdf+pypdfium2"}
+    finally:
+        shutil.rmtree(stage, True)
+
+
+def _render_args(doc, pages_, scale, fmt):
     if fmt not in ("png", "pdf"):
         raise DocError("bad_input", "fmt is png or pdf")
-    od = Path(out_dir).resolve() if out_dir else (_scratch() / ("render-" + rev))
-    od.mkdir(parents=True, exist_ok=True)
-    count = None
-    if pages in (None, "all"):
-        pr = e.call("pages", str(src))
-        if not pr.get("ok"):
-            raise _engine_error(pr, "pages")
-        count = pr.get("pages")
-    sel = _page_list(pages, count)
-    stem = src.stem
-    if fmt == "png":
-        r = e.call("png", str(src), str(od), pages=sel, scale=scale)
-        if r.get("ok") and isinstance(r.get("pages"), list):
-            return {"rev": rev, "pages": r["pages"], "via": "engine_png"}
-    pdf_out = od / ("%s.pdf" % stem if fmt == "pdf" else ".%s-%s.pdf" % (stem, rev))
-    r = e.call("pdf", str(src), str(pdf_out), pages=sel)
-    if not r.get("ok"):
-        raise _engine_error(r, "pdf")
-    pdfium = _pdfium()
+    if not isinstance(scale, (int, float)) or isinstance(scale, bool) or not 0 < scale <= 20:
+        raise DocError("bad_input", "scale: a number above 0 and at most 20")
+    count = doc.page_count()
+    if count is None:
+        r = _ecall("pages", str(doc.engine_file()))
+        count = r.get("pages") if _is_int(r.get("pages")) else None
+    return _page_list(pages_, count)
+
+
+@_api
+def render(path, pages, *, scale=2.0, fmt="png", out_dir=None):  # noqa: A002 - doc_core name
+    """{rev, pages: [{n, file, width_pt, height_pt, px_w, px_h}]} in the order asked for; fmt="pdf" writes one
+    PDF ({rev, file, pages: [{n, file, index, width_pt, height_pt}]}, pages in the PDF's ascending order).
+    Files are ``<stem>.p<N>.png`` / ``<stem>.pdf`` in out_dir (default: a private scratch folder)."""
+    doc = _load(path)
+    _need_engine("render")
+    sel = _render_args(doc, pages, scale, fmt)
+    rdir = _scratch_sub("render")
+    if out_dir is None:
+        _prune(rdir)
+    od = _out_dir(out_dir, rdir / doc.rev)
+    stem = doc.path.stem
     if fmt == "pdf":
-        out = {"rev": rev, "file": str(pdf_out), "pages": [{"n": n} for n in sel]}
-        if pdfium is not None:
-            d = pdfium.PdfDocument(str(pdf_out))
-            try:
-                for j, rec in enumerate(out["pages"]):
-                    w, h = d[j].get_size()
-                    rec.update(width_pt=round(w, 2), height_pt=round(h, 2))
-            finally:
-                d.close()
-        return out
-    if pdfium is None:
-        raise _unavailable("PNG pages need pypdfium2 (pip install pypdfium2)", "rasterizer_missing")
-    d = pdfium.PdfDocument(str(pdf_out))
-    res = []
-    try:
-        for j, n in enumerate(sel):
-            pg = d[j]
-            w, h = pg.get_size()
-            img = pg.render(scale=float(scale)).to_pil()
-            f = od / ("%s.p%d.png" % (stem, n))
-            fd, tmp = tempfile.mkstemp(prefix=".rtdoc-", suffix=".png", dir=str(od))
-            os.close(fd)
-            img.save(tmp, "PNG")
-            os.replace(tmp, f)
-            res.append({"n": n, "file": str(f), "width_pt": round(w, 2), "height_pt": round(h, 2),
-                        "px_w": img.width, "px_h": img.height})
-    finally:
-        d.close()
-        try:
-            pdf_out.unlink()
-        except OSError:
-            pass
-    return {"rev": rev, "pages": res, "via": "engine_pdf+pypdfium2"}
+        name = _check_out(od / ("%s.pdf" % stem), [doc.path])
+        r = _render(doc, sel, scale, fmt, None, name)
+    else:
+        names = {n: _check_out(od / ("%s.p%d.png" % (stem, n)), [doc.path]) for n in sel}
+        r = _render(doc, sel, scale, fmt, names)
+    r["rev"] = doc.rev
+    return r
 
 
-def _passthrough(fn, *args, **kwargs):
-    src = _need_file(args[0])
-    r = _ecall(fn, str(src), *args[1:], **kwargs)
-    out = {k: v for k, v in r.items() if k not in ("api", "ok", "backend", "fn", "fallback")}
-    out.setdefault("rev", rev_of(src))
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _rect(x):
+    return isinstance(x, list) and len(x) == 4 and all(_num(v) for v in x)
+
+
+_SHAPES = {
+    "geometry": lambda r: _is_int(r.get("page")) and _num(r.get("width_pt")) and _num(r.get("height_pt"))
+    and isinstance(r.get("boxes"), list) and all(
+        isinstance(b, dict) and isinstance(b.get("at"), (str, type(None))) and _rect(b.get("rect"))
+        and b.get("kind") in ("para", "line", "table", "cell", "place") for b in r["boxes"]),
+    "hit_test": lambda r: isinstance(r.get("at"), str) and _is_int(r.get("offset")),
+    "caret_rect": lambda r: _is_int(r.get("page")) and _rect(r.get("rect")),
+}
+
+
+def _passthrough(fn, doc, *args):
+    """An engine geometry answer, checked against the doc_core contract before it is passed on."""
+    r = _ecall(fn, str(doc.engine_file()), *args)
+    out = {k: v for k, v in r.items() if k not in ("api", "ok", "backend", "fn", "fallback", "file")}
+    if not _SHAPES[fn](out):
+        raise DocError("engine_protocol", "the engine's %s answer does not have the doc_core shape" % fn,
+                       engine_fn=fn)
+    out["rev"] = doc.rev
     return out
+
+
+def _one_page(doc, page):
+    if isinstance(page, (list, tuple)):
+        raise DocError("bad_input", "page: one page number")
+    return _page_list(page, doc.page_count())[0]
 
 
 @_api
 def geometry(path, page):
     """{rev, page, width_pt, height_pt, boxes: [{at, kind, rect, text?, baseline?, xs?}]} (engine)."""
-    n = _page_list(page)[0]
-    return _passthrough("geometry", path, n)
+    doc = _load(path)
+    _need_engine("geometry")
+    return _passthrough("geometry", doc, _one_page(doc, page))
 
 
 @_api
 def hit_test(path, page, x, y):
     """{at, offset} of the point (pt) on the page (engine)."""
-    n = _page_list(page)[0]
-    return _passthrough("hit_test", path, n, x, y)
+    doc = _load(path)
+    _need_engine("hit_test")
+    if not (_num(x) and _num(y)):
+        raise DocError("bad_input", "x and y are numbers (pt)")
+    return _passthrough("hit_test", doc, _one_page(doc, page), x, y)
 
 
 @_api
 def caret_rect(path, at, offset):
     """{page, rect} of the caret at offset in the paragraph at (engine)."""
-    parse_address(at)
-    return _passthrough("caret_rect", path, at, offset)
+    doc = _load(path)
+    _need_engine("caret_rect")
+    r = resolve(doc, at, allow=("para",))
+    if not _is_int(offset) or not 0 <= offset <= len(r["para"].text):
+        raise DocError("bad_input", "offset is 0..%d for %s" % (len(r["para"].text), at), at=at)
+    return _passthrough("caret_rect", doc, at, offset)
 
 
 # ============================================================================ convert, new, diff
 @_api
 def convert(src, out, *, to):
-    """{out, lossy: [str]}; to in hwpx, hwp, pdf, png, md, docx."""
-    s = _need_file(src)
-    o = Path(out).resolve()
-    if o == s:
-        raise DocError("bad_input", "out is the input file")
-    if not o.parent.is_dir():
-        raise DocError("not_found", "the output folder does not exist: %s" % o.parent)
-    fmt = s.suffix.lower().lstrip(".")
+    """{out, lossy: [str]}; to in hwpx, hwp, pdf, png, md, docx.
+
+    to="png": when out ends in .png, a one-page document is written to out itself and a longer one to
+    ``<out stem>.p<N>.png`` beside it (out is then the first page's file); otherwise out is a folder that gets
+    ``<src stem>.p<N>.png``. Every path returned exists."""
     if to not in ("hwpx", "hwp", "pdf", "png", "md", "docx"):
         raise DocError("bad_input", "to is one of hwpx, hwp, pdf, png, md, docx")
-    if fmt in ("hwpx", "hwp"):
-        real = _format_of(s)
-        if to == "hwpx" and real == "hwpx":
-            _atomic_copy(s, o)
-            return {"out": str(o), "lossy": []}
-        if _engine() is None and to == "md" and real == "hwpx":
-            raise _unavailable("markdown export needs the HWP engine", "engine_not_configured")
-        if to == "hwpx":
-            r = _ecall("to_hwpx", str(s), str(o))
-            return {"out": str(o), "lossy": ["%s x%d not converted" % (k, v)
-                                             for k, v in (r.get("unsupported") or {}).items()]}
-        if to == "hwp":
-            r = _ecall("save", str(s), str(o))
-            return {"out": str(o), "lossy": list(r.get("warnings") or [])}
-        if to == "pdf":
-            r = _ecall("pdf", str(s), str(o))
-            return {"out": str(o), "lossy": list(r.get("approx") or [])}
+    s = _need_file(src)
+    real = _format_of(s)
+    if real in ("hwpx", "hwp"):
+        doc = _load(s)
         if to == "png":
-            r = render.__wrapped__(s, "all", out_dir=o if o.suffix.lower() != ".png" else o.parent)
-            return {"out": str(o), "pages": r["pages"], "lossy": []}
+            _need_engine("converting to png")
+            sel = _render_args(doc, "all", 2.0, "png")
+            o = Path(os.path.abspath(os.fspath(out)))
+            if o.suffix.lower() == ".png":
+                if len(sel) == 1:
+                    names = {sel[0]: _check_out(o, [s])}
+                else:
+                    names = {n: _check_out(o.with_name("%s.p%d.png" % (o.stem, n)), [s]) for n in sel}
+                r = _render(doc, sel, 2.0, "png", names)
+                return {"out": r["pages"][0]["file"], "pages": r["pages"], "lossy": []}
+            od = _out_dir(o, o)
+            names = {n: _check_out(od / ("%s.p%d.png" % (s.stem, n)), [s]) for n in sel}
+            r = _render(doc, sel, 2.0, "png", names)
+            return {"out": str(od), "pages": r["pages"], "lossy": []}
+        o = _check_out(out, [s], suffixes=("." + to,) if to != "md" else (".md", ".markdown"))
+        if to == "hwpx" and doc.format == "hwpx":
+            _publish(o, data=doc.raw)
+            return {"out": str(o), "lossy": []}
+        if to == "hwpx":                    # the engine's conversion of the .hwp, read once into the Doc
+            _publish(o, data=doc.raw)
+            try:
+                lossy = json.loads((_scratch_sub("hwp") / ("%s.json" % doc.sha[:24])).read_text("utf-8"))
+            except (OSError, ValueError):
+                lossy = []
+            return {"out": str(o), "lossy": [str(x) for x in lossy]}
+        if _engine() is None and to == "md":
+            raise _unavailable("markdown export needs the HWP engine", "engine_not_configured")
+        e = _need_engine("converting to %s" % to)
+        fn = {"hwp": "save", "pdf": "pdf"}.get(to, "convert")
+        stage = Path(tempfile.mkdtemp(prefix="convert-", dir=str(_scratch())))
+        try:
+            staged = stage / ("out" + o.suffix.lower())
+            kw = {"to": to} if fn == "convert" else {}
+            r = e.call(fn, str(doc.engine_file()), str(staged), **kw)
+            if not r.get("ok"):
+                raise _engine_error(r, fn)
+            if not staged.is_file():
+                raise DocError("engine_protocol", "the engine reported success but wrote no %s" % to)
+            _publish(o, src=staged)
+        finally:
+            shutil.rmtree(stage, True)
+        lossy = {"hwp": r.get("warnings"), "pdf": r.get("approx")}.get(to, r.get("lossy"))
+        return {"out": str(o), "lossy": [str(x) for x in (lossy or [])]}
+    o = _check_out(out, [s], suffixes=("." + to,))
     e = _need_engine("converting to %s" % to)
-    r = e.call("convert", str(s), str(o), to=to)
-    if not r.get("ok"):
-        raise _engine_error(r, "convert")
-    return {"out": r.get("out", str(o)), "lossy": list(r.get("lossy") or [])}
+    stage = Path(tempfile.mkdtemp(prefix="convert-", dir=str(_scratch())))
+    try:
+        staged = stage / ("out" + o.suffix.lower())
+        r = e.call("convert", str(s), str(staged), to=to)
+        if not r.get("ok"):
+            raise _engine_error(r, "convert")
+        if not staged.is_file():
+            raise DocError("engine_protocol", "the engine reported success but wrote no %s" % to)
+        _publish(o, src=staged)
+    finally:
+        shutil.rmtree(stage, True)
+    return {"out": str(o), "lossy": [str(x) for x in (r.get("lossy") or [])]}
 
 
 @_api
 def new(markdown_path_or_text, out, *, form=None):
     """{out, rev}: a document built from markdown (a .md path or the text), optionally on a form."""
-    o = Path(out).resolve()
-    if not o.parent.is_dir():
-        raise DocError("not_found", "the output folder does not exist: %s" % o.parent)
     src = markdown_path_or_text
-    if isinstance(src, str) and "\n" not in src and Path(src).is_file():
+    if isinstance(src, os.PathLike):
+        src = os.fspath(src)
+    if not isinstance(src, str) or not src.strip():
+        raise DocError("bad_input", "new needs markdown text or a .md path")
+    inputs = []
+    if "\n" not in src and Path(src).is_file():
         src = str(Path(src).resolve())
-    kw = {"form": str(_need_file(form))} if form else {}
-    r = _ecall("build", src, str(o), **kw)
-    return {"out": str(o), "rev": rev_of(o), "warnings": list(r.get("warnings") or [])}
+        inputs.append(src)
+    fpath = None
+    if form is not None:
+        fpath = _need_file(form)
+        inputs.append(fpath)
+    o = _check_out(out, inputs, suffixes=(".hwpx",))
+    e = _need_engine("new")
+    stage = Path(tempfile.mkdtemp(prefix="new-", dir=str(_scratch())))
+    try:
+        staged = stage / "new.hwpx"
+        kw = {"form": str(fpath)} if fpath is not None else {}
+        r = e.call("build", src, str(staged), **kw)
+        if not r.get("ok"):
+            raise _engine_error(r, "build")
+        if not staged.is_file():
+            raise DocError("engine_protocol", "the engine reported success but wrote no document")
+        data = _read_bytes(staged)
+        _publish(o, data=data)
+    finally:
+        shutil.rmtree(stage, True)
+    return {"out": str(o), "rev": _sha(data)[:12], "warnings": list(r.get("warnings") or [])}
 
 
 @_api
 def diff(a, b):
     """{changes: [{at, before, after, kind, at_b?}]}: top-level paragraphs and table cells."""
-    da, db = _load(a), _load(b)
+    da, db = _load(a, meta=False), _load(b, meta=False)
     ch = []
     sm = difflib.SequenceMatcher(None, [p.text for p in da.top], [p.text for p in db.top], autojunk=False)
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
@@ -2313,4 +3016,5 @@ def diff(a, b):
 
 
 __all__ = ["open", "outline", "read", "find", "edit", "render", "geometry", "hit_test", "caret_rect", "pages",
-           "convert", "new", "diff", "parse_address", "resolve", "rev_of", "close", "engine_status", "DocError"]
+           "convert", "new", "diff", "parse_address", "resolve", "follow_remap", "rev_of", "close", "engine_status",
+           "DocError"]
