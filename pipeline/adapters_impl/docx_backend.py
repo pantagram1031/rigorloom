@@ -11,7 +11,8 @@ Mapping (bundle_spec.md build grammar → docx):
     ## SECTION:                 → Heading 1
     paragraph                   → body paragraph (inline EQ → italic code text)
     [[FIG file= width=NNmm]]    → embedded image (width mm, default 110mm); a
-                                  missing or unreadable file → an italic note
+                                  missing or unreadable file → the italic
+                                  "[missing figure: …]" note
     [[TABLE ...]] rows          → docx table (first row bold header), caption above
 
 Documented v1 limitation: equations are emitted as inline italic monospace text
@@ -132,9 +133,10 @@ def build(ws: str, out_dir: str | None = None):
                 except (InvalidImageStreamError, UnexpectedEndOfFileError,
                         UnrecognizedImageError):
                     # A figure python-docx cannot read (cut short, or not an
-                    # image) gets a note in its place, as a missing one does,
-                    # instead of stopping the whole document.
-                    run.text = f"[unreadable figure: {b['file']}]"
+                    # image) is missing from the document all the same: it
+                    # gets the missing figure's note instead of stopping the
+                    # whole document.
+                    run.text = f"[missing figure: {b['file']}]"
                     run.italic = True
             else:
                 p.add_run(f"[missing figure: {b['file']}]").italic = True

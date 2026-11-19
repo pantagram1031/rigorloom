@@ -1079,9 +1079,9 @@ class TestDocxBackend(unittest.TestCase):
         # a section heading string must survive into the document body
         self.assertIn("Intro", xml)
         # _make_ws writes plot.png as a PNG signature and nothing after it:
-        # python-docx cannot read it, so the figure becomes a note and the
-        # rest of the document is still built.
-        self.assertIn("[unreadable figure: plot.png]", xml)
+        # python-docx cannot read it, so the figure gets the missing figure's
+        # note and the rest of the document is still built.
+        self.assertIn("[missing figure: plot.png]", xml)
         self.assertIn("Figure 1. A synthetic plot", xml)
         # the table's caption comes before the table, as in the bundle backend
         self.assertLess(xml.index("Table 1. Synthetic data"), xml.index("<w:tbl>"))
@@ -1107,7 +1107,7 @@ class TestDocxBackend(unittest.TestCase):
         with zipfile.ZipFile(result["out"]) as z:
             xml = z.read("word/document.xml").decode("utf-8")
             media = [n for n in z.namelist() if n.startswith("word/media/")]
-        self.assertIn("[unreadable figure: plot.png]", xml)
+        self.assertIn("[missing figure: plot.png]", xml)
         self.assertEqual(media, [])
 
 
