@@ -176,10 +176,13 @@ class ProtocolDoor(_ChildDoor):
 
     name = "protocol"
 
-    def __init__(self, root: Path, engine_root: Path | None, stderr_path=None):
+    def __init__(self, root: Path, engine_root: Path | None, stderr_path=None,
+                 identity: str | None = None):
         argv = [sys.executable, str(SERVE), "--entry", "agent", "--root", str(root)]
         if engine_root is not None:
             argv += ["--engine-root", str(engine_root)]
+        if identity is not None:
+            argv += ["--provider-identity", identity]
         super().__init__(argv, stderr_path)
         self._next = 0
         self.handshake = self._request("initialize", {
@@ -210,10 +213,13 @@ class McpDoor(_ChildDoor):
 
     name = "mcp"
 
-    def __init__(self, root: Path, engine_root: Path | None, stderr_path=None):
+    def __init__(self, root: Path, engine_root: Path | None, stderr_path=None,
+                 identity: str | None = None):
         argv = [sys.executable, str(MCP), "--root", str(root)]
         if engine_root is not None:
             argv += ["--engine-root", str(engine_root)]
+        if identity is not None:
+            argv += ["--provider-identity", identity]
         super().__init__(argv, stderr_path)
         self._next = 0
         self._rpc("initialize", {
@@ -260,11 +266,18 @@ def newest_candidate(door, session_id: str) -> str | None:
 
 
 def open_door(door: str, root: Path, engine_root: Path | None,
-              stderr_path: Path | None = None):
+              stderr_path: Path | None = None, identity: str | None = None):
+    """Start the runtime the agent talks to.
+
+    ``identity`` is the launched provider's identity (``"mock"`` for the
+    bundled test agents). It is a launch argument of the runtime process, so
+    what the agent then sends — its ``proposer`` label included — cannot
+    change the provenance its plans carry.
+    """
     if door == "protocol":
-        return ProtocolDoor(root, engine_root, stderr_path)
+        return ProtocolDoor(root, engine_root, stderr_path, identity)
     if door == "mcp":
-        return McpDoor(root, engine_root, stderr_path)
+        return McpDoor(root, engine_root, stderr_path, identity)
     raise RpcError("invalid_params", f"unknown door {door!r}", known=list(DOORS))
 
 
@@ -517,7 +530,10 @@ def main(argv: list[str] | None = None) -> int:
     stderr_path = Path(args.stderr_log) if args.stderr_log else None
     door = None
     try:
-        door = open_door(args.door, root, args.engine_root, stderr_path)
+        # This script IS the bundled test agent: its runtime is launched
+        # with the mock identity, whatever it later calls itself.
+        door = open_door(args.door, root, args.engine_root, stderr_path,
+                         identity="mock")
         payload, code = run_scenario(door, args)
     except DoorRefusal as exc:
         return emit({"ok": False, "agent": AGENT_NAME, "door": args.door,

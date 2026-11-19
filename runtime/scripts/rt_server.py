@@ -59,6 +59,9 @@ from rt_jsonl import (  # noqa: E402
 )
 
 ENTRIES = ("host", "agent")
+#: Launch-time identities a connection can carry. Set by whoever STARTS the
+#: runtime process (``serve.py --provider-identity``), never by a request.
+PROVIDER_IDENTITIES = ("mock",)
 UNKNOWN_FIELD_POLICIES = ("reject", "ignore")
 
 _REQUEST_MEMBERS = {"kind", "id", "method", "params"}
@@ -93,10 +96,16 @@ def _text(value, name: str) -> str:
 
 class RuntimeServer:
     def __init__(self, *, entry: str, root: Path, engine_root: Path | None = None,
-                 stdin=None, stdout=None):
+                 stdin=None, stdout=None, provider_identity: str | None = None):
         if entry not in ENTRIES:
             raise ValueError(f"entry must be one of {ENTRIES}")
+        if provider_identity is not None and provider_identity not in PROVIDER_IDENTITIES:
+            raise ValueError(f"provider_identity must be one of {PROVIDER_IDENTITIES}")
         self.entry = entry
+        # The provenance every plan proposed on this connection carries. A
+        # ``proposer`` string in a request is a label; this is the identity of
+        # the provider that was launched, and only the launcher sets it.
+        self.provider_identity = provider_identity
         self.core = RuntimeCore(root, engine_root)
         self._in = stdin if stdin is not None else sys.stdin.buffer
         self._write_lock = threading.Lock()
@@ -418,7 +427,7 @@ class RuntimeServer:
 
     def _m_plan_propose(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "backend", "ops", "proposer",
-                                  "baseRunId", "reverses", "declares"},
+                                  "baseRunId", "reverses", "declares", "replaces"},
                          required=("sessionId", "backend", "ops"),
                          where="plan/propose.params",
                          policy=self.unknown_field_policy)
@@ -434,7 +443,9 @@ class RuntimeServer:
             # Field-level strictness stays with the domain: ``declares`` has one
             # allow-list (rt_plan.DECLARES_FIELDS) and one refusal, so the wire
             # and the CLI cannot drift into two dialects of the same object.
-            declares=params.get("declares"))
+            declares=params.get("declares"),
+            provenance=self.provider_identity,
+            replaces=params.get("replaces"))
 
     def _m_plan_validate(self, params: dict, _id) -> dict:
         params = _object(params, {"planId"}, required=("planId",),

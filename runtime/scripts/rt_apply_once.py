@@ -10,6 +10,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 import os
 import re
+import threading
+import time
 import uuid
 
 from rt_apply import RECEIPT_NAME, list_candidates, read_receipt
@@ -51,6 +53,91 @@ def plan_lock(root, plan_id):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+#: How long a writer waits for another host's transition on the same session.
+SESSION_LOCK_TIMEOUT_S = 300.0
+
+_held = threading.local()
+
+
+def _os_lock(handle, *, blocking: bool) -> bool:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _os_unlock(handle) -> None:
+    if os.name == "nt":
+        import msvcrt
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def session_lock(root, session_id, *, timeout=None):
+    """One writer per session, across threads AND host processes on one root.
+
+    Held from the ``plan_behind_head`` check through the receipt and the
+    candidate write, and around every approval-record replacement and its
+    event, so "is this plan still on the head?" and "publish it" are one step.
+    The plan lock alone serialised one plan; two plans on the same base could
+    both pass the head check before either receipt landed and publish siblings.
+
+    Blocking (with a timeout), unlike the plan lock: a second transition on the
+    same session is not a mistake, it simply goes second and then sees the
+    head the first one produced. Re-entrant within a thread. The file is a
+    separate open file description per acquisition, so threads of one process
+    exclude each other exactly as processes do.
+    """
+    if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+        raise RpcError("invalid_params", "invalid session identifier")
+    path = (root / "locks" / f"session-{session_id}.lock")
+    key = str(path)
+    held = getattr(_held, "locks", None)
+    if held is None:
+        held = _held.locks = {}
+    if key in held:
+        held[key][1] += 1
+        try:
+            yield
+        finally:
+            held[key][1] -= 1
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Never unlink a lock file: a waiter must not acquire a different inode.
+    handle = path.open("a+b")
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        deadline = time.monotonic() + (SESSION_LOCK_TIMEOUT_S if timeout is None else timeout)
+        while not _os_lock(handle, blocking=False):
+            if time.monotonic() >= deadline:
+                raise RpcError("apply_in_progress",
+                               "another transition on this session holds its lock; retry later",
+                               sessionId=session_id)
+            time.sleep(0.05)
+        held[key] = [handle, 1]
+        try:
+            yield
+        finally:
+            del held[key]
+            _os_unlock(handle)
+    finally:
+        handle.close()
+
+
 def verified_result(session, plan, approval, run_id):
     receipt = read_receipt(session, run_id)
     expected = {"runId": run_id, "sessionId": session.id,
@@ -77,7 +164,12 @@ def apply_once(root, session, plan, approval, execute, reconcile):
     with plan_lock(root, plan.id) as journal:
         def replay(run_id, completed):
             result = verified_result(session, plan, approval, run_id)
-            reconcile(result, emit_events=not completed)
+            if completed:
+                # The transition already committed and reconciled: a retry
+                # answers with the same candidate and changes nothing else —
+                # no events, no supersession, no journal rewrite.
+                return result
+            reconcile(result, emit_events=True)
             atomic_write_bytes(journal, canonical_bytes({**binding, "runId": run_id, "state": "published"}))
             return result
 

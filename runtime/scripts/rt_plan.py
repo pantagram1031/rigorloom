@@ -361,22 +361,20 @@ def _classify_foreign_kind(kind: str) -> str | None:
     return None
 
 
-#: Proposer names the bundled test agents use. A plan from one of them is a
-#: test value, not an agent's reading of the document, and it says so in its
-#: own payload (``provenance: "mock"``) so every surface that shows the plan —
-#: review rows, the approval dialog, history — can label it without guessing.
-MOCK_PROPOSERS = frozenset({"agenthost-mock", "rigorloom-mock-agent"})
-
-
-def plan_provenance(proposer) -> str | None:
-    """``"mock"`` for the bundled test agents, ``None`` for everything else."""
-    return "mock" if isinstance(proposer, str) and proposer in MOCK_PROPOSERS else None
+#: The one provenance a plan can carry. Set from the identity of the connection
+#: a plan arrived on — the runtime the bundled test agents launch is started
+#: with ``--provider-identity mock`` — never from a ``proposer`` string, which
+#: any caller can spell. A plan from a test agent is a test value, not an
+#: agent's reading of the document, and it says so in its own payload so every
+#: surface that shows the plan can label it without guessing.
+PROVENANCES = frozenset({"mock"})
 
 
 def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
                bound_sha256: str, base: dict | None = None,
                reverses: dict | None = None, declares=None,
-               inventory: dict | None = None) -> OperationPlan:
+               inventory: dict | None = None,
+               provenance: str | None = None) -> OperationPlan:
     """Create a plan. Refuses an unservable backend or op kind before anything else.
 
     ``base`` is the published candidate these ops are chained onto, or ``None``
@@ -474,8 +472,9 @@ def build_plan(*, session_id: str, backend: str, ops: list, proposer: str,
     # Only present for a test agent's plan, so every other plan hashes exactly
     # as it did before the field existed. Inside the hashed payload on purpose:
     # an approval of a test value binds the fact that it was one.
-    provenance = plan_provenance(proposer)
     if provenance is not None:
+        if provenance not in PROVENANCES:
+            raise RpcError("invalid_params", "unknown provenance", provenance=provenance)
         payload["provenance"] = provenance
     payload["opsHash"] = ops_hash(backend, bound_sha256, normalised)
     payload["planHash"] = hashlib.sha256(

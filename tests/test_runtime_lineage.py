@@ -158,9 +158,7 @@ def test_applying_a_plan_returns_other_pending_approvals_as_superseded(tmp_path)
     with RuntimeClient(tmp_path / "root") as client:
         session = _open(client, tmp_path)
         waiting = client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
-                                             "ops": SECOND,
-                                             "proposer": "agenthost-mock"})["plan"]
-        assert waiting["provenance"] == "mock"
+                                             "ops": SECOND})["plan"]
         waiting_approval = client.ok("approval/request",
                                      {"planId": waiting["planId"]})["approval"]
         _, first = _apply(client, session, FIRST)
@@ -350,3 +348,133 @@ def test_compare_is_agent_safe_and_apply_is_not(tmp_path):
         error = agent.err("plan/apply", {"planId": "x", "approvalId": "y"})
         assert error["code"] == "unknown_method"
         assert error["data"]["knownOnHostEntry"] is True
+
+
+# --- T2: explicit replacement, provenance, complete proofs --------------------
+
+def _events(client, session):
+    return client.ok("event/poll", {"sessionId": session, "after": -1})["events"]
+
+
+def test_an_explicit_replacement_revokes_the_replaced_plans_approval(tmp_path):
+    """Re-proposing a queued plan as a replacement retires its open approval.
+
+    Before, only the client forgot the old approval; the runtime still held a
+    usable one for a plan on the same base.
+    """
+    with RuntimeClient(tmp_path / "root") as client:
+        session = _open(client, tmp_path)
+        old = client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
+                                         "ops": FIRST})["plan"]
+        pending = client.ok("approval/request", {"planId": old["planId"]})["approval"]
+        answer = client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
+                                            "ops": FIRST + SECOND,
+                                            "replaces": old["planId"]})
+        new = answer["plan"]
+        assert answer["replaced"]["planId"] == old["planId"]
+        assert answer["replaced"]["revokedApprovals"] == [pending["approvalId"]]
+
+        record = client.ok("approval/get", {"approvalId": pending["approvalId"]})["approval"]
+        assert record["state"] == "rejected"
+        assert record["reasonCode"] == "superseded_by_newer_candidate"
+        assert record["supersededBy"] == new["planId"]
+        assert record["approver"] is None
+        refused = client.err("approval/resolve", {
+            "approvalId": pending["approvalId"], "planId": old["planId"],
+            "planHash": old["planHash"], "decision": "approved",
+            "approver": "test-operator"})
+        assert refused["code"] == "approval_already_resolved", refused
+        events = [ev for ev in _events(client, session)
+                  if ev["kind"] == "approval.resolved"
+                  and (ev.get("detail") or {}).get("approvalId") == pending["approvalId"]]
+        assert len(events) == 1
+        assert events[0]["detail"]["supersededBy"] == new["planId"]
+
+
+def test_a_replaced_plan_that_was_already_approved_cannot_be_applied(tmp_path):
+    with RuntimeClient(tmp_path / "root") as client:
+        session = _open(client, tmp_path)
+        old = client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
+                                         "ops": FIRST})["plan"]
+        approval = client.ok("approval/request", {"planId": old["planId"]})["approval"]
+        client.ok("approval/resolve", {
+            "approvalId": approval["approvalId"], "planId": old["planId"],
+            "planHash": old["planHash"], "decision": "approved",
+            "approver": "test-operator"})
+        client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
+                                   "ops": SECOND, "replaces": old["planId"]})
+        record = client.ok("approval/get", {"approvalId": approval["approvalId"]})["approval"]
+        assert record["state"] == "rejected"
+        assert record["revokedFrom"] == "approved"
+        refused = client.err("plan/apply", {"planId": old["planId"],
+                                            "approvalId": approval["approvalId"]})
+        assert refused["code"] == "plan_not_approved", refused
+        assert client.ok("candidate/list", {"sessionId": session})["candidates"] == []
+
+
+def test_a_caller_label_cannot_set_or_clear_test_provenance(tmp_path):
+    """Provenance is the launched provider's identity, not ``proposer``.
+
+    A host caller naming itself after a test agent gets no mock label; a
+    runtime launched for the test agent marks its plans mock whatever they
+    call themselves; and a client that rebuilds a test value and re-proposes
+    it keeps the label all the way to the receipt.
+    """
+    import mock_agent
+
+    root = tmp_path / "root"
+    with RuntimeClient(root) as client:
+        session = _open(client, tmp_path)
+        posing = client.ok("plan/propose", {"sessionId": session, "backend": "preedit",
+                                            "ops": SECOND,
+                                            "proposer": "agenthost-mock"})["plan"]
+        assert "provenance" not in posing
+
+        with mock_agent.open_door("protocol", root, None, identity="mock") as door:
+            agent_plan = door.call("plan/propose", {
+                "sessionId": session, "backend": "preedit",
+                "ops": [{"kind": "fill_cell", "table": 0, "row": 5, "col": 1,
+                         "text": "시험값"}],
+                "proposer": "rigorloom-desktop"})["plan"]
+        assert agent_plan["provenance"] == "mock"
+
+        # The desktop rebuilds the queue: new op id, ``lines`` instead of
+        # ``text``, one more op of its own. Still a test value.
+        rebuilt = [{"opId": "u-1", "kind": "fill_cell", "table": 0, "row": 5,
+                    "col": 1, "lines": ["시험값"]}] + SECOND
+        plan, candidate = _apply(client, session, rebuilt)
+        assert plan["provenance"] == "mock"
+        receipt = client.ok("receipt/read", {"sessionId": session,
+                                             "runId": candidate["runId"]})["receipt"]
+        assert receipt["provenance"] == "mock"
+        rows = client.ok("candidate/list", {"sessionId": session})["candidates"]
+        assert rows[-1]["provenance"] == "mock"
+
+
+def test_a_proof_needs_every_requested_region_to_be_readable(tmp_path, monkeypatch):
+    """One region the profile did not return: the answer is "not proven".
+
+    ``regionsEqual`` used to be computed over the readable subset, so an undo
+    touching two cells could be reported equal when only one was read.
+    """
+    import rt_core
+
+    root = tmp_path / "root"
+    other = {"table": 0, "row": 5, "col": 2}
+    with RuntimeClient(root) as client:
+        session = _open(client, tmp_path)
+        _, edit = _apply(client, session, FIRST)
+    real = rt_core._text_by_spec
+
+    def drops_one(profile):
+        out = real(profile)
+        out.pop("0:5,2", None)
+        return out
+
+    monkeypatch.setattr(rt_core, "_text_by_spec", drops_one)
+    proof = rt_core.RuntimeCore(root).candidate_compare(
+        session, edit["runId"], against={"runId": edit["runId"]},
+        regions=[CELL, other])
+    assert proof["regionsCompared"] == 1
+    assert proof["regionsUnreadable"] == ["0:5,2"]
+    assert proof["regionsEqual"] is None
