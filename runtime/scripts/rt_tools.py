@@ -419,6 +419,7 @@ def doc_call(fn: Callable, *args, **kwargs) -> dict:
         "source_rejected": "source_rejected",
         "page_out_of_range": "page_out_of_range",
         "bad_address": "bad_address",
+        "locked": "locked",
         "conflict": "conflict",
         "engine_timeout": "engine_unavailable",
         "engine_unavailable": "engine_unavailable",

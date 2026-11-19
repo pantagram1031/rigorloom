@@ -305,7 +305,7 @@ def test_fill_skips_signature_seats_and_reports_what_is_left(env):
             "person_only_seat")
     assert e["candidates"] == ["place:서명"]
     e = err(call(env.ctx(), "fill", {"path": str(path), "values": {"place:셩명": "x"}}),
-            "not_found")
+            "bad_address")
     assert "place:성명" in e["candidates"]
     r = ok(call(env.ctx(), "fill", {"path": str(path), "values": {"성명": "홍길동"}}))
     assert r["personOnly"] == ["place:서명"] and r["unfilled"] == ["place:소속"]
@@ -1019,6 +1019,15 @@ def test_document_layer_english_becomes_korean_for_people():
                            "message": "'근로' occurs 2 times; narrow it with at"})
     assert msg.startswith("찾는 말이 여러 곳에")
     assert candidates_line([f"t0/r{i}" for i in range(11)]) == "t0/r0 ~ t0/r10 (11개)"
+    # Past the end is bad_address with a range (doc-core-api ruling 2026-11-19).
+    assert person_error({"code": "bad_address", "at": "page:9", "range": [1, 3],
+                         "message": "page 9 is out of range"}) == (
+        "page:9: 문서에 없는 쪽입니다.", "1쪽부터 3쪽까지 있습니다.")
+    assert person_error({"code": "bad_address", "at": "p2:40", "range": [0, 12],
+                         "message": "offset 40 is out of range"}) == (
+        "p2:40: 범위를 벗어난 위치입니다.", "0부터 12까지 쓸 수 있습니다.")
+    assert person_error({"code": "locked", "message": "file is locked", "retryable": True}) == (
+        "다른 프로그램이 이 파일을 열고 있습니다.", "한글에서 파일을 닫은 뒤 다시 실행하세요.")
 
 
 def test_a_narrow_find_keeps_the_word_in_view():

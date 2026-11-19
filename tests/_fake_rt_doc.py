@@ -61,9 +61,10 @@ MAX_CANDIDATES = 5
 #: not occur. The rest are in runtime/scripts/rt_codes.py.
 DOC_CORE_CODES = frozenset({
     "stale", "expect_mismatch", "ambiguous_match", "not_found", "bad_address", "bad_input",
+    "locked",
 })
-ERROR_CODES = DOC_CORE_CODES | {"capability_unavailable", "source_rejected", "page_out_of_range"}
-RETRYABLE = frozenset({"stale"})
+ERROR_CODES = DOC_CORE_CODES | {"capability_unavailable", "source_rejected"}
+RETRYABLE = frozenset({"stale", "locked"})
 
 CONVERT_TARGETS = ("hwpx", "hwp", "pdf", "png", "md", "docx")
 EDIT_OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
@@ -633,8 +634,8 @@ def _page_numbers(pages_arg, count: int) -> list[int]:
         if isinstance(item, bool) or not isinstance(item, int):
             raise _Refusal("bad_input", "쪽 번호는 1부터 세는 정수입니다")
         if not 1 <= item <= count:
-            raise _Refusal("page_out_of_range", f"{item}쪽은 없습니다 (전체 {count}쪽)",
-                           at=f"page:{item}")
+            raise _Refusal("bad_address", f"{item}쪽은 없습니다 (전체 {count}쪽)",
+                           at=f"page:{item}", range=[1, count])
         if item not in out:
             out.append(item)
     if not out:

@@ -726,7 +726,7 @@ def _run_fill(ctx: Context, args: dict) -> dict:
             _refuse_filled_place(ctx, ref, inp, pid)
             near = [f"place:{p}" for p in places if pid in p or p in pid][:5] or \
                 [f"place:{p}" for p in list(places)[:5]]
-            raise ToolError("not_found", f"'{pid}' 칸을 찾지 못했습니다.",
+            raise ToolError("bad_address", f"'{pid}' 칸을 찾지 못했습니다.",
                             hint="open 결과에서 채울 칸의 주소를 확인하세요.",
                             at=f"place:{pid}", candidates=near)
         if is_person_only(place):

@@ -411,7 +411,7 @@ def test_refusal_is_is_error_with_message_hint_and_candidates(env):
     r = s.tool("fill", {"path": str(path), "values": {"place:셩명": "x"}})
     assert r["isError"] is True
     error = r["structuredContent"]["error"]
-    assert error["code"] == "not_found" and "place:성명" in error["candidates"]
+    assert error["code"] == "bad_address" and "place:성명" in error["candidates"]
     lines = text_of(r).split("\n")
     assert lines[0] == error["message"]
     if error.get("hint"):

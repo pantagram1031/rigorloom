@@ -282,7 +282,8 @@ def test_render_png_and_pdf(doc, tmp_path):
     assert data.startswith(b"%PDF-1.4") and b"/Count 2" in data and data.rstrip().endswith(b"%%EOF")
     xref = int(data.rsplit(b"startxref\n", 1)[1].split(b"\n")[0])
     assert data[xref:xref + 4] == b"xref"
-    assert fake.render(doc, [3])["error"]["code"] == "page_out_of_range"
+    past = fake.render(doc, [3])["error"]
+    assert (past["code"], past["at"], past["range"]) == ("bad_address", "page:3", [1, 2])
     assert fake.render(doc, [1], scale=0)["error"]["code"] == "bad_input"
     assert fake.render(doc, [1], fmt="svg")["error"]["code"] == "bad_input"
 
@@ -342,7 +343,8 @@ def test_diff_guard_style(doc, tmp_path):
 
 # --------------------------------------------------------------------------- envelope
 def test_error_codes_are_declared():
-    doc_core = {"stale", "expect_mismatch", "ambiguous_match", "not_found", "bad_address", "bad_input"}
+    doc_core = {"stale", "expect_mismatch", "ambiguous_match", "not_found", "bad_address", "bad_input",
+                "locked"}
     assert fake.DOC_CORE_CODES == doc_core
     shared = rt_codes.ERROR_CODES | doc_core
     assert fake.ERROR_CODES <= shared
