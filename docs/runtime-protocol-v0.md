@@ -707,7 +707,9 @@ Every row cites a real entrypoint. `GAP` rows have no implementation today.
    `confirmation_binding_mismatch` (another plan or hash, or the plan no
    longer matches the binding). Returning a proposal needs no token. The
    native shell calls the runtime directly, not through this bridge, and has
-   no token.
+   no token. `/api/guard/diff` states the digest of the bytes it compared
+   (`beforeSha256`, `afterSha256`; null for caller-sent text); the sheet
+   refuses 승인 when `beforeSha256` is not the plan's `boundSha256`.
 8. **Event ordering across a restart.** `events.jsonl` is append-only and
    pipeline events have no global sequence number across restarts. Runtime
    document logs carry session-scoped sequence numbers; whether pipeline

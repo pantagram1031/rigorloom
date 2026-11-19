@@ -207,3 +207,40 @@ def test_a_token_works_once(bridge):
     receipt_plan = client.ok("plan/get", {"planId": plan2["planId"]})["plan"]
     assert receipt_plan["state"] == "approved"
 
+
+def test_guard_diff_states_the_digest_it_read(bridge):
+    """The sheet's diff names the bytes it came from (beforeSha256)."""
+    import hashlib
+
+    _, client = bridge
+    session_id = _session(client)
+    source_sha = hashlib.sha256(CORPUS_FORM.read_bytes()).hexdigest()
+    plan, approval = _pending(client, session_id, "기준확인")
+    assert plan["boundSha256"] == source_sha
+
+    status, diff = client.post("/api/guard/diff", {"sessionId": session_id, "planId": plan["planId"]})
+    assert status == 200, diff
+    assert diff["beforeSha256"] == plan["boundSha256"]
+    assert isinstance(diff["afterSha256"], str) and len(diff["afterSha256"]) == 64
+
+    # Text the caller sends has no document behind it.
+    status, text_diff = client.post("/api/guard/diff", {"beforeText": "가", "afterText": "나"})
+    assert status == 200 and text_diff["beforeSha256"] is None and text_diff["afterSha256"] is None
+
+    # A plan chained on a revision is diffed against that revision's bytes.
+    status, data = _approve(client, plan, approval, _token(client, session_id, plan))
+    assert status == 200, data
+    candidate = client.ok("plan/apply", {"planId": plan["planId"], "approvalId": approval["approvalId"]})["candidate"]
+    chained = client.ok("plan/propose", {
+        "sessionId": session_id,
+        "backend": "preedit",
+        "baseRunId": candidate["runId"],
+        "ops": [{"kind": "fill_cell", "table": 0, "row": 5, "col": 1, "text": "둘째", "overwrite": True}],
+    })["plan"]
+    candidate_sha = candidate["candidate"]["sha256"]
+    assert chained["boundSha256"] == candidate_sha != source_sha
+    status, diff2 = client.post("/api/guard/diff", {"sessionId": session_id, "planId": chained["planId"]})
+    assert status == 200, diff2
+    assert diff2["beforeSha256"] == chained["boundSha256"]
+    status, run_diff = client.post("/api/guard/diff", {"sessionId": session_id, "runId": candidate["runId"]})
+    assert status == 200 and run_diff["beforeSha256"] == source_sha and run_diff["afterSha256"] == candidate_sha

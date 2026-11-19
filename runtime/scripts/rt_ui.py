@@ -17,8 +17,10 @@ from datetime import datetime, timezone
 import difflib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hashlib
 import hmac
 import importlib.util
+import io
 import json
 import mimetypes
 import os
@@ -374,7 +376,17 @@ def _collect_direct_paragraph_text(p_elem: ET.Element) -> str:
     return "".join(chunks)
 
 
-def _extract_hwpx_paragraphs(hwpx_path: Path) -> list[str]:
+def _read_hwpx_paragraphs(hwpx_path: Path) -> tuple[list[str], str]:
+    """Paragraphs of an HWPX file and the sha256 of the very bytes they came from.
+
+    The file is read once; the digest is of those bytes, not of a second read,
+    so a caller can state exactly which document its diff describes.
+    """
+    data = hwpx_path.read_bytes()
+    return _extract_hwpx_paragraphs(io.BytesIO(data)), hashlib.sha256(data).hexdigest()
+
+
+def _extract_hwpx_paragraphs(hwpx_path: Path | io.BytesIO) -> list[str]:
     """Extract paragraph strings in document reading order from HWPX section XMLs."""
     paragraphs: list[str] = []
     with zipfile.ZipFile(hwpx_path, "r") as zf:
@@ -1765,6 +1777,9 @@ class BridgeApplication:
             after_label = "text:after"
             before_paras = before_text.splitlines() if before_text else [""]
             after_paras = after_text.splitlines() if after_text else [""]
+            # Text the caller sent has no document behind it.
+            before_sha: str | None = None
+            after_sha: str | None = None
         else:
             raw_session = body.get("sessionId")
             if not raw_session:
@@ -1815,11 +1830,11 @@ class BridgeApplication:
                 before_label = "source"
 
             if body.get("runId"):
-                before_paras = _extract_hwpx_paragraphs(before_hwpx)
+                before_paras, before_sha = _read_hwpx_paragraphs(before_hwpx)
                 run_id = _require_bare_component(body["runId"], "runId")
                 after_hwpx = self._core_candidate_hwpx(core, session_id, run_id)
                 after_label = f"run:{run_id}"
-                after_paras = _extract_hwpx_paragraphs(after_hwpx)
+                after_paras, after_sha = _read_hwpx_paragraphs(after_hwpx)
             elif plan_record is not None:
                 after_label = f"plan:{plan_record['planId']}"
                 with tempfile.TemporaryDirectory(prefix="rigorloom-guard-preview-") as td:
@@ -1828,12 +1843,13 @@ class BridgeApplication:
                         core.plan_preview(session_id, plan_record["planId"], out_path=preview_hwpx)
                     except _rpc_error_classes() as exc:
                         raise _bridge_error_from_rpc(exc) from exc
-                    before_paras = _extract_hwpx_paragraphs(before_hwpx)
-                    after_paras = _extract_hwpx_paragraphs(preview_hwpx)
+                    before_paras, before_sha = _read_hwpx_paragraphs(before_hwpx)
+                    after_paras, after_sha = _read_hwpx_paragraphs(preview_hwpx)
             else:
-                before_paras = _extract_hwpx_paragraphs(before_hwpx)
+                before_paras, before_sha = _read_hwpx_paragraphs(before_hwpx)
                 after_label = before_label
                 after_paras = list(before_paras)
+                after_sha = before_sha
 
         pf = self._get_prose_fidelity()
         paired = _pair_paragraphs(before_paras, after_paras)
@@ -1886,6 +1902,11 @@ class BridgeApplication:
             "schema": "rigorloom/guard-v1",
             "before": before_label,
             "after": after_label,
+            # The sha256 of the bytes each side was read from (null for text
+            # the caller sent). A client compares `beforeSha256` with the
+            # plan's boundSha256 before it lets anyone approve on this diff.
+            "beforeSha256": before_sha,
+            "afterSha256": after_sha,
             "paragraphs": len(all_rows),
             "pass": overall_pass,
             "reason": reason,

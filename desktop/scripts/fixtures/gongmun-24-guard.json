@@ -1,7 +1,8 @@
 {
  "_note": "The runtime's copy of examples/gongmun/expected/plan.json on tests/corpus/forms/converted/gianmun-byeolji-1ho.hwpx and its /api/guard/diff result. Regenerate with desktop/scripts/record-gongmun-guard.py.",
  "guard": {
-  "after": "plan:9f57caf2f2364104a5ce9d6600d837a7",
+  "after": "plan:30c306ca416c49e09898b72354c6622f",
+  "afterSha256": "f6159cbb779a6467c7e844b117c18f3dbcac490d1fc71521faf2ea20d2dee0de",
   "allParagraphs": [
    {
     "after": "",
@@ -1464,6 +1465,7 @@
    }
   ],
   "before": "source",
+  "beforeSha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
   "changed": [
    {
     "after": "",
@@ -2484,7 +2486,7 @@
   "backend": "preedit",
   "base": null,
   "boundSha256": "52232388ac76b849cdaf4743e67bede0280f3cd613774a69f34120a08f422adf",
-  "createdUtc": "2026-11-19T05:35:24Z",
+  "createdUtc": "2026-11-19T05:45:13Z",
   "declares": {
    "fillMap": {
     "검토자  직위(직급) 서명": "사무관 박도윤",
@@ -2824,12 +2826,12 @@
    }
   ],
   "opsHash": "4ee7519bc4ad80d53deeef548866892a81c7477763c9aecf4207daf75aaa6a0c",
-  "planHash": "b1844102e12fc0ca1b561a14e248367ebb3db8423cdd31eb2f07008709a3488a",
-  "planId": "9f57caf2f2364104a5ce9d6600d837a7",
+  "planHash": "d9fe10e9edbc00ca44796fb65556c9e1f9a7c94b06929400b6a5afd19fac1d11",
+  "planId": "30c306ca416c49e09898b72354c6622f",
   "proposer": "gongmun-fixture",
   "reverses": null,
   "schema": "rigorloom/runtime-plan/v0",
-  "sessionId": "1aa9ac40f33f4ed48891a9fb3268078e",
+  "sessionId": "61a5daac109d4cec9df4c17c709cde34",
   "state": "proposed"
  }
 }

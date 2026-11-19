@@ -76,6 +76,7 @@ import {
   queueAdmission,
   requiredAcknowledgements,
   requiredGuardAcks,
+  diffDigestBreaks,
   restorableOps,
   returnedFromPrefs,
   savableOps,
@@ -2347,6 +2348,7 @@ export async function approveAndApplyFromDialog(
     const state = getState();
     const guard = typeof getReviewGuardSummary === "function" ? getReviewGuardSummary() : null;
     const guardAcks = guard && guard.planId === confirmed.planId ? requiredGuardAcks(guard).total : 0;
+    if (guard && diffDigestBreaks(guard, confirmed)) return "diff_mismatch";
     return confirmationBreak(confirmed, state, requiredAcknowledgements(state.draft, guardAcks));
   };
   const stop = (why: ConfirmationBreak): false => {

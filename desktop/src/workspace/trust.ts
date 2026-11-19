@@ -974,7 +974,22 @@ export type ConfirmationBreak =
   | "plan_replaced"
   | "base_changed"
   | "acknowledgements_changed"
-  | "validation_failed";
+  | "validation_failed"
+  | "diff_mismatch";
+
+/**
+ * The review diff for the confirmed plan was read from bytes that are not the
+ * plan's base (`beforeSha256` against `boundSha256`): what the person looked
+ * at is not what would change. False when the check stated no digest.
+ */
+export function diffDigestBreaks(
+  guard: { planId: string | null; state: string; documentDiff: { beforeSha256?: string | null } | null } | null | undefined,
+  binding: Pick<ConfirmationBinding, "planId" | "baseDigest">,
+): boolean {
+  if (!guard || guard.planId !== binding.planId || guard.state !== "ready") return false;
+  const read = guard.documentDiff?.beforeSha256;
+  return typeof read === "string" && read.length > 0 && read !== binding.baseDigest;
+}
 
 /**
  * Why the live state no longer matches the confirmation, or null if it does.

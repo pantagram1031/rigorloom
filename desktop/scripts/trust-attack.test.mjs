@@ -79,7 +79,7 @@ test("#1 a confirmation binds session, plan, hash, base digest and acknowledgeme
  * Run approveAndApplyFromDialog with steps that can change the world while
  * they "wait". Returns the calls each step saw.
  */
-function dialogHarness({ initial, onValidate, onRequest, onResolve, validation }) {
+function dialogHarness({ initial, onValidate, onRequest, onResolve, validation, guard = null }) {
   const s = store(initial);
   const calls = { validate: 0, request: [], resolve: [], apply: [] };
   const ctx = vm.createContext({
@@ -90,7 +90,8 @@ function dialogHarness({ initial, onValidate, onRequest, onResolve, validation }
     approvalBindsConfirmation: trust.approvalBindsConfirmation,
     requiredAcknowledgements: trust.requiredAcknowledgements,
     requiredGuardAcks: trust.requiredGuardAcks,
-    getReviewGuardSummary: () => ({ planId: null, changedFactOpIds: [] }),
+    diffDigestBreaks: trust.diffDigestBreaks,
+    getReviewGuardSummary: () => guard ?? { planId: null, changedFactOpIds: [] },
     revalidateActiveDraft: async () => {
       calls.validate += 1;
       onValidate?.(s);
@@ -191,6 +192,25 @@ test("#1 an acknowledgement the plan now needs but the person did not tick stops
   assert.equal(done, false);
   assert.deepEqual(h.calls.request, []);
   assert.equal(h.s.read().approvalError.data.reason, "acknowledgements_changed");
+});
+
+test("a review diff read from another document stops the flow before any request", async () => {
+  const plan = planFor("p1");
+  const initial = { activeSessionId: "S", language: "ko", draft: draftFor(plan), approval: null };
+  const guardFor = (digest) => ({
+    planId: "p1", state: "ready", changedFactOpIds: [], unattributedFailing: [],
+    documentDiff: { beforeSha256: digest },
+  });
+  const h = dialogHarness({ initial, guard: guardFor("f".repeat(64)) });
+  const done = await h.confirm(trust.captureConfirmation(initial, []));
+  assert.equal(done, false);
+  assert.equal(h.calls.validate, 0);
+  assert.deepEqual(h.calls.request, []);
+  assert.deepEqual(h.calls.resolve, []);
+  assert.equal(h.s.read().approvalError.data.reason, "diff_mismatch");
+  // The diff of the plan's own base goes through.
+  const ok = dialogHarness({ initial, guard: guardFor(plan.boundSha256) });
+  assert.equal(await ok.confirm(trust.captureConfirmation(initial, [])), true);
 });
 
 test("#1 an unchanged binding goes through every step to apply, bound throughout", async () => {

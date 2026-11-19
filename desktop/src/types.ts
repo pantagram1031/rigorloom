@@ -1242,6 +1242,13 @@ export interface GuardDiffResult {
   edited: boolean;
   changed: GuardDiffParagraph[];
   allParagraphs: GuardDiffParagraph[];
+  /**
+   * The sha256 of the bytes the "before" side was read from (null for text a
+   * caller sent; absent from an older bridge). A plan's diff must come from
+   * the document the plan is bound to (`boundSha256`).
+   */
+  beforeSha256?: string | null;
+  afterSha256?: string | null;
 }
 
 export interface PipelineGateRow {
