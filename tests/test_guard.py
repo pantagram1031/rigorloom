@@ -203,6 +203,17 @@ def test_a_unit_is_not_the_first_letter_of_another_word(tmp_path):
     assert _changed(b, a, tmp_path) == [1]
 
 
+def test_an_article_before_a_word_that_starts_with_won_is_not_trillions(tmp_path):
+    # Fable's review of T183: 조 is a trillion only before a won that stands
+    # alone (1조원이다, 1조 원으로); in 제12조 원장은 and 제5조 원칙 it is an
+    # article, so respacing or rewording around it changes nothing.
+    b = ["제12조 원장은 회의를 소집한다.", "제5조 원칙에 따라 처리한다.", "예산은 1조원이다.",
+         "예산은 1조원이다.", "제3조 원인 분석을 첨부했다."]
+    a = ["제12조 위원장은 회의를 소집한다.", "제5조원칙에 따라 처리한다.", "예산은 1조 원이다.",
+         "예산은 1조 2천억원이다.", "제4조 원인 분석을 첨부했다."]
+    assert _changed(b, a, tmp_path) == [4, 5]
+
+
 def test_a_number_and_its_unit_on_a_line_of_their_own_are_not_a_heading(tmp_path):
     assert _changed(["3,500원"], ["3500 원"], tmp_path) == []
 
