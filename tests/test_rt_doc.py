@@ -231,6 +231,8 @@ def test_expect_on_a_cell_names_where_the_expected_text_is(no_engine, tmp_path):
     assert e["found_at"] == "t0/r2/c2"
     e = refused({"op": "char_shape", "at": "t0/r0/c0", "set": {"bold": True}, "expect": "연락"})
     assert e["found_at"] == "t0/r2/c0"      # checked before the engine is needed
+    e = refused({"op": "numbering", "at": "t0/r0/c0", "set": {"kind": "bullet"}, "expect": "연락"})
+    assert e["found_at"] == "t0/r2/c0"
     # Nowhere in the table, or in more than one cell (the empty ones): no guess.
     assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": "없는 글"})
     assert "found_at" not in refused({"op": "set", "at": "t0/r0/c0", "text": "x", "expect": ""})
@@ -1378,3 +1380,154 @@ def test_engine_table_columns_and_sizes(kit, tmp_path):
     assert size(after, 0, 0)[0] == hu(20) + size(before, 1, 1)[0]       # the merged cell spans columns 0 and 1
     assert size(after, 1, 3)[1] == hu(15) and size(after, 0, 2)[1] == size(before, 0, 2)[1]
     assert D.read(out3, "t0")["blocks"][0]["cells"] == D.read(f, "t0")["blocks"][0]["cells"]
+
+
+# ============================================================================ 편집 용지 / 다단 / 쪽·단·구역 나누기
+SECTIONS3 = REPO / "tests" / "corpus" / "render-check" / "render-check-01.hwpx"     # 3 sections: p0, p100, p102
+
+
+def test_page_ops_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops, f=src, base=None):
+        ops = [ops] if isinstance(ops, dict) else ops
+        return D.edit(f, ops, base=base or rev, out=out)["error"]
+    e = err({"op": "page_setup", "at": "p0", "set": {"papre": "A4"}})
+    assert e["code"] == "bad_input" and "paper" in e["candidates"]
+    assert err({"op": "page_setup", "at": "p0", "set": {}})["code"] == "bad_input"
+    e = err({"op": "page_setup", "at": "p0", "set": {"paper": "A6"}})
+    assert e["code"] == "bad_input" and "A4" in e["candidates"]
+    assert err({"op": "page_setup", "at": "p0", "set": {"paper": "A4", "width_mm": 200}})["code"] == "bad_input"
+    assert err({"op": "page_setup", "at": "p0", "set": {"height_mm": 20}})["code"] == "bad_input"
+    assert err({"op": "page_setup", "at": "p0", "set": {"landscape": "yes"}})["code"] == "bad_input"
+    assert err({"op": "page_setup", "at": "p0", "set": {"width_mm": True}})["code"] == "bad_input"
+    # margins that leave no room on the paper are refused, with the paper of this op or of the section
+    e = err({"op": "page_setup", "at": "p0", "set": {"paper": "A5", "margins": {"left": 80, "right": 70}}})
+    assert e["code"] == "bad_input" and "across" in e["message"]
+    e = err({"op": "page_setup", "at": "p0", "set": {"margins": {"top": 150, "bottom": 150}}})
+    assert e["code"] == "bad_input" and "down" in e["message"]
+    e = err({"op": "page_setup", "at": "p0", "set": {"paper": "A4", "landscape": True,
+                                                    "margins": {"top": 100, "bottom": 100}}})
+    assert e["code"] == "bad_input" and "down" in e["message"]     # landscape A4 is 210 mm down
+    e = err({"op": "page_setup", "at": "p0", "set": {"margins": {"lefft": 20}}})
+    assert e["code"] == "bad_input" and "left" in e["candidates"]
+    assert err({"op": "page_setup", "at": "p0", "set": {"margins": {"top": 501}}})["code"] == "bad_input"
+    assert err({"op": "page_setup", "at": "p0", "set": {"gutter_type": "RIGHT"}})["code"] == "bad_input"
+    assert err({"op": "page_setup", "at": "p0", "set": {"paper": "A4"}, "expect": "x"})["code"] == "bad_input"
+    assert err({"op": "columns", "at": "p0", "set": {"gap_mm": 5}})["code"] == "bad_input"
+    assert err({"op": "columns", "at": "p0", "set": {"count": 0}})["code"] == "bad_input"
+    assert err({"op": "columns", "at": "p0", "set": {"count": 2, "gap_mm": 101}})["code"] == "bad_input"
+    assert err({"op": "columns", "at": "p0", "set": {"count": 2, "line": "SOLID"}})["code"] == "bad_input"
+    assert err({"op": "columns", "at": "p0", "set": {"count": 2, "kind": "magazine"}})["code"] == "bad_input"
+    e = err({"op": "break", "at": "p3", "kind": "line"})
+    assert e["code"] == "bad_input" and "page" in e["candidates"]
+    assert err({"op": "break", "at": "p3:0-2", "kind": "page"})["code"] == "bad_address"
+    assert err({"op": "break", "at": "t0/r0/c0", "kind": "page"})["code"] == "bad_address"
+    assert err({"op": "break", "at": "p3", "kind": "page", "expect": "아님"})["code"] == "expect_mismatch"
+    # one owner per section setting, one section break per edit, nothing else on what a section break moves
+    assert err([{"op": "page_setup", "at": "p0", "set": {"paper": "A4"}},
+                {"op": "page_setup", "at": "p5", "set": {"landscape": True}}])["code"] == "conflict"
+    assert err([{"op": "columns", "at": "p0", "set": {"count": 2}},
+                {"op": "break", "at": "p9", "kind": "section"}])["code"] == "conflict"
+    assert err([{"op": "break", "at": "p9", "kind": "section"},
+                {"op": "break", "at": "p20", "kind": "section"}])["code"] == "conflict"
+    assert err([{"op": "break", "at": "p9", "kind": "section"},
+                {"op": "set", "at": "p30", "text": "x"}])["code"] == "conflict"
+    assert err([{"op": "break", "at": "p9", "kind": "page"},
+                {"op": "break", "at": "p9", "kind": "column"}])["code"] == "conflict"
+    # the engine puts a new section after the last one, so a section break goes in the last section
+    many = _copy(SECTIONS3, tmp_path)
+    e = err({"op": "break", "at": "p5", "kind": "section"}, f=many, base=D.rev_of(many))
+    assert e["code"] == "bad_address" and "last section" in e["message"]
+    assert err({"op": "break", "at": "p102", "kind": "section"}, f=many, base=D.rev_of(many))["code"] == \
+        "bad_address"                                              # it starts its section already
+    e = err({"op": "page_setup", "at": "p0", "set": {"paper": "A4"}})
+    assert e["code"] == "capability_unavailable"                   # valid, but only the engine does it
+    assert not out.exists()
+
+
+def _hu(mm):
+    return int(mm * 7200 / 25.4)
+
+
+@engine
+def test_engine_page_setup_columns_and_breaks(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    out = tmp_path / "pg.hwpx"
+    r = D.edit(f, [
+        {"op": "page_setup", "at": "p0", "set": {"paper": "B5", "landscape": True, "gutter_type": "left_right",
+                                                "margins": {"left": 25, "right": 20, "header": 12, "gutter": 5}}},
+        {"op": "columns", "at": "p2", "set": {"count": 2, "gap_mm": 8, "line": True}},
+        {"op": "break", "at": "p3", "kind": "page"},
+        {"op": "break", "at": "p4", "kind": "column"},
+    ], base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    with zipfile.ZipFile(f) as z0, zipfile.ZipFile(out) as z:
+        s0 = z0.read("Contents/section0.xml").decode("utf-8")
+        sec = z.read("Contents/section0.xml").decode("utf-8")
+    pp = re.search(r"<hp:pagePr [^>]*>", sec).group(0)
+    assert 'landscape="NARROWLY"' in pp and 'gutterType="LEFT_RIGHT"' in pp
+    assert 'width="%d"' % _hu(182) in pp and 'height="%d"' % _hu(257) in pp
+    mg = re.search(r"<hp:margin [^>]*/>", sec).group(0)
+    for k, v in (("left", 25), ("right", 20), ("header", 12), ("gutter", 5)):
+        assert '%s="%d"' % (k, _hu(v)) in mg, (k, mg)
+    old = re.search(r"<hp:margin [^>]*/>", s0).group(0)            # the margins not named stay as they were
+    for k in ("top", "bottom", "footer"):
+        assert re.search(r'\b%s="\d+"' % k, old).group(0) in mg
+    col = re.search(r"<hp:colPr [^>]*>(?:<hp:colLine [^>]*/>)?", sec).group(0)
+    assert 'colCount="2"' in col and 'sameGap="%d"' % _hu(8) in col and "<hp:colLine " in col
+    d = D._load(out)
+    heads = {a: d.top[int(a[1:])].head for a in ("p3", "p4", "p5")}
+    assert 'pageBreak="1"' in heads["p3"] and 'columnBreak="1"' in heads["p4"]
+    assert 'pageBreak="1"' not in heads["p5"] and 'columnBreak="1"' not in heads["p5"]
+    assert [q.text for q in d.top] == [q.text for q in D._load(f).top]
+    # set and break on one paragraph in one edit: both land
+    out2 = tmp_path / "pg2.hwpx"
+    r = D.edit(f, [{"op": "set", "at": "p3", "text": "새 쪽의 첫 문단"}, {"op": "break", "at": "p3", "kind": "page"}],
+               base=D.rev_of(f), out=out2)
+    assert r["ok"], r
+    d = D._load(out2)
+    assert d.top[3].text == "새 쪽의 첫 문단" and 'pageBreak="1"' in d.top[3].head
+
+
+@engine
+def test_engine_landscape_page_is_drawn_wide(kit, tmp_path):
+    pytest.importorskip("pypdfium2")
+    f = _copy(kit / "tests" / "features" / "feat_paragraphs.hwpx", tmp_path)
+    out = tmp_path / "land.hwpx"
+    r = D.edit(f, [{"op": "page_setup", "at": "p0", "set": {"paper": "A4", "landscape": True}}],
+               base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    before = D.render(f, [1], scale=0.5, out_dir=tmp_path / "a")["pages"][0]
+    after = D.render(out, [1], scale=0.5, out_dir=tmp_path / "b")["pages"][0]
+    assert before["width_pt"] < before["height_pt"]
+    assert after["width_pt"] > after["height_pt"] and after["px_w"] > after["px_h"]
+    assert abs(after["width_pt"] - before["height_pt"]) < 1 and abs(after["height_pt"] - before["width_pt"]) < 1
+
+
+@engine
+def test_engine_section_break_moves_the_rest_into_a_new_section(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    base = D._load(f)
+    assert len(base.secs) == 1
+    out = tmp_path / "sec.hwpx"
+    r = D.edit(f, [
+        {"op": "break", "at": "p6", "kind": "section", "expect": base.top[6].text},
+        {"op": "set", "at": "p2", "text": "앞"},
+        {"op": "insert_after", "at": "p5", "text": "새 문단"},
+    ], base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert not r.get("remap_approx")
+    assert {m["from"]: m["to"] for m in r["remap"]}["p6"] == "p7"
+    with zipfile.ZipFile(out) as z:
+        assert "Contents/section1.xml" in z.namelist()
+        assert "section1.xml" in z.read("Contents/content.hpf").decode("utf-8")
+        s1 = z.read("Contents/section1.xml").decode("utf-8")
+    assert s1.count("<hp:secPr") == 1
+    d = D._load(out)
+    assert len(d.secs) == 2
+    assert [q.si for q in d.top] == [0] * 7 + [1] * (len(base.top) - 6)
+    assert [q.text for q in d.top if q.si == 1] == [q.text for q in base.top[6:]]
+    assert d.top[6].text == "새 문단" and d.top[2].text == "앞"
