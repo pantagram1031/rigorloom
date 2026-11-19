@@ -912,6 +912,7 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "style": (("at", "style"), ()),
     "char_shape": (("at", "set"), ("expect",)),
     "para_shape": (("at", "set"), ("expect",)),
+    "numbering": (("at", "set"), ("expect",)),
 }
 
 
@@ -928,6 +929,7 @@ OP_EXAMPLES = {
     "style": '{"op":"style","at":"p1","style":"개요 1"}',
     "char_shape": '{"op":"char_shape","at":"p1:0-6","set":{"bold":true,"size":12}}',
     "para_shape": '{"op":"para_shape","at":"p1","set":{"align":"CENTER","after":6}}',
+    "numbering": '{"op":"numbering","at":"p1","set":{"kind":"outline","level":2}}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -952,6 +954,11 @@ OP_NOTES = {
                   "rel_size and offset in %",
     "para_shape": "`at` is a paragraph, a cell, a row or a table, never a range; `set` holds "
                   "only what changes; lengths are in pt and an indent below 0 is 내어쓰기",
+    "numbering": "`at` is a paragraph or a cell (all its paragraphs), never a range; `set` "
+                 "keys: kind (outline, number, bullet or none), level (1 to 7; outline "
+                 "defaults to 1), char (bullet: one character), start (number: 1 to 9999) "
+                 "or restart (number: true); style and numbering on one paragraph in one "
+                 "edit are a conflict",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}

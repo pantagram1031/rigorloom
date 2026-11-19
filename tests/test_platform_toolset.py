@@ -1687,6 +1687,8 @@ def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeyp
     for name, table in rt_toolset.OP_SET_KEYS.items():   # the keys the layer checks, not a copy
         line = next(x for x in text.splitlines() if x.startswith(name + "{"))
         assert all(f" {key} (" in line for key in getattr(doc, table)), name
+    line = next(x for x in text.splitlines() if x.startswith("numbering{"))
+    assert all(kind in line for kind in doc.NUMBERING_KINDS)
     err(call(env.ctx(), "guide", {"topic": "gongmun"}), "capability_unavailable")
 
     (empty / "gongmun.md").write_text("# 공문\n", encoding="utf-8")
