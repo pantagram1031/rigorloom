@@ -277,7 +277,7 @@ def undo_line(target: str, *, shown=None) -> str:
     # ``shown`` escapes what cannot be seen; judge the name itself.
     arg = None if invisible_in(target) else shell_arg((shown or str)(target))
     if arg is None:
-        return "되돌리기: 이 파일 경로를 붙여 rigorloom undo 명령을 실행하세요."
+        return "되돌리려면 rigorloom undo 뒤에 실제 파일 경로를 입력해 실행하세요."
     return f"되돌리기: rigorloom undo {arg}"
 
 

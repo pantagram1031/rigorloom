@@ -121,6 +121,6 @@ def test_shell_arg_is_copyable_or_absent(name, posix, windows):
 
 def test_the_undo_line_names_no_command_for_an_invisible_character():
     assert rt_term.undo_line("/x/a\u200b.hwpx") == \
-        "되돌리기: 이 파일 경로를 붙여 rigorloom undo 명령을 실행하세요."
+        "되돌리려면 rigorloom undo 뒤에 실제 파일 경로를 입력해 실행하세요."
     assert rt_term.undo_line("/x/a.hwpx", shown=rt_term.path_text) == \
         '되돌리기: rigorloom undo "/x/a.hwpx"'

@@ -1470,8 +1470,8 @@ def _converted(ctx: Context, ref: Ref, head: Input, fmt: str) -> tuple[Path, lis
         try:
             text = source.read_text(encoding="utf-8")
         except UnicodeDecodeError as exc:
-            raise ToolError("invalid_params", "마크다운 파일이 UTF-8로 저장되어 있지 않습니다.",
-                            hint="UTF-8로 다시 저장한 뒤 시도하세요.", at=str(source)) from exc
+            raise ToolError("invalid_params", "마크다운 파일의 인코딩이 UTF-8이 아닙니다.",
+                            hint="파일을 UTF-8로 저장하고 다시 시도하세요.", at=str(source)) from exc
         gated = _gate_markdown_assets(
             ctx, text, ref.source.parent if ref.source is not None else None)
     try:

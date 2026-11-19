@@ -81,7 +81,7 @@ def _validate_text(raw: str) -> None:
     if "\x00" in raw:
         raise PathRefused("invalid_params", "경로에 널 문자(문자 코드 0)가 있습니다.", raw)
     if raw.startswith(_DEVICE_PREFIXES):
-        raise PathRefused("invalid_params", "장치 경로(\\\\.\\ 또는 \\\\?\\로 시작)는 쓸 수 없습니다.", raw)
+        raise PathRefused("invalid_params", "\\\\.\\ 또는 \\\\?\\로 시작하는 장치 경로는 쓸 수 없습니다.", raw)
 
 
 def _validate_components(path: Path) -> None:
