@@ -199,6 +199,10 @@
 | `foreign_session_ops` | 다른 문서에서 만든 변경이 섞여 있어 이 문서에 다시 제안할 수 없습니다. | Changes made for another document are mixed in, so they cannot be proposed for this document. |
 | `undo_unfixable` | 되돌리기 제안을 만들지 않았습니다. 그대로 만들면 승인할 수 없는 항목이 생깁니다. | No undo proposal was created. It would contain items that cannot be approved. |
 | `confirmation_changed` | 승인을 누른 뒤 변경 제안이 바뀌어 적용하지 않았습니다. 바뀐 내용을 보고 다시 승인해야 합니다. | The proposal changed after you approved it, so nothing was applied. Review the new proposal and approve again. |
+| `confirmation_required` | 승인 화면에서 확인한 승인만 기록합니다. 승인 화면을 다시 열어 승인해야 합니다. | Only an approval confirmed on the approval sheet is recorded. Open the sheet and approve again. |
+| `confirmation_invalid` | 이미 쓴 승인 확인이라 기록하지 않았습니다. 다시 승인해야 합니다. | That approval confirmation was already used, so nothing was recorded. Approve again. |
+| `confirmation_expired` | 승인 확인 시간이 지나 기록하지 않았습니다. 다시 승인해야 합니다. | The approval confirmation expired, so nothing was recorded. Approve again. |
+| `confirmation_binding_mismatch` | 다른 제안의 승인 확인이라 기록하지 않았습니다. 다시 승인해야 합니다. | The approval confirmation belongs to another proposal, so nothing was recorded. Approve again. |
 | `invalid_queue_ops` | 형식이 맞지 않는 변경이 섞여 있어 제안하지 않았습니다. | Some changes are malformed, so nothing was proposed. |
 | `undo_conflict` | 되돌리기 제안을 만들지 않았습니다. 이후 수정본에서 같은 자리를 다시 고쳐서, 되돌리면 그 변경이 지워집니다. | No undo proposal was created. A later revision changed the same place, and undoing would erase that change. |
 
