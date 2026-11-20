@@ -257,7 +257,7 @@ def _strip_js_comments(source: str) -> str:
 
 
 def _is_allowlisted(rel_posix: str) -> bool:
-    if rel_posix in {"devMock.ts", "smoke.ts"}:
+    if rel_posix in {"devMock.ts", "smoke.ts", "smokeV2.ts"}:
         return True
     if rel_posix.startswith("i18n/"):
         return True
