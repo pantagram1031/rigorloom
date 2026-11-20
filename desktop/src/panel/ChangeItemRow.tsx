@@ -1,5 +1,9 @@
 import { memo, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
+import { beginCellEditV2 } from "../canvas/actions";
+import { getPublishedChanges } from "../canvas/controller";
+import { isComposingEvent } from "../shell/keys";
+import { changeRowTid } from "../shell/testids";
 import { editOpValue } from "../actions";
 import type { UiLanguage } from "../i18n/vocabulary";
 import { hasNewValues, isChangedFact, needsLook, type ChangeItem } from "../model/changes";
@@ -7,7 +11,6 @@ import { decide, select } from "./actions";
 import { Keycap } from "../ui/Keycap";
 import { SourceText } from "./bits";
 import { tp } from "./i18n";
-import { eventIsComposing } from "./keys";
 
 /** The hue a change's margin bar and number take: the page's own rule. */
 export function stateHue(item: ChangeItem): "fact" | "attn" | "pending" | "decided" | "test" {
@@ -23,7 +26,7 @@ function DiffLine({ item, lang }: { item: ChangeItem; lang: UiLanguage }) {
     return <span className="rp-row-reason">{item.hard[0]}</span>;
   }
   if (item.kind === "delete") {
-    return <del className="rp-row-del">{item.before || tp("row_removed_value", lang)}</del>;
+    return <del className="rp-row-del">{item.before || tp("wp4_row_removed_value", lang)}</del>;
   }
   return <span className="rp-row-after">{item.after}</span>;
 }
@@ -49,8 +52,7 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
 
   useEffect(() => {
     const onEdit = (e: Event) => {
-      const id = (e as CustomEvent<{ itemId: string; handled?: boolean }>).detail?.itemId;
-      if (id !== item.id || (e as CustomEvent<{ handled?: boolean }>).detail?.handled) return;
+      if ((e as CustomEvent<{ itemId: string }>).detail.itemId !== item.id) return;
       setValue(item.after);
       setEditing(true);
       setTimeout(() => inputRef.current?.focus(), 0);
@@ -65,7 +67,7 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
   };
 
   const onEditKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (eventIsComposing(e)) return;
+    if (isComposingEvent(e.nativeEvent)) return;
     e.stopPropagation();
     if (e.key === "Escape") {
       e.preventDefault();
@@ -77,13 +79,13 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
   };
 
   const stateText =
-    item.decision === "accepted" ? tp("decision_accepted", lang) : item.decision === "rejected" ? tp("decision_rejected", lang) : null;
+    item.decision === "accepted" ? tp("wp4_decision_accepted", lang) : item.decision === "rejected" ? tp("wp4_decision_rejected", lang) : null;
 
   return (
     <li
       ref={rowRef}
       className="rp-row"
-      data-testid={`change-row-${item.n}`}
+      data-testid={changeRowTid(item.n)}
       data-item-id={item.id}
       data-decision={item.decision}
       data-hue={hue}
@@ -105,13 +107,13 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
           <span className="rp-row-right">
             {isChangedFact(item) ? (
               <span className="rp-tag rp-tag--fact" data-fact="">
-                {tp("tag_fact", lang)}
+                {tp("wp4_tag_fact", lang)}
               </span>
             ) : null}
-            {item.hard.length > 0 ? <span className="rp-tag rp-tag--attn">{tp("tag_hard", lang)}</span> : null}
-            {needsLook(item) && item.guard.status === "expected" ? <span className="rp-tag">{tp("tag_attn", lang)}</span> : null}
-            {hasNewValues(item) ? <span className="rp-tag">{tp("tag_new_values", lang)}</span> : null}
-            {item.guard.status === "not_checked" ? <span className="rp-tag">{tp("tag_not_checked", lang)}</span> : null}
+            {item.hard.length > 0 ? <span className="rp-tag rp-tag--attn">{tp("wp4_tag_hard", lang)}</span> : null}
+            {needsLook(item) && item.guard.status === "expected" ? <span className="rp-tag">{tp("wp4_tag_attn", lang)}</span> : null}
+            {hasNewValues(item) ? <span className="rp-tag">{tp("wp4_tag_new_values", lang)}</span> : null}
+            {item.guard.status === "not_checked" ? <span className="rp-tag">{tp("wp4_tag_not_checked", lang)}</span> : null}
             {stateText ? <span className="rp-row-state">{stateText}</span> : null}
           </span>
         </span>
@@ -125,11 +127,11 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
         <div className="rp-row-body">
           <dl className="rp-diff">
             <div className="rp-diff-line">
-              <dt>{tp("row_before", lang)}</dt>
-              <dd>{item.before.trim() ? item.before : <span className="rp-dim">{tp("row_empty_value", lang)}</span>}</dd>
+              <dt>{tp("wp4_row_before", lang)}</dt>
+              <dd>{item.before.trim() ? item.before : <span className="rp-dim">{tp("wp4_row_empty_value", lang)}</span>}</dd>
             </div>
             <div className="rp-diff-line">
-              <dt>{tp("row_after", lang)}</dt>
+              <dt>{tp("wp4_row_after", lang)}</dt>
               <dd>
                 {editing ? (
                   <textarea
@@ -140,11 +142,11 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
                     onChange={(e) => setValue(e.target.value)}
                     onKeyDown={onEditKey}
                     onBlur={() => void commit()}
-                    aria-label={tp("row_after", lang)}
+                    aria-label={tp("wp4_row_after", lang)}
                     data-testid="change-edit-input"
                   />
                 ) : item.kind === "delete" ? (
-                  <span className="rp-dim">{tp("row_removed_value", lang)}</span>
+                  <span className="rp-dim">{tp("wp4_row_removed_value", lang)}</span>
                 ) : (
                   item.after
                 )}
@@ -155,19 +157,19 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
           <div className="rp-row-actions">
             {item.decision === "rejected" ? (
               <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "pending")} data-testid="act-add-back">
-                {tp("act_add_back", lang)}
+                {tp("wp4_act_add_back", lang)}
                 <Keycap keys={["U"]} />
               </button>
             ) : (
               <>
                 {item.decision !== "accepted" ? (
                   <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "accepted")} data-testid="act-accept">
-                    {tp("act_accept", lang)}
+                    {tp("wp4_act_accept", lang)}
                     <Keycap keys={["Y"]} />
                   </button>
                 ) : null}
                 <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "rejected")} data-testid="act-reject">
-                  {tp("act_reject", lang)}
+                  {tp("wp4_act_reject", lang)}
                   <Keycap keys={["N"]} />
                 </button>
                 <button
@@ -177,12 +179,12 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
                   onClick={() => requestEdit(item.id)}
                   data-testid="act-edit"
                 >
-                  {tp("act_edit", lang)}
+                  {tp("wp4_act_edit", lang)}
                   <Keycap keys={["E"]} />
                 </button>
                 {item.decision === "accepted" ? (
                   <button type="button" className="rp-btn rp-btn--quiet" disabled={locked} onClick={() => decide(item.id, "pending")}>
-                    {tp("act_undo", lang)}
+                    {tp("wp4_act_undo", lang)}
                     <Keycap keys={["U"]} />
                   </button>
                 ) : null}
@@ -202,7 +204,8 @@ export const ChangeItemRow = memo(RowImpl);
  * otherwise the selected row edits the value itself.
  */
 export function requestEdit(itemId: string): void {
-  const detail: { itemId: string; handled: boolean } = { itemId, handled: false };
-  window.dispatchEvent(new CustomEvent("rigorloom:edit-change", { detail }));
-  if (!detail.handled) window.dispatchEvent(new CustomEvent("rigorloom:edit-change-fallback", { detail }));
+  const item = getPublishedChanges().find((change) => change.id === itemId);
+  const cell = item?.cellKey?.match(/^c:(\d+):(\d+):(\d+)$/);
+  if (cell && item?.run === undefined && beginCellEditV2(Number(cell[1]), Number(cell[2]), Number(cell[3]))) return;
+  window.dispatchEvent(new CustomEvent("rigorloom:edit-change-fallback", { detail: { itemId } }));
 }

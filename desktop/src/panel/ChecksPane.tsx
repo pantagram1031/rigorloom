@@ -55,12 +55,12 @@ export function ChecksPane({ view, lang, guardState }: { view: ChangeSetView | n
   return (
     <div className="rp-pane rp-pane--checks" data-testid="checks-pane">
       <p className="rp-scope" data-testid="checks-scope">
-        {guardState === "unavailable" ? tp("sheet_guard_skipped", lang) : tp("sheet_guard_scope", lang)}
+        {guardState === "unavailable" ? tp("wp4_sheet_guard_skipped", lang) : tp("wp4_sheet_guard_scope", lang)}
       </p>
       <div className="rp-scroll">
-        {guardState === "running" ? <p className="rp-pane-status">{tp("checks_guard_running", lang)}</p> : null}
+        {guardState === "running" ? <p className="rp-pane-status">{tp("wp4_checks_guard_running", lang)}</p> : null}
         {hard.length > 0 ? (
-          <Group title={tp("checks_group_hard", lang)} count={hard.length} testId="checks-hard">
+          <Group title={tp("wp4_checks_group_hard", lang)} count={hard.length} testId="checks-hard">
             <ul className="rp-check-list">
               {hard.map((it) => (
                 <ItemLink key={it.id} item={it} lang={lang}>
@@ -72,7 +72,7 @@ export function ChecksPane({ view, lang, guardState }: { view: ChangeSetView | n
         ) : null}
         {facts.length > 0 ? (
           <div data-fact="">
-            <Group title={tp("checks_group_fact", lang)} count={facts.length} testId="checks-facts">
+            <Group title={tp("wp4_checks_group_fact", lang)} count={facts.length} testId="checks-facts">
               <ul className="rp-check-list">
                 {facts.map((it) => (
                   <ItemLink key={it.id} item={it} lang={lang}>
@@ -87,17 +87,17 @@ export function ChecksPane({ view, lang, guardState }: { view: ChangeSetView | n
           </div>
         ) : null}
         {attn.length > 0 ? (
-          <Group title={tp("checks_group_attn", lang)} count={attn.length} testId="checks-attn">
+          <Group title={tp("wp4_checks_group_attn", lang)} count={attn.length} testId="checks-attn">
             <ul className="rp-check-list">
               {attn.map((it) => (
                 <ItemLink key={it.id} item={it} lang={lang}>
-                  {it.guard.status === "not_checked" ? tp("checks_not_run", lang) : it.opName}
+                  {it.guard.status === "not_checked" ? tp("wp4_checks_not_run", lang) : it.opName}
                 </ItemLink>
               ))}
             </ul>
           </Group>
         ) : null}
-        <Group title={tp("checks_group_style", lang)} count={style.findings.length} testId="checks-style">
+        <Group title={tp("wp4_checks_group_style", lang)} count={style.findings.length} testId="checks-style">
           <div className="rp-check-actions">
             <button
               type="button"
@@ -106,17 +106,17 @@ export function ChecksPane({ view, lang, guardState }: { view: ChangeSetView | n
               disabled={!doc || style.phase === "running"}
               data-testid="style-run"
             >
-              {style.phase === "running" ? tp("checks_style_running", lang) : tp("checks_style_run", lang)}
+              {style.phase === "running" ? tp("wp4_checks_style_running", lang) : tp("wp4_checks_style_run", lang)}
               <Keycap keys={["F8"]} />
             </button>
             {style.phase === "ready" ? (
               <span className="rp-pane-status">
                 {style.findings.length > 0
-                  ? tp("checks_style_result", lang, [style.findings.length])
-                  : tp("checks_style_none", lang)}
+                  ? tp("wp4_checks_style_result", lang, [style.findings.length])
+                  : tp("wp4_checks_style_none", lang)}
               </span>
             ) : null}
-            {style.phase === "failed" ? <span className="rp-pane-status rp-attn">{tp("checks_style_failed", lang)}</span> : null}
+            {style.phase === "failed" ? <span className="rp-pane-status rp-attn">{tp("wp4_checks_style_failed", lang)}</span> : null}
           </div>
           {style.findings.length > 0 ? (
             <ul className="rp-check-list" data-testid="style-findings">
@@ -130,7 +130,7 @@ export function ChecksPane({ view, lang, guardState }: { view: ChangeSetView | n
           ) : null}
         </Group>
         {hard.length === 0 && facts.length === 0 && attn.length === 0 && style.findings.length === 0 && guardState !== "running" ? (
-          <p className="rp-empty">{tp("checks_empty", lang)}</p>
+          <p className="rp-empty">{tp("wp4_checks_empty", lang)}</p>
         ) : null}
       </div>
     </div>

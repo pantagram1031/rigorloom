@@ -1,16 +1,15 @@
-/**
- * WP4's mount point. The shell loads every `<dir>/register.ts` with
- * `import.meta.glob`; this one fills the `rightPanel` slot and binds the
- * review keys (J1 §3 keyboard) through the shared registry.
- */
 import "./panel.css";
 
 import { createElement } from "react";
 
-import { getState } from "../store";
-import { canDecide, gateState } from "../model/changes";
+import { AgentConnectionSettings } from "../components/OperatorAgentModal";
+import { S } from "../i18n/v2/shell";
+import { canDecide } from "../model/changes";
+import { showRightTab } from "../shell/bindings";
 import { registerCommand } from "../shell/commands";
-import { defineContext, register as registerKey } from "../shell/keys";
+import { bindKey } from "../shell/keymap";
+import { defineContext } from "../shell/keys";
+import { activeTabSessionId, getShell } from "../shell/shellState";
 import { registerSlot, type SlotProps } from "../shell/slots";
 import {
   acceptAll,
@@ -20,86 +19,72 @@ import {
   openReturn,
   runStyleCheck,
   selectedId,
-  setTab,
   step,
   undoDecision,
 } from "./actions";
-import { AgentConnectionSettings } from "../components/OperatorAgentModal";
 import { requestEdit } from "./ChangeItemRow";
 import { tp } from "./i18n";
-import { PANEL_CHORDS, type PanelKeyId } from "./keys";
 import { RightPanel } from "./RightPanel";
 import { latestView, panelSlice } from "./state";
 
-function doc() {
-  return getState().activeSessionId;
+function documentReady(): boolean {
+  const shell = getShell();
+  return activeTabSessionId() !== null &&
+    !shell.paletteOpen && !shell.settingsOpen && !shell.appMenuOpen &&
+    !shell.tabListOpen && !shell.narrowDrawerOpen;
 }
 
-/** Review keys act only while the 변경 pane is the one showing. */
+function inPanelOverlay(): boolean {
+  const active = document.activeElement;
+  return Boolean(active?.closest('[data-testid="approve-sheet"], [data-testid="return-popover"]'));
+}
+
 function reviewing(): boolean {
-  const st = panelSlice.get(doc());
-  return st.tab === "changes" && !st.sheetOpen && !st.returnOpen && Boolean(latestView(doc()));
+  return documentReady() && Boolean(latestView(activeTabSessionId())?.items.length) &&
+    Boolean(document.activeElement?.closest('[data-testid="change-list"]'));
 }
 
 function onSelected(run: (id: string) => void): () => void {
   return () => {
     const id = selectedId();
-    if (id) run(id);
+    if (id && canDecide(latestView(activeTabSessionId()))) run(id);
   };
 }
 
-const RUN: Record<PanelKeyId, { run: () => void; when?: () => boolean }> = {
-  "change.next": { run: () => step(1), when: reviewing },
-  "change.prev": { run: () => step(-1), when: reviewing },
-  "change.accept": { run: onSelected((id) => decide(id, "accepted")), when: () => reviewing() && canDecide(latestView(doc())) },
-  "change.reject": { run: onSelected((id) => decide(id, "rejected")), when: () => reviewing() && canDecide(latestView(doc())) },
-  "change.edit": { run: onSelected((id) => requestEdit(id)), when: () => reviewing() && canDecide(latestView(doc())) },
-  "change.undo": { run: () => void undoDecision(), when: reviewing },
-  "change.acceptAll": { run: () => void acceptAll(), when: reviewing },
-  "proposal.return": { run: () => void openReturn(), when: reviewing },
-  "approval.open": {
-    run: () => {
-      if (!openApproval()) {
-        // Blocked: the reason pulses; nothing opens.
-      }
-    },
-    when: () => Boolean(latestView(doc())) && !panelSlice.get(doc()).sheetOpen,
-  },
-  "composer.focus": { run: focusComposer },
-  "panel.changes": { run: () => setTab("changes") },
-  "panel.agent": { run: () => setTab("agent") },
-  "panel.checks": { run: () => setTab("checks") },
-  "checks.style": { run: () => void runStyleCheck() },
-};
-
-const RightPanelSlot = (_: SlotProps) => createElement(RightPanel);
-const AgentSettingsSlot = (_: SlotProps) => createElement(AgentConnectionSettings);
-
-let registered = false;
-
-export function registerPanel(): void {
-  if (registered) return;
-  registered = true;
-  registerSlot("rightPanel", RightPanelSlot, { owner: "panel" });
-  registerSlot("settings:agent", AgentSettingsSlot, { owner: "panel" });
-  // The keymap's two contexts (shell/keymap.ts) are the panel's: `review`
-  // while the 변경 pane is showing, `sheet` while the approval sheet is open.
-  // They are exclusive, and the page's own review keys stand down while
-  // `review` is active.
-  defineContext("review", reviewing);
-  defineContext("sheet", () => panelSlice.get(doc()).sheetOpen);
-  for (const [id, chords] of Object.entries(PANEL_CHORDS) as [PanelKeyId, readonly string[]][]) {
-    const entry = RUN[id];
-    registerKey({ id, chords: [...chords], when: entry.when ? () => entry.when!() : undefined, run: entry.run });
-  }
-  registerCommand({ id: "approval.open", title: (l) => tp("act_approve", l), group: "review", run: () => void openApproval(), keyId: "approval.open", when: () => Boolean(latestView(doc())) });
-  registerCommand({ id: "change.acceptAll", title: (l) => tp("act_accept_all", l), group: "review", run: () => void acceptAll(), keyId: "change.acceptAll", when: () => Boolean(latestView(doc())) });
-  registerCommand({ id: "checks.style", title: (l) => tp("checks_style_run", l), group: "document", run: () => void runStyleCheck(), keyId: "checks.style", when: () => doc() !== null });
+function focusChangeList(): void {
+  showRightTab("changes");
+  requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="change-list"]')?.focus());
 }
 
-/** Whether 승인 is currently possible, for the shell's status bar and palette. */
-export function approvalReady(): boolean {
-  return gateState(latestView(doc())).canApprove;
-}
+const RightPanelSlot = ({ sessionId }: SlotProps) =>
+  sessionId ? createElement(RightPanel, { key: sessionId, sessionId }) : null;
 
-registerPanel();
+registerSlot("rightPanel", RightPanelSlot, { owner: "panel" });
+registerSlot("narrowSheet", RightPanelSlot, { owner: "panel" });
+registerSlot("settings:agent", AgentConnectionSettings, { owner: "panel", title: (lang) => S.t("shell_settings_agent", lang) });
+defineContext("review", reviewing);
+defineContext("sheet", inPanelOverlay);
+
+bindKey("change.next", () => step(1));
+bindKey("change.prev", () => step(-1));
+bindKey("change.accept", onSelected((id) => decide(id, "accepted")));
+bindKey("change.reject", onSelected((id) => decide(id, "rejected")));
+bindKey("change.edit", onSelected((id) => requestEdit(id)));
+bindKey("change.undo", undoDecision);
+bindKey("change.acceptAll", acceptAll);
+bindKey("proposal.return", openReturn);
+bindKey("approval.open", openApproval, {
+  when: () => documentReady() && !inPanelOverlay() &&
+    !panelSlice.get(activeTabSessionId()).sheetOpen && Boolean(latestView(activeTabSessionId())),
+  inEditable: false,
+});
+bindKey("panel.changes", focusChangeList, { when: documentReady });
+bindKey("panel.agent", () => showRightTab("agent"), { when: documentReady });
+bindKey("panel.checks", () => showRightTab("checks"), { when: documentReady });
+bindKey("composer.focus", focusComposer, { when: () => documentReady() && !inPanelOverlay() });
+bindKey("checks.style", runStyleCheck, { when: () => documentReady() && !inPanelOverlay() });
+
+const hasChanges = () => Boolean(latestView(activeTabSessionId()));
+registerCommand({ id: "approval.open", title: (lang) => tp("wp4_act_approve", lang), group: "review", run: () => void openApproval(), keyId: "approval.open", when: hasChanges });
+registerCommand({ id: "change.acceptAll", title: (lang) => tp("wp4_act_accept_all", lang), group: "review", run: () => { focusChangeList(); acceptAll(); }, keyId: "change.acceptAll", when: hasChanges });
+registerCommand({ id: "checks.style", title: (lang) => tp("wp4_checks_style_run", lang), group: "document", run: () => void runStyleCheck(), keyId: "checks.style", when: () => activeTabSessionId() !== null });

@@ -14,23 +14,23 @@ export function turnsFor(turns: readonly Turn[], sessionId: string | null, activ
 function stepName(turn: Turn, lang: UiLanguage): string {
   const step = [...turn.events].reverse().find((e) => e.kind === "step");
   const name = step?.detail && typeof step.detail.label === "string" ? step.detail.label : null;
-  return name ?? tp("thread_step_fallback", lang);
+  return name ?? tp("wp4_thread_step_fallback", lang);
 }
 
 function ProposalLine({ view, lang }: { view: ChangeSetView; lang: UiLanguage }) {
   return (
     <div className="rp-msg-proposal">
       <button type="button" className="rp-link rp-link--plain" onClick={() => setTab("changes")} data-testid="thread-proposal">
-        {tp("thread_proposal", lang, [view.items.length, revisionName(view.base.revision, lang)])}
+        {tp("wp4_thread_proposal", lang, [view.items.length, revisionName(view.base.revision, lang)])}
       </button>
       <details className="rp-details rp-details--inline">
-        <summary>{tp("thread_details", lang)}</summary>
+        <summary>{tp("wp4_thread_details", lang)}</summary>
         <div className="rp-kv">
-          <span className="rp-kv-k">{tp("sheet_plan_hash", lang)}</span>
+          <span className="rp-kv-k">{tp("wp4_sheet_plan_hash", lang)}</span>
           <code className="rp-mono">{shortHash(view.planHash)}</code>
         </div>
         <div className="rp-kv">
-          <span className="rp-kv-k">{tp("sheet_doc_hash", lang)}</span>
+          <span className="rp-kv-k">{tp("wp4_sheet_doc_hash", lang)}</span>
           <code className="rp-mono">{shortHash(view.base.sha256)}</code>
         </div>
       </details>
@@ -55,17 +55,17 @@ export function ThreadPane({
   const returned = panelSlice.use(sessionId, (s) => s.returned);
   const mine = turnsFor(turns, sessionId, activeTurn);
   const planInTurns = view ? mine.some((t) => t.payload?.plan?.planId === view.id || t.planId === view.id) : false;
-  const agentWho = view?.provenance.mock ? tp("source_test", lang) : tp("thread_agent", lang);
+  const agentWho = view?.provenance.mock ? tp("wp4_source_test", lang) : tp("wp4_thread_agent", lang);
 
   return (
     <div className="rp-pane rp-pane--agent" data-testid="agent-pane">
       {connected && providerName ? (
         <p className="rp-pane-status" data-testid="agent-connected">
-          {tp("thread_connected", lang, [providerName])}
+          {tp("wp4_thread_connected", lang, [providerName])}
         </p>
       ) : null}
       <div className="rp-scroll">
-        {mine.length === 0 && !view && !returned ? <p className="rp-empty">{tp("thread_empty", lang)}</p> : null}
+        {mine.length === 0 && !view && !returned ? <p className="rp-empty">{tp("wp4_thread_empty", lang)}</p> : null}
         <ol className="rp-thread">
           {mine.map((turn) => {
             const plan = turn.payload?.plan ?? null;
@@ -74,13 +74,13 @@ export function ThreadPane({
               <li key={turn.id} className="rp-turn">
                 <div className="rp-msg">
                   <div className="rp-msg-who">
-                    {tp("thread_me", lang)} <span className="rp-msg-time">{clockTime(turn.at, lang)}</span>
+                    {tp("wp4_thread_me", lang)} <span className="rp-msg-time">{clockTime(turn.at, lang)}</span>
                   </div>
                   <p className="rp-msg-text">{turn.instruction}</p>
                 </div>
                 <div className="rp-msg">
                   <div className="rp-msg-who">
-                    {turn.provider === "mock" ? tp("source_test", lang) : tp("thread_agent", lang)}
+                    {turn.provider === "mock" ? tp("wp4_source_test", lang) : tp("wp4_thread_agent", lang)}
                   </div>
                   {working ? (
                     <p className="rp-msg-step" data-testid="thread-step">
@@ -88,7 +88,7 @@ export function ThreadPane({
                     </p>
                   ) : turn.phase === "failed" ? (
                     <p className="rp-msg-text rp-msg-text--attn">
-                      {turn.error?.code === "cancelled" ? tp("thread_cancelled", lang) : tp("thread_failed", lang)}
+                      {turn.error?.code === "cancelled" ? tp("wp4_thread_cancelled", lang) : tp("wp4_thread_failed", lang)}
                     </p>
                   ) : (
                     <>
@@ -96,7 +96,7 @@ export function ThreadPane({
                       {view && plan && plan.planId === view.id ? (
                         <ProposalLine view={view} lang={lang} />
                       ) : !plan ? (
-                        <p className="rp-msg-text rp-dim">{tp("thread_no_proposal", lang)}</p>
+                        <p className="rp-msg-text rp-dim">{tp("wp4_thread_no_proposal", lang)}</p>
                       ) : null}
                     </>
                   )}
@@ -110,7 +110,7 @@ export function ThreadPane({
                 <div className="rp-msg-who">
                   {agentWho} <span className="rp-msg-time">{clockTime(view.createdUtc, lang)}</span>
                 </div>
-                {view.stale ? <p className="rp-msg-text rp-dim">{tp("stale_thread", lang)}</p> : null}
+                {view.stale ? <p className="rp-msg-text rp-dim">{tp("wp4_stale_thread", lang)}</p> : null}
                 <ProposalLine view={view} lang={lang} />
               </div>
             </li>
@@ -119,7 +119,7 @@ export function ThreadPane({
             <li className="rp-turn">
               <div className="rp-msg">
                 <p className="rp-msg-text rp-dim" data-testid="thread-returned">
-                  {tp("returned_row", lang, [returned.count])}
+                  {tp("wp4_returned_row", lang, [returned.count])}
                 </p>
                 {returned.reason ? <p className="rp-msg-text">{returned.reason}</p> : null}
               </div>

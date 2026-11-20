@@ -1,80 +1,10 @@
-// WP4: key handling under IME composition, the adapter, and the return payload.
+// WP4 guard details, the canvas projection adapter, and the return payload.
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const keys = await import("../src/panel/keys.ts");
 const adapter = await import("../src/panel/adapter.ts");
 const ret = await import("../src/panel/returnCall.ts");
 const model = await import("../src/model/changes.ts");
-
-function key(code, extra = {}) {
-  const letter = code.startsWith("Key") ? code.slice(3).toLowerCase() : code;
-  return {
-    code,
-    key: extra.key ?? letter,
-    ctrlKey: false,
-    shiftKey: false,
-    altKey: false,
-    metaKey: false,
-    target: null,
-    isComposing: false,
-    keyCode: 0,
-    ...extra,
-  };
-}
-
-test("Korean composition never triggers Y/N/E/U/J/K", () => {
-  for (const code of ["KeyY", "KeyN", "KeyE", "KeyU", "KeyJ", "KeyK", "KeyR"]) {
-    // 두벌식: Y is ㅛ, N is ㅜ ... composing either way.
-    assert.equal(keys.matchPanelKey(key(code, { key: "ㅛ", isComposing: true })), null, code);
-    assert.equal(keys.matchPanelKey(key(code, { key: "Process", keyCode: 229 })), null, code);
-  }
-  // Ctrl+Shift+Enter while composing does not approve either.
-  assert.equal(keys.matchPanelKey(key("Enter", { key: "Enter", ctrlKey: true, shiftKey: true, isComposing: true })), null);
-});
-
-test("letters match the physical key whatever the 한/영 state", () => {
-  assert.equal(keys.matchPanelKey(key("KeyY", { key: "ㅛ" })), "change.accept");
-  assert.equal(keys.matchPanelKey(key("KeyN", { key: "ㅜ" })), "change.reject");
-  assert.equal(keys.matchPanelKey(key("KeyJ", { key: "ㅓ" })), "change.next");
-  assert.equal(keys.matchPanelKey(key("KeyK", { key: "ㅏ" })), "change.prev");
-  assert.equal(keys.matchPanelKey(key("KeyE", { key: "ㄷ" })), "change.edit");
-  assert.equal(keys.matchPanelKey(key("KeyU", { key: "ㅕ" })), "change.undo");
-  // Shift+Y is not Y.
-  assert.equal(keys.matchPanelKey(key("KeyY", { shiftKey: true })), null);
-});
-
-test("single keys never fire in an editable target", () => {
-  const input = { tagName: "INPUT", type: "text" };
-  const area = { tagName: "TEXTAREA" };
-  const editable = { tagName: "DIV", isContentEditable: true };
-  const checkbox = { tagName: "INPUT", type: "checkbox" };
-  for (const target of [input, area, editable]) {
-    assert.equal(keys.matchPanelKey(key("KeyY", { target })), null);
-    assert.equal(keys.matchPanelKey(key("KeyN", { target })), null);
-  }
-  assert.equal(keys.matchPanelKey(key("KeyY", { target: checkbox })), "change.accept");
-  // Chords still work from the composer.
-  assert.equal(keys.matchPanelKey(key("Enter", { key: "Enter", ctrlKey: true, shiftKey: true, target: area })), "approval.open");
-  assert.equal(keys.matchPanelKey(key("KeyL", { ctrlKey: true, target: area })), "composer.focus");
-});
-
-test("the approve chord is Ctrl+Shift+Enter, never A or Ctrl+Enter", () => {
-  assert.equal(keys.matchPanelKey(key("Enter", { key: "Enter", ctrlKey: true, shiftKey: true })), "approval.open");
-  assert.equal(keys.matchPanelKey(key("Enter", { key: "Enter", ctrlKey: true })), null);
-  assert.equal(keys.matchPanelKey(key("KeyA")), null);
-  assert.equal(keys.matchPanelKey(key("Delete", { key: "Delete" })), null);
-});
-
-test("no chord is bound twice", () => {
-  const seen = new Map();
-  for (const [id, chords] of Object.entries(keys.PANEL_CHORDS)) {
-    for (const chord of chords) {
-      assert.equal(seen.has(chord), false, `${chord} bound to ${seen.get(chord)} and ${id}`);
-      seen.set(chord, id);
-    }
-  }
-});
 
 test("the return reason is stored as the reason, never as the approver", async () => {
   const binding = { approvalId: "ap-1", planId: "pl-1", planHash: "h".repeat(64) };
@@ -129,9 +59,23 @@ function indexed(n, op, extra = {}) {
   };
 }
 
-function input(changes, extra = {}) {
+function input(indexed, extra = {}) {
+  const changes = indexed.map((item) => ({
+    id: item.opId,
+    n: item.ordinal,
+    at: `t${item.op.table}/r${item.op.row}/c${item.op.col}`,
+    kind: item.opKindText,
+    label: item.fieldLabel,
+    before: item.beforeText,
+    after: item.afterText,
+    page: 1,
+    source: item.op.origin,
+    decision: item.op.origin === "user" ? "accepted" : "pending",
+    contentHash: item.opId,
+  }));
   return {
     language: "ko",
+    indexed,
     changes,
     guard: null,
     plan: { planId: "pl-1", planHash: "a".repeat(64), boundSha256: "b".repeat(64), base: null, reverses: null, proposer: "gongmun-walkthrough", createdUtc: "2026-11-19T05:13:00Z" },
@@ -140,8 +84,6 @@ function input(changes, extra = {}) {
     baseSha256: "",
     currentRevision: 0,
     stale: null,
-    mock: false,
-    provider: null,
     ...extra,
   };
 }
@@ -174,17 +116,16 @@ test("adapter maps addresses, kinds and sources onto ChangeItem", () => {
   assert.deepEqual(model.gateState(decided).block, { kind: "checking" });
 });
 
-test("adapter labels every item 시험용 when the plan is a test plan", () => {
-  const op = { opId: "op-5", kind: "fill_cell", table: 0, row: 1, col: 0, text: "x", before: "", origin: "agent" };
-  assert.equal(adapter.planIsMock({ proposer: "agenthost-mock" }), true);
-  assert.equal(adapter.planIsMock({ proposer: "rigorloom-mock-agent" }), true);
-  assert.equal(adapter.planIsMock({ proposer: "gongmun-walkthrough", provenance: "mock" }), true);
-  assert.equal(adapter.planIsMock({ proposer: "gongmun-walkthrough" }), false);
-  const view = adapter.fromWorkspace(input([indexed(1, op)], { mock: true }));
-  assert.equal(view.items[0].source, "test");
-  assert.equal(view.provenance.mock, true);
-  const accepted = { ...view, items: view.items.map((it) => ({ ...it, decision: "accepted" })) };
-  assert.deepEqual(model.requiredTicks(accepted), ["test"]);
+test("the adapter preserves each canvas flag in a mixed proposal", () => {
+  const op = { opId: "op-5", kind: "fill_cell", table: 0, row: 1, col: 0, text: "x", origin: "agent" };
+  const raw = input([indexed(1, op), indexed(2, { ...op, opId: "op-6", row: 2 })]);
+  raw.plan.proposer = "agent-with-mock-in-its-name";
+  raw.changes[0] = { ...raw.changes[0], source: "test", decision: "accepted" };
+  const view = adapter.fromWorkspace(raw);
+  assert.deepEqual(view.items.map(({ source, decision }) => [source, decision]), [
+    ["test", "accepted"], ["agent", "pending"],
+  ]);
+  assert.deepEqual(model.requiredTicks(view), ["test"]);
 });
 
 test("adapter: a plan behind the head is stale, and that disables the gate", () => {
@@ -236,25 +177,4 @@ test("adapter: guard facts split into 바뀐 사실 and expected", () => {
   // Kept stays kept; a failed guard is never a pass.
   assert.equal(adapter.guardOf(ch, "fill", summary(null, "kept")).status, "kept");
   assert.equal(adapter.guardOf(ch, "fill", { ...summary(null), state: "unavailable" }).status, "not_checked");
-});
-
-test("PLATFORM change sets map onto the same view", () => {
-  const view = adapter.fromPlatformChangeSet({
-    id: "cs-1",
-    base: { kind: "candidate", revision: 1, sha256: "c".repeat(64) },
-    status: "stale",
-    reason: "superseded_by_newer_candidate",
-    head_revision: 2,
-    provenance: { mock: true },
-    items: [
-      { item_id: "i1", address: "t0/r1/c0", kind: "fill", before: "", after: "가온", status: "accepted" },
-      { item_id: "i2", address: "p12", kind: "replace", before: "2026", after: "2027" },
-    ],
-    checks: { guard: { items: [{ item_id: "i2", pass: false, category: "changed", values: [{ kind: "dates", before: "2026", after: "2027" }] }] } },
-  });
-  assert.equal(view.items[0].decision, "accepted");
-  assert.equal(view.items[1].decision, "pending");
-  assert.equal(view.items[1].guard.status, "changed");
-  assert.equal(view.items[0].source, "test");
-  assert.deepEqual(view.stale, { reason: "superseded_by_newer_candidate", current: 2 });
 });

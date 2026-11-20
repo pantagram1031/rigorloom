@@ -5,12 +5,13 @@ import type {
   PageSource,
   PageViewMode,
 } from "../model/page";
+import { recordDecision, type DecisionRecord } from "../model/changes";
 import { defineDocSlice } from "../store";
 
 export interface DecisionUndoEntry {
   itemId: string;
-  prev: CanvasChangeDecision;
-  next: CanvasChangeDecision;
+  contentHash: string;
+  prev: DecisionRecord | undefined;
 }
 
 export interface CanvasDocSlice {
@@ -19,7 +20,7 @@ export interface CanvasDocSlice {
   selectedSeatKey: string | null;
   hoveredSeatKey: string | null;
   hoveredSeatLabel: string | null;
-  decisions: Record<string, CanvasChangeDecision>;
+  decisions: Record<string, DecisionRecord>;
   decisionUndoStack: DecisionUndoEntry[];
   pageFit: PageFit;
   zoom: number;
@@ -77,6 +78,44 @@ export function setCanvasSlice(
   const previous = canvasSlice.get(sessionId);
   const next = typeof patch === "function" ? patch(previous) : patch;
   if (next !== previous) canvasSlice.set(sessionId, next);
+}
+
+type DecidableChange = Pick<CanvasChangeRef, "id" | "contentHash" | "decision">;
+
+export function recordCanvasDecisions(
+  changes: readonly DecidableChange[],
+  decision: CanvasChangeDecision,
+): void {
+  const slice = getCanvasSlice();
+  let decisions = slice.decisions;
+  const undo = slice.decisionUndoStack.slice();
+  for (const item of changes) {
+    if (item.decision === decision) continue;
+    const prev = decisions[item.id];
+    undo.push({
+      itemId: item.id,
+      contentHash: item.contentHash,
+      prev: prev?.contentHash === item.contentHash ? prev : undefined,
+    });
+    decisions = recordDecision(decisions, item, decision);
+  }
+  if (decisions !== slice.decisions) setCanvasSlice({ decisions, decisionUndoStack: undo.slice(-200) });
+}
+
+export function restoreCanvasDecision(changes: readonly DecidableChange[]): string | null {
+  const slice = getCanvasSlice();
+  const undo = slice.decisionUndoStack.slice();
+  while (undo.length > 0) {
+    const last = undo.pop()!;
+    if (!changes.some((item) => item.id === last.itemId && item.contentHash === last.contentHash)) continue;
+    const decisions = { ...slice.decisions };
+    if (last.prev) decisions[last.itemId] = last.prev;
+    else delete decisions[last.itemId];
+    setCanvasSlice({ decisions, decisionUndoStack: undo });
+    return last.itemId;
+  }
+  if (slice.decisionUndoStack.length) setCanvasSlice({ decisionUndoStack: [] });
+  return null;
 }
 
 // --- Exposed `canvas` controller API (J1 §5) --------------------------------

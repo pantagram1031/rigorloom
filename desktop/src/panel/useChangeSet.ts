@@ -4,18 +4,19 @@
  * agent or the CLI proposed over the wire, and running the authoritative
  * guard diff whenever the plan's content changes.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import { adoptExternalPlan, attachExternalApproval, revisionNumberFor } from "../actions";
-import { pruneDecisions, withDecisions, type ChangeSetView } from "../model/changes";
-import { activeInspect, activeText, draftStaleness, headCandidate, useWorkspace } from "../store";
+import { useIndexedCanvasChanges } from "../canvas/changes";
+import { canvasSlice } from "../canvas/controller";
+import { pruneDecisions, type ChangeSetView } from "../model/changes";
+import { activeDisplayText, activeInspect, draftStaleness, headCandidate, useWorkspace } from "../store";
 import {
   findAdoptableExternalPlan,
   findPendingExternalApproval,
   buildRegionTextMap,
 } from "../workspace/externalPlan";
 import {
-  buildIndexedChanges,
   emptyReviewGuardSummary,
   getReviewGuardKey,
   getReviewGuardSummary,
@@ -25,15 +26,12 @@ import {
   type IndexedChange,
   type ReviewGuardSummary,
 } from "../workspace/guardHelper";
-import { fromWorkspace, planIsMock, staleFromValidation } from "./adapter";
-import { panelSlice, setLatestView } from "./state";
+import { fromWorkspace, staleFromValidation } from "./adapter";
+import { setLatestView } from "./state";
 
 export interface ChangeSetContext {
   view: ChangeSetView | null;
-  changes: readonly IndexedChange[];
   guard: ReviewGuardSummary;
-  sessionId: string | null;
-  currentRevision: number;
 }
 
 /** Adopt wire-proposed plans and keep the guard summary current. */
@@ -110,30 +108,21 @@ function useReviewDriver(sessionId: string | null, changes: readonly IndexedChan
   }, [sessionId, draft.phase, key]);
 }
 
-export function useChangeSet(): ChangeSetContext {
-  const sessionId = useWorkspace((s) => s.activeSessionId);
-  const session = useWorkspace((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId) ?? null);
+export function useChangeSet(sessionId: string): ChangeSetContext {
+  const session = useWorkspace((s) => s.sessions.find((x) => x.sessionId === sessionId) ?? null);
   const draft = useWorkspace((s) => s.draft);
-  const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
+  const texts = useWorkspace(activeDisplayText);
   const language = useWorkspace((s) => s.language);
   const staleness = useWorkspace(draftStaleness);
   const reapproval = useWorkspace((s) => s.reapprovalPrompt);
-  const provider = useWorkspace((s) => s.provider.provider);
-  const turns = useWorkspace((s) => s.turns);
   const head = useWorkspace(headCandidate);
   const candidates = useWorkspace((s) => (s.activeSessionId ? s.candidates[s.activeSessionId] : undefined));
   const appliedState = useWorkspace((s) => s.applied);
   const guard = useReviewGuardSummary();
-  const decisions = panelSlice.use(sessionId, (s) => s.decisions);
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
-  const ownDraft = draft.sessionId === null || draft.sessionId === sessionId;
-  const changes = useMemo(
-    () => (ownDraft ? buildIndexedChanges(draft, inspect, textMap, language) : []),
-    [ownDraft, draft, inspect, textMap, language],
-  );
-  useReviewDriver(sessionId, changes);
+  const { indexed, changes } = useIndexedCanvasChanges(sessionId, textMap);
+  useReviewDriver(sessionId, indexed);
 
   const revisionOf = (runId: string | null | undefined): number => {
     if (!runId || !sessionId) return 0;
@@ -148,16 +137,14 @@ export function useChangeSet(): ChangeSetContext {
   const baseRevision = revisionOf(draft.plan?.base?.runId ?? draft.baseRunId);
   const currentRevision = revisionOf(head?.runId ?? null);
 
-  const mockTurn = draft.plan ? turns.some((t) => t.planId === draft.plan?.planId && t.provider === "mock") : false;
-  const mock = planIsMock(draft.plan) || mockTurn;
-
   const view = useMemo(() => {
     const stale =
       staleFromValidation(draft.validation) ??
       (staleness?.kind === "source_changed" || reapproval ? "source_changed" : null) ??
       (draft.plan && currentRevision > baseRevision ? "plan_behind_head" : null);
-    const base = fromWorkspace({
+    return fromWorkspace({
       language,
+      indexed,
       changes,
       guard,
       plan: draft.plan,
@@ -166,24 +153,23 @@ export function useChangeSet(): ChangeSetContext {
       baseSha256: session?.source.sha256 ?? "",
       currentRevision,
       stale,
-      mock,
-      provider: mock ? "mock" : provider === "mock" ? null : provider,
     });
-    if (!base) return null;
-    return { ...base, items: withDecisions(base.items, decisions) };
-  }, [changes, guard, draft.plan, draft.validation, staleness, reapproval, baseRevision, currentRevision, mock, provider, language, decisions, session]);
+  }, [indexed, changes, guard, draft.plan, draft.validation, staleness, reapproval, baseRevision, currentRevision, language, session]);
 
-  setLatestView(sessionId, view);
+  useLayoutEffect(() => {
+    setLatestView(sessionId, view);
+    return () => setLatestView(sessionId, null);
+  }, [sessionId, view]);
 
-  // Forget decisions whose item is gone or changed, so a returned item can
-  // never come back already decided.
   useEffect(() => {
-    if (!view) return;
-    const pruned = pruneDecisions(decisions, view.items);
+    if (draft.phase === "starting" || (draft.sessionId && draft.sessionId !== sessionId)) return;
+    if (!view && draft.ops.length > 0) return;
+    const { decisions } = canvasSlice.get(sessionId);
+    const pruned = pruneDecisions(decisions, view?.items ?? []);
     if (Object.keys(pruned).length !== Object.keys(decisions).length) {
-      panelSlice.set(sessionId, { decisions: pruned });
+      canvasSlice.patch(sessionId, { decisions: pruned });
     }
-  }, [view, decisions, sessionId]);
+  }, [view, draft, sessionId]);
 
-  return { view, changes, guard, sessionId, currentRevision };
+  return { view, guard };
 }

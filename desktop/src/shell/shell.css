@@ -416,6 +416,10 @@
   border-left: 1px solid var(--line);
 }
 
+.sh-right[hidden] {
+  display: none;
+}
+
 .sh-left[data-overlay],
 .sh-right[data-overlay] {
   position: absolute;
@@ -1264,6 +1268,8 @@
 }
 
 .sh-narrow-sheet {
+  height: min(42dvh, 360px);
+  min-height: 0;
   background: var(--panel);
   border-top: 1px solid var(--line);
 }

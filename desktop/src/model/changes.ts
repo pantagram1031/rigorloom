@@ -146,6 +146,7 @@ export interface ChangeSetView {
    * before the guard answers could skip a 바뀐 사실 tick.
    */
   checking?: boolean;
+  baseRunId?: string | null;
 }
 
 /** A stored decision, bound to the content it was made on. */
@@ -392,6 +393,15 @@ export function canConfirm(
   if (!gate.canApprove) return false;
   const set = ticks instanceof Set ? ticks : new Set(ticks as readonly TickId[]);
   return requiredTicks(view).every((tick) => set.has(tick));
+}
+
+/** The exact plan and review decisions displayed when the sheet opened. */
+export function approvalSheetKey(view: ChangeSetView): string {
+  return JSON.stringify([
+    view.id, view.planHash, view.base.sha256, view.baseRunId,
+    view.items.map((item) => [item.id, item.contentHash, item.decision, item.guard]),
+    requiredTicks(view),
+  ]);
 }
 
 export interface OpTally {

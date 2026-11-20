@@ -13,7 +13,6 @@ import vm from "node:vm";
 import { errorCodeMessage } from "../src/i18n/vocabulary.ts";
 import * as trust from "../src/workspace/trust.ts";
 import * as changes from "../src/model/changes.ts";
-import { opSignature } from "../src/store.ts";
 
 const gateSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("../src/panel/actions.ts", import.meta.url), "utf8");
@@ -26,7 +25,7 @@ function slice(source, start, end) {
 }
 
 const gate = slice(gateSource, "export async function approveAndApplyFromDialog(", "export function openApprovalDialog");
-const panel = slice(panelSource, "function waitFor(", "export function openReturn");
+const panel = slice(panelSource, "function matchesRenderedPlan(", "export function openReturn");
 
 const OK = { ok: true, stale: false, hard: [] };
 
@@ -78,11 +77,14 @@ function harness({ ops, decisions = {}, hooks = {} }) {
   const getState = () => state;
   const setState = (patch) => { state = { ...state, ...patch }; };
   const panelSlice = {
-    get: (d) => slices.get(d) ?? { ticks: [], confirmPhase: "idle", sheetOpen: true, sheetFor: plan.planHash },
+    get: (d) => slices.get(d) ?? { ticks: [], confirmPhase: "idle", sheetOpen: true, sheetFor: changes.approvalSheetKey(view) },
     set: (d, patch) => { slices.set(d, { ...panelSlice.get(d), ...patch }); },
   };
   const ctx = vm.createContext({
-    getState, setState, panelSlice, opSignature, errorCodeMessage, setTimeout,
+    getState, setState, panelSlice, errorCodeMessage,
+    setCanvasSlice: () => {},
+    prunedReviewMatches: async () => hooks.prunedReviewMatches?.() ?? true,
+    closeApproval: () => panelSlice.set("S", { sheetOpen: false, sheetFor: null, ticks: [] }),
     showToast: () => {},
     doc: () => state.activeSessionId,
     view: () => view,
@@ -96,12 +98,14 @@ function harness({ ops, decisions = {}, hooks = {} }) {
     requiredGuardAcks: trust.requiredGuardAcks,
     getReviewGuardSummary: () => null,
     revisionNumberFor: () => 1,
-    removeOp: async (id) => {
-      calls.removed.push(id);
-      const left = state.draft.ops.filter((o) => o.opId !== id);
+    removeReviewOps: async (source, ids) => {
+      if (state.draft !== source) return false;
+      calls.removed.push(...ids);
+      const left = state.draft.ops.filter((o) => !ids.has(o.opId));
       const next = planFor(`p1-${left.map((o) => o.opId).join("-")}`);
       setState({ draft: draftFor(next, left), approval: null });
       hooks.prune?.({ getState, setState });
+      return state.draft.ops === left;
     },
     revalidateActiveDraft: async () => {
       calls.validate += 1;
@@ -212,6 +216,17 @@ test("a prune that rebases the plan on another base is refused", async () => {
     },
   });
   assert.equal(await h.confirm(), false);
+  assert.deepEqual(h.calls.apply, []);
+});
+
+test("a changed guard result after pruning needs a fresh review", async () => {
+  const h = harness({
+    ops: [op("u1", "홍길동"), op("u2", "뺄 값")],
+    decisions: { u2: "rejected" },
+    hooks: { prunedReviewMatches: () => false },
+  });
+  assert.equal(await h.confirm(), false);
+  assert.deepEqual(h.calls.request, []);
   assert.deepEqual(h.calls.apply, []);
 });
 

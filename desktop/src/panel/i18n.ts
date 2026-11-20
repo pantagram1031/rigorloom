@@ -1,24 +1,13 @@
-/**
- * Panel strings. Reads `i18n/v2/wp4.ts` until WP2's v2 loader and WP7's fold
- * land; the call sites do not change when they do.
- */
-import { WP4_STRINGS, type Wp4Key } from "../i18n/v2/wp4.ts";
+import { WP4, type Wp4Key } from "../i18n/v2/wp4.ts";
 import type { UiLanguage } from "../i18n/vocabulary.ts";
 
 export type { Wp4Key };
 
-export function tp(key: Wp4Key, lang: UiLanguage, args?: ReadonlyArray<string | number>): string {
-  const template: string = WP4_STRINGS[key][lang];
-  if (!args) return template;
-  return template.replace(/\{(\d+)\}/g, (full, idx: string) => {
-    const value = args[Number(idx)];
-    return value === undefined ? full : String(value);
-  });
-}
+export const tp = WP4.t;
 
 /** `원본` for revision 0, `수정본 N` otherwise. */
 export function revisionName(revision: number, lang: UiLanguage): string {
-  return revision <= 0 ? tp("revision_source", lang) : tp("revision_n", lang, [revision]);
+  return revision <= 0 ? tp("wp4_revision_source", lang) : tp("wp4_revision_n", lang, [revision]);
 }
 
 const TIME_FORMATS: Partial<Record<UiLanguage, Intl.DateTimeFormat>> = {};

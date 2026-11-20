@@ -11,13 +11,13 @@ import { tp } from "./i18n";
 export function sourceLabel(source: ChangeSource, lang: UiLanguage): string {
   switch (source) {
     case "user":
-      return tp("source_user", lang);
+      return tp("wp4_source_user", lang);
     case "test":
-      return tp("source_test", lang);
+      return tp("wp4_source_test", lang);
     case "revert":
-      return tp("source_revert", lang);
+      return tp("wp4_source_revert", lang);
     default:
-      return tp("source_agent", lang);
+      return tp("wp4_source_agent", lang);
   }
 }
 

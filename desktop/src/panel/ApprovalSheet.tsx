@@ -22,11 +22,11 @@ import { Keycap } from "../ui/Keycap";
 import { Parts } from "./bits";
 import { checkText, proposerText } from "./ChangesPane";
 import { revisionName, tp } from "./i18n";
-import { eventIsComposing } from "./keys";
+import { isComposingEvent } from "../shell/keys";
 import { panelSlice } from "./state";
 
 function factValue(v: string | null, lang: UiLanguage): string {
-  return v && v.trim() ? v : tp("sheet_fact_value_none", lang);
+  return v && v.trim() ? v : tp("wp4_sheet_fact_value_none", lang);
 }
 
 function ClauseQuote({ fact }: { fact: GuardFact }) {
@@ -50,11 +50,11 @@ function ExpectedRow({ item, lang }: { item: ChangeItem; lang: UiLanguage }) {
     <li className="rp-sheet-expected" data-testid={`sheet-expected-${item.n}`}>
       <div className="rp-sheet-expected-head">
         <button type="button" className="rp-link rp-link--plain" onClick={() => select(item.id)}>
-          <span className="rp-num">{item.n}</span> {tp("sheet_expected_row", lang, [item.label, item.opName])}
+          <span className="rp-num">{item.n}</span> {tp("wp4_sheet_expected_row", lang, [item.label, item.opName])}
         </button>
         {fact ? (
           <button type="button" className="rp-link" aria-expanded={open} onClick={() => setOpen(!open)} data-testid="expected-toggle">
-            {open ? tp("sheet_expected_hide", lang) : tp("sheet_expected_view", lang)}
+            {open ? tp("wp4_sheet_expected_hide", lang) : tp("wp4_sheet_expected_view", lang)}
           </button>
         ) : null}
       </div>
@@ -87,7 +87,7 @@ function CopyHash({ label, value, lang, testId }: { label: string; value: string
           );
         }}
       >
-        {copied ? tp("sheet_copied", lang) : tp("sheet_copy", lang)}
+        {copied ? tp("wp4_sheet_copied", lang) : tp("wp4_sheet_copy", lang)}
       </button>
     </div>
   );
@@ -118,7 +118,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
   }, [doc, view.id, view.planHash, view.base.sha256]);
 
   const onKey = (e: KeyboardEvent<HTMLElement>) => {
-    if (eventIsComposing(e)) return;
+    if (isComposingEvent(e.nativeEvent)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -137,10 +137,10 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
 
   const confirmLabel =
     st.confirmPhase === "pruning" || st.confirmPhase === "requesting"
-      ? tp("step_checking", lang)
+      ? tp("wp4_step_checking", lang)
       : st.confirmPhase === "applying"
-        ? tp("step_applying", lang)
-        : tp("sheet_confirm", lang);
+        ? tp("wp4_step_applying", lang)
+        : tp("wp4_sheet_confirm", lang);
 
   return (
     <section
@@ -148,7 +148,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
       className="rp-sheet"
       role="dialog"
       aria-modal="false"
-      aria-label={tp("sheet_aria", lang)}
+      aria-label={tp("wp4_sheet_aria", lang)}
       tabIndex={-1}
       onKeyDown={onKey}
       data-testid="approve-sheet"
@@ -156,14 +156,14 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
     >
       <header className="rp-sheet-head">
         <div>
-          <h2 className="rp-sheet-title">{tp("sheet_title", lang, [accepted.length])}</h2>
+          <h2 className="rp-sheet-title">{tp("wp4_sheet_title", lang, [accepted.length])}</h2>
           <p className="rp-sheet-tally">
             {tallyByOp(accepted)
-              .map((t) => tp("sheet_tally_item", lang, [t.opName, t.count]))
+              .map((t) => tp("wp4_sheet_tally_item", lang, [t.opName, t.count]))
               .join(" · ")}
           </p>
         </div>
-        <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeApproval()} aria-label={tp("sheet_close", lang)}>
+        <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeApproval()} aria-label={tp("wp4_sheet_close", lang)}>
           <Keycap keys={["Esc"]} />
         </button>
       </header>
@@ -188,7 +188,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
                     <li key={`${it.id}-${i}`}>
                       <button type="button" className="rp-link rp-link--plain" onClick={() => select(it.id)}>
                         <span className="rp-num">{it.n}</span>{" "}
-                        {tp("sheet_fact_row", lang, [it.label, factValue(f.before, lang), factValue(f.after, lang)])}
+                        {tp("wp4_sheet_fact_row", lang, [it.label, factValue(f.before, lang), factValue(f.after, lang)])}
                       </button>
                     </li>
                   )),
@@ -201,7 +201,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
                 onChange={() => toggleTick("facts")}
                 data-testid="tick-facts"
               />
-              {tp("sheet_tick_facts", lang)}
+              {tp("wp4_sheet_tick_facts", lang)}
             </label>
           </div>
         ) : null}
@@ -218,29 +218,29 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
           <div className="rp-sheet-test" data-testid="sheet-test">
             <label className="rp-tick">
               <input type="checkbox" checked={st.ticks.includes("test")} onChange={() => toggleTick("test")} data-testid="tick-test" />
-              <span className="rp-tag rp-tag--test">{tp("source_test", lang)}</span>
-              {tp("sheet_tick_test", lang)}
+              <span className="rp-tag rp-tag--test">{tp("wp4_source_test", lang)}</span>
+              {tp("wp4_sheet_tick_test", lang)}
             </label>
           </div>
         ) : null}
 
         <div className="rp-kvs">
           <div className="rp-kv">
-            <span className="rp-kv-k">{tp("sheet_base", lang)}</span>
+            <span className="rp-kv-k">{tp("wp4_sheet_base", lang)}</span>
             <span className="rp-kv-v">{revisionName(view.base.revision, lang)}</span>
           </div>
           <div className="rp-kv">
-            <span className="rp-kv-k">{tp("sheet_result", lang)}</span>
+            <span className="rp-kv-k">{tp("wp4_sheet_result", lang)}</span>
             <span className="rp-kv-v">{revisionName(resultRevision, lang)}</span>
           </div>
           <details className="rp-details" data-testid="sheet-details">
-            <summary>{tp("sheet_details", lang)}</summary>
-            <CopyHash label={tp("sheet_doc_hash", lang)} value={view.base.sha256 || sessionSha} lang={lang} testId="hash-doc" />
-            <CopyHash label={tp("sheet_plan_hash", lang)} value={view.planHash} lang={lang} testId="hash-plan" />
+            <summary>{tp("wp4_sheet_details", lang)}</summary>
+            <CopyHash label={tp("wp4_sheet_doc_hash", lang)} value={view.base.sha256 || sessionSha} lang={lang} testId="hash-doc" />
+            <CopyHash label={tp("wp4_sheet_plan_hash", lang)} value={view.planHash} lang={lang} testId="hash-plan" />
           </details>
         </div>
 
-        <ol className="rp-digest" aria-label={tp("sheet_digest_aria", lang)} data-testid="sheet-digest">
+        <ol className="rp-digest" aria-label={tp("wp4_sheet_digest_aria", lang)} data-testid="sheet-digest">
           {rangeDigest(accepted).map((row) => (
             <li key={row.firstId}>
               <button type="button" className="rp-digest-row" onClick={() => select(row.firstId)}>
@@ -255,10 +255,10 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
 
       <footer className="rp-sheet-foot">
         <p className="rp-sheet-note" data-testid="guard-scope">
-          {guardState === "unavailable" ? tp("sheet_guard_skipped", lang) : tp("sheet_guard_scope", lang)}
+          {guardState === "unavailable" ? tp("wp4_sheet_guard_skipped", lang) : tp("wp4_sheet_guard_scope", lang)}
         </p>
         <p className="rp-sheet-note" data-testid="sheet-effect">
-          {tp("sheet_effect", lang)}
+          {tp("wp4_sheet_effect", lang)}
         </p>
         {st.confirmPhase === "failed" && st.confirmError ? (
           <p className="rp-sheet-error" role="alert" data-testid="sheet-error">
@@ -267,7 +267,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
         ) : null}
         <div className="rp-sheet-actions">
           <button type="button" className="rp-btn" onClick={() => closeApproval()} disabled={busy} data-testid="approve-cancel">
-            {tp("sheet_cancel", lang)}
+            {tp("wp4_sheet_cancel", lang)}
             <Keycap keys={["Esc"]} />
           </button>
           <button

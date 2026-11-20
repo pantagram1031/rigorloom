@@ -1,40 +1,24 @@
 /**
- * Maps today's session, plan and approval objects, and later PLATFORM's
- * `ChangeSet`, onto `ChangeSetView` (J1 §5).
+ * Adds the panel's guard detail and gate metadata to the canvas changes.
  *
  * Pure: every input is passed in, so the mapping is tested in node. The hook
  * that gathers the inputs from the store is `useChangeSet.ts`.
  */
 import {
-  contentHashOf,
-  defaultDecision,
   type ChangeGuard,
   type ChangeItem,
   type ChangeKind,
   type ChangeSetStale,
   type ChangeSetView,
-  type ChangeSource,
   type GuardFact,
 } from "../model/changes.ts";
+import type { CanvasChangeRef } from "../model/page";
 import { errorCodeMessage, type UiLanguage } from "../i18n/vocabulary.ts";
 import type { GuardDiffParagraph, GuardProtectedToken, OperationPlan, PlanFinding, PlanValidation } from "../types";
 import type { QueuedOp } from "../store";
 import type { IndexedChange, ReviewGuardSummary } from "../workspace/guardHelper";
 
 // --- addresses and kinds ---------------------------------------------------------
-
-/** The doc-core address of a queued op (`t3/r2/c1`, `p12`). */
-export function addressOf(op: QueuedOp): string {
-  switch (op.kind) {
-    case "fill_cell":
-    case "replace_at_cell":
-      return `t${op.table}/r${op.row}/c${op.col}`;
-    case "set_run":
-      return `p${op.atPara}`;
-    default:
-      return "place:guides";
-  }
-}
 
 /** Section key for the range digest: the table row, or the paragraph. */
 export function groupOf(op: QueuedOp): string {
@@ -58,13 +42,6 @@ export function kindOf(change: Pick<IndexedChange, "op" | "beforeText" | "afterT
   if (op.kind === "fill_cell") return before.length === 0 ? "fill" : "replace";
   if (op.kind === "replace_at_cell" && op.mode === "append") return "insert";
   return before.length === 0 ? "fill" : "replace";
-}
-
-export function sourceOf(op: QueuedOp, ctx: { mock: boolean; reverses: boolean }): ChangeSource {
-  if (op.origin === "user") return "user";
-  if (ctx.mock) return "test";
-  if (ctx.reverses) return "revert";
-  return "agent";
 }
 
 // --- guard -------------------------------------------------------------------------
@@ -189,7 +166,8 @@ export function guardOf(
 
 export interface WorkspaceAdapterInput {
   language: UiLanguage;
-  changes: readonly IndexedChange[];
+  indexed: readonly IndexedChange[];
+  changes: readonly CanvasChangeRef[];
   guard: ReviewGuardSummary | null;
   plan: OperationPlan | null;
   validation: PlanValidation | null;
@@ -200,9 +178,6 @@ export interface WorkspaceAdapterInput {
   currentRevision: number;
   /** Why the set no longer applies, or null. */
   stale: ChangeSetStale["reason"] | null;
-  /** The plan comes from a test provider. */
-  mock: boolean;
-  provider: string | null;
 }
 
 function findingText(f: PlanFinding, lang: UiLanguage): string {
@@ -219,49 +194,39 @@ export function staleFromValidation(validation: PlanValidation | null): ChangeSe
   return null;
 }
 
-/** Whether a plan came from a test provider (trust: `provenance.mock`). */
-export function planIsMock(plan: OperationPlan | null): boolean {
-  if (!plan) return false;
-  // Trust writes `provenance: "mock"`; PLATFORM writes `provenance.mock`.
-  const prov = (plan as unknown as { provenance?: unknown }).provenance;
-  if (prov === "mock") return true;
-  if (prov && typeof prov === "object" && (prov as { mock?: unknown }).mock === true) return true;
-  return /(^|[-_.:])mock([-_.:]|$)/i.test(plan.proposer ?? "");
-}
-
 export function fromWorkspace(raw: WorkspaceAdapterInput): ChangeSetView | null {
-  const { changes, plan } = raw;
+  const { indexed, changes, plan } = raw;
   if (changes.length === 0) return null;
   // The guard summary is for one plan; another plan's result is no result.
   const foreign = Boolean(raw.guard && plan && raw.guard.planId && raw.guard.planId !== plan.planId);
   const input = foreign ? { ...raw, guard: null } : raw;
-  const reverses = Boolean(plan?.reverses);
   const claimed = new Set<number>();
-  const items: ChangeItem[] = changes.map((ch) => {
+  const items: ChangeItem[] = changes.map((change, index) => {
+    const ch = indexed[index];
     const kind = kindOf(ch);
-    const source = sourceOf(ch.op, { mock: input.mock, reverses });
     const hard = ch.hardFindings.filter((f) => !STALE_CODES.has(f.code)).map((f) => findingText(f, input.language));
-    const base = {
-      id: ch.opId,
-      n: ch.ordinal,
-      at: addressOf(ch.op),
+    return {
+      id: change.id,
+      n: change.n,
+      at: change.at,
       kind,
-      label: ch.fieldLabel,
-      opName: ch.opKindText,
-      before: ch.beforeText,
-      after: ch.afterText,
-      page: null,
-      source,
-      decision: defaultDecision(source),
+      label: change.label,
+      opName: change.kind,
+      before: change.before,
+      after: change.after,
+      page: change.page,
+      source: change.source,
+      decision: change.decision,
+      contentHash: change.contentHash,
       guard: guardOf(ch, kind, input.guard, claimed),
       hard,
       group: groupOf(ch.op),
     };
-    return { ...base, contentHash: contentHashOf(base) };
   });
   return {
     id: plan?.planId ?? "draft",
     planHash: plan?.planHash ?? "",
+    baseRunId: plan?.base?.runId ?? null,
     base: {
       kind: input.baseRevision > 0 ? "candidate" : "source",
       revision: input.baseRevision,
@@ -269,107 +234,11 @@ export function fromWorkspace(raw: WorkspaceAdapterInput): ChangeSetView | null 
     },
     stale: input.stale ? { reason: input.stale, current: input.currentRevision } : null,
     items,
-    provenance: { agent: plan?.proposer ?? null, provider: input.provider, mock: input.mock },
+    provenance: { agent: null, provider: null, mock: plan?.provenance === "mock" || items.some((item) => item.source === "test") },
     createdUtc: plan?.createdUtc ?? null,
     checking:
       foreign ||
       input.guard?.state === "running" ||
       ((!input.guard || input.guard.state === "idle") && Boolean(plan) && input.validation?.ok === true),
-  };
-}
-
-// --- PLATFORM change sets (platform-design §5, "UI 요구") ---------------------------------
-
-/** The field list agreed with PLATFORM. The schema lands in runtime/schemas. */
-export interface PlatformChangeSet {
-  id: string;
-  created?: string;
-  author?: string;
-  base: { kind: "source" | "candidate"; revision: number; sha256: string; path?: string };
-  status: "proposed" | "accepted" | "rejected" | "applied" | "stale";
-  reason?: string | null;
-  provenance?: { agent?: string | null; provider?: string | null; mock?: boolean };
-  plan_hash?: string;
-  head_revision?: number;
-  items: Array<{
-    item_id: string;
-    address: string;
-    kind: ChangeKind;
-    before: string;
-    after: string;
-    page?: number | null;
-    rects?: Array<[number, number, number, number]> | null;
-    status?: "pending" | "accepted" | "rejected";
-    note?: string | null;
-    label?: string;
-    op_name?: string;
-    origin?: "agent" | "user" | "revert";
-  }>;
-  checks?: {
-    guard?: {
-      items?: Array<{
-        item_id: string;
-        pass: boolean;
-        category: "changed" | "expected";
-        values?: Array<{ kind?: string; before?: string | null; after?: string | null }>;
-      }>;
-    };
-    hard?: Array<{ item_id: string; message: string }>;
-  };
-}
-
-export function fromPlatformChangeSet(cs: PlatformChangeSet): ChangeSetView {
-  const mock = cs.provenance?.mock === true;
-  const guardBy = new Map((cs.checks?.guard?.items ?? []).map((g) => [g.item_id, g]));
-  const hardBy = new Map<string, string[]>();
-  for (const h of cs.checks?.hard ?? []) hardBy.set(h.item_id, [...(hardBy.get(h.item_id) ?? []), h.message]);
-  const items: ChangeItem[] = cs.items.map((it, idx) => {
-    const source: ChangeSource = it.origin === "user" ? "user" : mock ? "test" : it.origin === "revert" ? "revert" : "agent";
-    const g = guardBy.get(it.item_id);
-    const guard: ChangeGuard = !g
-      ? { status: "none", facts: [] }
-      : g.pass
-        ? { status: "kept", facts: [] }
-        : {
-            status: g.category === "expected" ? "expected" : "changed",
-            facts: (g.values ?? []).map((v) => ({
-              kind: factKind(v.kind ?? ""),
-              before: v.before ?? null,
-              after: v.after ?? null,
-              expected: g.category === "expected",
-            })),
-          };
-    const base = {
-      id: it.item_id,
-      n: idx + 1,
-      at: it.address,
-      kind: it.kind,
-      label: it.label ?? it.address,
-      opName: it.op_name ?? it.kind,
-      before: it.before,
-      after: it.after,
-      page: it.page ?? null,
-      source,
-      decision: it.status ?? defaultDecision(source),
-      guard,
-      hard: hardBy.get(it.item_id) ?? [],
-      rects: (it.rects ?? []).map(([x, y, w, h]) => ({ page: it.page ?? 1, x, y, w, h })),
-    };
-    return { ...base, contentHash: contentHashOf(base) };
-  });
-  return {
-    id: cs.id,
-    planHash: cs.plan_hash ?? "",
-    base: { kind: cs.base.kind, revision: cs.base.revision, sha256: cs.base.sha256 },
-    stale:
-      cs.status === "stale"
-        ? {
-            reason: cs.reason === "superseded_by_newer_candidate" ? "superseded_by_newer_candidate" : "plan_behind_head",
-            current: cs.head_revision ?? cs.base.revision + 1,
-          }
-        : null,
-    items,
-    provenance: { agent: cs.author ?? cs.provenance?.agent ?? null, provider: cs.provenance?.provider ?? null, mock },
-    createdUtc: cs.created ?? null,
   };
 }

@@ -16,6 +16,8 @@ import {
   canvas,
   getCanvasSlice,
   getPublishedChanges,
+  recordCanvasDecisions,
+  restoreCanvasDecision,
   setCanvasSlice,
 } from "./controller";
 
@@ -202,53 +204,23 @@ export function decideCanvasItem(
 ): void {
   const changes = getPublishedChanges();
   const target = changes.find((c) => c.id === itemId);
-  if (target?.isStale && decision !== "pending") {
-    return;
-  }
+  if (!target || (target.isStale && decision !== "pending") || target.decision === decision) return;
 
-  const slice = getCanvasSlice();
-  const prev = slice.decisions[itemId] ?? target?.decision ?? "pending";
-  if (prev === decision) return;
-
-  const nextDecisions = { ...slice.decisions, [itemId]: decision };
-  const nextUndo = [
-    ...slice.decisionUndoStack,
-    { itemId, prev, next: decision },
-  ];
-
-  let nextSelected = slice.selectedChangeId;
-  if (decision === "accepted" && changes.length > 0) {
-    const idx = changes.findIndex((c) => c.id === itemId);
-    const after = changes
-      .slice(idx + 1)
-      .find((c) => (nextDecisions[c.id] ?? c.decision) === "pending");
-    const before = changes
-      .slice(0, Math.max(0, idx))
-      .find((c) => (nextDecisions[c.id] ?? c.decision) === "pending");
-    nextSelected = after?.id ?? before?.id ?? itemId;
-  }
-
-  setCanvasSlice({
-    decisions: nextDecisions,
-    decisionUndoStack: nextUndo,
-    selectedChangeId: nextSelected,
-  });
-
-  if (nextSelected && nextSelected !== slice.selectedChangeId) {
-    canvas.select(nextSelected);
+  recordCanvasDecisions([target], decision);
+  if (decision === "accepted") {
+    const idx = changes.indexOf(target);
+    const next = changes.slice(idx + 1).find((c) => c.decision === "pending") ??
+      changes.slice(0, idx).find((c) => c.decision === "pending");
+    if (next) canvas.select(next.id);
   }
 }
 
 export function undoCanvasDecision(): boolean {
-  const slice = getCanvasSlice();
-  if (slice.decisionUndoStack.length === 0) return false;
-  const last = slice.decisionUndoStack[slice.decisionUndoStack.length - 1];
-  setCanvasSlice({
-    decisions: { ...slice.decisions, [last.itemId]: last.prev },
-    decisionUndoStack: slice.decisionUndoStack.slice(0, -1),
-    selectedChangeId: last.itemId,
-  });
-  canvas.select(last.itemId);
+  const changes = getPublishedChanges();
+  if (changes.some((change) => change.isStale)) return false;
+  const id = restoreCanvasDecision(changes);
+  if (!id) return false;
+  canvas.select(id);
   return true;
 }
 
@@ -333,11 +305,7 @@ async function queueCanvasEdit(op: QueuedOp, sessionId: string | null): Promise<
     ? queuedCellOpAt(state, op.table, op.row, op.col)
     : op.kind === "set_run" ? queuedRunOpAt(state, op.atPara, op.run) : null;
   if (sessionId && queued) {
-    setCanvasSlice((prev) => ({
-      ...prev,
-      decisions: { ...prev.decisions, [queued.opId]: "accepted" },
-      selectedChangeId: queued.opId,
-    }), sessionId);
+    setCanvasSlice({ selectedChangeId: queued.opId }, sessionId);
   }
   return saved;
 }
