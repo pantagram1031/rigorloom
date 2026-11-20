@@ -455,14 +455,14 @@ function RightPanel({ sessionId, overlay }: { sessionId: string; overlay: boolea
 
 function Strip({ sessionId }: { sessionId: string }) {
   return (
-    <div className="sh-strip" data-testid={TID.stripHost} data-docked="true">
+    <header className="sh-strip" data-testid={TID.stripHost} data-docked="true">
       <div className="sh-strip-start">
         <Slot name="stripStart" sessionId={sessionId} quiet />
       </div>
       <div className="sh-strip-end">
         <Slot name="stripEnd" sessionId={sessionId} quiet />
       </div>
-    </div>
+    </header>
   );
 }
 
@@ -595,4 +595,4 @@ function shortPath(p: string): string {
   return p.replace(home, "~");
 }
 
-export { LeftPane, StatusBar, shortPath, FailedCanvas, OpeningCanvas, DropOutline };
+export { LeftPane, StatusBar, Strip, shortPath, FailedCanvas, OpeningCanvas, DropOutline };

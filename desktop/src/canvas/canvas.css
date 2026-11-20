@@ -16,25 +16,6 @@
 
 /* ── Document strip (32 px, flat docked chrome) ──────────────────────────── */
 
-.rl-doc-strip {
-  height: var(--h-strip);
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-12);
-  padding: 0 var(--s-12);
-  background: var(--panel);
-  border-bottom: var(--border-hair);
-  color: var(--ink);
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  line-height: var(--lh-sm);
-  font-weight: var(--weight-regular);
-  white-space: nowrap;
-  overflow: hidden;
-}
-
 .rl-strip-left {
   display: flex;
   align-items: center;
@@ -76,16 +57,7 @@
 }
 
 @media (max-width: 599px) {
-  .rl-doc-strip {
-    padding: 0 var(--s-8);
-    gap: var(--s-4);
-  }
-  .rl-strip-left {
-    display: none;
-  }
   .rl-strip-right {
-    width: 100%;
-    justify-content: space-between;
     gap: var(--s-4);
   }
   .rl-view-seg {
@@ -220,7 +192,7 @@
   overflow: auto;
   padding: var(--s-24) var(--s-24) var(--s-32);
   display: flex;
-  justify-content: center;
+  justify-content: safe center;
   align-items: flex-start;
   touch-action: pan-x pan-y pinch-zoom;
 }

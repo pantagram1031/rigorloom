@@ -10,11 +10,11 @@ import { openSettings } from "./bindings";
 import { docTitle, pendingCount } from "./docInfo";
 import { Icon } from "./parts";
 import { docLayout, LEFT_PANES, type LeftPaneId, setShell, type Tab, useShell, getShell } from "./shellState";
-import { FailedCanvas, OpeningCanvas } from "./Shell";
+import { FailedCanvas, OpeningCanvas, Strip } from "./Shell";
 import { Slot } from "./Slot";
 import { StartTab } from "./StartTab";
 import { activateTab } from "./tabs";
-import { TID } from "./testids";
+import { paneTabTid, TID } from "./testids";
 
 const LABEL: Record<LeftPaneId, Parameters<typeof S.t>[0]> = {
   files: "shell_pane_files",
@@ -53,16 +53,18 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
           <span className="sh-narrow-name">{title}</span>
           {count > 0 ? <span className="sh-narrow-sub">{S.t("shell_tab_changes_count", lang, [count])}</span> : null}
         </div>
-        {sessionId ? <Slot name="stripEnd" sessionId={sessionId} quiet /> : null}
       </header>
       <main className="sh-narrow-main" data-testid={TID.canvasHost}>
         {tab?.kind === "start" ? <StartTab /> : null}
         {tab?.kind === "opening" ? <OpeningCanvas name={tab.name} /> : null}
         {tab?.kind === "failed" ? <FailedCanvas tab={tab} /> : null}
         {sessionId ? (
-          <div className="sh-canvas">
-            <Slot name="canvas" sessionId={sessionId} fallback={<div className="sh-desk" data-slot-empty="canvas" />} />
-          </div>
+          <>
+            <Strip sessionId={sessionId} />
+            <div className="sh-canvas">
+              <Slot name="canvas" sessionId={sessionId} fallback={<div className="sh-desk" data-slot-empty="canvas" />} />
+            </div>
+          </>
         ) : null}
       </main>
       {sessionId ? (
@@ -113,6 +115,7 @@ function Drawer({ sessionId }: { sessionId: string | null }) {
                   type="button"
                   key={id}
                   role="tab"
+                  data-testid={paneTabTid(id)}
                   aria-selected={pane === id}
                   className="sh-pane-tab sh-pane-tab--touch"
                   onClick={() => docLayout.patch(sessionId, { leftPane: id, landed: true })}

@@ -34,6 +34,7 @@ import { deriveCellFieldLabel } from "../workspace/fieldLabels";
 import {
   beginCellEditV2,
   commitCellEditV2,
+  findTextPattern,
   notifyParagraphNotEditable,
   setCanvasZoom,
   stepCanvasZoom,
@@ -131,22 +132,25 @@ function renderTextWithNowrapTokens(
   activeHighlight = false,
 ): ReactNode {
   if (!text) return text;
-  if (findQuery && text.includes(findQuery)) {
-    const parts = text.split(findQuery);
+  const matches = findQuery.trim() ? [...text.matchAll(findTextPattern(findQuery))] : [];
+  if (matches.length > 0) {
     const out: ReactNode[] = [];
-    parts.forEach((seg, idx) => {
-      if (seg) out.push(<span key={`s-${idx}`}>{renderTextWithNowrapTokens(seg)}</span>);
-      if (idx < parts.length - 1) {
-        out.push(
-          <mark
-            key={`f-${idx}`}
-            className={`rl-find-hit${activeHighlight ? " rl-find-hit--active" : ""}`}
-          >
-            {findQuery}
-          </mark>,
-        );
-      }
-    });
+    let cursor = 0;
+    for (const match of matches) {
+      const index = match.index ?? cursor;
+      const segment = text.slice(cursor, index);
+      if (segment) out.push(<span key={`s-${index}`}>{renderTextWithNowrapTokens(segment)}</span>);
+      out.push(
+        <mark
+          key={`f-${index}`}
+          className={`rl-find-hit${activeHighlight ? " rl-find-hit--active" : ""}`}
+        >
+          {match[0]}
+        </mark>,
+      );
+      cursor = index + match[0].length;
+    }
+    if (cursor < text.length) out.push(<span key="tail">{renderTextWithNowrapTokens(text.slice(cursor))}</span>);
     return out;
   }
 
@@ -240,7 +244,7 @@ export function resolveMarkVisualState(ch: CanvasChangeRef): MarkVisualState {
   if (ch.isStale) return "stale";
   if (ch.source === "test") return "test";
   if (ch.decision === "rejected") return "rejected";
-  if (ch.decision === "accepted" || ch.source === "user") return "accepted";
+  if (ch.decision === "accepted") return "accepted";
   return "pending";
 }
 
@@ -463,7 +467,7 @@ export function PageSheet({
     [metrics?.margin?.left],
   );
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const update = () => {
