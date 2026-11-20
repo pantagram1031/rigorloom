@@ -1531,3 +1531,132 @@ def test_engine_section_break_moves_the_rest_into_a_new_section(kit, tmp_path):
     assert [q.si for q in d.top] == [0] * 7 + [1] * (len(base.top) - 6)
     assert [q.text for q in d.top if q.si == 1] == [q.text for q in base.top[6:]]
     assert d.top[6].text == "새 문단" and d.top[2].text == "앞"
+
+
+# ============================================================================ 머리말·꼬리말, 쪽 번호
+def test_header_ops_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops, f=src, base=None):
+        ops = [ops] if isinstance(ops, dict) else ops
+        return D.edit(f, ops, base=base or rev, out=out)["error"]
+    e = err({"op": "header", "at": "p0", "txt": "x"})
+    assert e["code"] == "bad_input" and "text" in e["candidates"]
+    assert err({"op": "header", "at": "p0"})["code"] == "bad_input"                          # no text
+    e = err({"op": "header", "at": "p0", "kind": "top", "text": "x"})
+    assert e["code"] == "bad_input" and "HEADER" in e["candidates"]
+    e = err({"op": "header", "at": "p0", "apply": "all", "text": "x"})
+    assert e["code"] == "bad_input" and "BOTH" in e["candidates"]
+    assert err({"op": "header", "at": "p0", "text": 3})["code"] == "bad_input"
+    assert err({"op": "header", "at": "p0", "text": "a\x01b"})["code"] == "bad_input"
+    assert err({"op": "header", "at": "p0", "text": "가" * 1001})["code"] == "bad_input"
+    assert err({"op": "header", "at": "p0:0-2", "text": "x"})["code"] == "bad_address"
+    assert err({"op": "header", "at": "t0/r0/c0/p0", "text": "x"})["code"] == "bad_address"
+    assert err({"op": "header", "at": "p0", "text": "x", "expect": "있는 머리말"})["code"] == "expect_mismatch"
+    e = err({"op": "page_number", "at": "p0", "pos": "middle"})
+    assert e["code"] == "bad_input" and "BOTTOM_CENTER" in e["candidates"]
+    assert err({"op": "page_number", "at": "p0", "format": "arabic"})["code"] == "bad_input"
+    assert err({"op": "page_number", "at": "p0", "side_char": "--"})["code"] == "bad_input"
+    assert err({"op": "page_number", "at": "p0", "expect": "1"})["code"] == "bad_input"     # no expect
+    # one header per section, kind and apply; one page_number per section; none beside a section break there
+    two = [{"op": "header", "at": "p0", "text": "a"}, {"op": "header", "at": "p3", "text": "b"}]
+    assert err(two)["code"] == "conflict"
+    assert err([{"op": "header", "at": "p0", "text": "a"},
+                {"op": "header", "at": "p3", "kind": "footer", "text": "b"},
+                {"op": "header", "at": "p4", "apply": "odd", "text": "c"}])["code"] == "capability_unavailable"
+    assert err([{"op": "page_number", "at": "p0"}, {"op": "page_number", "at": "p9"}])["code"] == "conflict"
+    sec3 = _copy(SECTIONS3, tmp_path)
+    e = err([{"op": "page_number", "at": "p103"}, {"op": "break", "at": "p104", "kind": "section"}],
+            f=sec3, base=D.rev_of(sec3))
+    assert e["code"] == "conflict"
+    e = err({"op": "header", "at": "p0", "text": "a"}, f=sec3, base=D.rev_of(sec3))
+    assert e["code"] == "capability_unavailable" and e["reason"] == "engine_needs_style"    # no 머리말 style
+    e = err({"op": "header", "at": "p0", "text": "a"})
+    assert e["code"] == "capability_unavailable"                   # valid, but only the engine writes it
+    assert e["reason"] != "engine_needs_style"
+    assert not out.exists()
+
+
+def test_header_ops_on_an_engine_without_replace_write_nothing(no_engine, tmp_path, monkeypatch):
+    """An engine from before hwp-engine #23 has insert_header without replace=: the op is unavailable on it,
+    names the engine it needs, and nothing is written."""
+    class Old:
+        def call(self, fn, *a, **k):
+            if fn == "edit":
+                return {"ok": False, "error": {"code": "bad_input", "step": 1, "message":
+                        "step 1 (insert_header): TypeError: EditOps.insert_header() got an unexpected keyword "
+                        "argument 'replace'"}}
+            return {"ok": True, "pages": [], "count": 0}
+    monkeypatch.setattr(D, "_engine", lambda: Old())
+    src = _copy(GUARD, tmp_path)
+    out = tmp_path / "o.hwpx"
+    r = D.edit(src, [{"op": "header", "at": "p0", "text": "머리말"}], base=D.rev_of(src), out=out)
+    e = r["error"]
+    assert e["code"] == "capability_unavailable" and e["reason"] == "engine_function_missing", e
+    assert e["fn"] == "insert_header" and e["keyword"] == "replace" and "2077774" in e["needs"]
+    assert e["written"] is False and e["retryable"] is False
+    assert not out.exists()
+
+
+def _hf_xml(path, si=0):
+    with zipfile.ZipFile(path) as z:
+        return z.read("Contents/section%d.xml" % si).decode("utf-8")
+
+
+@engine
+def test_engine_header_footer_and_page_number(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_header_footer.hwpx", tmp_path)
+    base = D._load(f)
+    old = [q.text for _t, ps in D._hf_controls(base, base.top[0], "header", "BOTH") for q in ps]
+    assert old == ["머리말: 2학년 탐구 보고서"]
+    out = tmp_path / "hf.hwpx"
+    r = D.edit(f, [
+        {"op": "header", "at": "p0", "text": "보고서 머리말\n둘째 줄", "expect": old[0]},
+        {"op": "header", "at": "p1", "kind": "footer", "apply": "odd", "text": "홀수 쪽 꼬리말"},
+        {"op": "page_number", "at": "p0", "pos": "top_right", "format": "roman_small", "side_char": ""},
+        {"op": "set", "at": "p0", "text": "첫 문단"},
+    ], base=D.rev_of(f), out=out)
+    assert r["ok"] and not r.get("remap_approx"), r
+    assert r["remap"] == []
+    sec = _hf_xml(out)
+    assert len(re.findall(r'<hp:header id="\d+" applyPageType="BOTH"', sec)) == 1          # replaced, not added
+    assert len(re.findall(r'<hp:footer id="\d+" applyPageType="BOTH"', sec)) == 1          # the old footer kept
+    assert len(re.findall(r'<hp:footer id="\d+" applyPageType="ODD"', sec)) == 1
+    pn = re.findall(r"<hp:pageNum\b[^>]*>", sec)
+    assert pn == ['<hp:pageNum pos="TOP_RIGHT" formatType="ROMAN_SMALL" sideChar=""/>']
+    d = D._load(out)
+    assert [q.text for _t, ps in D._hf_controls(d, d.top[0], "header", "BOTH") for q in ps] == ["보고서 머리말", "둘째 줄"]
+    assert [q.text for _t, ps in D._hf_controls(d, d.top[0], "footer", "ODD") for q in ps] == ["홀수 쪽 꼬리말"]
+    assert d.top[0].text == "첫 문단" and [q.text for q in d.top[1:]] == [q.text for q in base.top[1:]]
+    # a document without the 머리말 style: the engine cannot write one there, so nothing is written
+    nohdr = _copy(SECTIONS3, tmp_path)
+    e = D.edit(nohdr, [{"op": "header", "at": "p0", "text": "x"}], base=D.rev_of(nohdr), out=tmp_path / "n.hwpx")
+    assert e["error"]["code"] == "capability_unavailable" and e["error"]["reason"] == "engine_needs_style"
+    assert not (tmp_path / "n.hwpx").exists()
+    # again: still one of each, with the new text
+    out2 = tmp_path / "hf2.hwpx"
+    r = D.edit(out, [{"op": "header", "at": "p0", "text": "다시", "expect": "보고서 머리말\n둘째 줄"},
+                     {"op": "page_number", "at": "p0"}], base=D.rev_of(out), out=out2)
+    assert r["ok"], r
+    sec = _hf_xml(out2)
+    assert len(re.findall(r'<hp:header id="\d+" applyPageType="BOTH"', sec)) == 1 and ">다시<" in sec
+    assert re.findall(r"<hp:pageNum\b[^>]*>", sec) == ['<hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar="-"/>']
+
+
+@engine
+def test_engine_header_goes_in_the_paragraphs_section(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_page_setup.hwpx", tmp_path)          # 2 sections
+    base = D._load(f)
+    out = tmp_path / "s.hwpx"
+    p = next(q for q in base.top if q.si == 1)
+    r = D.edit(f, [{"op": "header", "at": "p%d" % p.gp, "text": "둘째 구역 머리말"}], base=D.rev_of(f), out=out)
+    assert r["ok"] and not r.get("remap_approx"), r
+    assert ">둘째 구역 머리말<" in _hf_xml(out, 1) and ">둘째 구역 머리말<" not in _hf_xml(out, 0)
+    d = D._load(out)
+    assert [q.text for q in d.top] == [q.text for q in base.top]
+    # a header and a section break in the same section, in one edit: a conflict, nothing written
+    out2 = tmp_path / "s2.hwpx"
+    e = D.edit(f, [{"op": "header", "at": "p13", "kind": "footer", "text": "x"},
+                   {"op": "break", "at": "p15", "kind": "section"}], base=D.rev_of(f), out=out2)["error"]
+    assert e["code"] == "conflict" and not out2.exists()
