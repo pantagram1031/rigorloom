@@ -853,3 +853,7 @@
     padding: 0 2px;
   }
 }
+
+.shell-v2:has(.rp-sheet) .rl-mark-toolbar {
+  display: none;
+}

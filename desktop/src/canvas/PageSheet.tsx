@@ -547,14 +547,19 @@ export function PageSheet({
         positions.set(itemId, { itemId, topPx, heightPx });
 
         if (itemId === selectedChangeId) {
-          const markRightInStage = r.right - sheetRect.left;
+          // The toolbar floats outside the block's top-right corner (J1 §1
+          // Borrow): anchored to the cell or paragraph that holds the mark,
+          // never to the changed text itself, so it does not cover it.
+          const block = el.closest<HTMLElement>("[data-cell-key], td, p") ?? el;
+          const br = block.getBoundingClientRect();
+          const markRightInStage = br.right - sheetRect.left;
           const stageVisibleW = sheetRect.width;
           const estimatedToolbarW = 248;
           const minLeftPx = Math.max(8, Math.round(padLeftPx * scale));
           const maxLeftPx = Math.max(minLeftPx, stageVisibleW - estimatedToolbarW - 8);
           const leftPx = Math.min(maxLeftPx, Math.max(minLeftPx, markRightInStage - estimatedToolbarW));
           toolbarAnchor = {
-            topPx: Math.max(4, topPx * scale - 32),
+            topPx: Math.max(4, br.top - sheetRect.top - 32),
             leftPx,
           };
         }
