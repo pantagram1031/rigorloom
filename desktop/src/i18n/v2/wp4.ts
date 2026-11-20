@@ -95,6 +95,7 @@ export const WP4_STRINGS = {
   wp4_sheet_expected_hide: { ko: "접기", en: "Hide" },
   wp4_sheet_base: { ko: "기준 문서", en: "Based on" },
   wp4_sheet_result: { ko: "새 수정본", en: "New revision" },
+  wp4_sheet_all_aria: { ko: "승인할 변경 전체", en: "All changes to approve" },
   wp4_sheet_details: { ko: "자세히", en: "Details" },
   wp4_sheet_doc_hash: { ko: "문서 검증값", en: "Document hash" },
   wp4_sheet_plan_hash: { ko: "제안 검증값", en: "Proposal hash" },

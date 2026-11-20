@@ -68,6 +68,66 @@ function ExpectedRow({ item, lang }: { item: ChangeItem; lang: UiLanguage }) {
   );
 }
 
+/** Plans this small list every change with its 변경 후 text in the sheet itself. */
+export const INLINE_AFTER_MAX = 5;
+
+/** What one change leaves on the page, for the row: the text, or what it removes. */
+function afterInline(item: ChangeItem, lang: UiLanguage): { text: string; empty: boolean } {
+  const flat = item.after.replace(/\s+/g, " ").trim();
+  return flat ? { text: flat, empty: false } : { text: item.opName || tp("wp4_row_empty_value", lang), empty: true };
+}
+
+function ItemRows({ items, lang }: { items: readonly ChangeItem[]; lang: UiLanguage }) {
+  return (
+    <>
+      {items.map((it) => {
+        const after = afterInline(it, lang);
+        return (
+          <li key={it.id} data-testid={`sheet-row-${it.n}`}>
+            <button type="button" className="rp-digest-row rp-digest-row--item" onClick={() => select(it.id)}>
+              <span className="rp-num">{it.n}</span>
+              <span className="rp-digest-label rp-digest-label--item">{it.label}</span>
+              <span
+                className="rp-digest-after"
+                data-empty={after.empty ? "" : undefined}
+                title={after.empty ? undefined : it.after}
+                data-testid={`sheet-after-${it.n}`}
+              >
+                {after.text}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </>
+  );
+}
+
+/** Every accepted change in full, as the plan will write it. Under 자세히, any size. */
+function FullList({ items, lang }: { items: readonly ChangeItem[]; lang: UiLanguage }) {
+  const value = (v: string) => (v.trim() ? v : tp("wp4_row_empty_value", lang));
+  return (
+    <ol className="rp-sheet-all" aria-label={tp("wp4_sheet_all_aria", lang)} data-testid="sheet-all">
+      {items.map((it) => (
+        <li key={it.id} data-testid={`sheet-all-${it.n}`}>
+          <div className="rp-sheet-all-head">
+            <span className="rp-num">{it.n}</span> {it.label}
+            <span className="rp-sheet-all-op">{it.opName}</span>
+          </div>
+          <dl className="rp-sheet-all-values">
+            <dt>{tp("wp4_row_before", lang)}</dt>
+            <dd data-empty={it.before.trim() ? undefined : ""}>{value(it.before)}</dd>
+            <dt>{tp("wp4_row_after", lang)}</dt>
+            <dd data-empty={it.after.trim() ? undefined : ""} data-testid={`sheet-all-after-${it.n}`}>
+              {value(it.after)}
+            </dd>
+          </dl>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function CopyHash({ label, value, lang, testId }: { label: string; value: string; lang: UiLanguage; testId: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -98,6 +158,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
   const sessionSha = useWorkspace((s) => s.sessions.find((x) => x.sessionId === s.activeSessionId)?.source.sha256 ?? "");
   const st = panelSlice.use(doc, (s) => s);
   const accepted = view.items.filter((it) => it.decision === "accepted");
+  const inline = accepted.length <= INLINE_AFTER_MAX;
   const facts = accepted.filter(isChangedFact);
   const untied = view.untied ?? [];
   const expected = accepted.filter((it) => it.guard.status === "expected" && needsLook(it));
@@ -239,15 +300,10 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
             <span className="rp-kv-k">{tp("wp4_sheet_result", lang)}</span>
             <span className="rp-kv-v">{revisionName(resultRevision, lang)}</span>
           </div>
-          <details className="rp-details" data-testid="sheet-details">
-            <summary>{tp("wp4_sheet_details", lang)}</summary>
-            <CopyHash label={tp("wp4_sheet_doc_hash", lang)} value={view.base.sha256 || sessionSha} lang={lang} testId="hash-doc" />
-            <CopyHash label={tp("wp4_sheet_plan_hash", lang)} value={view.planHash} lang={lang} testId="hash-plan" />
-          </details>
         </div>
 
-        <ol className="rp-digest" aria-label={tp("wp4_sheet_digest_aria", lang)} data-testid="sheet-digest">
-          {rangeDigest(accepted).map((row) => (
+        <ol className="rp-digest" aria-label={tp("wp4_sheet_digest_aria", lang)} data-testid="sheet-digest" data-inline={inline ? "" : undefined}>
+          {inline ? <ItemRows items={accepted} lang={lang} /> : rangeDigest(accepted).map((row) => (
             <li key={row.firstId}>
               <button type="button" className="rp-digest-row" onClick={() => select(row.firstId)}>
                 <span className="rp-num">{rangeText(row.from, row.to)}</span>
@@ -257,6 +313,13 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
             </li>
           ))}
         </ol>
+
+        <details className="rp-details" data-testid="sheet-details">
+          <summary>{tp("wp4_sheet_details", lang)}</summary>
+          <FullList items={accepted} lang={lang} />
+          <CopyHash label={tp("wp4_sheet_doc_hash", lang)} value={view.base.sha256 || sessionSha} lang={lang} testId="hash-doc" />
+          <CopyHash label={tp("wp4_sheet_plan_hash", lang)} value={view.planHash} lang={lang} testId="hash-plan" />
+        </details>
       </div>
 
       <footer className="rp-sheet-foot">
