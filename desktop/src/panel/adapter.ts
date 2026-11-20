@@ -236,6 +236,7 @@ export function fromWorkspace(raw: WorkspaceAdapterInput): ChangeSetView | null 
     },
     stale: input.stale ? { reason: input.stale, current: input.currentRevision } : null,
     items,
+    diffDigest: input.guard?.documentDiff?.beforeSha256,
     untied: input.guard?.unattributedFailing?.map(({ paragraph, before, after }) => ({ paragraph, before, after })),
     provenance: { agent: null, provider: null, mock: plan?.provenance === "mock" || items.some((item) => item.source === "test") },
     createdUtc: plan?.createdUtc ?? null,

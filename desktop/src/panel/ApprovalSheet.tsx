@@ -260,6 +260,9 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
       </div>
 
       <footer className="rp-sheet-foot">
+        {gate.block?.kind === "diff_mismatch" ? (
+          <p className="rp-sheet-error" role="alert">{tp("wp4_sheet_diff_mismatch", lang)}</p>
+        ) : null}
         <p className="rp-sheet-note" data-testid="guard-scope">
           {guardState === "unavailable" ? tp("wp4_sheet_guard_skipped", lang) : tp("wp4_sheet_guard_scope", lang)}
         </p>

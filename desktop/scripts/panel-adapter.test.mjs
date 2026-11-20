@@ -190,3 +190,18 @@ test("a typed edit waits until the draft has both a plan and validation", () => 
   const guard = { state: "ready", planId: "pl-1", rowAudits: {} };
   assert.equal(adapter.fromWorkspace(input(items, { guard })).checking, false);
 });
+test("adapter carries the digest the guard's diff was read from", () => {
+  const typed = { opId: "op-u", kind: "fill_cell", table: 0, row: 2, col: 0, text: "1. 관련", before: "", origin: "user" };
+  const guard = (digest) => ({ state: "ready", planId: "pl-1", rowAudits: {}, documentDiff: { beforeSha256: digest } });
+  const bound = input([indexed(1, typed)]).plan.boundSha256;
+  const same = adapter.fromWorkspace(input([indexed(1, typed)], { guard: guard(bound) }));
+  assert.equal(same.diffDigest, bound);
+  assert.equal(model.gateState(same).canApprove, true);
+  const other = adapter.fromWorkspace(input([indexed(1, typed)], { guard: guard("e".repeat(64)) }));
+  assert.equal(other.diffDigest, "e".repeat(64));
+  assert.deepEqual(model.gateState(other).block, { kind: "diff_mismatch" });
+  // An older bridge that states no digest changes nothing.
+  const none = adapter.fromWorkspace(input([indexed(1, typed)], { guard: guard(undefined) }));
+  assert.equal(none.diffDigest, undefined);
+});
+

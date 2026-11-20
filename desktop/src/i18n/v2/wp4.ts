@@ -73,6 +73,7 @@ export const WP4_STRINGS = {
   wp4_gate_none_accepted: { ko: "받아들인 변경이 없습니다", en: "No accepted changes" },
   wp4_gate_stale: { ko: "지난 제안", en: "Out-of-date proposal" },
   wp4_gate_busy: { ko: "처리 중", en: "Working" },
+  wp4_gate_diff_mismatch: { ko: "점검한 문서가 기준 문서와 다릅니다", en: "The checked document differs from the base" },
   wp4_gate_checking: { ko: "사실 점검 중", en: "Checking facts" },
   wp4_act_return: { ko: "돌려보내기", en: "Return" },
   wp4_act_approve: { ko: "승인", en: "Approve" },
@@ -104,6 +105,7 @@ export const WP4_STRINGS = {
     ko: "수정한 문단의 숫자·날짜·인용문·부정 표현·증감 및 방향 표현만 점검하며, 내용이 맞는지는 판단하지 않습니다.",
     en: "This check compares only numbers, dates, quotations, negation, and expressions of increase, decrease or direction in edited paragraphs. It does not determine whether the content is correct.",
   },
+  wp4_sheet_diff_mismatch: { ko: "다른 문서에서 점검한 차이입니다. 승인할 수 없습니다.", en: "The check used another document. Approval is unavailable." },
   wp4_sheet_guard_skipped: { ko: "사실 점검을 실행할 수 없었습니다.", en: "The fact check could not run." },
   wp4_sheet_effect: {
     ko: "승인하면 이 컴퓨터에 새 수정본을 만듭니다. 원본은 바뀌지 않습니다. 파일은 따로 내보내며, 승인할 때는 어디에도 전송하지 않습니다.",

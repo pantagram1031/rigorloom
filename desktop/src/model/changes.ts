@@ -149,6 +149,7 @@ export interface ChangeSetView {
    * before the guard answers could skip a 바뀐 사실 tick.
    */
   checking?: boolean;
+  diffDigest?: string | null;
   untied?: Array<{ paragraph: number; before: string; after: string }>;
   baseRunId?: string | null;
 }
@@ -324,6 +325,7 @@ export type GateBlock =
   | { kind: "stale" }
   | { kind: "busy" }
   | { kind: "checking" }
+  | { kind: "diff_mismatch" }
   | { kind: "hard"; count: number }
   | { kind: "remaining"; count: number }
   | { kind: "none_accepted" };
@@ -345,6 +347,7 @@ export function gateState(view: ChangeSetView | null, opts: { busy?: boolean } =
   let block: GateBlock | null = null;
   if (!view || items.length === 0 || view.closed) block = { kind: "empty" };
   else if (view.stale) block = { kind: "stale" };
+  else if (view.diffDigest && view.diffDigest !== view.base.sha256) block = { kind: "diff_mismatch" };
   else if (opts.busy) block = { kind: "busy" };
   else if (counts.hard > 0) block = { kind: "hard", count: counts.hard };
   else if (counts.pending > 0) block = { kind: "remaining", count: counts.pending };

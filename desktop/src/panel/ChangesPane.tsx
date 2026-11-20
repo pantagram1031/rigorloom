@@ -161,6 +161,8 @@ function blockText(gate: GateState, lang: UiLanguage): string | null {
       return tp("wp4_gate_stale", lang);
     case "busy":
       return tp("wp4_gate_busy", lang);
+    case "diff_mismatch":
+      return tp("wp4_gate_diff_mismatch", lang);
     case "checking":
       return tp("wp4_gate_checking", lang);
     default:

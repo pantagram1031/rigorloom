@@ -200,7 +200,7 @@ async function prunedReviewMatches(confirmed: ConfirmationBinding, reviewed: Cha
 
     const current = latestView(confirmed.sessionId);
     if (current && current.id === confirmed.planId && !current.checking) {
-      return !current.stale && contents(current.items) === contents(accepted) &&
+      return !current.stale && gateState(current).block?.kind !== "diff_mismatch" && contents(current.items) === contents(accepted) &&
         (current.untied ?? []).every((row) => reviewed.untied?.some((old) =>
           old.paragraph === row.paragraph && old.before === row.before && old.after === row.after)) &&
         requiredTicks(current).every((tick) => requiredTicks(reviewed).includes(tick));
