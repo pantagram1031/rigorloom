@@ -2,9 +2,11 @@ import * as legacyActions from "../actions";
 import { wp3t } from "../i18n/v2/wp3";
 import type { CanvasChangeDecision, PageViewMode } from "../model/page";
 import {
+  activeHeadTexts,
   cellKey,
   getState,
   queuedCellOpAt,
+  queuedRunOpAt,
   setState,
   type QueuedOp,
 } from "../store";
@@ -16,17 +18,6 @@ import {
   getPublishedChanges,
   setCanvasSlice,
 } from "./controller";
-
-export type QueueMutationAdapter = {
-  upsertOp: (op: QueuedOp, replaceOpId?: string | null) => Promise<void> | void;
-  removeOp: (opId: string) => Promise<void> | void;
-};
-
-let customQueueAdapter: QueueMutationAdapter | null = null;
-
-export function setCanvasQueueAdapter(adapter: QueueMutationAdapter | null): void {
-  customQueueAdapter = adapter;
-}
 
 function autoCharPr(
   seat: { scriptAnomaly?: boolean; charPrSuggested?: string } | null | undefined,
@@ -56,11 +47,13 @@ export function beginCellEditV2(
   const state = getState();
   const sessionId = state.activeSessionId;
   const inspect = options?.inspect ?? (sessionId ? state.inspects[sessionId] ?? null : null);
-  const texts = options?.texts ?? (sessionId ? state.texts[sessionId] ?? [] : []);
+  const texts = activeHeadTexts(state) ?? options?.texts ?? (sessionId ? state.texts[sessionId] ?? [] : []);
   const queued = queuedCellOpAt(state, table, row, col);
   const seat = legacyActions.seatAt(inspect, table, row, col);
   const baseText =
-    queued?.before ?? legacyActions.seatText(inspect, texts, table, row, col);
+    queued?.kind === "replace_at_cell" && queued.run !== undefined
+      ? legacyActions.seatText(inspect, texts, table, row, col)
+      : queued?.before ?? legacyActions.seatText(inspect, texts, table, row, col);
   const key = cellKey(table, row, col);
   const isStatic = !seat;
   const multiline =
@@ -124,11 +117,7 @@ export async function commitCellEditV2(
   const before = edit.before;
   if (nextValue === before || (before.trim().length === 0 && nextValue === "")) {
     if (edit.opId) {
-      if (customQueueAdapter) {
-        await customQueueAdapter.removeOp(edit.opId);
-      } else {
-        await legacyActions.undoQueuedOp(edit.opId);
-      }
+      await legacyActions.undoQueuedOp(edit.opId);
     }
     return { committed: false };
   }
@@ -179,25 +168,11 @@ export async function commitCellEditV2(
     };
   }
 
-  if (customQueueAdapter) {
-    await customQueueAdapter.upsertOp(nextOp, edit.opId);
-  } else {
-    if (edit.opId) {
-      await legacyActions.removeOp(edit.opId);
-    }
-    await legacyActions.addQueueOp(nextOp);
-  }
-
-  // User's own edit is immediately accepted (`내 입력`).
-  setCanvasSlice((prev) => ({
-    ...prev,
-    decisions: { ...prev.decisions, [nextOp.opId]: "accepted" },
-    selectedChangeId: nextOp.opId,
-  }));
+  const queued = await queueCanvasEdit(nextOp, sessionId);
 
   return {
     committed: true,
-    op: nextOp,
+    op: queued,
     modeLabelKey,
     hasFormText: classification.hasFormText,
     bodyStyleMatched: Boolean(resolvedCharPr && seat?.scriptAnomaly),
@@ -349,70 +324,91 @@ export interface FindMatchItem {
   matchEnd: number;
 }
 
-export async function replaceFindMatch(
-  match: FindMatchItem,
-  query: string,
-  replacement: string,
-): Promise<boolean> {
-  if (!query) return false;
-  const before = match.text;
-  const idx = before.indexOf(query);
-  if (idx < 0) return false;
-  const after = before.slice(0, idx) + replacement + before.slice(idx + query.length);
-
-  if (match.targetType === "cell" && match.table !== undefined && match.row !== undefined && match.col !== undefined) {
-    const opId = `op-find-t${match.table}r${match.row}c${match.col}`;
-    const op: QueuedOp = {
-      opId,
-      kind: "replace_at_cell",
-      table: match.table,
-      row: match.row,
-      col: match.col,
-      ...(match.run !== undefined ? { run: match.run } : {}),
-      text: after,
-      mode: "replace",
-      expect: before,
-      before,
-      origin: "user",
-    };
-    if (customQueueAdapter) {
-      await customQueueAdapter.upsertOp(op, opId);
-    } else {
-      await legacyActions.addQueueOp(op);
-    }
+async function queueCanvasEdit(op: QueuedOp, sessionId: string | null): Promise<QueuedOp> {
+  const saved = legacyActions.upsertQueueOp(op);
+  // The runtime proposal settles asynchronously. The store publishes the queue
+  // before that request, so selection and its decision stay with this edit.
+  const state = getState();
+  const queued = op.kind === "fill_cell" || op.kind === "replace_at_cell"
+    ? queuedCellOpAt(state, op.table, op.row, op.col)
+    : op.kind === "set_run" ? queuedRunOpAt(state, op.atPara, op.run) : null;
+  if (sessionId && queued) {
     setCanvasSlice((prev) => ({
       ...prev,
-      decisions: { ...prev.decisions, [opId]: "accepted" },
-      selectedChangeId: opId,
-    }));
+      decisions: { ...prev.decisions, [queued.opId]: "accepted" },
+      selectedChangeId: queued.opId,
+    }), sessionId);
+  }
+  return saved;
+}
+
+async function replaceMatchText(match: FindMatchItem, after: string): Promise<boolean> {
+  const state = getState();
+  const sessionId = state.activeSessionId;
+  if (!sessionId || after === match.text) return false;
+
+  if (match.targetType === "cell" && match.table !== undefined && match.row !== undefined && match.col !== undefined) {
+    const { table, row, col } = match;
+    const queued = queuedCellOpAt(state, table, row, col);
+    const inspect = state.inspects[sessionId] ?? null;
+    const texts = activeHeadTexts(state) ?? state.texts[sessionId] ?? [];
+    const before =
+      queued && !(queued.kind === "replace_at_cell" && queued.run !== undefined)
+        ? queued.before
+        : legacyActions.seatText(inspect, texts, table, row, col);
+    const seat = legacyActions.seatAt(inspect, table, row, col);
+    const charPr = autoCharPr(seat, queued?.charPr);
+    if (after === before && queued) {
+      await legacyActions.undoQueuedOp(queued.opId);
+      return true;
+    }
+    await queueCanvasEdit({
+      opId: `op-find-t${table}r${row}c${col}`,
+      table, row, col, text: after, before,
+      origin: "user",
+      ...(charPr ? { charPr } : {}),
+      ...(before
+        ? { kind: "replace_at_cell", mode: "replace", expect: before }
+        : { kind: "fill_cell", ...(after.includes("\n") ? { lines: after.split(/\r?\n/) } : {}) }),
+    }, sessionId);
     return true;
   }
 
   if (match.targetType === "para" && match.atPara !== undefined) {
-    const opId = `op-find-p${match.atPara}r${match.run ?? 0}`;
-    const op: QueuedOp = {
-      opId,
+    const run = match.run ?? 0;
+    const queued = queuedRunOpAt(state, match.atPara, run);
+    await queueCanvasEdit({
+      opId: `op-find-p${match.atPara}r${run}`,
       kind: "set_run",
       atPara: match.atPara,
-      run: match.run ?? 0,
+      run,
       text: after,
-      before,
+      before: queued?.before ?? match.text,
       origin: "user",
-    };
-    if (customQueueAdapter) {
-      await customQueueAdapter.upsertOp(op, opId);
-    } else {
-      await legacyActions.addQueueOp(op);
-    }
-    setCanvasSlice((prev) => ({
-      ...prev,
-      decisions: { ...prev.decisions, [opId]: "accepted" },
-      selectedChangeId: opId,
-    }));
+    }, sessionId);
     return true;
   }
 
   return false;
+}
+
+export function findTextPattern(query: string): RegExp {
+  return new RegExp(query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+}
+
+export function replaceFindMatch(
+  match: FindMatchItem,
+  query: string,
+  replacement: string,
+): Promise<boolean> {
+  const matched = match.text.slice(match.matchStart, match.matchEnd);
+  if (!query.trim() || !matched || findTextPattern(query).exec(matched)?.[0] !== matched) {
+    return Promise.resolve(false);
+  }
+  return replaceMatchText(
+    match,
+    match.text.slice(0, match.matchStart) + replacement + match.text.slice(match.matchEnd),
+  );
 }
 
 export async function replaceAllFindMatches(
@@ -420,68 +416,21 @@ export async function replaceAllFindMatches(
   query: string,
   replacement: string,
 ): Promise<number> {
-  if (!query || matches.length === 0) return 0;
-  const seenTargets = new Set<string>();
+  const needle = query.trim();
+  if (!needle) return 0;
+  const pattern = findTextPattern(needle);
+  const sessionId = getState().activeSessionId;
+  const seen = new Set<string>();
   let count = 0;
 
   for (const match of matches) {
-    const targetId =
-      match.targetType === "cell"
-        ? `${match.table}:${match.row}:${match.col}:${match.run ?? "all"}`
-        : `p:${match.atPara}:${match.run ?? 0}`;
-    if (seenTargets.has(targetId)) continue;
-    seenTargets.add(targetId);
-
-    const after = match.text.split(query).join(replacement);
-    if (after === match.text) continue;
-
-    if (match.targetType === "cell" && match.table !== undefined && match.row !== undefined && match.col !== undefined) {
-      const opId = `op-find-t${match.table}r${match.row}c${match.col}`;
-      const op: QueuedOp = {
-        opId,
-        kind: "replace_at_cell",
-        table: match.table,
-        row: match.row,
-        col: match.col,
-        ...(match.run !== undefined ? { run: match.run } : {}),
-        text: after,
-        mode: "replace",
-        expect: match.text,
-        before: match.text,
-        origin: "user",
-      };
-      if (customQueueAdapter) {
-        await customQueueAdapter.upsertOp(op, opId);
-      } else {
-        await legacyActions.addQueueOp(op);
-      }
-      setCanvasSlice((prev) => ({
-        ...prev,
-        decisions: { ...prev.decisions, [opId]: "accepted" },
-      }));
-      count += 1;
-    } else if (match.targetType === "para" && match.atPara !== undefined) {
-      const opId = `op-find-p${match.atPara}r${match.run ?? 0}`;
-      const op: QueuedOp = {
-        opId,
-        kind: "set_run",
-        atPara: match.atPara,
-        run: match.run ?? 0,
-        text: after,
-        before: match.text,
-        origin: "user",
-      };
-      if (customQueueAdapter) {
-        await customQueueAdapter.upsertOp(op, opId);
-      } else {
-        await legacyActions.addQueueOp(op);
-      }
-      setCanvasSlice((prev) => ({
-        ...prev,
-        decisions: { ...prev.decisions, [opId]: "accepted" },
-      }));
-      count += 1;
-    }
+    if (getState().activeSessionId !== sessionId) break;
+    const target = match.targetType === "cell"
+      ? cellKey(match.table ?? 0, match.row ?? 0, match.col ?? 0)
+      : `p:${match.atPara}#${match.run ?? 0}`;
+    if (seen.has(target)) continue;
+    seen.add(target);
+    if (await replaceMatchText(match, match.text.replace(pattern, () => replacement))) count += 1;
   }
   return count;
 }

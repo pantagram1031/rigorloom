@@ -1,0 +1,448 @@
+/* WP3 Left panes (`OutlinePane`, `BlanksPane`, `FindPane`) — zero hex literals.
+ * All tokens follow J1 §4 strictly; docked panels carry zero box-shadow. */
+
+.rl-pane {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+}
+
+.rl-pane-header {
+  flex: 0 0 auto;
+  padding: var(--s-8) var(--s-12);
+  border-bottom: var(--border-hair);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.rl-pane-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-8) 0;
+}
+
+.rl-pane-empty {
+  padding: var(--s-16) var(--s-12);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.rl-pane-group-hdr {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--s-4) var(--s-12);
+  background: var(--panel);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--weight-semibold);
+  border-bottom: var(--border-hair);
+}
+
+/* --- OutlinePane ---------------------------------------------------------- */
+
+.rl-outline-page-group + .rl-outline-page-group {
+  margin-top: var(--s-8);
+}
+
+.rl-outline-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--s-4) var(--s-8);
+}
+
+.rl-outline-row {
+  margin: 0;
+}
+
+.rl-outline-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-8);
+  width: 100%;
+  min-height: var(--row-tree);
+  padding: 5px var(--s-8);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+  font-weight: var(--weight-regular);
+  transition: background var(--dur-pop) var(--ease-standard);
+}
+
+.rl-outline-btn--d2 {
+  padding-left: var(--s-16);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  color: var(--text-2);
+}
+
+.rl-outline-btn--d3 {
+  padding-left: var(--s-24);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  color: var(--text-2);
+}
+
+.rl-outline-btn:hover {
+  background: var(--hover);
+}
+
+.rl-outline-btn--active {
+  background: var(--selected);
+  font-weight: var(--weight-semibold);
+}
+
+.rl-outline-btn:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: -1px;
+}
+
+.rl-outline-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rl-outline-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rl-outline-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+}
+
+.rl-outline-dot--fact[data-fact] {
+  background: var(--fact);
+}
+
+.rl-outline-dot--attn {
+  background: var(--attn);
+}
+
+.rl-outline-range {
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.rl-outline-range--pending[data-accent] {
+  color: var(--accent);
+}
+
+.rl-outline-range--decided {
+  color: var(--text-3);
+}
+
+/* --- BlanksPane ----------------------------------------------------------- */
+
+.rl-blanks-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--s-4) var(--s-8);
+}
+
+.rl-blank-row {
+  margin: 0;
+}
+
+.rl-blank-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px var(--s-8);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--dur-pop) var(--ease-standard);
+}
+
+.rl-blank-btn:hover {
+  background: var(--hover);
+}
+
+.rl-blank-btn--active {
+  background: var(--selected);
+}
+
+.rl-blank-btn:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: -1px;
+}
+
+.rl-blank-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.rl-blank-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+}
+
+.rl-blank-dot--empty {
+  background: var(--seat);
+  border: 1px solid var(--line-control);
+}
+
+.rl-blank-dot--filled {
+  background: var(--ink);
+}
+
+.rl-blank-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+  font-weight: var(--weight-semibold);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rl-blank-preview {
+  flex: 0 1 88px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rl-blank-loc {
+  padding-left: var(--s-12);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  color: var(--text-3);
+}
+
+.rl-blanks-agency-group {
+  margin-top: var(--s-8);
+  border-top: var(--border-hair);
+  padding-top: var(--s-4);
+}
+
+.rl-blanks-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px var(--s-12);
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  text-align: left;
+}
+
+.rl-blanks-group-toggle:hover {
+  background: var(--hover);
+}
+
+.rl-blanks-group-toggle:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: -1px;
+}
+
+.rl-blanks-group-title {
+  flex: 1 1 auto;
+}
+
+.rl-blanks-group-count {
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  color: var(--text-3);
+}
+
+/* --- FindPane ------------------------------------------------------------- */
+
+.rl-find-form {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-8);
+  padding: var(--s-12);
+  border-bottom: var(--border-hair);
+}
+
+.rl-find-input-row,
+.rl-find-replace-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-8);
+}
+
+.rl-find-input {
+  width: 100%;
+  height: var(--ctl);
+  padding: 0 var(--s-8);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+}
+
+.rl-find-input::placeholder {
+  color: var(--text-3);
+}
+
+.rl-find-input:focus {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: 0;
+  border-color: var(--focus);
+}
+
+.rl-find-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-8);
+}
+
+.rl-find-count {
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  color: var(--text-3);
+}
+
+.rl-find-nav-btns,
+.rl-find-replace-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.rl-find-replace-btns .rl-pane-btn {
+  flex: 1 1 0;
+}
+
+.rl-pane-btn {
+  height: var(--ctl);
+  padding: 0 var(--s-8);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--weight-regular);
+  cursor: pointer;
+}
+
+.rl-pane-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.rl-pane-btn:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.rl-pane-btn:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+.rl-find-results {
+  list-style: none;
+  margin: 0;
+  padding: var(--s-4) var(--s-8);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.rl-find-row {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rl-find-hit-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 6px var(--s-8);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rl-find-hit-btn:hover {
+  background: var(--hover);
+}
+
+.rl-find-hit-btn--active {
+  background: var(--selected);
+}
+
+.rl-find-hit-label {
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-2);
+}
+
+.rl-find-hit-snippet {
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

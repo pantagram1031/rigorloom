@@ -71,27 +71,10 @@ function createStoreHarness() {
     geometry: null,
   };
 
-  const storeStub = {
-    activeSession: (s) => s.sessions.find((x) => x.sessionId === s.activeSessionId) ?? null,
-    cellKey: (t, r, c) => `c:${t}:${r}:${c}`,
-    getState: () => state,
-    setState: (patch) => {
-      const next = typeof patch === "function" ? patch(state) : patch;
-      Object.assign(state, next);
-    },
-    queuedCellOpAt: (s, t, r, c) =>
-      s.draft.ops.find(
-        (o) =>
-          (o.kind === "fill_cell" || o.kind === "replace_at_cell") &&
-          o.table === t &&
-          o.row === r &&
-          o.col === c,
-      ) ?? null,
-    useWorkspace: (sel) => sel(state),
-  };
+  const store = loadTsModule("src/store.ts", { react: React });
+  store.setState(state);
 
   const upsertCalls = [];
-  const removeCalls = [];
 
   const legacyActionsStub = {
     seatAt: (inspect, t, r, c) => {
@@ -113,20 +96,19 @@ function createStoreHarness() {
       const cell = tbl?.cells?.find((cl) => cl.addr.row === r && cl.addr.col === c);
       return cell?.textPreview ?? "";
     },
-    addQueueOp: async (op) => {
-      upsertCalls.push({ op, replaceOpId: null });
-      queuedOps.push(op);
-      state.draft.opsCount = queuedOps.length;
+    upsertQueueOp: async (op) => {
+      const { ops, queued } = store.upsertQueuedOp(queuedOps, op);
+      upsertCalls.push(queued);
+      queuedOps.splice(0, queuedOps.length, ...ops);
+      return queued;
     },
     undoQueuedOp: async (opId) => {
-      removeCalls.push(opId);
-      const idx = queuedOps.findIndex((o) => o.opId === opId);
+      const idx = queuedOps.findIndex((op) => op.opId === opId);
       if (idx >= 0) queuedOps.splice(idx, 1);
-      state.draft.opsCount = queuedOps.length;
     },
   };
 
-  return { state, queuedOps, upsertCalls, removeCalls, storeStub, legacyActionsStub };
+  return { store, queuedOps, upsertCalls, legacyActionsStub };
 }
 
 function loadWp3Stack() {
@@ -149,30 +131,75 @@ function loadWp3Stack() {
     "../i18n/v2/wp3FormTokens": wp3FormTokens,
     "../workspace/fieldLabels": fieldLabels,
   });
-  const shim = loadTsModule("src/canvas/_shim.ts", {
-    react: React,
-    "../i18n/v2/wp3FormTokens": wp3FormTokens,
-    "../store": h.storeStub,
-  });
-  const controller = loadTsModule("src/canvas/controller.ts", {
-    "./_shim": shim,
-  });
+  const controller = loadTsModule("src/canvas/controller.ts", { "../store": h.store });
   const actions = loadTsModule("src/canvas/actions.ts", {
     "../actions": h.legacyActionsStub,
     "../i18n/v2/wp3": wp3,
-    "../store": h.storeStub,
+    "../store": h.store,
     "../workspace/fieldLabels": fieldLabels,
     "./controller": controller,
   });
+  const changes = loadTsModule("src/canvas/changes.ts", {
+    react: React,
+    "../store": h.store,
+    "../workspace/guardHelper": {},
+    "./controller": controller,
+  });
+  const keys = loadTsModule("src/shell/keys.ts", { react: React });
+  const keymap = loadTsModule("src/shell/keymap.ts", { "./keys.ts": keys });
+  const slots = loadTsModule("src/shell/slots.ts", { react: React });
+  const shell = loadTsModule("src/shell/shellState.ts", { react: React, "../store.ts": h.store });
+  const commands = loadTsModule("src/shell/commands.ts", { react: React });
+  const bindings = loadTsModule("src/shell/bindings.ts", {
+    "../actions": {},
+    "../i18n/v2/shell": {},
+    "../runtime": { isTauri: () => false },
+    "../store": h.store,
+    "./commands": commands,
+    "./keymap": keymap,
+    "./keys": keys,
+    "./open": {},
+    "./shellState": shell,
+    "./tabs": {},
+  });
+  const noopComp = () => null;
+  const registerMod = loadTsModule("src/canvas/register.ts", {
+    "../i18n/v2/wp3": wp3,
+    "../panes/BlanksPane": { BlanksPane: noopComp },
+    "../panes/FindPane": { FindPane: noopComp },
+    "../panes/OutlinePane": { OutlinePane: noopComp },
+    "../shell/bindings": bindings,
+    "../shell/commands": commands,
+    "../shell/keymap": keymap,
+    "../shell/keys": keys,
+    "../shell/shellState": shell,
+    "../shell/slots": slots,
+    "./actions": actions,
+    "./controller": controller,
+    "./CanvasPane": {
+      CanvasPane: noopComp,
+      CanvasStatusLeft: noopComp,
+      CanvasStatusRight: noopComp,
+    },
+    "./DocumentStrip": { DocumentStrip: noopComp, DocumentStripStart: noopComp },
+  });
+  shell.setShell({ tabs: [{ kind: "doc", id: "doc:sess-1", sessionId: "sess-1" }], activeTab: "doc:sess-1" });
+
   return {
     ...h,
     wp3,
     wp3FormTokens,
     fieldLabels,
     pageModel,
-    shim,
+    bindings,
+    changes,
+    keymap,
+    keys,
+    shell,
+    slots,
     controller,
     actions,
+    registerMod,
   };
 }
 
@@ -310,7 +337,7 @@ test("Font substitution counting reports exact count of unbundled Windows/Hancom
 });
 
 test("classifyCellEditMode & commitCellEditV2 turn typing into '성명(' into 칸 문구 덧붙임 (replace_at_cell append)", async () => {
-  const { fieldLabels, actions, state } = loadWp3Stack();
+  const { fieldLabels, actions, store, upsertCalls } = loadWp3Stack();
 
   const appendRes = fieldLabels.classifyCellEditMode("성명(", "성명(홍길동)");
   assert.equal(appendRes.kind, "replace_at_cell");
@@ -318,11 +345,7 @@ test("classifyCellEditMode & commitCellEditV2 turn typing into '성명(' into �
   assert.equal(appendRes.hasFormText, true);
 
   // Full commit path produces op.text as appended suffix "홍길동)" (`modeLabelKey === "replace_at_cell:append"`)
-  const spyOps = [];
-  actions.setCanvasQueueAdapter({
-    upsertOp: (op) => spyOps.push(op),
-    removeOp: () => {},
-  });
+  const state = store.getState();
   state.texts[state.activeSessionId] = [
     { table: 0, addr: { row: 0, col: 0 }, text: "성명(" },
     ...corpus.regions.filter((r) => !(r.table === 0 && r.addr?.row === 0 && r.addr?.col === 0)),
@@ -331,10 +354,9 @@ test("classifyCellEditMode & commitCellEditV2 turn typing into '성명(' into �
   const commit = await actions.commitCellEditV2("성명(홍길동)");
   assert.equal(commit.committed, true);
   assert.equal(commit.modeLabelKey, "replace_at_cell:append");
-  assert.equal(spyOps[0].kind, "replace_at_cell");
-  assert.equal(spyOps[0].mode, "append");
-  assert.equal(spyOps[0].text, "홍길동)");
-  actions.setCanvasQueueAdapter(null);
+  assert.equal(upsertCalls[0].kind, "replace_at_cell");
+  assert.equal(upsertCalls[0].mode, "append");
+  assert.equal(upsertCalls[0].text, "홍길동)");
 
   const slotRes = fieldLabels.classifyCellEditMode("전화번호(   )", "전화번호(044-555-0142)");
   assert.equal(slotRes.kind, "replace_at_cell");
@@ -368,38 +390,32 @@ test("detectDocumentSeats disambiguates 7 협조자 blanks and collapses 접수 
 
 test("beginCellEditV2 opens static/guide cells without refusal and commits only on explicit commit", async () => {
   const stack = loadWp3Stack();
-  const spyUpserts = [];
-  stack.actions.setCanvasQueueAdapter({
-    upsertOp: (op, replaceOpId) => spyUpserts.push({ op, replaceOpId }),
-    removeOp: () => {},
-  });
+  const { upsertCalls } = stack;
 
   // Clicking a guide cell (t0, r0, c0) must open editor cleanly with zero refusal notice
   const openedGuide = stack.actions.beginCellEditV2(0, 0, 0);
   assert.equal(openedGuide, true);
-  assert.ok(stack.state.inlineEdit);
+  assert.ok(stack.store.getState().inlineEdit);
   assert.equal(stack.controller.getCanvasSlice().statusNotice, null);
-  assert.equal(spyUpserts.length, 0); // zero network/queue writes while editing
+  assert.equal(upsertCalls.length, 0); // zero network/queue writes while editing
 
   // Reopen blank fill target (t0, r2, c0) which has scriptAnomaly -> auto charPrSuggested
   const openedBlank = stack.actions.beginCellEditV2(0, 2, 0);
   assert.equal(openedBlank, true);
-  assert.equal(stack.state.inlineEdit.charPr, "23");
-  assert.equal(spyUpserts.length, 0);
+  assert.equal(stack.store.getState().inlineEdit.charPr, "23");
+  assert.equal(upsertCalls.length, 0);
 
   const commitRes = await stack.actions.commitCellEditV2("가온공공기록원 본문");
   assert.equal(commitRes.committed, true);
   assert.equal(commitRes.bodyStyleMatched, true);
-  assert.equal(spyUpserts.length, 1);
-  assert.equal(spyUpserts[0].op.origin, "user");
-  assert.equal(spyUpserts[0].op.kind, "fill_cell");
-  assert.equal(spyUpserts[0].op.charPr, "23");
+  assert.equal(upsertCalls.length, 1);
+  assert.equal(upsertCalls[0].origin, "user");
+  assert.equal(upsertCalls[0].kind, "fill_cell");
+  assert.equal(upsertCalls[0].charPr, "23");
 
-  // Clean up custom adapter
-  stack.actions.setCanvasQueueAdapter(null);
 });
 
-test("replaceFindMatch enqueues origin:'user' (내 입력) edit op", async () => {
+test("find replacement and cell edits upsert the same address", async () => {
   const stack = loadWp3Stack();
   const match = {
     id: "c:0:1:0",
@@ -408,18 +424,206 @@ test("replaceFindMatch enqueues origin:'user' (내 입력) edit op", async () =>
     table: 0,
     row: 1,
     col: 0,
-    run: 0,
     label: "기관명",
     locationLabel: "1쪽 · 표 1 2행 1열",
     text: "가온공공기록원",
     matchStart: 0,
     matchEnd: 2,
   };
+  const state = stack.store.getState();
+  state.texts[state.activeSessionId] = [
+    { table: 0, addr: { row: 1, col: 0 }, text: match.text },
+    ...corpus.regions.filter((r) => !(r.table === 0 && r.addr?.row === 1 && r.addr?.col === 0)),
+  ];
   const ok = await stack.actions.replaceFindMatch(match, "가온", "한울");
   assert.equal(ok, true);
   assert.equal(stack.queuedOps.length, 1);
   assert.equal(stack.queuedOps[0].origin, "user");
   assert.equal(stack.queuedOps[0].text, "한울공공기록원");
+
+  const id = stack.queuedOps[0].opId;
+  await stack.actions.replaceAllFindMatches(
+    [{ ...match, text: "한울공공기록원" }],
+    "한울",
+    "새움",
+  );
+  assert.equal(stack.queuedOps.length, 1);
+  assert.equal(stack.queuedOps[0].text, "새움공공기록원");
+  assert.equal(stack.queuedOps[0].expect, match.text);
+
+  stack.actions.beginCellEditV2(0, 1, 0);
+  await stack.actions.commitCellEditV2("마루공공기록원");
+  assert.equal(stack.queuedOps.length, 1);
+  assert.equal(stack.queuedOps[0].opId, id);
+  assert.equal(stack.queuedOps[0].text, "마루공공기록원");
+  assert.equal(stack.queuedOps[0].before, match.text);
+
+});
+
+test("IME composition & editable-target guard block Y/N/E/U/J/K/V during Hangul composition", () => {
+  const stack = loadWp3Stack();
+  stack.controller.publishCanvasContext(
+    [
+      {
+        id: "op-1",
+        n: 1,
+        at: "t0/r1/c0",
+        kind: "replace_at_cell",
+        opKind: "replace_at_cell",
+        label: "기관명",
+        before: "행 정 기 관 명",
+        after: "가온공공기록원",
+        page: 1,
+        source: "agent",
+        decision: "pending",
+        guard: "none",
+        hard: false,
+        isFactChanged: false,
+        isStale: false,
+      },
+      {
+        id: "op-2",
+        n: 2,
+        at: "t0/r2/c0",
+        kind: "fill_cell",
+        opKind: "fill_cell",
+        label: "본문",
+        before: "",
+        after: "내용",
+        page: 1,
+        source: "agent",
+        decision: "pending",
+        guard: "none",
+        hard: false,
+        isFactChanged: false,
+        isStale: false,
+      },
+    ],
+    null,
+  );
+  stack.controller.canvas.select("op-1");
+
+  // During IME composition (isComposing: true or keyCode: 229), all shortcuts must return null
+  for (const code of ["KeyY", "KeyN", "KeyE", "KeyU", "KeyJ", "KeyK", "KeyV"]) {
+    assert.equal(
+      stack.keys.dispatch({ code, isComposing: true }),
+      false,
+      `Expected ${code} blocked when isComposing=true`,
+    );
+    assert.equal(
+      stack.keys.dispatch({ code, keyCode: 229 }),
+      false,
+      `Expected ${code} blocked when keyCode=229`,
+    );
+  }
+  assert.equal(stack.controller.getCanvasSlice().view, "marks");
+
+  // Single keys must be blocked inside TEXTAREA/INPUT while Ctrl+F still works
+  assert.equal(
+    stack.keys.dispatch({ code: "KeyV", target: { tagName: "TEXTAREA" } }),
+    false,
+  );
+  assert.equal(
+    stack.keys.dispatch({
+      code: "KeyF",
+      ctrlKey: true,
+      target: { tagName: "TEXTAREA" },
+    }),
+    true,
+  );
+
+  // Physical KeyV (even with Korean key:"ㅍ") cycles view marks -> clean -> base
+  assert.equal(
+    stack.keys.dispatch({ code: "KeyV", key: "ㅍ" }),
+    true,
+  );
+  assert.equal(stack.controller.getCanvasSlice().view, "clean");
+  stack.keys.dispatch({ code: "KeyV" });
+  assert.equal(stack.controller.getCanvasSlice().view, "base");
+
+  stack.controller.canvas.setView("marks");
+
+  // KeyY accepts op-1 & advances to op-2; Ctrl+Z undoes decision back to pending on op-1
+  assert.equal(
+    stack.keys.dispatch({ code: "KeyY", key: "ㅛ" }),
+    true,
+  );
+  assert.equal(stack.controller.getCanvasSlice().decisions["op-1"], "accepted");
+  assert.equal(stack.controller.getCanvasSlice().selectedChangeId, "op-2");
+  assert.equal(
+    stack.keys.dispatch({ code: "KeyZ", ctrlKey: true }),
+    true,
+  );
+  assert.equal(stack.controller.getCanvasSlice().decisions["op-1"], "pending");
+  assert.equal(stack.controller.getCanvasSlice().selectedChangeId, "op-1");
+
+  stack.registerMod.unregisterCanvasModule();
+});
+
+test("canvas and shell keys are exclusive in document, palette and review contexts", () => {
+  const { bindings, controller, keymap, keys, registerMod, shell, slots } = loadWp3Stack();
+  const previousWindow = globalThis.window;
+  globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  const off = bindings.installShellBindings();
+  try {
+    assert.equal(slots.hasSlot("canvas"), true);
+    for (const pane of ["blanks", "find", "outline"]) assert.equal(slots.hasSlot(`pane:${pane}`), true);
+    controller.publishCanvasContext([{ id: "change-1", decision: "pending" }], null);
+    controller.canvas.select("change-1");
+    assert.deepEqual(keys.activeConflicts(), []);
+    assert.equal(keys.dispatch({ code: "KeyN" }), true);
+
+    shell.setShell({ paletteOpen: true });
+    assert.deepEqual(keys.activeConflicts(), []);
+    assert.equal(keys.dispatch({ code: "KeyN" }), false);
+    shell.setShell({ paletteOpen: false });
+
+    let review = false;
+    keys.defineContext("review", () => review);
+    const panel = [];
+    for (const id of ["next", "prev", "accept", "reject", "edit", "undo"]) {
+      keymap.bindKey(`change.${id}`, () => { panel.push(id); });
+    }
+    review = true;
+    assert.deepEqual(keys.activeConflicts(), []);
+    assert.equal(keys.dispatch({ code: "KeyN" }), true);
+    assert.deepEqual(panel, ["reject"]);
+
+    shell.setShell({ activeTab: "start" });
+    review = false;
+    assert.deepEqual(keys.activeConflicts(), []);
+    assert.equal(keys.dispatch({ code: "KeyV" }), false);
+  } finally {
+    off();
+    registerMod.unregisterCanvasModule();
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test("change source and decision come from the operation, plan and decision flags", () => {
+  const { changes } = loadWp3Stack();
+  const input = [
+    { opId: "agent", origin: "agent", proposer: "시험용" },
+    { opId: "test", origin: "agent" },
+    { opId: "user", origin: "user" },
+    { opId: "flag", origin: "agent", provenance: "mock" },
+  ].map((op, index) => ({
+    op: { ...op, kind: "fill_cell", table: 0, row: index, col: 0 },
+    opId: op.opId,
+    beforeText: "",
+    afterText: "내용",
+  }));
+  const projected = changes.indexedChangesToCanvasRefs(
+    input,
+    { flag: { status: "changed" } },
+    { test: "accepted", user: "rejected" },
+    { plan: { provenance: "mock", mockOps: ["test"] }, isStale: true },
+  );
+  assert.deepEqual(projected.map(({ source }) => source), ["agent", "test", "user", "test"]);
+  assert.deepEqual(projected.map(({ decision }) => decision), ["pending", "accepted", "rejected", "pending"]);
+  assert.equal(projected[3].isFactChanged, true);
+  assert.equal(projected[3].isStale, true);
 });
 
 test("WP3 static hygiene: zero hex literals in canvas/ & panes/, zero 결재 in wp3.ts", () => {

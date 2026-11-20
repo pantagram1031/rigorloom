@@ -39,10 +39,17 @@ export function openSettings(): void {
 }
 
 /** Alt+1…5: show a left pane; the same key again collapses the pane. */
-export function showLeftPane(pane: LeftPaneId): void {
+export function showLeftPane(pane: LeftPaneId, { toggle = true } = {}): void {
   const sid = activeTabSessionId();
+  const shell = getShell();
+  if (shell.breakpoint === "narrow" && sid) {
+    const current = docLayout.get(sid).leftPane;
+    docLayout.patch(sid, { leftPane: pane, landed: true });
+    setShell({ narrowDrawerOpen: !(toggle && shell.narrowDrawerOpen && current === pane) });
+    return;
+  }
   const current = sid ? docLayout.get(sid).leftPane : "files";
-  if (visibleSides().left && current === pane) {
+  if (toggle && visibleSides().left && current === pane) {
     setShell({ leftOpen: false });
     return;
   }

@@ -193,6 +193,28 @@ export function opTargetId(op: QueuedOp): string {
   return `guides:${op.opId}`;
 }
 
+/** Canvas cell edits replace the whole address, including an earlier run edit there. */
+export function upsertQueuedOp(ops: readonly QueuedOp[], op: QueuedOp) {
+  const address = (item: QueuedOp) => {
+    if (item.kind === "fill_cell" || item.kind === "replace_at_cell") {
+      return cellKey(item.table, item.row, item.col);
+    }
+    return opTargetId(item);
+  };
+  const target = address(op);
+  const replaced = ops.filter((item) => address(item) === target);
+  const remaining = ops.filter((item) => address(item) !== target);
+  const ids = new Set(remaining.map((item) => item.opId));
+  const preferredId = replaced[0]?.opId ?? op.opId;
+  let opId = preferredId;
+  for (let suffix = 2; ids.has(opId); suffix += 1) opId = `${preferredId}-${suffix}`;
+
+  const queued = { ...op, opId };
+  const index = replaced.length > 0 ? ops.indexOf(replaced[0]) : remaining.length;
+  remaining.splice(index, 0, queued);
+  return { ops: remaining, queued, replaced };
+}
+
 /**
  * One string per (target, value), whatever the op id.
  *
