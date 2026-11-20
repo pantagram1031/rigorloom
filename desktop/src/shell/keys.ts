@@ -19,6 +19,12 @@
  */
 import { useSyncExternalStore } from "react";
 
+export function overlayOpen(): boolean {
+  return typeof document !== "undefined" && Boolean(
+    document.querySelector('[aria-modal="true"]:not([hidden]), [role="menu"]:not([hidden]), dialog[open]'),
+  );
+}
+
 export type KeyProfile = "standard";
 
 /**

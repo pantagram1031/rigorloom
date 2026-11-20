@@ -572,7 +572,8 @@ test("canvas and the mounted panel never own the same review key", () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   globalThis.window = { addEventListener() {}, removeEventListener() {} };
-  const doc = { activeElement: null };
+  let modal = false;
+  const doc = { activeElement: null, querySelector: () => modal ? {} : null };
   globalThis.document = doc;
   const focus = (testId) => {
     doc.activeElement = { closest: (selector) => selector.includes(`[data-testid="${testId}"]`) };
@@ -634,6 +635,13 @@ test("canvas and the mounted panel never own the same review key", () => {
       assert.equal(keys.dispatch({ code: "KeyN" }), false, overlay);
       shell.setShell({ [overlay]: false });
     }
+    modal = true;
+    for (const id of ["change-list", "canvas-scroll"]) {
+      focus(id);
+      assert.equal(keys.dispatch({ code: "KeyN" }), false, id);
+      assert.equal(keys.dispatch({ code: "Enter", ctrlKey: true, shiftKey: true }), false, id);
+    }
+    modal = false;
     shell.setShell({ activeTab: "start" });
     assert.deepEqual(keys.activeConflicts(), []);
     assert.equal(keys.dispatch({ code: "KeyN" }), false);

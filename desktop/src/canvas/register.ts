@@ -5,7 +5,7 @@ import { OutlinePane } from "../panes/OutlinePane";
 import { showLeftPane } from "../shell/bindings";
 import { registerCommand, type CommandGroup } from "../shell/commands";
 import { bindKey } from "../shell/keymap";
-import { isContextActive, keys, type KeyBinding } from "../shell/keys";
+import { isContextActive, keys, overlayOpen, type KeyBinding } from "../shell/keys";
 import { activeTabSessionId, getShell } from "../shell/shellState";
 import { registerSlot } from "../shell/slots";
 import {
@@ -37,7 +37,7 @@ function canFind(): boolean {
 }
 
 function reviewCanvas(): boolean {
-  return documentReady() && getCanvasSlice().view === "marks" &&
+  return documentReady() && !overlayOpen() && getCanvasSlice().view === "marks" &&
     getPublishedChanges().length > 0 && !isContextActive("review") && !isContextActive("sheet");
 }
 
