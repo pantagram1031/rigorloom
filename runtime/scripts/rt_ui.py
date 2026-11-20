@@ -2262,7 +2262,7 @@ class BridgeApplication:
 # - A module that is absent is skipped. A module that is present but fails to
 #   import raises, so a broken extension is loud rather than silently missing.
 
-UI_EXTENSION_MODULES = ("rt_workspace", "rt_page", "rt_ui_style")
+UI_EXTENSION_MODULES = ("rt_workspace", "rt_page", "rt_ui_style", "rt_ui_doc")
 
 _CORE_GET_API_PATHS = frozenset({
     "/api/export-download",
@@ -2299,10 +2299,18 @@ _CORE_POST_API_PATHS = frozenset({
 _EXTENSION_PATH_RE = re.compile(r"^/api/[a-z0-9][a-z0-9/_-]*$")
 
 
+class ExtensionBytes:
+    """A binary extension response with route-specific metadata headers."""
+
+    def __init__(self, body: bytes, content_type: str, headers: dict[str, str]):
+        self.body, self.content_type, self.headers = body, content_type, headers
+
+
 class ExtensionRouter:
     """What an extension module's `register_routes(router)` receives."""
 
     BridgeError = BridgeError
+    Bytes = ExtensionBytes
 
     def __init__(self) -> None:
         self.get_routes: dict[str, Any] = {}
@@ -2455,17 +2463,28 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _read_json_body(self, limit: int = MAX_JSON_BODY_BYTES) -> dict[str, Any]:
+    def _body_length(self, limit: int) -> int:
         raw_len = self.headers.get("Content-Length")
         if raw_len is None or not raw_len.strip():
-            return {}
+            return 0
         try:
             length = int(raw_len)
         except ValueError as exc:
             raise BridgeError("invalid_params", "invalid Content-Length") from exc
         if length < 0 or length > limit:
             raise BridgeError("body_too_large", "request body exceeds maximum allowed size", status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
-        if length == 0:
+        return length
+
+    def _check_extension_body(self, *, allow_body: bool) -> None:
+        if self.headers.get("Transfer-Encoding"):
+            raise BridgeError("invalid_params", "transfer encoding is not supported")
+        length = self._body_length(SMALL_JSON_BODY_BYTES)
+        if length and not allow_body:
+            raise BridgeError("invalid_params", "GET does not accept a request body")
+
+    def _read_json_body(self, limit: int = MAX_JSON_BODY_BYTES) -> dict[str, Any]:
+        length = self._body_length(limit)
+        if not length:
             return {}
         raw = self.rfile.read(length)
         try:
@@ -2516,7 +2535,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             return
         parsed = urlsplit(self.path)
         path = parsed.path
-        query = parse_qs(parsed.query)
+        query = parse_qs(parsed.query, keep_blank_values=path.startswith("/api/doc/"))
 
         if path == "/events":
             self._handle_sse(query)
@@ -2567,6 +2586,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 elif path in self.server.extensions.get_routes:
                     handler = self.server.extensions.get_routes[path]
                     try:
+                        if path.startswith("/api/doc/"):
+                            self._check_extension_body(allow_body=False)
                         payload = handler(self.server.bridge, query)
                     except BridgeError:
                         raise
@@ -2576,10 +2597,19 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                             f"{type(exc).__name__}: {exc}",
                             status=HTTPStatus.INTERNAL_SERVER_ERROR,
                         ) from exc
-                    self._send_json(HTTPStatus.OK, payload)
+                    if isinstance(payload, ExtensionBytes):
+                        try:
+                            self._send_bytes(HTTPStatus.OK, payload.body, payload.content_type,
+                                             extra_headers={"Cache-Control": "no-store", **payload.headers})
+                        except (BrokenPipeError, ConnectionResetError):
+                            self.close_connection = True
+                    else:
+                        self._send_json(HTTPStatus.OK, payload)
                 else:
                     raise BridgeError("not_found", f"unknown GET endpoint {path}", status=HTTPStatus.NOT_FOUND)
             except BridgeError as exc:
+                if path.startswith("/api/doc/"):
+                    self.close_connection = True
                 self._send_json(exc.status, exc.to_payload())
             return
 
@@ -2618,11 +2648,16 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
 
         try:
             small = path in _SMALL_BODY_CORE_POST_PATHS or path in self.server.extensions.post_routes
+            if path.startswith("/api/doc/") and path in self.server.extensions.post_routes:
+                self._check_extension_body(allow_body=True)
             body = self._read_json_body(SMALL_JSON_BODY_BYTES if small else MAX_JSON_BODY_BYTES)
             if path == "/rpc":
                 method = body.get("method")
                 params = body.get("params")
                 tag = body.get("tag")
+                if method == "document/pageView":
+                    raise BridgeError("not_found", "use the document page routes",
+                                      status=HTTPStatus.NOT_FOUND)
                 if tag is not None and not isinstance(tag, str):
                     raise BridgeError("invalid_params", "tag must be a string")
                 if method == "approval/resolve" and isinstance(params, dict):
@@ -2669,6 +2704,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             result = handler(body)
             self._send_json(HTTPStatus.OK, result)
         except BridgeError as exc:
+            if path.startswith("/api/doc/"):
+                self.close_connection = True
             self._send_json(exc.status, exc.to_payload())
         except Exception as exc:  # noqa: BLE001 - keep HTTP server alive on unexpected faults
             self._send_json(

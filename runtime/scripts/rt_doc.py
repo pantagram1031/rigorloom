@@ -4879,7 +4879,7 @@ def _fallback_apply(doc, order):
 @_api
 def pages(path):
     """{rev, count, pages: [{n, starts_with, signals}], approx}"""
-    doc = _load(path)
+    doc = _load(path, meta="layout")
     _need_engine("pages")
     r = doc.layout
     if r is None:

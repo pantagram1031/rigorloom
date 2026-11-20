@@ -171,6 +171,7 @@ class RuntimeServer:
             "approval/resolve": self._m_approval_resolve,
             "plan/apply": self._m_plan_apply,
             "document/renderPrepare": self._m_document_render_prepare,
+            "document/pageView": self._m_document_page_view,
         }
         assert set(methods) == set(HOST_ONLY_METHODS), (
             "host handler map and rt_core.HOST_ONLY_METHODS disagree: "
@@ -676,6 +677,11 @@ class RuntimeServer:
         return self.core.document_render_prepare(
             params["sessionId"], run_id=params.get("runId"),
             timeout=params.get("timeoutSeconds"))
+
+    def _m_document_page_view(self, params: dict, _id) -> dict:
+        from rt_ui_doc import native_page_view
+
+        return native_page_view(self.core.store.root, self.core.tools, params)
 
     def _m_document_page_geometry(self, params: dict, _id) -> dict:
         params = _object(params, {"sessionId", "page", "runId"},

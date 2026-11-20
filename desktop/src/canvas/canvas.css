@@ -187,6 +187,22 @@
   overflow: hidden;
 }
 
+.rl-redraw-notice {
+  position: absolute;
+  inset-block-start: var(--s-8);
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: var(--s-4) var(--s-8);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--chrome);
+  color: var(--attn);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .rl-desk-scroll {
   position: absolute;
   inset: 0;
@@ -231,6 +247,73 @@
   background: var(--paper-veil);
   pointer-events: none;
   z-index: 4;
+}
+
+.rl-paper[data-raster] {
+  overflow: clip;
+}
+
+.rl-paper-raster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.rl-paper[data-raster] :is(.rl-doc-table, .rl-para, .rl-guide-delete-strip) {
+  position: relative;
+  color: transparent;
+}
+
+.rl-paper[data-raster] :is(.rl-cell, .rl-para-body) {
+  color: transparent;
+  background: transparent;
+  border-color: transparent;
+}
+
+.rl-paper[data-raster] .rl-cell--blank {
+  background: color-mix(in srgb, var(--seat) 45%, transparent);
+}
+
+.rl-paper[data-raster] :is(.rl-ins, .rl-del, .rl-find-hit) {
+  color: transparent;
+}
+
+.rl-paper[data-raster] .rl-mark {
+  outline: 1px solid var(--mark-insert);
+}
+
+.rl-paper[data-raster] .rl-mark--selected {
+  outline-color: var(--focus-paper);
+}
+
+.rl-paper[data-engine-geometry] :is(.rl-doc-table, .rl-cell, .rl-para) {
+  position: absolute;
+}
+
+.rl-paper[data-engine-geometry] .rl-doc-table {
+  inset: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.rl-paper[data-engine-geometry] .rl-cell {
+  box-sizing: border-box;
+  overflow: clip;
+  pointer-events: auto;
+}
+
+.rl-paper[data-engine-geometry] .rl-cell--editing {
+  overflow: visible;
+  z-index: 1;
+}
+
+.rl-raster-caret {
+  position: absolute;
+  z-index: 3;
+  background: var(--paper-ink);
+  pointer-events: none;
 }
 
 .rl-doc-table {

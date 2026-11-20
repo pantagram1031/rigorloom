@@ -507,7 +507,7 @@ def _lineage_depth(rows: list[dict]) -> dict[str, int]:
     return {row["runId"]: depth(row["runId"]) for row in rows}
 
 
-def list_candidates(session) -> list[dict]:
+def list_candidates(session, *, confine=None) -> list[dict]:
     """Only runs whose receipt landed. A bare artifact is not a candidate.
 
     Each row carries the lineage fields — ``base``, ``reverses``, the candidate
@@ -521,6 +521,8 @@ def list_candidates(session) -> list[dict]:
     random hex id and that is not history.
     """
     rows = []
+    if confine is not None:
+        confine(session.candidates_dir)
     if not session.candidates_dir.is_dir():
         return rows
     for run_dir in sorted(session.candidates_dir.iterdir()):
@@ -529,6 +531,8 @@ def list_candidates(session) -> list[dict]:
         receipt_path = run_dir / RECEIPT_NAME
         if not receipt_path.is_file():
             continue
+        if confine is not None:
+            confine(receipt_path)
         row = {"runId": run_dir.name,
                "receipt": f"{run_dir.name}/{RECEIPT_NAME}",
                "verified": False}
@@ -560,13 +564,15 @@ def list_candidates(session) -> list[dict]:
     return rows
 
 
-def read_receipt(session, run_id: str) -> dict:
+def read_receipt(session, run_id: str, *, confine=None) -> dict:
     """Load a receipt and REFUSE unless it still binds the bytes on disk."""
     if not isinstance(run_id, str) or not run_id or "/" in run_id or "\\" in run_id:
         raise RpcError("invalid_params", "runId must be a bare identifier",
                        runId=run_id)
     run_dir = session.candidates_dir / run_id
     receipt_path = run_dir / RECEIPT_NAME
+    if confine is not None:
+        confine(receipt_path)
     if not receipt_path.is_file():
         raise RpcError("artifact_missing", "no canonical candidate for that runId",
                        runId=run_id)
@@ -594,6 +600,8 @@ def read_receipt(session, run_id: str) -> dict:
                        runId=run_id, declared=declared, recomputed=recomputed)
     candidate = payload.get("candidate") or {}
     artifact = run_dir / str(candidate.get("path") or "")
+    if confine is not None:
+        confine(artifact)
     if not artifact.is_file():
         raise RpcError("artifact_missing", "the bound candidate is gone",
                        runId=run_id, path=candidate.get("path"))

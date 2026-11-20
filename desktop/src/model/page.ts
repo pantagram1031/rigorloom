@@ -75,7 +75,7 @@ export interface PageBox {
   id: string;
   itemId?: string;
   address?: string;
-  kind: "cell" | "para" | "seat" | "mark" | "guide";
+  kind: "cell" | "para" | "table" | "seat" | "mark" | "guide";
   rect: PageRectPt;
   label?: string;
   fontCategory?: "serif" | "sans";

@@ -23,6 +23,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T???:** Opt-in editor v2 draws the session head with the document engine or the available PDF and built-in render tiers. It labels the page source and retains the displayed page if a redraw fails.
 - **T210:** The opt-in editor v2 reviews accepted changes and factual differences in the approval sheet, identifies mixed-source proposals, and refreshes stale proposals against the latest revision. It shows applied approval details and revision history, and the mounted gongmun walkthrough and open/edit smoke exercise the editor through export.
 - **T209:** Editor v2 mounts the 변경, 에이전트 and 점검 panes in the right panel. The change list shares the canvas's change flags and owns review shortcuts while focused. The approval sheet binds the reviewed plan, document and acknowledgements to the bridge's single-use confirmation token and refuses stale plans. The request box keeps unsent text per document. The bridge serves `POST /api/style/check` for the 점검 pane.
 - **T207:** The guard-pair fixtures in `tests/fixtures/guard_pairs/` are named for who wrote them (`review-t180`, `review-t183`, `review-t183b`, `advisor-t183`, `advisor-t193`), the last internal names left from T202. Pair ids, cases and counts are unchanged.

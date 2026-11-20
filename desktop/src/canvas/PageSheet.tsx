@@ -20,6 +20,8 @@ import {
   resolvePageFontCategory,
   type CanvasChangeRef,
   type PageFit,
+  type PageRectPt,
+  type PageSource,
   type PageViewMode,
 } from "../model/page";
 import { cellKey, useWorkspace } from "../store";
@@ -169,6 +171,14 @@ function renderTextWithNowrapTokens(
 
 const HWPUNIT_PER_INCH = 7200;
 const PX_PER_INCH = 96;
+const PX_PER_PT = PX_PER_INCH / 72;
+
+function rectStyle(rect: PageRectPt) {
+  return {
+    left: rect.x * PX_PER_PT, top: rect.y * PX_PER_PT,
+    width: rect.w * PX_PER_PT, height: rect.h * PX_PER_PT,
+  };
+}
 
 function hwpunitToPx(units: number | undefined, fallbackMm: number): number {
   if (typeof units === "number" && Number.isFinite(units) && units > 0) {
@@ -371,6 +381,9 @@ export interface PageSheetProps {
   pageFit: PageFit;
   zoom: number;
   narrowReadZoom: boolean;
+  pageSource: PageSource | null;
+  page: number;
+  hasEngineGeometry: boolean;
   drying?: boolean;
   findQuery?: string;
   activeFindCellKey?: string | null;
@@ -402,6 +415,9 @@ export function PageSheet({
   pageFit,
   zoom,
   narrowReadZoom,
+  pageSource,
+  page,
+  hasEngineGeometry,
   drying = false,
   findQuery = "",
   activeFindCellKey = null,
@@ -420,6 +436,25 @@ export function PageSheet({
 
   const [boxSize, setBoxSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [naturalHeightMeasure, setNaturalHeightMeasure] = useState(0);
+  const [caret, setCaret] = useState<{ page: number; rev: string; address: string; offset: number } | null>(null);
+
+  const layer = pageSource?.layer(page, view);
+  const rasterUrl = layer?.rasterUrl;
+  const drawnWidth = rasterUrl ? layer.sizePt.widthPt * PX_PER_PT : null;
+  const drawnHeight = rasterUrl ? layer.sizePt.heightPt * PX_PER_PT : null;
+  const positioned = useMemo(() => {
+    const rects = new Map<string, PageRectPt>();
+    if (hasEngineGeometry && pageSource) {
+      for (const box of pageSource.boxes(page)) {
+        if (box.address && (box.kind === "cell" || box.kind === "para") && !box.address.includes("#")) {
+          if (!rects.has(box.address)) rects.set(box.address, box.rect);
+        }
+      }
+    }
+    return rects;
+  }, [hasEngineGeometry, pageSource, page]);
+  const caretRect = hasEngineGeometry && caret && caret.page === page && caret.rev === layer?.rev
+    ? pageSource?.caretRect(page, caret.address, caret.offset) : null;
 
   const editingCellKey =
     inlineEdit && inlineEdit.kind === "cell"
@@ -442,14 +477,8 @@ export function PageSheet({
   }, []);
 
   const metrics = inspect.summary?.pageMetrics;
-  const naturalWidthPx = useMemo(
-    () => hwpunitToPx(metrics?.width, 210),
-    [metrics?.width],
-  );
-  const naturalHeightPx = useMemo(
-    () => hwpunitToPx(metrics?.height, 297),
-    [metrics?.height],
-  );
+  const naturalWidthPx = drawnWidth ?? hwpunitToPx(metrics?.width, 210);
+  const naturalHeightPx = drawnHeight ?? hwpunitToPx(metrics?.height, 297);
   const padTopPx = useMemo(
     () => clampMarginPx(metrics?.margin?.top, 16),
     [metrics?.margin?.top],
@@ -527,7 +556,7 @@ export function PageSheet({
     }
 
     const measure = () => {
-      const totalH = Math.max(naturalHeightPx, sheet.scrollHeight);
+      const totalH = rasterUrl ? naturalHeightPx : Math.max(naturalHeightPx, sheet.scrollHeight);
       setNaturalHeightMeasure(totalH);
 
       const sheetRect = sheet.getBoundingClientRect();
@@ -597,6 +626,8 @@ export function PageSheet({
     padLeftPx,
     inspect,
     texts,
+    rasterUrl,
+    positioned,
     onMeasurementsChange,
   ]);
 
@@ -835,7 +866,7 @@ export function PageSheet({
 
   const sheetOuterWidth = Math.floor(naturalWidthPx * effectiveZoom);
   const sheetOuterHeight = Math.round(
-    Math.max(naturalHeightPx, naturalHeightMeasure) * effectiveZoom,
+    (rasterUrl ? naturalHeightPx : Math.max(naturalHeightPx, naturalHeightMeasure)) * effectiveZoom,
   );
 
   const renderCellContent = (
@@ -1007,6 +1038,8 @@ export function PageSheet({
         className={`rl-paper${drying ? " rl-paper--drying" : ""}`}
         data-testid="paper"
         data-paper="true"
+        data-raster={rasterUrl ? "true" : undefined}
+        data-engine-geometry={hasEngineGeometry ? "true" : undefined}
         aria-label={wp3t("paper_aria_label", language)}
         onMouseLeave={() => onSelectSeat(null, null)}
         onTouchStart={handleTouchStart}
@@ -1014,15 +1047,29 @@ export function PageSheet({
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
         onWheel={handleWheel}
+        onPointerDownCapture={(event) => {
+          if (!pageSource || !hasEngineGeometry || event.button !== 0 ||
+              (event.target as HTMLElement).closest("input, textarea, button")) return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          const scale = effectiveZoom * PX_PER_PT;
+          const hit = pageSource.hitTest(page, (event.clientX - bounds.left) / scale,
+                                        (event.clientY - bounds.top) / scale);
+          setCaret(hit.address && hit.caretOffset != null
+            ? { page, rev: pageSource.rev, address: hit.address, offset: hit.caretOffset }
+            : null);
+        }}
         style={{
           width: `${naturalWidthPx}px`,
           minHeight: `${naturalHeightPx}px`,
-          padding: `${padTopPx}px ${padRightPx}px ${padBottomPx}px ${padLeftPx}px`,
+          height: rasterUrl ? `${naturalHeightPx}px` : undefined,
+          padding: hasEngineGeometry ? 0 : `${padTopPx}px ${padRightPx}px ${padBottomPx}px ${padLeftPx}px`,
           fontFamily: paperFontFamily,
           transform: `scale(${effectiveZoom})`,
           transformOrigin: "top left",
         }}
       >
+        {rasterUrl ? <img className="rl-paper-raster" data-testid="page-raster" src={rasterUrl} alt="" draggable={false} /> : null}
+        {caretRect ? <span className="rl-raster-caret" style={rectStyle(caretRect)} aria-hidden="true" /> : null}
         {tables.map((table) => (
           <table
             key={table.index}
@@ -1039,6 +1086,9 @@ export function PageSheet({
                     const key = legacyCellKey(table.index, cell.addr.row, cell.addr.col);
                     const region = textMap[key];
                     const cellChanges = changesByCell.get(key) ?? [];
+                    const address = formatCellAddress(table.index, cell.addr.row, cell.addr.col);
+                    const rect = positioned.get(address);
+                    if (hasEngineGeometry && !rect) return null;
                     const isEditing = editingCellKey === key;
                     const isSpacerCell = cell.classification === "spacer";
                     const baseText = region?.text ?? cell.textPreview ?? "";
@@ -1086,9 +1136,9 @@ export function PageSheet({
                         key={key}
                         colSpan={colSpan}
                         className={cls}
-                        style={cellFontFamily ? { fontFamily: cellFontFamily } : undefined}
+                        style={{ fontFamily: cellFontFamily, ...(rect ? rectStyle(rect) : undefined) }}
                         data-cell-key={key}
-                        data-address={formatCellAddress(table.index, cell.addr.row, cell.addr.col)}
+                        data-address={address}
                         data-testid={`page-cell-${table.index}-${cell.addr.row}-${cell.addr.col}`}
                         onMouseEnter={() => {
                           if (!isSpacerCell) {
@@ -1103,7 +1153,7 @@ export function PageSheet({
                             onSelectSeat(
                               key,
                               `${label} · ${formatSeatLocation(
-                                1,
+                                page,
                                 table.index,
                                 cell.addr.row,
                                 cell.addr.col,
@@ -1135,6 +1185,8 @@ export function PageSheet({
         ))}
 
         {looseParagraphs.map((para) => {
+          const rect = positioned.get(`p${para.at_para}`);
+          if (hasEngineGeometry && !rect) return null;
           const paraChanges = changesByPara.get(para.at_para) ?? [];
           const region = textMap[`p:${para.at_para}`];
           const runMap = new Map<number, CanvasChangeRef>();
@@ -1146,6 +1198,7 @@ export function PageSheet({
             <div
               key={`p:${para.at_para}`}
               className="rl-para"
+              style={rect ? rectStyle(rect) : undefined}
               data-para-key={`p:${para.at_para}`}
               data-testid={`page-para-${para.at_para}`}
               onClick={() => {
