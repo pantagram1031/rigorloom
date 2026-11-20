@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import urllib.request
 from zipfile import ZipFile
 from pathlib import Path
 
@@ -293,3 +295,30 @@ def test_review_keys_stand_down_and_text_fields_pass_palette_chords(browser, ser
         page.keyboard.press("Control+k")
         expect(page.get_by_test_id("palette")).to_be_visible()
         expect(row).to_have_attribute("data-decision", "pending")
+
+
+def test_files_pane_opens_a_resolved_document_folder_file(browser, server, tmp_path):
+    folder = tmp_path / "문서 폴더"
+    folder.mkdir()
+    source = Path(__file__).parent / "corpus" / "forms" / "converted" / "gianmun-byeolji-2ho.hwpx"
+    document = folder / "기안문.hwpx"
+    shutil.copyfile(source, document)
+    request = urllib.request.Request(
+        server.url.rstrip("/") + "/api/doc-folder",
+        data=json.dumps({"path": str(folder)}).encode(),
+        headers={"Content-Type": "application/json", "X-Rigorloom-Token": server.token},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        assert response.status == 200
+
+    with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
+        _open_sample(page, server)
+        original = _session_id(page)
+        page.get_by_test_id("pane-tab-files").click()
+        row = page.locator('.sh-tree-row[data-kind="file"]', has_text=document.name)
+        with page.expect_request(lambda req: _rpc_payload(req).get("method") == "workspace/openPath") as opened:
+            row.click()
+        assert _rpc_payload(opened.value)["params"]["path"] == str(document.resolve())
+        expect(page.locator(".shell-v2")).not_to_have_attribute("data-session", original)
+        expect(page.get_by_test_id("paper").first).to_be_visible(timeout=20_000)
