@@ -1178,3 +1178,197 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             json.dumps(metrics_snapshot, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+
+# --- editor v2 right panel and gate (WP4) ---------------------------------------------
+#
+# The same walkthrough through the v2 panel: 24 changes, decided with the
+# review keys, approved through the 결재란 footer and the sheet, exported and
+# compared with the committed file. Until WP2's shell mounts the panel in the
+# app, it runs on the panel harness page (desktop/panel-harness.html) served
+# by the real bridge; point RIGORLOOM_PANEL_HARNESS_DIST at a build of
+# vite.panel-harness.config.ts to run it.
+
+PANEL_HARNESS_ENV = "RIGORLOOM_PANEL_HARNESS_DIST"
+PANEL_HARNESS_SERVER = REPO_ROOT / "desktop" / "scripts" / "panel_harness_server.py"
+
+
+def _start_panel_harness(tmp_path: Path) -> tuple[subprocess.Popen[str], str, Path]:
+    dist = os.environ.get(PANEL_HARNESS_ENV)
+    if not dist or not (Path(dist) / "panel-harness.html").is_file():
+        pytest.skip(f"{PANEL_HARNESS_ENV} does not name a built panel harness")
+    rt_root = tmp_path / "panel-root"
+    env = os.environ.copy()
+    env["XDG_DATA_HOME"] = str(tmp_path / "xdg-data")
+    env["PYTHONUTF8"] = "1"
+    proc = subprocess.Popen(
+        [sys.executable, str(PANEL_HARNESS_SERVER), dist, str(rt_root), "0"],
+        cwd=str(REPO_ROOT), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8",
+    )
+    deadline = time.monotonic() + 30.0
+    assert proc.stdout is not None
+    while time.monotonic() < deadline:
+        line = proc.stdout.readline()
+        match = re.search(r"(http://127\.0\.0\.1:\d+/\S*)", line or "")
+        if match:
+            return proc, match.group(1), rt_root
+        if proc.poll() is not None:
+            break
+    proc.kill()
+    raise RuntimeError("panel harness did not start")
+
+
+def _panel_open_and_propose(page, url: str, ops: list[dict], declares: dict | None) -> tuple[str, dict]:
+    page.goto(url)
+    page.wait_for_function("() => window.__wp4 && window.__RIGORLOOM_UI__", timeout=30000)
+    session_id = page.evaluate(f"() => window.__wp4.openSample('{CORPUS_FORM_FILENAME}')")
+    assert session_id, "the bundled form did not open"
+    page.wait_for_selector('[data-testid="right-panel"]', timeout=30000)
+    token = page.evaluate("() => window.__RIGORLOOM_UI__.token")
+    base_url = url.split("?", 1)[0]
+    params = {"sessionId": session_id, "backend": "preedit", "ops": ops, "proposer": "gongmun-walkthrough"}
+    if declares:
+        params["declares"] = declares
+    prop = _rpc_post(base_url, token, "plan/propose", params)
+    assert prop["ok"] is True, prop
+    plan = prop["result"]["plan"]
+    req = _rpc_post(base_url, token, "approval/request", {"planId": plan["planId"], "requestedBy": "gongmun-walkthrough"})
+    assert req["ok"] is True, req
+    page.wait_for_selector(f'[data-testid="change-row-{len(ops)}"]', timeout=30000)
+    return session_id, plan
+
+
+def _approve_disabled(page) -> bool:
+    return page.evaluate("() => document.querySelector('[data-testid=\"approve\"]').disabled")
+
+
+def test_panel_gate_walkthrough_accept_all_approve_export(tmp_path: Path) -> None:
+    sync_playwright = _import_playwright()
+    expected_plan = json.loads(GONGMUN_PLAN_PATH.read_text(encoding="utf-8"))
+    flat_ops = [{"opId": op["opId"], "kind": op["kind"], **op["params"]} for op in expected_plan["ops"]]
+    proc, url, rt_root = _start_panel_harness(tmp_path)
+    page_errors: list[str] = []
+    try:
+        with sync_playwright() as pw:
+            browser = _launch_chromium(pw)
+            context = browser.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True)
+            page = context.new_page()
+            page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+            session_id, plan = _panel_open_and_propose(page, url, flat_ops, expected_plan["declares"])
+
+            rows = page.locator('[data-testid^="change-row-"]')
+            assert rows.count() == 24
+            assert page.locator('[data-testid="filter-pending"]').inner_text().split()[-1] == "24"
+            assert _approve_disabled(page)
+            assert page.locator('[data-testid="gate-reason"]').inner_text().strip() == "24건이 남았습니다"
+            # Ctrl+Shift+Enter with 남음 above 0 opens nothing.
+            page.keyboard.press("Control+Shift+Enter")
+            assert page.locator('[data-testid="approve-sheet"]').count() == 0
+
+            # Decide every change with Y; selection advances by itself.
+            page.click('[data-testid="change-summary-1"]')
+            for i in range(23):
+                page.keyboard.press("y")
+            page.wait_for_function(
+                "() => document.querySelector('[data-testid=\"gate-reason\"]').textContent.includes('1건')",
+                timeout=10000,
+            )
+            assert _approve_disabled(page), "승인 must stay disabled while one change is 남음"
+            page.keyboard.press("y")
+            # 승인 also waits for the fact check (it can take a while on a loaded machine).
+            page.wait_for_function("() => !document.querySelector('[data-testid=\"approve\"]').disabled", timeout=120000)
+            assert page.locator('[data-testid="filter-accepted"]').inner_text().split()[-1] == "24"
+
+            # Wait for the guard so the sheet shows the checked state.
+            page.wait_for_function("() => !document.querySelector('[data-testid=\"gate-box\"]').textContent.includes('점검 중')", timeout=120000)
+            page.keyboard.press("Control+Shift+Enter")
+            page.wait_for_selector('[data-testid="approve-sheet"]', timeout=10000)
+            sheet = page.locator('[data-testid="approve-sheet"]')
+            assert "변경 24건 승인" in sheet.inner_text()
+            assert page.locator('[data-testid="guard-scope"]').is_visible()
+            assert page.locator('[data-testid="sheet-effect"]').is_visible()
+            # No visible hash longer than 12 characters.
+            assert not re.search(r"[0-9a-f]{13,}", sheet.inner_text())
+            ticks = page.locator('[data-testid^="tick-"]')
+            for i in range(ticks.count()):
+                ticks.nth(i).check()
+            sheet.focus()
+            page.keyboard.press("Enter")
+            page.wait_for_selector('[data-testid="applied-footer"]', timeout=60000)
+            approved_cell = page.locator('[data-testid="gate-approved"]').inner_text()
+            assert approved_cell.startswith("직접 승인 · ")
+            assert "수정본 1 생성" in page.locator('[data-testid="applied-status"]').inner_text()
+
+            with page.expect_download(timeout=30000) as dl_info:
+                page.click('[data-testid="applied-export"]')
+            download = dl_info.value
+            exported = tmp_path / download.suggested_filename
+            download.save_as(str(exported))
+            with zipfile.ZipFile(exported) as z_exp, zipfile.ZipFile(GONGMUN_FILLED_HWPX_PATH) as z_ref:
+                assert sorted(z_exp.namelist()) == sorted(z_ref.namelist())
+                mismatched = [n for n in z_ref.namelist() if z_exp.read(n) != z_ref.read(n)]
+                assert not mismatched, mismatched
+            browser.close()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    assert not page_errors, page_errors
+
+    approvals = [json.loads(p.read_text(encoding="utf-8")) for p in (rt_root / "approvals").glob("*.json")]
+    approved = [a for a in approvals if a.get("state") == "approved"]
+    assert len(approved) == 1, approvals
+    assert approved[0]["approver"] == "host-operator"
+
+
+def test_panel_gate_excluded_change_never_reaches_the_applied_plan(tmp_path: Path) -> None:
+    sync_playwright = _import_playwright()
+    expected_plan = json.loads(GONGMUN_PLAN_PATH.read_text(encoding="utf-8"))
+    ops = [{"opId": op["opId"], "kind": op["kind"], **op["params"]} for op in expected_plan["ops"][4:9]]
+    proc, url, rt_root = _start_panel_harness(tmp_path)
+    try:
+        with sync_playwright() as pw:
+            browser = _launch_chromium(pw)
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            session_id, plan = _panel_open_and_propose(page, url, ops, None)
+            excluded_op = page.locator('[data-testid="change-row-3"]').get_attribute("data-item-id")
+            page.click('[data-testid="change-summary-1"]')
+            for key in ("y", "y", "n", "y", "y"):
+                page.keyboard.press(key)
+            assert page.locator('[data-testid="filter-rejected"]').inner_text().split()[-1] == "1"
+            page.wait_for_function("() => !document.querySelector('[data-testid=\"approve\"]').disabled", timeout=120000)
+            page.keyboard.press("Control+Shift+Enter")
+            page.wait_for_selector('[data-testid="approve-sheet"]', timeout=10000)
+            assert "변경 4건 승인" in page.locator('[data-testid="approve-sheet"]').inner_text()
+            ticks = page.locator('[data-testid^="tick-"]')
+            for i in range(ticks.count()):
+                ticks.nth(i).check()
+            page.locator('[data-testid="approve-sheet"]').focus()
+            page.keyboard.press("Enter")
+            page.wait_for_selector('[data-testid="applied-footer"]', timeout=60000)
+            browser.close()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    session_dir = rt_root / "sessions" / session_id
+    receipts = [json.loads(p.read_text(encoding="utf-8")) for p in (session_dir / "candidates").glob("*/receipt.json")]
+    assert len(receipts) == 1
+    applied_plan_id = receipts[0]["planId"]
+    assert applied_plan_id != plan["planId"], "the confirm must re-propose without the excluded change"
+    plan_files = list(rt_root.rglob(f"*{applied_plan_id}*.json"))
+    applied_ops = None
+    for path in plan_files:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("planId") == applied_plan_id and "ops" in data:
+            applied_ops = [op.get("opId") for op in data["ops"]]
+            break
+    assert applied_ops is not None, plan_files
+    assert excluded_op not in applied_ops
+    assert len(applied_ops) == 4
