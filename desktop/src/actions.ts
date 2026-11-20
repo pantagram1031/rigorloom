@@ -66,7 +66,9 @@ import {
   type CaretRefusal as RevisionCaretRefusal,
   type ParagraphEditEffect,
 } from "./revision";
+import { WP4 } from "./i18n/v2/wp4";
 import { errorCodeMessage, opKindLabel, t, type VocabularyKey } from "./i18n/vocabulary";
+import { uiVariant } from "./uiVariant";
 import {
   approvalBindsConfirmation,
   autoCharPrFor,
@@ -2248,7 +2250,9 @@ export async function applyApproved(confirmed?: ConfirmationBinding): Promise<vo
         .findIndex((c) => c.runId === applied.runId) + 1;
     showToast(
       revNum > 0
-        ? t("apply_done_toast", getState().language, [revNum])
+        ? (uiVariant() === "v2"
+          ? WP4.t("wp4_applied_status", getState().language, [revNum])
+          : t("apply_done_toast", getState().language, [revNum]))
         : t("review_applied_ok", getState().language),
       2200,
     );
