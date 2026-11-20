@@ -1,4 +1,3 @@
-export * from "./_shim";
 export * from "./actions";
 export * from "./CanvasPane";
 export * from "./controller";
@@ -6,5 +5,6 @@ export * from "./DocumentStrip";
 export * from "./MarginMarks";
 export * from "./MarkToolbar";
 export * from "./PageSheet";
+export { registerCanvasModule, unregisterCanvasModule } from "./register";
 export * from "./ScrollMap";
 export * from "./SeatEditor";
