@@ -18,6 +18,8 @@ export const S = defineStrings("shell", {
   shell_tab_opening: { ko: "문서 여는 중", en: "Opening document" },
   shell_palette_field: { ko: "명령, 문서, 빈칸 찾기", en: "Commands, documents, blanks" },
   shell_toggle_left: { ko: "왼쪽 창", en: "Left pane" },
+  shell_narrow_changes_open: { ko: "변경 {0}건 · 열기", en: "{0} changes · Open" },
+  shell_narrow_changes_close: { ko: "변경 창 닫기", en: "Close review panel" },
   shell_toggle_right: { ko: "오른쪽 창", en: "Right panel" },
   shell_app_menu: { ko: "메뉴", en: "Menu" },
   shell_win_minimize: { ko: "최소화", en: "Minimize" },

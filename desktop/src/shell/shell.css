@@ -1319,3 +1319,10 @@
 .sh-drawer-foot {
   border-top: 1px solid var(--line);
 }
+
+.sh-narrow-panel-toggle {
+  width: auto;
+  padding-inline: var(--s-8);
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
