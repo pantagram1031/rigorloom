@@ -219,7 +219,7 @@
   white-space: nowrap;
 }
 
-.rp-tag--fact {
+.rp-tag--fact[data-fact] {
   background: var(--fact-tint);
   color: var(--fact);
 }
@@ -330,7 +330,7 @@
   background: var(--attn-line);
 }
 
-.rp-row[aria-selected="true"][data-hue="fact"]::before {
+.rp-row[data-fact][aria-selected="true"][data-hue="fact"]::before {
   background: var(--fact);
 }
 
@@ -378,7 +378,7 @@
   color: var(--attn);
 }
 
-.rp-row[data-hue="fact"] .rp-row-n {
+.rp-row[data-fact][data-hue="fact"] .rp-row-n {
   color: var(--fact);
 }
 
@@ -667,7 +667,7 @@
   gap: 16px;
 }
 
-.rp-sheet-facts {
+.rp-sheet-facts[data-fact] {
   padding: 8px 0 8px 12px;
   border-left: 2px solid var(--fact);
 }
