@@ -392,10 +392,14 @@ class PageGateway:
             path, rev = (preview.path, preview.rev) if preview else (head.path, head.rev)
             info = _engine_result(rt_doc.pages(path), rev)
             with TemporaryDirectory(prefix="rigorloom-page-") as output:
-                result = _engine_result(rt_doc.render(path, page, scale=scale, out_dir=output), rev)
+                # Hand the engine the canonical directory: the temp root can be
+                # a link or, on Windows, an 8.3 short name, and the containment
+                # check compares canonical paths.
+                output_dir = Path(output).resolve()
+                result = _engine_result(rt_doc.render(path, page, scale=scale, out_dir=str(output_dir)), rev)
                 image = result["pages"][0]
                 image_path = Path(image["file"])
-                _confined(Path(output).resolve(), image_path)
+                _confined(output_dir, image_path)
                 png = image_path.read_bytes()
             payload = {"source": "engine", "page": page, "count": info["count"], "approx": bool(info["approx"]),
                        "widthPt": image["width_pt"], "heightPt": image["height_pt"]}
