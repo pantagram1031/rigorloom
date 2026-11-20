@@ -9,7 +9,8 @@
  * The checks keep the v1 phases' names where the claim is the same, so the
  * PowerShell driver's reports stay comparable across the switch.
  */
-import { exportApplied, openPath, reopenExported, selectSession } from "./actions";
+import { applyUiZoom, exportApplied, openPath, reopenExported, selectSession } from "./actions";
+import * as rt from "./runtime";
 import { activeDisplayText, activeInspect, getState } from "./store";
 
 export interface SmokeKit {
@@ -103,6 +104,12 @@ export async function phaseOpenV2(config: SmokeV2Config, k: SmokeKit) {
   k.check("the 빈칸 pane lists the document's blanks", count('[data-testid^="blank-seat-"]') > 0,
     `${count('[data-testid^="blank-seat-"]')} rows`);
   k.check("no failed slot", count("[data-slot-failed]") === 0, `${count("[data-slot-failed]")} failed`);
+
+  // The next smoke launch reads the remembered document and app zoom.
+  await applyUiZoom(1.2, false);
+  const prefs = await rt.loadPrefs();
+  k.check("app zoom persisted to prefs", Math.abs(Number(prefs.uiZoom) - 1.2) < 0.001, prefs.uiZoom);
+  await rt.savePrefs({ lastSessionId: sessionId, lastView: "document" });
   await k.ready("document");
 }
 
@@ -144,7 +151,7 @@ export async function phaseEditV2(config: SmokeV2Config, k: SmokeKit) {
     k.domText(`[data-cell-key="${key}"]`).includes(VALUE) && !!$('[data-testid="mark-1"]'), key);
 
   // --- 2. the gate: 결재란, sheet, 승인 --------------------------------------
-  const gateOpen = await k.waitFor(() => !($('[data-testid="approve"]') as HTMLButtonElement | null)?.disabled, 120000, 500);
+  const gateOpen = await k.waitFor(() => Boolean($('[data-testid="approve"]:enabled')), 120000, 500);
   k.check("승인 opens once the plan is checked", gateOpen, k.domText('[data-testid="gate-footer"]').slice(0, 120));
   if (!gateOpen) return;
   $('[data-testid="approve"]')?.click();
@@ -152,7 +159,11 @@ export async function phaseEditV2(config: SmokeV2Config, k: SmokeKit) {
   k.check("the approval sheet opens", sheet);
   k.check("the sheet states the guard's scope", !!$('[data-testid="guard-scope"]'));
   k.check("the sheet shows no full hash", !/[0-9a-f]{13,}/.test(k.domText('[data-testid="approve-sheet"]')));
-  const confirmable = await k.waitFor(() => !($('[data-testid="approve-confirm"]') as HTMLButtonElement | null)?.disabled, 60000, 500);
+  await k.waitFor(() => Boolean($('[data-testid="approve-sheet"][data-ready]')), 5000);
+  for (const tick of document.querySelectorAll<HTMLInputElement>('[data-testid="approve-sheet"] input[data-tick]')) {
+    if (!tick.checked) tick.click();
+  }
+  const confirmable = await k.waitFor(() => Boolean($('[data-testid="approve-confirm"]:enabled')), 60000, 500);
   k.check("승인 in the sheet is enabled", confirmable);
   $('[data-testid="approve-confirm"]')?.click();
   const applied = await k.waitFor(() => !!$('[data-testid="applied-footer"]'), 120000, 500);

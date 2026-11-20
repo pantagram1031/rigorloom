@@ -25,7 +25,7 @@ import {
 } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
 import { Keycap } from "../ui/Keycap";
-import { Parts, proposerLine, sourceLabel } from "./bits";
+import { Parts, PlanHash, proposerLine, sourceLabel } from "./bits";
 import { ChangeItemRow } from "./ChangeItemRow";
 import { clockTime, revisionName, tp } from "./i18n";
 import { panelSlice, type AppliedRecord } from "./state";
@@ -210,6 +210,7 @@ function GateFooter({
       <ApprovalBox
         lang={lang}
         data-testid="gate-box"
+        hasChangedFact={gate.counts.facts > 0 || Boolean(view.untied?.length)}
         propose={<Parts text={proposerText(view, lang)} />}
         check={<Parts text={checkText(view, lang, guardState)} />}
         approve={null}
@@ -261,11 +262,15 @@ export function AppliedFooter({ applied, lang }: { applied: AppliedRecord; lang:
           </span>
         }
       />
+      <details className="rp-details" data-testid="applied-details">
+        <summary>{tp("wp4_sheet_details", lang)}</summary>
+        <PlanHash value={applied.planHash} lang={lang} testId="applied-plan-hash" />
+      </details>
       <div className="rp-footer-row rp-footer-row--applied">
         <span className="rp-footer-status" data-testid="applied-status">
           {tp("wp4_applied_status", lang, [applied.revision])}
           <span className="rp-sep">·</span>
-          <button type="button" className="rp-link" onClick={() => void exportApplied()} data-testid="applied-export">
+          <button type="button" className="rp-link" onClick={() => void exportApplied(undefined, applied.runId)} data-testid="applied-export">
             {tp("wp4_applied_export", lang)}
           </button>
           <Keycap keys={["Ctrl", "E"]} />

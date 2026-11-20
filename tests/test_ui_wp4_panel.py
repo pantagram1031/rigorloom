@@ -94,7 +94,16 @@ def test_panel_keys_share_changes_and_apply_only_the_reviewed_subset(browser, se
         applied_id = receipts[0]["planId"]
         assert applied_id != proposal["planId"]
         projected = _rpc_post(server.url, server.token, "plan/get", {"planId": applied_id})
-        assert [op["opId"] for op in projected["result"]["plan"]["ops"]] == ["keeper"]
+        applied_plan = projected["result"]["plan"]
+        assert [op["opId"] for op in applied_plan["ops"]] == ["keeper"]
+        assert applied_plan["planHash"] != proposal["planHash"]
+        page.get_by_test_id("applied-details").locator("summary").click()
+        expect(page.get_by_test_id("applied-plan-hash")).to_have_attribute("title", applied_plan["planHash"])
+        expect(page.get_by_test_id("applied-plan-hash")).to_have_text(applied_plan["planHash"][:12])
+        page.get_by_test_id("panel-tab-agent").click()
+        page.get_by_test_id("thread-applied-details").locator("summary").click()
+        expect(page.get_by_test_id("thread-applied-plan-hash")).to_have_attribute("title", applied_plan["planHash"])
+        page.get_by_test_id("panel-tab-changes").click()
         assert len(resolves) == 1
         assert resolves[0]["params"]["planId"] == applied_id
         assert resolves[0]["params"]["confirmationToken"]
@@ -246,12 +255,6 @@ def test_gongmun_typing_approval_history_and_export(browser, server, tmp_path, t
         expect(approve).to_be_enabled(timeout=30_000)
         page.keyboard.press("Control+Shift+Enter")
         sheet = page.get_by_test_id("approve-sheet")
-        expect(sheet).to_have_attribute("data-ready", "")
-        tick = page.get_by_test_id("tick-facts")
-        expect(tick).to_be_focused()
-        page.keyboard.press("Enter")
-        expect(page.get_by_test_id("approve-confirm")).to_be_disabled()
-        assert not _receipts(tmp_path, _session_id(page))
         expect(sheet).to_contain_text("변경 1건 승인")
         expect(page.get_by_test_id("sheet-after-1")).to_have_text(value)
         page.get_by_test_id("sheet-details").locator("summary").click()
@@ -344,9 +347,11 @@ def test_reproposal_reaches_a_revision_published_by_another_client(browser, serv
             assert reply["ok"], reply
             return reply["result"]
 
+        fixture = Path(__file__).resolve().parents[1] / "examples" / "gongmun" / "expected" / "plan.json"
+        other = json.loads(fixture.read_text())["ops"][5]
         plan = rpc("plan/propose", {
             "sessionId": sid, "backend": "preedit",
-            "ops": [{"kind": "fill_cell", "table": 0, "row": 6, "col": 1, "text": "외부 수정"}],
+            "ops": [{"kind": other["kind"], **other["params"]}],
         })["plan"]
         approval = rpc("approval/request", {"planId": plan["planId"]})["approval"]
         rpc("approval/resolve", {
@@ -363,7 +368,7 @@ def test_reproposal_reaches_a_revision_published_by_another_client(browser, serv
         assert len(_receipts(tmp_path, sid)) == 1
         with page.expect_request(lambda req: _rpc_payload(req).get("method") == "plan/propose") as reproposed:
             page.get_by_test_id("stale-repropose").click()
-        assert _rpc_payload(reproposed.value)["params"]["base"]["runId"] == candidate["runId"]
+        assert _rpc_payload(reproposed.value)["params"]["baseRunId"] == candidate["runId"]
         expect(page.get_by_test_id("stale-banner")).to_have_count(0, timeout=20_000)
         expect(approve).to_be_enabled(timeout=20_000)
 
@@ -399,3 +404,56 @@ def test_refused_decision_retries_with_a_new_sheet_token(browser, server, tmp_pa
         confirm.click()
         expect(page.get_by_test_id("applied-footer")).to_be_visible(timeout=30_000)
         assert len(tokens) == 2 and all(tokens) and tokens[0] != tokens[1]
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_required_tick_takes_keyboard_focus_with_visible_ring(browser, server, tmp_path, theme):
+    with browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=theme) as page:
+        _open_sample(page, server)
+        sid = _session_id(page)
+        value = "시험 값"
+        provenance = tmp_path / "rt-root" / "provenance"
+        provenance.mkdir(exist_ok=True)
+        (provenance / f"{sid}.json").write_text(
+            json.dumps({"mockOps": [json.dumps(["cell", 0, 5, 1, value], ensure_ascii=False)]}),
+            encoding="utf-8",
+        )
+        plan = _propose(server, sid, [("test-value", 5, value)])
+        assert plan.get("mockOps") == ["test-value"]
+        page.get_by_test_id("change-summary-1").click(timeout=20_000)
+        page.keyboard.press("y")
+        expect(page.get_by_test_id("approve")).to_be_enabled(timeout=20_000)
+        page.keyboard.press("Control+Shift+Enter")
+        sheet = page.get_by_test_id("approve-sheet")
+        expect(sheet).to_have_attribute("data-ready", "")
+        tick = page.get_by_test_id("tick-test")
+        expect(tick).to_be_focused()
+        expect(tick).to_have_css("outline-style", "solid")
+        expect(tick).to_have_css("outline-width", "2px")
+        page.keyboard.press("Enter")
+        expect(page.get_by_test_id("approve-confirm")).to_be_disabled()
+        assert not _receipts(tmp_path, sid)
+        page.keyboard.press("Space")
+        expect(tick).to_be_checked()
+        page.keyboard.press("Enter")
+        expect(page.get_by_test_id("applied-footer")).to_be_visible(timeout=30_000)
+
+
+def test_open_settings_switches_an_already_open_dialog_to_the_requested_section(browser, server):
+    with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
+        _open_sample(page, server)
+        page.get_by_test_id("composer-connect").click()
+        dialog = page.get_by_test_id("settings-dialog")
+        agent = dialog.get_by_test_id("settings-nav-settings-agent")
+        general = dialog.get_by_test_id("settings-nav-general")
+        expect(agent).to_have_attribute("aria-selected", "true")
+        page.keyboard.press("Control+Comma")
+        expect(dialog).to_be_visible()
+        expect(general).to_have_attribute("aria-selected", "true")
+        expect(general).to_be_focused()
+        expect(agent).to_have_attribute("aria-selected", "false")
+        folders = dialog.get_by_test_id("settings-nav-folders")
+        folders.click()
+        expect(folders).to_have_attribute("aria-selected", "true")
+        page.keyboard.press("Control+Comma")
+        expect(general).to_have_attribute("aria-selected", "true")

@@ -352,6 +352,7 @@ export async function selectSession(sessionId: string) {
         }
       : {}),
   });
+  const selectedDraft = getState().draft;
   await rt.savePrefs({ lastSessionId: sessionId });
   if (Array.isArray(getState().corpusFiles) && getState().corpusFiles.length === 0) {
     void loadCorpusFiles();
@@ -373,7 +374,11 @@ export async function selectSession(sessionId: string) {
       await loadHeadTexts(sessionId, headRun);
     }
   }
-  if (typeof restoreSavedDraft === "function" && getState().activeSessionId === sessionId) {
+  // The canvas can receive edits while the document's open-time reads finish.
+  // Restore only the draft that was selected, so a live edit's in-flight plan
+  // never gets submitted again by the restore path.
+  if (typeof restoreSavedDraft === "function" && getState().activeSessionId === sessionId &&
+      (uiVariant() !== "v2" || getState().draft === selectedDraft)) {
     await restoreSavedDraft(sessionId);
   }
 }

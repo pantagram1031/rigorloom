@@ -16,6 +16,7 @@ import {
   getShell,
   type LeftPaneId,
   type RightTabId,
+  type SettingsSection,
   setShell,
 } from "./shellState";
 import { activateTabIndex, closeTab, openStartTab, stepTab } from "./tabs";
@@ -34,7 +35,7 @@ export function closePalette(): void {
   setShell({ paletteOpen: false, paletteQuery: "" });
 }
 
-export function openSettings(section: "general" | "settings:agent" = "general"): void {
+export function openSettings(section: SettingsSection = "general"): void {
   setShell({ settingsOpen: true, settingsSection: section, paletteOpen: false, appMenuOpen: false, narrowDrawerOpen: false });
 }
 

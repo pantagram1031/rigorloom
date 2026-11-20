@@ -5,7 +5,7 @@
 import { Fragment, useLayoutEffect, useRef } from "react";
 
 import type { UiLanguage } from "../i18n/vocabulary";
-import type { ChangeSource, SourceTally } from "../model/changes";
+import { shortHash, type ChangeSource, type SourceTally } from "../model/changes";
 import { tp } from "./i18n";
 
 export function sourceLabel(source: ChangeSource, lang: UiLanguage): string {
@@ -28,6 +28,15 @@ export function proposerLine(tally: SourceTally, lang: UiLanguage): string {
   const key = present.length > 1 ? "wp4_box_propose_part" : "wp4_box_propose_body";
   const sources = present.length ? present : ["agent" as const];
   return sources.map((source) => tp(key, lang, [sourceLabel(source, lang), tally[source] ?? 0])).join(" · ");
+}
+
+export function PlanHash({ value, lang, testId }: { value: string; lang: UiLanguage; testId: string }) {
+  return (
+    <div className="rp-kv">
+      <span className="rp-kv-k">{tp("wp4_sheet_plan_hash", lang)}</span>
+      <code className="rp-mono" title={value} data-testid={testId}>{shortHash(value)}</code>
+    </div>
+  );
 }
 
 /** The source as text, never colour alone. 시험용 carries the amber tag. */

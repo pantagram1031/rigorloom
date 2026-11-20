@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+const { setUiVariant } = await import("../src/uiVariant.ts");
+setUiVariant("v2");
 const labels = await import("../src/workspace/fieldLabels.ts");
 const corpus = JSON.parse(readFileSync(new URL("../src/fixtures/corpus.json", import.meta.url), "utf8"));
 
@@ -40,4 +42,15 @@ test("a static form line is named by its own words on the 기안문", () => {
   for (const row of [6, 7, 8, 9]) {
     for (const col of [0, 1, 2, 7, 12]) assert.doesNotMatch(label(row, col), /[(（]\s*[)）]?$/);
   }
+});
+
+test("a form separator stops label inheritance in editor v2", () => {
+  const cells = [
+    { addr: { row: 0, col: 0 }, classification: "static", textPreview: "왼쪽 항목" },
+    { addr: { row: 0, col: 1 }, classification: "static", textPreview: "/" },
+    { addr: { row: 0, col: 2 }, classification: "fill_target", textPreview: "" },
+  ];
+  const inspect = { graph: { tables: [{ index: 0, cells }] } };
+  assert.equal(labels.deriveCellFieldLabel(inspect, {}, 0, 0, 0, "en"), "왼쪽 항목");
+  assert.equal(labels.deriveCellFieldLabel(inspect, {}, 0, 0, 2, "en"), "Blank 1");
 });

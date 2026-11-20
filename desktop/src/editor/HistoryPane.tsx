@@ -45,7 +45,7 @@ export function HistoryPane({ sessionId }: { sessionId: string | null }) {
       <ol className="ed-history-list">
         {revisions.map(({ c, n }) => {
           const isHead = head?.runId === c.runId;
-          const box = applied && applied.revision === n ? applied : null;
+          const box = applied && applied.runId === c.runId ? applied : null;
           const count = Array.isArray(c.opKinds) ? c.opKinds.length : null;
           return (
             <li key={c.runId} className="ed-history-row" data-testid={`history-row-${n}`} aria-current={isHead ? "true" : undefined}>

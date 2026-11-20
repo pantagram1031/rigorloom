@@ -116,6 +116,7 @@ export function useChangeSet(sessionId: string): ChangeSetContext {
   const staleness = useWorkspace(draftStaleness);
   const reapproval = useWorkspace((s) => s.reapprovalPrompt);
   const approvalError = useWorkspace((s) => s.approvalError);
+  const applyError = useWorkspace((s) => s.applyError);
   const candidates = useWorkspace((s) => (s.activeSessionId ? s.candidates[s.activeSessionId] : undefined));
   const appliedState = useWorkspace((s) => s.applied);
   const guard = useReviewGuardSummary();
@@ -135,9 +136,10 @@ export function useChangeSet(sessionId: string): ChangeSetContext {
     );
   };
   const baseRevision = revisionOf(draft.plan?.base?.runId ?? draft.baseRunId);
-  const currentRevision = revisionOf(candidates?.at(-1)?.runId);
+  const currentRevision = revisionOf(candidates?.[candidates.length - 1]?.runId);
   const behindReported = staleFromValidation(draft.validation) === "plan_behind_head" ||
-    draft.error?.code === "plan_behind_head" || approvalError?.code === "plan_behind_head";
+    draft.error?.code === "plan_behind_head" || approvalError?.code === "plan_behind_head" ||
+    applyError?.code === "plan_behind_head";
   const unseenHead = behindReported && currentRevision <= baseRevision;
   const refreshed = useRef<string | null>(null);
   const refreshKey = `${sessionId}:${draft.plan?.planId ?? draft.baseRunId ?? "source"}`;

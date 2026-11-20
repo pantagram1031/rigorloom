@@ -121,6 +121,7 @@ test("stale disables Y, N and 승인", () => {
 
 test("Enter is blocked until the required ticks are set", () => {
   const fact = item(2, {
+    source: "test",
     guard: { status: "changed", facts: [{ kind: "date", before: "2026년 1월 1일", after: "2027년 1월 1일", expected: false }] },
   });
   const items = [item(1), fact];

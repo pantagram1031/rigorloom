@@ -37,14 +37,14 @@ import {
 import { canvas, getCanvasSlice, recordCanvasDecisions, restoreCanvasDecision, setCanvasSlice } from "../canvas/controller";
 import { showRightTab } from "../shell/bindings";
 import { docLayout } from "../shell/shellState";
-import { getState, headCandidate, showToast } from "../store";
+import { getState, headCandidate, showToast, subscribeWorkspace } from "../store";
 import { markExternalPlanDismissed } from "../workspace/externalPlan";
 import { activeApprovalBinding } from "../workspace/reviewSummary";
 import { captureConfirmation, type ConfirmationBinding } from "../workspace/trust";
 import { clearSheetConfirmation, prepareSheetConfirmation } from "../workspace/sheetConfirmation";
 import { tp } from "./i18n";
 import { resolveReturn, styleCheck } from "./rpc";
-import { latestView, panelSlice, type PanelTab } from "./state";
+import { latestView, panelSlice, subscribeLatestView, type PanelTab } from "./state";
 
 function doc(): string | null {
   return getState().activeSessionId;
@@ -195,23 +195,37 @@ async function prunedReviewMatches(confirmed: ConfirmationBinding, reviewed: Cha
   const contents = (items: ChangeSetView["items"]) => JSON.stringify(
     items.map(({ id, contentHash, guard }) => [id, contentHash, guard]),
   );
-  const until = Date.now() + 15_000;
-  do {
-    const live = captureConfirmation(getState(), []);
-    if (!live || live.sessionId !== confirmed.sessionId || live.planId !== confirmed.planId ||
-      live.planHash !== confirmed.planHash || live.baseDigest !== confirmed.baseDigest ||
-      live.baseRunId !== confirmed.baseRunId) return false;
+  return new Promise((resolve) => {
+    const finish = (matches: boolean) => {
+      clearTimeout(timeout);
+      unsubscribeWorkspace();
+      unsubscribeView();
+      resolve(matches);
+    };
+    const check = () => {
+      const live = captureConfirmation(getState(), []);
+      if (!live || live.sessionId !== confirmed.sessionId || live.planId !== confirmed.planId ||
+        live.planHash !== confirmed.planHash || live.baseDigest !== confirmed.baseDigest ||
+        live.baseRunId !== confirmed.baseRunId) {
+        finish(false);
+        return;
+      }
 
-    const current = latestView(confirmed.sessionId);
-    if (current && current.id === confirmed.planId && !current.checking) {
-      return !current.stale && gateState(current).block?.kind !== "diff_mismatch" && contents(current.items) === contents(accepted) &&
+      const current = latestView(confirmed.sessionId);
+      if (!current || !matchesRenderedPlan(confirmed, current) || current.checking) return;
+      finish(!current.stale && !current.failureCode && gateState(current).block?.kind !== "diff_mismatch" &&
+        contents(current.items) === contents(accepted) &&
         (current.untied ?? []).every((row) => reviewed.untied?.some((old) =>
           old.paragraph === row.paragraph && old.before === row.before && old.after === row.after)) &&
-        requiredTicks(current).every((tick) => requiredTicks(reviewed).includes(tick));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 40));
-  } while (Date.now() < until);
-  return false;
+        requiredTicks(current).every((tick) => requiredTicks(reviewed).includes(tick)));
+    };
+    // The store invalidates the binding immediately. The panel publishes its
+    // projection after rendering the guard summary for the replacement plan.
+    const timeout = setTimeout(() => finish(false), 15_000);
+    const unsubscribeWorkspace = subscribeWorkspace(check);
+    const unsubscribeView = subscribeLatestView(check);
+    check();
+  });
 }
 
 function matchesRenderedPlan(
@@ -262,13 +276,14 @@ export async function confirmApproval(): Promise<boolean> {
   const drop = idsToDrop(v.items);
   // What each accepted change does, as the person saw it.
   const seen = live.draft.ops.filter((op) => accepted.has(op.opId));
-  const counts = countChanges(v.items);
-  const sources = tallyBySource(v.items.filter((it) => accepted.has(it.id)));
+  const acceptedItems = v.items.filter((item) => accepted.has(item.id));
+  const counts = countChanges(acceptedItems);
+  const sources = tallyBySource(acceptedItems);
   const record = {
     count: accepted.size,
-    facts: v.items.filter((it) => accepted.has(it.id) && it.guard.status === "changed").length + (v.untied?.length ?? 0),
+    facts: counts.facts + (v.untied?.length ?? 0),
     attn: counts.attn,
-    checked: v.items.every((it) => it.guard.status !== "not_checked"),
+    checked: acceptedItems.every((it) => it.guard.status !== "not_checked"),
     sources,
   } as const;
   const fail = (): false => {
@@ -312,7 +327,7 @@ export async function confirmApproval(): Promise<boolean> {
     if (!done) return fail();
     const after = getState();
     const outcome = after.applyOutcomes?.[d];
-    if (outcome?.applied && after.draft.ops.length === 0) {
+    if (outcome?.applied?.planId === confirmed.planId) {
       const revision = revisionNumberFor(after, d, outcome.applied.runId) ?? 1;
       setCanvasSlice({ decisions: {}, decisionUndoStack: [] }, d);
       panelSlice.set(d, {
@@ -321,7 +336,10 @@ export async function confirmApproval(): Promise<boolean> {
         sheetFor: null,
         ticks: [],
         filter: "all",
-        applied: { revision, atUtc: new Date().toISOString(), ...record },
+        applied: {
+          revision, runId: outcome.applied.runId, planHash: confirmed.planHash, baseDigest: confirmed.baseDigest,
+          atUtc: new Date().toISOString(), ...record,
+        },
         returned: null,
       });
       return true;
@@ -382,7 +400,8 @@ export async function proposeAgainOnHead(): Promise<void> {
   await loadCandidates(d);
   const state = getState();
   if (state.activeSessionId !== d || state.draft !== draft) return;
-  const newest = state.candidates[d]?.at(-1)?.runId;
+  const candidates = state.candidates[d];
+  const newest = candidates?.[candidates.length - 1]?.runId;
   if (newest && newest !== headCandidate(state)?.runId) {
     await setHead(newest);
   } else {

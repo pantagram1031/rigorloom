@@ -130,7 +130,7 @@ function harness({ ops, decisions = {}, hooks = {}, ticks = [] }) {
       calls.apply.push(confirmed.planId);
       setState({
         draft: draftFor(planFor("none"), []),
-        applyOutcomes: { S: { applied: { runId: "run-1" } } },
+        applyOutcomes: { S: { applied: { runId: "run-1", planId: confirmed.planId } } },
       });
     },
   });

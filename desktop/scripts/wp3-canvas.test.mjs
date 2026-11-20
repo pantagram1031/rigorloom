@@ -121,6 +121,7 @@ function loadWp3Stack() {
   });
   const wp3FormTokens = loadTsModule("src/i18n/v2/wp3FormTokens.ts");
   const fieldLabels = loadTsModule("src/workspace/fieldLabels.ts", {
+    "../uiVariant.ts": { uiVariant: () => "v2" },
     "../i18n/formTokens.ts": formTokens,
     "../i18n/formTokens": formTokens,
     "../i18n/vocabulary.ts": vocabulary,

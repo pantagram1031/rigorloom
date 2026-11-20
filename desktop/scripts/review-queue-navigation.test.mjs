@@ -33,6 +33,7 @@ const planProjection = loadTsModule("../src/agent/planProjection.ts", {
   "../i18n/vocabulary": vocabulary,
 });
 const fieldLabels = loadTsModule("../src/workspace/fieldLabels.ts", {
+  "../uiVariant.ts": { uiVariant: () => "v1" },
   "../i18n/vocabulary.ts": vocabulary,
   "../i18n/vocabulary": vocabulary,
   "../i18n/formTokens.ts": formTokens,

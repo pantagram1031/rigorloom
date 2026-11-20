@@ -45,6 +45,7 @@ function loadModules() {
     "../i18n/vocabulary.ts": vocabulary,
   });
   const fieldLabels = load("../src/workspace/fieldLabels.ts", {
+    "../uiVariant.ts": { uiVariant: () => "v1" },
     "../i18n/vocabulary.ts": vocabulary,
     "../i18n/formTokens.ts": formTokens,
   });

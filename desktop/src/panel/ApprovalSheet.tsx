@@ -211,7 +211,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
       if (e.shiftKey || e.altKey) return;
       const target = e.target as HTMLElement;
       // A focused button or link keeps its own Enter.
-      if (target.tagName === "BUTTON" && !target.hasAttribute("data-confirm")) return;
+      if (target.closest("button, a, summary") && !target.hasAttribute("data-confirm")) return;
       e.preventDefault();
       e.stopPropagation();
       if (ready) void confirmApproval();
@@ -278,7 +278,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
                   )),
               )}
               {untied.map(({ paragraph, before, after }) => (
-                <li key={paragraph} data-testid={`sheet-untied-${paragraph}`}>
+                <li key={paragraph} className="rp-sheet-untied" data-testid={`sheet-untied-${paragraph}`}>
                   {tp("wp4_sheet_untied_row", lang, [paragraph, after || before])}
                 </li>
               ))}

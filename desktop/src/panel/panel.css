@@ -630,7 +630,15 @@
   height: 100%;
   min-height: 0;
   background: var(--panel);
+}
+
+.rp-sheet:focus-visible {
   outline: none;
+}
+
+.rp-sheet-untied {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .rp-sheet-head {

@@ -434,6 +434,7 @@ async function phaseOpen(config: SmokeConfig) {
 async function phaseReattach() {
   const state = getState();
   const prefs = await rt.loadPrefs();
+  await waitFor(() => hasHangul(domText('[data-testid="page-sheet"]')), 15000);
   const remembered = prefs.lastSessionId as string | undefined;
 
   check("a session was remembered from the previous run", !!remembered, remembered ?? "");
@@ -443,8 +444,8 @@ async function phaseReattach() {
 
   const inspect = activeInspect(state);
   check("the document was re-read without being re-imported", !!inspect);
-  check("the tree is populated again",
-    domText('[data-testid="structure-tree"]').length > 0 && !!inspect);
+  check("the document tables are populated again",
+    !!inspect && document.querySelector('[data-testid^="page-table-"]') !== null);
   check("the same source hash came back",
     !!inspect && inspect.documentHash ===
       state.sessions.find((s) => s.sessionId === state.activeSessionId)?.source.sha256,
@@ -456,7 +457,7 @@ async function phaseReattach() {
   check("최근 문서 came back", state.recents.length > 0,
     state.recents.map((r) => `${r.name} ${r.sha256.slice(0, 8)}`).join(", "));
   check("the centre shows the document again",
-    hasHangul(domText('[data-testid="paper"]')));
+    hasHangul(domText('[data-testid="page-sheet"]')));
   check("no terminal was needed", true, "the shell reattached from its own prefs file");
 }
 

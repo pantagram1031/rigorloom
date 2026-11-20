@@ -12,12 +12,10 @@ import { S } from "../i18n/v2/shell";
 import * as rt from "../runtime";
 import { useWorkspace } from "../store";
 import { Btn } from "./parts";
-import { setShell, useShell } from "./shellState";
+import { setShell, useShell, type SettingsSection } from "./shellState";
 import { Slot, useSlotsVersion } from "./Slot";
 import { slotEntries, slotNames, type SlotName } from "./slots";
 import { TID } from "./testids";
-
-type Section = "general" | "folders" | SlotName;
 
 /** A section's nav label: the registration's title, else a known name; never the raw slot id. */
 function sectionLabel(name: SlotName, lang: "ko" | "en"): string {
@@ -36,18 +34,17 @@ export function SettingsDialog() {
 function SettingsBody() {
   useSlotsVersion();
   const lang = useWorkspace((s) => s.language);
-  const initialSection = useShell((s) => s.settingsSection ?? "general");
-  const [section, setSection] = useState<Section>(initialSection);
+  const section = useShell((s) => s.settingsSection ?? "general");
   const ref = useRef<HTMLDivElement>(null);
   const extra = slotNames("settings:");
 
   useEffect(() => {
-    ref.current?.querySelector<HTMLElement>("[data-settings-nav] button")?.focus();
-  }, []);
+    ref.current?.querySelector<HTMLElement>('[data-settings-nav] button[aria-selected="true"]')?.focus();
+  }, [section]);
 
-  const sections: Array<{ id: Section; label: string }> = [
+  const sections: Array<{ id: SettingsSection; label: string }> = [
     { id: "general", label: S.t("shell_settings_general", lang) },
-    ...extra.map((name) => ({ id: name as Section, label: sectionLabel(name, lang) })),
+    ...extra.map((name) => ({ id: name as SettingsSection, label: sectionLabel(name, lang) })),
     { id: "folders", label: S.t("shell_settings_folders", lang) },
   ];
 
@@ -94,7 +91,7 @@ function SettingsBody() {
                 aria-selected={section === s.id}
                 className="sh-settings-navrow"
                 data-testid={`settings-nav-${String(s.id).replace(":", "-")}`}
-                onClick={() => setSection(s.id)}
+                onClick={() => setShell({ settingsSection: s.id })}
               >
                 {s.label}
               </button>

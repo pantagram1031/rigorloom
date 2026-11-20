@@ -2,22 +2,20 @@
 // The examples are checked against the runtime schemas.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import test from "node:test";
 
 const adapter = await import("../src/panel/adapter.ts");
 const model = await import("../src/model/changes.ts");
 
-const HERE = path.dirname(new URL(import.meta.url).pathname);
-const FIX = path.join(HERE, "fixtures", "platform");
-const RUNTIME_SCHEMAS = path.resolve(HERE, "..", "..", "runtime", "schemas");
+const FIX = new URL("./fixtures/platform/", import.meta.url);
+const RUNTIME_SCHEMAS = new URL("../../runtime/schemas/", import.meta.url);
 
 function loadSchema(name) {
-  const own = path.join(RUNTIME_SCHEMAS, name);
+  const own = new URL(name, RUNTIME_SCHEMAS);
   return JSON.parse(readFileSync(own, "utf8"));
 }
 const SCHEMAS = { "changeset.schema.json": loadSchema("changeset.schema.json"), "events.schema.json": loadSchema("events.schema.json") };
-const json = (f) => JSON.parse(readFileSync(path.join(FIX, f), "utf8"));
+const json = (f) => JSON.parse(readFileSync(new URL(f, FIX), "utf8"));
 
 // A subset of JSON Schema 2020-12: type, const, enum, pattern, minimum, minLength,
 // required, properties, items, $ref (local and cross-file $defs), allOf with if/then.
@@ -59,7 +57,7 @@ test("the examples are valid rigorloom.changeset/1 and rigorloom.events/1", () =
     assert.deepEqual(validate(json(f), cs, cs), [], f);
   }
   const ev = SCHEMAS["events.schema.json"];
-  const lines = readFileSync(path.join(FIX, "events-example.jsonl"), "utf8").trim().split("\n");
+  const lines = readFileSync(new URL("events-example.jsonl", FIX), "utf8").trim().split("\n");
   for (const line of lines) assert.deepEqual(validate(JSON.parse(line), ev, ev), [], line);
   // The validator itself refuses what the schema refuses.
   assert.notDeepEqual(validate({ ...json("changeset-example.json"), status: "accepted" }, cs, cs), []);
@@ -123,7 +121,7 @@ test("P0 sets without items, stale reasons and closed sets", () => {
 });
 
 test("events map onto what the panel does with them", () => {
-  const lines = readFileSync(path.join(FIX, "events-example.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const lines = readFileSync(new URL("events-example.jsonl", FIX), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   const fx = lines.map((l) => adapter.fromPlatformEvent(l));
   assert.deepEqual(fx[0], { kind: "run", turnId: "t-1", phase: "started" });
   assert.deepEqual(fx[1], { kind: "step", turnId: "t-1", step: "rendering_pages" });
