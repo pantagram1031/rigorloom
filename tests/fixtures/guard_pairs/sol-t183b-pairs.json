@@ -1,6 +1,6 @@
 {
  "_about": [
-  "Sol's 78 fresh before/after pairs from the re-check of the T183 fixes (4b4b568), none from the earlier sets; the one pair with two tables is split into two pairs, one table each.",
+  "The reviewer's 78 fresh before/after pairs from the re-check of the T183 fixes (4b4b568), none from the earlier sets; the one pair with two tables is split into two pairs, one table each.",
   "fact: did the edit change a fact the person would care about. A pair may hold a table on several lines; it is one paragraph.",
   "gap: the guard is wrong on this pair today; the name is the follow-up rule meant to close it. tests/test_guard_pairs.py runs these as strict xfails, so a rule that closes one must also delete its gap."
  ],

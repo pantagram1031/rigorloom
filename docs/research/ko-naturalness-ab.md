@@ -6,7 +6,7 @@ The purpose is to establish a measured basis for considering future claims about
 
 All sample sizes, cutoffs, model assignments, generation settings, the seed, and procedural limits below are design choices, not measured quantities or guarantees of how many eligible outputs the run will produce. Freeze this protocol and a run lock before acquiring documents. Record their SHA-256 hashes. Any later change requires a dated amendment and a separately identified run; do not pool runs silently.
 
-The run lock records the full code commit, protocol hash, acquisition window in UTC, operator identities and roles, model deployment identifiers and versions, reasoning settings, complete prompt templates, available decoding settings, and software versions. Use high reasoning for both judges. Resolve the exact deployments behind Astra and GPT Sol and freeze all exposed decoding settings before collection. If a required model cannot be fixed or becomes unavailable, stop and amend before acquiring further data; do not substitute silently.
+The run lock records the full code commit, protocol hash, acquisition window in UTC, operator identities and roles, model deployment identifiers and versions, reasoning settings, complete prompt templates, available decoding settings, and software versions. Use high reasoning for both judges. Resolve the exact deployments behind judge A and judge B and freeze all exposed decoding settings before collection. If a required model cannot be fixed or becomes unavailable, stop and amend before acquiring further data; do not substitute silently.
 
 The target pool contains 30–60 distinct official Korean documents. Report the actual count, including a count below the target. Each selected document supplies at most one paragraph. Search only official government or public-institution publication services, recording every query, filter, result page, acquisition time, and candidate rejection. Never search for material based on rewrite success or judge response.
 
@@ -32,7 +32,7 @@ Let K be the selected document count, at most 20 for this pilot. Plan K referenc
 
 Produce the common rewrite input as a model draft from the same facts. A model preparer extracts a fact card with one proposition per line, retaining actors, actions, exact values, units, dates, named institutions, conditions, obligations, polarity, uncertainty, and causal and temporal relations. Preserve necessary technical terms and verbatim quotations, but omit reference sentence structure, source identifiers, titles, URLs, and layout. A separate model context verifies the card against the reference before generation.
 
-Use `gpt-6.1-terra` as the nonjudge generation and humanization-worker backend, with medium reasoning, as a design assignment. Pin its exact deployment and any exposed sampling controls in the lock; leave unexposed controls explicitly unspecified rather than inventing settings. Use fresh contexts, no tools, no browsing, and no reference paragraph. Astra and GPT Sol perform no generation, preparation, editing, or preliminary review in this run.
+Use one fixed model deployment as the nonjudge generation and humanization-worker backend, with medium reasoning, as a design assignment. Pin its exact deployment and any exposed sampling controls in the lock; leave unexposed controls explicitly unspecified rather than inventing settings. Use fresh contexts, no tools, no browsing, and no reference paragraph. Judge A and judge B perform no generation, preparation, editing, or preliminary review in this run.
 
 The exact generation prompt is the following, with only the two placeholders substituted:
 
@@ -64,9 +64,9 @@ Before judgments, freeze every output, its status, hash, verification, and pair 
 
 Each pair contains only R and that condition's final output. No A-versus-B pair is substituted. Build opaque pair tokens from SHA-256 of `20261115|pair|<paragraph-id>|<condition>`. Keep the condition and reference-side key inaccessible to judges and their invocation contexts until both judgment files are frozen.
 
-For each judge and condition, sort pair tokens by SHA-256 of `20261115|side|<judge>|<condition>|<pair-token>`. Assign the reference to A for the first ceiling(K/2) scheduled pairs and to B for the rest. Omit ineligible pairs without rebalancing and report the resulting balance. Combine the conditions and present them in ascending SHA-256 order of `20261115|order|<judge>|<pair-token>`. Break hash ties lexicographically. Judge labels are exactly `Astra` and `GPT Sol`; these salts produce reproducible independent schedules.
+For each judge and condition, sort pair tokens by SHA-256 of `20261115|side|<judge>|<condition>|<pair-token>`. Assign the reference to A for the first ceiling(K/2) scheduled pairs and to B for the rest. Omit ineligible pairs without rebalancing and report the resulting balance. Combine the conditions and present them in ascending SHA-256 order of `20261115|order|<judge>|<pair-token>`. Break hash ties lexicographically. The judge labels used in these salts are recorded in the run lock; with them the salts produce reproducible independent schedules.
 
-Astra is the primary judge and GPT Sol the second judge. Give each pair a fresh isolated conversation, with no memory, tools, browsing, source documents, previous pairs, other judge responses, or preparation history. Both see the same normalized plain-text rendering, the common document-type label, and opaque pair token. They do not see URLs, licences, publication dates as metadata, reference/rewrite labels, condition, model identities, drafts, fact cards, edit marks, filenames, diagnostics, or scores. Dates that are factual body content remain on both sides.
+Judge A is the primary judge and judge B the second judge. Give each pair a fresh isolated conversation, with no memory, tools, browsing, source documents, previous pairs, other judge responses, or preparation history. Both see the same normalized plain-text rendering, the common document-type label, and opaque pair token. They do not see URLs, licences, publication dates as metadata, reference/rewrite labels, condition, model identities, drafts, fact cards, edit marks, filenames, diagnostics, or scores. Dates that are factual body content remain on both sides.
 
 Use this exact judge prompt for both judges, substituting only the four placeholders. No other evaluation instruction or example is added:
 
@@ -83,7 +83,7 @@ Retain raw judge responses unchanged. Validate pair ID, allowed choice, reason c
 
 Decode A/B to `reference` or `rewrite` only after both judges finish. Keep TIE and CANNOT_TELL distinct; neither is a win or a missing response. Identical-text pairs remain in denominators and should yield TIE; flag inconsistent answers without deleting them. Record condition failures, missing judgments, declined suggestions, unchanged outputs, and exact reference recovery separately.
 
-The primary result is Astra's count of rewrite wins, reference wins, ties, and cannot-tell responses for each condition, with the scheduled, input-valid, output-valid, and judgment-valid denominators. Report the same for GPT Sol and by document type. The primary rewrite-win proportion uses all valid responses, including ties and cannot-tell, as its denominator. A decisive-only proportion may be reported secondarily with its smaller denominator; it must never replace the primary one.
+The primary result is judge A's count of rewrite wins, reference wins, ties, and cannot-tell responses for each condition, with the scheduled, input-valid, output-valid, and judgment-valid denominators. Report the same for judge B and by document type. The primary rewrite-win proportion uses all valid responses, including ties and cannot-tell, as its denominator. A decisive-only proportion may be reported secondarily with its smaller denominator; it must never replace the primary one.
 
 Set N = 50 valid pairs per condition before making a comparative finding about that condition, and require 50 common valid paragraphs for any A-versus-B contrast. “Valid” here requires eligible input, faithful output, and valid responses from both judges; a tie or cannot-tell remains valid. With fewer, publish only descriptive pilot counts and failure accounting, explicitly without a claim of improvement, parity, or human-like Korean. Fifty is a practical precision floor, not a power calculation: under an independent Bernoulli approximation the worst-case standard error is about seven percentage points. This approximation is illustrative, not evidence from this study.
 
@@ -99,7 +99,7 @@ Earlier notes summarized in `docs/korean-style-rules.md` and the phase-1 Korean-
 
 The following were the planned files for a full study, not a list of files published for this pilot. Let RUN be the locked run ID, E be an external evaluation directory outside any Git worktree, ID be a selected paragraph ID, and DATE be the UTC completion date in YYYY-MM-DD form.
 
-The repository receives `docs/research/ko-naturalness-ab.md`; `evals/ko-naturalness-ab/RUN/lock.json`; `search-log.jsonl`; `corpus-index.csv`; `screening.csv`; `preparation-ledger.jsonl`; `pair-key.csv`; `schedule-astra.csv`; `schedule-sol.csv`; `judgments-astra.jsonl`; `judgments-sol.jsonl`; and `analysis.json`, with all filenames after lock.json relative to that same RUN directory. The ledger contains statuses, operator identities, hashes, verification outcomes, and edit decisions without full paragraph text. The pair key is withheld from judge contexts, not supplied as workspace context.
+The repository receives `docs/research/ko-naturalness-ab.md`; `evals/ko-naturalness-ab/RUN/lock.json`; `search-log.jsonl`; `corpus-index.csv`; `screening.csv`; `preparation-ledger.jsonl`; `pair-key.csv`; `schedule-judge-a.csv`; `schedule-judge-b.csv`; `judgments-judge-a.jsonl`; `judgments-judge-b.jsonl`; and `analysis.json`, with all filenames after lock.json relative to that same RUN directory. The ledger contains statuses, operator identities, hashes, verification outcomes, and edit decisions without full paragraph text. The pair key is withheld from judge contexts, not supplied as workspace context.
 
 The future script `evals/ko-naturalness-ab-redownload.py` reads corpus-index.csv and writes only to E. Its planned invocation is `python evals/ko-naturalness-ab-redownload.py --index evals/ko-naturalness-ab/RUN/corpus-index.csv --dest E/downloads`. It re-downloads recorded public URLs, records retrieval failures, checks the recorded licence evidence and byte hashes, and refuses silent substitution of changed bytes. It uses the indexed extraction locator and normalization specification to verify paragraph hashes. Unavailable or changed sources remain failures; an archived alternative requires a pre-recorded URL and matching hash. The script is specified here and is not implemented as part of this protocol.
 
@@ -125,9 +125,11 @@ Code commit: `bc97f84379022be6bba55b6ab855e7e2976cd10e`. Protocol draft SHA-256:
 
 All roles were filled by models in separate fresh contexts. No human served in the listed preparation, editing, verification, or judging roles.
 
-- preparer_verifier_generator_editor_humanization: `gpt-6.1-terra`, medium reasoning.
-- Astra: `gpt-6-astra`, high reasoning.
-- GPT Sol: `gpt-6.1-sol`, high reasoning.
+- preparer_verifier_generator_editor_humanization: medium reasoning.
+- Judge A: high reasoning.
+- Judge B: high reasoning.
+
+The exact deployment identifiers and versions, and the judge labels used in the salts, are recorded in the run lock kept in the project records, not in this repository.
 
 Codex CLI: `codex-cli 0.169.0`; Python: `Python 3.12.3`; temperature: not exposed, unspecified.
 

@@ -863,7 +863,7 @@ def test_decide_result_is_coordinator_fenced_bound_structured_and_immutable(
     }
     decided = state.decide_result(
         *args,
-        decider="sol-coordinator",
+        decider="coordinator",
         authority=authority,
         receipt=receipt,
         evidence_facets=facets,
@@ -873,7 +873,7 @@ def test_decide_result_is_coordinator_fenced_bound_structured_and_immutable(
     ].count("result.decided")
     duplicate = state.decide_result(
         *args,
-        decider="sol-coordinator",
+        decider="coordinator",
         authority=authority,
         receipt=receipt,
         evidence_facets=facets,
@@ -881,7 +881,7 @@ def test_decide_result_is_coordinator_fenced_bound_structured_and_immutable(
 
     assert decided["status"] == "decided"
     assert decided["decision"]["disposition"] == "accepted"
-    assert decided["decision"]["decider"] == "sol-coordinator"
+    assert decided["decision"]["decider"] == "coordinator"
     assert decided["decision"]["authority"] == authority
     assert decided["decision"]["receipt"] == receipt
     assert decided["decision"]["evidence_facets"] == facets
@@ -896,7 +896,7 @@ def test_decide_result_is_coordinator_fenced_bound_structured_and_immutable(
     with pytest.raises(FencedError, match="immutable"):
         state.decide_result(
             *args,
-            decider="sol-coordinator",
+            decider="coordinator",
             authority=authority,
             receipt=receipt,
             evidence_facets={"focused-tests": {"passed": 4}},
@@ -905,7 +905,7 @@ def test_decide_result_is_coordinator_fenced_bound_structured_and_immutable(
     with pytest.raises(FencedError, match="no longer current"):
         state.decide_result(
             *args,
-            decider="sol-coordinator",
+            decider="coordinator",
             authority=authority,
             receipt=receipt,
             evidence_facets=facets,

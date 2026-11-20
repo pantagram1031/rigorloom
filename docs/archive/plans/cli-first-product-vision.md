@@ -1,6 +1,6 @@
 # Rigorloom product execution plan
 
-Status: active plan, not a completion claim. Owner: planning owner (product planning and acceptance). Execution lead: separate Codex Sol High task. Updated 2026-09-10.
+Status: active plan, not a completion claim. Owner: planning owner (product planning and acceptance). Execution lead: separate Codex coordinator task (high reasoning). Updated 2026-09-10.
 
 ## 1. Product outcome
 
@@ -17,7 +17,7 @@ Planning worktree: `<worktree-root>/rigorloom-cli-product-plan`, branch `codex/c
 | Responsibility | Location / owner | Rule |
 |---|---|---|
 | Product plan and acceptance changes | this branch / planning owner | Major tradeoffs and milestone acceptance; brief reviews |
-| Routine orchestration | separate Sol task `01a08756-2564-7aa1-bcc9-d6e853f372b8` | Own queue, usage routing, review and local integration |
+| Routine orchestration | separate coordinator task `01a08756-2564-7aa1-bcc9-d6e853f372b8` | Own queue, usage routing, review and local integration |
 | Current report integration candidate | `<worktree-root>/rigorloom-cli-report-essentials`, `codex/cli-report-essentials` | Clean `8e1a1ea` at planning baseline; recheck before each integration |
 | Gate integrity card | `<worktree-root>/rigorloom-cli-gate-integrity` | Existing Cursor owner; no concurrent edits to its two files |
 | Historical unified preview | `<worktree-root>/rigorloom-unified-working`, `ea02604` | Preserve; do not describe as finished CLI product |
@@ -108,17 +108,17 @@ M3 catalog discovery and M4 packaging investigation can run alongside M1/M2, but
 | Card | Scope / suggested executor | Required verification and dependency |
 |---|---|---|
 | CLI-GATE-01 | Existing Cursor worker: report controller and controller tests only | RED temporary-fixture regression then GREEN; pending/rejected own script gates block done; preserve human/autonomous and legacy gate:null contracts |
-| CLI-SOURCE-01 | Sol independently accepts existing8e1a1ea | Review DOI/tag normalization and focused tests; no new implementation if already proven |
+| CLI-SOURCE-01 | Coordinator independently accepts existing8e1a1ea | Review DOI/tag normalization and focused tests; no new implementation if already proven |
 | CLI-LAYOUT-01 | New isolated worker, QA measurement/checking layer only | Establish form-owned vs generated gap evidence; targeted form-zone rule or actionable repair needs; malformed body-spacing negative tests; native second-case rerun; no whole-page suppression |
 | CLI-DISCOVERY-01 | CLI metadata/hand-off adapter owner | Current stage name/playbook/required artifacts discoverable through documented interface; agree with graph; no auto-approving missing human work |
 | DOC-EQN-01 | Engine owner after reuse audit | Recover boxed display-equation intent from historical implementation; unit+native round-trip and rendered samples; unboxed behavior unchanged |
 | DOC-FORM-01 | Form preprocessing owner | Generalized PII-free mapping, guide removal and clone normalization; idempotence; fixed-content preservation; native form check |
 | EVIDENCE-01 | Pipeline artifact/receipt owner, after gate card | Canonical exact file/version/hash binding; stale receipt and off-book edits detected; explicit legacy migration, not retrospective false approval |
 | BENCH-LONG-01 | Benchmark curator + independent native reviewer | Complete sanitized inputs/assets/sources/build command; no missing assets papered over; compare complexity and quality, not copied roster/text |
-| TOOL-CATALOG-01 | Antigravity advisory inventory, Sol reconciles | Map documented Hancom API/action families to existing paths/tests and unsupported reasons; no feature implementation claims from docs |
+| TOOL-CATALOG-01 | Antigravity advisory inventory, coordinator reconciles | Map documented Hancom API/action families to existing paths/tests and unsupported reasons; no feature implementation claims from docs |
 | DIST-DOCTOR-01 | Packaging owner in isolated tree | Clean-environment dependency discovery, Hancom availability/version, fonts and portable limits; install smoke without developer paths |
 
-Only CLI-GATE-01 is already assigned to an active implementation worker at plan creation. Sol assigns other cards after checking current ownership and dependencies, records exact worktree/base/allowed files and stops workers at reviewed milestones. Advisory worker recommendations do not alter acceptance criteria by themselves.
+Only CLI-GATE-01 is already assigned to an active implementation worker at plan creation. The coordinator assigns other cards after checking current ownership and dependencies, records exact worktree/base/allowed files and stops workers at reviewed milestones. Advisory worker recommendations do not alter acceptance criteria by themselves.
 
 ## 9. Verification and regression corpus
 
@@ -132,9 +132,9 @@ Install acceptance: clean user profile/VM, documented licensed prerequisites, no
 
 ## 10. Agent roster and terminal session coordination
 
-The planning owner owns this plan and strategic reviews. Separate Codex Sol High owns routine orchestration, card assignment, integration and acceptance preparation. Claude Code is reserved for high-value difficult implementation/review and native workflow reasoning, in fresh bounded sessions after a durable handoff. Cursor Grok handles scoped implementation/recovery; other Cursor models are selected by verified capabilities. SuperGrok Build handles useful independent research/review/implementation once its tool loop is verified. Antigravity CLI adds Google-backed advisory research, catalog extraction and independent reviews through supported sandbox mode.
+The planning owner owns this plan and strategic reviews. A separate Codex coordinator (high reasoning) owns routine orchestration, card assignment, integration and acceptance preparation. Claude Code is reserved for high-value difficult implementation/review and native workflow reasoning, in fresh bounded sessions after a durable handoff. Cursor Grok handles scoped implementation/recovery; other Cursor models are selected by verified capabilities. SuperGrok Build handles useful independent research/review/implementation once its tool loop is verified. Antigravity CLI adds Google-backed advisory research, catalog extraction and independent reviews through supported sandbox mode.
 
-A terminal session manager named session `rigorloom` is the only authorized coordination surface. CLI workers should run in actual managed panes, with model/account label, assigned card and tool-access acknowledgement. Existing external jobs are mirrored until they finish safely. Sol and planning owner app tasks use honestly labelled bridge panes unless an actual supported native session attachment is established. A dashboard/process existing is not proof of user-visible UI or working tool calls.
+A terminal session manager named session `rigorloom` is the only authorized coordination surface. CLI workers should run in actual managed panes, with model/account label, assigned card and tool-access acknowledgement. Existing external jobs are mirrored until they finish safely. Coordinator and planning owner app tasks use honestly labelled bridge panes unless an actual supported native session attachment is established. A dashboard/process existing is not proof of user-visible UI or working tool calls.
 
 Every worker receives bounded context, owned paths, input artifacts, expected deliverable, acceptance commands and stop condition. Read shared coordination files before writes. Separate native COM execution from parallel source work: one COM owner at a time. External text saying done is not accepted without artifacts/tests. Do not restart on a mere observation timeout. Investigate terminal/cancelled/progress-only results before reusing a failing route.
 
@@ -144,7 +144,7 @@ Use actual quota snapshots with service, redacted account label, window, directi
 
 Default reserve:25% Codex and Claude. Prefer verified available Cursor/Antigravity/SuperGrok for routine work; spend reserved Claude on difficult bounded tasks. User authorizes using an expiring SuperGrok reset, but first verify the specific service/credit/expiry/need; never substitute Codex reset credits. Ordinary authorized account switching to user's other Cursor Google account may be used when appropriate through supported login; do not extract cookies/tokens, bypass limits or enable paid overages.
 
-Sample locally every15minutes if safely supported; inspect provider quotas before expensive dispatch and after milestones. Let Sol perform a bounded operational check about every30–60minutes; notify the planning owner/user for meaningful milestones, blockers or anomalous burn. Avoid waking the planning owner on every log change. At >5 quota percentage points/15minutes or >2x sustainable pace until reset, checkpoint the suspected worker and inspect model, context growth, retries, subagent multiplication, cache counts and overlapping work. These thresholds are planning defaults, not provider rules.
+Sample locally every15minutes if safely supported; inspect provider quotas before expensive dispatch and after milestones. Let the coordinator perform a bounded operational check about every30–60minutes; notify the planning owner/user for meaningful milestones, blockers or anomalous burn. Avoid waking the planning owner on every log change. At >5 quota percentage points/15minutes or >2x sustainable pace until reset, checkpoint the suspected worker and inspect model, context growth, retries, subagent multiplication, cache counts and overlapping work. These thresholds are planning defaults, not provider rules.
 
 Prefer compact handoffs and fresh purpose-specific sessions. Do not ask every model to review everything. Cheap deterministic local checks precede model reviews. A few high-quality independent reviews are more valuable than unbounded parallel agents. Runtime control boundaries and auth/tool availability are verified per provider before assigning production work.
 

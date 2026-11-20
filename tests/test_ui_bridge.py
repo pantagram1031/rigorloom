@@ -504,7 +504,7 @@ def test_guard_diff_text_and_hwpx_plan_preview_and_export_safety(started_bridge,
 
     # A bare amount is compared in the unit its field declares, as the guard
     # does: 43 under 운송비(천원) is 43,000원, 93 under (천원) is not 93 under
-    # (백만원) (Sol's re-check of T183).
+    # (백만원) (the reviewer's re-check of T183).
     s_decl, g_decl = client.post_json(
         "/api/guard/diff",
         {"beforeText": "운송비(천원)는 43으로 확정했다.", "afterText": "운송비는 43,000원으로 확정했다."},

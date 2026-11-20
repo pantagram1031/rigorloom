@@ -2,7 +2,8 @@
 
 **Research date:** 2026-07-19 through 2026-07-20<br>
 **Target release:** rigorloom v0.15<br>
-**Test hosts:** Windows 11 with WSL2 (Ubuntu 24.04.2 LTS, kernel `5.15.167.4-microsoft-standard-WSL2`) and Pantadex on OCI `VM.Standard.A1.Flex` (ARM64, 4 OCPUs, 24 GiB, Ubuntu 24.04.4 LTS)<br>
+**Test hosts:** Windows 11 with WSL2 (Ubuntu 24.04.2 LTS, kernel `5.15.167.4-microsoft-standard-WSL2`) and an ARM64 VM on OCI `VM.Standard.A1.Flex` (4 OCPUs, 24 GiB, Ubuntu 24.04.4 LTS)<br>
+**Paths:** `<poc>`, `<local>` and `<report>` stand for the proof-of-concept root, the user-local tool prefix and a report workspace on the Windows/WSL host; `<scratch>` is the scratch root on the ARM64 VM.<br>
 **Decision status:** enough evidence for a v0.15 architecture decision; not enough evidence to replace Hancom as the release-fidelity oracle
 
 ## Decision
@@ -11,9 +12,9 @@ Pure Linux replacements now exist for **editing, HWP/HWPX conversion, and previe
 
 Do not make LibreOffice plus H2Orestart the canonical renderer. It is useful as a best-effort Linux PDF path, but the tested three-page document still had roughly 645 px worst-case word-anchor displacement at 96 dpi after the equation-image workaround. The workaround restored conversion; it did not restore layout fidelity. `rhwp` is also not ready to be the final renderer: its exact reproduction of the existing calibration reached 676.33 px render-tree displacement, and its complex PDF export did not finish within four minutes.
 
-Keep the Java family as the independent second route. On Pantadex ARM64, `hwplib` 1.1.10, `hwpxlib` 1.0.9, and `hwp2hwpx` 1.0.0 all built in 53.89 seconds in a disposable JDK 8 container after three scratch-only compatibility changes. Both HWP-to-HWPX conversions and both HWPX rewrites reopened in Hancom with zero word displacement and zero changed raster channels at 300 dpi. That is promising but still only a two-document synthetic corpus.
+Keep the Java family as the independent second route. On the ARM64 VM, `hwplib` 1.1.10, `hwpxlib` 1.0.9, and `hwp2hwpx` 1.0.0 all built in 53.89 seconds in a disposable JDK 8 container after three scratch-only compatibility changes. Both HWP-to-HWPX conversions and both HWPX rewrites reopened in Hancom with zero word displacement and zero changed raster channels at 300 dpi. That is promising but still only a two-document synthetic corpus.
 
-Do not make Hancom-under-emulation a v0.15 dependency. Hangover 11.9 on Pantadex successfully ran an x86_64 Windows COM client and activated three `IDispatch` Automation classes, so COM emulation is technically possible without KVM. The warm container peaked at 92,499,968 bytes and completed in 4.35 seconds, so capacity is not the blocker. The custom image was 1.095 GB, one fresh-prefix repeat stalled, and an actual licensed Hancom installer was unavailable; Hancom compatibility and licensing therefore remain untested.
+Do not make Hancom-under-emulation a v0.15 dependency. Hangover 11.9 on the ARM64 VM successfully ran an x86_64 Windows COM client and activated three `IDispatch` Automation classes, so COM emulation is technically possible without KVM. The warm container peaked at 92,499,968 bytes and completed in 4.35 seconds, so capacity is not the blocker. The custom image was 1.095 GB, one fresh-prefix repeat stalled, and an actual licensed Hancom installer was unavailable; Hancom compatibility and licensing therefore remain untested.
 
 Evaluate Hancom's paid Linux/server offering only after the operator approves vendor contact or a purchase. No public, free official Linux desktop installer was found, so none was installed.
 
@@ -26,8 +27,8 @@ Legend: **Yes** means the capability was exercised or an explicit API exists; **
 | rigorloom direct HWPX backend | No | **Yes** | No binary-HWP conversion | None by itself | Low; already integrated | Keep as canonical editor. Section XML is rewritten without using an office suite. |
 | Windows Hancom COM reference | **Yes** | **Yes** | **Yes** | **Reference** | Existing Windows-side dependency | Keep as release oracle, not a Linux solution. No Windows software was installed during this research. |
 | `rhwp` 0.7.19 | **Yes, experimental** | **Yes, experimental** | **Yes:** HWP to HWPX; HWP/HWPX to HWP; SVG/PDF | Low on complex calibration; useful diagnostic SVG | Medium | Minimal HWP-to-HWPX and HWP reserialization were Hancom-pixel-identical. Complex layout and PDF performance remain blockers. Recommended experimental ingress/diagnostics. |
-| `@rhwp/core` 0.7.19 on Pantadex ARM64 | **Yes, experimental** | **Yes, experimental** | **Yes:** HWP/HWPX cross-export; SVG | Same renderer ceiling as `rhwp`; font-sensitive | Low-medium; Node/WASM, 34 MB installed | All four fixtures edited, cross-exported, and reopened. Three-page SVG preview completed in 2.24 s at 318 MB peak RSS. No x86 emulation needed. |
-| `hwplib` 1.1.10 + `hwp2hwpx` 1.0.0 + `hwpxlib` 1.0.9 | **Yes** through `hwplib` | **Yes** through `hwpxlib` | **Yes:** HWP to HWPX; HWP/HWPX rewrite | None | Medium-high; JVM and three build compatibility changes | Pantadex ARM64 build and read/write/convert probes succeeded. Four Hancom reference renders were pixel-identical at 300 dpi. Advance as independent conversion quorum. |
+| `@rhwp/core` 0.7.19 on the ARM64 VM | **Yes, experimental** | **Yes, experimental** | **Yes:** HWP/HWPX cross-export; SVG | Same renderer ceiling as `rhwp`; font-sensitive | Low-medium; Node/WASM, 34 MB installed | All four fixtures edited, cross-exported, and reopened. Three-page SVG preview completed in 2.24 s at 318 MB peak RSS. No x86 emulation needed. |
+| `hwplib` 1.1.10 + `hwp2hwpx` 1.0.0 + `hwpxlib` 1.0.9 | **Yes** through `hwplib` | **Yes** through `hwpxlib` | **Yes:** HWP to HWPX; HWP/HWPX rewrite | None | Medium-high; JVM and three build compatibility changes | The ARM64 VM build and read/write/convert probes succeeded. Four Hancom reference renders were pixel-identical at 300 dpi. Advance as independent conversion quorum. |
 | Hangover 11.9 + FEX/Box64 on ARM64 | Only if the Windows application works | Only if the Windows application works | Application-dependent | **Unverified for Hancom** | High; 1.095 GB image plus Wine lifecycle work | Generic x86_64 COM/`IDispatch` succeeded at 92.5 MB peak container memory. One fresh prefix stalled; no Hancom installer/license was available. Do not make production-critical. |
 | LibreOffice 26.2.4 full archive + H2Orestart 0.7.13 | Import/edit through Writer only; not preservation-safe | Import/edit through Writer only; not preservation-safe | **Yes**, when import succeeds | Low on complex calibration | Medium | Minimal equations worked. Complex native-equation document still failed; image substitution converted but max displacement was 645.08 px at 96 dpi. Advisory fallback only. |
 | Ubuntu LibreOffice 24.2.7 + H2Orestart 0.7.13, without Math | Partial import | Partial import | Text-only/simple documents | Not measurable for native equations because conversion fails | Low | Minimal text converted; both `.hwp` and `.hwpx` equations failed with `Unspecified Application Error`. |
@@ -54,13 +55,13 @@ This is the only tested path that combines controlled editing with reference ren
 
 Use `rhwp export-hwpx INPUT.hwp OUTPUT.hwpx --verify --verify-pages`, then feed the HWPX into the existing backend. On both one-page sanitized fixtures, `rhwp` 0.7.18 and 0.7.19 reported one page and no IR difference; Hancom reopened the generated HWPX files and produced PDFs with zero word-anchor displacement and a zero changed-pixel ratio at 300 dpi.
 
-Pantadex does not need an ARM64 CLI release for this path. The `@rhwp/core` 0.7.19 WebAssembly package ran directly under ARM64 Node 20, edited all four fixtures, exported both native and cross-format outputs, reopened every output, and rendered SVG. The four-document probe took 1.98 seconds with 304,052 KiB peak RSS. The three-page sanitized surrogate took 2.24 seconds with 318,364 KiB peak RSS; individual SVG calls took 86.54, 74.48, and 22.87 ms. Minimal equation SVG hashes were identical to the earlier x86_64 outputs. Complex SVG hashes differed from the prior CLI outputs, so server font/measurement configuration must be pinned and this remains a preview path.
+The ARM64 VM does not need an ARM64 CLI release for this path. The `@rhwp/core` 0.7.19 WebAssembly package ran directly under ARM64 Node 20, edited all four fixtures, exported both native and cross-format outputs, reopened every output, and rendered SVG. The four-document probe took 1.98 seconds with 304,052 KiB peak RSS. The three-page sanitized surrogate took 2.24 seconds with 318,364 KiB peak RSS; individual SVG calls took 86.54, 74.48, and 22.87 ms. Minimal equation SVG hashes were identical to the earlier x86_64 outputs. Complex SVG hashes differed from the prior CLI outputs, so server font/measurement configuration must be pinned and this remains a preview path.
 
 The result is not yet a general round-trip guarantee. Before enabling it by default, build a sanitized acceptance corpus covering multi-section documents, nested tables, headers/footers, footnotes/endnotes, floating shapes, images, equations, fields, tracked objects, and legacy HWP 5 revisions. A failure must preserve the original `.hwp` and stop canonical editing.
 
 ### 3. Independent conversion quorum: evaluate the pure-Java family
 
-`hwplib` has an active HWP 5 reader/writer API and a long history of targeted format fixes. Pair it with [`hwp2hwpx`](https://github.com/neolord0/hwp2hwpx) and [`hwpxlib`](https://github.com/neolord0/hwpxlib) for a second, pure-Java HWP-to-HWPX route. Current commits `d9e073d` (`hwplib`), `50ae71b` (`hwp2hwpx`), and `7c159a6` (`hwpxlib`) built and ran natively on Pantadex ARM64 in Docker. `hwplib` preserved extracted text in both HWP rewrites; `hwp2hwpx` preserved the `<hp:equation>` and `x^2 + y^2 = 1` script; and `hwpxlib` rewrote both HWPX fixtures. All four Java outputs reopened in Hancom with 0.0 px maximum word displacement and 0 changed raster channels out of 26,077,200 at 300 dpi.
+`hwplib` has an active HWP 5 reader/writer API and a long history of targeted format fixes. Pair it with [`hwp2hwpx`](https://github.com/neolord0/hwp2hwpx) and [`hwpxlib`](https://github.com/neolord0/hwpxlib) for a second, pure-Java HWP-to-HWPX route. Current commits `d9e073d` (`hwplib`), `50ae71b` (`hwp2hwpx`), and `7c159a6` (`hwpxlib`) built and ran natively on the ARM64 VM in Docker. `hwplib` preserved extracted text in both HWP rewrites; `hwp2hwpx` preserved the `<hp:equation>` and `x^2 + y^2 = 1` script; and `hwpxlib` rewrote both HWPX fixtures. All four Java outputs reopened in Hancom with 0.0 px maximum word displacement and 0 changed raster channels out of 26,077,200 at 300 dpi.
 
 Use the Java path as an independent parser/writer/conversion oracle, not as the renderer. Its build needs modernization: Java 17 rejected the removed `javax.xml.bind` API, all three projects still declare Java source level 7, and `hwplib` contains an unused `com.sun.jmx.snmp` import. The successful scratch build used JDK 8, changed source/target 7 to 8, and removed that one unused import. No patches were made to the repository under test.
 
@@ -76,7 +77,7 @@ Hancom's public product pages describe server/Linux document-viewing and convers
 
 ### 6. Do not ship Hancom under Hangover yet
 
-The Pantadex probe disproves the claim that ARM64 cannot run Windows COM at all: Hangover/FEX successfully executed a PE32+ x86_64 client and activated `Shell.Application`, `WScript.Shell`, and `Scripting.Dictionary` through `IDispatch`. However, that proves Wine OLE/COM plumbing, not Hancom Office. An actual test would require an authorized Hancom Windows installer, a compatible license/EULA, silent-install parameters, and then a real `HwpFrame.HwpObject` activation/render test. Until the operator supplies those, this route is a reversible research option rather than a v0.15 recommendation.
+The ARM64 VM probe disproves the claim that ARM64 cannot run Windows COM at all: Hangover/FEX successfully executed a PE32+ x86_64 client and activated `Shell.Application`, `WScript.Shell`, and `Scripting.Dictionary` through `IDispatch`. However, that proves Wine OLE/COM plumbing, not Hancom Office. An actual test would require an authorized Hancom Windows installer, a compatible license/EULA, silent-install parameters, and then a real `HwpFrame.HwpObject` activation/render test. Until the operator supplies those, this route is a reversible research option rather than a v0.15 recommendation.
 
 ## Track A: rendering fidelity
 
@@ -197,11 +198,11 @@ Hancom PDF comparison at 300 dpi:
   minimal-equation:  9 unique words, max displacement 0.0 px, changed-channel ratio 0.0
 ```
 
-Build caveat: source level 7 fails on current JDKs; Java 17 also lacks the `javax.xml.bind` API used by `hwplib`. A WSL attempt became unresponsive during the Maven lifecycle. The independent Pantadex run resolved the ambiguity: after changing source/target 7 to 8 and removing the unused `com.sun.jmx.snmp.agent.SnmpUserDataFactory` import, JDK 8/Maven 3.9.16 completed `hwplib`, `hwpxlib`, and `hwp2hwpx` installs in 16.557, 12.657, and 5.872 seconds respectively. The entire disposable container invocation took 53.89 seconds. These were throwaway source-tree changes, not repository changes or proposed upstream fixes.
+Build caveat: source level 7 fails on current JDKs; Java 17 also lacks the `javax.xml.bind` API used by `hwplib`. A WSL attempt became unresponsive during the Maven lifecycle. The independent ARM64 VM run resolved the ambiguity: after changing source/target 7 to 8 and removing the unused `com.sun.jmx.snmp.agent.SnmpUserDataFactory` import, JDK 8/Maven 3.9.16 completed `hwplib`, `hwpxlib`, and `hwp2hwpx` installs in 16.557, 12.657, and 5.872 seconds respectively. The entire disposable container invocation took 53.89 seconds. These were throwaway source-tree changes, not repository changes or proposed upstream fixes.
 
 ### `hwp2hwpx` and `hwpxlib`
 
-The [`hwp2hwpx`](https://github.com/neolord0/hwp2hwpx) converter is pure Java and depends on the same maintainer's HWP and HWPX object models. Commit `50ae71bbaf98ec7a00192f72492d6a130a755ac1` from 2026-06-25 converted both sanitized HWP files to HWPX on Pantadex ARM64. Commit `7c159a6a3d7dc85c0eab6da2a32dd052403a052c` of [`hwpxlib`](https://github.com/neolord0/hwpxlib) rewrote both native HWPX fixtures. Every output passed `unzip -t` and reopened through the corresponding Java reader.
+The [`hwp2hwpx`](https://github.com/neolord0/hwp2hwpx) converter is pure Java and depends on the same maintainer's HWP and HWPX object models. Commit `50ae71bbaf98ec7a00192f72492d6a130a755ac1` from 2026-06-25 converted both sanitized HWP files to HWPX on the ARM64 VM. Commit `7c159a6a3d7dc85c0eab6da2a32dd052403a052c` of [`hwpxlib`](https://github.com/neolord0/hwpxlib) rewrote both native HWPX fixtures. Every output passed `unzip -t` and reopened through the corresponding Java reader.
 
 The HWP and HWPX text extractors use different control/newline conventions, so raw extracted strings were not a valid cross-format equality metric. Direct XML inspection confirmed that the converted equation retained `<hp:equation>` and `<hp:script>x^2 + y^2 = 1`. The stronger Hancom oracle then rendered all four outputs. Each had the original page count, 0.0 px maximum unique-word displacement, and a 0.0 changed-channel ratio at 300 dpi. This establishes a second viable HWP-to-HWPX path for the two fixtures; it does not establish broad format coverage.
 
@@ -252,9 +253,9 @@ Desk research used only public official pages:
 
 No free current official Linux desktop installer was found. No installer was downloaded or run, and no account was created, in accordance with the stop rule. Public pages did not provide a current Linux product version, offline/headless CLI syntax, price, or CI/redistribution terms.
 
-## Pantadex deployment check: native Linux versus Windows COM emulation
+## ARM64 VM deployment check: native Linux versus Windows COM emulation
 
-Pantadex is an OCI `VM.Standard.A1.Flex` instance with four ARM64 Neoverse-N1 OCPUs, 24 GiB RAM, Ubuntu 24.04.4, Docker 29.5.3, and no `/dev/kvm`. [OCI's instance-launch documentation](https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/launchinginstance.htm) states that Windows images are not supported on A1/A2 shapes. A nested Windows VM is therefore not a realistic same-host option; the practical choices are native ARM64 code, user-mode x86_64 emulation, or a separate x86_64 Windows worker.
+The ARM64 VM is an OCI `VM.Standard.A1.Flex` instance with four ARM64 Neoverse-N1 OCPUs, 24 GiB RAM, Ubuntu 24.04.4, Docker 29.5.3, and no `/dev/kvm`. [OCI's instance-launch documentation](https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/launchinginstance.htm) states that Windows images are not supported on A1/A2 shapes. A nested Windows VM is therefore not a realistic same-host option; the practical choices are native ARM64 code, user-mode x86_64 emulation, or a separate x86_64 Windows worker.
 
 ### Native ARM64 result
 
@@ -289,7 +290,7 @@ activated_count=3
 
 The warm run completed in 4.35 seconds. During an intentional 15-second hold, Docker reported 67.55 MiB current memory and the cgroup reported a 92,499,968-byte peak, with 57 processes. Cold Wine-prefix initialization took 17.10 to 20.22 seconds. One new-prefix retry stalled for more than two minutes before COM activation and the exact disposable container had to be stopped; the preserved warm prefix was repeatable.
 
-Conclusion: generic COM emulation is **not too resource-exhausting** for Pantadex, but it is less deterministic and operationally much heavier than the native paths. It also does not prove that Hancom Office installs, licenses, starts headlessly, renders correctly, or permits this deployment. No Hancom installer was used because the public route requires purchase/account approval. Do not replace the current Windows oracle with this until an operator-authorized installer and EULA review permit a real `HwpFrame.HwpObject` test.
+Conclusion: generic COM emulation is **not too resource-exhausting** for the ARM64 VM, but it is less deterministic and operationally much heavier than the native paths. It also does not prove that Hancom Office installs, licenses, starts headlessly, renders correctly, or permits this deployment. No Hancom installer was used because the public route requires purchase/account approval. Do not replace the current Windows oracle with this until an operator-authorized installer and EULA review permit a real `HwpFrame.HwpObject` test.
 
 ## Reproduction
 
@@ -347,9 +348,9 @@ These commands use an already-installed Windows Hancom/pyhwpx stack. They do not
 ### 3. LibreOffice/H2Orestart matrix
 
 ```bash
-ROOT=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc
+ROOT=<poc>
 LO24=/usr/bin/soffice
-LO26=/home/user/.local/share/rigorloom-linux-hwp/lo-26.2.4-root/opt/libreoffice26.2/program/soffice
+LO26=<local>/lo-26.2.4-root/opt/libreoffice26.2/program/soffice
 
 for stem in minimal-text.hwpx minimal-text.hwp minimal-equation.hwpx minimal-equation.hwp; do
   "$ROOT/run_soffice_probe.sh" "$LO24" "$ROOT/$stem" \
@@ -432,9 +433,9 @@ The metric matches words that occur exactly once per page, scales candidate coor
 ### 5. Exact 676.33 px `rhwp` reproduction
 
 ```bash
-RHWP=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc/tools/rhwp-0.7.18/rhwp/rhwp
-A=/mnt/c/Users/<user>/Downloads/agenthwpx/reports/report-physics-braking-2022-parity/work/stage-5/scratch/tmp/rhwp/out_no_lineseg.hwpx
-B=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc/locked-baseline/windows-com.hwpx
+RHWP=<poc>/tools/rhwp-0.7.18/rhwp/rhwp
+A=<report>/work/stage-5/scratch/tmp/rhwp/out_no_lineseg.hwpx
+B=<poc>/locked-baseline/windows-com.hwpx
 "$RHWP" --version
 "$RHWP" render-diff "$A" "$B"
 ```
@@ -449,7 +450,7 @@ windows-com.hwpx 2760C5FA0C4A6013D86C473135FEC9E96DCDC62FE100184E110A53BCA59B504
 ### 6. `rhwp` conversion and rendering probes
 
 ```bash
-ROOT=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc
+ROOT=<poc>
 RHWP="$ROOT/tools/rhwp-0.7.19/rhwp/rhwp"
 
 "$RHWP" export-hwpx "$ROOT/minimal-text.hwp" \
@@ -484,19 +485,19 @@ Repeat for the equation and reserialized HWP outputs. All four comparisons repor
 ### 7. `pyhwp`, `libhwp`, and `unhwp`
 
 ```bash
-ROOT=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc
+ROOT=<poc>
 "$ROOT/run_pyhwp_probe.sh"
 
-/home/user/.local/share/rigorloom-linux-hwp/libhwp-env/bin/python \
+<local>/libhwp-env/bin/python \
   "$ROOT/libhwp_probe.py" "$ROOT/minimal-text.hwp"
-/home/user/.local/share/rigorloom-linux-hwp/libhwp-env/bin/python \
+<local>/libhwp-env/bin/python \
   "$ROOT/libhwp_probe.py" "$ROOT/minimal-equation.hwp"
 
-/home/user/.local/share/rigorloom-linux-hwp/unhwp-env/bin/python - <<'PY'
+<local>/unhwp-env/bin/python - <<'PY'
 from pathlib import Path
 from unhwp import to_markdown
 
-root = Path("/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc")
+root = Path("<poc>")
 for name in ("minimal-text.hwp", "minimal-equation.hwp", "minimal-equation.hwpx"):
     print(name)
     print(to_markdown(str(root / name)))
@@ -506,7 +507,7 @@ PY
 ### 8. OpenHWP
 
 ```bash
-ROOT=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc
+ROOT=<poc>
 cd "$ROOT/src/openhwp"
 git rev-parse HEAD
 cargo test --workspace
@@ -522,11 +523,11 @@ Key output: commit `c605402ffae2f241baab06c9010a68faf1415d63`, 558 tests passed,
 The following two changes were applied only in the ignored scratch clone to make a current source probe possible: compiler source/target 7 to 8, and removal of the unused `com.sun.jmx.snmp.agent.SnmpUserDataFactory` import.
 
 ```bash
-ROOT=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc
-J=/home/user/.local/share/rigorloom-linux-hwp/temurin8/bin
-MVN=/home/user/.local/share/rigorloom-linux-hwp/apache-maven-3.9.11/bin/mvn
+ROOT=<poc>
+J=<local>/temurin8/bin
+MVN=<local>/apache-maven-3.9.11/bin/mvn
 cd "$ROOT/src/hwplib"
-JAVA_HOME=/home/user/.local/share/rigorloom-linux-hwp/temurin8 \
+JAVA_HOME=<local>/temurin8 \
   "$MVN" test package
 
 "$J/javac" -encoding UTF-8 -cp "$ROOT/src/hwplib/target/classes" \
@@ -539,7 +540,7 @@ JAVA_HOME=/home/user/.local/share/rigorloom-linux-hwp/temurin8 \
   "$ROOT/hwplib-probe-out/minimal-equation-rewritten.hwp"
 ```
 
-This WSL Maven command was terminated after it stopped producing output for more than four minutes; use the direct probe commands only after confirming `target/classes` exists. The later Pantadex JDK 8 container build in reproduction step 12 completed all three projects and resolves the build question for that environment. Hancom acceptance and PDF comparison:
+This WSL Maven command was terminated after it stopped producing output for more than four minutes; use the direct probe commands only after confirming `target/classes` exists. The later ARM64 VM JDK 8 container build in reproduction step 12 completed all three projects and resolves the build question for that environment. Hancom acceptance and PDF comparison:
 
 ```powershell
 python "$Poc\render_with_hancom.py" `
@@ -557,7 +558,7 @@ python "$Poc\compare_pdfs.py" "$Poc\minimal-equation-com.pdf" `
 ### 10. Source activity snapshots
 
 ```bash
-ROOT=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc
+ROOT=<poc>
 git clone https://github.com/ebandal/H2Orestart.git "$ROOT/src/H2Orestart"
 git clone https://github.com/mete0r/pyhwp.git "$ROOT/src/pyhwp"
 git clone https://github.com/openhwp/openhwp.git "$ROOT/src/openhwp"
@@ -575,12 +576,12 @@ rg -n 'TextEmbeddedObject|078B7ABA|threeD|breakCellSeparateLine' \
 
 Recorded commit/date pairs were H2Orestart `a0ead596` / 2026-06-27, pyhwp `83239f0d` / 2023-04-10, OpenHWP `c605402f` / 2025-12-13, `hwplib` `d9e073d` / 2026-07-13, `hwpxlib` `7c159a6` / 2026-07-16, and `hwp2hwpx` `50ae71b` / 2026-06-25.
 
-### 11. Pantadex ARM64 `rhwp` WebAssembly
+### 11. ARM64 VM: `rhwp` WebAssembly
 
 Stage the four minimal fixtures and `locked-baseline/linux-xml-surrogate.hwpx` under `$ROOT/fixtures`, verify their hashes, and copy `rhwp-arm-probe.mjs` plus `rhwp-complex-probe.mjs` from the ignored proof-of-concept directory:
 
 ```bash
-ROOT=/home/ubuntu/pantakit/scratch/linux-hwp-poc-20260720
+ROOT=<scratch>/linux-hwp-poc-20260720
 mkdir -p "$ROOT"/{fixtures,logs,results,rhwp-node}
 sha256sum "$ROOT"/fixtures/*
 
@@ -605,12 +606,12 @@ complex: pageCount=3 renderMs=[86.54,74.48,22.87]
 Elapsed 0:02.24; Maximum resident set size 318364 KiB
 ```
 
-### 12. Pantadex ARM64 Java rewrite and HWP-to-HWPX conversion
+### 12. ARM64 VM: Java rewrite and HWP-to-HWPX conversion
 
 All dependency downloads occurred during the build invocation. The actual document probe used `--network=none`.
 
 ```bash
-ROOT=/home/ubuntu/pantakit/scratch/linux-hwp-poc-20260720
+ROOT=<scratch>/linux-hwp-poc-20260720
 mkdir -p "$ROOT/java-src"
 for repo in hwplib hwpxlib hwp2hwpx; do
   git clone --depth 1 "https://github.com/neolord0/$repo.git" \
@@ -665,12 +666,12 @@ route=HWPX-hwpxlib-HWPX ... text_equal=true
 
 Render the four outputs with the existing Windows reference renderer, then run `compare_pdfs.py --dpi 300 --summary` and `compare_pdf_rasters.py --dpi 300`. All four returned `max_displacement_px: 0.0` and `changed_channel_ratio: 0.0`. No Windows installation occurred.
 
-### 13. Pantadex Hangover/FEX COM smoke test
+### 13. ARM64 VM: Hangover/FEX COM smoke test
 
 The build files are `scratch/linux-hwp-poc/hangover/{Dockerfile,com_smoke.c,run-smoke.sh}`. The release archive hash came from the GitHub release API and was verified after download.
 
 ```bash
-ROOT=/home/ubuntu/pantakit/scratch/linux-hwp-poc-20260720
+ROOT=<scratch>/linux-hwp-poc-20260720
 URL=https://github.com/AndreRH/hangover/releases/download/hangover-11.9/hangover_11.9_ubuntu2404_noble_arm64.tar
 curl -L --fail --retry 3 -o "$ROOT/downloads/hangover_11.9_ubuntu2404_noble_arm64.tar" "$URL"
 printf '%s  %s\n' \
@@ -705,13 +706,13 @@ docker inspect rigorloom-hangover-poc-20260720 \
 
 The test intentionally stopped before Hancom installation. A real follow-up must receive an authorized installer/license, verify the EULA, activate `HwpFrame.HwpObject`, open only the sanitized fixtures, and compare its PDFs to the same references.
 
-### 14. Pantadex rollback
+### 14. ARM64 VM: rollback
 
 Before testing, `rigorloom-hangover-poc:20260720`, both Maven image tags, and `ubuntu:24.04` were confirmed absent. Cleanup therefore removed only resources introduced by this proof-of-concept. The path guard must match the exact dated directory:
 
 ```bash
-ROOT=/home/ubuntu/pantakit/scratch/linux-hwp-poc-20260720
-PARENT=/home/ubuntu/pantakit/scratch
+ROOT=<scratch>/linux-hwp-poc-20260720
+PARENT=<scratch>
 
 for name in rigorloom-hangover-poc-20260720 rigorloom-java-hwp-poc-20260720; do
   if docker container inspect "$name" >/dev/null 2>&1; then
@@ -738,7 +739,7 @@ docker image rm maven:3.9-eclipse-temurin-17
 docker image rm ubuntu:24.04
 ```
 
-The default BuildKit builder retained cache records after image removal. A broad `docker builder prune` was not used because it would delete unrelated Pantadex caches. Instead, `docker buildx du --format json` was used to identify only records created by this Dockerfile during the test window (their descriptions included `COPY hangover-*.deb`, the two Hangover `apt-get` steps, `com_smoke.c`, and `run-smoke.sh`), and each exact cache ID was removed with:
+The default BuildKit builder retained cache records after image removal. A broad `docker builder prune` was not used because it would delete unrelated caches on the VM. Instead, `docker buildx du --format json` was used to identify only records created by this Dockerfile during the test window (their descriptions included `COPY hangover-*.deb`, the two Hangover `apt-get` steps, `com_smoke.c`, and `run-smoke.sh`), and each exact cache ID was removed with:
 
 ```bash
 docker buildx prune --filter "id=$cache_id" --force
@@ -750,37 +751,37 @@ All identified proof-of-concept cache IDs returned no result afterward. A future
 Post-cleanup checks:
 
 ```bash
-test ! -e /home/ubuntu/pantakit/scratch/linux-hwp-poc-20260720
+test ! -e <scratch>/linux-hwp-poc-20260720
 docker image inspect rigorloom-hangover-poc:20260720 >/dev/null 2>&1; test $? -ne 0
 docker ps -a --filter name=rigorloom-hangover-poc-20260720 --format '{{.Names}}'
 ```
 
 ## Linux-side install inventory
 
-All installs were user-local, unpacked below a scratch root, or contained in disposable Docker images; no Windows-side software was installed. The existing Ubuntu LibreOffice/H2Orestart packages were inspected but not changed. Pantadex host packages, services, ports, and firewall state were not changed.
+All installs were user-local, unpacked below a scratch root, or contained in disposable Docker images; no Windows-side software was installed. The existing Ubuntu LibreOffice/H2Orestart packages were inspected but not changed. The VM's host packages, services, ports, and firewall state were not changed.
 
 | Installed item | Resolved version | User-local location / method |
 |---|---|---|
-| LibreOffice official full archive | 26.2.4.2, build `0229ac93...` | DEBs extracted without root under `/home/user/.local/share/rigorloom-linux-hwp/lo-26.2.4-root`; archive SHA-256 `810ef197e190d7804a60e0016052c46ff33792303a200fddda9d5216a64b9900` |
+| LibreOffice official full archive | 26.2.4.2, build `0229ac93...` | DEBs extracted without root under `<local>/lo-26.2.4-root`; archive SHA-256 `810ef197e190d7804a60e0016052c46ff33792303a200fddda9d5216a64b9900` |
 | H2Orestart upstream extension | 0.7.13 | Installed only into scratch LibreOffice user profiles; `.oxt` SHA-256 `726230215dabe450bd617f9acac52376fd76f57c77158bd03b3ef9fe0c7e64fd` |
 | `rhwp` release archives | 0.7.18 and 0.7.19 | Extracted under `scratch/linux-hwp-poc/tools/`; hashes listed above |
 | `pip` bootstrap | current `get-pip.py` result | `python3 get-pip.py --user --break-system-packages` |
 | `virtualenv` | 21.6.1 | User Python packages |
-| `pyhwp`, `six`, `lxml` | 0.1b15, 1.17.0, 6.0.2 | `/home/user/.local/share/rigorloom-linux-hwp/pyhwp-env` |
-| `libhwp` | 0.2.0 | `/home/user/.local/share/rigorloom-linux-hwp/libhwp-env` |
-| `unhwp` | 0.5.3 | `/home/user/.local/share/rigorloom-linux-hwp/unhwp-env` |
+| `pyhwp`, `six`, `lxml` | 0.1b15, 1.17.0, 6.0.2 | `<local>/pyhwp-env` |
+| `libhwp` | 0.2.0 | `<local>/libhwp-env` |
+| `unhwp` | 0.5.3 | `<local>/unhwp-env` |
 | Rust toolchain | rustc 1.97.1, cargo 1.97.1 | `rustup` minimal profile under the WSL user home |
-| Apache Maven | 3.9.11 | `/home/user/.local/share/rigorloom-linux-hwp/apache-maven-3.9.11`; archive SHA-256 `4b7195b6a4f5c81af4c0212677a32ee8143643401bc6e1e8412e6b06ea82beac` |
-| Eclipse Temurin JDK | 8u492 | `/home/user/.local/share/rigorloom-linux-hwp/temurin8`; archive SHA-256 `da257f161d7f8c6ca5b0e5d9e4090f65ac28c5e398072e68b8ae87988b1d1a2e` |
-| `@rhwp/core`, `@napi-rs/canvas` | 0.7.19, 1.0.2 | Pantadex `/home/ubuntu/pantakit/scratch/linux-hwp-poc-20260720/rhwp-node`; npm prefix only, 34 MB |
-| Pure-Java source/Maven cache | `hwplib` 1.1.10, `hwpxlib` 1.0.9, `hwp2hwpx` 1.0.0; Maven 3.9.16/JDK 8u492 image | Pantadex scratch plus `maven:3.9-eclipse-temurin-8`; no host JDK/Maven install |
-| Hangover/FEX/Box64 | Hangover 11.9, FEX 2605, Box64 0.4.2 | Verified 287,129,600-byte archive in Pantadex scratch; custom image `rigorloom-hangover-poc:20260720`, 1,094,718,945 bytes |
+| Apache Maven | 3.9.11 | `<local>/apache-maven-3.9.11`; archive SHA-256 `4b7195b6a4f5c81af4c0212677a32ee8143643401bc6e1e8412e6b06ea82beac` |
+| Eclipse Temurin JDK | 8u492 | `<local>/temurin8`; archive SHA-256 `da257f161d7f8c6ca5b0e5d9e4090f65ac28c5e398072e68b8ae87988b1d1a2e` |
+| `@rhwp/core`, `@napi-rs/canvas` | 0.7.19, 1.0.2 | `<scratch>/linux-hwp-poc-20260720/rhwp-node`; npm prefix only, 34 MB |
+| Pure-Java source/Maven cache | `hwplib` 1.1.10, `hwpxlib` 1.0.9, `hwp2hwpx` 1.0.0; Maven 3.9.16/JDK 8u492 image | VM scratch plus `maven:3.9-eclipse-temurin-8`; no host JDK/Maven install |
+| Hangover/FEX/Box64 | Hangover 11.9, FEX 2605, Box64 0.4.2 | Verified 287,129,600-byte archive in the VM's scratch; custom image `rigorloom-hangover-poc:20260720`, 1,094,718,945 bytes |
 
 Installed-package reproduction:
 
 ```bash
-ROOT=/mnt/c/Users/<user>/dev/rigorloom/scratch/linux-hwp-poc
-LOCAL=/home/user/.local/share/rigorloom-linux-hwp
+ROOT=<poc>
+LOCAL=<local>
 
 # Unpack the official LibreOffice DEBs without apt/root.
 mkdir -p "$ROOT/tools/lo-26.2.4-extract" "$LOCAL/lo-26.2.4-root"
@@ -810,7 +811,7 @@ python3 -m virtualenv "$LOCAL/unhwp-env"
 "$LOCAL/unhwp-env/bin/pip" install unhwp==0.5.3
 ```
 
-The LibreOffice, JDK, Maven, Rust, H2Orestart, `rhwp`, and Hangover items were archive, package-manager-prefix, or container downloads. Reproduction should verify the publisher's current checksum/signature rather than silently trusting these dated hashes. The Pantadex proof-of-concept used the exact root `/home/ubuntu/pantakit/scratch/linux-hwp-poc-20260720` and exact Docker names/tags; after evidence capture, the 2026-07-20 scratch root and images were removed with the recorded rollback procedure.
+The LibreOffice, JDK, Maven, Rust, H2Orestart, `rhwp`, and Hangover items were archive, package-manager-prefix, or container downloads. Reproduction should verify the publisher's current checksum/signature rather than silently trusting these dated hashes. The ARM64 VM proof-of-concept used the exact root `<scratch>/linux-hwp-poc-20260720` and exact Docker names/tags; after evidence capture, the 2026-07-20 scratch root and images were removed with the recorded rollback procedure.
 
 ## Limitations and open operator questions
 
@@ -822,7 +823,7 @@ The LibreOffice, JDK, Maven, Rust, H2Orestart, `rhwp`, and Hangover items were a
 - Word-anchor displacement ignores unmatched objects and glyph/raster shape. Pixel identity was checked for minimal Hancom-to-Hancom round trips, including the Java conversions, not for LibreOffice/rhwp renderer outputs.
 - LO 24 versus LO 26 is a practical stack comparison, not a pure version comparison, because the Ubuntu install lacks LibreOffice Math.
 - Fonts, font substitution, WSL graphics/runtime behavior, and exact Hancom build can change layout or timing.
-- The Hangover result proves generic x86_64 OLE/COM on Pantadex ARM64 only. It does not prove Hancom installation, activation, rendering, licensing, or long-running stability. One fresh-prefix retry stalled.
+- The Hangover result proves generic x86_64 OLE/COM on the ARM64 VM only. It does not prove Hancom installation, activation, rendering, licensing, or long-running stability. One fresh-prefix retry stalled.
 
 ### Decisions required from the operator
 
@@ -836,8 +837,8 @@ The LibreOffice, JDK, Maven, Rust, H2Orestart, `rhwp`, and Hangover items were a
 8. **Upstream engagement:** May maintainers file minimal public issues for H2Orestart's missing Math dependency guidance, optional BorderFill-attribute crash, and complex equation conversion failure?
 9. **Corpus approval:** Approve a sanitized HWP/HWPX acceptance corpus before either `rhwp` or `hwplib` becomes a default path.
 10. **COM-emulation authorization:** May the operator supply an authorized offline Hancom Windows installer and license for a disposable Hangover test, and does the EULA permit Wine/server automation? Without both, stop.
-11. **Oracle topology:** If Windows release rendering must remain, choose between the current Windows workstation, a dedicated x86_64 Windows worker, or Hancom's paid Linux/server service. Pantadex A1 cannot host a supported Windows image and has no nested KVM device.
+11. **Oracle topology:** If Windows release rendering must remain, choose between the current Windows workstation, a dedicated x86_64 Windows worker, or Hancom's paid Linux/server service. The A1 VM cannot host a supported Windows image and has no nested KVM device.
 
 ## Conclusion
 
-There are now demonstrated pure-Linux replacements for every operation except Hancom-grade final rendering. The viable v0.15 design is layered: rigorloom HWPX for canonical edits; ARM-native `@rhwp/core`/`rhwp` for experimental `.hwp` ingress, cross-format editing, and fast SVG diagnostics; the Java `hwplib` + `hwp2hwpx` + `hwpxlib` path as an independent converter/writer quorum; and Hancom only for release verification. LibreOffice/H2Orestart remains an interoperability fallback; equation images solve conversion availability, not fidelity. Pantadex can technically emulate generic Windows COM without excessive RAM or CPU, but actual Hancom compatibility and licensing are unverified and the emulation is operationally less reliable than the native paths. A genuinely Linux-native Hancom-grade renderer remains a commercial evaluation question.
+There are now demonstrated pure-Linux replacements for every operation except Hancom-grade final rendering. The viable v0.15 design is layered: rigorloom HWPX for canonical edits; ARM-native `@rhwp/core`/`rhwp` for experimental `.hwp` ingress, cross-format editing, and fast SVG diagnostics; the Java `hwplib` + `hwp2hwpx` + `hwpxlib` path as an independent converter/writer quorum; and Hancom only for release verification. LibreOffice/H2Orestart remains an interoperability fallback; equation images solve conversion availability, not fidelity. The ARM64 VM can technically emulate generic Windows COM without excessive RAM or CPU, but actual Hancom compatibility and licensing are unverified and the emulation is operationally less reliable than the native paths. A genuinely Linux-native Hancom-grade renderer remains a commercial evaluation question.

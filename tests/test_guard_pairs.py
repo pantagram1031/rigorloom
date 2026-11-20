@@ -1,5 +1,5 @@
-"""The guard on Sol's before/after pairs from the T180 and T183 reviews and
-the re-check of the T183 fixes, and on Fable's pairs from the reviews of the
+"""The guard on the reviewer's before/after pairs from the T180 and T183 reviews and
+the re-check of the T183 fixes, and on the advisor's pairs from the reviews of the
 T183 head and the label-words rule.
 
 Every guard rule is measured on the same pairs instead of examples written for

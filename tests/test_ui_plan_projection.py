@@ -35,9 +35,6 @@ FORBIDDEN_LITERALS = [
     "Claude \uae30\ubc18",
     "AI \ud0d0\uc9c0 \ud68c\ud53c",
     "AI \ud2f0 \uc81c\uac70",
-    "Astra",
-    "Herdr",
-    "F:" + "/",
 ]
 
 

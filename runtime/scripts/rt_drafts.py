@@ -417,7 +417,7 @@ def new_record(*, source: Path | None, sha256: str | None,
         "declines": [],
         "created": _now(),
         # Which draft this is. A path's key outlives a discarded draft; the
-        # own-file exemption must not (Sol re-check F2).
+        # own-file exemption must not (review re-check F2).
         "instance": secrets.token_hex(8),
     }
 

@@ -121,7 +121,8 @@ VERB_HELP = {
              "작업: set, replace, insert_after, delete, table.set_cells, table.add_row, "
              "table.delete_row, style, char_shape(글자 모양), para_shape(문단 모양), "
              "numbering(개요·문단 번호, 글머리표), table.merge·table.split(셀 합치기·나누기), "
-             "table.add_col·table.delete_col(칸 넣기·지우기), table.size(셀 너비·높이)",
+             "table.add_col·table.delete_col(칸 넣기·지우기), table.size(셀 너비·높이), "
+             "page_setup(편집 용지), columns(다단), break(쪽·단·구역 나누기)",
              ("""rigorloom edit 보고서.hwpx --op '{"op":"replace","at":"p3","find":"사본하여","with":"복사하여"}'""",
               """rigorloom edit 보고서.hwpx --op '{"op":"set","at":"p0","text":"2027년 업무계획"}' -o 보고서-수정.hwpx""")),
     "fill": ("양식의 빈칸을 채웁니다. 서명·날인·결재일 칸은 비워 두고 어떤 칸인지 알려 줍니다.",
@@ -802,7 +803,7 @@ def _main(argv: list[str]) -> int:
     except _Usage as exc:
         return _usage(exc, argv)
     if getattr(args, "out", None) == "" or (args.verb == "save" and args.to == ""):
-        # An empty name must not quietly mean "the source" (Sol re-check F6).
+        # An empty name must not quietly mean "the source" (review re-check F6).
         return _usage(_Usage("저장할 경로가 비어 있습니다.",
                              "보고서.hwpx처럼 파일 이름을 포함한 경로를 입력하세요."), argv)
     term = Term.detect(getattr(args, "color", "auto"))

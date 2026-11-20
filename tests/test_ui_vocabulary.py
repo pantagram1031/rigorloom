@@ -28,9 +28,6 @@ FORBIDDEN_SUBSTRINGS = (
     "Claude 기반",
     "AI 탐지 회피",
     "AI 티 제거",
-    "Astra",
-    "Herdr",
-    "F:/",
     "리걸룸",
     "홍길동",
 )

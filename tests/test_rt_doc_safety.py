@@ -879,7 +879,7 @@ def test_every_error_code_is_declared():
     assert rt_codes.DOC_CORE_CODES <= rt_codes.ERROR_CODES
 
 
-# ============================================================================ fable-388 follow-ups
+# ============================================================================ #388 review follow-ups
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
 def test_outputs_keep_the_destination_mode_or_the_umask(no_engine, tmp_path):
     src = make(tmp_path, "source.hwpx", "BASE")

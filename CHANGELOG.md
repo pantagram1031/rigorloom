@@ -10,6 +10,7 @@ the kernel's contract shape.
 
 ### Added
 
+- **T200:** The document layer and the `edit` tool can change the page with the engine: `page_setup` (편집 용지: paper size or width and height, orientation, margins including 머리말, 꼬리말 and 제본, and the 제본 type) of a paragraph's section, `columns` (다단: count, gap, 구분선, kind and layout) of the column definition that governs a paragraph, and `break` with `kind` page, column or section (쪽·단·구역 나누기) at the start of a paragraph. A section break goes in the last section and moves the paragraphs from there into a new section; paragraph and table addresses do not change. Margins that leave no room on the page are refused before anything is written.
 - **T197:** The document layer and the `edit` tool can change a table's shape with the engine: `table.merge` (셀 합치기) of a cell block, `table.split` (셀 나누기) of a cell into rows and columns, `table.add_col` and `table.delete_col` (칸 넣기·지우기), and `table.size` for grid column widths and row heights in millimetres. Each owns its table for the edit, and the remap lists the cells that moved, merged away or were deleted. An edit whose engine step the installed engine does not have yet answers `capability_unavailable` (`engine_function_missing`) and writes nothing.
 - **T194:** The document layer and the `edit` tool can put whole paragraphs into 개요 번호, 문단 번호 or 글머리표, or take them out, with `numbering`: `kind` outline, number, bullet or none, `level` 1 to 7, a bullet `char`, and a `start` number or `restart` for numbers. The op reads each paragraph's current list state and sends the engine only the steps that change it. `docs/hangul-features.md` lists the 한글 features Rigorloom's edit ops cover, partly cover or do not cover yet.
 - **T192:** The document layer and the `edit` tool can change 글자 모양 and 문단 모양. `char_shape` sets bold, italic, underline, strikeout, colour, 음영, 형광펜, size, font, 장평, 자간 and super/subscript on a paragraph, a character range, a cell, a row or a table; `para_shape` sets alignment, margins, indent or 내어쓰기, spacing before and after, line spacing and the keep/page-break options of whole paragraphs. Keys and ranges are checked before anything runs; the engine applies them to the selected text or paragraphs, and the keys are fields of the 글자 모양 and 문단 모양 dialogs.
@@ -19,6 +20,8 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T202:** Comments, fixture descriptions and docs (research, release notes, the model-routing reference, archived plans and older CHANGELOG entries) no longer use internal model aliases: the naturalness pilot's judges are A and B (its column and file names too) with the exact models in the run record kept outside the repository, the v0.17 clean-room tiers are A, B and C, and the plans name roles. The UI tests' forbidden-phrase lists drop three internal entries, and their path-leak check now catches a drive path written with one `\` (it needed two) or with `/`. Two pipeline tests are renamed (`test_tier_c_*`). No behaviour change; guard pair ids and goldens are as before.
+- **T201:** The editor v2 page model and canvas (a one-page projection of the document's cells until the engine's page source lands, margin marks with their toolbar, the scroll map, the document strip and the seat editor) are in `desktop/src/model/page.ts` and `desktop/src/canvas`, checked by `wp3-canvas.test.mjs`; nothing registers or shows them yet. The v1 screens, including the fill screen's seat editor, are unchanged.
 - **T199:** `guide` has a topic `ops` in every install: each `edit` op with its fields, what they hold and an example. The `edit` description spells out the text ops (`set`, `replace`, `insert_after`, `delete`), names the others (a family once: `table.{set_cells,add_row,delete_row}`) and points to `guide` `ops`, so a new op adds a name there instead of its fields; it now says that addresses count from 0. `guide` without a topic lists `ops`, and shows the guide pack's index only when a pack is installed. `table.delete_row` and `fill` in `edit` take `expect` (the row's text, cells joined by a tab; the place's current value), which the document layer already checked and `edit` refused as a field those ops do not take.
 - **T198:** The editor v2 shell (title bar with the 리을R mark, document tabs, the Start tab, the 파일 pane over a chosen 문서 폴더, the command palette, the app menu, a settings dialog and a narrow layout) is in `desktop/src/shell`. It is opt-in: the v1 screens stay the default, and editor v2 opens with `?ui=v2` or when the developer preference `devEditorV2` is `true`; `?ui=v1` always opens the v1 screens. File names and tab titles drop bidi control characters before they are shown.
 - **T196:** The bridge has confined workspace routes for a chosen 문서 폴더: list, read, stat and resolve a file inside it, refusing symlinks that lead outside it, anything else outside it and raw reads. The folder is set only through `POST /api/doc-folder`, which refuses a filesystem or drive root and the folders directly under one (`/etc`, `/tmp`, `/home`), Windows system folders, the whole home folder and the runtime's own store, and checks it again on every use; the general prefs patch no longer takes it. The editor v2 helpers (Korean particles, the copy lint, the principles harness) are in place and the app does not show them yet. In v1, the banner on a proposal made before the latest revision now ends '수정본 {0} 변경 내용이 빠집니다' instead of '수정본 {0}의 변경이 빠집니다'; the v1 identity test does not capture that banner, so its baseline is not refreshed. A cell edit refused as `at_cell_expect_mismatch` now says the cell text differs from what was expected, not that it changed since it was read.
@@ -1347,7 +1350,7 @@ The ledger, and the honest limits of what those runs prove, is
 - **#75 — T36: acceptance now requires the safety set, and no path exits 1.**
   Two P0 correctness-of-VERDICT defects found by the independent Codex
   clean-room harness. First, **`acceptance: true` while safety checks sat in
-  `skipped[]`**: the luna tier supplied a CLI `--fill-map` and still got
+  `skipped[]`**: tier C supplied a CLI `--fill-map` and still got
   `empty_cell_expected_fill`, `fill_charpr_script_mismatch` AND page parity
   into `deterministic.skipped[]`, then exit 0 with `acceptance: true`, because
   acceptance was computed as "no HARD finding" and never read the skip list.
@@ -1372,7 +1375,7 @@ The ledger, and the honest limits of what those runs prove, is
   artifact's own `<hp:lineseg vertpos>` layout cache (`derive_pages_document`,
   excluding cell-relative linesegs inside `hp:tc`/`hp:subList`), records
   `pages_document_source`, and skips only when all three fail. Fourth, the
-  **exit-code contract, all six rows**: sol and terra both saw exit **1** for
+  **exit-code contract, all six rows**: tiers A and B both saw exit **1** for
   `vision_pending` where the contract says **3**. 1 was not a code at all but
   an unhandled path — `emit_verdict` sat outside every guard in `main`, so an
   unwritable `--out` escaped as a traceback after a perfectly good verdict.
@@ -1448,7 +1451,7 @@ The ledger, and the honest limits of what those runs prove, is
   release preparation that last limit was corrected rather than left standing:
   the non-Claude axis now has **exactly one** data point (the independent Codex
   harness of #75), recorded in the document with what it does and does not
-  support — luna produced an accepted document, so a second vendor *can* drive
+  support — tier C produced an accepted document, so a second vendor *can* drive
   the shipped surface, but it needed more retries and an auditing harness to
   get there, and its numbers are not comparable with the table's.
 

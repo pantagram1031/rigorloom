@@ -1,0 +1,900 @@
+/* WP3 Page canvas & editing styles — pure v2 tokens, zero hex literals. */
+
+.rl-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-canvas-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--desk);
+  position: relative;
+}
+
+/* ── Document strip (32 px, flat docked chrome) ──────────────────────────── */
+
+.rl-doc-strip {
+  height: var(--h-strip);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-12);
+  padding: 0 var(--s-12);
+  background: var(--panel);
+  border-bottom: var(--border-hair);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--weight-regular);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.rl-strip-left {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.rl-strip-version {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rl-strip-sep {
+  color: var(--text-3);
+}
+
+.rl-strip-grade {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rl-strip-grade--short {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  .rl-strip-grade--full {
+    display: none;
+  }
+  .rl-strip-grade--short {
+    display: inline;
+  }
+}
+
+@media (max-width: 599px) {
+  .rl-doc-strip {
+    padding: 0 var(--s-8);
+    gap: var(--s-4);
+  }
+  .rl-strip-left {
+    display: none;
+  }
+  .rl-strip-right {
+    width: 100%;
+    justify-content: space-between;
+    gap: var(--s-4);
+  }
+  .rl-view-seg {
+    padding: 0 6px;
+    font-size: var(--text-xs);
+  }
+  .rl-step-pos {
+    min-width: 42px;
+    font-size: var(--text-xs);
+  }
+  .rl-strip-export {
+    padding: 0 6px;
+    font-size: var(--text-xs);
+  }
+}
+
+.rl-strip-right {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  flex: none;
+}
+
+.rl-view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  border: var(--border-hair);
+}
+
+.rl-view-seg {
+  height: 22px;
+  padding: 0 var(--s-8);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+  cursor: pointer;
+}
+
+.rl-view-seg:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.rl-view-seg--active {
+  background: var(--field);
+  border-color: var(--line-strong);
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+}
+
+.rl-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rl-step-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.rl-step-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.rl-step-btn:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.rl-step-pos {
+  min-width: 64px;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-strip-export {
+  height: 24px;
+  padding: 0 var(--s-8);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.rl-strip-export:hover {
+  background: var(--hover);
+}
+
+.rl-doc-strip button:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+/* ── Desk & Paper ────────────────────────────────────────────────────────── */
+
+.rl-desk {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--desk);
+  overflow: hidden;
+}
+
+.rl-desk-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: var(--s-24) var(--s-24) var(--s-32);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+@media (max-width: 599px) {
+  .rl-desk-scroll {
+    padding: var(--s-8) var(--s-8) var(--s-24);
+  }
+}
+
+.rl-paper-stage {
+  position: relative;
+  flex: none;
+}
+
+.rl-paper-scale-frame {
+  position: relative;
+}
+
+.rl-paper {
+  position: relative;
+  box-sizing: border-box;
+  background-color: var(--paper);
+  color: var(--paper-ink);
+  border-radius: var(--radius-0);
+  box-shadow: var(--shadow-paper);
+  font-size: var(--page-size-default);
+  line-height: var(--page-leading-default);
+  letter-spacing: -0.01em;
+}
+
+.rl-paper-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--paper-veil);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.rl-doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  margin-bottom: var(--s-8);
+}
+
+.rl-cell-spacer {
+  border: none;
+  padding: 0;
+  height: 10px;
+}
+
+.rl-cell {
+  position: relative;
+  border: 1px solid var(--paper-ink);
+  padding: 5px 8px;
+  vertical-align: top;
+  background: var(--paper);
+  color: var(--paper-ink);
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+
+.rl-cell--nowrap,
+.rl-cell--nowrap .rl-cell-text,
+.rl-cell--nowrap .rl-cell-para {
+  white-space: nowrap;
+}
+
+.rl-cell--typable {
+  cursor: text;
+}
+
+.rl-cell--blank {
+  background: var(--seat);
+}
+
+.rl-cell--typable:hover,
+.rl-cell--hovered {
+  outline: 1px solid color-mix(in srgb, var(--paper-ink) 20%, transparent);
+  outline-offset: -1px;
+}
+
+.rl-cell--seat-selected {
+  outline: 1.5px solid var(--focus-paper);
+  outline-offset: -1.5px;
+}
+
+.rl-blank-seat-fill {
+  min-height: 22px;
+  width: 100%;
+}
+
+.rl-cell-inner {
+  min-height: 18px;
+}
+
+.rl-cell-text {
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.rl-cell-para {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.rl-cell-para + .rl-cell-para {
+  margin-top: 2px;
+}
+
+.rl-nowrap-token {
+  white-space: nowrap;
+}
+
+.rl-para {
+  position: relative;
+  margin: 0 0 var(--s-8);
+  padding: 2px 4px;
+}
+
+.rl-para-body {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* ── Track-change marks (overlay-only, ink text preserved) ───────────────── */
+
+.rl-mark {
+  border-radius: var(--radius-0);
+  transition: opacity var(--dur-mark-in) var(--ease-standard);
+}
+
+.rl-ins {
+  text-decoration: none;
+  color: var(--paper-ink);
+  padding: 0 1px;
+}
+
+.rl-ins-block {
+  display: block;
+}
+
+.rl-ins-line {
+  display: block;
+}
+
+.rl-del {
+  color: var(--mark-delete-text);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.rl-mark--pending .rl-ins {
+  background: var(--mark-insert-tint);
+  border-bottom: 1px solid var(--mark-insert);
+}
+
+.rl-mark--pending .rl-del {
+  text-decoration-color: var(--mark-delete);
+}
+
+.rl-mark--accepted .rl-ins {
+  background: transparent;
+  border-bottom: 1px solid var(--mark-accepted);
+}
+
+.rl-mark--accepted .rl-del {
+  text-decoration-color: var(--mark-accepted);
+}
+
+.rl-mark--test .rl-ins,
+.rl-mark--test .rl-del {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--mark-test-tint),
+    var(--mark-test-tint) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
+.rl-mark--test .rl-ins {
+  border-bottom: 1px solid var(--mark-test);
+}
+
+.rl-mark--test .rl-del {
+  text-decoration-color: var(--mark-test);
+}
+
+.rl-mark--stale .rl-ins {
+  background: transparent;
+  border-bottom: 1px dashed var(--mark-stale);
+}
+
+.rl-mark--stale .rl-del {
+  text-decoration-color: var(--mark-stale);
+  text-decoration-style: dashed;
+}
+
+.rl-mark--fact .rl-ins {
+  background: var(--mark-fact-tint);
+  border-bottom: 1px solid var(--mark-fact);
+}
+
+.rl-mark--fact .rl-del {
+  text-decoration-color: var(--mark-fact);
+}
+
+.rl-mark--selected {
+  outline: 1.5px solid var(--mark-insert);
+  outline-offset: 1px;
+  background: var(--mark-selected-tint);
+}
+
+.rl-mark--fact.rl-mark--selected {
+  outline-color: var(--mark-fact);
+}
+
+.rl-mark--test.rl-mark--selected,
+.rl-mark--stale.rl-mark--selected {
+  outline-color: var(--mark-test);
+}
+
+.rl-mark--accepted.rl-mark--selected {
+  outline-color: var(--mark-accepted);
+}
+
+.rl-paper--drying .rl-ins {
+  background: transparent;
+  border-bottom-color: transparent;
+  transition:
+    background-color var(--dur-mark-dry) var(--ease-standard),
+    border-color var(--dur-mark-dry) var(--ease-standard);
+}
+
+.rl-paper--drying .rl-del {
+  opacity: 0;
+  transition: opacity var(--dur-mark-dry) var(--ease-standard);
+}
+
+.rl-paper--drying .rl-mark--selected {
+  outline-color: transparent;
+  background: transparent;
+}
+
+.rl-find-hit {
+  background: var(--attn-tint);
+  color: var(--paper-ink);
+  border-bottom: 1px solid var(--attn-line);
+}
+
+.rl-find-hit--active {
+  outline: 1.5px solid var(--focus-paper);
+}
+
+.rl-guide-delete-strip {
+  margin-top: var(--s-8);
+  padding: var(--s-4) var(--s-8);
+  border: 1px solid var(--line-strong);
+}
+
+.rl-guide-delete-item {
+  font-size: var(--text-sm);
+}
+
+/* ── In-place SeatEditor ─────────────────────────────────────────────────── */
+
+.rl-seat-input {
+  width: 100%;
+  min-height: 22px;
+  box-sizing: border-box;
+  padding: 2px 4px;
+  border: 1.5px solid var(--paper-ink);
+  border-radius: var(--radius-0);
+  background: var(--paper);
+  color: var(--paper-ink);
+  font-size: inherit;
+  line-height: inherit;
+  outline: none;
+}
+
+.rl-seat-input--multiline {
+  resize: vertical;
+  min-height: 44px;
+}
+
+/* ── Margin marks gutter (outside [data-testid="paper"]) ─────────────────── */
+
+.rl-margin-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 6;
+  transition: opacity var(--dur-mark-dry) var(--ease-standard);
+}
+
+.rl-margin-layer--drying {
+  opacity: 0;
+}
+
+.rl-margin-mark {
+  position: absolute;
+  left: 4px;
+  right: 0;
+  min-height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 5px;
+  pointer-events: auto;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.rl-margin-num {
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.rl-margin-bar {
+  width: 2px;
+  align-self: stretch;
+  flex: none;
+}
+
+.rl-margin-mark--pending {
+  color: var(--mark-insert);
+}
+.rl-margin-mark--pending .rl-margin-bar {
+  background: var(--mark-insert);
+}
+
+.rl-margin-mark--accepted {
+  color: var(--mark-delete-text);
+}
+.rl-margin-mark--accepted .rl-margin-bar {
+  background: var(--mark-accepted);
+  opacity: 0.45;
+}
+
+.rl-margin-mark--rejected {
+  color: var(--mark-delete-text);
+}
+.rl-margin-mark--rejected .rl-margin-bar {
+  background: transparent;
+  border-right: 2px dotted var(--mark-rejected);
+}
+
+.rl-margin-mark--test,
+.rl-margin-mark--stale {
+  color: color-mix(in srgb, var(--mark-test) 68%, var(--paper-ink));
+}
+.rl-margin-mark--test .rl-margin-bar,
+.rl-margin-mark--stale .rl-margin-bar {
+  background: transparent;
+  border-right: 2px dashed var(--mark-test);
+}
+
+.rl-margin-mark--fact {
+  color: var(--mark-fact);
+}
+.rl-margin-mark--fact .rl-margin-bar {
+  background: var(--mark-fact);
+}
+
+.rl-margin-mark--selected .rl-margin-bar {
+  width: 3px;
+}
+
+.rl-margin-mark--selected .rl-margin-num {
+  color: var(--paper);
+  background: var(--mark-insert);
+}
+
+.rl-margin-mark--fact.rl-margin-mark--selected .rl-margin-num {
+  background: var(--mark-fact);
+}
+
+.rl-margin-mark--accepted.rl-margin-mark--selected .rl-margin-num,
+.rl-margin-mark--rejected.rl-margin-mark--selected .rl-margin-num {
+  background: var(--mark-accepted);
+}
+
+.rl-margin-mark--test.rl-margin-mark--selected .rl-margin-num,
+.rl-margin-mark--stale.rl-margin-mark--selected .rl-margin-num {
+  background: color-mix(in srgb, var(--mark-test) 70%, var(--paper-ink));
+}
+
+.rl-margin-mark:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+/* ── Floating Mark Toolbar (outside changed text) ────────────────────────── */
+
+.rl-mark-toolbar {
+  position: absolute;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+  font-family: var(--font-sans);
+  animation: rl-pop-in var(--dur-pop) var(--ease-standard) both;
+}
+
+@keyframes rl-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rl-mark-btn {
+  height: 24px;
+  padding: 0 var(--s-8);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--weight-regular);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rl-mark-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.rl-mark-btn--active {
+  background: var(--selected);
+  font-weight: var(--weight-semibold);
+}
+
+.rl-mark-btn:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.rl-mark-btn:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+.rl-keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text-3);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  line-height: 1;
+  font-weight: var(--weight-regular);
+}
+
+/* ── Scrollbar change map ────────────────────────────────────────────────── */
+
+.rl-scrollmap {
+  position: absolute;
+  right: 3px;
+  top: 6px;
+  bottom: 6px;
+  width: 8px;
+  z-index: 15;
+}
+
+.rl-scrollmap-thumb {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: var(--radius-sm);
+  background: var(--ink);
+  opacity: 0.08;
+  pointer-events: none;
+}
+
+.rl-scrollmap-tick {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  height: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  background: var(--mark-insert);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.rl-scrollmap-tick--decided {
+  background: var(--text-3);
+  opacity: 0.5;
+}
+
+.rl-scrollmap-tick--attn {
+  background: var(--attn-line);
+  opacity: 0.9;
+}
+
+.rl-scrollmap-tick--fact {
+  background: var(--mark-fact);
+  height: 3px;
+  opacity: 1;
+}
+
+.rl-scrollmap-tick--selected {
+  height: 4px;
+  opacity: 1;
+}
+
+.rl-scrollmap-tick:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+/* ── Narrow (< 600 px) docked seat input bar ─────────────────────────────── */
+
+.rl-narrow-seat-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-8) var(--s-12);
+  background: var(--panel);
+  border-top: var(--border-hair);
+  font-family: var(--font-sans);
+}
+
+.rl-narrow-seat-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--ink);
+}
+
+.rl-narrow-seat-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+}
+
+.rl-narrow-seat-input {
+  flex: 1;
+  min-height: var(--ctl-touch);
+  padding: 0 var(--s-8);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink);
+  font-size: var(--text-base);
+}
+
+.rl-narrow-seat-btn {
+  min-height: var(--ctl-touch);
+  padding: 0 var(--s-12);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.rl-narrow-seat-btn--commit {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+}
+
+/* ── Status bar canvas contributions ─────────────────────────────────────── */
+
+.rl-status-left,
+.rl-status-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-12);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  color: var(--text-3);
+}
+
+.rl-status-item {
+  white-space: nowrap;
+}
+
+.rl-status-item--attn {
+  color: var(--attn);
+}
+
+.rl-status-notice {
+  color: var(--attn);
+  white-space: nowrap;
+}
+
+.rl-zoom-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rl-zoom-btn,
+.rl-zoom-pct {
+  height: 20px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.rl-zoom-btn:hover,
+.rl-zoom-pct:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.rl-zoom-ctl button:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+@media (max-width: 599px) {
+  [data-testid="status-char-count"] {
+    display: none;
+  }
+  .rl-status-left,
+  .rl-status-right {
+    gap: var(--s-8);
+    font-size: var(--text-xs);
+  }
+  .rl-margin-mark {
+    left: 0;
+    gap: 2px;
+  }
+  .rl-margin-num {
+    padding: 0 2px;
+  }
+}

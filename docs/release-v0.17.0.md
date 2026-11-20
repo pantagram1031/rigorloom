@@ -213,7 +213,7 @@ was isolated from the checkout and prior run artifacts and passed containment.
 | 1 | Claude clean-room, `evals/` | Sonnet, Opus | **defect-workaround cost, not tiers** — it ran against v0.16.0 as released | 8 |
 | 2 | Claude clean-room, `evals/` | Sonnet, Opus | tier difference on a fixed product (after #59–#62) | 4 |
 | 3 | Claude clean-room, `evals/` | Sonnet, Opus | the full product, all six modules enabled | 6 |
-| 4 | **independent Codex harness** | sol, terra, luna | correctness of the *verdict* itself | 7 |
+| 4 | **independent Codex harness** | tiers A, B, C | correctness of the *verdict* itself | 7 |
 | 5 | Claude family clean-room | Sonnet | G1/P1/H1 work-type coverage; outcomes partial/pass/pass | 9 |
 | 6 | Claude + Codex relay, fresh G1 roots | independent author/reviewer roles | remove the G1 blockers and prove the final bundle/render/containment chain | 6 |
 | | | | | **40** |
@@ -266,14 +266,14 @@ modules (6).**
 | 17 | T35 (second nit) — `--baseline` reads as "the blank form" but refused an `.hwpx`, so the agent dropped pixel-diff rather than converting | #73 |
 | 18 | `form_inspect --pretty` was tried from habit and rejected with a bare argparse error that named no alternative; the habit has an in-repo source — `probe.py` is the one script with compact default output, a justified exception nobody had written down | #77 |
 
-**Round 4 — independent Codex harness, tiers sol / terra / luna (7).**
+**Round 4 — independent Codex harness, tiers A / B / C (7).**
 
 | # | defect | shipped in |
 |---|---|---|
-| 19 | **`acceptance: true` returned while three safety checks sat in `deterministic.skipped[]`** — `empty_cell_expected_fill`, `fill_charpr_script_mismatch` and page parity — with exit 0. Acceptance was computed as "no HARD finding" and never read the skip list (luna) | #75 |
-| 20 | `--fill-map` and `expectations.fill_map` were two different inputs with materially different effects, so the flag looked sufficient and was not (luna) | #75 |
-| 21 | `pages_document` had no source at all on the `--pdf` path, so page parity skipped by default unless the caller hand-declared a number (sol) | #75 |
-| 22 | **an exit-1 traceback escaping after a good verdict** — `vision_pending` exited 1 where the contract says 3, because `emit_verdict` sat outside every guard in `main` and an unwritable `--out` escaped as a traceback (sol, terra) | #75 |
+| 19 | **`acceptance: true` returned while three safety checks sat in `deterministic.skipped[]`** — `empty_cell_expected_fill`, `fill_charpr_script_mismatch` and page parity — with exit 0. Acceptance was computed as "no HARD finding" and never read the skip list (tier C) | #75 |
+| 20 | `--fill-map` and `expectations.fill_map` were two different inputs with materially different effects, so the flag looked sufficient and was not (tier C) | #75 |
+| 21 | `pages_document` had no source at all on the `--pdf` path, so page parity skipped by default unless the caller hand-declared a number (tier A) | #75 |
+| 22 | **an exit-1 traceback escaping after a good verdict** — `vision_pending` exited 1 where the contract says 3, because `emit_verdict` sat outside every guard in `main` and an unwritable `--out` escaped as a traceback (tiers A, B) | #75 |
 | 23 | six cells on the test form were classified `fill_target` when nothing is ever written in them, so every reader had to reason them away by hand | #76 |
 | 24 | `empty_cell_expected_fill` fired on every *correct* run, with a page y-coordinate as its only evidence — a warning every correct run emits | #76 |
 | 25 | no canonical fill procedure existed: three harnesses filling the same cell picked three different strategies, one built three separate maps, and the `convert` syntax was undocumented | #76 |
@@ -337,7 +337,7 @@ The round-4 Codex harness did not trust our verdicts. It found two things our ow
 harness structurally could not see:
 
 1. **`acceptance: true` returned while three safety checks sat in
-   `skipped[]`.** The luna tier passed a CLI `--fill-map`, and got
+   `skipped[]`.** Tier C passed a CLI `--fill-map`, and got
    `empty_cell_expected_fill`, `fill_charpr_script_mismatch` **and** page
    parity into `deterministic.skipped[]` — then exit 0 and `acceptance: true`.
    Our harness could not see this because our harness *reads the verdict*.
@@ -352,7 +352,7 @@ harness structurally could not see:
    HARD `acceptance_safety_skipped`, never a pass; and `--accept-without CHECK`
    is per check, on the record in `acceptance_waivers[]`, and never hides the
    skip.
-2. **An exit-1 traceback escaping after a good verdict.** sol and terra both
+2. **An exit-1 traceback escaping after a good verdict.** Tiers A and B both
    saw exit **1** for `vision_pending`, where the documented contract says
    **3**. 1 was not a code at all: `emit_verdict` sat outside every guard in
    `main`, so an `--out` naming an existing directory escaped as a traceback
@@ -402,7 +402,7 @@ tag should not be read as claiming more than the runs support.
    does not establish that the shipped surface works on a third harness or a
    different machine. The skill also still leans on at least one
    Claude-Code-specific mechanism (the capability probe is injected by an
-   inline-command syntax). **The luna tier's own result carries a caveat**: it
+   inline-command syntax). **Tier C's own result carries a caveat**: it
    produced an accepted document, but it needed more retries than the Claude
    tiers on the same class of task, and it needed an auditing harness around it
    to get there. "A second vendor can drive this" is supported; "a second
