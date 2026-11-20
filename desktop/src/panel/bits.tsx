@@ -5,7 +5,7 @@
 import { Fragment, useLayoutEffect, useRef } from "react";
 
 import type { UiLanguage } from "../i18n/vocabulary";
-import type { ChangeSource } from "../model/changes";
+import type { ChangeSource, SourceTally } from "../model/changes";
 import { tp } from "./i18n";
 
 export function sourceLabel(source: ChangeSource, lang: UiLanguage): string {
@@ -19,6 +19,15 @@ export function sourceLabel(source: ChangeSource, lang: UiLanguage): string {
     default:
       return tp("wp4_source_agent", lang);
   }
+}
+
+const SOURCE_ORDER: readonly ChangeSource[] = ["user", "agent", "test", "revert"];
+
+export function proposerLine(tally: SourceTally, lang: UiLanguage): string {
+  const present = SOURCE_ORDER.filter((source) => tally[source]);
+  const key = present.length > 1 ? "wp4_box_propose_part" : "wp4_box_propose_body";
+  const sources = present.length ? present : ["agent" as const];
+  return sources.map((source) => tp(key, lang, [sourceLabel(source, lang), tally[source] ?? 0])).join(" · ");
 }
 
 /** The source as text, never colour alone. 시험용 carries the amber tag. */

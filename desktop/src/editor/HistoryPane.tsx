@@ -8,6 +8,7 @@
 import { useMemo } from "react";
 
 import { E } from "../i18n/v2/editor";
+import { Parts, proposerLine } from "../panel/bits";
 import { clockTime, tp } from "../panel/i18n";
 import { panelSlice } from "../panel/state";
 import { headCandidate, useWorkspace } from "../store";
@@ -33,9 +34,6 @@ export function HistoryPane({ sessionId }: { sessionId: string | null }) {
   );
 
   if (!sessionId) return null;
-
-  const who = (p: "agent" | "user" | "test" | "mixed") =>
-    p === "user" ? tp("source_user", lang) : p === "test" ? tp("source_test", lang) : tp("source_agent", lang);
 
   return (
     <section className="ed-history" aria-label={E.t("editor_history_aria", lang)} data-testid="history-pane">
@@ -66,9 +64,9 @@ export function HistoryPane({ sessionId }: { sessionId: string | null }) {
                   lang={lang}
                   data-testid={`history-box-${n}`}
                   hasChangedFact={box.checked && box.facts > 0}
-                  propose={tp("box_propose_body", lang, [who(box.proposer), box.count])}
-                  check={box.checked ? tp("box_check_body", lang, [box.facts, box.attn]) : tp("box_check_not_run", lang)}
-                  approve={tp("box_approved_direct", lang, [clockTime(box.atUtc, lang)])}
+                  propose={<Parts text={proposerLine(box.sources, lang)} />}
+                  check={box.checked ? tp("wp4_box_check_body", lang, [box.facts, box.attn]) : tp("wp4_box_check_not_run", lang)}
+                  approve={tp("wp4_box_approved_direct", lang, [clockTime(box.atUtc, lang)])}
                 />
               ) : null}
             </li>

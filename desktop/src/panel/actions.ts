@@ -19,6 +19,7 @@ import {
   canConfirm,
   canDecide,
   countChanges,
+  tallyBySource,
   filterChanges,
   gateState,
   idsForApproval,
@@ -259,16 +260,13 @@ export async function confirmApproval(): Promise<boolean> {
   // What each accepted change does, as the person saw it.
   const seen = live.draft.ops.filter((op) => accepted.has(op.opId));
   const counts = countChanges(v.items);
-  const proposerKinds = new Set(v.items.filter((it) => accepted.has(it.id)).map((it) => it.source));
+  const sources = tallyBySource(v.items.filter((it) => accepted.has(it.id)));
   const record = {
     count: accepted.size,
     facts: v.items.filter((it) => accepted.has(it.id) && it.guard.status === "changed").length + (v.untied?.length ?? 0),
     attn: counts.attn,
     checked: v.items.every((it) => it.guard.status !== "not_checked"),
-    proposer:
-      proposerKinds.size === 1
-        ? ([...proposerKinds][0] === "user" ? "user" : [...proposerKinds][0] === "test" ? "test" : "agent")
-        : ("mixed" as const),
+    sources,
   } as const;
   const fail = (): false => {
     // A broken binding asks for a fresh confirmation: the ticks clear.

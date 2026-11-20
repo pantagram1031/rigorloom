@@ -7,6 +7,7 @@ import {
   canDecide,
   filterChanges,
   gateState,
+  tallyBySource,
   type ChangeFilter,
   type ChangeSetView,
   type GateState,
@@ -24,7 +25,7 @@ import {
 } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
 import { Keycap } from "../ui/Keycap";
-import { Parts, sourceLabel } from "./bits";
+import { Parts, proposerLine } from "./bits";
 import { ChangeItemRow } from "./ChangeItemRow";
 import { clockTime, revisionName, tp } from "./i18n";
 import { panelSlice, type AppliedRecord } from "./state";
@@ -171,9 +172,7 @@ function blockText(gate: GateState, lang: UiLanguage): string | null {
 }
 
 export function proposerText(view: ChangeSetView, lang: UiLanguage): string {
-  const sources = new Set(view.items.map((it) => it.source));
-  const who = sources.size === 1 ? sourceLabel([...sources][0], lang) : tp("wp4_source_agent", lang);
-  return tp("wp4_box_propose_body", lang, [who, view.items.length]);
+  return proposerLine(tallyBySource(view.items), lang);
 }
 
 export function checkText(view: ChangeSetView, lang: UiLanguage, guardState: string): string {
@@ -208,7 +207,7 @@ function GateFooter({
       <ApprovalBox
         lang={lang}
         data-testid="gate-box"
-        propose={proposerText(view, lang)}
+        propose={<Parts text={proposerText(view, lang)} />}
         check={<Parts text={checkText(view, lang, guardState)} />}
         approve={null}
       />
@@ -245,19 +244,13 @@ function GateFooter({
 }
 
 export function AppliedFooter({ applied, lang }: { applied: AppliedRecord; lang: UiLanguage }) {
-  const who =
-    applied.proposer === "user"
-      ? tp("wp4_source_user", lang)
-      : applied.proposer === "test"
-        ? tp("wp4_source_test", lang)
-        : tp("wp4_source_agent", lang);
   return (
     <footer className="rp-footer" data-testid="applied-footer">
       <ApprovalBox
         lang={lang}
         data-testid="gate-box-filled"
         hasChangedFact={applied.checked && applied.facts > 0}
-        propose={tp("wp4_box_propose_body", lang, [who, applied.count])}
+        propose={<Parts text={proposerLine(applied.sources, lang)} />}
         check={<Parts text={applied.checked ? tp("wp4_box_check_body", lang, [applied.facts, applied.attn]) : tp("wp4_box_check_not_run", lang)} />}
         approve={
           <span data-testid="gate-approved">

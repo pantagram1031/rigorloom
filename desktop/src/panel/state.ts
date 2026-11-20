@@ -7,6 +7,7 @@ import type {
   ChangeFilter,
   ChangeSetView,
   TickId,
+  SourceTally,
 } from "../model/changes";
 import { defineDocSlice } from "../store";
 
@@ -25,7 +26,7 @@ export interface StyleFinding {
 export interface AppliedRecord {
   revision: number;
   atUtc: string;
-  proposer: "agent" | "user" | "test" | "mixed";
+  sources: SourceTally;
   count: number;
   facts: number;
   attn: number;

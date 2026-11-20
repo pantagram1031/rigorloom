@@ -257,7 +257,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
           lang={lang}
           data-testid="sheet-box"
           hasChangedFact={ticks.includes("facts")}
-          propose={proposerText({ ...view, items: accepted }, lang)}
+          propose={<Parts text={proposerText({ ...view, items: accepted }, lang)} />}
           check={<Parts text={checkText(view, lang, guardState)} />}
           approve={null}
         />

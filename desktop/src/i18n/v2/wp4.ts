@@ -58,6 +58,7 @@ export const WP4_STRINGS = {
   wp4_box_propose: { ko: "제안", en: "Proposed" },
   wp4_box_check: { ko: "점검", en: "Checked" },
   wp4_box_approve: { ko: "승인", en: "Approved" },
+  wp4_box_propose_part: { ko: "{0} {1}건", en: "{0} {1}" },
   wp4_box_propose_body: { ko: "{0} · {1}건", en: "{0} · {1}" },
   wp4_box_check_body: { ko: "바뀐 사실 {0} · 확인 {1}", en: "Changed facts {0} · Check {1}" },
   wp4_box_check_not_run: { ko: "점검하지 않음", en: "Not checked" },

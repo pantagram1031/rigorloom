@@ -33,6 +33,14 @@ export type ChangeKind = "fill" | "replace" | "insert" | "delete" | "format";
  */
 export type ChangeSource = "agent" | "user" | "test" | "revert";
 
+export type SourceTally = Partial<Record<ChangeSource, number>>;
+
+export function tallyBySource(items: readonly Pick<ChangeItem, "source">[]): SourceTally {
+  const counts: SourceTally = {};
+  for (const { source } of items) counts[source] = (counts[source] ?? 0) + 1;
+  return counts;
+}
+
 /** Filters on the 변경 header. Each count is also a filter. */
 export type ChangeFilter = "all" | "pending" | "accepted" | "rejected" | "attn";
 
