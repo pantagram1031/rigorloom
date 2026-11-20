@@ -30,6 +30,7 @@ export interface CanvasDocSlice {
   pageCount: number;
   rasterSource: RasterSource | null;
   rasterApprox: boolean;
+  fontRefresh: number;
   findRequest: "find" | "replace" | 1 | -1 | null;
   findQuery: string;
   replaceQuery: string;
@@ -55,6 +56,7 @@ export const INITIAL_CANVAS_SLICE: CanvasDocSlice = {
   pageCount: 1,
   rasterSource: null,
   rasterApprox: false,
+  fontRefresh: 0,
   findRequest: null,
   findQuery: "",
   replaceQuery: "",

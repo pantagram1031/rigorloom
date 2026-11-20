@@ -142,11 +142,13 @@ def own_unavailable(reason: str, detail: str, **extra) -> dict:
     return {"state": "no", "reason": reason, "detail": detail, **extra}
 
 
-def _key(subject_sha256: str, dpi: int) -> str:
-    return f"{subject_sha256[:16]}-{int(dpi)}dpi"
+def _key(subject_sha256: str, dpi: int, font_refresh=False) -> str:
+    suffix = "-fonts" if font_refresh else ""
+    return f"{subject_sha256[:16]}-{int(dpi)}dpi{suffix}"
 
 
-def existing_own(session, *, subject_sha256: str, dpi: int, confine=None) -> dict | None:
+def existing_own(session, *, subject_sha256: str, dpi: int, confine=None,
+                 font_refresh=False) -> dict | None:
     """A tier-3 render of THESE bytes at THIS dpi, or nothing.
 
     Bound the way ``rt_convert.existing_pdf`` binds a prepared PDF, and for the
@@ -155,7 +157,7 @@ def existing_own(session, *, subject_sha256: str, dpi: int, confine=None) -> dic
     renders = (session.meta or {}).get("ownRenders")
     if not isinstance(renders, dict):
         return None
-    record = renders.get(_key(subject_sha256, dpi))
+    record = renders.get(_key(subject_sha256, dpi, font_refresh))
     if not isinstance(record, dict):
         return None
     if record.get("subjectSha256") != subject_sha256:
@@ -177,7 +179,7 @@ def existing_own(session, *, subject_sha256: str, dpi: int, confine=None) -> dic
     return dict(record)
 
 
-def any_own_for(session, *, subject_sha256: str) -> dict | None:
+def any_own_for(session, *, subject_sha256: str, confine=None, latest=False) -> dict | None:
     """Any cached tier-3 render of these bytes, at whatever dpi drew it.
 
     Geometry needs A render of this subject, not one at a particular dpi: the
@@ -186,24 +188,30 @@ def any_own_for(session, *, subject_sha256: str) -> dict | None:
     the CLIENT happened to ask the raster for — and the Desktop asks for 110,
     which is nobody's round number.
 
-    Highest dpi wins where there are several: the line boxes are measured in
-    device pixels and the finer render rounds least.
+    Highest dpi wins for geometry. Font reporting uses the newest render,
+    preferring a font refresh when the recorded timestamps match.
     """
     renders = (session.meta or {}).get("ownRenders")
     if not isinstance(renders, dict):
         return None
     best = None
+    best_rank = None
     for key, record in renders.items():
         if not isinstance(record, dict):
             continue
         if record.get("subjectSha256") != subject_sha256:
             continue
+        dpi = int(record.get("dpi") or 0)
+        refreshed = key == _key(subject_sha256, dpi, font_refresh=True)
+        if refreshed and not latest:
+            continue
         candidate = existing_own(session, subject_sha256=subject_sha256,
-                                 dpi=int(record.get("dpi") or 0))
+                                 dpi=dpi, confine=confine, font_refresh=refreshed)
         if candidate is None:
             continue
-        if best is None or int(candidate.get("dpi") or 0) > int(best.get("dpi") or 0):
-            best = candidate
+        rank = (candidate.get("producedUtc") or "", refreshed, dpi) if latest else (dpi,)
+        if best_rank is None or rank > best_rank:
+            best, best_rank = candidate, rank
     return best
 
 
@@ -246,7 +254,7 @@ def run_own_render(tools, subject: Path, out_dir: Path, *, dpi: int,
 
 
 def own_render(session, tools, *, subject: Path, subject_sha256: str,
-               dpi: int, confine=None) -> tuple[dict | None, dict | None]:
+               dpi: int, confine=None, refresh_fonts=False) -> tuple[dict | None, dict | None]:
     """``(record, refusal)`` — never both, never neither.
 
     The refusal is a plain dict from :func:`own_unavailable`, not an exception,
@@ -267,11 +275,12 @@ def own_render(session, tools, *, subject: Path, subject_sha256: str,
             f"subject is {subject.suffix.lower() or 'extensionless'}",
             suffix=subject.suffix.lower())
 
-    cached = existing_own(session, subject_sha256=subject_sha256, dpi=dpi, confine=confine)
-    if cached is not None:
-        return cached, None
+    if not refresh_fonts:
+        cached = existing_own(session, subject_sha256=subject_sha256, dpi=dpi, confine=confine)
+        if cached is not None:
+            return cached, None
 
-    key = _key(subject_sha256, dpi)
+    key = _key(subject_sha256, dpi, refresh_fonts)
     out_dir = session.dir / OWN_DIRNAME / key
     if confine is not None:
         confine(out_dir)
@@ -344,7 +353,7 @@ def own_render(session, tools, *, subject: Path, subject_sha256: str,
     return record, None
 
 
-def font_summary(sidecar: dict) -> dict:
+def font_summary(sidecar: dict, *, include_bundled=False) -> dict:
     """The substitution story, small enough to put in a badge tooltip.
 
     ``faces`` is kept whole for the ones that were SUBSTITUTED only: a person
@@ -356,7 +365,9 @@ def font_summary(sidecar: dict) -> dict:
         return {"state": "unavailable",
                 "reason": "this render's sidecar carries no font report"}
     faces = fonts.get("faces") if isinstance(fonts.get("faces"), list) else []
-    substituted = [f for f in faces if isinstance(f, dict) and not f.get("resolved")]
+    substituted = [f for f in faces if isinstance(f, dict) and (
+        not f.get("resolved") or (include_bundled and f.get("source") == "bundled")
+    )]
     return {
         "state": "read",
         "charactersResolved": fonts.get("characters_on_a_resolved_face"),
@@ -364,7 +375,9 @@ def font_summary(sidecar: dict) -> dict:
         "facesTotal": len(faces),
         "facesSubstituted": len(substituted),
         "substituted": [
-            {"declared": f.get("declared"), "drawnWith": f.get("installed_family"),
+            {"declared": f.get("declared"),
+             "drawnWith": (f.get("installed_family") or f.get("substituted_with"))
+             if include_bundled else f.get("installed_family"),
              "slot": f.get("slot"), "characters": f.get("characters")}
             for f in substituted
         ],

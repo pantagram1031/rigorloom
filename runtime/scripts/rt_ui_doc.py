@@ -17,13 +17,15 @@ import time
 from uuid import uuid4
 
 try:
-    from . import rt_apply, rt_doc, rt_render
+    from . import rt_apply, rt_doc, rt_font_install, rt_own, rt_render
     from .rt_codes import MAX_INLINE_IMAGE_BYTES, MIN_RENDER_DPI, RpcError
     from .rt_engine import EngineTools
     from .rt_session import Session, sha256_file
 except ImportError:
     import rt_apply
     import rt_doc
+    import rt_font_install
+    import rt_own
     import rt_render
     from rt_codes import MAX_INLINE_IMAGE_BYTES, MIN_RENDER_DPI, RpcError
     from rt_engine import EngineTools
@@ -39,6 +41,7 @@ CELL_ADDRESS = re.compile(r"t[0-9]+/r[0-9]+/c[0-9]+")
 PARA_ADDRESS = re.compile(r"p[0-9]+")
 FIELDS = {
     "pages": set(),
+    "fonts": {"faces", "source", "refresh"},
     "render": {"page", "scale"},
     "geometry": {"page"},
     "preview": {"ops"},
@@ -140,6 +143,8 @@ def _params(operation, body):
         raise PageError("page_limit", "a render request accepts one page")
     required = FIELDS[operation] | {"sessionId", "rev"}
     optional = {"previewId"} if operation in {"render", "geometry"} else set()
+    if operation == "render":
+        optional.add("refreshFonts")
     if not required <= body.keys() or body.keys() - required - optional:
         raise PageError("invalid_params", "unexpected or missing page request fields")
     session_id, rev = body["sessionId"], body["rev"]
@@ -148,6 +153,18 @@ def _params(operation, body):
     if not isinstance(rev, str) or not re.fullmatch(r"[a-f0-9]{64}", rev):
         raise PageError("invalid_params", "rev must be a document digest")
     args = {}
+    if operation == "fonts":
+        faces, source, refresh = body["faces"], body["source"], body["refresh"]
+        if (not isinstance(faces, list) or len(faces) > rt_font_install.MAX_FACES
+                or any(not isinstance(face, str) or len(face) > rt_font_install.MAX_FACE_LENGTH for face in faces)
+                or source not in ("engine", "own-uncertified", "projection", "pdf", "hancom")
+                or type(refresh) is not bool):
+            raise PageError("invalid_params", "invalid font request")
+        args.update(faces=faces, source=source, refresh=refresh)
+    if "refreshFonts" in body:
+        if body["refreshFonts"] != "1":
+            raise PageError("invalid_params", "invalid font refresh flag")
+        args["refresh_fonts"] = True
     if "page" in body:
         if isinstance(body["page"], list) or "," in str(body["page"]):
             raise PageError("page_limit", "a page request accepts one page")
@@ -345,7 +362,27 @@ class PageGateway:
     def _uses_engine(head):
         return head.path.suffix.lower() in {".hwp", ".hwpx"} and rt_doc.engine_status()["available"]
 
+    def _fonts(self, head, faces, source, refresh):
+        if source == "engine" and self._uses_engine(head):
+            result = _engine_result(rt_doc.page_font_substitutions(head.path, refresh=refresh), head.rev)
+            substitutions = result["fonts"]["substituted"]
+        elif source == "own-uncertified":
+            record = rt_own.any_own_for(head.session, subject_sha256=head.rev, confine=head.confine, latest=True)
+            if record is None:
+                substitutions = []
+            else:
+                fonts = rt_own.font_summary(rt_own.read_sidecar(head.session, record), include_bundled=True)
+                substitutions = [{"want": row["declared"], "got": row["drawnWith"]}
+                                 for row in fonts.get("substituted", [])]
+        elif source == "projection":
+            substitutions = [{"want": name, "got": None} for name in faces]
+        else:
+            substitutions = []
+        return {"faces": rt_font_install.substitution_states(substitutions)}
+
     def _read(self, head, operation, args):
+        if operation == "fonts":
+            return self._fonts(head, **args)
         if not self._uses_engine(head):
             if operation == "pages":
                 return {"source": "fallback", "count": None, "pages": [], "approx": []}
@@ -386,7 +423,7 @@ class PageGateway:
             payload.update(previewId=preview.id, previewRev=preview.rev, changed=changed)
         return payload
 
-    def _render(self, head, tools, page, scale, preview_id=None):
+    def _render(self, head, tools, page, scale, preview_id=None, refresh_fonts=False):
         preview = self._get_preview(head, preview_id, page)
         if self._uses_engine(head):
             path, rev = (preview.path, preview.rev) if preview else (head.path, head.rev)
@@ -413,7 +450,8 @@ class PageGateway:
 
         dpi = max(MIN_RENDER_DPI, round(72 * scale))
         result = rt_render.render_page(head.session, page=page - 1, dpi=dpi,
-                                       run_id=head.run_id, inline=False, tools=tools, confine=head.confine)
+                                       run_id=head.run_id, inline=False, tools=tools, confine=head.confine,
+                                       refresh_fonts=refresh_fonts)
         if not result["available"]:
             if (result.get("own") or {}).get("reason") == "render_failed":
                 raise PageError("render_failed", "the fallback renderer could not draw the page",
@@ -459,7 +497,7 @@ def register_routes(router):
         return read
 
     for operation in FIELDS:
-        is_query = operation != "preview"
+        is_query = operation not in {"preview", "fonts"}
         register = router.get if is_query else router.post
         register(f"/api/doc/{operation}", handler(operation, is_query))
 

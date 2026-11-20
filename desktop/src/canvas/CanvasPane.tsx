@@ -41,6 +41,7 @@ import {
   setCanvasSlice,
   useCanvasSlice,
 } from "./controller";
+import { FontStatus } from "./FontStatus";
 import { MarginMarks, type MeasuredMarkPos } from "./MarginMarks";
 import { MarkToolbar, type MarkToolbarAnchor } from "./MarkToolbar";
 import { PageSheet } from "./PageSheet";
@@ -110,7 +111,7 @@ export function CanvasPane() {
   }, [changes, draft, headRunId, session?.sessionId, slice.rasterSource, slice.view]);
   const pageRaster = usePageRaster(
     session?.sessionId, rev, slice.page,
-    slice.effectiveZoomPct === null ? null : measured.effectiveZoom, previewEdits,
+    slice.effectiveZoomPct === null ? null : measured.effectiveZoom, previewEdits, slice.fontRefresh,
   );
   const pageSource = useMemo<PageSource | null>(() => {
     if (!inspect) return null;
@@ -314,6 +315,11 @@ export function CanvasPane() {
         ) : null}
       </div>
 
+      {isNarrow && rev ? (
+        <FontStatus key={`${session.sessionId}:${rev}`} sessionId={session.sessionId} rev={rev}
+          language={language} source={source ?? "projection"} narrow />
+      ) : null}
+
       {isNarrow && inlineEdit?.kind === "cell" && !pageRaster.geometry?.boxes.some((box) =>
         box.kind === "line" && (box.queueAddress ?? box.at)?.startsWith(`t${inlineEdit.table}/r${inlineEdit.row}/c${inlineEdit.col}/p`)) ? (
         <div className="rl-narrow-seat-bar" data-testid="narrow-seat-bar">
@@ -503,40 +509,17 @@ export function CanvasStatusLeft() {
 
 export function CanvasStatusRight() {
   const session = useWorkspace(activeSession);
-  const inspect = useWorkspace(activeInspect);
-  const render = useWorkspace((s) => s.render);
   const language = useWorkspace((s) => s.language);
+  const rev = useWorkspace((s) => headCandidate(s)?.sha256 ?? activeSession(s)?.source.sha256);
   const slice = useCanvasSlice(session?.sessionId);
 
-  const fonts = useMemo(() => {
-    if (!inspect) return null;
-    const src = createProjectionPageSource({
-      inspect,
-      texts: [],
-      textMap: {},
-      changes: [],
-      render,
-      language,
-    });
-    return src.fonts();
-  }, [inspect, render, language]);
-
-  const subCount = fonts?.substitutedCount ?? 0;
   const pct = slice.effectiveZoomPct ?? Math.round(slice.zoom * 100);
 
   return (
     <div className="rl-status-right" data-testid="status-canvas-right">
-      {subCount > 0 ? (
-        <span
-          className="rl-status-item rl-status-item--attn"
-          data-testid="status-font-sub"
-          title={fonts?.entries
-            .filter((e) => e.substituted)
-            .map((e) => wp3t("status_font_sub_detail", language, [e.declared, e.resolved]))
-            .join(", ")}
-        >
-          {wp3t("status_font_sub", language, [subCount])}
-        </span>
+      {session && rev ? (
+        <FontStatus key={`${session.sessionId}:${rev}`} sessionId={session.sessionId} rev={rev}
+          language={language} source={slice.rasterSource ?? "projection"} />
       ) : null}
 
       <div className="rl-zoom-ctl" data-testid="status-zoom">

@@ -27,6 +27,9 @@ def test_rendered_page_shows_source_keeps_image_and_uses_local_caret(browser, se
             url = urlsplit(route.request.url)
             query = parse_qs(url.query)
             operation = url.path.rsplit("/", 1)[-1]
+            if operation == "fonts":
+                route.fallback()
+                return
             rev = query["rev"][0]
             requests.append((operation, query))
             if operation == "geometry":
@@ -166,6 +169,9 @@ def test_engine_cell_stays_over_held_raster_until_its_preview_draws(browser, ser
             url = urlsplit(route.request.url)
             query = parse_qs(url.query)
             operation = url.path.rsplit("/", 1)[-1]
+            if operation == "fonts":
+                route.fallback()
+                return
             if operation == "preview":
                 params = route.request.post_data_json
                 previews.append(params)

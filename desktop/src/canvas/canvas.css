@@ -967,3 +967,97 @@
 .shell-v2:has(.rp-sheet) .rl-mark-toolbar {
   display: none;
 }
+
+.rl-font-trigger {
+  padding: 1px var(--s-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--attn);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rl-font-trigger--narrow {
+  align-self: flex-end;
+  min-height: var(--ctl-touch);
+  padding-inline: var(--s-12);
+  font: var(--text-sm)/var(--lh-sm) var(--font-sans);
+}
+
+.rl-font-trigger:hover,
+.rl-font-dismiss:hover,
+.rl-font-action:hover {
+  background: var(--hover);
+}
+
+.rl-font-panel {
+  position: fixed;
+  inset: auto 12px 34px auto;
+  width: min(360px, calc(100vw - 24px));
+  max-width: none;
+  max-height: calc(100dvh - 48px);
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--s-16);
+  overflow: auto;
+  white-space: normal;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  box-shadow: var(--shadow-float);
+  color: var(--ink);
+  font: var(--text-sm)/var(--lh-sm) var(--font-sans);
+}
+
+.rl-font-panel::backdrop { background: transparent; }
+
+.rl-font-panel-header,
+.rl-font-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-8);
+}
+
+.rl-font-panel h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.rl-font-panel p {
+  margin: var(--s-8) 0;
+  color: var(--text-2);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.rl-font-dismiss,
+.rl-font-action {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--s-4) var(--s-8);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rl-font-dismiss { border-color: transparent; }
+.rl-font-action:disabled { cursor: default; }
+.rl-font-source { text-decoration: none; }
+
+.rl-font-faces {
+  margin: var(--s-12) 0;
+  border-block: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.rl-font-faces > div { padding: var(--s-8) 0; }
+.rl-font-faces > div + div { border-top: 1px solid var(--line); }
+.rl-font-faces dt { font-weight: var(--weight-semibold); }
+.rl-font-faces dd { margin: 0; color: var(--text-2); }
+.rl-font-actions { justify-content: flex-end; }
+.rl-font-feedback:not(:empty) { margin: 0 0 var(--s-8); color: var(--text-2); }

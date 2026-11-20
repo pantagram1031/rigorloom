@@ -23,6 +23,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T213:** Opt-in editor v2 lists missing Hancom faces and their substitutes in the status bar. Open Hancom’s official font distribution page to install the fonts, then check again to redraw the document.
 - **T212:** Typing on an opt-in editor v2 engine page shows an inline preview. Edits enter the review queue and redraw affected pages from a scratch copy. The canvas keeps the previous image and typed text if the redraw fails.
 - **T211:** Opt-in editor v2 draws the session head with the document engine or the available PDF and built-in render tiers. It labels the page source and retains the displayed page if a redraw fails.
 - **T210:** The opt-in editor v2 reviews accepted changes and factual differences in the approval sheet, identifies mixed-source proposals, and refreshes stale proposals against the latest revision. It shows applied approval details and revision history, and the mounted gongmun walkthrough and open/edit smoke exercise the editor through export.

@@ -253,7 +253,7 @@ def _image_record(png: bytes, path: Path, session, *, width: int, height: int,
 
 def own_render_page(session, tools, *, subject: Path, subject_facts: dict,
                     page: int, dpi: int, run_id: str | None,
-                    inline: bool, confine=None) -> tuple[dict | None, dict | None]:
+                    inline: bool, confine=None, refresh_fonts=False) -> tuple[dict | None, dict | None]:
     """Tier 3 — ``(result, refusal)``. Never claims to be anything else.
 
     Every field that could be mistaken for a Hancom render is deliberately
@@ -272,7 +272,8 @@ def own_render_page(session, tools, *, subject: Path, subject_facts: dict,
             "render_failed", "this subject has no recorded digest, and a page "
             "is only ever served bound to the bytes it was drawn from")
     record, refusal = own_render(session, tools, subject=subject,
-                                 subject_sha256=subject_sha, dpi=dpi, confine=confine)
+                                 subject_sha256=subject_sha, dpi=dpi, confine=confine,
+                                 refresh_fonts=refresh_fonts)
     if record is None:
         return None, refusal
 
@@ -330,7 +331,7 @@ def own_render_page(session, tools, *, subject: Path, subject_facts: dict,
 
 def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
                 run_id: str | None = None, inline: bool = True,
-                tools=None, confine=None) -> dict:
+                tools=None, confine=None, refresh_fonts=False) -> dict:
     """Rasterise one page, or say precisely why there is no page to rasterise."""
     if not isinstance(page, int) or isinstance(page, bool) or page < 0:
         raise RpcError("invalid_params", "page must be a non-negative integer",
@@ -359,7 +360,7 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
             # explaining that there is no page.
             own_result, own_refusal = own_render_page(
                 session, tools, subject=path, subject_facts=facts, page=page,
-                dpi=dpi, run_id=run_id, inline=inline, confine=confine)
+                dpi=dpi, run_id=run_id, inline=inline, confine=confine, refresh_fonts=refresh_fonts)
             if own_result is not None:
                 return own_result
 

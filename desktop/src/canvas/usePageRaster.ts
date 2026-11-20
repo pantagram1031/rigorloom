@@ -5,6 +5,7 @@ import {
   type RenderedPage, type RasterSource,
 } from "../model/enginePage";
 import { browserToken, call, isTauri, tokenHeaders } from "../runtime";
+import type { FontCheckRow } from "../model/fontInstall";
 
 type RenderInfo = Omit<RenderedPage, "url">;
 type PageReply =
@@ -20,7 +21,10 @@ function hasCode(error: unknown, code: string): boolean {
 
 async function requestPage<T>(
   operation: string,
-  params: PageIdentity & { page?: number; scale?: number; previewId?: string; ops?: EngineTextEdit[] },
+  params: PageIdentity & {
+    page?: number; scale?: number; previewId?: string; ops?: EngineTextEdit[];
+    faces?: string[]; source?: RasterSource | "projection"; refresh?: boolean; refreshFonts?: "1";
+  },
   signal: AbortSignal,
 ): Promise<T> {
   if (isTauri()) {
@@ -47,7 +51,7 @@ async function requestPage<T>(
   }
   const options: RequestInit = { headers: tokenHeaders(), signal };
   let path = `/api/doc/${operation}`;
-  if (operation === "preview") {
+  if (operation === "preview" || operation === "fonts") {
     options.method = "POST";
     options.headers = tokenHeaders({ "Content-Type": "application/json" });
     options.body = JSON.stringify(params);
@@ -78,6 +82,13 @@ async function requestPage<T>(
   return response.json();
 }
 
+export function requestPageFonts(
+  params: PageIdentity & { faces: string[]; source: RasterSource | "projection"; refresh: boolean },
+  signal: AbortSignal,
+) {
+  return requestPage<{ rev: string; faces: FontCheckRow[] }>("fonts", params, signal);
+}
+
 async function retrySuperseded<T>(request: () => Promise<T>, signal: AbortSignal): Promise<T> {
   try {
     return await request();
@@ -91,12 +102,13 @@ async function retrySuperseded<T>(request: () => Promise<T>, signal: AbortSignal
 type HeldRaster = {
   sessionId: string; frame: RenderedPage; geometry: EngineGeometry | null; scale: number;
   edits: EngineTextEdit[];
+  fontRefresh: number;
 };
 type PreviewRects = NonNullable<EngineGeometry["changed"]>;
 
 export function usePageRaster(
   sessionId: string | undefined, rev: string | undefined, page: number, zoom: number | null,
-  edits: readonly EngineTextEdit[],
+  edits: readonly EngineTextEdit[], fontRefresh: number,
 ) {
   const [held, setHeld] = useState<HeldRaster | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -118,7 +130,7 @@ export function usePageRaster(
   const enabled = Boolean(browserToken() || isTauri());
   const scale = zoom === null ? null : pageRasterScale(zoom, pixelRatio);
   const editKey = edits.length ? JSON.stringify(edits) : "";
-  const previewKey = `${sessionId}:${rev}:${editKey}`;
+  const previewKey = `${sessionId}:${rev}:${fontRefresh}:${editKey}`;
   const requestKey = `${previewKey}:${page}:${scale}`;
   useEffect(() => {
     if (!enabled || !sessionId || !rev || scale === null) return;
@@ -154,13 +166,13 @@ export function usePageRaster(
       const params = { sessionId, rev, page, ...(previewId ? { previewId } : {}) };
       const current = shown.current;
       if (preview && !previewId && current?.sessionId === sessionId && current.frame.rev === rev &&
-          current.frame.page === page && current.scale === scale && !current.frame.previewId) {
+          current.frame.page === page && current.scale === scale && !current.frame.previewId && current.fontRefresh === fontRefresh) {
         settle(preview.count);
         return;
       }
 
       const measure = async (): Promise<EngineGeometry | null> => {
-        const key = `${sessionId}:${rev}:${page}:${previewId ?? ""}`;
+        const key = `${sessionId}:${rev}:${fontRefresh}:${page}:${previewId ?? ""}`;
         if (measured.current?.key === key) return measured.current.value;
         const result = await requestPage<EngineGeometry>("geometry", params, signal).catch(() => null);
         const value = result?.rev === rev && result.page === page &&
@@ -179,7 +191,9 @@ export function usePageRaster(
       if (previewId) setChanged({ key: requestKey, rects: preview?.changed ?? [] });
 
       const result = await retrySuperseded(
-        () => requestPage<PageReply>("render", { ...params, scale }, signal), signal,
+        () => requestPage<PageReply>("render", {
+          ...params, scale, ...(fontRefresh ? { refreshFonts: "1" } : {}),
+        }, signal), signal,
       );
       if (result.rev !== rev || result.page !== page || !accept(result.seq)) return;
       if (result.source === "projection") {
@@ -205,7 +219,7 @@ export function usePageRaster(
         if (!accept(result.seq)) return;
         lastSequence.current = { sessionId, seq: result.seq };
         const { source, seq, page, count, approx, widthPt, heightPt } = result;
-        const next = { sessionId, geometry, scale, edits: previewId ? JSON.parse(editKey) as EngineTextEdit[] : [],
+        const next = { sessionId, geometry, scale, fontRefresh, edits: previewId ? JSON.parse(editKey) as EngineTextEdit[] : [],
           frame: { rev, source, seq, page, count, approx, widthPt, heightPt, url, previewId, previewRev } };
         shown.current = next;
         adopted = true;
@@ -238,7 +252,7 @@ export function usePageRaster(
       window.clearTimeout(debounce);
       pending.abort();
     };
-  }, [enabled, sessionId, rev, page, scale, editKey, previewKey, requestKey]);
+  }, [enabled, sessionId, rev, page, scale, editKey, previewKey, requestKey, fontRefresh]);
 
   const url = held?.frame.url;
   useEffect(() => () => {
