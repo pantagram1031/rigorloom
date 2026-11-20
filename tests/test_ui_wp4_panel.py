@@ -270,3 +270,26 @@ def test_gongmun_typing_approval_history_and_export(browser, server, tmp_path, t
         assert download.value.suggested_filename.endswith(".hwpx")
         assert len(_receipts(tmp_path, _session_id(page))) == 1
         assert not errors, errors
+
+
+def test_review_keys_stand_down_and_text_fields_pass_palette_chords(browser, server):
+    with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
+        _open_sample(page, server)
+        _propose(server, _session_id(page), [("pending", 5, "담당관")])
+        row = page.get_by_test_id("change-row-1")
+        expect(row).to_have_attribute("data-decision", "pending", timeout=20_000)
+        page.get_by_test_id("change-summary-1").click()
+        page.keyboard.press("Control+Comma")
+        settings = page.get_by_test_id("settings-dialog")
+        expect(settings).to_be_visible()
+        page.keyboard.press("n")
+        expect(row).to_have_attribute("data-decision", "pending")
+        page.keyboard.press("Escape")
+        page.get_by_test_id("return").click()
+        reason = page.get_by_test_id("return-reason")
+        expect(reason).to_be_focused()
+        page.keyboard.press("n")
+        expect(reason).to_have_value("n")
+        page.keyboard.press("Control+k")
+        expect(page.get_by_test_id("palette")).to_be_visible()
+        expect(row).to_have_attribute("data-decision", "pending")

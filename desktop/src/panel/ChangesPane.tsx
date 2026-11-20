@@ -25,7 +25,7 @@ import {
 } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
 import { Keycap } from "../ui/Keycap";
-import { Parts, proposerLine } from "./bits";
+import { Parts, proposerLine, sourceLabel } from "./bits";
 import { ChangeItemRow } from "./ChangeItemRow";
 import { clockTime, revisionName, tp } from "./i18n";
 import { panelSlice, type AppliedRecord } from "./state";
@@ -102,11 +102,12 @@ export function ReturnPopover({ lang, connected }: { lang: UiLanguage; connected
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposingEvent(e.nativeEvent)) return;
-    e.stopPropagation();
     if (e.key === "Escape") {
+      e.stopPropagation();
       e.preventDefault();
       closeReturn();
-    } else if (e.key === "Enter" && !e.shiftKey) {
+    } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.stopPropagation();
       e.preventDefault();
       void submit(false);
     }

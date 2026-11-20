@@ -68,11 +68,12 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
 
   const onEditKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposingEvent(e.nativeEvent)) return;
-    e.stopPropagation();
     if (e.key === "Escape") {
+      e.stopPropagation();
       e.preventDefault();
       setEditing(false);
-    } else if (e.key === "Enter" && !e.shiftKey) {
+    } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.stopPropagation();
       e.preventDefault();
       void commit();
     }
