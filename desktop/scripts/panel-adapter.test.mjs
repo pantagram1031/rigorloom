@@ -205,3 +205,10 @@ test("adapter carries the digest the guard's diff was read from", () => {
   assert.equal(none.diffDigest, undefined);
 });
 
+
+test("a refused draft reports its failure ahead of the missing plan", () => {
+  const op = { opId: "typed", kind: "fill_cell", table: 0, row: 1, col: 0, text: "Draft", origin: "user" };
+  const refusal = { plan: null, validation: null, failureCode: "capability_unavailable" };
+  const view = adapter.fromWorkspace(input([indexed(1, op)], refusal));
+  assert.deepEqual(model.gateState(view).block, { kind: "failed", code: "capability_unavailable" });
+});

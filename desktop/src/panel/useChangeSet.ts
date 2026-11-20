@@ -149,12 +149,13 @@ export function useChangeSet(sessionId: string): ChangeSetContext {
       guard,
       plan: draft.plan,
       validation: draft.validation,
+      failureCode: draft.phase === "failed" ? draft.error?.code : undefined,
       baseRevision,
       baseSha256: session?.source.sha256 ?? "",
       currentRevision,
       stale,
     });
-  }, [indexed, changes, guard, draft.plan, draft.validation, staleness, reapproval, baseRevision, currentRevision, language, session]);
+  }, [indexed, changes, guard, draft.plan, draft.validation, draft.phase, draft.error, staleness, reapproval, baseRevision, currentRevision, language, session]);
 
   useLayoutEffect(() => {
     setLatestView(sessionId, view);

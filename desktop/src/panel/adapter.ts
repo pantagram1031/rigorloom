@@ -173,6 +173,7 @@ export interface WorkspaceAdapterInput {
   guard: ReviewGuardSummary | null;
   plan: OperationPlan | null;
   validation: PlanValidation | null;
+  failureCode?: string;
   /** Revision the plan is based on: 0 for 원본. */
   baseRevision: number;
   baseSha256: string;
@@ -236,6 +237,7 @@ export function fromWorkspace(raw: WorkspaceAdapterInput): ChangeSetView | null 
     },
     stale: input.stale ? { reason: input.stale, current: input.currentRevision } : null,
     items,
+    failureCode: input.failureCode,
     diffDigest: input.guard?.documentDiff?.beforeSha256,
     untied: input.guard?.unattributedFailing?.map(({ paragraph, before, after }) => ({ paragraph, before, after })),
     provenance: { agent: null, provider: null, mock: plan?.provenance === "mock" || items.some((item) => item.source === "test") },

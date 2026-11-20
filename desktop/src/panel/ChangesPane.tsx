@@ -2,7 +2,7 @@ import { useCanvasSlice } from "../canvas/controller";
 import { isComposingEvent } from "../shell/keys";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
-import type { UiLanguage } from "../i18n/vocabulary";
+import { errorCodeMessage, type UiLanguage } from "../i18n/vocabulary";
 import {
   canDecide,
   filterChanges,
@@ -165,6 +165,8 @@ function blockText(gate: GateState, lang: UiLanguage): string | null {
       return tp("wp4_gate_busy", lang);
     case "diff_mismatch":
       return tp("wp4_gate_diff_mismatch", lang);
+    case "failed":
+      return errorCodeMessage(b.code, lang);
     case "checking":
       return tp("wp4_gate_checking", lang);
     default:
