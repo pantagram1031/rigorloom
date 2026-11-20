@@ -109,7 +109,7 @@ export interface ChangeItem {
 }
 
 export interface ChangeSetBase {
-  kind: "source" | "candidate";
+  kind: "source" | "candidate" | "empty";
   /** 0 for 원본, N for 수정본 N. */
   revision: number;
   sha256: string;
@@ -117,7 +117,7 @@ export interface ChangeSetBase {
 
 export interface ChangeSetStale {
   /** Shared naming with PLATFORM: `superseded_by_newer_candidate`. */
-  reason: "superseded_by_newer_candidate" | "plan_behind_head" | "source_changed";
+  reason: "superseded_by_newer_candidate" | "plan_behind_head" | "source_changed" | "target_changed" | "declined_by_person";
   /** The revision the document is at now. */
   current: number;
 }
@@ -137,6 +137,9 @@ export interface ChangeSetView {
   base: ChangeSetBase;
   /** Status `stale` in PLATFORM terms, or null. */
   stale: ChangeSetStale | null;
+  closed?: "applied" | "rejected" | "withdrawn" | null;
+  returnedItems?: string[];
+  supersedes?: string[];
   items: ChangeItem[];
   provenance: ChangeSetProvenance;
   /** ISO time the proposal was made. */
@@ -339,7 +342,7 @@ export function gateState(view: ChangeSetView | null, opts: { busy?: boolean } =
   const items = view?.items ?? [];
   const counts = countChanges(items);
   let block: GateBlock | null = null;
-  if (!view || items.length === 0) block = { kind: "empty" };
+  if (!view || items.length === 0 || view.closed) block = { kind: "empty" };
   else if (view.stale) block = { kind: "stale" };
   else if (opts.busy) block = { kind: "busy" };
   else if (counts.hard > 0) block = { kind: "hard", count: counts.hard };
@@ -351,7 +354,7 @@ export function gateState(view: ChangeSetView | null, opts: { busy?: boolean } =
 
 /** Y and N are refused on a stale set (D1 §3d). */
 export function canDecide(view: ChangeSetView | null): boolean {
-  return Boolean(view && !view.stale && view.items.length > 0);
+  return Boolean(view && !view.stale && !view.closed && view.items.length > 0);
 }
 
 /**
