@@ -1671,6 +1671,7 @@ def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeyp
     assert set(rt_toolset.OP_FIELDS) - {"fill"} - set(rt_toolset.OPS_SPELLED) <= named
     assert "count from 0" in description
     assert rt_toolset._op_names(["table.a", "style", "table.b", "x.y"]) == "table.{a,b}, style, x.y"
+    assert rt_toolset._op_names(["style", "table.a", "style.create"]) == "style, table.a, style.create"
 
     empty = tmp_path / "none"
     empty.mkdir()
