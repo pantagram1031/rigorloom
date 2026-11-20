@@ -214,3 +214,46 @@ def test_panel_layout_with_sample(browser, server, width, height):
         expect(page.get_by_test_id("checks-pane")).to_be_visible()
         page.get_by_test_id("panel-tab-agent").click()
         expect(page.get_by_test_id("agent-pane")).to_be_visible()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_gongmun_typing_approval_history_and_export(browser, server, tmp_path, theme):
+    from test_ui_walkthrough_gongmun import _assert_surface_clean
+
+    with browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=theme) as page:
+        errors = []
+        page.on("pageerror", lambda err: errors.append(str(err)))
+        _open_sample(page, server)
+        _assert_surface_clean(page, f"mounted document {theme}")
+        body = page.locator('[data-cell-key="c:0:2:0"]')
+        value = "1. 관련: 기록정책과-88(2026. 10. 30.)"
+        body.click()
+        seat = page.get_by_test_id("seat-input")
+        seat.fill(value)
+        seat.press("Enter")
+        row = page.get_by_test_id("change-row-1")
+        expect(row).to_have_attribute("data-decision", "accepted")
+        expect(row).to_contain_text("내 입력")
+        expect(row).to_contain_text(value)
+        expect(page.get_by_test_id("mark-1").first).to_be_visible()
+        approve = page.get_by_test_id("approve")
+        expect(approve).to_be_enabled(timeout=30_000)
+        approve.click()
+        sheet = page.get_by_test_id("approve-sheet")
+        expect(sheet).to_contain_text("변경 1건 승인")
+        _assert_principles(page, f"mounted approval {theme}")
+        _assert_surface_clean(page, f"mounted approval {theme}")
+        _confirm_ticks(page)
+        page.get_by_test_id("approve-confirm").click()
+        expect(page.get_by_test_id("applied-footer")).to_be_visible(timeout=30_000)
+        expect(body).to_contain_text(value)
+        expect(page.get_by_test_id("strip-version")).to_have_text("수정본 1")
+        page.keyboard.press("Alt+5")
+        expect(page.get_by_test_id("history-row-1")).to_have_attribute("aria-current", "true")
+        expect(page.get_by_test_id("history-box-1")).to_contain_text("내 입력")
+        expect(page.get_by_test_id("history-row-source")).to_be_visible()
+        with page.expect_download() as download:
+            page.get_by_test_id("strip-export").click()
+        assert download.value.suggested_filename.endswith(".hwpx")
+        assert len(_receipts(tmp_path, _session_id(page))) == 1
+        assert not errors, errors
