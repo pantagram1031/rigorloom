@@ -240,6 +240,10 @@ export function fromWorkspace(raw: WorkspaceAdapterInput): ChangeSetView | null 
     createdUtc: plan?.createdUtc ?? null,
     checking:
       foreign ||
+      // A person's typing reaches the draft before its plan is proposed; the
+      // approval binds to a plan hash, so 승인 waits until there is one.
+      !plan ||
+      input.validation == null ||
       input.guard?.state === "running" ||
       ((!input.guard || input.guard.state === "idle") && Boolean(plan) && input.validation?.ok === true),
   };

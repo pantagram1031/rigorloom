@@ -178,3 +178,15 @@ test("adapter: guard facts split into 바뀐 사실 and expected", () => {
   assert.equal(adapter.guardOf(ch, "fill", summary(null, "kept")).status, "kept");
   assert.equal(adapter.guardOf(ch, "fill", { ...summary(null), state: "unavailable" }).status, "not_checked");
 });
+
+test("a typed edit waits until the draft has both a plan and validation", () => {
+  const op = { opId: "typed", kind: "fill_cell", table: 0, row: 1, col: 0, text: "Draft", origin: "user" };
+  const items = [indexed(1, op)];
+  for (const state of [{ plan: null, validation: null }, { validation: null }]) {
+    const view = adapter.fromWorkspace(input(items, state));
+    assert.equal(view.checking, true);
+    assert.deepEqual(model.gateState(view).block, { kind: "checking" });
+  }
+  const guard = { state: "ready", planId: "pl-1", rowAudits: {} };
+  assert.equal(adapter.fromWorkspace(input(items, { guard })).checking, false);
+});
