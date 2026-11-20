@@ -2,7 +2,7 @@ import { useRef, type KeyboardEvent } from "react";
 
 import { openOperatorModal } from "../actions";
 import type { UiLanguage } from "../i18n/vocabulary";
-import { composerBlocker, setComposerDraft, useWorkspace } from "../store";
+import { composerBlocker, composerDraftAfterSend, composerDraftOf, setComposerDraft, useComposerDraftText, useWorkspace } from "../store";
 import { cancelRequest, clearContext, sendRequest } from "./actions";
 import { Keycap } from "../ui/Keycap";
 import { tp } from "./i18n";
@@ -23,7 +23,7 @@ export function Composer({ lang }: { lang: UiLanguage }) {
   const doc = useWorkspace((s) => s.activeSessionId);
   const blocker = useWorkspace(composerBlocker);
   const provider = useWorkspace((s) => s.provider.provider);
-  const text = useWorkspace((s) => s.composerDraft.text);
+  const text = useComposerDraftText();
   const context = panelSlice.use(doc, (s) => s.context);
   const mode = composerMode(blocker, provider, Boolean(doc));
   const ref = useRef<HTMLTextAreaElement | null>(null);
@@ -42,9 +42,12 @@ export function Composer({ lang }: { lang: UiLanguage }) {
   const send = async () => {
     const value = text.trim();
     if (!value || mode === "working") return;
-    setComposerDraft("");
+    // The draft belongs to the document it was typed for, even if the person
+    // switches tabs while the send is in flight.
+    const at = doc;
+    setComposerDraft("", at);
     const ok = await sendRequest(value);
-    if (!ok) setComposerDraft(value);
+    if (!ok) setComposerDraft(composerDraftAfterSend(composerDraftOf(at).text, value, false), at);
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
