@@ -113,6 +113,25 @@ def test_symlinked_session_directory_is_refused_even_inside_the_root(tmp_path: P
     assert exc.value.status == 404
 
 
+def test_a_symlinked_root_is_the_root(tmp_path: Path) -> None:
+    """Finding 7: a runtime root that is itself a symlink (macOS /tmp, a
+    Documents folder redirected to a cloud drive) serves its documents; a
+    symlink below it is still refused."""
+    real = tmp_path / "real-root"
+    session = _session(real)
+    link = tmp_path / "Documents-link"
+    os.symlink(real, link)
+    assert rt_ui_style.style_check(link, {"sessionId": session.id})["ok"] is True
+    # Below the (symlinked) root, a symlinked session directory is refused.
+    inner = real / "sessions" / session.id
+    moved = real / "elsewhere"
+    shutil.move(str(inner), str(moved))
+    os.symlink(moved, inner)
+    with pytest.raises(rt_ui_style.StyleRouteError) as exc:
+        rt_ui_style.style_check(link, {"sessionId": session.id})
+    assert exc.value.status == 404
+
+
 def test_a_source_name_that_climbs_is_refused(tmp_path: Path) -> None:
     root = tmp_path / "root"
     session = _session(root)
@@ -136,6 +155,11 @@ def test_unknown_run_is_not_found_and_unknown_fields_are_refused(tmp_path: Path)
     with pytest.raises(rt_ui_style.StyleRouteError) as dt:
         rt_ui_style.style_check(root, {"sessionId": session.id, "docType": "../x"})
     assert dt.value.code == "invalid_params"
+    # A docType that is not a string is a bad request, not a crash (finding 11).
+    for bad in (["gongmun"], {"a": 1}, 3):
+        with pytest.raises(rt_ui_style.StyleRouteError) as dt:
+            rt_ui_style.style_check(root, {"sessionId": session.id, "docType": bad})
+        assert dt.value.status == 400 and dt.value.code == "invalid_params", bad
 
 
 # --- over HTTP ------------------------------------------------------------------------

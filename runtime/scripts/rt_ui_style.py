@@ -67,14 +67,20 @@ def _confined(root: Path, target: Path) -> Path:
         raise _not_found() from None
     if not resolved.is_relative_to(resolved_root) or not resolved.is_file():
         raise _not_found()
-    # A symlink anywhere on the way is refused even when it lands inside.
-    probe = target
-    while True:
+    # A symlink anywhere below the root is refused even when it lands inside.
+    # The root itself may be one (macOS /tmp, a Documents folder redirected
+    # to a cloud drive): it is canonicalised above and never walked.
+    if target.is_relative_to(root):
+        base, below = root, target.relative_to(root).parts
+    elif target.is_relative_to(resolved_root):
+        base, below = resolved_root, target.relative_to(resolved_root).parts
+    else:
+        raise _not_found()
+    probe = base
+    for part in below:
+        probe = probe / part
         if probe.is_symlink():
             raise _not_found()
-        if probe == root or probe.parent == probe:
-            break
-        probe = probe.parent
     return resolved
 
 
@@ -103,7 +109,7 @@ def style_check(root: Path, body: Any) -> dict[str, Any]:
     session_id = _id(body.get("sessionId"), "sessionId")
     run_id = _id(body.get("runId"), "runId", optional=True)
     doc_type = body.get("docType")
-    if doc_type is not None and doc_type not in _DOC_TYPES:
+    if doc_type is not None and (not isinstance(doc_type, str) or doc_type not in _DOC_TYPES):
         raise StyleRouteError(HTTPStatus.BAD_REQUEST, "invalid_params", "docType is not a known document type")
     path = resolve_document(root, session_id, run_id)
     try:
