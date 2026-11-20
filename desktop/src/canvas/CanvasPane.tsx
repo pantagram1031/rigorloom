@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 
 import { cancelEdit } from "../actions";
@@ -19,23 +18,19 @@ import {
 import {
   activeInspect,
   activeSession,
-  activeText,
+  activeDisplayText,
   cellKey,
-  headCandidate,
   useWorkspace,
 } from "../store";
 import { buildRegionTextMap } from "../workspace/externalPlan";
 import { deriveCellFieldLabel } from "../workspace/fieldLabels";
+import { useCanvasChanges } from "./changes";
+import { useCanvasBaseName } from "./DocumentStrip";
 import {
-  buildIndexedChanges,
-  useReviewGuardSummary,
-} from "../workspace/guardHelper";
-import { indexedChangesToCanvasRefs } from "./_shim";
-import {
+  beginCellEditV2,
   commitCellEditV2,
   decideCanvasItem,
   fitCanvasWidth,
-  stepCanvasChange,
   stepCanvasZoom,
 } from "./actions";
 import {
@@ -45,7 +40,6 @@ import {
   setCanvasSlice,
   useCanvasSlice,
 } from "./controller";
-import { DocumentStrip } from "./DocumentStrip";
 import { MarginMarks, type MeasuredMarkPos } from "./MarginMarks";
 import { MarkToolbar, type MarkToolbarAnchor } from "./MarkToolbar";
 import { PageSheet } from "./PageSheet";
@@ -53,48 +47,14 @@ import { ScrollMap, type ScrollMapTick } from "./ScrollMap";
 import { SeatEditor } from "./SeatEditor";
 import "./canvas.css";
 
-export interface CanvasPaneProps {
-  /** Optional external changes (e.g. from WP4 `ChangeItem[]` or harness). */
-  changesOverride?: readonly CanvasChangeRef[];
-  /** Optional base document label (`원본` or `수정본 1`). */
-  baseNameOverride?: string;
-  /** Optional stale flag override. */
-  isStaleOverride?: boolean;
-  /** Optional read-only flag (history revision viewing). */
-  readOnly?: boolean;
-  /** Optional callback when a user decides an item (`Y`/`N`/`U`). */
-  onDecideItem?: (itemId: string, decision: "pending" | "accepted" | "rejected") => void;
-  /** Optional callback when user wants to jump to edit via MarkToolbar `E`. */
-  onEditItem?: (item: CanvasChangeRef) => void;
-  /** Optional slot renderers for stripStart / stripEnd. */
-  stripStart?: ReactNode;
-  stripEnd?: ReactNode;
-  /** Optional callback exposing active PageSource. */
-  onPageSourceReady?: (source: PageSource | null) => void;
-}
-
-export function CanvasPane({
-  changesOverride,
-  baseNameOverride,
-  isStaleOverride,
-  readOnly = false,
-  onDecideItem,
-  onEditItem,
-  stripStart,
-  stripEnd,
-  onPageSourceReady,
-}: CanvasPaneProps) {
+export function CanvasPane() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
-  const draft = useWorkspace((s) => s.draft);
+  const texts = useWorkspace(activeDisplayText);
   const render = useWorkspace((s) => s.render);
   const geometry = useWorkspace((s) => s.geometry);
-  const head = useWorkspace(headCandidate);
-  const candidatesBySession = useWorkspace((s) => s.candidates);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const language = useWorkspace((s) => s.language);
-  const guardSummary = useReviewGuardSummary();
 
   const slice = useCanvasSlice(session?.sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -119,7 +79,6 @@ export function CanvasPane({
   });
 
   const [hoveredStatusLabel, setHoveredStatusLabel] = useState<string | null>(null);
-  const [narrowEditDraft, setNarrowEditDraft] = useState("");
   const [isNarrow, setIsNarrow] = useState<boolean>(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia("(max-width: 599px)").matches
@@ -137,49 +96,8 @@ export function CanvasPane({
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
-  const indexedChanges = useMemo(
-    () => (inspect ? buildIndexedChanges(draft, inspect, textMap, language) : []),
-    [draft, inspect, textMap, language],
-  );
-
-  const isStale = Boolean(
-    isStaleOverride ??
-      (draft.validation?.stale ||
-        (draft.plan && draft.boundSha256 && draft.plan.boundSha256 !== draft.boundSha256)),
-  );
-
-  const changes = useMemo<CanvasChangeRef[]>(() => {
-    if (changesOverride) {
-      return changesOverride.map((ch) => ({
-        ...ch,
-        decision: slice.decisions[ch.id] ?? ch.decision,
-        isStale: ch.isStale ?? isStale,
-      }));
-    }
-    return indexedChangesToCanvasRefs(indexedChanges, guardSummary.rowAudits, slice.decisions, {
-      isStale,
-      reverses: draft.reverses,
-      planProvenance: (draft.plan as { provenance?: string | null } | null)?.provenance,
-    });
-  }, [
-    changesOverride,
-    indexedChanges,
-    guardSummary.rowAudits,
-    slice.decisions,
-    isStale,
-    draft.reverses,
-    draft.plan,
-  ]);
-
-  const baseName = useMemo(() => {
-    if (baseNameOverride) return baseNameOverride;
-    if (head) {
-      const candidates = candidatesBySession[session?.sessionId ?? ""] ?? [];
-      const idx = candidates.findIndex((c) => c.runId === head.runId);
-      if (idx >= 0) return wp3t("canvas_view_base_revision", language, [idx + 1]);
-    }
-    return wp3t("canvas_view_base_source", language);
-  }, [baseNameOverride, head, candidatesBySession, session?.sessionId, language]);
+  const changes = useCanvasChanges(session?.sessionId ?? null, textMap);
+  const baseName = useCanvasBaseName();
 
   const pageSource = useMemo<PageSource | null>(() => {
     if (!inspect) return null;
@@ -197,8 +115,8 @@ export function CanvasPane({
 
   useEffect(() => {
     publishCanvasContext(changes, pageSource);
-    onPageSourceReady?.(pageSource);
-  }, [changes, pageSource, onPageSourceReady]);
+    return () => publishCanvasContext([], null);
+  }, [changes, pageSource]);
 
   // Keep selectedChangeId valid
   useEffect(() => {
@@ -242,44 +160,20 @@ export function CanvasPane({
     [changes, slice.selectedChangeId],
   );
 
-  const handleDecide = useCallback(
-    (itemId: string, decision: "pending" | "accepted" | "rejected") => {
-      decideCanvasItem(itemId, decision);
-      onDecideItem?.(itemId, decision);
-    },
-    [onDecideItem],
-  );
-
-  const handleEditSelected = useCallback(
-    (item: CanvasChangeRef) => {
-      if (onEditItem) {
-        onEditItem(item);
-        return;
-      }
-      if (!inspect || !item.cellKey) return;
-      const m = /^c:(\d+):(\d+):(\d+)$/.exec(item.cellKey);
-      if (!m) return;
-      import("./actions").then(({ beginCellEditV2 }) => {
-        beginCellEditV2(Number(m[1]), Number(m[2]), Number(m[3]), {
-          inspect,
-          texts: [...texts],
-        });
-      });
-    },
-    [onEditItem, inspect, texts],
-  );
-
-  useEffect(() => {
-    if (inlineEdit?.kind === "cell") {
-      setNarrowEditDraft(inlineEdit.before);
-    }
-  }, [inlineEdit]);
+  const handleEditSelected = (item: CanvasChangeRef) => {
+    const target = item.cellKey?.match(/^c:(\d+):(\d+):(\d+)$/);
+    if (target) beginCellEditV2(Number(target[1]), Number(target[2]), Number(target[3]));
+  };
 
   if (!session || !inspect) {
     return null;
   }
 
   const scrollReq = getScrollRequestState();
+  const narrowEditDraft = inlineEdit?.kind === "cell"
+    ? changes.find((change) => change.id === inlineEdit.opId && change.decision !== "rejected")?.after ??
+      inlineEdit.before
+    : "";
   const activeSeatLabel =
     inlineEdit?.kind === "cell"
       ? deriveCellFieldLabel(
@@ -299,20 +193,6 @@ export function CanvasPane({
       data-effective-zoom={String(Math.round(measured.effectiveZoom * 100))}
       data-seat-status={activeSeatLabel ?? ""}
     >
-      <DocumentStrip
-        baseName={baseName}
-        changes={changes}
-        selectedChangeId={slice.selectedChangeId}
-        view={slice.view}
-        isStale={isStale}
-        readOnly={readOnly}
-        language={language}
-        onSetView={(v) => canvas.setView(v)}
-        onStepChange={(d) => stepCanvasChange(d)}
-        stripStart={stripStart}
-        stripEnd={stripEnd}
-      />
-
       <div className="rl-desk">
         <div
           ref={scrollRef}
@@ -363,7 +243,6 @@ export function CanvasPane({
             ) : null}
 
             {!isNarrow &&
-            !readOnly &&
             slice.view === "marks" &&
             selectedItem &&
             measured.toolbarAnchor ? (
@@ -372,7 +251,7 @@ export function CanvasPane({
                 anchor={measured.toolbarAnchor}
                 canEdit={Boolean(selectedItem.cellKey && selectedItem.opKind !== "delete_guides")}
                 language={language}
-                onDecide={handleDecide}
+                onDecide={decideCanvasItem}
                 onEdit={handleEditSelected}
               />
             ) : null}
@@ -408,6 +287,7 @@ export function CanvasPane({
               key={`narrow-${cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col)}`}
               value={narrowEditDraft}
               caret="end"
+              multiline={inlineEdit.multiline}
               className="rl-narrow-seat-input"
               onCommit={(val) => {
                 void commitCellEditV2(val, { inspect });
@@ -417,6 +297,7 @@ export function CanvasPane({
             <button
               type="button"
               className="rl-narrow-seat-btn"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => cancelEdit()}
             >
               {wp3t("seat_narrow_cancel", language)}
@@ -424,6 +305,7 @@ export function CanvasPane({
             <button
               type="button"
               className="rl-narrow-seat-btn rl-narrow-seat-btn--commit"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
                   '[data-testid="seat-input"]',
@@ -445,7 +327,7 @@ export function CanvasPane({
 export function CanvasStatusLeft() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
+  const texts = useWorkspace(activeDisplayText);
   const render = useWorkspace((s) => s.render);
   const page = useWorkspace((s) => s.page);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
@@ -558,11 +440,7 @@ export function CanvasStatusLeft() {
   );
 }
 
-export function CanvasStatusRight({
-  effectiveZoomPct,
-}: {
-  effectiveZoomPct?: number;
-}) {
+export function CanvasStatusRight() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
   const render = useWorkspace((s) => s.render);
@@ -583,7 +461,7 @@ export function CanvasStatusRight({
   }, [inspect, render, language]);
 
   const subCount = fonts?.substitutedCount ?? 0;
-  const pct = effectiveZoomPct ?? slice.effectiveZoomPct ?? Math.round(slice.zoom * 100);
+  const pct = slice.effectiveZoomPct ?? Math.round(slice.zoom * 100);
 
   return (
     <div className="rl-status-right" data-testid="status-canvas-right">

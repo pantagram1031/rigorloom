@@ -1,8 +1,8 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
-  useState,
   type KeyboardEvent,
 } from "react";
 
@@ -11,20 +11,14 @@ import { legacyCellKey, type CanvasChangeRef } from "../model/page";
 import {
   activeInspect,
   activeSession,
-  activeText,
+  activeDisplayText,
   useWorkspace,
 } from "../store";
 import { buildRegionTextMap } from "../workspace/externalPlan";
 import { deriveCellFieldLabel } from "../workspace/fieldLabels";
+import { useCanvasChanges } from "../canvas/changes";
 import {
-  buildIndexedChanges,
-  useReviewGuardSummary,
-} from "../workspace/guardHelper";
-import {
-  bindFindFocusHook,
-  indexedChangesToCanvasRefs,
-} from "../canvas/_shim";
-import {
+  findTextPattern,
   replaceAllFindMatches,
   replaceFindMatch,
   type FindMatchItem,
@@ -36,83 +30,20 @@ import {
 } from "../canvas/controller";
 import "./panes.css";
 
-export interface FindPaneProps {
-  /** Optional external changes list (for standalone harness / WP4 queue). */
-  changesOverride?: readonly CanvasChangeRef[];
-  /** Start with replace input expanded. */
-  defaultShowReplace?: boolean;
-}
-
-export function FindPane({
-  changesOverride,
-  defaultShowReplace = true,
-}: FindPaneProps = {}) {
+export function FindPane() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
-  const draft = useWorkspace((s) => s.draft);
+  const texts = useWorkspace(activeDisplayText);
   const language = useWorkspace((s) => s.language);
-  const guardSummary = useReviewGuardSummary();
   const slice = useCanvasSlice(session?.sessionId);
 
-  const [showReplace, setShowReplace] = useState(defaultShowReplace);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const composingRef = useRef(false);
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
-  const indexedChanges = useMemo(
-    () => (inspect ? buildIndexedChanges(draft, inspect, textMap, language) : []),
-    [draft, inspect, textMap, language],
-  );
-
-  const isStale = Boolean(
-    draft.validation?.stale ||
-      (draft.plan && draft.boundSha256 && draft.plan.boundSha256 !== draft.boundSha256),
-  );
-
-  const changes = useMemo<CanvasChangeRef[]>(() => {
-    if (changesOverride) {
-      return changesOverride.map((ch) => ({
-        ...ch,
-        decision: slice.decisions[ch.id] ?? ch.decision,
-      }));
-    }
-    return indexedChangesToCanvasRefs(
-      indexedChanges,
-      guardSummary.rowAudits,
-      slice.decisions,
-      {
-        isStale,
-        reverses: draft.reverses,
-        planProvenance: (draft.plan as { provenance?: string | null } | null)?.provenance,
-      },
-    );
-  }, [
-    changesOverride,
-    indexedChanges,
-    guardSummary.rowAudits,
-    slice.decisions,
-    isStale,
-    draft.reverses,
-    draft.plan,
-  ]);
-
-  useEffect(() => {
-    return bindFindFocusHook((mode) => {
-      if (mode === "replace") setShowReplace(true);
-      requestAnimationFrame(() => {
-        if (mode === "replace" && slice.findQuery.trim().length > 0) {
-          replaceInputRef.current?.focus();
-          replaceInputRef.current?.select();
-        } else {
-          findInputRef.current?.focus();
-          findInputRef.current?.select();
-        }
-      });
-    });
-  }, [slice.findQuery]);
+  const changes = useCanvasChanges(session?.sessionId ?? null, textMap);
 
   const cellEffectiveChanges = useMemo(() => {
     const map = new Map<string, CanvasChangeRef>();
@@ -128,7 +59,7 @@ export function FindPane({
   const matches = useMemo<FindMatchItem[]>(() => {
     const query = slice.findQuery.trim();
     if (!inspect || !query) return [];
-    const needle = query.toLowerCase();
+    const pattern = findTextPattern(query);
     const out: FindMatchItem[] = [];
     const coveredStrings = new Set<string>();
 
@@ -145,8 +76,8 @@ export function FindPane({
           cell.textPreview ??
           "";
         if (text.trim()) coveredStrings.add(text.trim());
-        const matchStart = text.toLowerCase().indexOf(needle);
-        if (matchStart < 0) continue;
+        const match = text.matchAll(pattern).next().value;
+        if (match?.index === undefined) continue;
         const label = deriveCellFieldLabel(
           inspect,
           textMap,
@@ -170,8 +101,8 @@ export function FindPane({
             cell.addr.col + 1,
           ]),
           text,
-          matchStart,
-          matchEnd: matchStart + query.length,
+          matchStart: match.index,
+          matchEnd: match.index + match[0].length,
         });
       }
     }
@@ -180,8 +111,8 @@ export function FindPane({
       const pKey = `p:${para.at_para}`;
       const text = textMap[pKey]?.text ?? para.text ?? "";
       if (!text.trim() || coveredStrings.has(text.trim())) continue;
-      const matchStart = text.toLowerCase().indexOf(needle);
-      if (matchStart < 0) continue;
+      const match = text.matchAll(pattern).next().value;
+      if (match?.index === undefined) continue;
       out.push({
         id: pKey,
         targetType: "para",
@@ -190,8 +121,8 @@ export function FindPane({
         label: text.slice(0, 24),
         locationLabel: wp3t("outline_page_header", language, [1]),
         text,
-        matchStart,
-        matchEnd: matchStart + query.length,
+        matchStart: match.index,
+        matchEnd: match.index + match[0].length,
       });
     }
 
@@ -220,7 +151,7 @@ export function FindPane({
     });
   }, [activeMatch, safeIndex]);
 
-  const stepMatch = (delta: -1 | 1) => {
+  const stepMatch = useCallback((delta: -1 | 1) => {
     if (matches.length === 0) return;
     const next = (safeIndex + delta + matches.length) % matches.length;
     const target = matches[next];
@@ -234,7 +165,21 @@ export function FindPane({
       cellKey: target.cellKey ?? null,
       atPara: target.atPara ?? null,
     });
-  };
+  }, [matches, safeIndex]);
+
+  useEffect(() => {
+    const request = slice.findRequest;
+    if (request === null) return;
+    if (typeof request === "number") {
+      stepMatch(request);
+    } else {
+      const input = request === "replace" && slice.findQuery.trim()
+        ? replaceInputRef.current : findInputRef.current;
+      input?.focus();
+      input?.select();
+    }
+    setCanvasSlice({ findRequest: null }, session?.sessionId);
+  }, [slice.findRequest, slice.findQuery, stepMatch, session?.sessionId]);
 
   const selectMatchAt = (index: number) => {
     const target = matches[index];
@@ -256,7 +201,7 @@ export function FindPane({
     if (e.nativeEvent.isComposing || e.keyCode === 229 || composingRef.current) {
       return;
     }
-    if (e.key === "Enter" || e.code === "F3") {
+    if (e.key === "Enter") {
       e.preventDefault();
       stepMatch(e.shiftKey ? -1 : 1);
     }
@@ -335,60 +280,58 @@ export function FindPane({
           </div>
         </div>
 
-        {showReplace ? (
-          <div className="rl-find-replace-box">
-            <input
-              ref={replaceInputRef}
-              type="text"
-              className="rl-find-input"
-              data-testid="find-replace-input"
-              value={slice.replaceQuery}
-              placeholder={wp3t("replace_input_placeholder", language)}
-              aria-label={wp3t("replace_input_placeholder", language)}
-              onCompositionStart={() => {
-                composingRef.current = true;
+        <div className="rl-find-replace-box">
+          <input
+            ref={replaceInputRef}
+            type="text"
+            className="rl-find-input"
+            data-testid="find-replace-input"
+            value={slice.replaceQuery}
+            placeholder={wp3t("replace_input_placeholder", language)}
+            aria-label={wp3t("replace_input_placeholder", language)}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onChange={(e) => setCanvasSlice({ replaceQuery: e.target.value })}
+            onKeyDown={handleReplaceKeyDown}
+          />
+          <div className="rl-find-replace-btns">
+            <button
+              type="button"
+              className="rl-pane-btn"
+              data-testid="replace-one-btn"
+              disabled={!activeMatch || !trimmedQuery}
+              onClick={() => {
+                if (!activeMatch) return;
+                void replaceFindMatch(
+                  activeMatch,
+                  slice.findQuery,
+                  slice.replaceQuery,
+                );
               }}
-              onCompositionEnd={() => {
-                composingRef.current = false;
+            >
+              {wp3t("replace_one", language)}
+            </button>
+            <button
+              type="button"
+              className="rl-pane-btn"
+              data-testid="replace-all-btn"
+              disabled={replaceableCount === 0 || !trimmedQuery}
+              onClick={() => {
+                void replaceAllFindMatches(
+                  matches,
+                  slice.findQuery,
+                  slice.replaceQuery,
+                );
               }}
-              onChange={(e) => setCanvasSlice({ replaceQuery: e.target.value })}
-              onKeyDown={handleReplaceKeyDown}
-            />
-            <div className="rl-find-replace-btns">
-              <button
-                type="button"
-                className="rl-pane-btn"
-                data-testid="replace-one-btn"
-                disabled={!activeMatch || !trimmedQuery}
-                onClick={() => {
-                  if (!activeMatch) return;
-                  void replaceFindMatch(
-                    activeMatch,
-                    slice.findQuery,
-                    slice.replaceQuery,
-                  );
-                }}
-              >
-                {wp3t("replace_one", language)}
-              </button>
-              <button
-                type="button"
-                className="rl-pane-btn"
-                data-testid="replace-all-btn"
-                disabled={replaceableCount === 0 || !trimmedQuery}
-                onClick={() => {
-                  void replaceAllFindMatches(
-                    matches,
-                    slice.findQuery,
-                    slice.replaceQuery,
-                  );
-                }}
-              >
-                {wp3t("replace_all", language)}
-              </button>
-            </div>
+            >
+              {wp3t("replace_all", language)}
+            </button>
           </div>
-        ) : null}
+        </div>
       </div>
 
       {trimmedQuery.length > 0 && matches.length === 0 ? (

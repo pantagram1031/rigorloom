@@ -3,21 +3,16 @@ import { useMemo } from "react";
 import { wp3t } from "../i18n/v2/wp3";
 import {
   extractDocumentOutline,
-  type CanvasChangeRef,
   type OutlineNode,
 } from "../model/page";
 import {
   activeInspect,
   activeSession,
-  activeText,
+  activeDisplayText,
   useWorkspace,
 } from "../store";
 import { buildRegionTextMap } from "../workspace/externalPlan";
-import {
-  buildIndexedChanges,
-  useReviewGuardSummary,
-} from "../workspace/guardHelper";
-import { indexedChangesToCanvasRefs } from "../canvas/_shim";
+import { useCanvasChanges } from "../canvas/changes";
 import {
   canvas,
   scrollCanvasToTarget,
@@ -26,63 +21,16 @@ import {
 } from "../canvas/controller";
 import "./panes.css";
 
-export interface OutlinePaneProps {
-  /** Optional external changes list (for standalone harness / WP4 queue integration). */
-  changesOverride?: readonly CanvasChangeRef[];
-  /** Optional callback after clicking an outline node. */
-  onNavigateNode?: (node: OutlineNode) => void;
-}
-
-export function OutlinePane({
-  changesOverride,
-  onNavigateNode,
-}: OutlinePaneProps = {}) {
+export function OutlinePane() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
-  const draft = useWorkspace((s) => s.draft);
+  const texts = useWorkspace(activeDisplayText);
   const language = useWorkspace((s) => s.language);
-  const guardSummary = useReviewGuardSummary();
   const slice = useCanvasSlice(session?.sessionId);
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
-  const indexedChanges = useMemo(
-    () => (inspect ? buildIndexedChanges(draft, inspect, textMap, language) : []),
-    [draft, inspect, textMap, language],
-  );
-
-  const isStale = Boolean(
-    draft.validation?.stale ||
-      (draft.plan && draft.boundSha256 && draft.plan.boundSha256 !== draft.boundSha256),
-  );
-
-  const changes = useMemo<CanvasChangeRef[]>(() => {
-    if (changesOverride) {
-      return changesOverride.map((ch) => ({
-        ...ch,
-        decision: slice.decisions[ch.id] ?? ch.decision,
-      }));
-    }
-    return indexedChangesToCanvasRefs(
-      indexedChanges,
-      guardSummary.rowAudits,
-      slice.decisions,
-      {
-        isStale,
-        reverses: draft.reverses,
-        planProvenance: (draft.plan as { provenance?: string | null } | null)?.provenance,
-      },
-    );
-  }, [
-    changesOverride,
-    indexedChanges,
-    guardSummary.rowAudits,
-    slice.decisions,
-    isStale,
-    draft.reverses,
-    draft.plan,
-  ]);
+  const changes = useCanvasChanges(session?.sessionId ?? null, textMap);
 
   const nodes = useMemo(() => {
     if (!inspect) return [];
@@ -114,7 +62,6 @@ export function OutlinePane({
       cellKey: node.cellKey ?? null,
       atPara: Number.isFinite(atPara) ? atPara : null,
     });
-    onNavigateNode?.(node);
   };
 
   return (

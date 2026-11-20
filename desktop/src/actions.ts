@@ -37,6 +37,7 @@ import {
   setView,
   showToast,
   queuedCellOpAt,
+  upsertQueuedOp,
   queuedOpAt,
   queuedRunOpAt,
   bumpEditIntent,
@@ -1174,6 +1175,14 @@ export async function addQueueOp(op: QueuedOp): Promise<void> {
   }
   if (normalized.origin === "user") clearReturned([normalized]);
   await setQueue([...state.draft.ops, normalized]);
+}
+
+/** Replace a canvas edit and rebuild the plan once, with the queue's existing base. */
+export async function upsertQueueOp(op: QueuedOp): Promise<QueuedOp> {
+  const { ops, queued, replaced } = upsertQueuedOp(getState().draft.ops, op);
+  if (queued.origin === "user") clearReturned([queued]);
+  await setQueue(ops, { rewritten: replaced.some((item) => item.origin === "agent") });
+  return queued;
 }
 
 /** Declare the charPr the engine itself suggested for this seat (T30). */

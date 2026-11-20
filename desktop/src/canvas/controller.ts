@@ -5,7 +5,7 @@ import type {
   PageSource,
   PageViewMode,
 } from "../model/page";
-import { defineDocSlice } from "./_shim";
+import { defineDocSlice } from "../store";
 
 export interface DecisionUndoEntry {
   itemId: string;
@@ -25,6 +25,7 @@ export interface CanvasDocSlice {
   zoom: number;
   effectiveZoomPct: number | null;
   page: number;
+  findRequest: "find" | "replace" | 1 | -1 | null;
   findQuery: string;
   replaceQuery: string;
   activeFindIndex: number;
@@ -46,6 +47,7 @@ export const INITIAL_CANVAS_SLICE: CanvasDocSlice = {
   zoom: 1,
   effectiveZoomPct: null,
   page: 1,
+  findRequest: null,
   findQuery: "",
   replaceQuery: "",
   activeFindIndex: 0,
@@ -56,7 +58,7 @@ export const INITIAL_CANVAS_SLICE: CanvasDocSlice = {
 };
 
 export const canvasSlice = defineDocSlice<CanvasDocSlice>(
-  "canvas",
+  "canvas.page",
   INITIAL_CANVAS_SLICE,
 );
 
@@ -72,7 +74,9 @@ export function setCanvasSlice(
   patch: Partial<CanvasDocSlice> | ((prev: CanvasDocSlice) => CanvasDocSlice),
   sessionId?: string | null,
 ): void {
-  canvasSlice.set(patch, sessionId);
+  const previous = canvasSlice.get(sessionId);
+  const next = typeof patch === "function" ? patch(previous) : patch;
+  if (next !== previous) canvasSlice.set(sessionId, next);
 }
 
 // --- Exposed `canvas` controller API (J1 §5) --------------------------------

@@ -5,19 +5,6 @@
 
 export const KOREAN_SUBCLAUSE_LINE_RE = /^([\uAC00-\uD7A3]\.\s+.+)$/;
 
-export const SOURCE_KO_ALIAS_MAP: Record<string, "test" | "revert" | "user" | "agent"> = {
-  시험용: "test",
-  되돌리기: "revert",
-  "내 입력": "user",
-  에이전트: "agent",
-};
-
-export const DECISION_KO_ALIAS_MAP: Record<string, "accepted" | "rejected" | "pending"> = {
-  받아들임: "accepted",
-  뺌: "rejected",
-  대기: "pending",
-};
-
 export const AGENCY_USE_TOKENS = [
   "접수",
   "접수일",

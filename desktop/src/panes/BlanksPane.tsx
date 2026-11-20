@@ -3,21 +3,17 @@ import { useMemo, useState } from "react";
 import { wp3t } from "../i18n/v2/wp3";
 import {
   detectDocumentSeats,
-  type CanvasChangeRef,
   type PageSeat,
 } from "../model/page";
 import {
   activeInspect,
   activeSession,
-  activeText,
+  activeDisplayText,
   useWorkspace,
 } from "../store";
 import { buildRegionTextMap } from "../workspace/externalPlan";
-import {
-  buildIndexedChanges,
-  useReviewGuardSummary,
-} from "../workspace/guardHelper";
-import { indexedChangesToCanvasRefs } from "../canvas/_shim";
+import { getShell, setShell } from "../shell/shellState";
+import { useCanvasChanges } from "../canvas/changes";
 import { beginCellEditV2 } from "../canvas/actions";
 import {
   scrollCanvasToTarget,
@@ -26,23 +22,11 @@ import {
 } from "../canvas/controller";
 import "./panes.css";
 
-export interface BlanksPaneProps {
-  /** Optional external changes list (for harness / WP4 queue). */
-  changesOverride?: readonly CanvasChangeRef[];
-  /** Optional callback invoked when user selects a seat. */
-  onJumpToSeat?: (seat: PageSeat) => void;
-}
-
-export function BlanksPane({
-  changesOverride,
-  onJumpToSeat,
-}: BlanksPaneProps = {}) {
+export function BlanksPane() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
-  const texts = useWorkspace(activeText);
-  const draft = useWorkspace((s) => s.draft);
+  const texts = useWorkspace(activeDisplayText);
   const language = useWorkspace((s) => s.language);
-  const guardSummary = useReviewGuardSummary();
   const slice = useCanvasSlice(session?.sessionId);
 
   // `J1 §3` & `BlanksPane`: receiving-agency blanks start collapsed by default.
@@ -50,42 +34,7 @@ export function BlanksPane({
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
-  const indexedChanges = useMemo(
-    () => (inspect ? buildIndexedChanges(draft, inspect, textMap, language) : []),
-    [draft, inspect, textMap, language],
-  );
-
-  const isStale = Boolean(
-    draft.validation?.stale ||
-      (draft.plan && draft.boundSha256 && draft.plan.boundSha256 !== draft.boundSha256),
-  );
-
-  const changes = useMemo<CanvasChangeRef[]>(() => {
-    if (changesOverride) {
-      return changesOverride.map((ch) => ({
-        ...ch,
-        decision: slice.decisions[ch.id] ?? ch.decision,
-      }));
-    }
-    return indexedChangesToCanvasRefs(
-      indexedChanges,
-      guardSummary.rowAudits,
-      slice.decisions,
-      {
-        isStale,
-        reverses: draft.reverses,
-        planProvenance: (draft.plan as { provenance?: string | null } | null)?.provenance,
-      },
-    );
-  }, [
-    changesOverride,
-    indexedChanges,
-    guardSummary.rowAudits,
-    slice.decisions,
-    isStale,
-    draft.reverses,
-    draft.plan,
-  ]);
+  const changes = useCanvasChanges(session?.sessionId ?? null, textMap);
 
   const seats = useMemo(() => {
     if (!inspect) return [];
@@ -117,6 +66,7 @@ export function BlanksPane({
   };
 
   const handleActivate = (seat: PageSeat) => {
+    if (getShell().breakpoint === "narrow") setShell({ narrowDrawerOpen: false });
     setCanvasSlice({
       selectedSeatKey: seat.key,
       hoveredSeatKey: seat.key,
@@ -129,7 +79,6 @@ export function BlanksPane({
         texts: [...texts],
       });
     }
-    onJumpToSeat?.(seat);
   };
 
   const renderSeatRow = (seat: PageSeat) => {

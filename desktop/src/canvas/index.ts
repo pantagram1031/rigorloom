@@ -1,4 +1,3 @@
-export * from "./_shim";
 export * from "./actions";
 export * from "./CanvasPane";
 export * from "./controller";
