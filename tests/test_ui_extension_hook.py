@@ -229,6 +229,6 @@ def test_core_route_tables_match_the_handler():
 
 
 def test_absent_extensions_are_skipped_and_default_names_are_fixed():
-    assert rt_ui.UI_EXTENSION_MODULES == ("rt_workspace", "rt_page", "rt_ui_style")
+    assert rt_ui.UI_EXTENSION_MODULES == ("rt_workspace", "rt_page", "rt_ui_style", "rt_ui_doc")
     router = rt_ui.load_ui_extensions(("rt_wp2_definitely_absent",))
     assert router.get_routes == {} and router.post_routes == {} and router.modules == []

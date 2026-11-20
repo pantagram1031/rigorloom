@@ -303,7 +303,7 @@ def _write_meta(session, record: dict, *, run_id: str | None = None) -> None:
 
 
 def existing_pdf(session, *, run_id: str | None = None,
-                 expect_sha256: str | None = None) -> dict | None:
+                 expect_sha256: str | None = None, confine=None) -> dict | None:
     """A prepared PDF for THESE bytes, or nothing.
 
     The binding check is not ceremony: a session's source cannot change under
@@ -324,6 +324,8 @@ def existing_pdf(session, *, run_id: str | None = None,
     if expected is not None and record.get("sourceSha256") != expected:
         return None
     path = session.dir / str(record.get("path") or "")
+    if confine is not None:
+        confine(path)
     if not path.is_file():
         return None
     try:

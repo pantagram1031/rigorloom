@@ -131,6 +131,7 @@ HOST_ONLY_METHODS: tuple[str, ...] = (
     "approval/resolve",
     "plan/apply",
     "document/renderPrepare",
+    "document/pageView",
 )
 
 METHODS: tuple[str, ...] = (AGENT_METHODS + PROTOCOL_ONLY_METHODS

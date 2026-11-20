@@ -6,6 +6,7 @@ import type {
   PageViewMode,
 } from "../model/page";
 import { recordDecision, type DecisionRecord } from "../model/changes";
+import type { RasterSource } from "../model/enginePage";
 import { defineDocSlice } from "../store";
 
 export interface DecisionUndoEntry {
@@ -26,6 +27,9 @@ export interface CanvasDocSlice {
   zoom: number;
   effectiveZoomPct: number | null;
   page: number;
+  pageCount: number;
+  rasterSource: RasterSource | null;
+  rasterApprox: boolean;
   findRequest: "find" | "replace" | 1 | -1 | null;
   findQuery: string;
   replaceQuery: string;
@@ -48,6 +52,9 @@ export const INITIAL_CANVAS_SLICE: CanvasDocSlice = {
   zoom: 1,
   effectiveZoomPct: null,
   page: 1,
+  pageCount: 1,
+  rasterSource: null,
+  rasterApprox: false,
   findRequest: null,
   findQuery: "",
   replaceQuery: "",

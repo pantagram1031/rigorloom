@@ -234,6 +234,7 @@ def test_capabilities_contract(tmp_path: Path):
         "capabilities/list",
         "document/inspect",
         "document/pageGeometry",
+        "document/pageView",
         "document/readRegion",
         "document/render",
         "document/renderPrepare",

@@ -146,7 +146,7 @@ def _key(subject_sha256: str, dpi: int) -> str:
     return f"{subject_sha256[:16]}-{int(dpi)}dpi"
 
 
-def existing_own(session, *, subject_sha256: str, dpi: int) -> dict | None:
+def existing_own(session, *, subject_sha256: str, dpi: int, confine=None) -> dict | None:
     """A tier-3 render of THESE bytes at THIS dpi, or nothing.
 
     Bound the way ``rt_convert.existing_pdf`` binds a prepared PDF, and for the
@@ -161,6 +161,8 @@ def existing_own(session, *, subject_sha256: str, dpi: int) -> dict | None:
     if record.get("subjectSha256") != subject_sha256:
         return None
     sidecar_path = session.dir / str(record.get("sidecar") or "")
+    if confine is not None:
+        confine(sidecar_path)
     if not sidecar_path.is_file():
         return None
     pages = record.get("pages")
@@ -168,6 +170,8 @@ def existing_own(session, *, subject_sha256: str, dpi: int) -> dict | None:
         return None
     directory = session.dir / str(record.get("dir") or "")
     for name in pages:
+        if confine is not None:
+            confine(directory / str(name))
         if not (directory / str(name)).is_file():
             return None
     return dict(record)
@@ -242,7 +246,7 @@ def run_own_render(tools, subject: Path, out_dir: Path, *, dpi: int,
 
 
 def own_render(session, tools, *, subject: Path, subject_sha256: str,
-               dpi: int) -> tuple[dict | None, dict | None]:
+               dpi: int, confine=None) -> tuple[dict | None, dict | None]:
     """``(record, refusal)`` — never both, never neither.
 
     The refusal is a plain dict from :func:`own_unavailable`, not an exception,
@@ -263,12 +267,17 @@ def own_render(session, tools, *, subject: Path, subject_sha256: str,
             f"subject is {subject.suffix.lower() or 'extensionless'}",
             suffix=subject.suffix.lower())
 
-    cached = existing_own(session, subject_sha256=subject_sha256, dpi=dpi)
+    cached = existing_own(session, subject_sha256=subject_sha256, dpi=dpi, confine=confine)
     if cached is not None:
         return cached, None
 
     key = _key(subject_sha256, dpi)
     out_dir = session.dir / OWN_DIRNAME / key
+    if confine is not None:
+        confine(out_dir)
+        if out_dir.is_dir():
+            for entry in out_dir.iterdir():
+                confine(entry)
     out_dir.mkdir(parents=True, exist_ok=True)
     outcome = run_own_render(tools, subject, out_dir, dpi=dpi)
 
@@ -301,6 +310,9 @@ def own_render(session, tools, *, subject: Path, subject_sha256: str,
         return None, own_unavailable(
             "render_failed", f"the renderer's sidecar is unreadable: {exc}"[:400])
     pages = [str(name) for name in (sidecar.get("png_pages") or [])]
+    if confine is not None:
+        for name in pages:
+            confine(out_dir / name)
     if not pages or not all((out_dir / name).is_file() for name in pages):
         return None, own_unavailable(
             "render_failed",

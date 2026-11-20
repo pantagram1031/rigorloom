@@ -8,6 +8,7 @@ import {
 
 import { cancelEdit } from "../actions";
 import { wp3t } from "../i18n/v2/wp3";
+import { createEnginePageSource, type RasterSource } from "../model/enginePage";
 import {
   createProjectionPageSource,
   detectDocumentSeats,
@@ -20,12 +21,12 @@ import {
   activeSession,
   activeDisplayText,
   cellKey,
+  headCandidate,
   useWorkspace,
 } from "../store";
 import { buildRegionTextMap } from "../workspace/externalPlan";
 import { deriveCellFieldLabel } from "../workspace/fieldLabels";
 import { useCanvasChanges } from "./changes";
-import { useCanvasBaseName } from "./DocumentStrip";
 import {
   beginCellEditV2,
   commitCellEditV2,
@@ -45,6 +46,7 @@ import { MarkToolbar, type MarkToolbarAnchor } from "./MarkToolbar";
 import { PageSheet } from "./PageSheet";
 import { ScrollMap, type ScrollMapTick } from "./ScrollMap";
 import { SeatEditor } from "./SeatEditor";
+import { usePageRaster } from "./usePageRaster";
 import "./canvas.css";
 
 export function CanvasPane() {
@@ -55,6 +57,7 @@ export function CanvasPane() {
   const geometry = useWorkspace((s) => s.geometry);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const language = useWorkspace((s) => s.language);
+  const rev = useWorkspace((s) => headCandidate(s)?.sha256 ?? activeSession(s)?.source.sha256);
 
   const slice = useCanvasSlice(session?.sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -72,6 +75,10 @@ export function CanvasPane() {
     gutterWidthPx: 54,
     effectiveZoom: 1,
   });
+  const pageRaster = usePageRaster(
+    session?.sessionId, rev, slice.page,
+    slice.effectiveZoomPct === null ? null : measured.effectiveZoom,
+  );
 
   const [scrollThumb, setScrollThumb] = useState<{ topPct: number; heightPct: number }>({
     topPct: 0,
@@ -97,21 +104,34 @@ export function CanvasPane() {
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
   const changes = useCanvasChanges(session?.sessionId ?? null, textMap);
-  const baseName = useCanvasBaseName();
-
   const pageSource = useMemo<PageSource | null>(() => {
     if (!inspect) return null;
-    return createProjectionPageSource({
+    const projection = createProjectionPageSource({
       inspect,
       texts,
       textMap,
       changes,
       render,
       geometry,
-      rev: baseName,
+      rev,
       language,
     });
-  }, [inspect, texts, textMap, changes, render, geometry, baseName, language]);
+    if (!pageRaster.raster) return projection;
+    return createEnginePageSource({
+      projection, raster: pageRaster.raster, geometry: pageRaster.geometry,
+      count: pageRaster.count, changes,
+    });
+  }, [inspect, texts, textMap, changes, render, geometry, rev, language,
+    pageRaster.raster, pageRaster.geometry, pageRaster.count]);
+
+  const source = pageRaster.raster?.source ?? null;
+  useEffect(() => {
+    if (!session) return;
+    setCanvasSlice({
+      pageCount: pageRaster.count, rasterSource: source,
+      rasterApprox: pageRaster.approx,
+    }, session.sessionId);
+  }, [session, source, pageRaster.count, pageRaster.approx]);
 
   useEffect(() => {
     publishCanvasContext(changes, pageSource);
@@ -170,6 +190,7 @@ export function CanvasPane() {
   }
 
   const scrollReq = getScrollRequestState();
+  const visiblePage = pageRaster.raster?.page ?? slice.page;
   const narrowEditDraft = inlineEdit?.kind === "cell"
     ? changes.find((change) => change.id === inlineEdit.opId && change.decision !== "rejected")?.after ??
       inlineEdit.before
@@ -194,6 +215,11 @@ export function CanvasPane() {
       data-seat-status={activeSeatLabel ?? ""}
     >
       <div className="rl-desk">
+        {pageRaster.failed ? (
+          <div className="rl-redraw-notice" data-testid="page-render-failed" role="status">
+            {wp3t("page_render_failed", language)}
+          </div>
+        ) : null}
         <div
           ref={scrollRef}
           className="rl-desk-scroll"
@@ -227,6 +253,9 @@ export function CanvasPane() {
                 setCanvasSlice({ hoveredSeatKey: key, hoveredSeatLabel: label });
               }}
               onMeasurementsChange={handleMeasurementsChange}
+              pageSource={pageSource}
+              page={visiblePage}
+              hasEngineGeometry={Boolean(pageRaster.geometry)}
             />
 
             {slice.view === "marks" ? (
@@ -324,15 +353,21 @@ export function CanvasPane() {
 
 // --- Status bar slots (`statusLeft` / `statusRight`) ------------------------
 
+const SOURCE_COPY: Record<RasterSource, Parameters<typeof wp3t>[0]> = {
+  engine: "page_source_engine",
+  hancom: "page_source_hancom",
+  pdf: "page_source_pdf",
+  "own-uncertified": "page_source_own",
+};
+
 export function CanvasStatusLeft() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
   const texts = useWorkspace(activeDisplayText);
-  const render = useWorkspace((s) => s.render);
-  const page = useWorkspace((s) => s.page);
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const language = useWorkspace((s) => s.language);
   const slice = useCanvasSlice(session?.sessionId);
+  const { page, pageCount, rasterSource, rasterApprox } = slice;
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
@@ -413,16 +448,26 @@ export function CanvasStatusLeft() {
     language,
   ]);
 
-  const isPaginated = Boolean(render?.available && (render.pageCount ?? 0) > 0);
-  const pageCount = render?.pageCount ?? 1;
-
   return (
     <div className="rl-status-left" data-testid="status-canvas-left">
-      {isPaginated ? (
-        <span className="rl-status-item rl-num" data-testid="status-page-pos">
-          {wp3t("status_page_pos", language, [page, pageCount])}
+      {pageCount > 1 ? (
+        <span className="rl-zoom-ctl">
+          <button type="button" className="rl-zoom-btn" disabled={page <= 1}
+            aria-label={wp3t("page_previous", language)}
+            onClick={() => setCanvasSlice({ page: page - 1 })}>‹</button>
+          <span className="rl-status-item rl-num" data-testid="status-page-pos">
+            {wp3t("status_page_pos", language, [page, pageCount])}
+          </span>
+          <button type="button" className="rl-zoom-btn" disabled={page >= pageCount}
+            aria-label={wp3t("page_next", language)}
+            onClick={() => setCanvasSlice({ page: page + 1 })}>›</button>
         </span>
       ) : null}
+      <span className="rl-status-item" data-testid="status-page-source"
+        data-page-source={rasterSource ?? "projection"}>
+        {wp3t(rasterSource ? SOURCE_COPY[rasterSource] : "page_source_projection", language)}
+        {rasterApprox ? ` · ${wp3t("page_source_approx", language)}` : null}
+      </span>
       {seatText ? (
         <span className="rl-status-item" data-testid="status-seat">
           {seatText}

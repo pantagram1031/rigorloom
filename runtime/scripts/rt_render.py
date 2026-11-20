@@ -165,7 +165,7 @@ def _unavailable(session, reason: str, detail: str, _tools=None, **extra) -> dic
     }
 
 
-def resolve_artifact(session, run_id: str | None) -> tuple[Path | None, str, dict]:
+def resolve_artifact(session, run_id: str | None, *, confine=None) -> tuple[Path | None, str, dict]:
     """(path, kind, facts) for the thing we could rasterise, if anything."""
     if run_id is not None:
         if not isinstance(run_id, str) or not run_id or "/" in run_id or "\\" in run_id:
@@ -175,7 +175,7 @@ def resolve_artifact(session, run_id: str | None) -> tuple[Path | None, str, dic
         # their binding (rt_apply.read_receipt), so a raster is never taken from
         # an artifact that drifted after publication.
         from rt_apply import read_receipt
-        receipt = read_receipt(session, run_id)
+        receipt = read_receipt(session, run_id, confine=confine)
         candidate = receipt["candidate"]
         # A PDF prepared FROM this candidate, if renderPrepare made one and it
         # still binds the candidate's digest. Without this, a candidate render
@@ -185,7 +185,7 @@ def resolve_artifact(session, run_id: str | None) -> tuple[Path | None, str, dic
         from rt_convert import existing_pdf
 
         prepared = existing_pdf(session, run_id=run_id,
-                                expect_sha256=candidate["sha256"])
+                                expect_sha256=candidate["sha256"], confine=confine)
         if prepared is not None:
             return (session.dir / prepared["path"], "candidate_prepared",
                     {"runId": run_id, "sha256": prepared["sha256"],
@@ -203,7 +203,7 @@ def resolve_artifact(session, run_id: str | None) -> tuple[Path | None, str, dic
     # one and it still binds these bytes.
     from rt_convert import existing_pdf
 
-    prepared = existing_pdf(session)
+    prepared = existing_pdf(session, confine=confine)
     if prepared is not None:
         return (session.dir / prepared["path"], "prepared",
                 {"sha256": prepared["sha256"], "bytes": prepared["bytes"],
@@ -253,7 +253,7 @@ def _image_record(png: bytes, path: Path, session, *, width: int, height: int,
 
 def own_render_page(session, tools, *, subject: Path, subject_facts: dict,
                     page: int, dpi: int, run_id: str | None,
-                    inline: bool) -> tuple[dict | None, dict | None]:
+                    inline: bool, confine=None) -> tuple[dict | None, dict | None]:
     """Tier 3 — ``(result, refusal)``. Never claims to be anything else.
 
     Every field that could be mistaken for a Hancom render is deliberately
@@ -272,7 +272,7 @@ def own_render_page(session, tools, *, subject: Path, subject_facts: dict,
             "render_failed", "this subject has no recorded digest, and a page "
             "is only ever served bound to the bytes it was drawn from")
     record, refusal = own_render(session, tools, subject=subject,
-                                 subject_sha256=subject_sha, dpi=dpi)
+                                 subject_sha256=subject_sha, dpi=dpi, confine=confine)
     if record is None:
         return None, refusal
 
@@ -330,7 +330,7 @@ def own_render_page(session, tools, *, subject: Path, subject_facts: dict,
 
 def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
                 run_id: str | None = None, inline: bool = True,
-                tools=None) -> dict:
+                tools=None, confine=None) -> dict:
     """Rasterise one page, or say precisely why there is no page to rasterise."""
     if not isinstance(page, int) or isinstance(page, bool) or page < 0:
         raise RpcError("invalid_params", "page must be a non-negative integer",
@@ -343,7 +343,9 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
                        f"{MAX_RENDER_DPI}", dpi=dpi,
                        min=MIN_RENDER_DPI, max=MAX_RENDER_DPI)
 
-    path, kind, facts = resolve_artifact(session, run_id)
+    path, kind, facts = resolve_artifact(session, run_id, confine=confine)
+    if confine is not None and path is not None:
+        confine(path)
     suffix = path.suffix.lower() if path is not None else ""
     document_kind = session.meta.get("ingress", {}).get("documentKind", "opaque")
 
@@ -357,7 +359,7 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
             # explaining that there is no page.
             own_result, own_refusal = own_render_page(
                 session, tools, subject=path, subject_facts=facts, page=page,
-                dpi=dpi, run_id=run_id, inline=inline)
+                dpi=dpi, run_id=run_id, inline=inline, confine=confine)
             if own_result is not None:
                 return own_result
 
@@ -430,6 +432,9 @@ def render_page(session, *, page: int = 0, dpi: int = DEFAULT_RENDER_DPI,
     # Always write the raster; a path is a stable reference the host can read
     # without pushing a megabyte through a frame.
     target = session.renders_dir / f"{kind}-{run_id or 'source'}-p{page}-{dpi}dpi.png"
+    if confine is not None:
+        confine(target)
+        target.parent.mkdir(exist_ok=True)
     atomic_write_bytes(target, png)
 
     image = _image_record(png, target, session, width=pixmap.width,
