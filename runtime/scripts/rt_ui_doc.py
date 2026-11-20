@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import base64
+from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http import HTTPStatus
 from itertools import count
+import json
 import math
 from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
 from threading import Condition
+import time
+from uuid import uuid4
 
 try:
     from . import rt_apply, rt_doc, rt_render
@@ -27,12 +31,17 @@ except ImportError:
 
 
 MAX_SCALE = 3
+PREVIEW_LIMIT = 128
+PREVIEW_TTL = 300
+IMAGE_TTL = 60
+NATIVE_PREVIEW_BYTES = 16 * 1024
+CELL_ADDRESS = re.compile(r"t[0-9]+/r[0-9]+/c[0-9]+")
+PARA_ADDRESS = re.compile(r"p[0-9]+")
 FIELDS = {
     "pages": set(),
     "render": {"page", "scale"},
     "geometry": {"page"},
-    "hit": {"page", "x", "y"},
-    "caret": {"at", "offset"},
+    "preview": {"ops"},
 }
 
 
@@ -129,7 +138,9 @@ def _number(value, name):
 def _params(operation, body):
     if operation == "render" and "pages" in body:
         raise PageError("page_limit", "a render request accepts one page")
-    if set(body) != FIELDS[operation] | {"sessionId", "rev"}:
+    required = FIELDS[operation] | {"sessionId", "rev"}
+    optional = {"previewId"} if operation in {"render", "geometry"} else set()
+    if not required <= body.keys() or body.keys() - required - optional:
         raise PageError("invalid_params", "unexpected or missing page request fields")
     session_id, rev = body["sessionId"], body["rev"]
     if not isinstance(session_id, str) or not re.fullmatch(r"[a-f0-9]{32}", session_id):
@@ -146,19 +157,33 @@ def _params(operation, body):
         if not 0 < scale <= MAX_SCALE:
             raise PageError("scale_limit", "render scale must be above zero and at most 3")
         args["scale"] = scale
-    if operation == "hit":
-        args.update(x=_number(body["x"], "x"), y=_number(body["y"], "y"))
-    if operation == "caret":
-        at = body["at"]
-        if not isinstance(at, str) or not at or len(at) > 256:
-            raise PageError("invalid_params", "at must be a document address")
-        args.update(at=at, offset=_integer(body["offset"], "offset", 0))
+    if "previewId" in body:
+        preview_id = body["previewId"]
+        if not isinstance(preview_id, str) or not re.fullmatch(r"[a-f0-9]{32}", preview_id):
+            raise PageError("invalid_params", "previewId must be a preview identifier")
+        args["preview_id"] = preview_id
+    if operation == "preview":
+        ops = body["ops"]
+        if not isinstance(ops, list) or not 1 <= len(ops) <= PREVIEW_LIMIT:
+            raise PageError("invalid_params", "preview requires a bounded list of text edits")
+        for op in ops:
+            if not isinstance(op, dict) or not isinstance(op.get("at"), str) or not isinstance(op.get("text"), str):
+                raise PageError("invalid_params", "invalid preview text edit")
+            at = op["at"]
+            if (set(op) == {"at", "text"} and CELL_ADDRESS.fullmatch(at)):
+                continue
+            if (set(op) != {"at", "run", "before", "text"} or not PARA_ADDRESS.fullmatch(at) or
+                    type(op["run"]) is not int or op["run"] < 0 or not isinstance(op["before"], str)):
+                raise PageError("invalid_params", "invalid preview text edit")
+        args["ops"] = ops
     return session_id, rev, args
 
 
 def _engine_result(result, rev):
     if not result.get("ok"):
         code = result["error"]["code"]
+        if code == "stale":
+            raise _stale()
         if code in {"bad_address", "bad_input"}:
             raise PageError(code, "invalid page or document position")
         if code == "engine_timeout":
@@ -168,7 +193,7 @@ def _engine_result(result, rev):
         raise PageError("render_failed", "the page engine could not complete the request",
                         HTTPStatus.UNPROCESSABLE_ENTITY)
     # rt_doc exposes a short digest, while the session records the full SHA-256.
-    if result["rev"] != rev[:12]:
+    if rev is not None and result["rev"] != rev[:12]:
         raise _stale()
     return result
 
@@ -179,11 +204,27 @@ class RenderQueue:
     active: bool = False
 
 
+@dataclass(frozen=True)
+class Preview:
+    id: str
+    session_dir: Path
+    base: str
+    path: Path
+    rev: str
+    count: int
+    pages: frozenset[int]
+    changed: list
+    targets: list
+    addresses: dict
+    expires: float
+
+
 class PageGateway:
     def __init__(self):
         self._ready = Condition()
         self._sequence = count(1)
         self._renders: dict[tuple[Path, str], RenderQueue] = {}
+        self._previews: OrderedDict[str, Preview] = OrderedDict()
 
     @contextmanager
     def _render_turn(self, key):
@@ -216,9 +257,12 @@ class PageGateway:
         root = root.resolve()
         try:
             head = _head(root, session_id, rev)
-            if operation == "render":
+            if operation in {"render", "preview"}:
                 with self._render_turn((root, session_id)) as seq:
-                    result, png = self._render(head, tools, **args)
+                    if operation == "preview":
+                        result, png = self._preview(head, **args), None
+                    else:
+                        result, png = self._render(head, tools, **args)
                     _head(root, session_id, rev)
             else:
                 seq = next(self._sequence)
@@ -233,6 +277,70 @@ class PageGateway:
                             HTTPStatus.UNPROCESSABLE_ENTITY) from None
         return {**result, "rev": rev, "seq": seq}, png
 
+    def _preview(self, head, ops):
+        if not self._uses_engine(head):
+            raise PageError("capability_unavailable", "preview needs the document engine",
+                            HTTPStatus.SERVICE_UNAVAILABLE)
+        # Translate queued paragraph runs to doc-core character ranges on the
+        # same head that was used to choose the run.
+        addresses = _engine_result(rt_doc.queue_addresses(head.path), head.rev)["addresses"]
+        core_addresses = {value: key for key, value in addresses.items()}
+        edits = []
+        targets = []
+        paragraphs = {}
+        for op in ops:
+            base_at, sep, tail = op["at"].partition("/")
+            if base_at not in core_addresses:
+                raise PageError("bad_address", "the queued text target is unavailable")
+            at = core_addresses[base_at] + sep + tail
+            targets.append(at)
+            if "run" in op:
+                if at not in paragraphs:
+                    read = _engine_result(rt_doc.read(head.path, at, with_runs=True), head.rev)
+                    paragraphs[at] = read["blocks"][0]
+                block = paragraphs[at]
+                runs = [run["text"] for run in block["runs"]]
+                idx = op["run"]
+                if idx >= len(runs) or runs[idx] != op["before"] or "".join(runs) != block["text"]:
+                    raise PageError("bad_address", "the queued run no longer matches the document")
+                start = sum(map(len, runs[:idx]))
+                at = f"{at}:{start}-{start + len(runs[idx])}"
+            edits.append({"op": "set", "at": at, "text": op["text"]})
+        # rt_doc snapshots the session head and writes the edit to its own private scratch.
+        result = _engine_result(rt_doc.edit(head.path, edits,
+                                            base=head.rev[:12], preview=True), None)
+        if result["rev_before"] != head.rev[:12]:
+            raise _stale()
+        path = Path(result["out"])
+        info = _engine_result(rt_doc.pages(path), result["rev"])
+        changed = result["changed"]
+        pages = frozenset(page for page in (*result["changed_pages"], *(row["page"] for row in changed))
+                          if type(page) is int and 1 <= page <= info["count"])
+        remap = {item["from"]: item["to"] for item in result["remap"]}
+        targets = [rt_doc.follow_remap(remap, at) for at in targets]
+        preview_addresses = {mapped: at for core, at in addresses.items()
+                             if (mapped := rt_doc.follow_remap(remap, core)) is not None}
+        preview = Preview(uuid4().hex, head.session.dir, head.rev, path, result["rev"], info["count"],
+                          pages, changed, targets, preview_addresses, time.monotonic() + PREVIEW_TTL)
+        with self._ready:
+            self._previews[preview.id] = preview
+            while len(self._previews) > PREVIEW_LIMIT:
+                self._previews.popitem(last=False)
+        return {"previewId": preview.id, "previewRev": preview.rev, "count": preview.count,
+                "changedPages": sorted(preview.pages), "changed": changed}
+
+    def _get_preview(self, head, preview_id, page):
+        if preview_id is None:
+            return None
+        with self._ready:
+            preview = self._previews.get(preview_id)
+        if (preview is None or preview.session_dir != head.session.dir or preview.base != head.rev
+                or preview.expires < time.monotonic() or not preview.path.is_file()):
+            raise PageError("preview_expired", "the page preview is unavailable", HTTPStatus.NOT_FOUND)
+        if page not in preview.pages:
+            raise PageError("page_unchanged", "the page is outside the preview's changed set")
+        return preview
+
     @staticmethod
     def _uses_engine(head):
         return head.path.suffix.lower() in {".hwp", ".hwpx"} and rt_doc.engine_status()["available"]
@@ -246,19 +354,62 @@ class PageGateway:
         if operation == "pages":
             result = _engine_result(rt_doc.pages(head.path), head.rev)
             return {"source": "engine", **{key: result[key] for key in ("count", "pages", "approx")}}
-        handler = {"geometry": rt_doc.geometry, "hit": rt_doc.hit_test, "caret": rt_doc.caret_rect}
-        result = _engine_result(handler[operation](head.path, **args), head.rev)
-        return {key: value for key, value in result.items() if key not in {"ok", "rev"}}
+        page = args["page"]
+        preview = self._get_preview(head, args.get("preview_id"), page)
+        result = _engine_result(rt_doc.geometry(preview.path if preview else head.path, page),
+                                preview.rev if preview else head.rev)
+        payload = {key: value for key, value in result.items() if key not in {"ok", "rev"}}
+        addresses = (preview.addresses if preview else
+                     _engine_result(rt_doc.queue_addresses(head.path), head.rev)["addresses"])
+        for box in payload["boxes"]:
+            at = box["at"] or ""
+            if at.startswith("t") and "/r" in at:
+                base_at, tail = at.rsplit("/r", 1)
+                suffix = "/r" + tail
+            else:
+                base_at, sep, tail = at.partition("#")
+                suffix = sep + tail
+            if base_at in addresses:
+                box["queueAddress"] = addresses[base_at] + suffix
+        if preview:
+            changed = [row for row in preview.changed if row["page"] == page and row["rect"]]
+            measured = {row["i"] for row in changed}
+            # Some engine versions return the affected page without an edit rect.
+            # Use the actual target box on that page when available.
+            boxes = defaultdict(list)
+            for box in result["boxes"]:
+                if box["at"] and box["kind"] in {"para", "cell"}:
+                    boxes[box["at"]].append(box["rect"])
+            for i, at in enumerate(preview.targets):
+                if i not in measured:
+                    changed.extend({"i": i, "page": page, "rect": rect} for rect in boxes.get(at, []))
+            payload.update(previewId=preview.id, previewRev=preview.rev, changed=changed)
+        return payload
 
-    def _render(self, head, tools, page, scale):
+    def _render(self, head, tools, page, scale, preview_id=None):
+        preview = self._get_preview(head, preview_id, page)
         if self._uses_engine(head):
-            info = _engine_result(rt_doc.pages(head.path), head.rev)
+            path, rev = (preview.path, preview.rev) if preview else (head.path, head.rev)
+            info = _engine_result(rt_doc.pages(path), rev)
             with TemporaryDirectory(prefix="rigorloom-page-") as output:
-                result = _engine_result(rt_doc.render(head.path, page, scale=scale, out_dir=output), head.rev)
+                # Hand the engine the canonical directory: the temp root can be
+                # a link or, on Windows, an 8.3 short name, and the containment
+                # check compares canonical paths.
+                output_dir = Path(output).resolve()
+                result = _engine_result(rt_doc.render(path, page, scale=scale, out_dir=str(output_dir)), rev)
                 image = result["pages"][0]
-                png = Path(image["file"]).read_bytes()
-                return {"source": "engine", "page": page, "count": info["count"], "approx": bool(info["approx"]),
-                        "widthPt": image["width_pt"], "heightPt": image["height_pt"]}, png
+                image_path = Path(image["file"])
+                _confined(output_dir, image_path)
+                png = image_path.read_bytes()
+            payload = {"source": "engine", "page": page, "count": info["count"], "approx": bool(info["approx"]),
+                       "widthPt": image["width_pt"], "heightPt": image["height_pt"]}
+            if preview:
+                payload.update(previewId=preview.id, previewRev=preview.rev)
+            return payload, png
+
+        if preview:
+            raise PageError("capability_unavailable", "preview needs the document engine",
+                            HTTPStatus.SERVICE_UNAVAILABLE)
 
         dpi = max(MIN_RENDER_DPI, round(72 * scale))
         result = rt_render.render_page(head.session, page=page - 1, dpi=dpi,
@@ -301,11 +452,14 @@ def register_routes(router):
                 headers["X-Rigorloom-Page-Count"] = str(payload["count"])
             if payload.get("approx"):
                 headers["X-Rigorloom-Approx"] = "1"
+            if "previewId" in payload:
+                headers["X-Rigorloom-Preview-Id"] = payload["previewId"]
+                headers["X-Rigorloom-Preview-Rev"] = payload["previewRev"]
             return router.Bytes(png, "image/png", headers)
         return read
 
     for operation in FIELDS:
-        is_query = operation not in {"hit", "caret"}
+        is_query = operation != "preview"
         register = router.get if is_query else router.post
         register(f"/api/doc/{operation}", handler(operation, is_query))
 
@@ -313,19 +467,65 @@ def register_routes(router):
 _native_gateway = PageGateway()
 
 
+def _native_render_dir(head):
+    directory = head.session.renders_dir / "page-view"
+    head.confine(directory)
+    return directory
+
+
+def _native_image(root, params):
+    if set(params) != {"operation", "sessionId", "rev", "imageId", "offset"}:
+        raise PageError("invalid_params", "invalid page image request")
+    session_id, rev, _ = _params("pages", {key: params[key] for key in ("sessionId", "rev")})
+    image_id = params["imageId"]
+    match = re.fullmatch(r"([0-9]{1,15})-[a-f0-9]{32}", image_id) if isinstance(image_id, str) else None
+    if not match:
+        raise PageError("invalid_params", "imageId must be a page image identifier")
+    offset = _integer(params["offset"], "offset", 0)
+    head = _head(root.resolve(), session_id, rev)
+    directory = _native_render_dir(head)
+    path = directory / f"{rev}-{image_id}.png"
+    _confined(directory, path)
+    try:
+        with path.open("rb") as image:
+            if time.time() - path.stat().st_mtime > IMAGE_TTL:
+                raise _missing()
+            image.seek(offset)
+            chunk = image.read(MAX_INLINE_IMAGE_BYTES)
+    except OSError:
+        raise _missing() from None
+    _head(root.resolve(), session_id, rev)
+    return {"rev": rev, "seq": int(match[1]), "offset": offset, "png": base64.b64encode(chunk).decode("ascii")}
+
+
 def native_page_view(root, tools, params):
     """The packaged editor uses the same page service via its host sidecar."""
     operation = params.get("operation")
-    if not isinstance(operation, str) or operation not in FIELDS:
+    if not isinstance(operation, str) or operation not in FIELDS.keys() | {"image"}:
         raise RpcError("invalid_params", "unknown page operation")
     try:
+        if operation == "image":
+            return _native_image(root, params)
+        if operation == "preview" and len(json.dumps(params, ensure_ascii=False).encode()) > NATIVE_PREVIEW_BYTES:
+            raise PageError("body_too_large", "the preview request exceeds the page request limit",
+                            HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
         payload, png = _native_gateway.read(
             root, tools, operation, {key: value for key, value in params.items() if key != "operation"},
         )
+        if png is not None:
+            head = _head(root.resolve(), params["sessionId"], payload["rev"])
+            directory = _native_render_dir(head)
+            directory.mkdir(exist_ok=True)
+            for path in directory.glob("*.png"):
+                if time.time() - path.stat(follow_symlinks=False).st_mtime > IMAGE_TTL:
+                    path.unlink(missing_ok=True)
+            image_id = f"{payload['seq']}-{uuid4().hex}"
+            path = directory / f"{head.rev}-{image_id}.png"
+            with path.open("xb") as image:
+                image.write(png)
+            payload.update(imageId=image_id, imageBytes=len(png))
     except PageError as exc:
         raise RpcError(exc.code, str(exc)) from None
-    if png is not None:
-        if len(png) > MAX_INLINE_IMAGE_BYTES:
-            raise RpcError("render_failed", "page image exceeds the sidecar frame limit")
-        payload["png"] = base64.b64encode(png).decode("ascii")
+    except OSError:
+        raise RpcError("render_failed", "the page image could not be stored") from None
     return payload

@@ -316,6 +316,32 @@
   pointer-events: none;
 }
 
+.rl-engine-edit,
+.rl-engine-changed-rect {
+  position: absolute;
+  z-index: 3;
+}
+
+.rl-engine-edit.rl-seat-input {
+  padding: 0 2px;
+  line-height: 1.1;
+}
+
+.rl-engine-edit-pending,
+.rl-engine-changed-rect {
+  pointer-events: none;
+}
+
+.rl-engine-edit-pending {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rl-engine-changed-rect {
+  z-index: 2;
+  outline: 1px solid var(--mark-insert);
+}
+
 .rl-doc-table {
   width: 100%;
   border-collapse: collapse;

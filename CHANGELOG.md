@@ -23,6 +23,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T212:** Typing on an opt-in editor v2 engine page shows an inline preview. Edits enter the review queue and redraw affected pages from a scratch copy. The canvas keeps the previous image and typed text if the redraw fails.
 - **T211:** Opt-in editor v2 draws the session head with the document engine or the available PDF and built-in render tiers. It labels the page source and retains the displayed page if a redraw fails.
 - **T210:** The opt-in editor v2 reviews accepted changes and factual differences in the approval sheet, identifies mixed-source proposals, and refreshes stale proposals against the latest revision. It shows applied approval details and revision history, and the mounted gongmun walkthrough and open/edit smoke exercise the editor through export.
 - **T209:** Editor v2 mounts the 변경, 에이전트 and 점검 panes in the right panel. The change list shares the canvas's change flags and owns review shortcuts while focused. The approval sheet binds the reviewed plan, document and acknowledgements to the bridge's single-use confirmation token and refuses stale plans. The request box keeps unsent text per document. The bridge serves `POST /api/style/check` for the 점검 pane.

@@ -64,7 +64,7 @@ export const WP3_VOCABULARY = {
   page_previous: { ko: "이전 쪽", en: "Previous page" },
   page_next: { ko: "다음 쪽", en: "Next page" },
   page_source_engine: { ko: "문서 엔진으로 그린 쪽", en: "Page drawn by the document engine" },
-  page_source_hancom: { ko: "한글에서 만든 PDF", en: "PDF made by Hangul" },
+  page_source_hancom: { ko: "한글에서 만든 PDF", en: "PDF from Hancom Hangul" },
   page_source_pdf: { ko: "준비된 PDF", en: "Prepared PDF" },
   page_source_own: { ko: "내장 기능으로 그린 쪽", en: "Page drawn by Rigorloom" },
   page_source_projection: { ko: "간이 미리보기", en: "Approximate preview" },

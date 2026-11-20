@@ -13,6 +13,7 @@ import {
 
 import { cancelEdit, setInlineEditMultiline } from "../actions";
 import { wp3t } from "../i18n/v2/wp3";
+import { rectPt, type EngineGeometry, type EngineTextEdit } from "../model/enginePage";
 import {
   formatCellAddress,
   formatSeatLocation,
@@ -20,6 +21,7 @@ import {
   resolvePageFontCategory,
   type CanvasChangeRef,
   type PageFit,
+  type PageHitResult,
   type PageRectPt,
   type PageSource,
   type PageViewMode,
@@ -45,6 +47,7 @@ import {
 import type { MeasuredMarkPos } from "./MarginMarks";
 import type { MarkToolbarAnchor } from "./MarkToolbar";
 import type { ScrollMapTick } from "./ScrollMap";
+import { useEngineEditOverlay } from "./EngineEditOverlay";
 import { SeatEditor } from "./SeatEditor";
 
 export function groupCellRunsIntoParagraphs<R extends { text: string }>(
@@ -383,7 +386,11 @@ export interface PageSheetProps {
   narrowReadZoom: boolean;
   pageSource: PageSource | null;
   page: number;
-  hasEngineGeometry: boolean;
+  engineGeometry: EngineGeometry | null;
+  engineEditable: boolean;
+  previewSettled: boolean;
+  previewRects: NonNullable<EngineGeometry["changed"]>;
+  displayedEdits: readonly EngineTextEdit[];
   drying?: boolean;
   findQuery?: string;
   activeFindCellKey?: string | null;
@@ -417,7 +424,11 @@ export function PageSheet({
   narrowReadZoom,
   pageSource,
   page,
-  hasEngineGeometry,
+  engineGeometry,
+  engineEditable,
+  previewSettled,
+  previewRects,
+  displayedEdits,
   drying = false,
   findQuery = "",
   activeFindCellKey = null,
@@ -436,7 +447,13 @@ export function PageSheet({
 
   const [boxSize, setBoxSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [naturalHeightMeasure, setNaturalHeightMeasure] = useState(0);
-  const [caret, setCaret] = useState<{ page: number; rev: string; address: string; offset: number } | null>(null);
+  const [caret, setCaret] = useState<{ page: number; rasterUrl?: string; address: string; offset: number } | null>(null);
+  const [engineHit, setEngineHit] = useState<PageHitResult | null>(null);
+  const engineOverlay = useEngineEditOverlay({
+    sessionId, geometry: engineGeometry, editable: engineEditable, settled: previewSettled,
+    displayedEdits, inspect, hit: engineHit?.page === page ? engineHit : null,
+  });
+  const hasEngineGeometry = Boolean(engineGeometry);
 
   const layer = pageSource?.layer(page, view);
   const rasterUrl = layer?.rasterUrl;
@@ -453,7 +470,7 @@ export function PageSheet({
     }
     return rects;
   }, [hasEngineGeometry, pageSource, page]);
-  const caretRect = hasEngineGeometry && caret && caret.page === page && caret.rev === layer?.rev
+  const caretRect = hasEngineGeometry && caret && caret.page === page && caret.rasterUrl === rasterUrl
     ? pageSource?.caretRect(page, caret.address, caret.offset) : null;
 
   const editingCellKey =
@@ -881,7 +898,7 @@ export function PageSheet({
       face: baselineFace,
     };
 
-    if (isEditing && inlineEdit && inlineEdit.kind === "cell" && !isNarrow) {
+    if (isEditing && inlineEdit && inlineEdit.kind === "cell" && !isNarrow && !engineOverlay.activeCell) {
       const activeChange =
         cellChanges.length === 1 && cellChanges[0].decision !== "rejected"
           ? cellChanges[0]
@@ -1047,6 +1064,13 @@ export function PageSheet({
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
         onWheel={handleWheel}
+        onClick={(event) => {
+          if (!engineEditable || !engineHit?.lineAddress ||
+              (event.target as HTMLElement).closest("td, .rl-mark, input, textarea, button")) return;
+          void engineOverlay.beginParagraph(engineHit).then((started) => {
+            if (started === false) notifyParagraphNotEditable(language);
+          });
+        }}
         onPointerDownCapture={(event) => {
           if (!pageSource || !hasEngineGeometry || event.button !== 0 ||
               (event.target as HTMLElement).closest("input, textarea, button")) return;
@@ -1054,8 +1078,9 @@ export function PageSheet({
           const scale = effectiveZoom * PX_PER_PT;
           const hit = pageSource.hitTest(page, (event.clientX - bounds.left) / scale,
                                         (event.clientY - bounds.top) / scale);
-          setCaret(hit.address && hit.caretOffset != null
-            ? { page, rev: pageSource.rev, address: hit.address, offset: hit.caretOffset }
+          setEngineHit(hit);
+          setCaret(hit.lineAddress && hit.lineOffset != null
+            ? { page, rasterUrl, address: hit.lineAddress, offset: hit.lineOffset }
             : null);
         }}
         style={{
@@ -1070,6 +1095,12 @@ export function PageSheet({
       >
         {rasterUrl ? <img className="rl-paper-raster" data-testid="page-raster" src={rasterUrl} alt="" draggable={false} /> : null}
         {caretRect ? <span className="rl-raster-caret" style={rectStyle(caretRect)} aria-hidden="true" /> : null}
+        {previewRects.flatMap(({ i, page: changedPage, rect }, index) => changedPage === page && rect
+          ? [<span key={`${i}-${index}`} className="rl-engine-changed-rect" data-testid="engine-changed-rect"
+              style={rectStyle(rectPt(rect))} aria-hidden="true" />]
+          : [])}
+        {engineOverlay.pending}
+        {engineOverlay.editor}
         {tables.map((table) => (
           <table
             key={table.index}
@@ -1201,12 +1232,16 @@ export function PageSheet({
               style={rect ? rectStyle(rect) : undefined}
               data-para-key={`p:${para.at_para}`}
               data-testid={`page-para-${para.at_para}`}
-              onClick={() => {
+              onClick={(event) => {
                 if (paraChanges.length > 0) {
                   onSelectChange(paraChanges[0].id, { fromCanvas: true });
-                  return;
+                  if (!engineEditable || paraChanges.every((change) => change.id !== selectedChangeId)) {
+                    event.stopPropagation();
+                    return;
+                  }
+                } else if (!engineEditable || !engineHit?.lineAddress) {
+                  notifyParagraphNotEditable(language);
                 }
-                notifyParagraphNotEditable(language);
               }}
             >
               <p className="rl-para-body">

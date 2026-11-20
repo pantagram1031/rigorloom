@@ -4434,7 +4434,7 @@ def _remap_result(doc, newdoc, acts):
 def follow_remap(remap, at):
     """Where an address of the base document is after an edit: its own entry, else the longest listed prefix
     (``t1 -> t2`` makes ``t1/r0/c3`` ``t2/r0/c3``); None when it, or what holds it, was deleted."""
-    table = {m["from"]: m["to"] for m in remap}
+    table = remap if isinstance(remap, dict) else {m["from"]: m["to"] for m in remap}
     rng = ""
     if isinstance(at, str) and ":" in at and not at.startswith(("h:", "place:", "page:")):
         at, rng = at.split(":", 1)
@@ -5126,6 +5126,20 @@ def geometry(path, page):
     doc = _load(path, meta="layout")
     _need_engine("geometry")
     return _passthrough("geometry", doc, _one_page(doc, page))
+
+
+@_api
+def queue_addresses(path):
+    """Map document-core body paragraphs and tables to the review queue's addresses."""
+    doc = _load(path, meta=False)
+    # The queue tools count depth-first in filename order. Document core
+    # follows the spine and gives nested tables their own address grammar.
+    sections = sorted(range(len(doc.section_names)), key=doc.section_names.__getitem__)
+    paragraphs = (p for si in sections for p in doc.sec_paras[si])
+    tables = (t for si in sections for t in doc.sec_tables[si])
+    addresses = {f"p{p.gp}": f"p{i}" for i, p in enumerate(paragraphs) if p.top}
+    addresses.update({t.addr: f"t{i}" for i, t in enumerate(tables) if t.addr})
+    return {"rev": doc.rev, "addresses": addresses}
 
 
 @_api

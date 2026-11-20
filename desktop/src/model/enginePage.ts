@@ -6,6 +6,7 @@ import type {
   PageSource,
   PageViewMode,
 } from "./page";
+import type { QueuedOp } from "../store";
 
 export const MAX_PAGE_SCALE = 3;
 
@@ -26,6 +27,20 @@ export interface RenderedPage {
   heightPt: number;
   source: RasterSource;
   url: string;
+  previewId?: string;
+  previewRev?: string;
+}
+
+export type EngineTextEdit = { at: string; text: string; run?: number; before?: string };
+
+export interface PagePreview {
+  rev: string;
+  seq: number;
+  previewId: string;
+  previewRev: string;
+  count: number;
+  changedPages: number[];
+  changed: NonNullable<EngineGeometry["changed"]>;
 }
 
 export interface EngineGeometry {
@@ -34,11 +49,14 @@ export interface EngineGeometry {
   width_pt: number;
   height_pt: number;
   boxes: EngineBox[];
+  previewId?: string;
+  previewRev?: string;
   changed?: Array<{ i: number; page: number; rect: RectTuple | null }>;
 }
 
-interface EngineBox {
+export interface EngineBox {
   at: string | null;
+  queueAddress?: string;
   kind: "para" | "line" | "table" | "cell" | "place";
   rect: RectTuple;
   text?: string;
@@ -48,7 +66,19 @@ interface EngineBox {
   start?: number;
 }
 
-function rectPt([x, y, w, h]: RectTuple): PageRectPt {
+export function engineTextEdit(op: QueuedOp): EngineTextEdit[] {
+  if (op.kind === "set_run") {
+    return [{ at: `p${op.atPara}`, run: op.run, before: op.before, text: op.text }];
+  }
+  if (op.kind === "fill_cell" || (op.kind === "replace_at_cell" && op.run === undefined)) {
+    const text = op.kind === "fill_cell" ? op.lines?.join("\n") ?? op.text
+      : op.mode === "append" ? op.before + op.text : op.text;
+    return [{ at: `t${op.table}/r${op.row}/c${op.col}`, text }];
+  }
+  return [];
+}
+
+export function rectPt([x, y, w, h]: RectTuple): PageRectPt {
   return { x, y, w, h };
 }
 
@@ -61,6 +91,7 @@ function paragraphAddress(address: string): string {
 }
 
 interface Line {
+  id: string;
   address: string;
   rect: PageRectPt;
   vertical: boolean;
@@ -78,7 +109,7 @@ function linesFromGeometry(geometry: EngineGeometry): Line[] {
     const start = box.start ?? offsets.get(address) ?? 0;
     offsets.set(address, start + length);
     if (!positions.length) return [];
-    return [{ address, rect: rectPt(box.rect), vertical: Boolean(box.vertical), positions, start }];
+    return [{ id: box.at, address, rect: rectPt(box.rect), vertical: Boolean(box.vertical), positions, start }];
   });
 }
 
@@ -101,11 +132,11 @@ export function createEnginePageSource({
   for (const [index, box] of (geometry?.boxes ?? []).entries()) {
     const kind = box.kind === "line" ? "para" : box.kind === "place" ? "seat" : box.kind;
     const mapped: PageBox = {
-      id: `geometry-${index}`, address: box.at ?? undefined,
+      id: `geometry-${index}`, address: box.queueAddress ?? box.at ?? undefined,
       kind, rect: rectPt(box.rect), label: box.text,
     };
     boxes.push(mapped);
-    if (box.at && box.kind !== "line" && !byAddress.has(box.at)) byAddress.set(box.at, mapped);
+    if (mapped.address && box.kind !== "line" && !byAddress.has(mapped.address)) byAddress.set(mapped.address, mapped);
   }
 
   const lines = geometry ? linesFromGeometry(geometry) : [];
@@ -162,31 +193,34 @@ export function createEnginePageSource({
     const pointPt = { x: xPt, y: yPt };
     const seat = seats.find((entry) => contains(entry.rect, xPt, yPt));
     const mark = marks.find((entry) => contains(entry.rect, xPt, yPt));
-    const line = lines.find((entry) => contains(entry.rect, xPt, yPt));
+    const line = lines.filter((entry) => contains(entry.rect, xPt, yPt))
+      .sort((a, b) => a.rect.w * a.rect.h - b.rect.w * b.rect.h)[0];
     const para = boxes.find((entry) => entry.kind === "para" && contains(entry.rect, xPt, yPt));
     if (!line && !seat && !mark && !para) return { kind: "none", page, pointPt };
-    let caretOffset: number | undefined;
+    let lineOffset: number | undefined;
     if (line) {
       const coordinate = line.vertical ? yPt : xPt;
-      const index = line.positions.reduce((best, position, i, positions) => (
+      lineOffset = line.positions.reduce((best, position, i, positions) => (
         Math.abs(position - coordinate) <= Math.abs(positions[best] - coordinate) ? i : best
       ), 0);
-      caretOffset = line.start + index;
     }
     return {
       kind: mark ? "mark" : seat ? "seat" : "para",
       page, pointPt, address: line?.address ?? seat?.address ?? mark?.address ?? para?.address,
-      seatKey: seat?.key, itemId: mark?.itemId, caretOffset,
+      seatKey: seat?.key, itemId: mark?.itemId, lineAddress: line?.id, lineOffset,
+      caretOffset: line && lineOffset !== undefined ? line.start + lineOffset : undefined,
     };
   }
 
   function caretRect(page: number, address: string, offset: number): PageRectPt | null {
     if (!geometry || page !== pageNumber) return projection.caretRect(page, address, offset);
     const line = [...lines].reverse().find((entry) => (
-      entry.address === address && offset >= entry.start && offset < entry.start + entry.positions.length
+      entry.id === address || (entry.address === address &&
+        offset >= entry.start && offset < entry.start + entry.positions.length)
     ));
     if (!line) return null;
-    const position = line.positions[offset - line.start];
+    const position = line.positions[line.id === address ? offset : offset - line.start];
+    if (position === undefined) return null;
     return line.vertical
       ? { x: line.rect.x, y: position, w: line.rect.w, h: 1 }
       : { x: position, y: line.rect.y, w: 1, h: line.rect.h };

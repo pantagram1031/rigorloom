@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import base64
 import hashlib
 import http.client
+from io import BytesIO
 import json
 import os
 from pathlib import Path
+import random
 import shutil
 import threading
 from urllib.parse import urlencode
@@ -20,12 +23,13 @@ import rt_apply  # noqa: E402
 import rt_render  # noqa: E402
 import rt_ui  # noqa: E402
 import rt_ui_doc  # noqa: E402
-from rt_jsonl import canonical_bytes  # noqa: E402
+from rt_jsonl import FrameWriter, canonical_bytes  # noqa: E402
 from rt_session import Session  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 DOC = REPO / "tests" / "fixtures" / "rt_doc_contract" / "basic.hwpx"
 GONGMUN = REPO / "tests" / "corpus" / "forms" / "converted" / "gianmun-byeolji-1ho.hwpx"
+RENDER_CHECK = REPO / "tests" / "corpus" / "render-check" / "render-check-01.hwpx"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -54,7 +58,7 @@ def document(serving, tmp_path):
 def request(server, operation, params, *, headers=None, token=True, body=None):
     headers = {**({"X-Rigorloom-Token": server.token} if token else {}), **(headers or {})}
     path = f"/api/doc/{operation}"
-    method = "POST" if operation in {"hit", "caret"} else "GET"
+    method = "POST" if operation == "preview" else "GET"
     if method == "POST":
         headers["Content-Type"] = "application/json"
         body = json.dumps(params) if body is None else body
@@ -101,7 +105,7 @@ def test_wrong_revision_is_refused(serving, document):
     refuse(request(serving, "pages", params), 409, "stale_rev")
 
 
-@pytest.mark.parametrize("operation", ["render", "hit"])
+@pytest.mark.parametrize("operation", ["render", "preview"])
 def test_oversize_request_is_refused(serving, document, operation):
     params = {**binding(document[0]), "page": 1, "scale": 1}
     refuse(request(serving, operation, params,
@@ -128,7 +132,7 @@ def test_multiple_pages_are_refused(serving, document, page_args):
 
 
 @pytest.fixture
-def fake_engine(monkeypatch):
+def fake_engine(monkeypatch, tmp_path):
     engine = rt_ui_doc.rt_doc
     seen = []
 
@@ -142,13 +146,22 @@ def fake_engine(monkeypatch):
         return engine_result(path, pages=[{"n": page, "file": str(png),
                                            "width_pt": 600, "height_pt": 800}])
 
+    def edit(path, ops, *, base, preview):
+        assert preview is True
+        assert base == engine.rev_of(path)
+        output = tmp_path / "preview.hwpx"
+        output.write_bytes(path.read_bytes() + json.dumps(ops).encode())
+        seen.append(path)
+        return {"ok": True, "rev_before": base, "rev": engine.rev_of(output), "out": str(output), "remap": [],
+                "changed_pages": [2], "changed": [{"i": 0, "page": 2, "rect": None}]}
+
     monkeypatch.setattr(engine, "engine_status", lambda: {"available": True})
     monkeypatch.setattr(engine, "pages", lambda path: engine_result(path, count=2, pages=[], approx=["fallback"]))
     monkeypatch.setattr(engine, "render", render)
+    monkeypatch.setattr(engine, "edit", edit)
     monkeypatch.setattr(engine, "geometry", lambda path, page: engine_result(
-        path, page=page, width_pt=600, height_pt=800, boxes=[]))
-    monkeypatch.setattr(engine, "hit_test", lambda path, page, x, y: engine_result(path, at="p0", offset=1))
-    monkeypatch.setattr(engine, "caret_rect", lambda path, at, offset: engine_result(path, page=1, rect=[0, 0, 1, 12]))
+        path, page=page, width_pt=600, height_pt=800,
+        boxes=[{"kind": "cell", "at": "t0/r0/c0", "rect": [20, 30, 40, 50]}]))
     return seen
 
 
@@ -158,8 +171,7 @@ def test_engine_responses_bind_to_the_private_copy(serving, document, fake_engin
     params = binding(session)
     seqs = []
     for operation, extra in [
-        ("pages", {}), ("geometry", {"page": 1}), ("hit", {"page": 1, "x": 20, "y": 30}),
-        ("caret", {"at": "p0", "offset": 1}),
+        ("pages", {}), ("geometry", {"page": 1}),
     ]:
         status, _, payload = request(serving, operation, {**params, **extra})
         assert status == 200 and payload["rev"] == params["rev"]
@@ -172,8 +184,100 @@ def test_engine_responses_bind_to_the_private_copy(serving, document, fake_engin
     assert headers["Cache-Control"] == "no-store"
     seqs.append(int(headers["X-Rigorloom-Seq"]))
     assert seqs == sorted(set(seqs))
-    assert fake_engine == [session.source] * 6
+    assert fake_engine == [session.source] * 4
     assert original.read_bytes() == b"the user has changed the original"
+
+
+def test_preview_guards_and_only_renders_a_changed_page(serving, document, fake_engine):
+    session, original = document
+    base = binding(session)
+    before = session.source.read_bytes()
+    ops = [{"at": "t0/r0/c0", "text": "수정"}]
+    params = {**base, "ops": ops}
+    refuse(request(serving, "preview", params, token=False), 403, "unauthorized")
+    refuse(request(serving, "preview", params,
+                   headers={"Origin": "https://example.invalid"}), 403, "invalid_origin")
+    refuse(request(serving, "preview", {**params, "rev": "0" * 64}), 409, "stale_rev")
+    refuse(request(serving, "preview", {**params, "ops": [{**ops[0], "out": str(original)}]}),
+           400, "invalid_params")
+    assert fake_engine == []
+
+    status, _, preview = request(serving, "preview", params)
+    assert status == 200
+    assert preview["rev"] == base["rev"]
+    assert preview["previewRev"] != base["rev"][:12]
+    assert preview["changedPages"] == [2]
+    assert fake_engine[0] == session.source and fake_engine[1] != session.source
+    preview_binding = {**base, "previewId": preview["previewId"]}
+    refuse(request(serving, "render", {**preview_binding, "page": 1, "scale": 1}), 400, "page_unchanged")
+    assert len(fake_engine) == 2
+    other = Session.open_path(serving.bridge.current_root(), str(original))
+    refuse(request(serving, "render", {**preview_binding, "sessionId": other.id, "page": 2, "scale": 1}),
+           404, "preview_expired")
+
+    status, _, geometry = request(serving, "geometry", {**preview_binding, "page": 2})
+    assert status == 200 and geometry["previewRev"] == preview["previewRev"]
+    assert geometry["changed"] == [{"i": 0, "page": 2, "rect": [20, 30, 40, 50]}]
+    status, headers, png = request(serving, "render", {**preview_binding, "page": 2, "scale": 1})
+    assert status == 200 and png.startswith(PNG_SIGNATURE)
+    assert headers["X-Rigorloom-Preview-Id"] == preview["previewId"]
+    assert headers["X-Rigorloom-Preview-Rev"] == preview["previewRev"]
+    assert int(headers["X-Rigorloom-Seq"]) > geometry["seq"] > preview["seq"]
+    assert session.source.read_bytes() == original.read_bytes() == before
+    assert rt_apply.list_candidates(session) == []
+
+
+def test_preview_refuses_a_linked_source(serving, document, fake_engine):
+    session, original = document
+    session.source.unlink()
+    session.source.symlink_to(original)
+    refuse(request(serving, "preview", {**binding(session), "ops": [{"at": "t0/r0/c0", "text": "x"}]}),
+           404, "not_found")
+    assert fake_engine == []
+
+
+def test_native_page_image_can_exceed_inline_limit(serving, document, fake_engine, monkeypatch, tmp_path):
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.frombytes("L", (900, 900), random.Random(42).randbytes(900 * 900)).save(buffer, "PNG")
+    expected = buffer.getvalue()
+    limit = rt_ui_doc.MAX_INLINE_IMAGE_BYTES
+    assert len(expected) > limit
+    gateway = rt_ui_doc.PageGateway()
+    render = gateway._render
+
+    def large_render(*args, **kwargs):
+        info, _ = render(*args, **kwargs)
+        return info, expected
+
+    monkeypatch.setattr(gateway, "_render", large_render)
+    monkeypatch.setattr(rt_ui_doc, "_native_gateway", gateway)
+    root = serving.bridge.current_root()
+    tools = rt_ui_doc.EngineTools(REPO)
+    session, _ = document
+    base = binding(session)
+    response = rt_ui_doc.native_page_view(root, tools, {**base, "operation": "render", "page": 1, "scale": 3})
+    assert "png" not in response and response["imageBytes"] == len(expected)
+
+    payload = {**base, "operation": "image", "imageId": response["imageId"]}
+    chunks = []
+    for offset in range(0, response["imageBytes"], limit):
+        chunk = rt_ui_doc.native_page_view(root, tools, {**payload, "offset": offset})
+        frame = BytesIO()
+        FrameWriter(frame, threading.Lock()).respond("test", chunk)
+        assert json.loads(frame.getvalue())["kind"] == "response"
+        chunks.append(base64.b64decode(chunk["png"]))
+    assert b"".join(chunks) == expected
+
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(expected)
+    image_file, = (session.renders_dir / "page-view").glob("*.png")
+    image_file.unlink()
+    image_file.symlink_to(outside)
+    with pytest.raises(rt_ui_doc.RpcError) as error:
+        rt_ui_doc.native_page_view(root, tools, {**payload, "offset": 0})
+    assert error.value.code == "not_found"
 
 
 def test_published_candidate_is_the_only_head(serving, document, fake_engine):
@@ -271,6 +375,28 @@ def test_installed_engine_renders_a_png(serving):
     assert status == 200 and info["source"] == "engine" and info["count"] > 0
     status, headers, png = request(serving, "render", {**params, "page": 1, "scale": 1})
     assert status == 200 and headers["X-Rigorloom-Source"] == "engine"
+    assert png.startswith(PNG_SIGNATURE)
+
+
+@pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
+def test_installed_engine_previews_the_queued_paragraph_run(serving):
+    session = Session.open_path(serving.bridge.current_root(), str(RENDER_CHECK))
+    base = binding(session)
+    status, _, geometry = request(serving, "geometry", {**base, "page": 1})
+    assert status == 200
+    line = next(box for box in geometry["boxes"] if box["at"] == "p1#L0")
+    assert line["queueAddress"] == "p3#L0"
+    text = "검토 제목"
+    status, _, preview = request(serving, "preview", {**base, "ops": [
+        {"at": "p3", "run": 0, "before": line["text"], "text": text},
+    ]})
+    assert status == 200 and 1 in preview["changedPages"]
+    params = {**base, "previewId": preview["previewId"], "page": 1}
+    status, _, geometry = request(serving, "geometry", params)
+    assert status == 200 and geometry["changed"]
+    assert next(box for box in geometry["boxes"] if box["at"] == "p1#L0")["text"] == text
+    status, headers, png = request(serving, "render", {**params, "scale": 1})
+    assert status == 200 and headers["X-Rigorloom-Preview-Rev"] == preview["previewRev"]
     assert png.startswith(PNG_SIGNATURE)
 
 
