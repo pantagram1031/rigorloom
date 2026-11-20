@@ -100,7 +100,7 @@ SCHEMA = "rigorloom/doc-core/v1"
 OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
-       "table.delete_col", "table.size", "page_setup", "columns", "break")
+       "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -773,6 +773,9 @@ def engine_status() -> dict:
 
 
 _RESERVED = ("code", "message", "at", "i", "retryable", "engine_fn")
+#: (engine edit step, keyword) -> the engine that first has it, named when an older engine lacks it
+ENGINE_NEEDS = {("insert_header", "replace"): "hwp-engine 2077774 or later (PR #23, header replace)",
+                ("page_number", "replace"): "hwp-engine 2077774 or later (PR #23, header replace)"}
 
 
 def _engine_error(env, fn=None, at=None, i=None):
@@ -788,6 +791,14 @@ def _engine_error(env, fn=None, at=None, i=None):
         return _unavailable("the installed engine has no %s yet; update the HWP engine" % m.group(1),
                             "engine_function_missing", fn=m.group(1), engine_fn=fn,
                             at=at if at is not None else err.get("at"), i=i if i is not None else err.get("i"))
+    m = re.search(r"\((\w+)\): TypeError: \S+ got an unexpected keyword argument '(\w+)'", msg) \
+        if code == "bad_input" else None
+    if m:       # an older engine whose edit step lacks a keyword an op needs (e.g. insert_header replace=)
+        need = ENGINE_NEEDS.get((m.group(1), m.group(2)), "a newer HWP engine")
+        return _unavailable("the installed engine's %s has no %s yet; this needs %s" % (m.group(1), m.group(2), need),
+                            "engine_function_missing", fn=m.group(1), keyword=m.group(2), needs=need,
+                            engine_fn=fn, at=at if at is not None else err.get("at"),
+                            i=i if i is not None else err.get("i"))
     extra = {k: v for k, v in err.items() if k not in _RESERVED}
     if isinstance(err.get("retryable"), bool):
         retry = err["retryable"]
@@ -2467,6 +2478,7 @@ class _Act:
         self.tbl_dels = []      # base table gs removed
         self.row_adds = []      # (table g, after)
         self.row_dels = []      # (table g, row)
+        self.hf = []            # (si, kind, apply, text) / (si, "pageNum", pos, fmt): a section's own control
         self.col_adds = []      # (table g, after)
         self.col_dels = []      # (table g, col)
         self.merges = []        # (table g, first Cell, [Cells merged into it, reading order], (rs, cs))
@@ -2529,7 +2541,7 @@ def _no_list_twice(cl, q, i, name, at):
 
 
 EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape", "numbering",
-              "table.delete_col", "break")
+              "table.delete_col", "break", "header")
 RANGE_OPS = ("set", "replace", "char_shape")
 
 
@@ -3041,6 +3053,46 @@ def _columns_kwargs(op, i, at):
                                candidates=list(allowed))
             kw[k] = x
     return kw
+
+
+#: 머리말/꼬리말 (Ctrl+N,H) and 쪽 번호 매기기 (Ctrl+N,P): the values hnc_edit takes.
+HF_KINDS = ("header", "footer")
+HF_APPLY = ("BOTH", "ODD", "EVEN")
+HF_TEXT_MAX = 1000
+PAGE_NUM_POS = ("BOTTOM_CENTER", "BOTTOM_LEFT", "BOTTOM_RIGHT", "TOP_CENTER", "TOP_LEFT", "TOP_RIGHT",
+                "OUTSIDE_TOP", "OUTSIDE_BOTTOM", "INSIDE_TOP", "INSIDE_BOTTOM", "NONE")
+PAGE_NUM_FORMATS = ("DIGIT", "CIRCLED_DIGIT", "ROMAN_CAPITAL", "ROMAN_SMALL", "LATIN_CAPITAL", "LATIN_SMALL",
+                    "CIRCLED_LATIN_CAPITAL", "CIRCLED_LATIN_SMALL", "HANGUL_SYLLABLE", "CIRCLED_HANGUL_SYLLABLE",
+                    "HANGUL_JAMO", "CIRCLED_HANGUL_JAMO", "HANGUL_PHONETIC", "IDEOGRAPH", "CIRCLED_IDEOGRAPH")
+
+
+def _enum(v, allowed, what, i, at, default=None):
+    if v is None and default is not None:
+        return default
+    x = v.upper() if isinstance(v, str) else None
+    if x not in allowed:
+        raise DocError("bad_input", "%s is one of %s" % (what, ", ".join(allowed)), i=i, at=at,
+                       candidates=_cands_near(list(allowed), str(v)) or list(allowed))
+    return x
+
+
+def _hf_controls(doc, sec_first, kind, apply=None):
+    """The section's own 머리말/꼬리말 (or 쪽 번호) controls: (attrs tag, [their paragraphs]) in its first
+    paragraph, where Hancom and the engine keep them."""
+    s = doc.secs[sec_first.si]
+    seg = s[sec_first.start:sec_first.end]
+    out = []
+    if kind == "pageNum":
+        for m in re.finditer(r"<hp:pageNum\b[^>]*/?>", seg):
+            out.append((m.group(0), []))
+        return out
+    for m in re.finditer(r"<hp:%s\b[^>]*>" % kind, seg):
+        if apply is not None and 'applyPageType="%s"' % apply not in m.group(0):
+            continue
+        end = seg.find("</hp:%s>" % kind, m.end())
+        a, b = sec_first.start + m.start(), sec_first.start + (end if end >= 0 else len(seg))
+        out.append((m.group(0), [q for q in doc.sec_paras[sec_first.si] if a < q.start < b]))
+    return out
 
 
 def _section_claim(cl, si, i, name, at):
@@ -3588,6 +3640,55 @@ def _plan_op(doc, cl, i, name, op, at):
                 cl.touch(p.si, p.start, i, name, at)
                 acts.append(_Act(i, name, at, p, p.start, side=2,
                                  steps=[go, ["break_page" if kind == "page" else "break_column"]]))
+    elif name in ("header", "page_number"):
+        known = ("kind", "apply", "text", "expect") if name == "header" else ("pos", "format", "side_char")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "%s takes %s, not %s" % (name, ", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
+        if name == "header":
+            kind = _enum(op.get("kind"), ("HEADER", "FOOTER"), "header: kind", i, at, "HEADER").lower()
+            apply = _enum(op.get("apply"), HF_APPLY, "header: apply", i, at, "BOTH")
+            if "text" not in op:
+                raise DocError("bad_input", "header needs text (the 머리말/꼬리말's text; \\n starts a new line)",
+                               i=i, at=at)
+            text = _clean(op["text"], "header: text", i, at)
+            if len(text) > HF_TEXT_MAX:
+                raise DocError("bad_input", "header: text is at most %d characters" % HF_TEXT_MAX, i=i, at=at)
+        else:
+            pos = _enum(op.get("pos"), PAGE_NUM_POS, "page_number: pos", i, at, "BOTTOM_CENTER")
+            fmt = _enum(op.get("format"), PAGE_NUM_FORMATS, "page_number: format", i, at, "DIGIT")
+            side = op.get("side_char", "-")
+            if not isinstance(side, str) or len(side) > 1 or (side and _CTRL.search(side)):
+                raise DocError("bad_input", "page_number: side_char is one character (or \"\" for none)", i=i, at=at)
+        r = resolve(doc, at, allow=("para", "heading"))
+        if r.get("range"):
+            raise DocError("bad_address", "%s takes a whole paragraph, not a character range" % name, i=i, at=at)
+        p = r["para"]
+        if not p.top:
+            raise DocError("bad_address", "%s needs a body paragraph (it picks the section), not one in a table, "
+                           "note or box" % name, i=i, at=at)
+        first = next(q for q in doc.top if q.si == p.si)
+        if name == "header":
+            if not any((st.get("engName") or "") == "Header" for st in doc.styles.values()):
+                # the engine gives the new 머리말/꼬리말 the document's own 머리말 style and has none to add
+                raise _unavailable("this document has no 머리말 (Header) style, which the engine needs to write a "
+                                   "머리말 or 꼬리말", "engine_needs_style", style="Header")
+            have = _hf_controls(doc, first, kind, apply)
+            _check_expect(op, i, at, "\n".join(q.text for _tag, ps in have for q in ps))
+            _section_claim(cl, p.si, i, "%s %s" % (kind, apply), at)
+            steps = [["goto", first.k, 0, first.si],
+                     {"op": "insert_header", "kwargs": {"text": text, "kind": kind, "apply": apply, "replace": True}}]
+            a = _Act(i, name, at, first, first.start, side=0, rank=0, steps=steps)
+            a.hf = [(first.si, kind, apply, text)]
+        else:
+            _section_claim(cl, p.si, i, name, at)
+            steps = [["goto", first.k, 0, first.si],
+                     {"op": "page_number", "kwargs": {"pos": pos, "fmt": fmt, "side_char": side, "replace": True}}]
+            a = _Act(i, name, at, first, first.start, side=0, rank=0, steps=steps)
+            a.hf = [(first.si, "pageNum", pos, fmt)]
+        cl.touch(first.si, first.start, i, name, at)
+        acts.append(a)
     elif name == "numbering":
         want = _numbering_set(op, i, at)
         if want["kind"] == "outline" and _outline_style(doc, want["level"]) is None:
@@ -3885,6 +3986,8 @@ def _verify(doc, newdoc, acts):
                 return False
     if not _verify_shapes(doc, newdoc, acts, st):
         return False
+    if not _verify_hf(newdoc, acts, st):
+        return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
         ng = st["newt"][t.g]
@@ -3902,6 +4005,25 @@ def _verify(doc, newdoc, acts):
         nc = newdoc.tables[g].at(nr, c.col) if nr is not None else None
         if nc is not None and len(nc.paras) != n:
             return False
+    return True
+
+
+def _verify_hf(newdoc, acts, st):
+    """Each section a header / page_number op changed has exactly one such control, with the text (position,
+    format) asked."""
+    for a in acts:
+        for si, kind, x, y in a.hf:
+            first = next((q for q in newdoc.top if q.si == si), None)
+            if first is None:
+                return False
+            if kind == "pageNum":
+                have = _hf_controls(newdoc, first, "pageNum")
+                if len(have) != 1 or 'pos="%s"' % x not in have[0][0] or 'formatType="%s"' % y not in have[0][0]:
+                    return False
+                continue
+            have = _hf_controls(newdoc, first, kind, x)
+            if len(have) != 1 or "\n".join(q.text for q in have[0][1]) != y:
+                return False
     return True
 
 
@@ -3953,7 +4075,8 @@ def _remap_result(doc, newdoc, acts):
     remap = _remap(doc, acts)
     if newdoc is None or _verify(doc, newdoc, acts):
         return remap, False
-    dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges]
+    dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
+            or a.hf]
     if dels:        # a removal the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) removes; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
