@@ -25,9 +25,9 @@ Rigorloom이 한글(.hwpx) 문서에서 할 수 있는 편집을 한글 메뉴 �
 | 표 셀 입력, 줄 추가·삭제 | 지원 | `table.set_cells`, `table.add_row`, `table.delete_row` |
 | 셀 합치기·나누기 | 지원 | `table.merge`, `table.split` (한 번의 편집에서 표마다 표 구조 동작 하나) |
 | 칸 추가·삭제, 너비·높이 | 지원 | `table.add_col`, `table.delete_col`, `table.size` (한 번의 편집에서 표마다 표 구조 동작 하나, 셀 너비·높이 같게는 없음) |
-| 표 테두리·배경 | 미지원 |  |
-| 셀 정렬·안 여백 | 미지원 |  |
-| 제목 줄 반복, 쪽 나눔 | 미지원 |  |
+| 표 테두리·배경 | 부분 | `table.cell_style` (단색 배경만, 무늬·그러데이션 배경과 대각선은 없음) |
+| 셀 정렬·안 여백 | 지원 | `table.cell_style` |
+| 제목 줄 반복, 쪽 나눔 | 지원 | `table.style`, `table.cell_style` |
 | 캡션 | 미지원 |  |
 | 표 계산식 | 미지원 |  |
 | 편집 용지 (용지, 방향, 여백, 제본) | 지원 | `page_setup` |

@@ -293,6 +293,26 @@ rt_doc.edit("보고서.hwpx", [
   - A column added or deleted inside a merged cell widens or narrows that
     cell; its address and text stay.
   - 셀 너비·높이 같게 (distribute) has no op yet.
+- Table style ops (표 > 셀 테두리/배경, 셀 속성, 표 속성) need the engine and change no
+  address; they take no `expect`.
+  - `table.cell_style` at a cell, a row or a table (or a cell with `to`, the
+    block's other corner cell) with `set`: `border` (one line for every side,
+    `{type, width, color}` or `"none"`, or `{all, left, right, top, bottom}`
+    with a line each; `type` one of 한글's line types such as `SOLID`,
+    `DASH`, `DOUBLE_SLIM`; `width` one of 한글's widths in millimetres, 0.1 to
+    5.0; `color` `#RRGGBB`), `fill` (`#RRGGBB`, or null / `"none"`),
+    `valign` (`TOP`, `CENTER`, `BOTTOM`), `margin_mm` (안 여백, 0 to 50, one
+    number or per side) and `header` (제목 셀, true/false). The block grows to
+    whole merged cells. A border changes each block cell's side and, across a
+    shared edge, the neighbour's opposite side too, as 한글's 셀 테두리 does.
+  - `table.style` at a table with `set`: `repeat_header` (제목 줄 자동 반복,
+    true/false; the rows whose cells are 제목 셀 repeat on each page) and
+    `page_break` (쪽 경계에서 나눔: `CELL`, `TABLE` or `NONE`).
+  - Conflicts: two `table.cell_style` ops on one table may not overlap, nor
+    share an edge when either sets a border; a `table.add_row` /
+    `table.delete_row` or a shape op on the same table, or a second
+    `table.style`, is a conflict. Text ops on the table's cells are fine: they
+    run before the style op rewrites the table.
 - Page ops (쪽 > 편집 용지, 다단 설정, 쪽·단·구역 나누기) need the engine and take
   `at`, a body paragraph (not one in a table, note or box, and not a range).
   - `page_setup` changes the 편집 용지 of the section that holds the

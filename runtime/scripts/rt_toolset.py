@@ -923,6 +923,8 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "break": (("at", "kind"), ("expect",)),
     "header": (("at", "text"), ("kind", "apply", "expect")),
     "page_number": (("at",), ("pos", "format", "side_char")),
+    "table.cell_style": (("at", "set"), ("to",)),
+    "table.style": (("at", "set"), ()),
 }
 
 
@@ -950,6 +952,9 @@ OP_EXAMPLES = {
     "break": '{"op":"break","at":"p12","kind":"page"}',
     "header": '{"op":"header","at":"p0","kind":"footer","text":"2027년 업무계획"}',
     "page_number": '{"op":"page_number","at":"p0","pos":"BOTTOM_CENTER","format":"DIGIT"}',
+    "table.cell_style": '{"op":"table.cell_style","at":"t0/r0","set":{"fill":"#D9D9D9","header":true,'
+                        '"border":{"bottom":{"type":"DOUBLE_SLIM","width":0.5}}}}',
+    "table.style": '{"op":"table.style","at":"t0","set":{"repeat_header":true}}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1023,6 +1028,17 @@ OP_NOTES = {
                    "TOP/BOTTOM, or NONE), `format` (번호 모양: DIGIT default, ROMAN_CAPITAL, "
                    "CIRCLED_DIGIT, HANGUL_SYLLABLE, ...), `side_char` (`-` default, \"\" for "
                    "none); one per section per edit",
+    "table.cell_style": "`at` is a cell, a row or a table, or a cell with `to` the block's other "
+                        "corner (the block grows to whole merged cells); `set`: border (one line "
+                        "{type, width, color} or \"none\" for every side, or {all, left, right, "
+                        "top, bottom}; width 0.1 to 5.0 mm, color #RRGGBB), fill (#RRGGBB or "
+                        "\"none\"), valign (TOP, CENTER, BOTTOM), margin_mm (0 to 50, one number "
+                        "or per side), header (제목 셀); a border also sets the neighbour's side "
+                        "across a shared edge; two on one table may not overlap or share a "
+                        "bordered edge",
+    "table.style": "`at` is a table; `set`: repeat_header (제목 줄 반복 for the rows of 제목 셀) and "
+                   "page_break (CELL, TABLE or NONE); one per table per edit; a row or shape op "
+                   "on the same table is a conflict",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
