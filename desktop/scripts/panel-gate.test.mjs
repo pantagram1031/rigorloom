@@ -203,3 +203,14 @@ test("the gate waits for the fact check", () => {
   assert.deepEqual(m.gateState(v).block, { kind: "checking" });
   assert.equal(m.canConfirm(v, [], m.gateState(v)), false);
 });
+
+test("a failing paragraph no change is tied to asks for the 바뀐 사실 tick", () => {
+  const items = [item(1, { decision: "accepted" })];
+  const plain = view(items);
+  assert.deepEqual(m.requiredTicks(plain), []);
+  const untied = view(items, { untied: [{ paragraph: 9, before: "", after: "2. Review" }] });
+  assert.deepEqual(m.requiredTicks(untied), ["facts"]);
+  const gate = m.gateState(untied);
+  assert.equal(m.canConfirm(untied, [], gate), false);
+  assert.equal(m.canConfirm(untied, ["facts"], gate), true);
+});

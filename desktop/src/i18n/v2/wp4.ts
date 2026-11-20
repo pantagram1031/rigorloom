@@ -85,6 +85,7 @@ export const WP4_STRINGS = {
   wp4_sheet_aria: { ko: "승인", en: "Approval" },
   wp4_sheet_tally_item: { ko: "{0} {1}", en: "{0} {1}" },
   wp4_sheet_fact_row: { ko: "{0} · {1} → {2}", en: "{0} · {1} → {2}" },
+  wp4_sheet_untied_row: { ko: "변경과 연결되지 않은 차이 · 문단 {0} · {1}", en: "Unlinked difference · Paragraph {0} · {1}" },
   wp4_sheet_fact_value_none: { ko: "없음", en: "none" },
   wp4_sheet_tick_facts: { ko: "바뀐 사실을 확인했습니다", en: "I reviewed the changed facts" },
   wp4_sheet_tick_test: { ko: "시험용 값임을 확인했습니다", en: "I understand these are test values" },

@@ -178,7 +178,7 @@ export function checkText(view: ChangeSetView, lang: UiLanguage, guardState: str
   if (guardState === "running") return tp("wp4_box_check_running", lang);
   if (view.items.some((it) => it.guard.status === "not_checked") && guardState !== "ready") return tp("wp4_box_check_not_run", lang);
   const c = gateState(view).counts;
-  return tp("wp4_box_check_body", lang, [c.facts, c.attn]);
+  return tp("wp4_box_check_body", lang, [c.facts + (view.untied?.length ?? 0), c.attn]);
 }
 
 function GateFooter({

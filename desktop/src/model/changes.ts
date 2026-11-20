@@ -149,6 +149,7 @@ export interface ChangeSetView {
    * before the guard answers could skip a 바뀐 사실 tick.
    */
   checking?: boolean;
+  untied?: Array<{ paragraph: number; before: string; after: string }>;
   baseRunId?: string | null;
 }
 
@@ -382,7 +383,7 @@ export function requiredTicks(view: ChangeSetView | null): TickId[] {
   if (!view) return [];
   const accepted = view.items.filter((item) => item.decision === "accepted");
   const ticks: TickId[] = [];
-  if (accepted.some(isChangedFact)) ticks.push("facts");
+  if (accepted.some(isChangedFact) || (accepted.length > 0 && view.untied?.length)) ticks.push("facts");
   if (view.provenance.mock || accepted.some((item) => item.source === "test")) ticks.push("test");
   return ticks;
 }
@@ -403,7 +404,7 @@ export function approvalSheetKey(view: ChangeSetView): string {
   return JSON.stringify([
     view.id, view.planHash, view.base.sha256, view.baseRunId,
     view.items.map((item) => [item.id, item.contentHash, item.decision, item.guard]),
-    requiredTicks(view),
+    requiredTicks(view), view.untied ?? [],
   ]);
 }
 

@@ -201,6 +201,8 @@ async function prunedReviewMatches(confirmed: ConfirmationBinding, reviewed: Cha
     const current = latestView(confirmed.sessionId);
     if (current && current.id === confirmed.planId && !current.checking) {
       return !current.stale && contents(current.items) === contents(accepted) &&
+        (current.untied ?? []).every((row) => reviewed.untied?.some((old) =>
+          old.paragraph === row.paragraph && old.before === row.before && old.after === row.after)) &&
         requiredTicks(current).every((tick) => requiredTicks(reviewed).includes(tick));
     }
     await new Promise((resolve) => setTimeout(resolve, 40));
@@ -260,7 +262,7 @@ export async function confirmApproval(): Promise<boolean> {
   const proposerKinds = new Set(v.items.filter((it) => accepted.has(it.id)).map((it) => it.source));
   const record = {
     count: accepted.size,
-    facts: v.items.filter((it) => accepted.has(it.id) && it.guard.status === "changed").length,
+    facts: v.items.filter((it) => accepted.has(it.id) && it.guard.status === "changed").length + (v.untied?.length ?? 0),
     attn: counts.attn,
     checked: v.items.every((it) => it.guard.status !== "not_checked"),
     proposer:

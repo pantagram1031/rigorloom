@@ -99,6 +99,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
   const st = panelSlice.use(doc, (s) => s);
   const accepted = view.items.filter((it) => it.decision === "accepted");
   const facts = accepted.filter(isChangedFact);
+  const untied = view.untied ?? [];
   const expected = accepted.filter((it) => it.guard.status === "expected" && needsLook(it));
   const ticks = requiredTicks(view);
   const busy = st.confirmPhase === "pruning" || st.confirmPhase === "requesting" || st.confirmPhase === "applying";
@@ -172,13 +173,13 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
         <ApprovalBox
           lang={lang}
           data-testid="sheet-box"
-          hasChangedFact={facts.length > 0}
+          hasChangedFact={ticks.includes("facts")}
           propose={proposerText({ ...view, items: accepted }, lang)}
           check={<Parts text={checkText(view, lang, guardState)} />}
           approve={null}
         />
 
-        {facts.length > 0 ? (
+        {ticks.includes("facts") ? (
           <div className="rp-sheet-facts" data-fact="" data-testid="sheet-facts">
             <ul>
               {facts.map((it) =>
@@ -193,6 +194,11 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
                     </li>
                   )),
               )}
+              {untied.map(({ paragraph, before, after }) => (
+                <li key={paragraph} data-testid={`sheet-untied-${paragraph}`}>
+                  {tp("wp4_sheet_untied_row", lang, [paragraph, after || before])}
+                </li>
+              ))}
             </ul>
             <label className="rp-tick">
               <input
