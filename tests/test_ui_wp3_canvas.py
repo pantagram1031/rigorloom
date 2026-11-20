@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
 
@@ -75,6 +77,31 @@ def _rpc_payload(request):
     if request.url.endswith("/rpc") and request.post_data:
         return json.loads(request.post_data)
     return {}
+
+
+def _wait_for_cell_geometry(page):
+    if os.environ.get("RIGORLOOM_HWP_ENGINE"):
+        expect(page.get_by_test_id("paper")).to_have_attribute(
+            "data-engine-geometry", "true", timeout=20_000,
+        )
+
+
+@contextmanager
+def _expect_cell_redraw(page):
+    if not os.environ.get("RIGORLOOM_HWP_ENGINE"):
+        yield
+        return
+
+    raster = page.get_by_test_id("page-raster")
+    previous_src = raster.get_attribute("src")
+    with page.expect_response(
+        lambda response: "/api/doc/render?" in response.url and response.ok
+        and "x-rigorloom-preview-id" in response.headers,
+        timeout=20_000,
+    ):
+        yield
+    expect(raster).not_to_have_attribute("src", previous_src, timeout=20_000)
+    expect(page.get_by_test_id("page-render-failed")).to_have_count(0)
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
@@ -207,6 +234,7 @@ def test_ime_typing_writes_only_on_commit(browser, server):
             lambda response: _rpc_payload(response.request).get("method") == "event/subscribe"
         ):
             _open_sample(page, server)
+        _wait_for_cell_geometry(page)
         page.locator(COOP_CELL).click()
         seat = page.get_by_test_id("seat-input")
         baseline = len(requests)
@@ -219,18 +247,22 @@ def test_ime_typing_writes_only_on_commit(browser, server):
         expect(seat).to_be_visible()
         assert requests[baseline:] == []
         seat.dispatch_event("compositionend", {"data": "가나다라마바사"})
-        seat.blur()
+        with _expect_cell_redraw(page):
+            seat.blur()
         expect(seat).to_have_count(0)
         expect(page.locator(COOP_CELL)).to_contain_text("가나다라마바사")
+        assert requests[baseline:].count("plan/propose") == 1
 
         page.locator(COOP_CELL).click()
         seat.press("Tab")
         expect(page.get_by_test_id("seat-input")).to_be_focused()
+        expect(page.locator('[data-cell-key="c:0:5:2"].rl-cell--editing')).to_have_count(1)
 
 
 def test_narrow_cell_editor_reopens_with_queued_value(browser, server):
     with browser.new_page(viewport={"width": 390, "height": 844}) as page:
         _open_sample(page, server)
+        _wait_for_cell_geometry(page)
         page.get_by_test_id("app-menu").click()
         page.get_by_test_id("pane-tab-blanks").click()
         page.get_by_test_id("blank-seat-t0/r5/c1").click()
@@ -239,7 +271,8 @@ def test_narrow_cell_editor_reopens_with_queued_value(browser, server):
         expect(page.get_by_test_id("narrow-drawer")).to_have_count(0)
         seat = bar.get_by_test_id("seat-input")
         seat.fill("담당관")
-        seat.press("Enter")
+        with _expect_cell_redraw(page):
+            seat.press("Enter")
         expect(page.locator(COOP_CELL)).to_contain_text("담당관")
         page.locator(COOP_CELL).click()
         expect(seat).to_have_value("담당관")

@@ -320,8 +320,7 @@ export function CanvasPane() {
           language={language} source={source ?? "projection"} narrow />
       ) : null}
 
-      {isNarrow && inlineEdit?.kind === "cell" && !pageRaster.geometry?.boxes.some((box) =>
-        box.kind === "line" && (box.queueAddress ?? box.at)?.startsWith(`t${inlineEdit.table}/r${inlineEdit.row}/c${inlineEdit.col}/p`)) ? (
+      {isNarrow && inlineEdit?.kind === "cell" ? (
         <div className="rl-narrow-seat-bar" data-testid="narrow-seat-bar">
           <span className="rl-narrow-seat-label">
             {deriveCellFieldLabel(
