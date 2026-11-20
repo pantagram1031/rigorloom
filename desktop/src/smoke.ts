@@ -44,6 +44,7 @@ import {
   undoQueuedOp,
 } from "./actions";
 import * as rt from "./runtime";
+import { runV2Phase, V2_SMOKE_PHASES } from "./smokeV2";
 import {
   activeCandidates,
   activeInspect,
@@ -184,6 +185,14 @@ function fillOps(): QueuedFillOp[] {
 /** The queue's paragraph-run ops, narrowed for the same reason. */
 function runOps(): QueuedRunOp[] {
   return getState().draft.ops.filter((op): op is QueuedRunOp => op.kind === "set_run");
+}
+
+/**
+ * Whether a smoke phase still drives the v1 screens. `open` and `edit` run on
+ * the v2 editor (`smokeV2.ts`); the rest keep the v1 screens until ported.
+ */
+export function smokeNeedsLegacy(config: SmokeConfig | null): boolean {
+  return Boolean(config?.phase) && !V2_SMOKE_PHASES.has(config!.phase!);
 }
 
 /** Read the launcher's intent before anything renders. */
@@ -425,6 +434,7 @@ async function phaseOpen(config: SmokeConfig) {
 async function phaseReattach() {
   const state = getState();
   const prefs = await rt.loadPrefs();
+  await waitFor(() => hasHangul(domText('[data-testid="page-sheet"]')), 15000);
   const remembered = prefs.lastSessionId as string | undefined;
 
   check("a session was remembered from the previous run", !!remembered, remembered ?? "");
@@ -434,8 +444,8 @@ async function phaseReattach() {
 
   const inspect = activeInspect(state);
   check("the document was re-read without being re-imported", !!inspect);
-  check("the tree is populated again",
-    domText('[data-testid="structure-tree"]').length > 0 && !!inspect);
+  check("the document tables are populated again",
+    !!inspect && document.querySelector('[data-testid^="page-table-"]') !== null);
   check("the same source hash came back",
     !!inspect && inspect.documentHash ===
       state.sessions.find((s) => s.sessionId === state.activeSessionId)?.source.sha256,
@@ -447,7 +457,7 @@ async function phaseReattach() {
   check("최근 문서 came back", state.recents.length > 0,
     state.recents.map((r) => `${r.name} ${r.sha256.slice(0, 8)}`).join(", "));
   check("the centre shows the document again",
-    hasHangul(domText('[data-testid="paper"]')));
+    hasHangul(domText('[data-testid="page-sheet"]')));
   check("no terminal was needed", true, "the shell reattached from its own prefs file");
 }
 
@@ -3641,9 +3651,11 @@ export async function runSmoke(): Promise<void> {
   }, budgetMs);
 
   try {
-    if (config.phase === "open") await phaseOpen(config);
+    if (config.phase && V2_SMOKE_PHASES.has(config.phase)) {
+      await runV2Phase(config, { check, settled, waitFor, domText, hasHangul, ready });
+    } else if (config.phase === "open") await phaseOpen(config);
     else if (config.phase === "reattach") await phaseReattach();
-    else if (config.phase === "edit") await phaseEdit(config);
+    else if (config.phase === "edit") await phaseEdit(config); // v1, kept for ?ui=v1 runs
     else if (config.phase === "agent") await phaseAgent(config);
     else if (config.phase === "page") await phasePage(config);
     else if (config.phase === "own") await phaseOwn(config);

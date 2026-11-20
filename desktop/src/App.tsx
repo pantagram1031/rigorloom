@@ -19,7 +19,7 @@ import {
   setState,
   useWorkspace,
 } from "./store";
-import { runSmoke, smokeIntent } from "./smoke";
+import { runSmoke, smokeIntent, smokeNeedsLegacy } from "./smoke";
 import "./shell/registrations";
 import { engineState } from "./shell/docInfo";
 import { isLegacyUi, LegacyApp } from "./shell/LegacyApp";
@@ -150,11 +150,12 @@ export default function App() {
 
       const intent = await smokeIntent();
       if (subscriptions.isDisposed) return;
-      // The scripted Tauri smoke still drives the v1 screens; it runs on them
-      // until it is ported to the shell's test ids.
+      // `open` and `edit` drive the v2 editor; the smoke phases not yet ported
+      // still run on the v1 screens. v1 is the default, so each phase picks.
       if (intent) {
-        setUiVariant("v1");
-        setLegacy(true);
+        const legacyPhase = smokeNeedsLegacy(intent);
+        setUiVariant(legacyPhase ? "v1" : "v2");
+        setLegacy(legacyPhase);
       }
       if (intent?.phase === "hold-entrance") setState({ holdEntrance: true });
 

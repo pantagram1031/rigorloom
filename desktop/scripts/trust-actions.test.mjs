@@ -51,8 +51,10 @@ test("switching documents parks the queue; the other document starts clean and t
     editIntentGeneration: 0, applyPhase: "idle", applyOutcomes: {},
   });
   const headLoads = [];
+  const restored = [];
   const ctx = vm.createContext({
     ...s, EMPTY_DRAFT, swapSessionDrafts,
+    uiVariant: () => "v2",
     stopDocumentEvents: () => {},
     applyPresentation: () => ({}),
     rt: { savePrefs: async () => {} },
@@ -60,7 +62,7 @@ test("switching documents parks the queue; the other document starts clean and t
     loadCandidates: async () => {}, rememberRecent: () => {}, startEvents: async () => {},
     headCandidate: () => ({ runId: "run-1" }),
     loadHeadTexts: async (sessionId, runId) => { headLoads.push([sessionId, runId]); },
-    restoreSavedDraft: async () => {},
+    restoreSavedDraft: async (sessionId) => { restored.push(sessionId); },
   });
   vm.runInContext(
     `${section("let eventSelectionGeneration", "export async function refreshSessions(")}\nglobalThis.select = selectSession;`,
@@ -77,6 +79,13 @@ test("switching documents parks the queue; the other document starts clean and t
   assert.equal(s.read().draft, draftA, "A's queue comes back intact");
   assert.equal(s.read().approval.approvalId, "ap");
   assert.equal(s.read().parkedDrafts.A, undefined);
+  assert.deepEqual(restored, ["B", "A"]);
+
+  const liveEdit = { ...EMPTY_DRAFT, sessionId: "B", phase: "starting", ops: [{ opId: "live-edit" }] };
+  ctx.startEvents = async () => s.setState({ draft: liveEdit });
+  await ctx.select("B");
+  assert.equal(s.read().draft, liveEdit);
+  assert.deepEqual(restored, ["B", "A"], "opening must not restore over a live edit");
 });
 
 test("re-propose refuses ops made for another document and rebases on the head otherwise", async () => {

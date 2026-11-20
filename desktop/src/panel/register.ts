@@ -8,7 +8,7 @@ import { canDecide } from "../model/changes";
 import { showRightTab } from "../shell/bindings";
 import { registerCommand } from "../shell/commands";
 import { bindKey } from "../shell/keymap";
-import { defineContext } from "../shell/keys";
+import { defineContext, overlayOpen } from "../shell/keys";
 import { activeTabSessionId, getShell } from "../shell/shellState";
 import { registerSlot, type SlotProps } from "../shell/slots";
 import {
@@ -35,12 +35,13 @@ function documentReady(): boolean {
 }
 
 function inPanelOverlay(): boolean {
+  const { sheetOpen, returnOpen } = panelSlice.get(activeTabSessionId());
   const active = document.activeElement;
-  return Boolean(active?.closest('[data-testid="approve-sheet"], [data-testid="return-popover"]'));
+  return sheetOpen || returnOpen || Boolean(active?.closest('[data-testid="approve-sheet"], [data-testid="return-popover"]'));
 }
 
 function reviewing(): boolean {
-  return documentReady() && Boolean(latestView(activeTabSessionId())?.items.length) &&
+  return documentReady() && !overlayOpen() && !inPanelOverlay() && Boolean(latestView(activeTabSessionId())?.items.length) &&
     Boolean(document.activeElement?.closest('[data-testid="change-list"]'));
 }
 
@@ -74,8 +75,7 @@ bindKey("change.undo", undoDecision);
 bindKey("change.acceptAll", acceptAll);
 bindKey("proposal.return", openReturn);
 bindKey("approval.open", openApproval, {
-  when: () => documentReady() && !inPanelOverlay() &&
-    !panelSlice.get(activeTabSessionId()).sheetOpen && Boolean(latestView(activeTabSessionId())),
+  when: () => documentReady() && !overlayOpen() && !inPanelOverlay() && Boolean(latestView(activeTabSessionId())),
   inEditable: false,
 });
 bindKey("panel.changes", focusChangeList, { when: documentReady });

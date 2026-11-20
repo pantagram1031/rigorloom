@@ -27,6 +27,8 @@ export type Tab =
 
 export type Breakpoint = "wide" | "medium" | "overlay" | "narrow";
 
+export type SettingsSection = "general" | "folders" | `settings:${string}`;
+
 export interface ShellState {
   tabs: Tab[];
   activeTab: string;
@@ -38,7 +40,7 @@ export interface ShellState {
   paletteOpen: boolean;
   paletteQuery: string;
   settingsOpen: boolean;
-  settingsSection?: "general" | "settings:agent";
+  settingsSection?: SettingsSection;
   appMenuOpen: boolean;
   tabListOpen: boolean;
   narrowDrawerOpen: boolean;

@@ -32,9 +32,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-import pytest
-
+from _browser_gate import no_browser
 from _editor_v2 import editor_v2_url
+from _v1_identity import launch_browser
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "runtime" / "scripts" / "cli.py"
@@ -47,15 +47,15 @@ def _import_playwright():
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
-        pytest.skip(f"playwright Python package unavailable: {exc}")
+        no_browser(f"playwright Python package unavailable: {exc}")
     return sync_playwright
 
 
 def _launch_chromium(pw):
     try:
-        return pw.chromium.launch(headless=True)
+        return launch_browser(pw)
     except Exception as exc:  # pragma: no cover - environment dependent
-        pytest.skip(f"headless Chromium unavailable: {exc}")
+        no_browser(f"headless Chromium unavailable: {exc}")
 
 
 def _bundle_has_shell() -> bool:
@@ -195,7 +195,7 @@ def _open_sample(page, index: int) -> str:
 def test_ui_shell_e2e_keys_isolation_tabs_and_budgets(tmp_path: Path) -> None:
     sync_playwright = _import_playwright()
     if not _bundle_has_shell():
-        pytest.skip("runtime/scripts/ui_dist predates the v2 shell; rebuild with `npm run build:web`")
+        no_browser("runtime/scripts/ui_dist predates the v2 shell; rebuild with `npm run build:web`")
 
     shots = tmp_path / "shots"
     shots.mkdir()

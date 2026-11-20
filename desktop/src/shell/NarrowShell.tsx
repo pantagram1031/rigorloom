@@ -52,18 +52,17 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
         </button>
         <div className="sh-narrow-title">
           <span className="sh-narrow-name">{title}</span>
-          {count > 0 ? <span className="sh-narrow-sub">{S.t("shell_tab_changes_count", lang, [count])}</span> : null}
         </div>
         {sessionId ? (
           <button
             type="button"
-            className="sh-iconbtn sh-iconbtn--touch"
-            aria-label={S.t("shell_toggle_right", lang)}
+            className="sh-iconbtn sh-iconbtn--touch sh-narrow-panel-toggle"
+            aria-controls="sh-narrow-sheet"
             aria-expanded={panelOpen}
             data-testid={TID.toggleRight}
             onClick={toggleRight}
           >
-            <Icon name="paneRight" />
+            {S.t(panelOpen ? "shell_narrow_changes_close" : "shell_narrow_changes_open", lang, [count])}
           </button>
         ) : null}
       </header>
@@ -81,7 +80,7 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
         ) : null}
       </main>
       {sessionId ? (
-        <div className="sh-narrow-sheet" hidden={!panelOpen}>
+        <div className="sh-narrow-sheet" id="sh-narrow-sheet" hidden={!panelOpen}>
           <Slot name="narrowSheet" sessionId={sessionId} quiet />
         </div>
       ) : null}

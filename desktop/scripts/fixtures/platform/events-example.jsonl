@@ -1,0 +1,6 @@
+{"schema": "rigorloom.events/1", "seq": 0, "kind": "run.started", "ts": "2026-11-19T04:19:58Z", "turn_id": "t-1"}
+{"schema": "rigorloom.events/1", "seq": 1, "kind": "step", "ts": "2026-11-19T04:19:59Z", "turn_id": "t-1", "step": "rendering_pages"}
+{"schema": "rigorloom.events/1", "seq": 2, "kind": "message.delta", "ts": "2026-11-19T04:20:00Z", "turn_id": "t-1", "text": "행정기관명을 채웠습니다.\n"}
+{"schema": "rigorloom.events/1", "seq": 3, "kind": "change.proposed", "ts": "2026-11-19T04:20:00Z", "turn_id": "t-1", "changeset_id": "cs-0002-a1b2c3", "provenance": {"mock": false}, "item_ids": ["i1", "i2", "i3"]}
+{"schema": "rigorloom.events/1", "seq": 4, "kind": "change.stale", "ts": "2026-11-19T04:21:00Z", "turn_id": "t-1", "changeset_id": "cs-0001-ffeedd", "reason": "superseded_by_newer_candidate"}
+{"schema": "rigorloom.events/1", "seq": 5, "kind": "change.applied", "ts": "2026-11-19T04:22:00Z", "turn_id": "t-1", "changeset_id": "cs-0002-a1b2c3", "path": "drafts/rev-2.hwpx"}

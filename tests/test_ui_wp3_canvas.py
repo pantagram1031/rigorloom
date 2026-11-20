@@ -28,7 +28,7 @@ except ImportError as exc:
 def canvas_bundle(tmp_path_factory):
     vite = DESKTOP / "node_modules" / "vite" / "bin" / "vite.js"
     if not vite.is_file():
-        pytest.skip("desktop dependencies unavailable (run npm ci in desktop)")
+        no_browser("desktop dependencies unavailable (run npm ci in desktop)")
     dist = tmp_path_factory.mktemp("wp3-web")
     build = subprocess.run(
         ["node", str(vite), "build", "--config", "vite.web.config.ts", "--outDir", str(dist)],

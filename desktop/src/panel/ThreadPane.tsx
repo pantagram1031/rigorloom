@@ -3,6 +3,7 @@ import { shortHash, type ChangeSetView } from "../model/changes";
 import { useWorkspace } from "../store";
 import type { Turn } from "../types";
 import { setTab } from "./actions";
+import { PlanHash } from "./bits";
 import { clockTime, revisionName, tp } from "./i18n";
 import { panelSlice } from "./state";
 
@@ -25,10 +26,7 @@ function ProposalLine({ view, lang }: { view: ChangeSetView; lang: UiLanguage })
       </button>
       <details className="rp-details rp-details--inline">
         <summary>{tp("wp4_thread_details", lang)}</summary>
-        <div className="rp-kv">
-          <span className="rp-kv-k">{tp("wp4_sheet_plan_hash", lang)}</span>
-          <code className="rp-mono">{shortHash(view.planHash)}</code>
-        </div>
+        <PlanHash value={view.planHash} lang={lang} testId="thread-proposal-plan-hash" />
         <div className="rp-kv">
           <span className="rp-kv-k">{tp("wp4_sheet_doc_hash", lang)}</span>
           <code className="rp-mono">{shortHash(view.base.sha256)}</code>
@@ -52,6 +50,7 @@ export function ThreadPane({
   const sessionId = useWorkspace((s) => s.activeSessionId);
   const turns = useWorkspace((s) => s.turns);
   const activeTurn = useWorkspace((s) => s.activeTurn);
+  const applied = panelSlice.use(sessionId, (s) => s.applied);
   const returned = panelSlice.use(sessionId, (s) => s.returned);
   const mine = turnsFor(turns, sessionId, activeTurn);
   const planInTurns = view ? mine.some((t) => t.payload?.plan?.planId === view.id || t.planId === view.id) : false;
@@ -65,7 +64,7 @@ export function ThreadPane({
         </p>
       ) : null}
       <div className="rp-scroll">
-        {mine.length === 0 && !view && !returned ? <p className="rp-empty">{tp("wp4_thread_empty", lang)}</p> : null}
+        {mine.length === 0 && !view && !returned && !applied ? <p className="rp-empty">{tp("wp4_thread_empty", lang)}</p> : null}
         <ol className="rp-thread">
           {mine.map((turn) => {
             const plan = turn.payload?.plan ?? null;
@@ -112,6 +111,21 @@ export function ThreadPane({
                 </div>
                 {view.stale ? <p className="rp-msg-text rp-dim">{tp("wp4_stale_thread", lang)}</p> : null}
                 <ProposalLine view={view} lang={lang} />
+              </div>
+            </li>
+          ) : null}
+          {applied ? (
+            <li className="rp-turn">
+              <div className="rp-msg">
+                <p className="rp-msg-text">{tp("wp4_applied_status", lang, [applied.revision])}</p>
+                <details className="rp-details rp-details--inline" data-testid="thread-applied-details">
+                  <summary>{tp("wp4_thread_details", lang)}</summary>
+                  <PlanHash value={applied.planHash} lang={lang} testId="thread-applied-plan-hash" />
+                  <div className="rp-kv">
+                    <span className="rp-kv-k">{tp("wp4_sheet_doc_hash", lang)}</span>
+                    <code className="rp-mono" title={applied.baseDigest}>{shortHash(applied.baseDigest)}</code>
+                  </div>
+                </details>
               </div>
             </li>
           ) : null}

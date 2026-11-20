@@ -1,0 +1,14 @@
+{
+  "schema": "rigorloom.changeset/1",
+  "id": "cs-0001-ffeedd",
+  "kind": "edit",
+  "created": "2026-11-19T04:00:00Z",
+  "author": "mcp:desktop",
+  "provenance": {"client": "mcp", "mock": true},
+  "base": {"kind": "source", "revision": 0, "rev": null, "sha256": null},
+  "revision": 1,
+  "rev": "0123456789ab",
+  "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "status": "stale",
+  "reason": "superseded_by_newer_candidate"
+}

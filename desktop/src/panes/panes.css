@@ -218,8 +218,11 @@
   border-radius: 3px;
 }
 
+/* Hollow in both themes: --seat is a paper colour and never themed, so a
+   seat-filled dot read as a filled dot on the dark panel. */
 .rl-blank-dot--empty {
-  background: var(--seat);
+  box-sizing: border-box;
+  background: transparent;
   border: 1px solid var(--line-control);
 }
 

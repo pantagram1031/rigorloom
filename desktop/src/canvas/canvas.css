@@ -69,6 +69,7 @@
     font-size: var(--text-xs);
   }
   .rl-strip-export {
+    margin-inline-start: auto;
     padding: 0 6px;
     font-size: var(--text-xs);
   }
@@ -665,23 +666,6 @@
   outline-offset: var(--focus-offset);
 }
 
-.rl-keycap {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 3px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--panel);
-  color: var(--text-3);
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  line-height: 1;
-  font-weight: var(--weight-regular);
-}
-
 /* ── Scrollbar change map ────────────────────────────────────────────────── */
 
 .rl-scrollmap {
@@ -869,4 +853,8 @@
   .rl-margin-num {
     padding: 0 2px;
   }
+}
+
+.shell-v2:has(.rp-sheet) .rl-mark-toolbar {
+  display: none;
 }

@@ -33,6 +33,14 @@ export type ChangeKind = "fill" | "replace" | "insert" | "delete" | "format";
  */
 export type ChangeSource = "agent" | "user" | "test" | "revert";
 
+export type SourceTally = Partial<Record<ChangeSource, number>>;
+
+export function tallyBySource(items: readonly Pick<ChangeItem, "source">[]): SourceTally {
+  const counts: SourceTally = {};
+  for (const { source } of items) counts[source] = (counts[source] ?? 0) + 1;
+  return counts;
+}
+
 /** Filters on the 변경 header. Each count is also a filter. */
 export type ChangeFilter = "all" | "pending" | "accepted" | "rejected" | "attn";
 
@@ -109,7 +117,7 @@ export interface ChangeItem {
 }
 
 export interface ChangeSetBase {
-  kind: "source" | "candidate";
+  kind: "source" | "candidate" | "empty";
   /** 0 for 원본, N for 수정본 N. */
   revision: number;
   sha256: string;
@@ -117,7 +125,7 @@ export interface ChangeSetBase {
 
 export interface ChangeSetStale {
   /** Shared naming with PLATFORM: `superseded_by_newer_candidate`. */
-  reason: "superseded_by_newer_candidate" | "plan_behind_head" | "source_changed";
+  reason: "superseded_by_newer_candidate" | "plan_behind_head" | "source_changed" | "target_changed" | "declined_by_person";
   /** The revision the document is at now. */
   current: number;
 }
@@ -137,6 +145,9 @@ export interface ChangeSetView {
   base: ChangeSetBase;
   /** Status `stale` in PLATFORM terms, or null. */
   stale: ChangeSetStale | null;
+  closed?: "applied" | "rejected" | "withdrawn" | null;
+  returnedItems?: string[];
+  supersedes?: string[];
   items: ChangeItem[];
   provenance: ChangeSetProvenance;
   /** ISO time the proposal was made. */
@@ -146,6 +157,9 @@ export interface ChangeSetView {
    * before the guard answers could skip a 바뀐 사실 tick.
    */
   checking?: boolean;
+  failureCode?: string;
+  diffDigest?: string | null;
+  untied?: Array<{ paragraph: number; before: string; after: string }>;
   baseRunId?: string | null;
 }
 
@@ -320,6 +334,8 @@ export type GateBlock =
   | { kind: "stale" }
   | { kind: "busy" }
   | { kind: "checking" }
+  | { kind: "failed"; code: string }
+  | { kind: "diff_mismatch" }
   | { kind: "hard"; count: number }
   | { kind: "remaining"; count: number }
   | { kind: "none_accepted" };
@@ -339,8 +355,10 @@ export function gateState(view: ChangeSetView | null, opts: { busy?: boolean } =
   const items = view?.items ?? [];
   const counts = countChanges(items);
   let block: GateBlock | null = null;
-  if (!view || items.length === 0) block = { kind: "empty" };
+  if (!view || items.length === 0 || view.closed) block = { kind: "empty" };
   else if (view.stale) block = { kind: "stale" };
+  else if (view.failureCode) block = { kind: "failed", code: view.failureCode };
+  else if (view.diffDigest && view.diffDigest !== view.base.sha256) block = { kind: "diff_mismatch" };
   else if (opts.busy) block = { kind: "busy" };
   else if (counts.hard > 0) block = { kind: "hard", count: counts.hard };
   else if (counts.pending > 0) block = { kind: "remaining", count: counts.pending };
@@ -351,7 +369,7 @@ export function gateState(view: ChangeSetView | null, opts: { busy?: boolean } =
 
 /** Y and N are refused on a stale set (D1 §3d). */
 export function canDecide(view: ChangeSetView | null): boolean {
-  return Boolean(view && !view.stale && view.items.length > 0);
+  return Boolean(view && !view.stale && !view.closed && view.items.length > 0);
 }
 
 /**
@@ -379,8 +397,8 @@ export function requiredTicks(view: ChangeSetView | null): TickId[] {
   if (!view) return [];
   const accepted = view.items.filter((item) => item.decision === "accepted");
   const ticks: TickId[] = [];
-  if (accepted.some(isChangedFact)) ticks.push("facts");
-  if (view.provenance.mock || accepted.some((item) => item.source === "test")) ticks.push("test");
+  if (accepted.some(isChangedFact) || (accepted.length > 0 && view.untied?.length)) ticks.push("facts");
+  if (accepted.some((item) => item.source === "test")) ticks.push("test");
   return ticks;
 }
 
@@ -400,7 +418,7 @@ export function approvalSheetKey(view: ChangeSetView): string {
   return JSON.stringify([
     view.id, view.planHash, view.base.sha256, view.baseRunId,
     view.items.map((item) => [item.id, item.contentHash, item.decision, item.guard]),
-    requiredTicks(view),
+    requiredTicks(view), view.untied ?? [],
   ]);
 }
 

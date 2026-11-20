@@ -66,7 +66,9 @@ import {
   type CaretRefusal as RevisionCaretRefusal,
   type ParagraphEditEffect,
 } from "./revision";
+import { WP4 } from "./i18n/v2/wp4";
 import { errorCodeMessage, opKindLabel, t, type VocabularyKey } from "./i18n/vocabulary";
+import { uiVariant } from "./uiVariant";
 import {
   approvalBindsConfirmation,
   autoCharPrFor,
@@ -350,6 +352,7 @@ export async function selectSession(sessionId: string) {
         }
       : {}),
   });
+  const selectedDraft = getState().draft;
   await rt.savePrefs({ lastSessionId: sessionId });
   if (Array.isArray(getState().corpusFiles) && getState().corpusFiles.length === 0) {
     void loadCorpusFiles();
@@ -371,7 +374,11 @@ export async function selectSession(sessionId: string) {
       await loadHeadTexts(sessionId, headRun);
     }
   }
-  if (typeof restoreSavedDraft === "function" && getState().activeSessionId === sessionId) {
+  // The canvas can receive edits while the document's open-time reads finish.
+  // Restore only the draft that was selected, so a live edit's in-flight plan
+  // never gets submitted again by the restore path.
+  if (typeof restoreSavedDraft === "function" && getState().activeSessionId === sessionId &&
+      (uiVariant() !== "v2" || getState().draft === selectedDraft)) {
     await restoreSavedDraft(sessionId);
   }
 }
@@ -2248,7 +2255,9 @@ export async function applyApproved(confirmed?: ConfirmationBinding): Promise<vo
         .findIndex((c) => c.runId === applied.runId) + 1;
     showToast(
       revNum > 0
-        ? t("apply_done_toast", getState().language, [revNum])
+        ? (uiVariant() === "v2"
+          ? WP4.t("wp4_applied_status", getState().language, [revNum])
+          : t("apply_done_toast", getState().language, [revNum]))
         : t("review_applied_ok", getState().language),
       2200,
     );

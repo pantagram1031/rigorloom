@@ -121,6 +121,7 @@ function loadWp3Stack() {
   });
   const wp3FormTokens = loadTsModule("src/i18n/v2/wp3FormTokens.ts");
   const fieldLabels = loadTsModule("src/workspace/fieldLabels.ts", {
+    "../uiVariant.ts": { uiVariant: () => "v2" },
     "../i18n/formTokens.ts": formTokens,
     "../i18n/formTokens": formTokens,
     "../i18n/vocabulary.ts": vocabulary,
@@ -572,7 +573,8 @@ test("canvas and the mounted panel never own the same review key", () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   globalThis.window = { addEventListener() {}, removeEventListener() {} };
-  const doc = { activeElement: null };
+  let modal = false;
+  const doc = { activeElement: null, querySelector: () => modal ? {} : null };
   globalThis.document = doc;
   const focus = (testId) => {
     doc.activeElement = { closest: (selector) => selector.includes(`[data-testid="${testId}"]`) };
@@ -634,6 +636,13 @@ test("canvas and the mounted panel never own the same review key", () => {
       assert.equal(keys.dispatch({ code: "KeyN" }), false, overlay);
       shell.setShell({ [overlay]: false });
     }
+    modal = true;
+    for (const id of ["change-list", "canvas-scroll"]) {
+      focus(id);
+      assert.equal(keys.dispatch({ code: "KeyN" }), false, id);
+      assert.equal(keys.dispatch({ code: "Enter", ctrlKey: true, shiftKey: true }), false, id);
+    }
+    modal = false;
     shell.setShell({ activeTab: "start" });
     assert.deepEqual(keys.activeConflicts(), []);
     assert.equal(keys.dispatch({ code: "KeyN" }), false);
@@ -651,7 +660,7 @@ test("change source and decision come from the operation, plan and decision flag
   const { changes, changeModel } = loadWp3Stack();
   const input = [
     { opId: "agent", origin: "agent", proposer: "시험용" },
-    { opId: "test", origin: "agent" },
+    { opId: "test", origin: "user" },
     { opId: "user", origin: "user" },
     { opId: "flag", origin: "agent", provenance: "mock" },
   ].map((op, index) => ({
@@ -693,4 +702,20 @@ test("WP3 static hygiene: zero hex literals in canvas/ & panes/, zero 결재 in 
 
   const wp3Src = readFileSync(path.join(DESKTOP_ROOT, "src/i18n/v2/wp3.ts"), "utf8");
   assert.equal(wp3Src.includes("결재"), false, "Forbidden word 결재 in wp3.ts");
+});
+
+test("changing operation formatting or flags invalidates a shared decision", () => {
+  const { changes, changeModel } = loadWp3Stack();
+  const op = { opId: "change", kind: "fill_cell", table: 0, row: 1, col: 0, text: "Value", origin: "agent" };
+  const project = (op, decisions = {}) => changes.indexedChangesToCanvasRefs(
+    [{ op, opId: op.opId, beforeText: "", afterText: op.text }], {}, decisions, {},
+  )[0];
+  const decisions = changeModel.recordDecision({}, project(op), "accepted");
+  assert.equal(project(op, decisions).decision, "accepted");
+  for (const params of [{ charPr: "17" }, { paraPr: "4" }, { overwrite: true }, { lines: ["Value"] }]) {
+    assert.equal(project({ ...op, ...params }, decisions).decision, "pending");
+  }
+  const replace = { ...op, kind: "replace_at_cell", mode: "replace", run: 0 };
+  const replaceDecisions = changeModel.recordDecision({}, project(replace), "accepted");
+  assert.equal(project({ ...replace, expect: "Original" }, replaceDecisions).decision, "pending");
 });

@@ -178,3 +178,37 @@ test("adapter: guard facts split into 바뀐 사실 and expected", () => {
   assert.equal(adapter.guardOf(ch, "fill", summary(null, "kept")).status, "kept");
   assert.equal(adapter.guardOf(ch, "fill", { ...summary(null), state: "unavailable" }).status, "not_checked");
 });
+
+test("a typed edit waits until the draft has both a plan and validation", () => {
+  const op = { opId: "typed", kind: "fill_cell", table: 0, row: 1, col: 0, text: "Draft", origin: "user" };
+  const items = [indexed(1, op)];
+  for (const state of [{ plan: null, validation: null }, { validation: null }]) {
+    const view = adapter.fromWorkspace(input(items, state));
+    assert.equal(view.checking, true);
+    assert.deepEqual(model.gateState(view).block, { kind: "checking" });
+  }
+  const guard = { state: "ready", planId: "pl-1", rowAudits: {} };
+  assert.equal(adapter.fromWorkspace(input(items, { guard })).checking, false);
+});
+test("adapter carries the digest the guard's diff was read from", () => {
+  const typed = { opId: "op-u", kind: "fill_cell", table: 0, row: 2, col: 0, text: "1. 관련", before: "", origin: "user" };
+  const guard = (digest) => ({ state: "ready", planId: "pl-1", rowAudits: {}, documentDiff: { beforeSha256: digest } });
+  const bound = input([indexed(1, typed)]).plan.boundSha256;
+  const same = adapter.fromWorkspace(input([indexed(1, typed)], { guard: guard(bound) }));
+  assert.equal(same.diffDigest, bound);
+  assert.equal(model.gateState(same).canApprove, true);
+  const other = adapter.fromWorkspace(input([indexed(1, typed)], { guard: guard("e".repeat(64)) }));
+  assert.equal(other.diffDigest, "e".repeat(64));
+  assert.deepEqual(model.gateState(other).block, { kind: "diff_mismatch" });
+  // An older bridge that states no digest changes nothing.
+  const none = adapter.fromWorkspace(input([indexed(1, typed)], { guard: guard(undefined) }));
+  assert.equal(none.diffDigest, undefined);
+});
+
+
+test("a refused draft reports its failure ahead of the missing plan", () => {
+  const op = { opId: "typed", kind: "fill_cell", table: 0, row: 1, col: 0, text: "Draft", origin: "user" };
+  const refusal = { plan: null, validation: null, failureCode: "capability_unavailable" };
+  const view = adapter.fromWorkspace(input([indexed(1, op)], refusal));
+  assert.deepEqual(model.gateState(view).block, { kind: "failed", code: "capability_unavailable" });
+});

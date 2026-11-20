@@ -1,0 +1,25 @@
+{
+  "schema": "rigorloom.changeset/1",
+  "id": "cs-0002-a1b2c3",
+  "kind": "fill",
+  "created": "2026-11-19T04:20:00Z",
+  "author": "agent",
+  "provenance": {"client": "agent", "agent": "rigorloom-agent", "provider": "example-agent", "mock": false},
+  "base": {"kind": "candidate", "revision": 1, "rev": "0123456789ab", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+  "revision": 2,
+  "rev": "abcdef012345",
+  "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "status": "proposed",
+  "items": [
+    {"item_id": "i1", "ops": [0], "address": "t0/r1/c0/p0", "kind": "fill", "before": null, "after": "가온공공기록원", "page": 1,
+     "rects": [{"page": 1, "x": 72, "y": 96, "w": 180, "h": 14}], "status": "accepted", "decided_by": "ui"},
+    {"item_id": "i2", "ops": [1], "address": "t0/r9/c0", "kind": "replace", "before": "210㎜×297㎜(백상지 80g/㎡)", "after": "210㎜×297㎜(백상지 100g/㎡)", "page": 1, "status": "pending"},
+    {"item_id": "i3", "ops": [2], "address": "p12", "kind": "delete", "before": "※ 작성 요령", "after": "", "status": "rejected", "note": "남겨 두세요"}
+  ],
+  "checks": {"guard": {"pass": false, "items": [
+    {"item_id": "i2", "pass": false, "category": "changed", "values": [{"kind": "number", "before": "80", "after": "100"}]},
+    {"item_id": "i3", "pass": false, "category": "expected", "values": [{"kind": "quote", "before": "작성 요령", "after": null}]}
+  ]}},
+  "returned_items": ["i3"],
+  "supersedes": ["cs-0001-ffeedd"]
+}

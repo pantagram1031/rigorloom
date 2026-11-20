@@ -121,6 +121,7 @@ test("stale disables Y, N and 승인", () => {
 
 test("Enter is blocked until the required ticks are set", () => {
   const fact = item(2, {
+    source: "test",
     guard: { status: "changed", facts: [{ kind: "date", before: "2026년 1월 1일", after: "2027년 1월 1일", expected: false }] },
   });
   const items = [item(1), fact];
@@ -202,4 +203,23 @@ test("the gate waits for the fact check", () => {
   const v = view(m.withDecisions(items, decideAll(items, {}, "accepted")), { checking: true });
   assert.deepEqual(m.gateState(v).block, { kind: "checking" });
   assert.equal(m.canConfirm(v, [], m.gateState(v)), false);
+});
+
+test("a failing paragraph no change is tied to asks for the 바뀐 사실 tick", () => {
+  const items = [item(1, { decision: "accepted" })];
+  const plain = view(items);
+  assert.deepEqual(m.requiredTicks(plain), []);
+  const untied = view(items, { untied: [{ paragraph: 9, before: "", after: "2. Review" }] });
+  assert.deepEqual(m.requiredTicks(untied), ["facts"]);
+  const gate = m.gateState(untied);
+  assert.equal(m.canConfirm(untied, [], gate), false);
+  assert.equal(m.canConfirm(untied, ["facts"], gate), true);
+});
+
+test("test acknowledgements follow the accepted operations in a mixed plan", () => {
+  const typed = item(1, { source: "user", decision: "accepted" });
+  const testValue = item(2, { source: "test", decision: "rejected" });
+  const provenance = { agent: null, provider: null, mock: true };
+  assert.deepEqual(m.requiredTicks(view([typed, testValue], { provenance })), []);
+  assert.deepEqual(m.requiredTicks(view([typed, { ...testValue, decision: "accepted" }], { provenance })), ["test"]);
 });

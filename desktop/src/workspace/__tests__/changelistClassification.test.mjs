@@ -55,6 +55,8 @@ function loadModules() {
     "../i18n/vocabulary": vocabulary,
     "../i18n/formTokens.ts": formTokens,
     "../i18n/formTokens": formTokens,
+    // These cases check the v1 labels, so the window is the v1 screens.
+    "../uiVariant.ts": { uiVariant: () => "v1" },
   });
   const guardHelper = loadCjs("../guardHelper.ts", {
     react: {

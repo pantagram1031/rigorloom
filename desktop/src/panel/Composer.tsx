@@ -52,11 +52,12 @@ export function Composer({ lang }: { lang: UiLanguage }) {
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposingEvent(e.nativeEvent)) return;
-    e.stopPropagation();
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.stopPropagation();
       e.preventDefault();
       void send();
     } else if (e.key === "Escape") {
+      e.stopPropagation();
       e.preventDefault();
       if (mode === "working") void cancelRequest();
       else ref.current?.blur();

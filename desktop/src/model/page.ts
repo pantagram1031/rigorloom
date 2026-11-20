@@ -20,6 +20,7 @@ import type {
 import {
   collapseFormGuideLabel,
   deriveCellFieldLabel,
+  labelFromCellText,
   disambiguateBlankLabels,
   extractFormInstructionContext,
   isSlotPlaceholderText,
@@ -554,11 +555,8 @@ export function detectDocumentSeats(
       );
       let baseLabel = derivedFallback;
       if (isPlaceholderSlot && regionText.trim().length > 0) {
-        const rawOwn = regionText.trim();
-        const cleanedOwn = collapseFormGuideLabel(rawOwn.replace(/\(\s*\)\s*$/, "")).trim();
-        const leadToken = rawOwn.includes("  ")
-          ? collapseFormGuideLabel(rawOwn.split("  ")[0]).trim()
-          : cleanedOwn;
+        // `전화번호(   )` → `전화번호`: the empty slot goes before the field split.
+        const leadToken = labelFromCellText(regionText.trim());
         if (leadToken.length > 0) {
           baseLabel = truncateLabel(leadToken, 20);
         }

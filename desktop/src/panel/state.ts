@@ -7,6 +7,7 @@ import type {
   ChangeFilter,
   ChangeSetView,
   TickId,
+  SourceTally,
 } from "../model/changes";
 import { defineDocSlice } from "../store";
 
@@ -24,8 +25,11 @@ export interface StyleFinding {
 /** What the filled 결재란 shows after the draft is gone. */
 export interface AppliedRecord {
   revision: number;
+  runId: string;
+  planHash: string;
+  baseDigest: string;
   atUtc: string;
-  proposer: "agent" | "user" | "test" | "mixed";
+  sources: SourceTally;
   count: number;
   facts: number;
   attn: number;
@@ -76,12 +80,19 @@ export const panelSlice = defineDocSlice<PanelDocState>("panel", PANEL_INITIAL);
 
 // The view the panel last rendered, per document. Key handlers and actions
 // read it so they act on exactly what is on screen.
-const latest = new Map<string, ChangeSetView | null>();
+const latest = new Map<string, ChangeSetView>();
+const viewListeners = new Set<() => void>();
+
+export function subscribeLatestView(listener: () => void): () => void {
+  viewListeners.add(listener);
+  return () => { viewListeners.delete(listener); };
+}
 
 export function setLatestView(doc: string | null, view: ChangeSetView | null): void {
-  if (!doc) return;
+  if (!doc || (latest.get(doc) ?? null) === view) return;
   if (view) latest.set(doc, view);
   else latest.delete(doc);
+  for (const listener of viewListeners) listener();
 }
 
 export function latestView(doc: string | null): ChangeSetView | null {

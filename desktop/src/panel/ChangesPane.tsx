@@ -2,11 +2,12 @@ import { useCanvasSlice } from "../canvas/controller";
 import { isComposingEvent } from "../shell/keys";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
-import type { UiLanguage } from "../i18n/vocabulary";
+import { errorCodeMessage, type UiLanguage } from "../i18n/vocabulary";
 import {
   canDecide,
   filterChanges,
   gateState,
+  tallyBySource,
   type ChangeFilter,
   type ChangeSetView,
   type GateState,
@@ -24,7 +25,7 @@ import {
 } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
 import { Keycap } from "../ui/Keycap";
-import { Parts, sourceLabel } from "./bits";
+import { Parts, PlanHash, proposerLine, sourceLabel } from "./bits";
 import { ChangeItemRow } from "./ChangeItemRow";
 import { clockTime, revisionName, tp } from "./i18n";
 import { panelSlice, type AppliedRecord } from "./state";
@@ -101,11 +102,12 @@ export function ReturnPopover({ lang, connected }: { lang: UiLanguage; connected
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposingEvent(e.nativeEvent)) return;
-    e.stopPropagation();
     if (e.key === "Escape") {
+      e.stopPropagation();
       e.preventDefault();
       closeReturn();
-    } else if (e.key === "Enter" && !e.shiftKey) {
+    } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.stopPropagation();
       e.preventDefault();
       void submit(false);
     }
@@ -161,6 +163,10 @@ function blockText(gate: GateState, lang: UiLanguage): string | null {
       return tp("wp4_gate_stale", lang);
     case "busy":
       return tp("wp4_gate_busy", lang);
+    case "diff_mismatch":
+      return tp("wp4_gate_diff_mismatch", lang);
+    case "failed":
+      return errorCodeMessage(b.code, lang);
     case "checking":
       return tp("wp4_gate_checking", lang);
     default:
@@ -169,16 +175,14 @@ function blockText(gate: GateState, lang: UiLanguage): string | null {
 }
 
 export function proposerText(view: ChangeSetView, lang: UiLanguage): string {
-  const sources = new Set(view.items.map((it) => it.source));
-  const who = sources.size === 1 ? sourceLabel([...sources][0], lang) : tp("wp4_source_agent", lang);
-  return tp("wp4_box_propose_body", lang, [who, view.items.length]);
+  return proposerLine(tallyBySource(view.items), lang);
 }
 
 export function checkText(view: ChangeSetView, lang: UiLanguage, guardState: string): string {
   if (guardState === "running") return tp("wp4_box_check_running", lang);
   if (view.items.some((it) => it.guard.status === "not_checked") && guardState !== "ready") return tp("wp4_box_check_not_run", lang);
   const c = gateState(view).counts;
-  return tp("wp4_box_check_body", lang, [c.facts, c.attn]);
+  return tp("wp4_box_check_body", lang, [c.facts + (view.untied?.length ?? 0), c.attn]);
 }
 
 function GateFooter({
@@ -206,7 +210,8 @@ function GateFooter({
       <ApprovalBox
         lang={lang}
         data-testid="gate-box"
-        propose={proposerText(view, lang)}
+        hasChangedFact={gate.counts.facts > 0 || Boolean(view.untied?.length)}
+        propose={<Parts text={proposerText(view, lang)} />}
         check={<Parts text={checkText(view, lang, guardState)} />}
         approve={null}
       />
@@ -243,19 +248,13 @@ function GateFooter({
 }
 
 export function AppliedFooter({ applied, lang }: { applied: AppliedRecord; lang: UiLanguage }) {
-  const who =
-    applied.proposer === "user"
-      ? tp("wp4_source_user", lang)
-      : applied.proposer === "test"
-        ? tp("wp4_source_test", lang)
-        : tp("wp4_source_agent", lang);
   return (
     <footer className="rp-footer" data-testid="applied-footer">
       <ApprovalBox
         lang={lang}
         data-testid="gate-box-filled"
         hasChangedFact={applied.checked && applied.facts > 0}
-        propose={tp("wp4_box_propose_body", lang, [who, applied.count])}
+        propose={<Parts text={proposerLine(applied.sources, lang)} />}
         check={<Parts text={applied.checked ? tp("wp4_box_check_body", lang, [applied.facts, applied.attn]) : tp("wp4_box_check_not_run", lang)} />}
         approve={
           <span data-testid="gate-approved">
@@ -263,11 +262,15 @@ export function AppliedFooter({ applied, lang }: { applied: AppliedRecord; lang:
           </span>
         }
       />
+      <details className="rp-details" data-testid="applied-details">
+        <summary>{tp("wp4_sheet_details", lang)}</summary>
+        <PlanHash value={applied.planHash} lang={lang} testId="applied-plan-hash" />
+      </details>
       <div className="rp-footer-row rp-footer-row--applied">
         <span className="rp-footer-status" data-testid="applied-status">
           {tp("wp4_applied_status", lang, [applied.revision])}
           <span className="rp-sep">·</span>
-          <button type="button" className="rp-link" onClick={() => void exportApplied()} data-testid="applied-export">
+          <button type="button" className="rp-link" onClick={() => void exportApplied(undefined, applied.runId)} data-testid="applied-export">
             {tp("wp4_applied_export", lang)}
           </button>
           <Keycap keys={["Ctrl", "E"]} />

@@ -630,7 +630,15 @@
   height: 100%;
   min-height: 0;
   background: var(--panel);
+}
+
+.rp-sheet:focus-visible {
   outline: none;
+}
+
+.rp-sheet-untied {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .rp-sheet-head {
@@ -813,6 +821,78 @@
   flex: none;
   font-size: 12px;
   color: var(--text-2);
+}
+
+/* Five changes or fewer: one row each, the 변경 후 text inline. */
+.rp-digest-label--item {
+  flex: 0 0 auto;
+  max-width: 40%;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.rp-digest-after {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.rp-digest-after[data-empty] {
+  color: var(--text-3);
+}
+
+/* 자세히: every accepted change in full. */
+.rp-sheet-all {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+}
+
+.rp-sheet-all li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.rp-sheet-all-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.rp-sheet-all-head .rp-num {
+  color: var(--text-3);
+}
+
+.rp-sheet-all-op {
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.rp-sheet-all-values {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 4px 0 0;
+}
+
+.rp-sheet-all-values dt {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.rp-sheet-all-values dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rp-sheet-all-values dd[data-empty] {
+  color: var(--text-3);
 }
 
 .rp-sheet-foot {
@@ -1100,4 +1180,8 @@
 
 .rp-part {
   white-space: nowrap;
+}
+
+.rp-part[data-line-end] .rp-part-sep {
+  opacity: 0;
 }

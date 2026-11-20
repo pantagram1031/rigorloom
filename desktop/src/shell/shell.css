@@ -298,6 +298,10 @@
   flex: none;
 }
 
+.sh-cmdfield:last-child {
+  margin-inline-end: 6px;
+}
+
 .sh-cmdfield:hover {
   border-color: var(--line-strong);
 }
@@ -1318,4 +1322,30 @@
 
 .sh-drawer-foot {
   border-top: 1px solid var(--line);
+}
+
+.sh-narrow-panel-toggle {
+  width: auto;
+  padding-inline: var(--s-8);
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.shell-v2 .toast {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  color: var(--ink);
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+  font-weight: var(--weight-regular);
+  box-shadow: var(--shadow-float);
+}
+
+@media (max-width: 599px) {
+  .shell-v2 .toast {
+    top: 64px;
+    bottom: auto;
+  }
 }

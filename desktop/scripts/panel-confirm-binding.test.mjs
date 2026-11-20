@@ -48,7 +48,7 @@ function viewFor(plan, ops, decisions = {}) {
   const items = ops.map((o, i) => {
     const base = {
       id: o.opId, n: i + 1, at: `t0/r1/c${i}`, kind: "fill", label: `칸 ${i + 1}`, opName: "빈칸 채움",
-      before: "", after: o.text, page: 1, source: "user", guard: { status: "none", facts: [] }, hard: [],
+      before: "", after: o.text, page: 1, source: o.source ?? "user", guard: { status: "none", facts: [] }, hard: [],
     };
     base.decision = decisions[o.opId] ?? "accepted";
     return { ...base, contentHash: changes.contentHashOf(base) };
@@ -65,7 +65,7 @@ function viewFor(plan, ops, decisions = {}) {
  * inside the named wait: prune (after the last 뺌 is removed), validate,
  * request, resolve.
  */
-function harness({ ops, decisions = {}, hooks = {} }) {
+function harness({ ops, decisions = {}, hooks = {}, ticks = [] }) {
   const plan = planFor("p1");
   let state = {
     activeSessionId: "S", language: "ko", draft: draftFor(plan, ops),
@@ -77,13 +77,14 @@ function harness({ ops, decisions = {}, hooks = {} }) {
   const getState = () => state;
   const setState = (patch) => { state = { ...state, ...patch }; };
   const panelSlice = {
-    get: (d) => slices.get(d) ?? { ticks: [], confirmPhase: "idle", sheetOpen: true, sheetFor: changes.approvalSheetKey(view) },
+    get: (d) => slices.get(d) ?? { ticks, confirmPhase: "idle", sheetOpen: true, sheetFor: changes.approvalSheetKey(view) },
     set: (d, patch) => { slices.set(d, { ...panelSlice.get(d), ...patch }); },
   };
   const ctx = vm.createContext({
     getState, setState, panelSlice, errorCodeMessage,
     setCanvasSlice: () => {},
     prunedReviewMatches: async () => hooks.prunedReviewMatches?.() ?? true,
+    prepareConfirmation: () => {},
     closeApproval: () => panelSlice.set("S", { sheetOpen: false, sheetFor: null, ticks: [] }),
     showToast: () => {},
     doc: () => state.activeSessionId,
@@ -129,7 +130,7 @@ function harness({ ops, decisions = {}, hooks = {} }) {
       calls.apply.push(confirmed.planId);
       setState({
         draft: draftFor(planFor("none"), []),
-        applyOutcomes: { S: { applied: { runId: "run-1" } } },
+        applyOutcomes: { S: { applied: { runId: "run-1", planId: confirmed.planId } } },
       });
     },
   });
@@ -247,4 +248,13 @@ test("a sheet opened on another plan closes instead of confirming", async () => 
   assert.equal(await h.confirm(), false);
   assert.deepEqual(h.calls.request, []);
   assert.equal(h.panel().sheetOpen, false);
+});
+
+test("an applied approval records typed and test changes separately", async () => {
+  const h = harness({
+    ops: [op("u1", "Typed value"), { ...op("t2", "Test value"), source: "test" }],
+    ticks: ["test"],
+  });
+  assert.equal(await h.confirm(), true);
+  assert.deepEqual({ ...h.panel().applied.sources }, { user: 1, test: 1 });
 });
