@@ -61,5 +61,18 @@
 }
 
 .ed-history .rl-approval-compact {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 0;
   margin-top: var(--s-4);
+}
+
+.ed-history .rl-approval-compact-sep {
+  display: none;
+}
+
+.ed-history .rl-approval-compact-key {
+  display: inline-block;
+  min-width: 32px;
 }

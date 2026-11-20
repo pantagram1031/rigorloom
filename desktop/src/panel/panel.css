@@ -1101,3 +1101,7 @@
 .rp-part {
   white-space: nowrap;
 }
+
+.rp-part[data-line-end] .rp-part-sep {
+  opacity: 0;
+}
