@@ -122,7 +122,8 @@ VERB_HELP = {
              "table.delete_row, style, char_shape(글자 모양), para_shape(문단 모양), "
              "numbering(개요·문단 번호, 글머리표), table.merge·table.split(셀 합치기·나누기), "
              "table.add_col·table.delete_col(칸 넣기·지우기), table.size(셀 너비·높이), "
-             "page_setup(편집 용지), columns(다단), break(쪽·단·구역 나누기)",
+             "page_setup(편집 용지), columns(다단), break(쪽·단·구역 나누기), "
+             "header(머리말·꼬리말), page_number(쪽 번호 매기기)",
              ("""rigorloom edit 보고서.hwpx --op '{"op":"replace","at":"p3","find":"사본하여","with":"복사하여"}'""",
               """rigorloom edit 보고서.hwpx --op '{"op":"set","at":"p0","text":"2027년 업무계획"}' -o 보고서-수정.hwpx""")),
     "fill": ("양식의 빈칸을 채웁니다. 서명·날인·결재일 칸은 비워 두고 어떤 칸인지 알려 줍니다.",

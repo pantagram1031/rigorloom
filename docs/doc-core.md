@@ -331,6 +331,36 @@ rt_doc.edit("보고서.hwpx", [
     second section break in the same edit, a second break on one paragraph,
     and any other op on a paragraph a section break moves. Send them in
     separate edits.
+- 머리말·꼬리말 and 쪽 번호 매기기 (쪽 > 머리말/꼬리말, 쪽 번호 매기기) need the
+  engine and take `at`, a body paragraph (not one in a table, note or box, and
+  not a range); the op changes that paragraph's section.
+  - `header` writes the section's own 머리말 (`kind: "header"`, the default) or
+    꼬리말 (`kind: "footer"`) for `apply` `BOTH` (양쪽, the default), `ODD` or
+    `EVEN`, with `text` (up to 1000 characters; `\n` starts a new line in it).
+    It replaces the section's own control of that kind and apply, so the
+    section keeps one; the other kinds and applies stay. `expect` is the text
+    of the one it replaces (its lines joined by `\n`; `""` when the section
+    has none). The new control gets the document's 머리말 style; a document
+    without that style answers `capability_unavailable` (`engine_needs_style`)
+    and nothing is written.
+  - `page_number` sets the section's 쪽 번호: `pos` (`BOTTOM_CENTER`, the
+    default, `BOTTOM_LEFT`, `BOTTOM_RIGHT`, `TOP_CENTER`, `TOP_LEFT`,
+    `TOP_RIGHT`, `OUTSIDE_TOP`, `OUTSIDE_BOTTOM`, `INSIDE_TOP`,
+    `INSIDE_BOTTOM`, or `NONE` for no number), `format` (`DIGIT`, the default,
+    `ROMAN_CAPITAL`, `ROMAN_SMALL`, `CIRCLED_DIGIT`, `LATIN_CAPITAL`,
+    `HANGUL_SYLLABLE` and the other 번호 모양 names) and `side_char` (the
+    character on both sides of the number, `-` by default, `""` for none). It
+    replaces the section's own page number. It takes no `expect`.
+  - Both need hwp-engine 2077774 (PR #23) or later. An older engine, whose
+    insert_header / page_number has no `replace`, answers
+    `capability_unavailable` (`engine_function_missing`, with `keyword` and
+    `needs` naming that engine) and nothing is written.
+  - No address changes: the controls sit in the section's first paragraph and
+    take no characters. `read` does not show 머리말·꼬리말 text yet.
+  - Conflicts: two `header` ops on one section with the same `kind` and
+    `apply`, two `page_number` ops on one section, either beside a section
+    break in that section, and a `delete` of the section's first paragraph in
+    the same edit.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is
