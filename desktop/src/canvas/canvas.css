@@ -69,6 +69,7 @@
     font-size: var(--text-xs);
   }
   .rl-strip-export {
+    margin-inline-start: auto;
     padding: 0 6px;
     font-size: var(--text-xs);
   }
