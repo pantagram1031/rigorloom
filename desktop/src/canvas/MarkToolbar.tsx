@@ -1,4 +1,5 @@
 import { wp3t } from "../i18n/v2/wp3";
+import { Keycap } from "../ui/Keycap";
 import type { CanvasChangeDecision, CanvasChangeRef } from "../model/page";
 import type { UiLanguage } from "../types";
 
@@ -52,7 +53,7 @@ export function MarkToolbar({
           onClick={() => onDecide(item.id, "pending")}
         >
           <span>{wp3t("mark_restore", language)}</span>
-          <kbd className="rl-keycap">Y</kbd>
+          <Keycap keys="Y" />
         </button>
       ) : (
         <>
@@ -65,7 +66,7 @@ export function MarkToolbar({
             onClick={() => onDecide(item.id, "accepted")}
           >
             <span>{wp3t("mark_accept", language)}</span>
-            <kbd className="rl-keycap">Y</kbd>
+            <Keycap keys="Y" />
           </button>
 
           <button
@@ -76,7 +77,7 @@ export function MarkToolbar({
             onClick={() => onDecide(item.id, "rejected")}
           >
             <span>{wp3t("mark_reject", language)}</span>
-            <kbd className="rl-keycap">N</kbd>
+            <Keycap keys="N" />
           </button>
         </>
       )}
@@ -89,7 +90,7 @@ export function MarkToolbar({
           onClick={() => onEdit(item)}
         >
           <span>{wp3t("mark_edit", language)}</span>
-          <kbd className="rl-keycap">E</kbd>
+          <Keycap keys="E" />
         </button>
       ) : null}
     </div>

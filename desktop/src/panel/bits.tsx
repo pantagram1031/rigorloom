@@ -37,11 +37,14 @@ export function SourceText({ source, lang }: { source: ChangeSource; lang: UiLan
   );
 }
 
-/** `바뀐 사실 0 · 확인 3`, wrapping only between the parts. */
+/**
+ * `바뀐 사실 0 · 확인 3`, wrapping only between the parts. One wrapper span,
+ * so a flex cell (the 결재란 body) keeps the spaces between the parts.
+ */
 export function Parts({ text }: { text: string }) {
   const parts = text.split(" \u00b7 ");
   return (
-    <>
+    <span className="rp-parts">
       {parts.map((part, i) => (
         <Fragment key={i}>
           <span className="rp-part">
@@ -51,6 +54,6 @@ export function Parts({ text }: { text: string }) {
           {i < parts.length - 1 ? " " : null}
         </Fragment>
       ))}
-    </>
+    </span>
   );
 }

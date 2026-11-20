@@ -665,23 +665,6 @@
   outline-offset: var(--focus-offset);
 }
 
-.rl-keycap {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 3px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--panel);
-  color: var(--text-3);
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  line-height: 1;
-  font-weight: var(--weight-regular);
-}
-
 /* ── Scrollbar change map ────────────────────────────────────────────────── */
 
 .rl-scrollmap {
