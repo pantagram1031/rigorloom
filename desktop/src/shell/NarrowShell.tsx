@@ -6,7 +6,7 @@
 import { Mark } from "../brand";
 import { S } from "../i18n/v2/shell";
 import { useWorkspace } from "../store";
-import { openSettings } from "./bindings";
+import { openSettings, toggleRight } from "./bindings";
 import { docTitle, pendingCount } from "./docInfo";
 import { Icon } from "./parts";
 import { docLayout, LEFT_PANES, type LeftPaneId, setShell, type Tab, useShell, getShell } from "./shellState";
@@ -27,6 +27,7 @@ const LABEL: Record<LeftPaneId, Parameters<typeof S.t>[0]> = {
 export function NarrowShell({ tab }: { tab: Tab | null }) {
   const lang = useWorkspace((s) => s.language);
   const drawer = useShell((s) => s.narrowDrawerOpen);
+  const panelOpen = useShell((s) => s.rightOpen);
   const sessionId = tab?.kind === "doc" ? tab.sessionId : null;
   const title = useWorkspace((s) => {
     if (!tab) return "";
@@ -53,6 +54,18 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
           <span className="sh-narrow-name">{title}</span>
           {count > 0 ? <span className="sh-narrow-sub">{S.t("shell_tab_changes_count", lang, [count])}</span> : null}
         </div>
+        {sessionId ? (
+          <button
+            type="button"
+            className="sh-iconbtn sh-iconbtn--touch"
+            aria-label={S.t("shell_toggle_right", lang)}
+            aria-expanded={panelOpen}
+            data-testid={TID.toggleRight}
+            onClick={toggleRight}
+          >
+            <Icon name="paneRight" />
+          </button>
+        ) : null}
       </header>
       <main className="sh-narrow-main" data-testid={TID.canvasHost}>
         {tab?.kind === "start" ? <StartTab /> : null}
@@ -68,7 +81,7 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
         ) : null}
       </main>
       {sessionId ? (
-        <div className="sh-narrow-sheet">
+        <div className="sh-narrow-sheet" hidden={!panelOpen}>
           <Slot name="narrowSheet" sessionId={sessionId} quiet />
         </div>
       ) : null}

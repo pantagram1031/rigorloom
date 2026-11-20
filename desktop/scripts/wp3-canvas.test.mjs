@@ -131,7 +131,8 @@ function loadWp3Stack() {
     "../i18n/v2/wp3FormTokens": wp3FormTokens,
     "../workspace/fieldLabels": fieldLabels,
   });
-  const controller = loadTsModule("src/canvas/controller.ts", { "../store": h.store });
+  const changeModel = loadTsModule("src/model/changes.ts");
+  const controller = loadTsModule("src/canvas/controller.ts", { "../store": h.store, "../model/changes": changeModel });
   const actions = loadTsModule("src/canvas/actions.ts", {
     "../actions": h.legacyActionsStub,
     "../i18n/v2/wp3": wp3,
@@ -141,6 +142,7 @@ function loadWp3Stack() {
   });
   const changes = loadTsModule("src/canvas/changes.ts", {
     react: React,
+    "../model/changes": changeModel,
     "../store": h.store,
     "../workspace/guardHelper": {},
     "./controller": controller,
@@ -193,6 +195,9 @@ function loadWp3Stack() {
     pageModel,
     bindings,
     changes,
+    changeModel,
+    commands,
+    keymap,
     keymap,
     keys,
     shell,
@@ -476,6 +481,7 @@ test("IME composition & editable-target guard block Y/N/E/U/J/K/V during Hangul 
         page: 1,
         source: "agent",
         decision: "pending",
+        contentHash: "reviewed",
         guard: "none",
         hard: false,
         isFactChanged: false,
@@ -493,6 +499,7 @@ test("IME composition & editable-target guard block Y/N/E/U/J/K/V during Hangul 
         page: 1,
         source: "agent",
         decision: "pending",
+        contentHash: "reviewed",
         guard: "none",
         hard: false,
         isFactChanged: false,
@@ -548,61 +555,100 @@ test("IME composition & editable-target guard block Y/N/E/U/J/K/V during Hangul 
     stack.keys.dispatch({ code: "KeyY", key: "ㅛ" }),
     true,
   );
-  assert.equal(stack.controller.getCanvasSlice().decisions["op-1"], "accepted");
+  assert.equal(stack.controller.getCanvasSlice().decisions["op-1"].decision, "accepted");
   assert.equal(stack.controller.getCanvasSlice().selectedChangeId, "op-2");
   assert.equal(
     stack.keys.dispatch({ code: "KeyZ", ctrlKey: true }),
     true,
   );
-  assert.equal(stack.controller.getCanvasSlice().decisions["op-1"], "pending");
+  assert.equal(stack.controller.getCanvasSlice().decisions["op-1"], undefined);
   assert.equal(stack.controller.getCanvasSlice().selectedChangeId, "op-1");
 
   stack.registerMod.unregisterCanvasModule();
 });
 
-test("canvas and shell keys are exclusive in document, palette and review contexts", () => {
-  const { bindings, controller, keymap, keys, registerMod, shell, slots } = loadWp3Stack();
+test("canvas and the mounted panel never own the same review key", () => {
+  const { bindings, controller, keys, keymap, shell, slots, commands, changeModel, registerMod } = loadWp3Stack();
   const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
   globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  const doc = { activeElement: null };
+  globalThis.document = doc;
+  const focus = (testId) => {
+    doc.activeElement = { closest: (selector) => selector.includes(`[data-testid="${testId}"]`) };
+  };
+  const change = { id: "change-1", decision: "pending", contentHash: "reviewed" };
+  const calls = [];
+  const action = (id) => () => { calls.push(id); };
   const off = bindings.installShellBindings();
   try {
-    assert.equal(slots.hasSlot("canvas"), true);
-    for (const pane of ["blanks", "find", "outline"]) assert.equal(slots.hasSlot(`pane:${pane}`), true);
-    controller.publishCanvasContext([{ id: "change-1", decision: "pending" }], null);
-    controller.canvas.select("change-1");
-    assert.deepEqual(keys.activeConflicts(), []);
-    assert.equal(keys.dispatch({ code: "KeyN" }), true);
+    loadTsModule("src/panel/register.ts", {
+      "./panel.css": {},
+      react: React,
+      "../components/OperatorAgentModal": {},
+      "../i18n/v2/shell": {},
+      "../model/changes": changeModel,
+      "../shell/bindings": bindings,
+      "../shell/commands": commands,
+      "../shell/keymap": keymap,
+      "../shell/keys": keys,
+      "../shell/shellState": shell,
+      "../shell/slots": slots,
+      "./actions": {
+        step: (delta) => calls.push(delta > 0 ? "J" : "K"),
+        decide: (_id, decision) => calls.push(decision === "accepted" ? "Y" : "N"),
+        selectedId: () => change.id,
+        undoDecision: action("U"),
+      },
+      "./ChangeItemRow": { requestEdit: action("E") },
+      "./i18n": {},
+      "./RightPanel": {},
+      "./state": {
+        latestView: (session) => session ? { items: [change] } : null,
+        panelSlice: { get: () => ({ sheetOpen: false }) },
+      },
+    });
+    assert.equal(slots.hasSlot("rightPanel"), true);
+    assert.equal(slots.hasSlot("narrowSheet"), true);
+    controller.publishCanvasContext([change], null);
+    controller.canvas.select(change.id);
 
-    shell.setShell({ paletteOpen: true });
+    for (const id of ["canvas-scroll", "composer-input", "panel-tab-agent", "change-list", "approve-sheet", "return-popover"]) {
+      focus(id);
+      assert.deepEqual(keys.activeConflicts(), [], id);
+    }
+    focus("change-list");
+    for (const letter of ["J", "K", "Y", "N", "E", "U"]) {
+      assert.equal(keys.dispatch({ code: `Key${letter}` }), true);
+    }
+    assert.deepEqual(calls, ["J", "K", "Y", "N", "E", "U"]);
+    focus("canvas-scroll");
+    assert.equal(keys.dispatch({ code: "KeyN" }), true);
+    assert.equal(controller.getCanvasSlice().decisions[change.id].decision, "rejected");
+    assert.equal(calls.length, 6);
+
+    focus("change-list");
+    for (const overlay of ["paletteOpen", "settingsOpen", "appMenuOpen", "tabListOpen", "narrowDrawerOpen"]) {
+      shell.setShell({ [overlay]: true });
+      assert.deepEqual(keys.activeConflicts(), [], overlay);
+      assert.equal(keys.dispatch({ code: "KeyN" }), false, overlay);
+      shell.setShell({ [overlay]: false });
+    }
+    shell.setShell({ activeTab: "start" });
     assert.deepEqual(keys.activeConflicts(), []);
     assert.equal(keys.dispatch({ code: "KeyN" }), false);
-    shell.setShell({ paletteOpen: false });
-
-    let review = false;
-    keys.defineContext("review", () => review);
-    const panel = [];
-    for (const id of ["next", "prev", "accept", "reject", "edit", "undo"]) {
-      keymap.bindKey(`change.${id}`, () => { panel.push(id); });
-    }
-    review = true;
-    assert.deepEqual(keys.activeConflicts(), []);
-    assert.equal(keys.dispatch({ code: "KeyN" }), true);
-    assert.deepEqual(panel, ["reject"]);
-
-    shell.setShell({ activeTab: "start" });
-    review = false;
-    assert.deepEqual(keys.activeConflicts(), []);
-    assert.equal(keys.dispatch({ code: "KeyV" }), false);
   } finally {
     off();
     registerMod.unregisterCanvasModule();
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
   }
 });
 
 test("change source and decision come from the operation, plan and decision flags", () => {
-  const { changes } = loadWp3Stack();
+  const { changes, changeModel } = loadWp3Stack();
   const input = [
     { opId: "agent", origin: "agent", proposer: "시험용" },
     { opId: "test", origin: "agent" },
@@ -614,12 +660,13 @@ test("change source and decision come from the operation, plan and decision flag
     beforeText: "",
     afterText: "내용",
   }));
-  const projected = changes.indexedChangesToCanvasRefs(
-    input,
-    { flag: { status: "changed" } },
-    { test: "accepted", user: "rejected" },
-    { plan: { provenance: "mock", mockOps: ["test"] }, isStale: true },
-  );
+  const options = { plan: { provenance: "mock", mockOps: ["test"] }, isStale: true };
+  const audits = { flag: { status: "changed" } };
+  const [, testChange, userChange] = changes.indexedChangesToCanvasRefs(input, audits, {}, options);
+  const decisions = changeModel.recordDecision(changeModel.recordDecision({}, testChange, "accepted"), userChange, "rejected");
+  const projected = changes.indexedChangesToCanvasRefs(input, audits, decisions, options);
+  const rewritten = input.map((item) => item.opId === "test" ? { ...item, afterText: "수정된 내용" } : item);
+  assert.equal(changes.indexedChangesToCanvasRefs(rewritten, audits, decisions, options)[1].decision, "pending");
   assert.deepEqual(projected.map(({ source }) => source), ["agent", "test", "user", "test"]);
   assert.deepEqual(projected.map(({ decision }) => decision), ["pending", "accepted", "rejected", "pending"]);
   assert.equal(projected[3].isFactChanged, true);

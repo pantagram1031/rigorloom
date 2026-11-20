@@ -145,7 +145,7 @@ export function Shell() {
             </>
           ) : null}
         </main>
-        {isDoc && docked.right ? <RightPanel sessionId={sessionId} overlay={overlay} /> : null}
+        {isDoc ? <RightPanel sessionId={sessionId} overlay={overlay} visible={docked.right} /> : null}
       </div>
       <StatusBar sessionId={sessionId} rightDocked={docked.right} />
       <Palette />
@@ -437,11 +437,12 @@ function LeftPane({ sessionId, overlay }: { sessionId: string; overlay: boolean 
 // ---------------------------------------------------------------------------
 // Right panel host
 
-function RightPanel({ sessionId, overlay }: { sessionId: string; overlay: boolean }) {
+function RightPanel({ sessionId, overlay, visible }: { sessionId: string; overlay: boolean; visible: boolean }) {
   return (
     <aside
       className="sh-right"
       data-testid={TID.rightPanelHost}
+      hidden={!visible}
       data-docked={overlay ? undefined : "true"}
       data-overlay={overlay || undefined}
     >

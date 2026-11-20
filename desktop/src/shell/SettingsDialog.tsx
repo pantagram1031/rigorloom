@@ -36,7 +36,8 @@ export function SettingsDialog() {
 function SettingsBody() {
   useSlotsVersion();
   const lang = useWorkspace((s) => s.language);
-  const [section, setSection] = useState<Section>("general");
+  const initialSection = useShell((s) => s.settingsSection ?? "general");
+  const [section, setSection] = useState<Section>(initialSection);
   const ref = useRef<HTMLDivElement>(null);
   const extra = slotNames("settings:");
 

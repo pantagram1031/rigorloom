@@ -135,6 +135,7 @@ export interface CanvasChangeRef {
   page: number;
   source: CanvasChangeSource;
   decision: CanvasChangeDecision;
+  contentHash: string;
   guard: "changed" | "kept" | "expected" | "none" | "needs_fixes";
   hard: boolean;
   isFactChanged: boolean;

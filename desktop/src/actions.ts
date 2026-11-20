@@ -1210,6 +1210,25 @@ export async function removeOp(opId: string): Promise<void> {
   );
 }
 
+/** Re-propose a reviewed subset in one queue update. */
+export async function removeReviewOps(source: Draft, ids: ReadonlySet<string>): Promise<boolean> {
+  const state = getState();
+  if (state.draft !== source || state.activeSessionId !== source.sessionId) return false;
+  const sessionId = state.activeSessionId;
+  if (!sessionId) return false;
+  const kept = source.ops
+    .filter((op) => !ids.has(op.opId))
+    .map((op) => op.sessionId === undefined ? { ...op, sessionId } : op);
+  if (kept.length === source.ops.length) return true;
+  await setQueue(kept, {
+    rewritten: source.ops.some((op) => ids.has(op.opId) && op.origin === "agent"),
+    baseRunId: source.baseRunId,
+  });
+  const current = getState();
+  return current.activeSessionId === source.sessionId &&
+    (kept.length > 0 ? current.draft.ops === kept && current.draft.plan !== null : current.draft.ops.length === 0);
+}
+
 // --- undo, tier one: the queue (E1.4) ----------------------------------------
 //
 // AN EDIT IN THE QUEUE IS NOT IN ANY DOCUMENT. Nothing has been approved and

@@ -38,6 +38,7 @@ export interface ShellState {
   paletteOpen: boolean;
   paletteQuery: string;
   settingsOpen: boolean;
+  settingsSection?: "general" | "settings:agent";
   appMenuOpen: boolean;
   tabListOpen: boolean;
   narrowDrawerOpen: boolean;

@@ -856,3 +856,16 @@ export function OperatorAgentModal() {
     </div>
   );
 }
+
+/**
+ * The agent connection, as content for the v2 settings dialog's `에이전트`
+ * section (`settings:agent` slot). The thread and the request box now live in
+ * the right panel; only the provider, key and probe remain here.
+ */
+export function AgentConnectionSettings() {
+  const language = useWorkspace((s) => s.language);
+  useEffect(() => {
+    void refreshCredential();
+  }, []);
+  return <OperatorCredentialsTab open language={language} />;
+}

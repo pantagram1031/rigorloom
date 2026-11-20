@@ -6,7 +6,7 @@ import { S } from "../i18n/v2/shell";
 import * as rt from "../runtime";
 import { getState } from "../store";
 import { registerCommand } from "./commands";
-import { defineContext, dispatch, runKeyAction, setBrowserMode } from "./keys";
+import { defineContext, dispatch, setBrowserMode } from "./keys";
 import { bindKey } from "./keymap";
 import { pickAndOpenFile, pickFolder } from "./open";
 import {
@@ -34,8 +34,8 @@ export function closePalette(): void {
   setShell({ paletteOpen: false, paletteQuery: "" });
 }
 
-export function openSettings(): void {
-  setShell({ settingsOpen: true, paletteOpen: false, appMenuOpen: false });
+export function openSettings(section: "general" | "settings:agent" = "general"): void {
+  setShell({ settingsOpen: true, settingsSection: section, paletteOpen: false, appMenuOpen: false, narrowDrawerOpen: false });
 }
 
 /** Alt+1…5: show a left pane; the same key again collapses the pane. */
@@ -57,24 +57,11 @@ export function showLeftPane(pane: LeftPaneId, { toggle = true } = {}): void {
   setShell({ leftOpen: true, lastOpened: "left" });
 }
 
-const PANEL_KEY: Record<RightTabId, string> = {
-  changes: "panel.changes",
-  agent: "panel.agent",
-  checks: "panel.checks",
-};
-
-/**
- * Open the right panel on a tab. The panel (WP4) owns its tab state and binds
- * `panel.changes` / `panel.agent` / `panel.checks`; the shell runs that
- * binding, and records the request in `docLayout.rightTab` for a panel that
- * reads it instead.
- */
 export function showRightTab(tab: RightTabId): void {
   const sid = activeTabSessionId();
   if (!sid) return;
   docLayout.patch(sid, { rightTab: tab });
-  setShell({ rightOpen: true, lastOpened: "right" });
-  runKeyAction(PANEL_KEY[tab]);
+  setShell({ rightOpen: true, lastOpened: "right", narrowDrawerOpen: false });
 }
 
 function visibleSides() {
@@ -90,7 +77,8 @@ export function toggleLeft(): void {
 
 /** Show the right panel if it is not showing; hide it if it is. */
 export function toggleRight(): void {
-  if (visibleSides().right) setShell({ rightOpen: false });
+  const shell = getShell();
+  if (shell.breakpoint === "narrow" ? shell.rightOpen : visibleSides().right) setShell({ rightOpen: false });
   else setShell({ rightOpen: true, lastOpened: "right" });
 }
 

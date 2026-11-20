@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 
+import { defaultDecision, effectiveDecision, hashText, type DecisionMap } from "../model/changes";
 import type { CanvasChangeDecision, CanvasChangeRef } from "../model/page";
-import { activeInspect, useWorkspace, type Draft } from "../store";
+import { activeInspect, opSignature, useWorkspace, type Draft } from "../store";
 import type { RegionText } from "../types";
 import {
   buildIndexedChanges,
@@ -11,7 +12,11 @@ import {
 } from "../workspace/guardHelper";
 import { useCanvasSlice } from "./controller";
 
-export function useCanvasChanges(
+export function useCanvasChanges(sessionId: string | null, textMap: Record<string, RegionText>) {
+  return useIndexedCanvasChanges(sessionId, textMap).changes;
+}
+
+export function useIndexedCanvasChanges(
   sessionId: string | null,
   textMap: Record<string, RegionText>,
 ) {
@@ -33,24 +38,27 @@ export function useCanvasChanges(
   const approvalDecision: CanvasChangeDecision | undefined =
     approvalState === "approved" ? "accepted" : approvalState === "rejected" ? "rejected" : undefined;
 
-  const changes = useMemo(() => {
-    if (!inspect) return [];
-    const indexed = buildIndexedChanges(draft, inspect, textMap, language);
-    return indexedChangesToCanvasRefs(
+  const indexed = useMemo(
+    () => inspect && (draft.sessionId === null || draft.sessionId === sessionId)
+      ? buildIndexedChanges(draft, inspect, textMap, language)
+      : [],
+    [inspect, draft, sessionId, textMap, language],
+  );
+
+  const changes = useMemo(() => indexedChangesToCanvasRefs(
       indexed,
       planId === draft.plan?.planId ? rowAudits : {},
       decisions,
       { isStale, reverses: draft.reverses, plan: draft.plan, approvalDecision },
-    );
-  }, [inspect, draft, textMap, language, planId, rowAudits, decisions, isStale, approvalDecision]);
+  ), [indexed, draft, planId, rowAudits, decisions, isStale, approvalDecision]);
 
-  return changes;
+  return { indexed, changes };
 }
 
 export function indexedChangesToCanvasRefs(
   changes: readonly IndexedChange[],
   rowAudits: Record<string, RowGuardAudit>,
-  decisions: Readonly<Record<string, CanvasChangeDecision>>,
+  decisions: DecisionMap,
   options: {
     isStale?: boolean;
     reverses?: string | null;
@@ -65,8 +73,15 @@ export function indexedChangesToCanvasRefs(
       (options.plan?.provenance === "mock" &&
         (options.plan.mockOps?.includes(op.opId) ?? true));
     const source = isTest ? "test" : options.reverses ? "revert" : op.origin;
-    const decision = decisions[ch.opId] ?? options.approvalDecision ??
-      (source === "user" ? "accepted" : "pending");
+    const contentHash = hashText(JSON.stringify([
+      source, options.reverses, opSignature(op), ch.beforeText, ch.afterText, op.charPr,
+      op.kind === "fill_cell" ? [op.lines, op.paraPr, op.overwrite] : null,
+      op.kind === "replace_at_cell" ? op.expect : null,
+    ]));
+    const decision = effectiveDecision(
+      { source, contentHash, decision: options.approvalDecision ?? defaultDecision(source) },
+      decisions[ch.opId],
+    );
     const isFactChanged = audit?.status === "changed";
     const guard: CanvasChangeRef["guard"] =
       audit?.status === "changed"
@@ -100,6 +115,7 @@ export function indexedChangesToCanvasRefs(
       page: 1,
       source,
       decision,
+      contentHash,
       guard,
       hard: ch.hasHardFailure,
       isFactChanged,
