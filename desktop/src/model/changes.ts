@@ -395,7 +395,7 @@ export function requiredTicks(view: ChangeSetView | null): TickId[] {
   const accepted = view.items.filter((item) => item.decision === "accepted");
   const ticks: TickId[] = [];
   if (accepted.some(isChangedFact) || (accepted.length > 0 && view.untied?.length)) ticks.push("facts");
-  if (view.provenance.mock || accepted.some((item) => item.source === "test")) ticks.push("test");
+  if (accepted.some((item) => item.source === "test")) ticks.push("test");
   return ticks;
 }
 

@@ -214,3 +214,11 @@ test("a failing paragraph no change is tied to asks for the 바뀐 사실 tick",
   assert.equal(m.canConfirm(untied, [], gate), false);
   assert.equal(m.canConfirm(untied, ["facts"], gate), true);
 });
+
+test("test acknowledgements follow the accepted operations in a mixed plan", () => {
+  const typed = item(1, { source: "user", decision: "accepted" });
+  const testValue = item(2, { source: "test", decision: "rejected" });
+  const provenance = { agent: null, provider: null, mock: true };
+  assert.deepEqual(m.requiredTicks(view([typed, testValue], { provenance })), []);
+  assert.deepEqual(m.requiredTicks(view([typed, { ...testValue, decision: "accepted" }], { provenance })), ["test"]);
+});

@@ -651,7 +651,7 @@ test("change source and decision come from the operation, plan and decision flag
   const { changes, changeModel } = loadWp3Stack();
   const input = [
     { opId: "agent", origin: "agent", proposer: "시험용" },
-    { opId: "test", origin: "agent" },
+    { opId: "test", origin: "user" },
     { opId: "user", origin: "user" },
     { opId: "flag", origin: "agent", provenance: "mock" },
   ].map((op, index) => ({
