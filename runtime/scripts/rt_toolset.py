@@ -925,6 +925,7 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "page_number": (("at",), ("pos", "format", "side_char")),
     "table.cell_style": (("at", "set"), ("to",)),
     "table.style": (("at", "set"), ()),
+    "style.create": (("name",), ("eng_name", "kind", "based_on", "char", "para")),
 }
 
 
@@ -955,6 +956,8 @@ OP_EXAMPLES = {
     "table.cell_style": '{"op":"table.cell_style","at":"t0/r0","set":{"fill":"#D9D9D9","header":true,'
                         '"border":{"bottom":{"type":"DOUBLE_SLIM","width":0.5}}}}',
     "table.style": '{"op":"table.style","at":"t0","set":{"repeat_header":true}}',
+    "style.create": '{"op":"style.create","name":"보고서 본문","based_on":"바탕글",'
+                    '"char":{"size":11,"bold":false},"para":{"align":"JUSTIFY","after":4}}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1039,6 +1042,11 @@ OP_NOTES = {
     "table.style": "`at` is a table; `set`: repeat_header (제목 줄 반복 for the rows of 제목 셀) and "
                    "page_break (CELL, TABLE or NONE); one per table per edit; a row or shape op "
                    "on the same table is a conflict",
+    "style.create": "no `at`: a new paragraph (`kind` para, default) or character (char) style for "
+                    "the whole document; `name` 1 to 64 characters, new to the document (as name, "
+                    "English name or id); `based_on` an existing style (default 바탕글); `char` the "
+                    "char_shape keys except markpen, `para` the para_shape keys (para styles only); "
+                    "a `style` op cannot apply it in the same edit",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
@@ -1086,12 +1094,13 @@ def _op_names(names: list[str]) -> str:
     """Op names with a shared family written once: table.{set_cells,add_row}.
     Every op the engine work adds is one more name, so the description has
     to stay short as the list grows."""
-    families: dict[str, list[str]] = {}
+    # a bare op (style) and a family of the same word (style.create) stay apart
+    families: dict[tuple[str, bool], list[str]] = {}
     for name in names:
         family, dot, rest = name.partition(".")
-        families.setdefault(family if dot else name, []).append(rest if dot else "")
-    return ", ".join(f"{f}.{{{','.join(r)}}}" if r != [""] and len(r) > 1
-                     else (f"{f}.{r[0]}" if r != [""] else f) for f, r in families.items())
+        families.setdefault((family, bool(dot)), []).append(rest)
+    return ", ".join(f if not dot else (f"{f}.{{{','.join(r)}}}" if len(r) > 1 else f"{f}.{r[0]}")
+                     for (f, dot), r in families.items())
 
 
 def _edit_description() -> str:

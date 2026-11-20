@@ -20,7 +20,7 @@ Rigorloom이 한글(.hwpx) 문서에서 할 수 있는 편집을 한글 메뉴 �
 | 개요 번호 (개요 1-7) | 지원 | `numbering` |
 | 문단 번호·글머리표 (수준 1-7, 시작 번호, 새 번호) | 지원 | `numbering` |
 | 스타일 적용 | 지원 | `style` |
-| 스타일 만들기·고치기 | 미지원 |  |
+| 스타일 만들기·고치기 | 부분 | `style.create` (만들기만, 고치기·지우기는 없음) |
 | 표 만들기 | 지원 | `insert_table` |
 | 표 셀 입력, 줄 추가·삭제 | 지원 | `table.set_cells`, `table.add_row`, `table.delete_row` |
 | 셀 합치기·나누기 | 지원 | `table.merge`, `table.split` (한 번의 편집에서 표마다 표 구조 동작 하나) |

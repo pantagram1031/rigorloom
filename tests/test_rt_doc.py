@@ -1747,6 +1747,96 @@ def _border_fill(head, tc):
     return sides, face.group(1) if face else None
 
 
+def test_style_create_is_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(GUARD, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops):
+        return D.edit(src, ops if isinstance(ops, list) else [ops], base=rev, out=out)["error"]
+    sc = "style.create"
+    assert err({"op": sc})["code"] == "bad_input"                                          # no name
+    for bad in ("", " 본문2", "a\tb", "x" * 65, "12"):
+        assert err({"op": sc, "name": bad})["code"] == "bad_input", bad
+    for taken in ("본문", "Body"):                          # a name or an English name the document has
+        e = err({"op": sc, "name": taken})
+        assert e["code"] == "bad_input" and "already has" in e["message"], taken
+    assert err({"op": sc, "name": "새 스타일", "eng_name": "Outline 1"})["code"] == "bad_input"
+    e = err({"op": sc, "name": "새 스타일", "based_on": "개요1"})
+    assert e["code"] == "bad_input" and "개요 1" in e["candidates"]
+    e = err({"op": sc, "name": "새 스타일", "char": {"colour": "#FF0000"}})
+    assert e["code"] == "bad_input" and "color" in e["candidates"]
+    assert "markpen" in err({"op": sc, "name": "새 스타일", "char": {"markpen": "#FFFF00"}})["message"]
+    assert err({"op": sc, "name": "새 스타일", "char": {"size": 0}})["code"] == "bad_input"
+    assert err({"op": sc, "name": "새 스타일", "para": {"align": "MIDDLE"}})["code"] == "bad_input"
+    assert err({"op": sc, "name": "새 스타일", "kind": "char", "para": {"align": "LEFT"}})["code"] == "bad_input"
+    assert err({"op": sc, "name": "새 스타일", "kind": "table"})["code"] == "bad_input"
+    e = err({"op": sc, "name": "새 스타일", "at": "p1"})
+    assert e["code"] == "bad_input" and "no at" in e["message"]
+    e = err({"op": sc, "name": "새 스타일", "expect": "x"})
+    assert e["code"] == "bad_input" and "expect" in e["message"]
+    e = err({"op": sc, "name": "새 스타일", "base": "본문"})
+    assert e["code"] == "bad_input" and "based_on" in e["candidates"]
+    # two ops that make one style, by name or English name
+    assert err([{"op": sc, "name": "새 스타일"}, {"op": sc, "name": "새 스타일"}])["code"] == "conflict"
+    assert err([{"op": sc, "name": "가", "eng_name": "Alpha"}, {"op": sc, "name": "Alpha"}])["code"] == "conflict"
+    # a style op of the same edit cannot use the new style yet: it is applied in a later edit
+    e = err([{"op": sc, "name": "새 스타일"}, {"op": "style", "at": "p1", "style": "새 스타일"}])
+    assert e["code"] == "bad_input" and e["i"] == 1 and "later edit" in e["message"]
+    # a well-formed op needs the engine: the built-in path has no 스타일 추가
+    e = err({"op": sc, "name": "새 스타일", "char": {"bold": True}, "para": {"align": "CENTER"}})
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+@engine
+def test_engine_style_create_writes_the_style(kit, tmp_path):
+    f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
+    out = tmp_path / "sc.hwpx"
+    before = [b["text"] for b in D.read(f)["blocks"] if b.get("text") is not None]
+    r = D.edit(f, [
+        {"op": "style.create", "name": "보고서 본문", "eng_name": "Report Body", "based_on": "바탕글",
+         "char": {"size": 11.5, "bold": True, "color": "#1F3864"}, "para": {"align": "center", "before": 4}},
+        {"op": "style.create", "name": "강조", "kind": "char", "char": {"italic": True}},
+    ], base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    assert [b["text"] for b in D.read(out)["blocks"] if b.get("text") is not None] == before
+    with zipfile.ZipFile(out) as z:
+        head = z.read("Contents/header.xml").decode("utf-8")
+    body = re.search(r'<hh:style [^>]*name="보고서 본문"[^>]*/>', head).group(0)
+    assert 'type="PARA"' in body and 'engName="Report Body"' in body
+    cp = re.search(r'<hh:charPr id="%s"[^>]*>.*?</hh:charPr>' % re.search(r'charPrIDRef="(\d+)"', body).group(1),
+                   head, re.S).group(0)
+    assert 'height="1150"' in cp and 'textColor="#1F3864"' in cp and "<hh:bold/>" in cp
+    pp = re.search(r'<hh:paraPr id="%s"[^>]*>.*?</hh:paraPr>' % re.search(r'paraPrIDRef="(\d+)"', body).group(1),
+                   head, re.S).group(0)
+    assert '<hh:align horizontal="CENTER"' in pp
+    em = re.search(r'<hh:style [^>]*name="강조"[^>]*/>', head).group(0)
+    assert 'type="CHAR"' in em
+    cp2 = re.search(r'<hh:charPr id="%s"[^>]*>.*?</hh:charPr>' % re.search(r'charPrIDRef="(\d+)"', em).group(1),
+                    head, re.S).group(0)
+    assert "<hh:italic/>" in cp2
+    # the check reads the values back: an output without them is not taken for done
+    base, got = D._load(f, meta=False), D._load(out, meta=False)
+    acts = D._plan(base, [{"op": "style.create", "name": "보고서 본문", "eng_name": "Report Body",
+                           "char": {"size": 11.5, "bold": True}, "para": {"align": "CENTER"}},
+                          {"op": "style.create", "name": "강조", "kind": "char", "char": {"italic": True}}])
+    assert D._verify_styles(base, got, acts)
+    acts[0].new_style["char"]["size"] = 12.0
+    assert not D._verify_styles(base, got, acts)
+    acts[0].new_style["char"]["size"] = 11.5
+    acts[1].new_style["char"]["italic"] = False
+    assert not D._verify_styles(base, got, acts)
+    # the new styles are the document's own from here on: a later edit applies them
+    out2 = tmp_path / "sc2.hwpx"
+    r = D.edit(out, [{"op": "style", "at": "p3", "style": "보고서 본문"},
+                     {"op": "style.create", "name": "보고서 본문"}], base=D.rev_of(out), out=out2)
+    assert r["error"]["code"] == "bad_input" and r["error"]["i"] == 1          # the name is taken now
+    r = D.edit(out, [{"op": "style", "at": "p3", "style": "보고서 본문"}], base=D.rev_of(out), out=out2)
+    assert r["ok"], r
+    assert D.read(out2, "p3")["blocks"][0]["style"] == "보고서 본문"
+
+
 @engine
 def test_engine_table_cell_and_table_style(kit, tmp_path):
     f = _copy(kit / "tests" / "features" / "feat_tables.hwpx", tmp_path)
