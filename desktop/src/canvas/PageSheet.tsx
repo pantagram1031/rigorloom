@@ -449,10 +449,6 @@ export function PageSheet({
   const [naturalHeightMeasure, setNaturalHeightMeasure] = useState(0);
   const [caret, setCaret] = useState<{ page: number; rasterUrl?: string; address: string; offset: number } | null>(null);
   const [engineHit, setEngineHit] = useState<PageHitResult | null>(null);
-  const engineOverlay = useEngineEditOverlay({
-    sessionId, geometry: engineGeometry, editable: engineEditable, settled: previewSettled,
-    displayedEdits, inspect, hit: engineHit?.page === page ? engineHit : null,
-  });
   const hasEngineGeometry = Boolean(engineGeometry);
 
   const layer = pageSource?.layer(page, view);
@@ -814,20 +810,13 @@ export function PageSheet({
     onSelectChange(item.id, { fromCanvas: true });
   };
 
-  const handleCycleBlank = async (
+  const cycleCell = (
     table: number,
     row: number,
     col: number,
     dir: 1 | -1,
-    currentValue: string,
   ) => {
-    // Initiate commit synchronously up to its first await (which reads inlineEdit & clears it),
-    // then immediately focus the next blank seat with zero async queue latency.
-    const commitPromise = commitCellEditV2(currentValue, { inspect });
-    if (orderedEditableSeats.length === 0) {
-      await commitPromise;
-      return;
-    }
+    if (orderedEditableSeats.length === 0) return;
     const idx = orderedEditableSeats.findIndex(
       (s) => s.table === table && s.row === row && s.col === col,
     );
@@ -840,8 +829,12 @@ export function PageSheet({
       inspect,
       texts: [...texts],
     });
-    await commitPromise;
   };
+
+  const engineOverlay = useEngineEditOverlay({
+    sessionId, geometry: engineGeometry, editable: engineEditable, isNarrow, settled: previewSettled,
+    displayedEdits, inspect, hit: engineHit?.page === page ? engineHit : null, onCycleCell: cycleCell,
+  });
 
   const handleTouchStart = (e: TouchEvent<HTMLDivElement>) => {
     if (e.touches.length === 2) {
@@ -914,15 +907,10 @@ export function PageSheet({
           fontCategory={fontInfo.category}
           fontFace={fontInfo.face}
           onMultilineChange={(multi) => setInlineEditMultiline(multi)}
-          onCycleBlank={(dir, cur) =>
-            void handleCycleBlank(
-              inlineEdit.table,
-              inlineEdit.row,
-              inlineEdit.col,
-              dir,
-              cur,
-            )
-          }
+          onCycleBlank={(dir, cur) => {
+            void commitCellEditV2(cur, { inspect });
+            cycleCell(inlineEdit.table, inlineEdit.row, inlineEdit.col, dir);
+          }}
           onCommit={(next) => {
             void commitCellEditV2(next, { inspect });
           }}

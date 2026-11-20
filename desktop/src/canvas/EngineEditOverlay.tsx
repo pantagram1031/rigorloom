@@ -36,15 +36,17 @@ function lineStyle({ line }: Placement): CSSProperties {
 }
 
 export function useEngineEditOverlay({
-  sessionId, geometry, editable, settled, displayedEdits, inspect, hit,
+  sessionId, geometry, editable, isNarrow, settled, displayedEdits, inspect, hit, onCycleCell,
 }: {
   sessionId: string;
   geometry: EngineGeometry | null;
   editable: boolean;
+  isNarrow: boolean;
   settled: boolean;
   displayedEdits: readonly EngineTextEdit[];
   inspect: InspectResult;
   hit: PageHitResult | null;
+  onCycleCell: (table: number, row: number, col: number, dir: 1 | -1) => void;
 }) {
   const edit = useWorkspace((s) => s.inlineEdit);
   const [paragraph, setParagraph] = useState<Placement | null>(null);
@@ -67,7 +69,7 @@ export function useEngineEditOverlay({
       : queuedCell?.kind === "replace_at_cell" && queuedCell.run === undefined ? queuedCell.text : edit?.before ?? "";
   const placement: Placement | null = !editable || !geometry || !edit ? null
     : edit.kind === "run" ? paragraph
-      : cellLine && cellAt ? {
+      : !isNarrow && cellLine && cellAt ? {
           id: cellAt, line: cellLine, page: geometry.page,
           face: inspect.regions.regions.find((region) => region.table === edit.table &&
             region.row === edit.row && region.col === edit.col)?.charPrFace?.hangul ?? baselineFace,
@@ -151,17 +153,18 @@ export function useEngineEditOverlay({
     const state = getState();
     const head = headCandidate(state)?.sha256 ?? activeSession(state)?.source.sha256;
     if (!placement || !edit || state.inlineEdit !== edit || state.activeSessionId !== sessionId ||
-        geometry?.rev !== head) return;
+        geometry?.rev !== head) return false;
     const previous = lastSubmitted.current;
     if (value === (previous ? previous.value : initial)) {
       if (!keepOpen) cancelEdit();
-      return;
+      return true;
     }
     const item = { ...placement, value };
     lastSubmitted.current = item;
     setPending((items) => [...items.filter((other) => other.id !== item.id), item]);
     if (edit.kind === "cell") void commitCellEditV2(value, { inspect, keepOpen });
     else void commitEngineRunEdit(value, runTextAfterEdit(edit, value), keepOpen);
+    return true;
   };
 
   const editor = placement && edit ? (
@@ -180,6 +183,9 @@ export function useEngineEditOverlay({
       onCompositionStart={() => { latestValue.current = null; }}
       onIdleCommit={(value) => submit(value, true)}
       onCommit={(value) => submit(value, false)}
+      onCycleBlank={edit.kind === "cell" ? (dir, value) => {
+        if (submit(value, false)) onCycleCell(edit.table, edit.row, edit.col, dir);
+      } : undefined}
       onCancel={cancelEdit}
     />
   ) : null;
