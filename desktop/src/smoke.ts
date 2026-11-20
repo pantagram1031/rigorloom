@@ -44,6 +44,7 @@ import {
   undoQueuedOp,
 } from "./actions";
 import * as rt from "./runtime";
+import { runV2Phase, V2_SMOKE_PHASES } from "./smokeV2";
 import {
   activeCandidates,
   activeInspect,
@@ -184,6 +185,14 @@ function fillOps(): QueuedFillOp[] {
 /** The queue's paragraph-run ops, narrowed for the same reason. */
 function runOps(): QueuedRunOp[] {
   return getState().draft.ops.filter((op): op is QueuedRunOp => op.kind === "set_run");
+}
+
+/**
+ * Whether a smoke phase still drives the v1 screens. `open` and `edit` run on
+ * the v2 editor (`smokeV2.ts`); the rest keep the v1 screens until ported.
+ */
+export function smokeNeedsLegacy(config: SmokeConfig | null): boolean {
+  return Boolean(config?.phase) && !V2_SMOKE_PHASES.has(config!.phase!);
 }
 
 /** Read the launcher's intent before anything renders. */
@@ -3641,9 +3650,11 @@ export async function runSmoke(): Promise<void> {
   }, budgetMs);
 
   try {
-    if (config.phase === "open") await phaseOpen(config);
+    if (config.phase && V2_SMOKE_PHASES.has(config.phase)) {
+      await runV2Phase(config, { check, settled, waitFor, domText, hasHangul, ready });
+    } else if (config.phase === "open") await phaseOpen(config);
     else if (config.phase === "reattach") await phaseReattach();
-    else if (config.phase === "edit") await phaseEdit(config);
+    else if (config.phase === "edit") await phaseEdit(config); // v1, kept for ?ui=v1 runs
     else if (config.phase === "agent") await phaseAgent(config);
     else if (config.phase === "page") await phasePage(config);
     else if (config.phase === "own") await phaseOwn(config);
