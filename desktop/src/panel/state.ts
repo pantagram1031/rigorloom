@@ -10,7 +10,7 @@ import type {
   DecisionRecord,
   TickId,
 } from "../model/changes";
-import { defineDocSlice } from "./_shim";
+import { defineDocSlice } from "../store";
 
 export type PanelTab = "changes" | "agent" | "checks";
 

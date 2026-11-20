@@ -35,7 +35,8 @@ import {
 } from "../../store";
 import { buildRegionTextMap } from "../../workspace/externalPlan";
 import { buildIndexedChanges, getReviewGuardSummary, useReviewGuardSummary } from "../../workspace/guardHelper";
-import { getSlot } from "../_shim";
+import { dispatch as dispatchKey } from "../../shell/keys";
+import { slotEntries } from "../../shell/slots";
 import { latestView, panelSlice } from "../state";
 
 function Frame() {
@@ -48,7 +49,7 @@ function Frame() {
   const guard = useReviewGuardSummary();
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
   const changes = useMemo(() => buildIndexedChanges(draft, inspect, textMap, language), [draft, inspect, textMap, language]);
-  const Panel = getSlot("rightPanel");
+  const Panel = slotEntries("rightPanel")[0]?.component ?? null;
   const title = session ? session.source.name.replace(/\.[^.]+$/, "") : "";
   const ext = session ? session.source.name.slice(session.source.name.lastIndexOf(".")) : "";
   return (
@@ -83,7 +84,7 @@ function Frame() {
             ) : null}
           </div>
         </main>
-        {Panel ? <Panel /> : null}
+        {Panel ? <Panel sessionId={session?.sessionId ?? null} /> : null}
       </div>
     </div>
   );
@@ -108,6 +109,10 @@ const harness = {
 (window as unknown as { __wp4: typeof harness }).__wp4 = harness;
 
 async function start() {
+  // No shell here: the harness feeds keys to the shell's registry itself.
+  window.addEventListener("keydown", (e) => {
+    dispatchKey(e);
+  });
   await rt.onActivity(pushActivity);
   await rt.onEvents(deliverDocumentEvents);
   await rt.onAgentEvents(pushHostEvents);

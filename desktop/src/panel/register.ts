@@ -5,9 +5,13 @@
  */
 import "./panel.css";
 
+import { createElement } from "react";
+
 import { getState } from "../store";
 import { canDecide, gateState } from "../model/changes";
-import { keys, registerCommand, registerSlot } from "./_shim";
+import { registerCommand } from "../shell/commands";
+import { defineContext, register as registerKey } from "../shell/keys";
+import { registerSlot, type SlotProps } from "../shell/slots";
 import {
   acceptAll,
   decide,
@@ -68,16 +72,29 @@ const RUN: Record<PanelKeyId, { run: () => void; when?: () => boolean }> = {
   "checks.style": { run: () => void runStyleCheck() },
 };
 
+const RightPanelSlot = (_: SlotProps) => createElement(RightPanel);
+const AgentSettingsSlot = (_: SlotProps) => createElement(AgentConnectionSettings);
+
+let registered = false;
+
 export function registerPanel(): void {
-  registerSlot("rightPanel", RightPanel);
-  registerSlot("settings:agent", AgentConnectionSettings);
+  if (registered) return;
+  registered = true;
+  registerSlot("rightPanel", RightPanelSlot, { owner: "panel" });
+  registerSlot("settings:agent", AgentSettingsSlot, { owner: "panel" });
+  // The keymap's two contexts (shell/keymap.ts) are the panel's: `review`
+  // while the 변경 pane is showing, `sheet` while the approval sheet is open.
+  // They are exclusive, and the page's own review keys stand down while
+  // `review` is active.
+  defineContext("review", reviewing);
+  defineContext("sheet", () => panelSlice.get(doc()).sheetOpen);
   for (const [id, chords] of Object.entries(PANEL_CHORDS) as [PanelKeyId, readonly string[]][]) {
     const entry = RUN[id];
-    keys.register({ id, chords: [...chords], when: entry.when ? () => entry.when!() : undefined, run: entry.run });
+    registerKey({ id, chords: [...chords], when: entry.when ? () => entry.when!() : undefined, run: entry.run });
   }
-  registerCommand({ id: "approval.open", title: () => tp("act_approve", getState().language), run: () => void openApproval(), keyId: "approval.open" });
-  registerCommand({ id: "change.acceptAll", title: () => tp("act_accept_all", getState().language), run: () => void acceptAll(), keyId: "change.acceptAll" });
-  registerCommand({ id: "checks.style", title: () => tp("checks_style_run", getState().language), run: () => void runStyleCheck(), keyId: "checks.style" });
+  registerCommand({ id: "approval.open", title: (l) => tp("act_approve", l), group: "review", run: () => void openApproval(), keyId: "approval.open", when: () => Boolean(latestView(doc())) });
+  registerCommand({ id: "change.acceptAll", title: (l) => tp("act_accept_all", l), group: "review", run: () => void acceptAll(), keyId: "change.acceptAll", when: () => Boolean(latestView(doc())) });
+  registerCommand({ id: "checks.style", title: (l) => tp("checks_style_run", l), group: "document", run: () => void runStyleCheck(), keyId: "checks.style", when: () => doc() !== null });
 }
 
 /** Whether 승인 is currently possible, for the shell's status bar and palette. */

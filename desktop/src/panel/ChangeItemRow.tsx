@@ -4,7 +4,8 @@ import { editOpValue } from "../actions";
 import type { UiLanguage } from "../i18n/vocabulary";
 import { hasNewValues, isChangedFact, needsLook, type ChangeItem } from "../model/changes";
 import { decide, select } from "./actions";
-import { Keycaps, SourceText } from "./bits";
+import { Keycap } from "../ui/Keycap";
+import { SourceText } from "./bits";
 import { tp } from "./i18n";
 import { eventIsComposing } from "./keys";
 
@@ -155,19 +156,19 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
             {item.decision === "rejected" ? (
               <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "pending")} data-testid="act-add-back">
                 {tp("act_add_back", lang)}
-                <Keycaps keys={["U"]} />
+                <Keycap keys={["U"]} />
               </button>
             ) : (
               <>
                 {item.decision !== "accepted" ? (
                   <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "accepted")} data-testid="act-accept">
                     {tp("act_accept", lang)}
-                    <Keycaps keys={["Y"]} />
+                    <Keycap keys={["Y"]} />
                   </button>
                 ) : null}
                 <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "rejected")} data-testid="act-reject">
                   {tp("act_reject", lang)}
-                  <Keycaps keys={["N"]} />
+                  <Keycap keys={["N"]} />
                 </button>
                 <button
                   type="button"
@@ -177,12 +178,12 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
                   data-testid="act-edit"
                 >
                   {tp("act_edit", lang)}
-                  <Keycaps keys={["E"]} />
+                  <Keycap keys={["E"]} />
                 </button>
                 {item.decision === "accepted" ? (
                   <button type="button" className="rp-btn rp-btn--quiet" disabled={locked} onClick={() => decide(item.id, "pending")}>
                     {tp("act_undo", lang)}
-                    <Keycaps keys={["U"]} />
+                    <Keycap keys={["U"]} />
                   </button>
                 ) : null}
               </>

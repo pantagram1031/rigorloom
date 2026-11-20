@@ -4,7 +4,7 @@ import type { UiLanguage } from "../i18n/vocabulary";
 import { isChangedFact, needsLook, type ChangeItem, type ChangeSetView } from "../model/changes";
 import { useWorkspace } from "../store";
 import { runStyleCheck, select, setTab } from "./actions";
-import { Keycaps } from "./bits";
+import { Keycap } from "../ui/Keycap";
 import { tp } from "./i18n";
 import { panelSlice } from "./state";
 
@@ -107,7 +107,7 @@ export function ChecksPane({ view, lang, guardState }: { view: ChangeSetView | n
               data-testid="style-run"
             >
               {style.phase === "running" ? tp("checks_style_running", lang) : tp("checks_style_run", lang)}
-              <Keycaps keys={["F8"]} />
+              <Keycap keys={["F8"]} />
             </button>
             {style.phase === "ready" ? (
               <span className="rp-pane-status">

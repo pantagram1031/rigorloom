@@ -17,7 +17,9 @@ import {
 } from "../model/changes";
 import { useWorkspace } from "../store";
 import { closeApproval, confirmApproval, select, toggleTick } from "./actions";
-import { GateBox, Keycaps, Parts } from "./bits";
+import { ApprovalBox } from "../ui/ApprovalBox";
+import { Keycap } from "../ui/Keycap";
+import { Parts } from "./bits";
 import { checkText, proposerText } from "./ChangesPane";
 import { revisionName, tp } from "./i18n";
 import { eventIsComposing } from "./keys";
@@ -156,15 +158,18 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
           </p>
         </div>
         <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeApproval()} aria-label={tp("sheet_close", lang)}>
-          <Keycaps keys={["Esc"]} />
+          <Keycap keys={["Esc"]} />
         </button>
       </header>
 
       <div className="rp-sheet-body">
-        <GateBox
+        <ApprovalBox
           lang={lang}
-          testId="sheet-box"
-          cells={{ propose: proposerText({ ...view, items: accepted }, lang), check: <Parts text={checkText(view, lang, guardState)} />, approve: null }}
+          data-testid="sheet-box"
+          hasChangedFact={facts.length > 0}
+          propose={proposerText({ ...view, items: accepted }, lang)}
+          check={<Parts text={checkText(view, lang, guardState)} />}
+          approve={null}
         />
 
         {facts.length > 0 ? (
@@ -257,7 +262,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
         <div className="rp-sheet-actions">
           <button type="button" className="rp-btn" onClick={() => closeApproval()} disabled={busy} data-testid="approve-cancel">
             {tp("sheet_cancel", lang)}
-            <Keycaps keys={["Esc"]} />
+            <Keycap keys={["Esc"]} />
           </button>
           <button
             type="button"
@@ -270,7 +275,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
             onClick={() => void confirmApproval()}
           >
             {confirmLabel}
-            {busy ? null : <Keycaps keys={["Enter"]} />}
+            {busy ? null : <Keycap keys={["Enter"]} />}
           </button>
         </div>
       </footer>

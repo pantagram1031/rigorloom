@@ -20,7 +20,9 @@ import {
   setFilter,
   setTab,
 } from "./actions";
-import { GateBox, Keycaps, Parts, sourceLabel } from "./bits";
+import { ApprovalBox } from "../ui/ApprovalBox";
+import { Keycap } from "../ui/Keycap";
+import { Parts, sourceLabel } from "./bits";
 import { ChangeItemRow } from "./ChangeItemRow";
 import { clockTime, revisionName, tp } from "./i18n";
 import { eventIsComposing } from "./keys";
@@ -126,7 +128,7 @@ export function ReturnPopover({ lang, connected }: { lang: UiLanguage; connected
       <div className="rp-pop-actions">
         <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeReturn()}>
           {tp("return_cancel", lang)}
-          <Keycaps keys={["Esc"]} />
+          <Keycap keys={["Esc"]} />
         </button>
         {connected ? (
           <button type="button" className="rp-btn" disabled={busy || !reason.trim()} onClick={() => void submit(true)} data-testid="return-rerequest">
@@ -135,7 +137,7 @@ export function ReturnPopover({ lang, connected }: { lang: UiLanguage; connected
         ) : null}
         <button type="submit" className="rp-btn" disabled={busy} data-testid="return-confirm">
           {tp("return_confirm", lang)}
-          <Keycaps keys={["Enter"]} />
+          <Keycap keys={["Enter"]} />
         </button>
       </div>
     </form>
@@ -200,10 +202,12 @@ function GateFooter({
   return (
     <footer className="rp-footer" data-testid="gate-footer">
       {returnOpen ? <ReturnPopover lang={lang} connected={connected} /> : null}
-      <GateBox
+      <ApprovalBox
         lang={lang}
-        testId="gate-box"
-        cells={{ propose: proposerText(view, lang), check: <Parts text={checkText(view, lang, guardState)} />, approve: null }}
+        data-testid="gate-box"
+        propose={proposerText(view, lang)}
+        check={<Parts text={checkText(view, lang, guardState)} />}
+        approve={null}
       />
       {reason ? (
         <p className="rp-footer-reason" data-testid="gate-reason" data-pulse={pulse > 0 ? pulse % 2 : undefined} key={pulse}>
@@ -218,7 +222,7 @@ function GateFooter({
       <div className="rp-footer-row">
         <button type="button" className="rp-btn" onClick={() => openReturn()} data-testid="return" disabled={busy}>
           {tp("act_return", lang)}
-          <Keycaps keys={["R"]} />
+          <Keycap keys={["R"]} />
         </button>
         <button
           type="button"
@@ -230,7 +234,7 @@ function GateFooter({
           onClick={() => openApproval()}
         >
           {tp("act_approve", lang)}
-          <Keycaps keys={["Ctrl", "Shift", "Enter"]} />
+          <Keycap keys={["Ctrl", "Shift", "Enter"]} />
         </button>
       </div>
     </footer>
@@ -246,18 +250,17 @@ export function AppliedFooter({ applied, lang }: { applied: AppliedRecord; lang:
         : tp("source_agent", lang);
   return (
     <footer className="rp-footer" data-testid="applied-footer">
-      <GateBox
+      <ApprovalBox
         lang={lang}
-        testId="gate-box-filled"
-        cells={{
-          propose: tp("box_propose_body", lang, [who, applied.count]),
-          check: <Parts text={applied.checked ? tp("box_check_body", lang, [applied.facts, applied.attn]) : tp("box_check_not_run", lang)} />,
-          approve: (
-            <span data-testid="gate-approved">
-              <Parts text={tp("box_approved_direct", lang, [clockTime(applied.atUtc, lang)])} />
-            </span>
-          ),
-        }}
+        data-testid="gate-box-filled"
+        hasChangedFact={applied.checked && applied.facts > 0}
+        propose={tp("box_propose_body", lang, [who, applied.count])}
+        check={<Parts text={applied.checked ? tp("box_check_body", lang, [applied.facts, applied.attn]) : tp("box_check_not_run", lang)} />}
+        approve={
+          <span data-testid="gate-approved">
+            <Parts text={tp("box_approved_direct", lang, [clockTime(applied.atUtc, lang)])} />
+          </span>
+        }
       />
       <div className="rp-footer-row rp-footer-row--applied">
         <span className="rp-footer-status" data-testid="applied-status">
@@ -266,7 +269,7 @@ export function AppliedFooter({ applied, lang }: { applied: AppliedRecord; lang:
           <button type="button" className="rp-link" onClick={() => void exportApplied()} data-testid="applied-export">
             {tp("applied_export", lang)}
           </button>
-          <Keycaps keys={["Ctrl", "E"]} />
+          <Keycap keys={["Ctrl", "E"]} />
         </span>
       </div>
     </footer>

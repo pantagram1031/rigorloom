@@ -1,44 +1,18 @@
 /*
- * WP4 right panel. Tokens only: v2 role names (J1 §4) with the v1 alias as
- * the fallback until WP1a's tokens.css lands. No colour literal here.
+ * WP4 right panel. Tokens only: v2 role names (J1 §4). No colour literal here.
  * Type: 11/12/13/15 px, weights 400/600. Radius 4 on controls and tags,
  * 6 on floating layers, 0 on the 결재란. Docked surfaces carry no shadow.
  */
 .rp {
-  --_panel: var(--panel, var(--bg-surface));
-  --_chrome: var(--chrome, var(--bg-app));
-  --_field: var(--field, var(--bg-control));
-  --_raised: var(--raised, var(--bg-surface));
-  --_ink: var(--ink, var(--fg-primary));
-  --_on-ink: var(--on-ink, var(--fg-on-ink));
-  --_text-2: var(--text-2, var(--fg-secondary));
-  --_text-3: var(--text-3, var(--fg-muted));
-  --_text-disabled: var(--text-disabled, var(--fg-muted));
-  --_line: var(--line, var(--border-subtle));
-  --_line-strong: var(--line-strong, var(--border-strong));
-  --_line-control: var(--line-control, var(--border-strong));
-  --_hover: var(--hover, var(--bg-hover));
-  --_selected: var(--selected, var(--bg-selected));
-  --_accent: var(--accent);
-  --_accent-tint: var(--accent-tint, var(--accent-soft));
-  --_focus: var(--focus, var(--focus-ring));
-  --_fact: var(--fact, var(--changed-fact-fg));
-  --_attn: var(--attn, var(--needs-look-fg));
-  --_attn-tint: var(--attn-tint, var(--needs-look-bg));
-  --_attn-line: var(--attn-line, var(--needs-look-rail));
-  --_expected-tint: var(--expected-tint, var(--bg-selected));
-  --_shadow-float: var(--shadow-float, var(--shadow-pop));
-  --_ease: var(--ease-standard, cubic-bezier(0.2, 0, 0, 1));
-
   position: relative;
   display: flex;
   flex-direction: column;
-  width: var(--w-right, 360px);
+  width: var(--w-right);
   height: 100%;
   min-height: 0;
-  background: var(--_panel);
-  color: var(--_ink);
-  border-left: 1px solid var(--_line);
+  background: var(--panel);
+  color: var(--ink);
+  border-left: 1px solid var(--line);
   font-family: var(--font-sans);
   font-size: 13px;
   line-height: 18px;
@@ -54,8 +28,8 @@
 }
 
 .rp :focus-visible {
-  outline: var(--focus-width, 2px) solid var(--_focus);
-  outline-offset: var(--focus-offset, 1px);
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: var(--focus-offset);
 }
 
 :where(.rp) :where(button) {
@@ -69,11 +43,11 @@
 
 .rp-sep {
   margin: 0 4px;
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-dim {
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 /* --- tabs --------------------------------------------------------------------- */
@@ -81,9 +55,9 @@
 .rp-tabs {
   display: flex;
   gap: 16px;
-  height: var(--h-tabrow, 32px);
+  height: var(--h-tabrow);
   padding: 0 16px;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
   flex: none;
 }
 
@@ -93,13 +67,13 @@
   background: none;
   padding: 0;
   height: 100%;
-  color: var(--_text-2);
+  color: var(--text-2);
   cursor: pointer;
   font-size: 13px;
 }
 
 .rp-tab[aria-selected="true"] {
-  color: var(--_ink);
+  color: var(--ink);
   font-weight: 600;
 }
 
@@ -110,11 +84,11 @@
   right: 0;
   bottom: -1px;
   height: 2px;
-  background: var(--_ink);
+  background: var(--ink);
 }
 
 .rp-tab .rp-num {
-  color: var(--_text-3);
+  color: var(--text-3);
   font-weight: 400;
 }
 
@@ -141,7 +115,7 @@
 .rp-empty {
   margin: 0;
   padding: 24px 16px;
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-pane-status {
@@ -149,11 +123,11 @@
   padding: 8px 16px;
   font-size: 12px;
   line-height: 16px;
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-attn {
-  color: var(--_attn);
+  color: var(--attn);
 }
 
 /* --- buttons, tags, keycaps ----------------------------------------------------- */
@@ -162,60 +136,60 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  height: var(--ctl, 28px);
+  height: var(--ctl);
   padding: 0 8px;
-  border: 1px solid var(--_line-strong);
-  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--_ink);
+  color: var(--ink);
   font-size: 13px;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .rp-btn:hover:not(:disabled) {
-  background: var(--_hover);
+  background: var(--hover);
 }
 
 .rp-btn:disabled {
-  color: var(--_text-disabled);
+  color: var(--text-disabled);
   cursor: default;
 }
 
 .rp-btn--quiet {
   border-color: transparent;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-btn--primary {
-  border-color: var(--_ink);
-  background: var(--_ink);
-  color: var(--_on-ink);
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-ink);
   font-weight: 600;
 }
 
 .rp-btn--primary:hover:not(:disabled) {
-  background: var(--_ink);
+  background: var(--ink);
 }
 
 .rp-btn--primary:disabled {
-  border-color: var(--_line);
-  background: var(--_selected);
-  color: var(--_text-disabled);
+  border-color: var(--line);
+  background: var(--selected);
+  color: var(--text-disabled);
   font-weight: 600;
 }
 
-.rp-btn--primary .rp-kbd {
-  border-color: currentColor;
-  color: inherit;
-  opacity: 0.8;
+.rp-btn--primary:not(:disabled) .rl-keycap-key {
+  background: transparent;
+  border-color: var(--line-control);
+  color: var(--on-ink);
 }
 
 .rp-link {
   border: 0;
   background: none;
   padding: 0;
-  color: var(--_text-2);
+  color: var(--text-2);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
@@ -232,51 +206,32 @@
   text-decoration: underline;
 }
 
-.rp-keys {
-  display: inline-flex;
-  gap: 2px;
-}
-
-.rp-kbd {
-  display: inline-flex;
-  align-items: center;
-  height: 16px;
-  padding: 0 4px;
-  border: 1px solid var(--_line-strong);
-  border-radius: var(--radius-sm, 4px);
-  font-family: var(--font-sans);
-  font-size: 11px;
-  line-height: 14px;
-  font-weight: 400;
-  color: var(--_text-3);
-}
-
 .rp-tag {
   display: inline-flex;
   align-items: center;
   height: 18px;
   padding: 0 4px;
-  border-radius: var(--radius-sm, 4px);
-  background: var(--_expected-tint);
-  color: var(--_text-2);
+  border-radius: var(--radius-sm);
+  background: var(--expected-tint);
+  color: var(--text-2);
   font-size: 12px;
   line-height: 16px;
   white-space: nowrap;
 }
 
 .rp-tag--fact {
-  background: var(--fact-tint, var(--changed-fact-bg));
-  color: var(--_fact);
+  background: var(--fact-tint);
+  color: var(--fact);
 }
 
 .rp-tag--attn,
 .rp-tag--test {
-  background: var(--_attn-tint);
-  color: var(--_attn);
+  background: var(--attn-tint);
+  color: var(--attn);
 }
 
 .rp-source {
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 /* --- 변경 pane -------------------------------------------------------------------- */
@@ -286,7 +241,7 @@
   flex-wrap: wrap;
   gap: 4px 12px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
   flex: none;
 }
 
@@ -295,42 +250,42 @@
   background: none;
   padding: 0;
   height: 20px;
-  color: var(--_text-3);
+  color: var(--text-3);
   cursor: pointer;
   font-size: 12px;
 }
 
 .rp-filter .rp-num {
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-filter[aria-pressed="true"] {
-  color: var(--_ink);
+  color: var(--ink);
   font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--_ink);
+  box-shadow: inset 0 -2px 0 var(--ink);
 }
 
 .rp-filter[aria-pressed="true"] .rp-num {
-  color: var(--_ink);
+  color: var(--ink);
 }
 
 .rp-thread-row {
   display: flex;
   align-items: center;
   width: 100%;
-  height: var(--row, 32px);
+  height: var(--row);
   padding: 0 16px;
   border: 0;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
   background: none;
-  color: var(--_text-2);
+  color: var(--text-2);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
 }
 
 .rp-thread-row:hover {
-  background: var(--_hover);
+  background: var(--hover);
 }
 
 .rp-thread-row--static {
@@ -345,7 +300,7 @@
 
 .rp-row {
   position: relative;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
 }
 
 .rp-row::before {
@@ -359,24 +314,24 @@
 }
 
 .rp-row[aria-selected="true"] {
-  background: var(--_selected);
+  background: var(--selected);
 }
 
 .rp-row[data-source="agent"][aria-selected="true"][data-hue="pending"]::before {
-  background: var(--_accent);
+  background: var(--accent);
 }
 
 .rp-row[aria-selected="true"][data-hue="decided"]::before {
-  background: var(--_ink);
+  background: var(--ink);
 }
 
 .rp-row[aria-selected="true"][data-hue="attn"]::before,
 .rp-row[aria-selected="true"][data-hue="test"]::before {
-  background: var(--_attn-line);
+  background: var(--attn-line);
 }
 
 .rp-row[aria-selected="true"][data-hue="fact"]::before {
-  background: var(--_fact);
+  background: var(--fact);
 }
 
 .rp-row-head {
@@ -385,7 +340,7 @@
   justify-content: center;
   gap: 2px;
   width: 100%;
-  min-height: var(--row-change, 52px);
+  min-height: var(--row-change);
   padding: 8px 16px 8px 12px;
   border: 0;
   background: none;
@@ -394,7 +349,7 @@
 }
 
 .rp-row:not([aria-selected="true"]) .rp-row-head:hover {
-  background: var(--_hover);
+  background: var(--hover);
 }
 
 .rp-row-line1 {
@@ -411,20 +366,20 @@
   text-align: right;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-row[data-source="agent"][data-hue="pending"] .rp-row-n {
-  color: var(--_accent);
+  color: var(--accent);
 }
 
 .rp-row[data-hue="attn"] .rp-row-n,
 .rp-row[data-hue="test"] .rp-row-n {
-  color: var(--_attn);
+  color: var(--attn);
 }
 
 .rp-row[data-hue="fact"] .rp-row-n {
-  color: var(--_fact);
+  color: var(--fact);
 }
 
 .rp-row-label {
@@ -442,7 +397,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--_text-2);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -456,7 +411,7 @@
 
 .rp-row-state {
   font-size: 12px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-row-line2 {
@@ -465,25 +420,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-row[data-decision="rejected"] .rp-row-label,
 .rp-row[data-decision="rejected"] .rp-row-line2 {
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-row[data-locked] .rp-row-head {
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-row-del {
-  color: var(--_text-3);
-  text-decoration-color: var(--_text-3);
+  color: var(--text-3);
+  text-decoration-color: var(--text-3);
 }
 
 .rp-row-reason {
-  color: var(--_attn);
+  color: var(--attn);
   font-size: 12px;
 }
 
@@ -507,13 +462,13 @@
   display: flex;
   gap: 8px;
   padding: 4px 8px;
-  background: var(--_field);
+  background: var(--field);
 }
 
 .rp-diff-line dt {
   flex: none;
   width: 44px;
-  color: var(--_text-3);
+  color: var(--text-3);
   font-size: 12px;
 }
 
@@ -526,10 +481,10 @@
 
 .rp-edit {
   width: 100%;
-  border: 1px solid var(--_line-control);
-  border-radius: var(--radius-sm, 4px);
-  background: var(--_field);
-  color: var(--_ink);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink);
   font: inherit;
   padding: 2px 4px;
   resize: vertical;
@@ -547,10 +502,10 @@
 .rp-stale {
   flex: none;
   padding: 8px 16px 8px 14px;
-  border-left: 2px solid var(--_attn-line);
-  border-bottom: 1px solid var(--_line);
-  background: var(--_attn-tint);
-  color: var(--_ink);
+  border-left: 2px solid var(--attn-line);
+  border-bottom: 1px solid var(--line);
+  background: var(--attn-tint);
+  color: var(--ink);
 }
 
 .rp-stale p {
@@ -564,12 +519,12 @@
 }
 
 .rp-stale[data-pulse] {
-  animation: rp-pulse var(--dur-panel, 160ms) var(--_ease) 2;
+  animation: rp-pulse var(--dur-panel) var(--ease-standard) 2;
 }
 
 @keyframes rp-pulse {
   50% {
-    background: var(--_panel);
+    background: var(--panel);
   }
 }
 
@@ -579,42 +534,8 @@
   position: relative;
   flex: none;
   padding: 12px 16px;
-  border-top: 1px solid var(--_line);
-  background: var(--_panel);
-}
-
-.rp-box {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-  border-radius: 0;
-}
-
-.rp-box th,
-.rp-box td {
-  border: 1px solid var(--_line-strong);
-  text-align: center;
-  padding: 0 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rp-box th {
-  height: 20px;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 400;
-  color: var(--_text-3);
-}
-
-.rp-box td {
-  height: 36px;
-  font-size: 13px;
-  line-height: 16px;
-  color: var(--_ink);
-  white-space: normal;
-  word-break: keep-all;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .rp-footer-row {
@@ -632,7 +553,7 @@
   margin: 8px 0 0;
   font-size: 12px;
   line-height: 16px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-footer-status {
@@ -642,17 +563,17 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-footer-reason[data-pulse="1"],
 .rp-footer-reason[data-pulse="0"] {
-  animation: rp-text-pulse 320ms var(--_ease) 1;
+  animation: rp-text-pulse 320ms var(--ease-standard) 1;
 }
 
 @keyframes rp-text-pulse {
   50% {
-    color: var(--_ink);
+    color: var(--ink);
   }
 }
 
@@ -665,9 +586,9 @@
   bottom: calc(100% + 4px);
   z-index: 5;
   padding: 12px;
-  border-radius: var(--radius-md, 6px);
-  background: var(--_raised);
-  box-shadow: var(--_shadow-float);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  box-shadow: var(--shadow-float);
 }
 
 .rp-pop-title {
@@ -680,15 +601,15 @@
   display: block;
   margin-bottom: 4px;
   font-size: 12px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-input {
   width: 100%;
-  border: 1px solid var(--_line-control);
-  border-radius: var(--radius-sm, 4px);
-  background: var(--_field);
-  color: var(--_ink);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink);
   font: inherit;
   padding: 4px 8px;
   resize: none;
@@ -709,7 +630,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--_panel);
+  background: var(--panel);
   outline: none;
 }
 
@@ -719,7 +640,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 16px 16px 12px;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
 }
 
 .rp-sheet-title {
@@ -733,7 +654,7 @@
   margin: 2px 0 0;
   font-size: 12px;
   line-height: 16px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-sheet-body {
@@ -748,7 +669,7 @@
 
 .rp-sheet-facts {
   padding: 8px 0 8px 12px;
-  border-left: 2px solid var(--_fact);
+  border-left: 2px solid var(--fact);
 }
 
 .rp-sheet-facts ul,
@@ -776,12 +697,12 @@
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: var(--_ink);
+  accent-color: var(--ink);
 }
 
 .rp-sheet-expected {
   padding: 4px 0;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
 }
 
 .rp-sheet-expected-head {
@@ -793,12 +714,12 @@
 .rp-sheet-expected-body {
   margin-top: 4px;
   padding: 8px;
-  background: var(--_field);
+  background: var(--field);
 }
 
 .rp-sentence {
   margin: 0 0 4px;
-  color: var(--_text-2);
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -827,19 +748,19 @@
 .rp-kv-k {
   width: 88px;
   flex: none;
-  color: var(--_text-3);
+  color: var(--text-3);
   font-size: 12px;
 }
 
 .rp-mono {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-details summary {
   cursor: pointer;
-  color: var(--_text-2);
+  color: var(--text-2);
   font-size: 12px;
   min-height: 24px;
   line-height: 24px;
@@ -853,7 +774,7 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  border-top: 1px solid var(--_line);
+  border-top: 1px solid var(--line);
 }
 
 .rp-digest-row {
@@ -864,21 +785,21 @@
   height: 28px;
   padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
   background: none;
   text-align: left;
   cursor: pointer;
 }
 
 .rp-digest-row:hover {
-  background: var(--_hover);
+  background: var(--hover);
 }
 
 .rp-digest-row .rp-num {
   width: 48px;
   flex: none;
   font-size: 12px;
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-digest-label {
@@ -892,25 +813,25 @@
 .rp-digest-ops {
   flex: none;
   font-size: 12px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-sheet-foot {
   flex: none;
   padding: 12px 16px 16px;
-  border-top: 1px solid var(--_line);
+  border-top: 1px solid var(--line);
 }
 
 .rp-sheet-note {
   margin: 0 0 8px;
   font-size: 12px;
   line-height: 16px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-sheet-error {
   margin: 0 0 8px;
-  color: var(--_attn);
+  color: var(--attn);
 }
 
 .rp-sheet-actions {
@@ -921,14 +842,14 @@
 }
 
 .rp-sheet-actions .rp-btn {
-  height: var(--ctl-lg, 32px);
+  height: var(--ctl-lg);
 }
 
 /* --- thread ----------------------------------------------------------------------------- */
 
 .rp-turn {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
 }
 
 .rp-msg + .rp-msg {
@@ -938,13 +859,13 @@
 .rp-msg-who {
   font-size: 12px;
   font-weight: 600;
-  color: var(--_ink);
+  color: var(--ink);
 }
 
 .rp-msg-time {
   margin-left: 4px;
   font-weight: 400;
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-msg-text {
@@ -953,12 +874,12 @@
 }
 
 .rp-msg-text--attn {
-  color: var(--_attn);
+  color: var(--attn);
 }
 
 .rp-msg-step {
   margin: 2px 0 0;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-msg-proposal {
@@ -971,8 +892,8 @@
   position: relative;
   flex: none;
   padding: 8px 16px 12px;
-  border-top: 1px solid var(--_line);
-  background: var(--_panel);
+  border-top: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .rp-composer-line {
@@ -981,7 +902,7 @@
   left: 0;
   right: 0;
   height: 2px;
-  background: var(--_line-strong);
+  background: var(--line-strong);
 }
 
 .rp-composer--off {
@@ -994,7 +915,7 @@
 }
 
 .rp-composer-off {
-  color: var(--_attn);
+  color: var(--attn);
 }
 
 .rp-composer-top {
@@ -1005,7 +926,7 @@
   margin-bottom: 4px;
 }
 
-.rp-composer-top .rp-keys {
+.rp-composer-top .rl-keycap {
   margin-left: auto;
 }
 
@@ -1015,17 +936,17 @@
   gap: 4px;
   height: 20px;
   padding: 0 4px;
-  border: 1px solid var(--_line-strong);
-  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-chip-x {
   border: 0;
   background: none;
   padding: 0;
-  color: var(--_text-3);
+  color: var(--text-3);
   cursor: pointer;
 }
 
@@ -1033,17 +954,17 @@
   display: block;
   width: 100%;
   min-height: 40px;
-  border: 1px solid var(--_line-control);
-  border-radius: var(--radius-sm, 4px);
-  background: var(--_field);
-  color: var(--_ink);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink);
   font: inherit;
   padding: 4px 8px;
   resize: none;
 }
 
 .rp-composer-input::placeholder {
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-composer-actions {
@@ -1058,15 +979,15 @@
   flex: none;
   margin: 0;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
   font-size: 12px;
   line-height: 16px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 .rp-group {
   padding: 8px 0;
-  border-bottom: 1px solid var(--_line);
+  border-bottom: 1px solid var(--line);
 }
 
 .rp-group-title {
@@ -1074,11 +995,11 @@
   padding: 4px 16px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 [data-fact] .rp-group-title {
-  color: var(--_fact);
+  color: var(--fact);
 }
 
 .rp-check-row {
@@ -1095,7 +1016,7 @@
 }
 
 .rp-check-row:hover {
-  background: var(--_hover);
+  background: var(--hover);
 }
 
 .rp-check-row .rp-num {
@@ -1103,7 +1024,7 @@
   flex: none;
   text-align: right;
   font-size: 11px;
-  color: var(--_text-3);
+  color: var(--text-3);
 }
 
 .rp-check-label {
@@ -1114,7 +1035,7 @@
 .rp-check-detail {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--_text-2);
+  color: var(--text-2);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1144,7 +1065,7 @@
 
 .rp-style-excerpt {
   font-size: 12px;
-  color: var(--_text-2);
+  color: var(--text-2);
 }
 
 /* --- narrow -------------------------------------------------------------------------------- */
@@ -1155,7 +1076,7 @@
     border-left: 0;
   }
   .rp-btn {
-    min-height: var(--ctl-touch, 44px);
+    min-height: var(--ctl-touch);
   }
   .rp-tab,
   .rp-filter {

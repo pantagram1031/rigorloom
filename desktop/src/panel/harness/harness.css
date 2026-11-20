@@ -10,7 +10,7 @@ body,
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--desk, var(--bg-canvas));
+  background: var(--desk);
   font-family: var(--font-sans);
 }
 
@@ -20,10 +20,10 @@ body,
   gap: 12px;
   height: var(--h-titlebar, 36px);
   padding: 0 12px;
-  background: var(--chrome, var(--bg-app));
-  border-bottom: 1px solid var(--line, var(--border-subtle));
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
   font-size: 13px;
-  color: var(--ink, var(--fg-primary));
+  color: var(--ink);
   flex: none;
 }
 
@@ -38,12 +38,12 @@ body,
   height: 28px;
   padding: 0 12px;
   border-radius: 6px 6px 0 0;
-  background: var(--panel, var(--bg-surface));
+  background: var(--panel);
   font-weight: 600;
 }
 
 .hx-ext {
-  color: var(--text-3, var(--fg-muted));
+  color: var(--text-3);
   font-weight: 400;
 }
 
@@ -65,8 +65,8 @@ body,
   align-items: center;
   height: var(--h-strip, 32px);
   padding: 0 12px;
-  background: var(--panel, var(--bg-surface));
-  border-bottom: 1px solid var(--line, var(--border-subtle));
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
   flex: none;
 }
 

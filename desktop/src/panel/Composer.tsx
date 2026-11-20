@@ -4,7 +4,7 @@ import { openOperatorModal } from "../actions";
 import type { UiLanguage } from "../i18n/vocabulary";
 import { composerBlocker, setComposerDraft, useWorkspace } from "../store";
 import { cancelRequest, clearContext, sendRequest } from "./actions";
-import { Keycaps } from "./bits";
+import { Keycap } from "../ui/Keycap";
 import { tp } from "./i18n";
 import { eventIsComposing } from "./keys";
 import { panelSlice } from "./state";
@@ -73,7 +73,7 @@ export function Composer({ lang }: { lang: UiLanguage }) {
             </button>
           </span>
         ) : null}
-        <Keycaps keys={["Ctrl", "L"]} />
+        <Keycap keys={["Ctrl", "L"]} />
       </div>
       <textarea
         ref={ref}
@@ -90,12 +90,12 @@ export function Composer({ lang }: { lang: UiLanguage }) {
         {mode === "working" ? (
           <button type="button" className="rp-btn" onClick={() => void cancelRequest()} data-testid="composer-cancel">
             {tp("composer_cancel", lang)}
-            <Keycaps keys={["Esc"]} />
+            <Keycap keys={["Esc"]} />
           </button>
         ) : (
           <button type="button" className="rp-btn" onClick={() => void send()} disabled={!text.trim()} data-testid="composer-send">
             {tp("composer_send", lang)}
-            <Keycaps keys={["Enter"]} />
+            <Keycap keys={["Enter"]} />
           </button>
         )}
       </div>
