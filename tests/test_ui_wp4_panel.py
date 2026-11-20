@@ -366,3 +366,36 @@ def test_reproposal_reaches_a_revision_published_by_another_client(browser, serv
         assert _rpc_payload(reproposed.value)["params"]["base"]["runId"] == candidate["runId"]
         expect(page.get_by_test_id("stale-banner")).to_have_count(0, timeout=20_000)
         expect(approve).to_be_enabled(timeout=20_000)
+
+
+def test_refused_decision_retries_with_a_new_sheet_token(browser, server, tmp_path):
+    with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
+        tokens = []
+
+        def refuse_once(route):
+            payload = _rpc_payload(route.request)
+            if payload.get("method") == "approval/resolve" and payload["params"]["decision"] == "approved":
+                tokens.append(payload["params"].get("confirmationToken"))
+                if len(tokens) == 1:
+                    route.fulfill(json={"ok": False, "error": {"code": "confirmation_required", "message": "Retry"}})
+                    return
+            route.continue_()
+
+        page.route("**/rpc", refuse_once)
+        _open_sample(page, server)
+        sid = _session_id(page)
+        _propose(server, sid, [("approve-on-retry", 5, "담당관")])
+        page.get_by_test_id("change-summary-1").click(timeout=20_000)
+        page.keyboard.press("y")
+        approve = page.get_by_test_id("approve")
+        expect(approve).to_be_enabled(timeout=20_000)
+        approve.click()
+        _confirm_ticks(page)
+        confirm = page.get_by_test_id("approve-confirm")
+        confirm.click()
+        expect(page.get_by_test_id("sheet-error")).to_be_visible()
+        assert not _receipts(tmp_path, sid)
+        _confirm_ticks(page)
+        confirm.click()
+        expect(page.get_by_test_id("applied-footer")).to_be_visible(timeout=30_000)
+        assert len(tokens) == 2 and all(tokens) and tokens[0] != tokens[1]

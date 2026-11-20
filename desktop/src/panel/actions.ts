@@ -274,6 +274,7 @@ export async function confirmApproval(): Promise<boolean> {
   const fail = (): false => {
     // A broken binding asks for a fresh confirmation: the ticks clear.
     panelSlice.set(d, { confirmPhase: "failed", confirmError: tp("wp4_apply_failed", lang()), ticks: [] });
+    if (doc() === d) prepareConfirmation();
     return false;
   };
   if (seen.length !== accepted.size || seen.length + drop.length !== live.draft.ops.length) return fail();

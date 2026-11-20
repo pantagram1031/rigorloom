@@ -84,6 +84,7 @@ function harness({ ops, decisions = {}, hooks = {}, ticks = [] }) {
     getState, setState, panelSlice, errorCodeMessage,
     setCanvasSlice: () => {},
     prunedReviewMatches: async () => hooks.prunedReviewMatches?.() ?? true,
+    prepareConfirmation: () => {},
     closeApproval: () => panelSlice.set("S", { sheetOpen: false, sheetFor: null, ticks: [] }),
     showToast: () => {},
     doc: () => state.activeSessionId,
