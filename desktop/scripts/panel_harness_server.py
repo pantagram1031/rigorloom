@@ -1,7 +1,7 @@
 """Serve the WP4 panel harness through the real ``rigorloom ui`` bridge.
 
 Dev only: the bundle comes from ``vite.panel-harness.config.ts`` in a
-temporary directory, and ``rt_ui_style.install`` stands in for WP2's
+temporary directory; the bridge serves the style route through its own
 extension hook. Usage: panel_harness_server.py DIST ROOT PORT
 """
 from __future__ import annotations
@@ -13,7 +13,6 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "runtime" / "scripts"))
 
 import rt_ui  # noqa: E402
-import rt_ui_style  # noqa: E402
 
 
 def main() -> int:
@@ -28,7 +27,6 @@ def main() -> int:
         return rt_ui._inject_bootstrap(html, {"token": self.token, "root": str(self.current_root())}).encode("utf-8")
 
     rt_ui.BridgeApplication.render_index_html = render_index_html  # type: ignore[method-assign]
-    rt_ui_style.install(rt_ui.BridgeHTTPHandler)
     return rt_ui.run_ui(root=root, port=port, no_open=True, explicit_root=True)
 
 

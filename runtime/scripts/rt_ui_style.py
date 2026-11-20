@@ -6,8 +6,9 @@ is read-only. It never writes, never takes a path from the caller, and only
 reads files under the bridge's configured root, so the same token, Host and
 Origin checks and body caps as every other ``/api/`` route apply.
 
-The bridge loads this module through its extension hook (WP2) and calls
-``handle_post(bridge, path, body)``; a ``None`` return means "not mine".
+The bridge loads this module through its extension hook (WP2):
+``register_routes(router)`` puts the route on the bridge's extension router,
+behind the same guards as every other route. There is no other way in.
 """
 from __future__ import annotations
 
@@ -137,48 +138,19 @@ def style_check(root: Path, body: Any) -> dict[str, Any]:
     }
 
 
-def handle_post(bridge: Any, path: str, body: Any) -> tuple[HTTPStatus, dict[str, Any]] | None:
-    """The bridge hook. Auth, Host/Origin and body caps run before this."""
-    if path != ROUTE:
-        return None
-    try:
-        return HTTPStatus.OK, style_check(Path(bridge.current_root()), body)
-    except StyleRouteError as exc:
-        return exc.status, exc.payload()
+def register_routes(router: Any) -> None:
+    """WP2's extension hook: ``rigorloom ui`` registers the route on its router.
 
-
-def install(handler_cls: Any) -> None:
-    """Route ``POST /api/style/check`` on a ``BridgeHTTPHandler`` class.
-
-    For a bridge without WP2's extension hook. The wrapped ``do_POST`` runs
-    the handler's own Origin/Host guard, token check and body cap first, so
-    this route can never be reached with less than the others require.
-    Idempotent.
+    The hook runs the bridge's Host/Origin guard, header token and body cap
+    before the handler. A StyleRouteError keeps its status and code, so the
+    one 404 answer for absent and outside-the-root documents holds.
     """
-    if getattr(handler_cls, "_rl_style_installed", False):
-        return
-    original = handler_cls.do_POST
+    bridge_error = router.BridgeError
 
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler naming
-        from urllib.parse import urlsplit
-
-        if urlsplit(self.path).path != ROUTE:
-            original(self)
-            return
-        if not self._check_origin_guards():
-            return
-        if not self._require_header_token():
-            return
+    def handler(bridge: Any, body: Any) -> dict[str, Any]:
         try:
-            body = self._read_json_body()
-        except Exception as exc:  # noqa: BLE001 - the bridge's own BridgeError
-            status = getattr(exc, "status", HTTPStatus.BAD_REQUEST)
-            to_payload = getattr(exc, "to_payload", None)
-            self._send_json(status, to_payload() if callable(to_payload) else
-                            {"ok": False, "error": {"code": "invalid_body", "message": str(exc)}})
-            return
-        status, payload = handle_post(self.server.bridge, ROUTE, body)  # type: ignore[misc]
-        self._send_json(status, payload)
+            return style_check(Path(bridge.current_root()), body)
+        except StyleRouteError as exc:
+            raise bridge_error(exc.code, exc.message, status=exc.status) from None
 
-    handler_cls.do_POST = do_POST
-    handler_cls._rl_style_installed = True
+    router.post(ROUTE, handler)

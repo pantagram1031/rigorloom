@@ -27,8 +27,6 @@ import rt_ui  # noqa: E402
 import rt_ui_style  # noqa: E402
 from rt_session import Session  # noqa: E402
 
-rt_ui_style.install(rt_ui.BridgeHTTPHandler)
-
 
 def _session(root: Path, source: Path = CORPUS_FORM) -> Session:
     return Session.open_path(root, str(source))
@@ -172,12 +170,17 @@ def bridge(tmp_path: Path):
         root=root, engine_root=REPO_ROOT, port=0, explicit_root=True,
         prefs_path=tmp_path / "prefs.json", auto_start=False,
     )
+    # The production path: the route is on the bridge's own extension router,
+    # and the handler class is the bridge's, unpatched.
+    assert rt_ui_style.ROUTE in srv.extensions.post_routes
+    assert rt_ui.BridgeHTTPHandler.do_POST.__module__ == rt_ui.__name__
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
     try:
         yield srv, root
     finally:
         srv.shutdown_bridge()
+        thread.join(timeout=5)
 
 
 def _post(srv, body: bytes, headers: dict[str, str]) -> tuple[int, dict]:
@@ -201,7 +204,7 @@ def test_unauthenticated_request_is_refused(bridge) -> None:
     assert status == 403
 
 
-def test_host_and_cross_site_guards_apply(bridge) -> None:
+def test_host_origin_and_cross_site_guards_apply(bridge) -> None:
     srv, root = bridge
     session = _session(root)
     body = json.dumps({"sessionId": session.id}).encode()
@@ -209,6 +212,8 @@ def test_host_and_cross_site_guards_apply(bridge) -> None:
     assert status == 403 and payload["error"]["code"] == "invalid_host"
     status, payload = _post(srv, body, {"X-Rigorloom-Token": srv.token, "Sec-Fetch-Site": "cross-site"})
     assert status == 403 and payload["error"]["code"] == "cross_site_refused"
+    status, payload = _post(srv, body, {"X-Rigorloom-Token": srv.token, "Origin": "https://evil.example"})
+    assert status == 403 and payload["error"]["code"] == "invalid_origin"
 
 
 def test_body_cap_applies(bridge) -> None:
@@ -246,7 +251,7 @@ def test_authenticated_request_runs_the_check(bridge) -> None:
         {"X-Rigorloom-Token": srv.token, "Content-Type": "application/json"},
     )
     assert status == 400
-    # Other POST routes still go through the original handler.
+    # Other POST routes are unaffected.
     conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=30)
     try:
         conn.request("POST", "/api/no-such-route", body=b"{}",
@@ -256,3 +261,26 @@ def test_authenticated_request_runs_the_check(bridge) -> None:
     finally:
         conn.close()
     assert resp.status == 404
+
+
+def test_style_route_registers_on_the_rigorloom_ui_extension_hook(tmp_path: Path) -> None:
+    """`rigorloom ui` serves the route through WP2's hook, with the same answers."""
+    assert rt_ui_style.ROUTE in rt_ui.load_ui_extensions().post_routes
+    router = rt_ui.ExtensionRouter()
+    rt_ui_style.register_routes(router)
+    handler = router.post_routes[rt_ui_style.ROUTE]
+    root = tmp_path / "root"
+    session = _session(root)
+
+    class Bridge:
+        def current_root(self) -> Path:
+            return root
+
+    out = handler(Bridge(), {"sessionId": session.id})
+    assert out["ok"] is True and "findings" in out
+    with pytest.raises(rt_ui.BridgeError) as missing:
+        handler(Bridge(), {"sessionId": "0" * 32})
+    with pytest.raises(rt_ui.BridgeError) as bad:
+        handler(Bridge(), {"sessionId": session.id, "extra": 1})
+    assert missing.value.status == 404 and missing.value.code == "not_found"
+    assert bad.value.status == 400 and bad.value.code == "unknown_field"
