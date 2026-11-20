@@ -95,13 +95,14 @@ export interface CommitCellEditResult {
 }
 
 /**
- * Commit an in-place cell edit. Never called on keystroke; fires only on
- * explicit Enter / Tab / Ctrl+Enter / blur commit.
+ * Commit an in-place cell edit. The engine overlay may stay open through
+ * its debounced commit while the new raster is still being drawn.
  */
 export async function commitCellEditV2(
   nextValue: string,
   options?: {
     inspect?: InspectResult | null;
+    keepOpen?: boolean;
   },
 ): Promise<CommitCellEditResult> {
   const state = getState();
@@ -111,15 +112,16 @@ export async function commitCellEditV2(
   }
 
   setState({
-    inlineEdit: null,
+    ...(options?.keepOpen ? {} : { inlineEdit: null }),
     lastCommit: { value: nextValue, composed: state.sawComposition },
     sawComposition: false,
   });
 
   const before = edit.before;
   if (nextValue === before || (before.trim().length === 0 && nextValue === "")) {
-    if (edit.opId) {
-      await legacyActions.undoQueuedOp(edit.opId);
+    const opId = queuedCellOpAt(state, edit.table, edit.row, edit.col)?.opId;
+    if (opId) {
+      await legacyActions.undoQueuedOp(opId);
     }
     return { committed: false };
   }
@@ -179,6 +181,26 @@ export async function commitCellEditV2(
     hasFormText: classification.hasFormText,
     bodyStyleMatched: Boolean(resolvedCharPr && seat?.scriptAnomaly),
   };
+}
+
+export async function commitEngineRunEdit(value: string, text: string, keepOpen: boolean): Promise<void> {
+  const state = getState();
+  const edit = state.inlineEdit;
+  if (edit?.kind !== "run") return;
+  setState({
+    ...(keepOpen ? {} : { inlineEdit: null }),
+    lastCommit: { value, composed: state.sawComposition },
+    sawComposition: false,
+  });
+  const queued = queuedRunOpAt(state, edit.atPara, edit.run);
+  if (text === edit.before) {
+    if (queued) await legacyActions.undoQueuedOp(queued.opId);
+    return;
+  }
+  await queueCanvasEdit({
+    kind: "set_run", opId: queued?.opId ?? `op-p${edit.atPara}r${edit.run}`,
+    atPara: edit.atPara, run: edit.run, text, before: edit.before, origin: "user",
+  }, state.activeSessionId);
 }
 
 /**

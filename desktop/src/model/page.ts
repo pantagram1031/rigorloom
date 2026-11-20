@@ -179,6 +179,8 @@ export interface PageHitResult {
   seatKey?: string;
   itemId?: string;
   caretOffset?: number | null;
+  lineAddress?: string;
+  lineOffset?: number;
 }
 
 export interface PageSource {

@@ -14,6 +14,9 @@ import { setState, useWorkspace } from "../store";
 export interface SeatEditorProps {
   value: string;
   onCommit: (next: string, reason?: "enter" | "blur") => void;
+  onIdleCommit?: (next: string) => void;
+  onValueChange?: (next: string) => void;
+  onCompositionStart?: () => void;
   onCancel: () => void;
   className?: string;
   style?: React.CSSProperties;
@@ -40,6 +43,9 @@ export interface SeatEditorProps {
 export function SeatEditor({
   value,
   onCommit,
+  onIdleCommit,
+  onValueChange,
+  onCompositionStart,
   onCancel,
   className = "rl-seat-input",
   style,
@@ -66,6 +72,22 @@ export function SeatEditor({
   const skipBlurRef = useRef(false);
   const switchingRef = useRef(false);
   const nextCaretRef = useRef<number | null>(null);
+  const editTimer = useRef<number | undefined>(undefined);
+  const idleCommit = useRef(onIdleCommit);
+  idleCommit.current = onIdleCommit;
+
+  const clearEditTimer = () => window.clearTimeout(editTimer.current);
+  useEffect(() => () => window.clearTimeout(editTimer.current), []);
+
+  const changeText = (next: string) => {
+    dirtyRef.current = true;
+    setText(next);
+    onValueChange?.(next);
+    clearEditTimer();
+    if (!composing.current && idleCommit.current) {
+      editTimer.current = window.setTimeout(() => idleCommit.current?.(next), 300);
+    }
+  };
 
   const currentField = (): HTMLInputElement | HTMLTextAreaElement | null =>
     isMultiline ? textareaRef.current : inputRef.current;
@@ -110,6 +132,8 @@ export function SeatEditor({
 
   const handleCompositionStart = () => {
     composing.current = true;
+    clearEditTimer();
+    onCompositionStart?.();
   };
 
   const handleCompositionEnd = (
@@ -117,7 +141,7 @@ export function SeatEditor({
   ) => {
     composing.current = false;
     setState({ sawComposition: true });
-    setText(e.currentTarget.value);
+    changeText(e.currentTarget.value);
   };
 
   const handleKeyDown = (
@@ -138,7 +162,7 @@ export function SeatEditor({
           cur.length === 0 ? cur : `${cur.slice(0, start)}\n${cur.slice(end)}`;
         nextCaretRef.current = cur.length === 0 ? 0 : start + 1;
         switchingRef.current = true;
-        setText(nextText);
+        changeText(nextText);
         setIsMultiline(true);
         onMultilineChange?.(true);
         e.stopPropagation();
@@ -146,6 +170,7 @@ export function SeatEditor({
       }
       if (!isMultiline || e.ctrlKey || e.metaKey) {
         e.preventDefault();
+        clearEditTimer();
         skipBlurRef.current = true;
         onCommit(cur, "enter");
         e.stopPropagation();
@@ -156,6 +181,7 @@ export function SeatEditor({
     }
     if (e.key === "Tab" && onCycleBlank) {
       e.preventDefault();
+      clearEditTimer();
       skipBlurRef.current = true;
       onCycleBlank(e.shiftKey ? -1 : 1, cur);
       e.stopPropagation();
@@ -163,6 +189,7 @@ export function SeatEditor({
     }
     if (e.key === "Escape") {
       e.preventDefault();
+      clearEditTimer();
       skipBlurRef.current = true;
       if (onEscapeExit) {
         onEscapeExit();
@@ -181,6 +208,7 @@ export function SeatEditor({
       skipBlurRef.current = false;
       return;
     }
+    clearEditTimer();
     onCommit(currentField()?.value ?? text, "blur");
   };
 
@@ -206,10 +234,7 @@ export function SeatEditor({
         rows={Math.max(2, Math.min(10, text.split(/\r?\n/).length + 1))}
         placeholder={placeholder}
         aria-label={resolvedAriaLabel}
-        onChange={(e) => {
-          dirtyRef.current = true;
-          setText(e.target.value);
-        }}
+        onChange={(e) => changeText(e.target.value)}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         onKeyDown={handleKeyDown}
@@ -228,10 +253,7 @@ export function SeatEditor({
       style={mergedStyle}
       placeholder={placeholder}
       aria-label={resolvedAriaLabel}
-      onChange={(e) => {
-          dirtyRef.current = true;
-          setText(e.target.value);
-        }}
+      onChange={(e) => changeText(e.target.value)}
       onCompositionStart={handleCompositionStart}
       onCompositionEnd={handleCompositionEnd}
       onKeyDown={handleKeyDown}

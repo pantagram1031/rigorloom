@@ -8,7 +8,7 @@ import {
 
 import { cancelEdit } from "../actions";
 import { wp3t } from "../i18n/v2/wp3";
-import { createEnginePageSource, type RasterSource } from "../model/enginePage";
+import { createEnginePageSource, engineTextEdit, type RasterSource } from "../model/enginePage";
 import {
   createProjectionPageSource,
   detectDocumentSeats,
@@ -58,6 +58,8 @@ export function CanvasPane() {
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const language = useWorkspace((s) => s.language);
   const rev = useWorkspace((s) => headCandidate(s)?.sha256 ?? activeSession(s)?.source.sha256);
+  const headRunId = useWorkspace((s) => headCandidate(s)?.runId ?? null);
+  const draft = useWorkspace((s) => s.draft);
 
   const slice = useCanvasSlice(session?.sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -75,10 +77,6 @@ export function CanvasPane() {
     gutterWidthPx: 54,
     effectiveZoom: 1,
   });
-  const pageRaster = usePageRaster(
-    session?.sessionId, rev, slice.page,
-    slice.effectiveZoomPct === null ? null : measured.effectiveZoom,
-  );
 
   const [scrollThumb, setScrollThumb] = useState<{ topPct: number; heightPct: number }>({
     topPct: 0,
@@ -104,6 +102,16 @@ export function CanvasPane() {
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
   const changes = useCanvasChanges(session?.sessionId ?? null, textMap);
+  const previewEdits = useMemo(() => {
+    if (slice.rasterSource !== "engine" || slice.view === "base" ||
+        draft.sessionId !== session?.sessionId || draft.baseRunId !== headRunId) return [];
+    const rejected = new Set(changes.filter((change) => change.decision === "rejected").map((change) => change.id));
+    return draft.ops.flatMap((op) => op.origin === "user" && !rejected.has(op.opId) ? engineTextEdit(op) : []);
+  }, [changes, draft, headRunId, session?.sessionId, slice.rasterSource, slice.view]);
+  const pageRaster = usePageRaster(
+    session?.sessionId, rev, slice.page,
+    slice.effectiveZoomPct === null ? null : measured.effectiveZoom, previewEdits,
+  );
   const pageSource = useMemo<PageSource | null>(() => {
     if (!inspect) return null;
     const projection = createProjectionPageSource({
@@ -127,11 +135,13 @@ export function CanvasPane() {
   const source = pageRaster.raster?.source ?? null;
   useEffect(() => {
     if (!session) return;
-    setCanvasSlice({
+    setCanvasSlice((prev) => ({
+      ...prev,
+      page: pageRaster.settled ? Math.min(prev.page, pageRaster.count) : prev.page,
       pageCount: pageRaster.count, rasterSource: source,
       rasterApprox: pageRaster.approx,
-    }, session.sessionId);
-  }, [session, source, pageRaster.count, pageRaster.approx]);
+    }), session.sessionId);
+  }, [session, source, pageRaster.count, pageRaster.approx, pageRaster.settled]);
 
   useEffect(() => {
     publishCanvasContext(changes, pageSource);
@@ -228,6 +238,7 @@ export function CanvasPane() {
         >
           <div className="rl-paper-stage">
             <PageSheet
+              key={session.sessionId}
               sessionId={session.sessionId}
               inspect={inspect}
               texts={texts}
@@ -255,7 +266,11 @@ export function CanvasPane() {
               onMeasurementsChange={handleMeasurementsChange}
               pageSource={pageSource}
               page={visiblePage}
-              hasEngineGeometry={Boolean(pageRaster.geometry)}
+              engineGeometry={pageRaster.geometry}
+              engineEditable={Boolean(pageRaster.geometry && pageRaster.raster?.rev === rev && visiblePage === slice.page && slice.view !== "base")}
+              previewRects={pageRaster.changed}
+              previewSettled={pageRaster.settled}
+              displayedEdits={pageRaster.displayedEdits}
             />
 
             {slice.view === "marks" ? (
@@ -299,7 +314,8 @@ export function CanvasPane() {
         ) : null}
       </div>
 
-      {isNarrow && inlineEdit?.kind === "cell" ? (
+      {isNarrow && inlineEdit?.kind === "cell" && !pageRaster.geometry?.boxes.some((box) =>
+        box.kind === "line" && (box.queueAddress ?? box.at)?.startsWith(`t${inlineEdit.table}/r${inlineEdit.row}/c${inlineEdit.col}/p`)) ? (
         <div className="rl-narrow-seat-bar" data-testid="narrow-seat-bar">
           <span className="rl-narrow-seat-label">
             {deriveCellFieldLabel(
