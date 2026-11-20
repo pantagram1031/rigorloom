@@ -32,9 +32,10 @@ import {
   type Decision,
   type TickId,
 } from "../model/changes";
-import { getState, headCandidate, showToast } from "../store";
+import { getState, headCandidate, opSignature, showToast } from "../store";
 import { markExternalPlanDismissed } from "../workspace/externalPlan";
 import { activeApprovalBinding } from "../workspace/reviewSummary";
+import { captureConfirmation } from "../workspace/trust";
 import { tp } from "./i18n";
 import { resolveReturn, styleCheck } from "./rpc";
 import { latestView, panelSlice, type PanelTab } from "./state";
@@ -190,25 +191,46 @@ function waitFor(predicate: () => boolean, ms = 15000): Promise<boolean> {
   });
 }
 
+/** The acknowledgement keys the trust gate knows, from the sheet's ticks. */
+function acknowledgementsFor(ticks: readonly TickId[]): string[] {
+  return [...(ticks.includes("facts") ? ["changed_facts"] : []), ...(ticks.includes("test") ? ["mock"] : [])];
+}
+
 /**
  * `승인` in the sheet. The plan that reaches the runtime holds the 받아들임
  * changes and nothing else: any 뺌 (or, defensively, 대기) op is taken out of
  * the draft first, the plan is re-proposed, and the confirm refuses to go on
- * unless the re-proposed plan holds exactly the accepted ids.
+ * unless the re-proposed plan holds exactly the accepted ops, unchanged, on
+ * the same document and the same base.
+ *
+ * Trust: the confirmation is captured at the click from the sheet as
+ * rendered (this document, this plan, this base, these ticks), the same way
+ * the v1 approval dialog does it. Every wait after the click ends with a
+ * check against it; the frozen gate in `actions.ts` re-checks after each of
+ * its own waits. A plan that changed under the sheet is never applied.
  */
 export async function confirmApproval(): Promise<boolean> {
   const d = doc();
   const v = view();
   const st = panelSlice.get(d);
   const gate = gateState(v, { busy: st.confirmPhase !== "idle" && st.confirmPhase !== "failed" });
-  if (!v || !canConfirm(v, st.ticks, gate)) return false;
+  if (!d || !v || !canConfirm(v, st.ticks, gate)) return false;
   // The person reviewed one plan; a different one under the sheet is refused.
   if (st.sheetFor !== v.planHash) {
     panelSlice.set(d, { sheetOpen: false, sheetFor: null, ticks: [] });
     return false;
   }
+  const acknowledgements = acknowledgementsFor(st.ticks);
+  const live = getState();
+  const shown = captureConfirmation(live, acknowledgements);
+  if (!shown || shown.sessionId !== d || shown.planHash !== st.sheetFor) {
+    panelSlice.set(d, { sheetOpen: false, sheetFor: null, ticks: [] });
+    return false;
+  }
   const accepted = new Set(idsForApproval(v.items));
   const drop = idsToDrop(v.items);
+  // What each accepted change does, as the person saw it.
+  const seen = new Map(live.draft.ops.filter((op) => accepted.has(op.opId)).map((op) => [op.opId, opSignature(op)]));
   const counts = countChanges(v.items);
   const proposerKinds = new Set(v.items.filter((it) => accepted.has(it.id)).map((it) => it.source));
   const record = {
@@ -221,27 +243,53 @@ export async function confirmApproval(): Promise<boolean> {
         ? ([...proposerKinds][0] === "user" ? "user" : [...proposerKinds][0] === "test" ? "test" : "agent")
         : ("mixed" as const),
   } as const;
+  const fail = (): false => {
+    // A broken binding asks for a fresh confirmation: the ticks clear.
+    panelSlice.set(d, { confirmPhase: "failed", confirmError: tp("apply_failed", lang()), ticks: [] });
+    return false;
+  };
+  if (seen.size !== accepted.size) return fail();
 
   try {
+    let confirmed = shown;
     if (drop.length > 0) {
       panelSlice.set(d, { confirmPhase: "pruning", confirmError: null });
       for (const id of drop) await removeOp(id);
-      await waitFor(() => {
+      const settled = await waitFor(() => {
         const s = getState();
         return s.draft.phase !== "starting" && Boolean(s.draft.plan);
       });
+      if (!settled) return fail();
+      // The re-proposed plan has a new hash; it is bound again only if it is
+      // the same document on the same base holding exactly what was accepted.
+      const next = captureConfirmation(getState(), acknowledgements);
+      if (
+        !next ||
+        next.sessionId !== shown.sessionId ||
+        next.baseDigest !== shown.baseDigest ||
+        next.baseRunId !== shown.baseRunId
+      ) {
+        return fail();
+      }
+      confirmed = next;
     }
     const s = getState();
-    const planIds = new Set(s.draft.ops.map((op) => op.opId));
-    const exact = planIds.size === accepted.size && [...accepted].every((id) => planIds.has(id));
-    if (!exact || !s.draft.plan || s.draft.validation?.ok !== true) {
-      panelSlice.set(d, { confirmPhase: "failed", confirmError: tp("apply_failed", lang()) });
-      return false;
+    const exact =
+      s.draft.ops.length === seen.size && s.draft.ops.every((op) => seen.get(op.opId) === opSignature(op));
+    if (
+      !exact ||
+      !s.draft.plan ||
+      s.draft.plan.planId !== confirmed.planId ||
+      s.draft.plan.planHash !== confirmed.planHash ||
+      s.draft.validation?.ok !== true
+    ) {
+      return fail();
     }
     panelSlice.set(d, { confirmPhase: "applying" });
-    await approveAndApplyFromDialog();
+    const done = await approveAndApplyFromDialog(confirmed, "host-operator");
+    if (!done) return fail();
     const after = getState();
-    const outcome = d ? after.applyOutcomes?.[d] : undefined;
+    const outcome = after.applyOutcomes?.[d];
     if (outcome?.applied && after.draft.ops.length === 0) {
       const revision = revisionNumberFor(after, d, outcome.applied.runId) ?? 1;
       panelSlice.set(d, {
@@ -256,11 +304,9 @@ export async function confirmApproval(): Promise<boolean> {
       });
       return true;
     }
-    panelSlice.set(d, { confirmPhase: "failed", confirmError: tp("apply_failed", lang()) });
-    return false;
+    return fail();
   } catch {
-    panelSlice.set(d, { confirmPhase: "failed", confirmError: tp("apply_failed", lang()) });
-    return false;
+    return fail();
   }
 }
 
