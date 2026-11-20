@@ -2,6 +2,7 @@
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+import shutil
 import sys
 
 import pytest
@@ -114,3 +115,19 @@ def test_builtin_renderer_reports_the_bundled_substitute_for_font_guidance(monke
     assert fonts.substitution_states([
         {"want": row["declared"], "got": row["drawnWith"]} for row in report["substituted"]
     ]) == [{"declared": "함초롬바탕", "drawnWith": "Nanum Myeongjo", "state": "missing"}]
+
+
+_MADE_UP_FACE = "Rigorloom Absent Face 7f3c"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="reads the real Windows font registry")
+def test_real_windows_registry_detects_installed_and_missing_faces():
+    states = fonts.installed_states(["Segoe UI", _MADE_UP_FACE])
+    assert states == {"Segoe UI": "installed", _MADE_UP_FACE: "missing"}
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux") or shutil.which("fc-list") is None,
+                    reason="reads the real fontconfig inventory")
+def test_real_fontconfig_detects_installed_and_missing_faces():
+    states = fonts.installed_states(["DejaVu Sans", _MADE_UP_FACE])
+    assert states == {"DejaVu Sans": "installed", _MADE_UP_FACE: "missing"}
