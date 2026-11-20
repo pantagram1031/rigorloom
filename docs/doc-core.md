@@ -212,8 +212,8 @@ rt_doc.edit("보고서.hwpx", [
 - Every op is checked before anything is written: address kinds, ranges
   (`p3:2-5` only for `set`, `replace` and `char_shape`), `expect`
   (`expect_mismatch`; only `set`, `replace`, `delete`, `fill`,
-  `table.delete_row`, `table.delete_col`, `char_shape`, `para_shape` and
-  `numbering` take one,
+  `table.delete_row`, `table.delete_col`, `char_shape`, `para_shape`,
+  `numbering` and `break` take one,
   others refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
   and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
   or an op on something another op deletes (a paragraph, table or row; one
@@ -293,6 +293,74 @@ rt_doc.edit("보고서.hwpx", [
   - A column added or deleted inside a merged cell widens or narrows that
     cell; its address and text stay.
   - 셀 너비·높이 같게 (distribute) has no op yet.
+- Page ops (쪽 > 편집 용지, 다단 설정, 쪽·단·구역 나누기) need the engine and take
+  `at`, a body paragraph (not one in a table, note or box, and not a range).
+  - `page_setup` changes the 편집 용지 of the section that holds the
+    paragraph: `set` takes `paper` (`A3`, `A4`, `A5`, `B4`, `B5`, `LETTER`,
+    `LEGAL`, portrait sizes) or `width_mm` / `height_mm` (50 to 1000),
+    `landscape` (true/false; the engine keeps width and height as they are and
+    writes the orientation), `margins` (`left`, `right`, `top`, `bottom`,
+    `header`, `footer`, `gutter`, 0 to 500 mm; margins left out keep their
+    value) and `gutter_type` (제본: `LEFT_ONLY`, `LEFT_RIGHT`, `TOP_BOTTOM`).
+    Margins that leave no room are refused with `bad_input`: left + right +
+    gutter (top + bottom + header + footer, plus the gutter for
+    `TOP_BOTTOM`) must stay below the page's width (height), using the
+    section's paper and margins for what the op leaves out; a landscape page
+    lays the paper's height across.
+  - `columns` changes the column definition (다단) that governs the paragraph,
+    the last one before it in its section: `set` takes `count` (1 to 255),
+    `gap_mm` (0 to 100), `line` (구분선, true/false), `kind` (`NEWSPAPER`,
+    `BALANCED_NEWSPAPER`, `PARALLEL`) and `layout` (`LEFT`, `RIGHT`,
+    `MIRROR`). Every paragraph under that definition changes with it.
+  - `break` with `kind` `page` (쪽 나누기) or `column` (단 나누기) makes the
+    paragraph start a page or a column; nothing is split and no address
+    changes. `kind: "section"` (구역 나누기) moves the paragraph and every
+    paragraph after it in its section into a new section, which copies the
+    section's settings and column definition. The engine adds the new section
+    after the last one, so a section break goes in the document's last
+    section and not on that section's first paragraph. Paragraph and table
+    addresses do not change (they count across sections). `expect` guards the
+    paragraph's text. Order: the engine runs the edit's steps from the end of
+    the document back, and at one paragraph a section break runs after the
+    edits inside that paragraph and before an `insert_after` on the
+    paragraph before it, so every step still finds its paragraph by its
+    position in the original document. A `set` or other text op and a
+    `page` or `column` break on one paragraph in one edit both apply.
+  - Conflicts: two `page_setup` or two `columns` ops on one section are a
+    `conflict`; so is either of them on the section of a section break, a
+    second section break in the same edit, a second break on one paragraph,
+    and any other op on a paragraph a section break moves. Send them in
+    separate edits.
+- 머리말·꼬리말 and 쪽 번호 매기기 (쪽 > 머리말/꼬리말, 쪽 번호 매기기) need the
+  engine and take `at`, a body paragraph (not one in a table, note or box, and
+  not a range); the op changes that paragraph's section.
+  - `header` writes the section's own 머리말 (`kind: "header"`, the default) or
+    꼬리말 (`kind: "footer"`) for `apply` `BOTH` (양쪽, the default), `ODD` or
+    `EVEN`, with `text` (up to 1000 characters; `\n` starts a new line in it).
+    It replaces the section's own control of that kind and apply, so the
+    section keeps one; the other kinds and applies stay. `expect` is the text
+    of the one it replaces (its lines joined by `\n`; `""` when the section
+    has none). The new control gets the document's 머리말 style; a document
+    without that style answers `capability_unavailable` (`engine_needs_style`)
+    and nothing is written.
+  - `page_number` sets the section's 쪽 번호: `pos` (`BOTTOM_CENTER`, the
+    default, `BOTTOM_LEFT`, `BOTTOM_RIGHT`, `TOP_CENTER`, `TOP_LEFT`,
+    `TOP_RIGHT`, `OUTSIDE_TOP`, `OUTSIDE_BOTTOM`, `INSIDE_TOP`,
+    `INSIDE_BOTTOM`, or `NONE` for no number), `format` (`DIGIT`, the default,
+    `ROMAN_CAPITAL`, `ROMAN_SMALL`, `CIRCLED_DIGIT`, `LATIN_CAPITAL`,
+    `HANGUL_SYLLABLE` and the other 번호 모양 names) and `side_char` (the
+    character on both sides of the number, `-` by default, `""` for none). It
+    replaces the section's own page number. It takes no `expect`.
+  - Both need hwp-engine 2077774 (PR #23) or later. An older engine, whose
+    insert_header / page_number has no `replace`, answers
+    `capability_unavailable` (`engine_function_missing`, with `keyword` and
+    `needs` naming that engine) and nothing is written.
+  - No address changes: the controls sit in the section's first paragraph and
+    take no characters. `read` does not show 머리말·꼬리말 text yet.
+  - Conflicts: two `header` ops on one section with the same `kind` and
+    `apply`, two `page_number` ops on one section, either beside a section
+    break in that section, and a `delete` of the section's first paragraph in
+    the same edit.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is

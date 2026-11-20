@@ -918,6 +918,11 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "table.add_col": (("at",), ("after", "like")),
     "table.delete_col": (("at",), ("col", "expect")),
     "table.size": (("at",), ("width_mm", "height_mm", "col_widths_mm", "row_heights_mm")),
+    "page_setup": (("at", "set"), ()),
+    "columns": (("at", "set"), ()),
+    "break": (("at", "kind"), ("expect",)),
+    "header": (("at", "text"), ("kind", "apply", "expect")),
+    "page_number": (("at",), ("pos", "format", "side_char")),
 }
 
 
@@ -940,6 +945,11 @@ OP_EXAMPLES = {
     "table.add_col": '{"op":"table.add_col","at":"t0","after":1}',
     "table.delete_col": '{"op":"table.delete_col","at":"t0/r0/c2"}',
     "table.size": '{"op":"table.size","at":"t0","col_widths_mm":[30,null,45]}',
+    "page_setup": '{"op":"page_setup","at":"p0","set":{"paper":"A4","margins":{"left":20,"right":20}}}',
+    "columns": '{"op":"columns","at":"p0","set":{"count":2,"gap_mm":8,"line":true}}',
+    "break": '{"op":"break","at":"p12","kind":"page"}',
+    "header": '{"op":"header","at":"p0","kind":"footer","text":"2027년 업무계획"}',
+    "page_number": '{"op":"page_number","at":"p0","pos":"BOTTOM_CENTER","format":"DIGIT"}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -988,6 +998,31 @@ OP_NOTES = {
                   "the cell `at` names (`height_mm` also at a row); the `col_widths_mm` / "
                   "`row_heights_mm` lists go on the table address only, null keeping one"
                   + _OWNS_TABLE,
+    "page_setup": "`at` is a body paragraph; its section's 편집 용지 changes. `set` keys: "
+                  "paper (A3, A4, A5, B4, B5, LETTER, LEGAL) or width_mm / height_mm (50 to "
+                  "1000), landscape, margins {left, right, top, bottom, header, footer, gutter} "
+                  "in mm (0 to 500; left out keeps the value), gutter_type (LEFT_ONLY, "
+                  "LEFT_RIGHT, TOP_BOTTOM); margins must leave room on the page; one page_setup "
+                  "per section per edit, and none on the section of a section break",
+    "columns": "`at` is a body paragraph; the 다단 definition that governs it changes, and with "
+               "it every paragraph under it. `set` keys: count (1 to 255), gap_mm (0 to 100), "
+               "line (구분선), kind (NEWSPAPER, BALANCED_NEWSPAPER, PARALLEL), layout (LEFT, "
+               "RIGHT, MIRROR); one columns per section per edit, and none on the section of a "
+               "section break",
+    "break": "`at` is a body paragraph that starts a page, a column or a section (`kind` page, "
+             "column or section); `expect` is that paragraph's text. A section break goes in "
+             "the last section, not on its first paragraph, one per edit; any other op on a "
+             "paragraph it moves is a conflict; a text op and a page or column break on one "
+             "paragraph both apply",
+    "header": "`at` is a body paragraph; its section's own 머리말 (`kind` header, the default) "
+              "or 꼬리말 (footer) for `apply` BOTH (default), ODD or EVEN is replaced; `text` "
+              "up to 1000 characters, \\n starts a line; `expect` is the replaced one's text "
+              "(\"\" when the section has none); one per section, kind and apply per edit",
+    "page_number": "`at` is a body paragraph; its section's 쪽 번호 is replaced: `pos` "
+                   "(BOTTOM_CENTER default, TOP_/BOTTOM_ LEFT/RIGHT/CENTER, OUTSIDE_/INSIDE_ "
+                   "TOP/BOTTOM, or NONE), `format` (번호 모양: DIGIT default, ROMAN_CAPITAL, "
+                   "CIRCLED_DIGIT, HANGUL_SYLLABLE, ...), `side_char` (`-` default, \"\" for "
+                   "none); one per section per edit",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}

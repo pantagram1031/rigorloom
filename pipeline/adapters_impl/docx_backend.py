@@ -10,8 +10,10 @@ Mapping (bundle_spec.md build grammar → docx):
     title (build.yaml title:)  → document title paragraph
     ## SECTION:                 → Heading 1
     paragraph                   → body paragraph (inline EQ → italic code text)
-    [[FIG file= width=NNmm]]    → embedded image (width mm, default 110mm)
-    [[TABLE ...]] rows          → docx table (first row bold header)
+    [[FIG file= width=NNmm]]    → embedded image (width mm, default 110mm); a
+                                  missing or unreadable file → the italic
+                                  "[missing figure: …]" note
+    [[TABLE ...]] rows          → docx table (first row bold header), caption above
 
 Documented v1 limitation: equations are emitted as inline italic monospace text
 (the literal latex/hwpeqn source), NOT as OMML — there is no equation typesetting
@@ -75,6 +77,9 @@ def build(ws: str, out_dir: str | None = None):
 
     try:
         import docx
+        from docx.image.exceptions import (InvalidImageStreamError,
+                                           UnexpectedEndOfFileError,
+                                           UnrecognizedImageError)
         from docx.shared import Mm, Pt
     except ImportError:
         return {"ok": False, "backend": "docx",
@@ -123,7 +128,16 @@ def build(ws: str, out_dir: str | None = None):
             p.alignment = 1  # center
             if os.path.isfile(img):
                 run = p.add_run()
-                run.add_picture(img, width=Mm(width_mm))
+                try:
+                    run.add_picture(img, width=Mm(width_mm))
+                except (InvalidImageStreamError, UnexpectedEndOfFileError,
+                        UnrecognizedImageError):
+                    # A figure python-docx cannot read (cut short, or not an
+                    # image) is missing from the document all the same: it
+                    # gets the missing figure's note instead of stopping the
+                    # whole document.
+                    run.text = f"[missing figure: {b['file']}]"
+                    run.italic = True
             else:
                 p.add_run(f"[missing figure: {b['file']}]").italic = True
             if b["caption"]:
@@ -135,6 +149,12 @@ def build(ws: str, out_dir: str | None = None):
             rows = b["rows"]
             if not rows:
                 continue
+            if b["caption"]:
+                # Above the table, as the bundle backend's caption-side: top.
+                cap = doc.add_paragraph(b["caption"])
+                cap.alignment = 1
+                for r in cap.runs:
+                    r.font.size = Pt(9)
             ncols = max(len(r) for r in rows)
             table = doc.add_table(rows=0, cols=ncols)
             table.style = "Table Grid"

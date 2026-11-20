@@ -52,7 +52,7 @@
     "proof_grade": "none",
     "reason": "state=underfilled",
     "render_quality": {
-      "artifact_bytes": 796,
+      "artifact_bytes": "<VERIFIED_PDF_BYTES>",
       "artifact_sha256": "<VERIFIED_PDF_SHA256>",
       "checked_font_xrefs": 0,
       "checker": "hangul_glyphs",

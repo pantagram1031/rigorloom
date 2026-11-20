@@ -2667,6 +2667,10 @@ def _parent_probe(root: Path, ws: Path, case: str) -> dict:
         quality = payload["render_quality"]
         assert quality["artifact_sha256"] == hashlib.sha256((out / "out.pdf").read_bytes()).hexdigest()
         quality["artifact_sha256"] = "<VERIFIED_PDF_SHA256>"
+        # MuPDF writes a random second /ID entry, sometimes as an escaped string, so the
+        # PDF's length varies by a few bytes from run to run.
+        assert quality["artifact_bytes"] == (out / "out.pdf").stat().st_size
+        quality["artifact_bytes"] = "<VERIFIED_PDF_BYTES>"
     ops_file = out / "ops.json"
     if ops_file.is_file() and ops_file != form:
         result["ops"] = json.loads(ops_file.read_text(encoding="utf-8"))
