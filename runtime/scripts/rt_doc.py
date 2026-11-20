@@ -1558,6 +1558,12 @@ def _load(path, *, meta=True):
     return d
 
 
+def _set_layout(doc, layout):
+    doc.layout = layout
+    doc.page_starts = [s["para"] for s in layout.get("page_starts") or []
+                       if isinstance(s, dict) and isinstance(s.get("para"), int) and s["para"] >= 0] or [0]
+
+
 def _ensure_meta(d, e, places=True):
     """Layout (pages) and form analysis (headings, places) from the engine, once per Doc. A transient failure
     (timeout, worker gone) is retried by the next call; any other failure is kept, and the Doc then uses the
@@ -1573,9 +1579,7 @@ def _ensure_meta(d, e, places=True):
         if d.layout is None:
             r = e.call("pages", f)
             if r.get("ok"):
-                d.layout = r
-                d.page_starts = [s["para"] for s in r.get("page_starts") or []
-                                 if isinstance(s, dict) and isinstance(s.get("para"), int) and s["para"] >= 0] or [0]
+                _set_layout(d, r)
             else:
                 transient |= bool((r.get("error") or {}).get("retryable"))
                 if places:
@@ -4876,6 +4880,18 @@ def _fallback_apply(doc, order):
 
 
 # ============================================================================ pages, render, geometry
+@_api
+def page_font_substitutions(path, *, refresh=False):
+    """The same substitution report as open(), using just the page layout."""
+    doc = _load(path, meta=False if refresh else "layout")
+    layout = doc.layout
+    if refresh:
+        with doc.meta_lock:
+            layout = _ecall("pages", str(doc.engine_file()))
+            _set_layout(doc, layout)
+    return {"rev": doc.rev, "fonts": _fonts(doc, (layout or {}).get("approx"))}
+
+
 @_api
 def pages(path):
     """{rev, count, pages: [{n, starts_with, signals}], approx}"""

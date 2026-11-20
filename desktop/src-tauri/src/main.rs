@@ -10,6 +10,7 @@ mod credstore;
 mod devgate;
 mod digest;
 mod export;
+mod font_source;
 mod jobkill;
 mod prefs;
 mod sidecar;
@@ -852,6 +853,7 @@ fn main() {
             prefs_save,
             default_runtime_root,
             export_candidate,
+            font_source::open_hancom_font_source,
             agent_tool_status,
             run_mock_agent,
             agent_host_status,
