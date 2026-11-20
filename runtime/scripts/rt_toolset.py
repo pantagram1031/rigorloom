@@ -1014,6 +1014,15 @@ OP_NOTES = {
              "the last section, not on its first paragraph, one per edit; any other op on a "
              "paragraph it moves is a conflict; a text op and a page or column break on one "
              "paragraph both apply",
+    "header": "`at` is a body paragraph; its section's own 머리말 (`kind` header, the default) "
+              "or 꼬리말 (footer) for `apply` BOTH (default), ODD or EVEN is replaced; `text` "
+              "up to 1000 characters, \\n starts a line; `expect` is the replaced one's text "
+              "(\"\" when the section has none); one per section, kind and apply per edit",
+    "page_number": "`at` is a body paragraph; its section's 쪽 번호 is replaced: `pos` "
+                   "(BOTTOM_CENTER default, TOP_/BOTTOM_ LEFT/RIGHT/CENTER, OUTSIDE_/INSIDE_ "
+                   "TOP/BOTTOM, or NONE), `format` (번호 모양: DIGIT default, ROMAN_CAPITAL, "
+                   "CIRCLED_DIGIT, HANGUL_SYLLABLE, ...), `side_char` (`-` default, \"\" for "
+                   "none); one per section per edit",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
