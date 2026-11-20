@@ -45,6 +45,23 @@ export function collapseFormGuideLabel(raw: string): string {
   );
 }
 
+/**
+ * The label a form cell's own text gives: empty slots `(   )` and `[ ]` are
+ * dropped, the first field of a multi-field line (fields separated by two or
+ * more spaces) is kept, and a dangling opening bracket is trimmed.
+ * `전화번호(   )` → `전화번호`, `210㎜×297㎜(백상지 80g/㎡)` stays whole.
+ */
+export function labelFromCellText(raw: string): string {
+  const noSlots = raw.replace(/[(（]\s*[)）]/g, "  ").replace(/\[\s*\]/g, "  ");
+  const first = noSlots.split(/\s{2,}/).map((part) => part.trim()).find(Boolean) ?? "";
+  return collapseFormGuideLabel(first.replace(/[(（[]\s*$/, "")).trim();
+}
+
+/** A cell that only separates two fields on a form line (`/`, `·`, `-`). */
+function isSeparatorText(text: string): boolean {
+  return /^[\s/|·\-–—]+$/.test(text);
+}
+
 /** Truncate text at `maxCodepoints` Unicode codepoints with `…`. */
 export function truncateLabel(text: string, maxCodepoints = 20): string {
   const codepoints = Array.from(text);
@@ -325,6 +342,23 @@ export function deriveCellFieldLabel(
       byPos.set(`${cell.addr.row}:${cell.addr.col}`, cell);
     }
 
+    // 0. A cell that carries its own words (a form line being edited:
+    //    `전화번호(   )`, `검토자 직위(직급) 서명`, the paper-size line) is
+    //    named by them, never by a neighbour or the row above it.
+    const ownCell = byPos.get(`${row}:${col}`);
+    const ownText = ownCell ? readCellText(table.index, ownCell, texts) ?? "" : "";
+    let ownLabel =
+      ownCell && ownCell.classification === "static" && !isCompositeHeaderCell(table.index, ownCell, texts, inspect)
+        ? labelFromCellText(ownText)
+        : "";
+    // A guide or instruction line (`비고(이 난은 …)`) is named by its heading word.
+    if (ownCell && !ownLabel && ownCell.classification !== "fill_target" && ownCell.classification !== "spacer") {
+      const head = ownText.split(/[(（]/)[0].replace(/\s+/g, " ").trim();
+      if (head && Array.from(head).length <= 10) ownLabel = head;
+    }
+    if (isSeparatorText(ownLabel)) ownLabel = "";
+    if (ownLabel) return truncateLabel(ownLabel, 20);
+
     // 1. Scan left in the same row for the nearest static label cell.
     for (let c = col - 1; c >= 0; c -= 1) {
       const candidate = byPos.get(`${row}:${c}`);
@@ -333,7 +367,10 @@ export function deriveCellFieldLabel(
       if (candidate.classification === "static") {
         if (isCompositeHeaderCell(table.index, candidate, texts, inspect)) continue;
         const text = readCellText(table.index, candidate, texts);
-        if (text) return truncateLabel(collapseFormGuideLabel(text), 20);
+        const label = text ? labelFromCellText(text) : "";
+        // A `/` between two fields ends the field to the left.
+        if (isSeparatorText(label)) break;
+        if (label) return truncateLabel(label, 20);
       }
     }
 
@@ -346,7 +383,8 @@ export function deriveCellFieldLabel(
       if (candidate.classification === "static") {
         if (isCompositeHeaderCell(table.index, candidate, texts, inspect)) continue;
         const text = readCellText(table.index, candidate, texts);
-        if (text) return truncateLabel(collapseFormGuideLabel(text), 20);
+        const label = text ? labelFromCellText(text) : "";
+        if (label) return truncateLabel(label, 20);
       }
     }
 
@@ -364,7 +402,7 @@ export function deriveCellFieldLabel(
       if (isCompositeHeaderCell(table.index, candidate, texts, inspect)) continue;
       const text = readCellText(table.index, candidate, texts);
       if (!text) continue;
-      const collapsed = collapseFormGuideLabel(text);
+      const collapsed = labelFromCellText(text);
       if (!collapsed || Array.from(collapsed).length > 20) continue;
       return truncateLabel(collapsed, 20);
     }
