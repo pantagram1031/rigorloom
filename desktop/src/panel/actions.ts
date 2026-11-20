@@ -8,10 +8,13 @@
  */
 import {
   approveAndApplyFromDialog,
+  loadCandidates,
+  loadHeadTexts,
   removeReviewOps,
   reproposeDraft,
   revisionNumberFor,
   sendInstruction,
+  setHead,
   stopInstruction,
 } from "../actions";
 import {
@@ -372,7 +375,21 @@ export async function returnProposal(reason: string, requestAgain = false): Prom
 
 /** Stale banner: propose the same ops again on the current revision. */
 export async function proposeAgainOnHead(): Promise<void> {
-  await reproposeDraft();
+  const d = doc();
+  if (!d) return;
+  const draft = getState().draft;
+  await loadCandidates(d);
+  const state = getState();
+  if (state.activeSessionId !== d || state.draft !== draft) return;
+  const newest = state.candidates[d]?.at(-1)?.runId;
+  if (newest && newest !== headCandidate(state)?.runId) {
+    await setHead(newest);
+  } else {
+    await reproposeDraft();
+  }
+  if (newest && doc() === d && headCandidate(getState())?.runId === newest) {
+    await loadHeadTexts(d, newest);
+  }
 }
 
 export async function sendRequest(text: string): Promise<boolean> {

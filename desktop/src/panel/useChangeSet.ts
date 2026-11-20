@@ -6,11 +6,11 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
-import { adoptExternalPlan, attachExternalApproval, revisionNumberFor } from "../actions";
+import { adoptExternalPlan, attachExternalApproval, loadCandidates, revisionNumberFor } from "../actions";
 import { useIndexedCanvasChanges } from "../canvas/changes";
 import { canvasSlice } from "../canvas/controller";
 import { pruneDecisions, type ChangeSetView } from "../model/changes";
-import { activeDisplayText, activeInspect, draftStaleness, headCandidate, useWorkspace } from "../store";
+import { activeDisplayText, activeInspect, draftStaleness, useWorkspace } from "../store";
 import {
   findAdoptableExternalPlan,
   findPendingExternalApproval,
@@ -115,7 +115,7 @@ export function useChangeSet(sessionId: string): ChangeSetContext {
   const language = useWorkspace((s) => s.language);
   const staleness = useWorkspace(draftStaleness);
   const reapproval = useWorkspace((s) => s.reapprovalPrompt);
-  const head = useWorkspace(headCandidate);
+  const approvalError = useWorkspace((s) => s.approvalError);
   const candidates = useWorkspace((s) => (s.activeSessionId ? s.candidates[s.activeSessionId] : undefined));
   const appliedState = useWorkspace((s) => s.applied);
   const guard = useReviewGuardSummary();
@@ -135,10 +135,21 @@ export function useChangeSet(sessionId: string): ChangeSetContext {
     );
   };
   const baseRevision = revisionOf(draft.plan?.base?.runId ?? draft.baseRunId);
-  const currentRevision = revisionOf(head?.runId ?? null);
+  const currentRevision = revisionOf(candidates?.at(-1)?.runId);
+  const behindReported = staleFromValidation(draft.validation) === "plan_behind_head" ||
+    draft.error?.code === "plan_behind_head" || approvalError?.code === "plan_behind_head";
+  const unseenHead = behindReported && currentRevision <= baseRevision;
+  const refreshed = useRef<string | null>(null);
+  const refreshKey = `${sessionId}:${draft.plan?.planId ?? draft.baseRunId ?? "source"}`;
+  useEffect(() => {
+    if (!unseenHead || refreshed.current === refreshKey) return;
+    refreshed.current = refreshKey;
+    void loadCandidates(sessionId);
+  }, [sessionId, unseenHead, refreshKey]);
 
   const view = useMemo(() => {
     const stale =
+      (behindReported ? "plan_behind_head" : null) ??
       staleFromValidation(draft.validation) ??
       (staleness?.kind === "source_changed" || reapproval ? "source_changed" : null) ??
       (draft.plan && currentRevision > baseRevision ? "plan_behind_head" : null);
@@ -155,7 +166,7 @@ export function useChangeSet(sessionId: string): ChangeSetContext {
       currentRevision,
       stale,
     });
-  }, [indexed, changes, guard, draft.plan, draft.validation, draft.phase, draft.error, staleness, reapproval, baseRevision, currentRevision, language, session]);
+  }, [indexed, changes, guard, draft.plan, draft.validation, draft.phase, draft.error, behindReported, staleness, reapproval, baseRevision, currentRevision, language, session]);
 
   useLayoutEffect(() => {
     setLatestView(sessionId, view);

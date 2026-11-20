@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from test_ui_playwright import _assert_principles
-from test_ui_playwright_v1 import _rpc_post
+from test_ui_playwright_v1 import _confirmation_token, _rpc_post
 from test_ui_wp3_canvas import _open_sample, _rpc_payload, browser, canvas_bundle, expect, server
 
 
@@ -322,3 +322,47 @@ def test_files_pane_opens_a_resolved_document_folder_file(browser, server, tmp_p
         assert _rpc_payload(opened.value)["params"]["path"] == str(document.resolve())
         expect(page.locator(".shell-v2")).not_to_have_attribute("data-session", original)
         expect(page.get_by_test_id("paper").first).to_be_visible(timeout=20_000)
+
+
+def test_reproposal_reaches_a_revision_published_by_another_client(browser, server, tmp_path):
+    with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
+        _open_sample(page, server)
+        sid = _session_id(page)
+        cell = page.locator('[data-cell-key="c:0:5:1"]')
+        cell.click()
+        seat = page.get_by_test_id("seat-input")
+        seat.fill("기록정책담당관")
+        seat.press("Enter")
+        approve = page.get_by_test_id("approve")
+        expect(approve).to_be_enabled(timeout=20_000)
+        approve.click()
+        sheet = page.get_by_test_id("approve-sheet")
+        expect(sheet).to_have_attribute("data-ready", "")
+
+        def rpc(method, params):
+            reply = _rpc_post(server.url, server.token, method, params)
+            assert reply["ok"], reply
+            return reply["result"]
+
+        plan = rpc("plan/propose", {
+            "sessionId": sid, "backend": "preedit",
+            "ops": [{"kind": "fill_cell", "table": 0, "row": 6, "col": 1, "text": "외부 수정"}],
+        })["plan"]
+        approval = rpc("approval/request", {"planId": plan["planId"]})["approval"]
+        rpc("approval/resolve", {
+            "approvalId": approval["approvalId"], "planId": plan["planId"], "planHash": plan["planHash"],
+            "decision": "approved", "approver": "another-client",
+            "confirmationToken": _confirmation_token(server.url, server.token, sid, plan),
+        })
+        candidate = rpc("plan/apply", {"planId": plan["planId"], "approvalId": approval["approvalId"]})["candidate"]
+
+        _confirm_ticks(page)
+        page.get_by_test_id("approve-confirm").click()
+        expect(sheet).to_have_count(0, timeout=20_000)
+        expect(page.get_by_test_id("stale-banner")).to_contain_text("수정본 1", timeout=20_000)
+        assert len(_receipts(tmp_path, sid)) == 1
+        with page.expect_request(lambda req: _rpc_payload(req).get("method") == "plan/propose") as reproposed:
+            page.get_by_test_id("stale-repropose").click()
+        assert _rpc_payload(reproposed.value)["params"]["base"]["runId"] == candidate["runId"]
+        expect(page.get_by_test_id("stale-banner")).to_have_count(0, timeout=20_000)
+        expect(approve).to_be_enabled(timeout=20_000)
