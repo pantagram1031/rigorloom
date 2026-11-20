@@ -2887,13 +2887,6 @@ CELL_STYLE_KEYS = ("border", "fill", "valign", "margin_mm", "header")
 TABLE_STYLE_KEYS = ("repeat_header", "page_break")
 
 
-def _enum(v, allowed, what, i, at):
-    if not isinstance(v, str) or v.upper() not in allowed:
-        raise DocError("bad_input", "%s is one of %s" % (what, ", ".join(allowed)), i=i, at=at,
-                       candidates=list(allowed))
-    return v.upper()
-
-
 def _bool(v, what, i, at):
     if not isinstance(v, bool):
         raise DocError("bad_input", "%s is true or false" % what, i=i, at=at)
@@ -2978,14 +2971,15 @@ def _style_set(op, keys, i, at, name):
 
 
 def _table_mark(cl, t, i, name, at, kind, rect=None, border=False):
-    """Row and style ops on one table: a style op's cells are read by row and column of the base table, so a
-    row added or deleted in the same edit is a conflict; two cell styles may share a table when their blocks do
-    not overlap (nor touch, when either sets a border: a border is shared with the neighbour across it)."""
+    """Row and style ops on one table: a style op reads the base table by row and column, so a row added or
+    deleted in the same edit is a conflict with a cell style or a table style; two cell styles may share a
+    table when their blocks do not overlap (nor touch, when either sets a border: a border is shared with the
+    neighbour across it)."""
     for j, op2, at2, kind2, rect2, border2 in cl.tables.get(t.g, []):
         if j == i:
             continue
         clash = False
-        if "rows" in (kind, kind2) and "cell" in (kind, kind2):
+        if "rows" in (kind, kind2) and ("cell" in (kind, kind2) or "table" in (kind, kind2)):
             clash = True
         elif kind == kind2 == "table":
             clash = True

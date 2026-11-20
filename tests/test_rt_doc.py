@@ -1706,6 +1706,8 @@ def test_table_style_ops_are_checked_before_anything_runs(no_engine, tmp_path):
         "conflict"
     assert err([{"op": cs, "at": "t5/r1", "set": fill},
                 {"op": "table.add_row", "at": "t5", "after": 3}])["code"] == "conflict"
+    assert err([{"op": "table.style", "at": "t5", "set": {"repeat_header": True}},
+                {"op": "table.add_row", "at": "t5", "after": 3}])["code"] == "conflict"
     assert err([{"op": "table.size", "at": "t5", "row_heights_mm": [10]},
                 {"op": cs, "at": "t5/r1", "set": fill}])["code"] == "conflict"
     assert err([{"op": "table.style", "at": "t5", "set": {"repeat_header": True}},
