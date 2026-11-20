@@ -16,7 +16,7 @@ import {
   type GuardFact,
 } from "../model/changes";
 import { useWorkspace } from "../store";
-import { closeApproval, confirmApproval, select, toggleTick } from "./actions";
+import { closeApproval, confirmApproval, prepareConfirmation, select, toggleTick } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
 import { Keycap } from "../ui/Keycap";
 import { Parts } from "./bits";
@@ -110,6 +110,12 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
   useEffect(() => {
     rootRef.current?.focus();
   }, []);
+
+  // The sheet as rendered asks the bridge for its single-use confirmation
+  // token, bound to this document, plan and base.
+  useEffect(() => {
+    prepareConfirmation();
+  }, [doc, view.id, view.planHash, view.base.sha256]);
 
   const onKey = (e: KeyboardEvent<HTMLElement>) => {
     if (eventIsComposing(e)) return;

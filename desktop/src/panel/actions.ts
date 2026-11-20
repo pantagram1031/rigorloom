@@ -36,6 +36,7 @@ import { getState, headCandidate, opSignature, showToast } from "../store";
 import { markExternalPlanDismissed } from "../workspace/externalPlan";
 import { activeApprovalBinding } from "../workspace/reviewSummary";
 import { captureConfirmation } from "../workspace/trust";
+import { clearSheetConfirmation, prepareSheetConfirmation } from "../workspace/sheetConfirmation";
 import { tp } from "./i18n";
 import { resolveReturn, styleCheck } from "./rpc";
 import { latestView, panelSlice, type PanelTab } from "./state";
@@ -170,7 +171,22 @@ export function closeApproval(): void {
   const d = doc();
   const phase = panelSlice.get(d).confirmPhase;
   if (phase !== "idle" && phase !== "failed") return;
+  clearSheetConfirmation();
   panelSlice.set(d, { sheetOpen: false, sheetFor: null, ticks: [], confirmPhase: "idle", confirmError: null });
+}
+
+/**
+ * The sheet rendered a plan: ask the browser bridge for the single-use
+ * confirmation token bound to this document, plan and base. Only the plan
+ * the sheet was opened for, and only while it is still the live one.
+ */
+export function prepareConfirmation(): void {
+  const d = doc();
+  const v = view();
+  if (!d || !v || panelSlice.get(d).sheetFor !== v.planHash) return;
+  const shown = captureConfirmation(getState(), []);
+  if (!shown || shown.sessionId !== d || shown.planHash !== v.planHash) return;
+  prepareSheetConfirmation(shown);
 }
 
 export function toggleTick(tick: TickId): void {

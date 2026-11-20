@@ -74,7 +74,7 @@ function harness({ ops, decisions = {}, hooks = {} }) {
   };
   let view = viewFor(plan, ops, decisions);
   const slices = new Map();
-  const calls = { removed: [], validate: 0, request: [], resolve: [], apply: [] };
+  const calls = { removed: [], validate: 0, request: [], resolve: [], apply: [], tokens: [] };
   const getState = () => state;
   const setState = (patch) => { state = { ...state, ...patch }; };
   const panelSlice = {
@@ -114,8 +114,10 @@ function harness({ ops, decisions = {}, hooks = {} }) {
       setState({ approval: { approvalId: `a-${p.planId}`, planId: p.planId, planHash: p.planHash, state: "pending" } });
       hooks.request?.({ getState, setState });
     },
-    resolveApprovalDecision: async () => {
+    takeSheetConfirmation: async (binding) => `token-${binding.planId}-${binding.planHash}`,
+    resolveApprovalDecision: async (_decision, _approver, _reason, options) => {
       calls.resolve.push(state.approval?.planId);
+      calls.tokens.push(options?.confirmationToken ?? null);
       setState({ approval: { ...state.approval, state: "approved" } });
       hooks.resolve?.({ getState, setState });
     },
@@ -141,6 +143,8 @@ test("the unchanged plan is approved and applied once", async () => {
   const h = harness({ ops: [op("u1", "홍길동")] });
   assert.equal(await h.confirm(), true);
   assert.deepEqual(h.calls.request, ["p1"]);
+  // The decision carries the sheet's confirmation token for exactly this plan.
+  assert.deepEqual(h.calls.tokens, ["token-p1-h-p1"]);
   assert.deepEqual(h.calls.apply, ["p1"]);
   assert.equal(h.panel().applied.count, 1);
 });
@@ -217,6 +221,7 @@ test("a clean prune binds the re-proposed plan and applies only the accepted cha
   assert.deepEqual(h.calls.removed, ["u2"]);
   assert.deepEqual(h.calls.request, ["p1-u1"]);
   assert.deepEqual(h.calls.apply, ["p1-u1"]);
+  assert.deepEqual(h.calls.tokens, ["token-p1-u1-h-p1-u1"], "the token binds the re-proposed plan");
 });
 
 test("a sheet opened on another plan closes instead of confirming", async () => {
