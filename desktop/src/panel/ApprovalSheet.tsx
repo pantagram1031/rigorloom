@@ -165,13 +165,28 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
   const ticks = requiredTicks(view);
   const busy = st.confirmPhase === "pruning" || st.confirmPhase === "requesting" || st.confirmPhase === "applying";
   const gate = gateState(view);
-  const ready = canConfirm(view, st.ticks, gate) && !busy;
+  const [shown, setShown] = useState(false);
+  const ready = shown && canConfirm(view, st.ticks, gate) && !busy;
   const rootRef = useRef<HTMLElement | null>(null);
   const resultRevision = Math.max(view.base.revision, view.stale?.current ?? 0) + 1;
 
   useEffect(() => {
     rootRef.current?.focus();
+    let next = 0;
+    const frame = requestAnimationFrame(() => {
+      next = requestAnimationFrame(() => setShown(true));
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(next);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!shown) return;
+    const tick = rootRef.current?.querySelector<HTMLInputElement>("input[data-tick]");
+    tick?.focus();
+  }, [shown]);
 
   // The sheet as rendered asks the bridge for its single-use confirmation
   // token, bound to this document, plan and base.
@@ -187,7 +202,13 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
       closeApproval();
       return;
     }
-    if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+    if (e.key === "Enter") {
+      if (!shown || e.repeat || e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (e.shiftKey || e.altKey) return;
       const target = e.target as HTMLElement;
       // A focused button or link keeps its own Enter.
       if (target.tagName === "BUTTON" && !target.hasAttribute("data-confirm")) return;
@@ -214,6 +235,7 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
       tabIndex={-1}
       onKeyDown={onKey}
       data-testid="approve-sheet"
+      data-ready={shown ? "" : undefined}
       data-docked=""
     >
       <header className="rp-sheet-head">
@@ -266,6 +288,8 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
                 type="checkbox"
                 checked={st.ticks.includes("facts")}
                 onChange={() => toggleTick("facts")}
+                disabled={!shown || busy}
+                data-tick=""
                 data-testid="tick-facts"
               />
               {tp("wp4_sheet_tick_facts", lang)}
@@ -284,7 +308,14 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
         {ticks.includes("test") ? (
           <div className="rp-sheet-test" data-testid="sheet-test">
             <label className="rp-tick">
-              <input type="checkbox" checked={st.ticks.includes("test")} onChange={() => toggleTick("test")} data-testid="tick-test" />
+              <input
+                type="checkbox"
+                checked={st.ticks.includes("test")}
+                onChange={() => toggleTick("test")}
+                disabled={!shown || busy}
+                data-tick=""
+                data-testid="tick-test"
+              />
               <span className="rp-tag rp-tag--test">{tp("wp4_source_test", lang)}</span>
               {tp("wp4_sheet_tick_test", lang)}
             </label>
