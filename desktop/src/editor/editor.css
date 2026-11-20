@@ -1,0 +1,65 @@
+/* Integration glue: the minimal 기록 pane. Tokens only (J1 §4). */
+.ed-history {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--s-8) 0;
+}
+
+.ed-history-none {
+  margin: 0;
+  padding: var(--s-4) var(--s-12) var(--s-8);
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.ed-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ed-history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-8) var(--s-12);
+  border-bottom: var(--border-hair);
+}
+
+.ed-history-row[aria-current="true"] {
+  background: var(--selected);
+}
+
+.ed-history-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-8);
+  min-width: 0;
+}
+
+.ed-history-name {
+  color: var(--ink);
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
+  font-weight: var(--weight-semibold);
+}
+
+.ed-history-tag {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+}
+
+.ed-history-meta {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  line-height: var(--lh-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.ed-history .rl-approval-compact {
+  margin-top: var(--s-4);
+}
