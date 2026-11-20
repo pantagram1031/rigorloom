@@ -694,3 +694,19 @@ test("WP3 static hygiene: zero hex literals in canvas/ & panes/, zero 결재 in 
   const wp3Src = readFileSync(path.join(DESKTOP_ROOT, "src/i18n/v2/wp3.ts"), "utf8");
   assert.equal(wp3Src.includes("결재"), false, "Forbidden word 결재 in wp3.ts");
 });
+
+test("changing operation formatting or flags invalidates a shared decision", () => {
+  const { changes, changeModel } = loadWp3Stack();
+  const op = { opId: "change", kind: "fill_cell", table: 0, row: 1, col: 0, text: "Value", origin: "agent" };
+  const project = (op, decisions = {}) => changes.indexedChangesToCanvasRefs(
+    [{ op, opId: op.opId, beforeText: "", afterText: op.text }], {}, decisions, {},
+  )[0];
+  const decisions = changeModel.recordDecision({}, project(op), "accepted");
+  assert.equal(project(op, decisions).decision, "accepted");
+  for (const params of [{ charPr: "17" }, { paraPr: "4" }, { overwrite: true }, { lines: ["Value"] }]) {
+    assert.equal(project({ ...op, ...params }, decisions).decision, "pending");
+  }
+  const replace = { ...op, kind: "replace_at_cell", mode: "replace", run: 0 };
+  const replaceDecisions = changeModel.recordDecision({}, project(replace), "accepted");
+  assert.equal(project({ ...replace, expect: "Original" }, replaceDecisions).decision, "pending");
+});
