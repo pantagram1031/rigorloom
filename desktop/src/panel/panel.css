@@ -388,9 +388,6 @@
   font-weight: 600;
 }
 
-.rp-row-meta .rp-source,
-.rp-row-meta .rp-sep:nth-child(2) { display: none; }
-
 .rp-row-meta {
   flex: 1 1 auto;
   min-width: 0;

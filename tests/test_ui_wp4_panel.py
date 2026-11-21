@@ -258,6 +258,8 @@ def test_gongmun_typing_approval_history_and_export(browser, server, tmp_path, t
         row = page.get_by_test_id("change-row-1")
         expect(row).to_have_attribute("data-decision", "accepted")
         expect(row).to_contain_text("내 입력")
+        expect(row.locator(".rp-row-meta .rp-source")).to_be_visible()
+        expect(row.locator(".rp-row-meta .rp-source")).to_have_text("내 입력")
         expect(row).to_contain_text(value)
         expect(body.locator('.rl-review-mark[data-selected][data-decision="accepted"]')).to_be_visible()
         expect(page.get_by_test_id("scrollmap-tick-1")).to_be_visible()

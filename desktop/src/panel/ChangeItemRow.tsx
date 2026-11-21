@@ -91,8 +91,12 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
           <span className="rp-row-meta">
             <span className="rp-sep">·</span>
             {item.opName}
-            <span className="rp-sep">·</span>
-            <SourceText source={item.source} lang={lang} />
+            {item.source !== "agent" ? (
+              <>
+                <span className="rp-sep">·</span>
+                <SourceText source={item.source} lang={lang} />
+              </>
+            ) : null}
           </span>
           <span className="rp-row-right">
             {isChangedFact(item) ? (
