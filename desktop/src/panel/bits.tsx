@@ -1,6 +1,5 @@
 /**
- * Small pieces the panel draws. Keycaps and the 결재란 box come from WP1b's
- * primitives (`ui/Keycap`, `ui/ApprovalBox`).
+ * Small pieces the review panel draws.
  */
 import { Fragment, useLayoutEffect, useRef } from "react";
 

@@ -1,6 +1,5 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
-import { Keycap } from "./Keycap";
 import { principleAttributes, type DataSource, type DataVariant } from "./attributes";
 
 export type ButtonSize = "sm" | "md" | "lg" | "touch";
@@ -13,7 +12,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: DataVariant;
   /** `sm`/`md` = 28 px (`--ctl`), `lg` = 32 px (`--ctl-lg`), `touch` = 44 px (`--ctl-touch`). */
   size?: ButtonSize;
-  /** Optional shortcut rendered via `<Keycap>` at the right edge of the button. */
+  /** Optional shortcut shown in the button tooltip. */
   shortcut?: string | readonly string[];
   /** Optional icon-only mode (requires `aria-label` or `title`). */
   iconOnly?: boolean;
@@ -35,6 +34,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     type = "button",
     className = "",
     children,
+    title,
     ...rest
   },
   ref,
@@ -49,16 +49,19 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     .filter(Boolean)
     .join(" ");
 
+  const chord = typeof shortcut === "string" ? shortcut : shortcut?.join("+");
+  const tooltip = chord ? [title, chord].filter(Boolean).join(" · ") : title;
+
   return (
     <button
       ref={ref}
       type={type}
       className={classes}
+      title={tooltip}
       {...principleAttributes({ variant, source })}
       {...rest}
     >
       <span className="rl-btn-label">{children}</span>
-      {shortcut ? <Keycap keys={shortcut} /> : null}
     </button>
   );
 });

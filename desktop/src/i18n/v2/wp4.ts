@@ -37,6 +37,7 @@ export const WP4_STRINGS = {
   wp4_changes_empty: { ko: "검토할 변경이 없습니다.", en: "No changes to review." },
   wp4_changes_filter_empty: { ko: "해당하는 변경이 없습니다.", en: "No changes match." },
   wp4_thread_row: { ko: "변경 {0}건 제안", en: "Proposed {0} changes" },
+  wp4_box_untied: { ko: "변경 항목과 연결되지 않은 사실 {0}건", en: "Facts without a matching change: {0}" },
   wp4_row_before: { ko: "변경 전", en: "Before" },
   wp4_row_after: { ko: "변경 후", en: "After" },
   wp4_row_empty_value: { ko: "빈칸", en: "Empty" },

@@ -23,6 +23,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T215:** Editor v2 brings document tabs and view controls into one bar and puts a search field above the start screen’s document list. Pages have rulers and margin guides. The review pane shows before and after text for every change, a table for the selected change, and a three-cell approval box. The status line shows the page and table position.
 - **T214:** On engine-rendered pages in opt-in editor v2, Tab and Shift+Tab move between table cell editors. On narrow screens the bottom cell editor stays available and reopens with the queued text.
 - **T213:** Opt-in editor v2 lists missing Hancom faces and their substitutes in the status bar. Open Hancom’s official font distribution page to install the fonts, then check again to redraw the document.
 - **T212:** Typing on an opt-in editor v2 engine page shows an inline preview. Edits enter the review queue and redraw affected pages from a scratch copy. The canvas keeps the previous image and typed text if the redraw fails.

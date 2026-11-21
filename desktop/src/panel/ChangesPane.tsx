@@ -24,7 +24,6 @@ import {
   setTab,
 } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
-import { Keycap } from "../ui/Keycap";
 import { Parts, PlanHash, proposerLine, sourceLabel } from "./bits";
 import { ChangeItemRow } from "./ChangeItemRow";
 import { clockTime, revisionName, tp } from "./i18n";
@@ -129,18 +128,16 @@ export function ReturnPopover({ lang, connected }: { lang: UiLanguage; connected
         data-testid="return-reason"
       />
       <div className="rp-pop-actions">
-        <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeReturn()}>
+        <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeReturn()} title="Esc">
           {tp("wp4_return_cancel", lang)}
-          <Keycap keys={["Esc"]} />
         </button>
         {connected ? (
           <button type="button" className="rp-btn" disabled={busy || !reason.trim()} onClick={() => void submit(true)} data-testid="return-rerequest">
             {tp("wp4_return_rerequest", lang)}
           </button>
         ) : null}
-        <button type="submit" className="rp-btn" disabled={busy} data-testid="return-confirm">
+        <button type="submit" className="rp-btn" disabled={busy} data-testid="return-confirm" title="Enter">
           {tp("wp4_return_confirm", lang)}
-          <Keycap keys={["Enter"]} />
         </button>
       </div>
     </form>
@@ -215,6 +212,11 @@ function GateFooter({
         check={<Parts text={checkText(view, lang, guardState)} />}
         approve={null}
       />
+      {view.untied?.length ? (
+        <p className="rp-untied-count" data-fact="">
+          {tp("wp4_box_untied", lang, [view.untied.length])}
+        </p>
+      ) : null}
       {reason ? (
         <p className="rp-footer-reason" data-testid="gate-reason" data-pulse={pulse > 0 ? pulse % 2 : undefined} key={pulse}>
           {reason}
@@ -226,21 +228,19 @@ function GateFooter({
         </p>
       ) : null}
       <div className="rp-footer-row">
-        <button type="button" className="rp-btn" onClick={() => openReturn()} data-testid="return" disabled={busy}>
+        <button type="button" className="rp-btn" onClick={() => openReturn()} data-testid="return" title="R" disabled={busy}>
           {tp("wp4_act_return", lang)}
-          <Keycap keys={["R"]} />
         </button>
         <button
           type="button"
           className="rp-btn rp-btn--primary"
           data-variant="primary"
-          data-testid="approve"
+          data-testid="approve" title="Ctrl+Shift+Enter"
           disabled={!gate.canApprove}
           aria-disabled={!gate.canApprove}
           onClick={() => openApproval()}
         >
           {tp("wp4_act_approve", lang)}
-          <Keycap keys={["Ctrl", "Shift", "Enter"]} />
         </button>
       </div>
     </footer>
@@ -270,10 +270,9 @@ export function AppliedFooter({ applied, lang }: { applied: AppliedRecord; lang:
         <span className="rp-footer-status" data-testid="applied-status">
           {tp("wp4_applied_status", lang, [applied.revision])}
           <span className="rp-sep">·</span>
-          <button type="button" className="rp-link" onClick={() => void exportApplied(undefined, applied.runId)} data-testid="applied-export">
+          <button type="button" className="rp-link" onClick={() => void exportApplied(undefined, applied.runId)} data-testid="applied-export" title="Ctrl+E">
             {tp("wp4_applied_export", lang)}
           </button>
-          <Keycap keys={["Ctrl", "E"]} />
         </span>
       </div>
     </footer>

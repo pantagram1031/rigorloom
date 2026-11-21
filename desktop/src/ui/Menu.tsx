@@ -5,7 +5,6 @@ import {
   type ReactNode,
 } from "react";
 
-import { Keycap } from "./Keycap";
 import { isImeComposing, principleAttributes } from "./attributes";
 
 export type MenuEntry =
@@ -144,6 +143,7 @@ export function Menu({
                 </div>
               );
             }
+            const shortcut = typeof entry.shortcut === "string" ? entry.shortcut : entry.shortcut?.join("+");
             return (
               <button
                 key={entry.id}
@@ -161,7 +161,7 @@ export function Menu({
                 }}
               >
                 <span className="rl-menu-item-label">{entry.label}</span>
-                {entry.shortcut ? <Keycap keys={entry.shortcut} /> : null}
+                {shortcut ? <span className="rl-menu-shortcut">{shortcut}</span> : null}
               </button>
             );
           })}

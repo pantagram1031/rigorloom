@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
+import vm from "node:vm";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +11,40 @@ const { WP1B_STRINGS, tWp1b } = await import("../src/i18n/v2/wp1b.ts");
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC_DIR = path.resolve(HERE, "../src");
+
+async function loadTsx(file, imports = {}) {
+  const ts = (await import("typescript")).default;
+  const nodeRequire = createRequire(import.meta.url);
+  const { outputText } = ts.transpileModule(fs.readFileSync(path.join(SRC_DIR, file), "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+    fileName: file,
+  });
+  const mod = { exports: {} };
+  const requireImport = (id) => imports[id] ?? nodeRequire(id);
+  vm.runInThisContext(`(function(exports, require, module) {
+${outputText}
+})`)(mod.exports, requireImport, mod);
+  return mod.exports;
+}
+
+test("buttons put shortcuts in tooltips and segmented controls use a flat underline", async () => {
+  const { Button } = await loadTsx("ui/Button.tsx", { "./attributes": { principleAttributes } });
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const html = renderToStaticMarkup(createElement(Button, {
+    title: "Approve", shortcut: ["Ctrl", "Shift", "Enter"],
+  }, "Approve"));
+  assert.match(html, /title="Approve · Ctrl\+Shift\+Enter"/);
+  assert.doesNotMatch(html, /<kbd\b|rl-keycap/);
+
+  const css = fs.readFileSync(path.join(SRC_DIR, "ui/ui.css"), "utf8");
+  const track = css.match(/\.rl-segmented \{([^}]+)\}/)?.[1];
+  const active = css.match(/\.rl-segmented-btn--active \{([^}]+)\}/)?.[1];
+  assert.ok(track && active);
+  assert.doesNotMatch(track, /border|background/);
+  assert.match(active, /box-shadow:\s*inset 0 -2px/);
+  assert.doesNotMatch(active, /border|background/);
+});
 
 test("principleAttributes emits canonical data-* attributes only when active", () => {
   assert.deepEqual(principleAttributes({}), {});
@@ -249,21 +285,11 @@ test("public/favicon.ico is the generated 리을R favicon and index.html links i
 });
 
 test("Mark draws the 리을R as one path, the 16-px cut at small sizes and the full drawing above", async () => {
-  const { createRequire } = await import("node:module");
-  const vm = await import("node:vm");
-  const ts = (await import("typescript")).default;
-  const nodeRequire = createRequire(import.meta.url);
-  const source = fs.readFileSync(path.join(SRC_DIR, "brand", "Mark.tsx"), "utf8");
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
-    fileName: "Mark.tsx",
-  });
-  const mod = { exports: {} };
-  vm.runInThisContext(`(function(exports, require, module) {\n${outputText}\n})`)(mod.exports, nodeRequire, mod);
-  const { renderToStaticMarkup } = nodeRequire("react-dom/server");
-  const React = nodeRequire("react");
+  const { Mark } = await loadTsx("brand/Mark.tsx");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
   const svgPath = (file) => fs.readFileSync(path.join(SRC_DIR, "assets", file), "utf8").match(/<path d="([^"]+)"/)[1];
-  const render = (size) => renderToStaticMarkup(React.createElement(mod.exports.Mark, { size }));
+  const render = (size) => renderToStaticMarkup(createElement(Mark, { size }));
 
   const small = render(16);
   const large = render(40);

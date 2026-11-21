@@ -88,3 +88,14 @@ const hasChanges = () => Boolean(latestView(activeTabSessionId()));
 registerCommand({ id: "approval.open", title: (lang) => tp("wp4_act_approve", lang), group: "review", run: () => void openApproval(), keyId: "approval.open", when: hasChanges });
 registerCommand({ id: "change.acceptAll", title: (lang) => tp("wp4_act_accept_all", lang), group: "review", run: () => { focusChangeList(); acceptAll(); }, keyId: "change.acceptAll", when: hasChanges });
 registerCommand({ id: "checks.style", title: (lang) => tp("wp4_checks_style_run", lang), group: "document", run: () => void runStyleCheck(), keyId: "checks.style", when: () => activeTabSessionId() !== null });
+
+for (const [id, label, run] of [
+  ["change.accept", "wp4_act_accept", onSelected((item) => decide(item, "accepted"))],
+  ["change.reject", "wp4_act_reject", onSelected((item) => decide(item, "rejected"))],
+  ["change.edit", "wp4_act_edit", onSelected(requestEdit)],
+  ["change.undo", "wp4_act_undo", undoDecision],
+  ["proposal.return", "wp4_act_return", openReturn],
+] as const) {
+  registerCommand({ id, title: (lang) => tp(label, lang), group: "review", keyId: id, when: hasChanges,
+    run: () => { focusChangeList(); run(); } });
+}

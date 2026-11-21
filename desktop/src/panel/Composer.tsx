@@ -5,7 +5,6 @@ import { isComposingEvent } from "../shell/keys";
 import type { UiLanguage } from "../i18n/vocabulary";
 import { composerBlocker, composerDraftAfterSend, composerDraftOf, setComposerDraft, useComposerDraftText, useWorkspace } from "../store";
 import { cancelRequest, clearContext, sendRequest } from "./actions";
-import { Keycap } from "../ui/Keycap";
 import { tp } from "./i18n";
 import { panelSlice } from "./state";
 
@@ -77,7 +76,6 @@ export function Composer({ lang }: { lang: UiLanguage }) {
             </button>
           </span>
         ) : null}
-        <Keycap keys={["Ctrl", "L"]} />
       </div>
       <textarea
         ref={ref}
@@ -88,18 +86,16 @@ export function Composer({ lang }: { lang: UiLanguage }) {
         aria-label={tp("wp4_composer_aria", lang)}
         onChange={(e) => setComposerDraft(e.target.value)}
         onKeyDown={onKey}
-        data-testid="composer-input"
+        data-testid="composer-input" title="Ctrl+L"
       />
       <div className="rp-composer-actions">
         {mode === "working" ? (
-          <button type="button" className="rp-btn" onClick={() => void cancelRequest()} data-testid="composer-cancel">
+          <button type="button" className="rp-btn" onClick={() => void cancelRequest()} data-testid="composer-cancel" title="Esc">
             {tp("wp4_composer_cancel", lang)}
-            <Keycap keys={["Esc"]} />
           </button>
         ) : (
-          <button type="button" className="rp-btn" onClick={() => void send()} disabled={!text.trim()} data-testid="composer-send">
+          <button type="button" className="rp-btn" onClick={() => void send()} disabled={!text.trim()} data-testid="composer-send" title="Enter">
             {tp("wp4_composer_send", lang)}
-            <Keycap keys={["Enter"]} />
           </button>
         )}
       </div>

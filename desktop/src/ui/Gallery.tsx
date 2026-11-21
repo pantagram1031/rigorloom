@@ -5,6 +5,7 @@ import { Mark, Wordmark } from "../brand";
 import { tWp1b } from "../i18n/v2/wp1b";
 import type { UiLanguage } from "../i18n/vocabulary";
 import "../tokens.css";
+import "../v2-tokens.css";
 import { ApprovalBox } from "./ApprovalBox";
 import { Button } from "./Button";
 import { Keycap } from "./Keycap";
@@ -240,7 +241,6 @@ export function UiGallery() {
                 label: tWp1b("demo_panel_check", lang),
                 count: 1,
                 countTone: "attn",
-                dot: "attn",
               },
             ]}
           />
@@ -505,6 +505,7 @@ export function UiGallery() {
 }
 
 export function mountUiGallery(rootElement: HTMLElement): void {
+  document.documentElement.dataset.ui = "v2";
   ReactDOM.createRoot(rootElement).render(
     <React.StrictMode>
       <UiGallery />
