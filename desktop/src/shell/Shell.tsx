@@ -7,6 +7,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { Mark } from "../brand";
+import { useKeyHint } from "./keys";
 import { errorCodeMessage } from "../i18n/vocabulary";
 import { S } from "../i18n/v2/shell";
 import * as rt from "../runtime";
@@ -17,7 +18,7 @@ import { docTitle, engineLabel, engineState, agentStatus, pendingCount } from ".
 import { NarrowShell } from "./NarrowShell";
 import { pickAndOpenFile } from "./open";
 import { Palette } from "./Palette";
-import { Btn, FileName, Icon, KeyHint } from "./parts";
+import { Btn, FileName, Icon } from "./parts";
 import { SettingsDialog } from "./SettingsDialog";
 import {
   activeTab,
@@ -116,8 +117,8 @@ export function Shell() {
   }
 
   const style = {
-    "--sh-left": `${widths.left}px`,
-    "--sh-right": `${widths.right}px`,
+    "--sh-left": bp === "wide" ? "var(--w-left)" : `${widths.left}px`,
+    "--sh-right": bp === "wide" ? "var(--w-right)" : `${widths.right}px`,
   } as CSSProperties;
 
   return (
@@ -129,7 +130,7 @@ export function Shell() {
       data-right={docked.right ? "open" : "closed"}
       style={style}
     >
-      <TitleBar bp={bp} isDoc={isDoc} docked={docked} />
+      <TitleBar docked={docked} sessionId={sessionId} />
       <div className="sh-body">
         {isDoc && docked.left ? <LeftPane sessionId={sessionId} overlay={overlay} /> : null}
         <main className="sh-center" data-testid={TID.canvasHost}>
@@ -137,12 +138,9 @@ export function Shell() {
           {tab?.kind === "opening" ? <OpeningCanvas name={tab.name} /> : null}
           {tab?.kind === "failed" ? <FailedCanvas tab={tab} /> : null}
           {tab?.kind === "doc" ? (
-            <>
-              <Strip sessionId={tab.sessionId} />
-              <div className="sh-canvas">
-                <Slot name="canvas" sessionId={tab.sessionId} fallback={<div className="sh-desk" data-slot-empty="canvas" />} />
-              </div>
-            </>
+            <div className="sh-canvas">
+              <Slot name="canvas" sessionId={tab.sessionId} fallback={<div className="sh-desk" data-slot-empty="canvas" />} />
+            </div>
           ) : null}
         </main>
         {isDoc ? <RightPanel sessionId={sessionId} overlay={overlay} visible={docked.right} /> : null}
@@ -158,7 +156,8 @@ export function Shell() {
 // ---------------------------------------------------------------------------
 // Title bar
 
-function TitleBar({ bp, isDoc, docked }: { bp: Breakpoint; isDoc: boolean; docked: { left: boolean; right: boolean } }) {
+function TitleBar({ docked, sessionId }: { docked: { left: boolean; right: boolean }; sessionId: string | null }) {
+  const paletteShortcut = useKeyHint("shell.palette")?.join("+");
   const tabs = useShell((s) => s.tabs);
   const active = useShell((s) => s.activeTab);
   const appMenuOpen = useShell((s) => s.appMenuOpen);
@@ -187,7 +186,7 @@ function TitleBar({ bp, isDoc, docked }: { bp: Breakpoint; isDoc: boolean; docke
   }, [active]);
 
   return (
-    <header className="sh-titlebar" data-testid={TID.titlebar} data-tauri-drag-region>
+    <header className="sh-titlebar" data-merged={sessionId ? true : undefined} data-testid={TID.titlebar} data-tauri-drag-region>
       <div className="sh-menu-anchor">
         <button
           type="button"
@@ -234,17 +233,18 @@ function TitleBar({ bp, isDoc, docked }: { bp: Breakpoint; isDoc: boolean; docke
         </div>
       ) : null}
       <div className="sh-drag" data-tauri-drag-region />
+      {sessionId ? <Strip sessionId={sessionId} /> : null}
       <button
         type="button"
-        className="sh-cmdfield"
+        className="sh-iconbtn"
+        title={[S.t("shell_palette_label", lang), paletteShortcut].filter(Boolean).join(" · ")}
         data-testid={TID.paletteField}
         onClick={() => openPalette()}
         aria-label={S.t("shell_palette_label", lang)}
       >
-        <span className="sh-cmdfield-text">{S.t("shell_palette_field", lang)}</span>
-        <KeyHint id="shell.palette" />
+        <Icon name="search" />
       </button>
-      {isDoc && bp !== "narrow" ? (
+      {sessionId ? (
         <div className="sh-toggles">
           <button
             type="button"
@@ -456,14 +456,14 @@ function RightPanel({ sessionId, overlay, visible }: { sessionId: string; overla
 
 function Strip({ sessionId }: { sessionId: string }) {
   return (
-    <header className="sh-strip" data-testid={TID.stripHost} data-docked="true">
+    <div className="sh-strip" data-testid={TID.stripHost} data-docked="true">
       <div className="sh-strip-start">
         <Slot name="stripStart" sessionId={sessionId} quiet />
       </div>
       <div className="sh-strip-end">
         <Slot name="stripEnd" sessionId={sessionId} quiet />
       </div>
-    </header>
+    </div>
   );
 }
 
@@ -567,7 +567,7 @@ function StatusBar({ sessionId, rightDocked }: { sessionId: string | null; right
             {S.t("shell_status_changes", lang, [count])}
           </button>
         ) : null}
-        {tabKind === "doc" ? (
+        {tabKind === "doc" && !rightDocked ? (
           <span className="sh-status-item" data-attn={agentAttn || undefined} data-testid={statusTid("agent")}>
             {agentText}
           </span>

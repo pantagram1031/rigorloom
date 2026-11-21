@@ -449,3 +449,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Compact outline and blank rows. */
+:is(.rl-outline-list, .rl-blanks-list) { padding: 0; }
+:is(.rl-blank-btn, .rl-outline-btn) {
+  min-height: var(--row-tree); border-radius: 0; padding-block: 2px;
+}
+.rl-blank-btn { flex-direction: row; align-items: center; padding-inline: 6px; }
+.rl-blank-line1 { flex: 1; width: auto; }
+.rl-blank-loc { flex: none; padding: 0; font: 9px var(--font-mono); }
+.rl-blank-preview { display: none; }
+.rl-blank-dot { border-radius: 0; }

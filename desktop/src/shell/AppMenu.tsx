@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { useWorkspace } from "../store";
 import { S } from "../i18n/v2/shell";
 import { type Command, commandTitle, runCommand, useCommandsVersion, visibleCommands } from "./commands";
-import { KeyHint } from "./parts";
+import { keyHintText } from "./keys";
 import { setShell } from "./shellState";
 
 const ORDER: Command["group"][] = ["file", "edit", "view", "document", "review", "help"];
@@ -60,7 +60,7 @@ export function AppMenu() {
               }}
             >
               <span className="sh-menu-label">{commandTitle(c, lang)}</span>
-              {c.keyId === "" ? null : <KeyHint id={c.keyId ?? c.id} />}
+              {c.keyId === "" ? null : <span className="sh-mono">{keyHintText(c.keyId ?? c.id)}</span>}
             </button>
           </div>
         );

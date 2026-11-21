@@ -26,7 +26,7 @@ export function ChordHint({ chord }: { chord: string }) {
   return <Keycaps caps={chordCaps(chord)} />;
 }
 
-type IconName = "close" | "chevronDown" | "paneLeft" | "paneRight" | "minimize" | "maximize" | "more";
+type IconName = "close" | "chevronDown" | "paneLeft" | "paneRight" | "minimize" | "maximize" | "more" | "search";
 
 /** 16 px glyphs, 1 px stroke on pixel centres, square caps (D1 §5 Iconography). */
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
@@ -43,6 +43,8 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
     focusable: false,
   };
   switch (name) {
+    case "search":
+      return <svg {...common}><circle cx="7" cy="7" r="4" /><path d="m10 10 3.5 3.5" /></svg>;
     case "close":
       return (
         <svg {...common}>

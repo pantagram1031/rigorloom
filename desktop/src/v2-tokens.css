@@ -1,0 +1,60 @@
+/* Editor v2 workbench. The shared sheet also supplies frozen v1 aliases. */
+:root[data-ui="v2"] {
+  --font-sans: "Pretendard Variable", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace;
+
+  --text-sm: 11.5px;
+  --text-base: 12.5px; --lh-base: 17px;
+  --text-lg: 14px; --lh-lg: 20px;
+  --text-display: 16px; --lh-display: 22px;
+  --h-titlebar: 28px; --h-tabrow: 26px; --h-status: 22px; --h-ruler: 20px;
+  --row-tree: 22px; --row: 26px; --row-change: 48px;
+  --ctl: 24px; --ctl-lg: 28px;
+  --w-left: 208px; --w-right: 388px;
+  --radius-sm: 2px; --radius-md: 4px;
+
+  --desk: #c9cdd4; --chrome: #e4e7ec; --panel: #f1f3f6; --field: #fff; --raised: #fff;
+  --ink: #111318; --on-ink: #fff; --text-2: #343942; --text-3: #525866;
+  --text-disabled: var(--text-3);
+  --line: #d5d9e2; --line-strong: #aeb5c2; --line-control: #727987;
+  --hover: color-mix(in srgb, var(--ink) 6%, transparent);
+  --selected: color-mix(in srgb, var(--ink) 9%, transparent);
+  --accent: var(--ink); --accent-tint: var(--selected); --accent-line: var(--line-strong);
+  --focus: var(--ink);
+  --attn: #734800; --attn-tint: #fef0d6; --attn-line: #9c6d27;
+  --fact: #a61b1b; --fact-tint: #fce9e7;
+  --expected: var(--text-2); --expected-tint: var(--selected);
+  --diff-ins-fg: #17482c; --diff-ins-bg: #e3f5e8;
+  --review-accent: #1d4ed8;
+  --mark-insert: #4b505a; --mark-insert-tint: rgb(0 0 0 / 5%);
+  --mark-delete: #545963; --mark-selected-tint: rgb(0 0 0 / 12%);
+  --focus-paper: #1d4ed8;
+  --mark-fact: #a61b1b; --mark-fact-tint: rgb(166 27 27 / 10%);
+  --crop-ink: #777;
+  --paper-veil: transparent;
+  --shadow-paper: 0 0 0 1px #8d95a5;
+}
+
+:root[data-ui="v2"][data-theme="dark"] {
+  --desk: #0d0e11; --chrome: #17191d; --panel: #262a32; --field: #1b1e25; --raised: #2e323c;
+  --ink: #e6e8ee; --on-ink: #131519; --text-2: #bfc4d0; --text-3: #a2a9b9;
+  --line: #373d4a; --line-strong: #555e70; --line-control: #7a849a;
+  --review-accent: #8ab4f8; --attn: #f5c26b; --attn-tint: #30230e; --attn-line: #bb8940;
+  --fact: #ff9a8d; --fact-tint: #3e201e;
+  --diff-ins-fg: #a2dcb3; --diff-ins-bg: #163021;
+  --paper-veil: rgb(0 0 0 / 7%);
+  --shadow-paper: 0 0 0 1px #666e81;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-ui="v2"]:not([data-theme]) {
+    --desk: #0d0e11; --chrome: #17191d; --panel: #262a32; --field: #1b1e25; --raised: #2e323c;
+    --ink: #e6e8ee; --on-ink: #131519; --text-2: #bfc4d0; --text-3: #a2a9b9;
+    --line: #373d4a; --line-strong: #555e70; --line-control: #7a849a;
+    --review-accent: #8ab4f8; --attn: #f5c26b; --attn-tint: #30230e; --attn-line: #bb8940;
+    --fact: #ff9a8d; --fact-tint: #3e201e;
+    --diff-ins-fg: #a2dcb3; --diff-ins-bg: #163021;
+    --paper-veil: rgb(0 0 0 / 7%);
+    --shadow-paper: 0 0 0 1px #666e81;
+  }
+}

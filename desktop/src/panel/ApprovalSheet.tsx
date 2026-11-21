@@ -18,7 +18,7 @@ import {
 import { useWorkspace } from "../store";
 import { closeApproval, confirmApproval, prepareConfirmation, select, toggleTick } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
-import { Keycap } from "../ui/Keycap";
+import { Icon } from "../ui/icons";
 import { Parts } from "./bits";
 import { checkText, proposerText } from "./ChangesPane";
 import { revisionName, tp } from "./i18n";
@@ -247,8 +247,8 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
               .join(" · ")}
           </p>
         </div>
-        <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeApproval()} aria-label={tp("wp4_sheet_close", lang)}>
-          <Keycap keys={["Esc"]} />
+        <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeApproval()} aria-label={tp("wp4_sheet_close", lang)} title="Esc">
+          <Icon name="close" />
         </button>
       </header>
 
@@ -369,22 +369,20 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
           </p>
         ) : null}
         <div className="rp-sheet-actions">
-          <button type="button" className="rp-btn" onClick={() => closeApproval()} disabled={busy} data-testid="approve-cancel">
+          <button type="button" className="rp-btn" onClick={() => closeApproval()} disabled={busy} data-testid="approve-cancel" title="Esc">
             {tp("wp4_sheet_cancel", lang)}
-            <Keycap keys={["Esc"]} />
           </button>
           <button
             type="button"
             className="rp-btn rp-btn--primary"
             data-variant="primary"
             data-confirm=""
-            data-testid="approve-confirm"
+            data-testid="approve-confirm" title="Enter"
             disabled={!ready}
             aria-busy={busy || undefined}
             onClick={() => void confirmApproval()}
           >
             {confirmLabel}
-            {busy ? null : <Keycap keys={["Enter"]} />}
           </button>
         </div>
       </footer>

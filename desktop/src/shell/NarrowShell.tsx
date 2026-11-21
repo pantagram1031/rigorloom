@@ -38,7 +38,7 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
   const count = useWorkspace((s) => (sessionId ? pendingCount(s, sessionId) : 0));
 
   return (
-    <div className="sh-narrow">
+    <div className="sh-narrow" data-merged={sessionId ? true : undefined}>
       <header className="sh-narrow-bar" data-testid={TID.titlebar}>
         <button
           type="button"
@@ -65,18 +65,16 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
             {S.t(panelOpen ? "shell_narrow_changes_close" : "shell_narrow_changes_open", lang, [count])}
           </button>
         ) : null}
+        {sessionId ? <Strip sessionId={sessionId} /> : null}
       </header>
       <main className="sh-narrow-main" data-testid={TID.canvasHost}>
         {tab?.kind === "start" ? <StartTab /> : null}
         {tab?.kind === "opening" ? <OpeningCanvas name={tab.name} /> : null}
         {tab?.kind === "failed" ? <FailedCanvas tab={tab} /> : null}
         {sessionId ? (
-          <>
-            <Strip sessionId={sessionId} />
-            <div className="sh-canvas">
-              <Slot name="canvas" sessionId={sessionId} fallback={<div className="sh-desk" data-slot-empty="canvas" />} />
-            </div>
-          </>
+          <div className="sh-canvas">
+            <Slot name="canvas" sessionId={sessionId} fallback={<div className="sh-desk" data-slot-empty="canvas" />} />
+          </div>
         ) : null}
       </main>
       {sessionId ? (

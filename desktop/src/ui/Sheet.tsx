@@ -7,7 +7,6 @@ import {
 
 import { tWp1b } from "../i18n/v2/wp1b";
 import type { UiLanguage } from "../i18n/vocabulary";
-import { Keycap } from "./Keycap";
 import { isImeComposing, principleAttributes } from "./attributes";
 import { Icon } from "./icons";
 
@@ -94,11 +93,10 @@ export function Sheet({
         {onClose ? (
           <button
             type="button"
-            className="rl-sheet-close"
+            className="rl-sheet-close" title="Esc"
             aria-label={resolvedCloseLabel}
             onClick={onClose}
           >
-            <Keycap keys="Esc" />
             <Icon name="close" size={16} />
           </button>
         ) : null}

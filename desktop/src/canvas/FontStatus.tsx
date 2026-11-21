@@ -89,8 +89,8 @@ export function FontStatus({ sessionId, rev, language, source, narrow = false }:
           }}>
           {rows.length ? wp3t("status_font_sub", language, [rows.length]) : wp3t("font_install_title", language)}
         </button>
-      ) : !narrow && other.length > 0 ? (
-        <span className="rl-status-item rl-status-item--attn" data-testid="status-font-sub"
+      ) : other.length > 0 ? (
+        <span className={`rl-status-item rl-status-item--attn${narrow ? " rl-font-trigger--narrow" : ""}`} data-testid="status-font-sub"
           title={other.map((row) => row.resolved ?
             wp3t("status_font_sub_detail", language, [row.declared, row.resolved]) : row.declared).join(", ")}>
           {wp3t("status_font_sub", language, [other.length])}

@@ -2,15 +2,12 @@ import { useRef, type KeyboardEvent, type ReactNode } from "react";
 
 import { Tag } from "./Tag";
 import { isImeComposing, principleAttributes } from "./attributes";
-import { Icon } from "./icons";
 
 export interface TabItem<T extends string = string> {
   id: T;
   label: ReactNode;
   count?: number;
   countTone?: "accent" | "attn" | "neutral";
-  /** Amber indicator dot for stale or blocked state (J1 §1 Borrow). */
-  dot?: "attn";
   disabled?: boolean;
 }
 
@@ -104,11 +101,6 @@ export function Tabs<T extends string = string>({
               >
                 {item.count}
               </Tag>
-            ) : null}
-            {item.dot === "attn" ? (
-              <span className="rl-tab-dot rl-tab-dot--attn" aria-hidden="true">
-                <Icon name="dot" size={16} />
-              </span>
             ) : null}
           </button>
         );

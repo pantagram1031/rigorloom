@@ -114,6 +114,12 @@ def test_canvas_and_panes_mount_from_start(browser, server, theme, size):
         _open_sample(page, server)
         assert page.evaluate("document.documentElement.scrollWidth") == width
         expect(page.get_by_test_id("strip-export")).to_have_count(0)
+        expect(page.get_by_test_id("titlebar").get_by_test_id("strip-host")).to_be_visible()
+        expect(page.locator(".rl-ruler-h")).to_have_css("height", "20px")
+        expect(page.locator(".rl-ruler-v")).to_have_css("width", "20px")
+        expect(page.locator(".rl-cropmarks")).to_be_visible()
+        if not os.environ.get("RIGORLOOM_HWP_ENGINE"):
+            expect(page.get_by_test_id("strip-grade")).to_contain_text("인쇄 결과와 다를 수 있습니다")
         _assert_principles(page, f"{width} {theme}")
 
         if width < 600:

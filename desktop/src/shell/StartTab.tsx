@@ -5,6 +5,7 @@
  */
 import { useMemo, useState } from "react";
 
+import { useKeyHint } from "./keys";
 import { Mark } from "../brand";
 import { S } from "../i18n/v2/shell";
 import { useWorkspace } from "../store";
@@ -12,7 +13,6 @@ import type { CorpusFileEntry, Recent } from "../types";
 import { corpusFormDisplayInfo, filterCorpusEntries, findSessionByPath, isHwpBackendAvailable, normalizePathKey, pathParentFolder } from "../workspace/openHelpers";
 import { engineState, formatShellDate, pendingCount } from "./docInfo";
 import { OPENABLE_EXTENSIONS, openRecent, openSample, pickAndOpenFile, pickFolder } from "./open";
-import { KeyHint } from "./parts";
 import { recentTid, TID } from "./testids";
 import { shortPath } from "./Shell";
 
@@ -23,17 +23,29 @@ export function StartTab() {
   const capabilities = useWorkspace((s) => s.capabilities);
   const engine = useWorkspace((s) => engineState(s));
   const missing = engine === "missing";
+  const [query, setQuery] = useState("");
+  const openFileKey = useKeyHint("shell.openFile")?.join("+");
+  const openFolderKey = useKeyHint("shell.openFolder")?.join("+");
   const [help, setHelp] = useState(false);
   const samples = useMemo(() => filterCorpusEntries(corpus, isHwpBackendAvailable(capabilities)), [corpus, capabilities]);
+
+  const needle = query.trim().toLocaleLowerCase();
+  const filterLabel = S.t("shell_start_filter", lang);
+  const filteredSamples = needle ? samples.filter((entry) => {
+    const { title, sourceLabel, filename } = corpusFormDisplayInfo(entry, lang);
+    return [title, sourceLabel, filename].some((part) => part.toLocaleLowerCase().includes(needle));
+  }) : samples;
+  const filteredRecents = needle
+    ? recents.filter((entry) => entry.name.toLocaleLowerCase().includes(needle))
+    : recents;
 
   return (
     <div className="sh-start" data-testid={TID.start}>
       <div className="sh-start-col">
         <div className="sh-start-head">
-          <Mark size={40} className="sh-start-mark" />
+          <Mark size={24} className="sh-start-mark" />
           <h1 className="sh-start-word">{S.t("shell_app_name", lang)}</h1>
         </div>
-        <p className="sh-start-boundary">{S.t("shell_start_boundary", lang)}</p>
 
         {missing ? (
           <div className="sh-start-attn" role="alert" data-testid={TID.startEngineMissing}>
@@ -46,32 +58,32 @@ export function StartTab() {
         ) : null}
 
         <div className="sh-start-actions">
-          <button type="button" className="sh-start-row" data-testid={TID.startOpenFile} disabled={missing} onClick={() => void pickAndOpenFile()}>
+          <button type="button" className="sh-start-row" data-testid={TID.startOpenFile} title={openFileKey} disabled={missing} onClick={() => void pickAndOpenFile()}>
             <span className="sh-start-row-main">
               <span className="sh-start-row-label">{S.t("shell_start_open_file", lang)}</span>
               <span className="sh-start-exts sh-mono">{OPENABLE_EXTENSIONS.map((e) => `.${e}`).join(" ")}</span>
             </span>
-            <KeyHint id="shell.openFile" />
           </button>
-          <button type="button" className="sh-start-row" data-testid={TID.startOpenFolder} disabled={missing} onClick={() => void pickFolder()}>
+          <button type="button" className="sh-start-row" data-testid={TID.startOpenFolder} title={openFolderKey} disabled={missing} onClick={() => void pickFolder()}>
             <span className="sh-start-row-label">{S.t("shell_start_open_folder", lang)}</span>
-            <KeyHint id="shell.openFolder" />
           </button>
-          <a className="sh-start-row" href="#start-samples" data-testid={TID.startSamples}>
-            <span className="sh-start-row-label">{S.t("shell_start_samples", lang)}</span>
-          </a>
         </div>
 
-        {recents.length > 0 ? <RecentList recents={recents} disabled={missing} /> : null}
+        <input type="search" className="sh-start-filter" aria-label={filterLabel} placeholder={filterLabel}
+          data-testid="start-filter" value={query} onChange={(event) => setQuery(event.target.value)} />
+        {filteredRecents.length > 0 ? <RecentList recents={filteredRecents} disabled={missing} /> : null}
       </div>
 
-      <section className="sh-start-col sh-start-col--side" id="start-samples" aria-labelledby="sh-samples-h">
+      <section className="sh-start-col sh-start-col--side" data-testid={TID.startSamples} aria-labelledby="sh-samples-h">
         <h2 className="sh-start-h" id="sh-samples-h">{S.t("shell_start_samples", lang)}</h2>
         <ul className="sh-start-list" data-testid="start-sample-list">
-          {samples.map((entry, i) => (
+          {filteredSamples.map((entry, i) => (
             <SampleRow key={entry.path} entry={entry} index={i} disabled={missing} />
           ))}
         </ul>
+        {needle && filteredSamples.length === 0 && filteredRecents.length === 0 ? (
+          <p className="sh-start-empty" role="status">{S.t("shell_start_no_matches", lang)}</p>
+        ) : null}
       </section>
     </div>
   );
@@ -80,6 +92,7 @@ export function StartTab() {
 function SampleRow({ entry, index, disabled }: { entry: CorpusFileEntry; index: number; disabled: boolean }) {
   const lang = useWorkspace((s) => s.language);
   const info = corpusFormDisplayInfo(entry, lang);
+  const ext = info.filename.split(".").pop()?.toUpperCase();
   return (
     <li>
       <button
@@ -90,6 +103,7 @@ function SampleRow({ entry, index, disabled }: { entry: CorpusFileEntry; index: 
         data-file={info.filename}
         onClick={() => void openSample(entry)}
       >
+        <span className="sh-start-ext sh-mono">{ext}</span>
         <span className="sh-start-item-title">{info.title}</span>
         <span className="sh-start-item-meta">{info.sourceLabel}</span>
       </button>

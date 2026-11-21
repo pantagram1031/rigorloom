@@ -8,7 +8,6 @@ import { editOpValue } from "../actions";
 import type { UiLanguage } from "../i18n/vocabulary";
 import { hasNewValues, isChangedFact, needsLook, type ChangeItem } from "../model/changes";
 import { decide, select } from "./actions";
-import { Keycap } from "../ui/Keycap";
 import { SourceText } from "./bits";
 import { tp } from "./i18n";
 
@@ -19,16 +18,6 @@ export function stateHue(item: ChangeItem): "fact" | "attn" | "pending" | "decid
   if (item.decision !== "pending") return "decided";
   if (item.source === "test") return "test";
   return "pending";
-}
-
-function DiffLine({ item, lang }: { item: ChangeItem; lang: UiLanguage }) {
-  if (item.hard.length > 0) {
-    return <span className="rp-row-reason">{item.hard[0]}</span>;
-  }
-  if (item.kind === "delete") {
-    return <del className="rp-row-del">{item.before || tp("wp4_row_removed_value", lang)}</del>;
-  }
-  return <span className="rp-row-after">{item.after}</span>;
 }
 
 interface RowProps {
@@ -97,13 +86,17 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
     >
       <button type="button" className="rp-row-head" onClick={() => select(item.id)} data-testid={`change-summary-${item.n}`}>
         <span className="rp-row-line1">
-          <span className="rp-row-n">{item.n}</span>
+          <span className="rp-row-n">{String(item.n).padStart(2, "0")}</span>
           <span className="rp-row-label">{item.label}</span>
           <span className="rp-row-meta">
             <span className="rp-sep">·</span>
             {item.opName}
-            <span className="rp-sep">·</span>
-            <SourceText source={item.source} lang={lang} />
+            {item.source !== "agent" ? (
+              <>
+                <span className="rp-sep">·</span>
+                <SourceText source={item.source} lang={lang} />
+              </>
+            ) : null}
           </span>
           <span className="rp-row-right">
             {isChangedFact(item) ? (
@@ -118,22 +111,23 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
             {stateText ? <span className="rp-row-state">{stateText}</span> : null}
           </span>
         </span>
-        {!selected ? (
-          <span className="rp-row-line2">
-            <DiffLine item={item} lang={lang} />
-          </span>
-        ) : null}
       </button>
-      {selected ? (
-        <div className="rp-row-body">
-          <dl className="rp-diff">
-            <div className="rp-diff-line">
-              <dt>{tp("wp4_row_before", lang)}</dt>
-              <dd>{item.before.trim() ? item.before : <span className="rp-dim">{tp("wp4_row_empty_value", lang)}</span>}</dd>
-            </div>
-            <div className="rp-diff-line">
-              <dt>{tp("wp4_row_after", lang)}</dt>
-              <dd>
+      <div className="rp-row-body">
+        <table className="rp-diff" aria-label={item.label}>
+          <tbody>
+            <tr className="rp-diff-line rp-diff-line--before">
+              <th scope="row">
+                <span aria-hidden="true">−</span>
+                <span className="rp-diff-label">{tp("wp4_row_before", lang)}</span>
+              </th>
+              <td>{item.before.trim() ? item.before : <span className="rp-dim">{tp("wp4_row_empty_value", lang)}</span>}</td>
+            </tr>
+            <tr className="rp-diff-line rp-diff-line--after">
+              <th scope="row">
+                <span aria-hidden="true">+</span>
+                <span className="rp-diff-label">{tp("wp4_row_after", lang)}</span>
+              </th>
+              <td>
                 {editing ? (
                   <textarea
                     ref={inputRef}
@@ -144,56 +138,54 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
                     onKeyDown={onEditKey}
                     onBlur={() => void commit()}
                     aria-label={tp("wp4_row_after", lang)}
-                    data-testid="change-edit-input"
+                    data-testid="change-edit-input" title="Enter · Esc"
                   />
                 ) : item.kind === "delete" ? (
                   <span className="rp-dim">{tp("wp4_row_removed_value", lang)}</span>
                 ) : (
                   item.after
                 )}
-              </dd>
-            </div>
-          </dl>
-          {item.hard.length > 0 ? <p className="rp-row-reason rp-row-reason--full">{item.hard.join(" ")}</p> : null}
-          <div className="rp-row-actions">
-            {item.decision === "rejected" ? (
-              <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "pending")} data-testid="act-add-back">
-                {tp("wp4_act_add_back", lang)}
-                <Keycap keys={["U"]} />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        {selected && item.hard.length > 0 ? <p className="rp-row-reason rp-row-reason--full">{item.hard.join(" ")}</p> : null}
+        <div className="rp-row-actions">
+          {item.decision === "rejected" ? (
+            <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "pending")} data-testid="act-add-back" title="U">
+              {tp("wp4_act_add_back", lang)}
+            </button>
+          ) : (
+            <>
+              {item.decision !== "accepted" ? (
+                <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "accepted")} data-testid="act-accept" title="Y">
+                  {tp("wp4_act_accept", lang)}
+                </button>
+              ) : null}
+              <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "rejected")} data-testid="act-reject" title="N">
+                {tp("wp4_act_reject", lang)}
               </button>
-            ) : (
-              <>
-                {item.decision !== "accepted" ? (
-                  <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "accepted")} data-testid="act-accept">
-                    {tp("wp4_act_accept", lang)}
-                    <Keycap keys={["Y"]} />
-                  </button>
-                ) : null}
-                <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "rejected")} data-testid="act-reject">
-                  {tp("wp4_act_reject", lang)}
-                  <Keycap keys={["N"]} />
+              <button
+                type="button"
+                className="rp-btn"
+                disabled={locked || item.kind === "delete"}
+                onClick={() => {
+                  if (!selected) select(item.id);
+                  requestEdit(item.id);
+                }}
+                data-testid="act-edit" title="E"
+              >
+                {tp("wp4_act_edit", lang)}
+              </button>
+              {item.decision === "accepted" ? (
+                <button type="button" className="rp-btn rp-btn--quiet" disabled={locked} onClick={() => decide(item.id, "pending")} title="U">
+                  {tp("wp4_act_undo", lang)}
                 </button>
-                <button
-                  type="button"
-                  className="rp-btn"
-                  disabled={locked || item.kind === "delete"}
-                  onClick={() => requestEdit(item.id)}
-                  data-testid="act-edit"
-                >
-                  {tp("wp4_act_edit", lang)}
-                  <Keycap keys={["E"]} />
-                </button>
-                {item.decision === "accepted" ? (
-                  <button type="button" className="rp-btn rp-btn--quiet" disabled={locked} onClick={() => decide(item.id, "pending")}>
-                    {tp("wp4_act_undo", lang)}
-                    <Keycap keys={["U"]} />
-                  </button>
-                ) : null}
-              </>
-            )}
-          </div>
+              ) : null}
+            </>
+          )}
         </div>
-      ) : null}
+      </div>
     </li>
   );
 }
