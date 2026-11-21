@@ -16,7 +16,6 @@ export const S = defineStrings("shell", {
   shell_tab_changes_count: { ko: "변경 {0}건 대기", en: "{0} changes pending" },
   shell_tab_failed: { ko: "열지 못함", en: "Could not open" },
   shell_tab_opening: { ko: "문서 여는 중", en: "Opening document" },
-  shell_palette_field: { ko: "명령, 문서, 빈칸 찾기", en: "Commands, documents, blanks" },
   shell_toggle_left: { ko: "왼쪽 창", en: "Left pane" },
   shell_narrow_changes_open: { ko: "변경 {0}건 · 열기", en: "{0} changes · Open" },
   shell_narrow_changes_close: { ko: "변경 창 닫기", en: "Close review panel" },
@@ -44,10 +43,8 @@ export const S = defineStrings("shell", {
   shell_open_filter: { ko: "문서", en: "Documents" },
 
   // start tab
-  shell_start_boundary: {
-    ko: "에이전트는 제안하고, 사람이 승인합니다. 승인한 변경만 새 수정본이 되고 원본은 바뀌지 않습니다.",
-    en: "Agents propose. A person approves. Only approved changes become a new revision, and the original never changes.",
-  },
+  shell_start_filter: { ko: "문서명, 양식명, 기관 검색", en: "Search files, forms, and agencies" },
+  shell_start_no_matches: { ko: "검색 결과가 없습니다.", en: "No matching documents." },
   shell_start_open_file: { ko: "파일 열기", en: "Open file" },
   shell_start_open_folder: { ko: "폴더 열기", en: "Open folder" },
   shell_start_samples: { ko: "예시 양식", en: "Sample forms" },

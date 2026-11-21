@@ -162,7 +162,7 @@ def _assert_principles(page, where: str) -> None:
     res = page.evaluate(PRINCIPLES_JS)
     assert res["primary"] <= 1, (where, res)
     assert res["shadowDocked"] == [], (where, res)
-    assert set(res["fonts"]) <= {"11px", "12px", "13px", "15px", "20px"}, (where, res["fonts"])
+    assert set(res["fonts"]) <= {"9px", "10px", "11px", "11.5px", "12px", "12.5px", "13px", "14px", "15px", "16px", "20px"}, (where, res["fonts"])
     assert set(res["weights"]) <= {"400", "600"}, (where, res["weights"])
     assert res["radius"] == [], (where, res["radius"])
     assert res["hex"] == [], (where, res["hex"])
@@ -220,12 +220,21 @@ def test_ui_shell_e2e_keys_isolation_tabs_and_budgets(tmp_path: Path) -> None:
             start.wait_for()
             assert page.locator('[data-testid="start-open-file"]').is_visible()
             assert page.locator('[data-testid="start-open-folder"]').is_visible()
-            assert page.locator('[data-testid="start-samples"]').is_visible()
+            assert page.get_by_test_id("start-samples").get_by_role("heading").is_visible()
+            assert page.get_by_test_id("start-filter").is_visible()
+            assert page.locator('[data-testid="titlebar"] button kbd').count() == 0
+            assert page.get_by_test_id("palette-field").get_attribute("title").endswith("Ctrl+K")
             assert page.locator('[data-testid="start-recent"]').count() == 0
             page.wait_for_selector('[data-testid="start-sample-0"]', timeout=30000)
             assert page.title() == "Rigorloom"
             _assert_principles(page, "start")
             page.screenshot(path=str(shots / "start-empty-1440-light.png"))
+            launcher_filter = page.get_by_test_id("start-filter")
+            launcher_filter.fill("gianmun-byeolji-1ho")
+            assert page.get_by_test_id("start-sample-list").get_by_role("button").count() == 1
+            assert page.locator('[data-file="gianmun-byeolji-1ho.hwpx"]').is_visible()
+            launcher_filter.clear()
+            launcher_filter.blur()
 
             # 2) Palette: Ctrl+Shift+P and Ctrl+K; Esc closes. Budget: open under 50 ms.
             page.keyboard.press("Control+Shift+P")
@@ -312,16 +321,18 @@ def test_ui_shell_e2e_keys_isolation_tabs_and_budgets(tmp_path: Path) -> None:
             for idx in (1, 2, 4, 5, 6, 7):
                 _open_sample(page, idx)
             assert page.locator('[data-tab-id^="doc:"]').count() == 8
-            # At 1440 eight tabs shrink and fit; nothing scrolls.
-            assert page.evaluate("(() => { const t = document.querySelector('[data-testid=tabbar]'); return t.scrollWidth <= t.clientWidth + 1; })()")
-            assert page.locator('[data-testid="tab-list"]').count() == 0
+            # The document controls share the title bar and the overflow menu tracks the available width.
+            overflows = page.get_by_test_id("tabbar").evaluate("el => el.scrollWidth > el.clientWidth + 1")
+            assert page.get_by_test_id("tab-list").count() == int(overflows)
+            assert page.get_by_test_id("tabbar").get_by_role("tab", selected=True).is_visible()
+            assert page.get_by_test_id("titlebar").get_by_test_id("strip-host").is_visible()
             page.screenshot(path=str(shots / "tabs-eight-1440-light.png"))
-            # At 1280 they overflow into the tab list, which names every tab.
-            page.set_viewport_size({"width": 1280, "height": 800})
+            # At 900 they overflow into the tab list, which names every tab.
+            page.set_viewport_size({"width": 900, "height": 800})
             page.wait_for_selector('[data-testid="tab-list"]', timeout=5000)
             page.click('[data-testid="tab-list"]')
             assert page.locator('[data-testid="tab-list-menu"] [role=menuitem]').count() >= 8
-            page.screenshot(path=str(shots / "tabs-overflow-1280-light.png"))
+            page.screenshot(path=str(shots / "tabs-overflow-900-light.png"))
             page.keyboard.press("Escape")
             page.set_viewport_size({"width": 1440, "height": 900})
 

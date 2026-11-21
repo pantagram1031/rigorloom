@@ -1,5 +1,6 @@
 @import "./tokens.css";
 @import "./v1-tokens.css";
+@import "./v2-tokens.css";
 
 /*
  * Compatibility aliases for legacy selectors alongside tokens.css.
