@@ -1,3 +1,4 @@
+import { SOURCE_COPY } from "./sourceCopy";
 import {
   useCallback,
   useEffect,
@@ -8,11 +9,11 @@ import {
 
 import { cancelEdit } from "../actions";
 import { wp3t } from "../i18n/v2/wp3";
-import { createEnginePageSource, engineTextEdit, type RasterSource } from "../model/enginePage";
+import { createEnginePageSource, engineTextEdit } from "../model/enginePage";
 import {
   createProjectionPageSource,
   detectDocumentSeats,
-  formatSeatLocation,
+  parseDocAddress,
   type CanvasChangeRef,
   type PageSource,
 } from "../model/page";
@@ -42,7 +43,6 @@ import {
   useCanvasSlice,
 } from "./controller";
 import { FontStatus } from "./FontStatus";
-import { MarginMarks, type MeasuredMarkPos } from "./MarginMarks";
 import { MarkToolbar, type MarkToolbarAnchor } from "./MarkToolbar";
 import { PageSheet } from "./PageSheet";
 import { ScrollMap, type ScrollMapTick } from "./ScrollMap";
@@ -66,16 +66,12 @@ export function CanvasPane() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const [measured, setMeasured] = useState<{
-    positions: Map<string, MeasuredMarkPos>;
     toolbarAnchor: MarkToolbarAnchor | null;
     scrollTicks: ScrollMapTick[];
-    gutterWidthPx: number;
     effectiveZoom: number;
   }>({
-    positions: new Map(),
     toolbarAnchor: null,
     scrollTicks: [],
-    gutterWidthPx: 54,
     effectiveZoom: 1,
   });
 
@@ -171,10 +167,8 @@ export function CanvasPane() {
 
   const handleMeasurementsChange = useCallback(
     (data: {
-      positions: Map<string, MeasuredMarkPos>;
       toolbarAnchor: MarkToolbarAnchor | null;
       scrollTicks: ScrollMapTick[];
-      gutterWidthPx: number;
       effectiveZoom: number;
     }) => {
       setMeasured(data);
@@ -274,19 +268,6 @@ export function CanvasPane() {
               displayedEdits={pageRaster.displayedEdits}
             />
 
-            {slice.view === "marks" ? (
-              <MarginMarks
-                changes={changes}
-                positions={measured.positions}
-                selectedChangeId={slice.selectedChangeId}
-                zoom={measured.effectiveZoom}
-                gutterWidthPx={measured.gutterWidthPx}
-                drying={slice.drying}
-                language={language}
-                onSelect={(id) => canvas.select(id, { fromCanvas: false })}
-              />
-            ) : null}
-
             {!isNarrow &&
             slice.view === "marks" &&
             selectedItem &&
@@ -374,13 +355,6 @@ export function CanvasPane() {
 
 // --- Status bar slots (`statusLeft` / `statusRight`) ------------------------
 
-const SOURCE_COPY: Record<RasterSource, Parameters<typeof wp3t>[0]> = {
-  engine: "page_source_engine",
-  hancom: "page_source_hancom",
-  pdf: "page_source_pdf",
-  "own-uncertified": "page_source_own",
-};
-
 export function CanvasStatusLeft() {
   const session = useWorkspace(activeSession);
   const inspect = useWorkspace(activeInspect);
@@ -420,54 +394,20 @@ export function CanvasStatusLeft() {
     return map;
   }, [inspect, textMap, language]);
 
-  const seatText = useMemo(() => {
-    if (!inspect) return null;
-    if (inlineEdit?.kind === "cell") {
-      const k = cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col);
-      const label =
-        seatLabelByKey.get(k) ??
-        deriveCellFieldLabel(
-          inspect,
-          textMap,
-          inlineEdit.table,
-          inlineEdit.row,
-          inlineEdit.col,
-          language,
-        );
-      return `${label} · ${formatSeatLocation(
-        page,
-        inlineEdit.table,
-        inlineEdit.row,
-        inlineEdit.col,
-        language,
-      )}`;
-    }
-    if (slice.hoveredSeatLabel) {
-      return slice.hoveredSeatLabel;
-    }
-    if (slice.selectedSeatKey) {
-      const m = /^c:(\d+):(\d+):(\d+)$/.exec(slice.selectedSeatKey);
-      if (m) {
-        const tIdx = Number(m[1]);
-        const rIdx = Number(m[2]);
-        const cIdx = Number(m[3]);
-        const label =
-          seatLabelByKey.get(slice.selectedSeatKey) ??
-          deriveCellFieldLabel(inspect, textMap, tIdx, rIdx, cIdx, language);
-        return `${label} · ${formatSeatLocation(page, tIdx, rIdx, cIdx, language)}`;
-      }
-    }
-    return null;
-  }, [
-    inspect,
-    seatLabelByKey,
-    inlineEdit,
-    slice.selectedSeatKey,
-    slice.hoveredSeatLabel,
-    textMap,
-    page,
-    language,
-  ]);
+  const changes = useCanvasChanges(session?.sessionId ?? null, textMap);
+  const selectedCellKey = changes.find((change) => change.id === slice.selectedChangeId)?.cellKey;
+  const statusKey = inlineEdit?.kind === "cell"
+    ? cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col)
+    : slice.hoveredSeatKey ?? selectedCellKey ?? slice.selectedSeatKey;
+  const address = statusKey ? parseDocAddress(statusKey) : null;
+  const position = address?.kind === "cell"
+    ? wp3t("status_cell_position", language, [page, address.row + 1, address.col + 1])
+    : wp3t("status_page_position", language, [page]);
+
+  const seatText = inspect && statusKey && address?.kind === "cell"
+    ? seatLabelByKey.get(statusKey) ??
+      deriveCellFieldLabel(inspect, textMap, address.table, address.row, address.col, language)
+    : null;
 
   return (
     <div className="rl-status-left" data-testid="status-canvas-left">
@@ -489,6 +429,7 @@ export function CanvasStatusLeft() {
         {wp3t(rasterSource ? SOURCE_COPY[rasterSource] : "page_source_projection", language)}
         {rasterApprox ? ` · ${wp3t("page_source_approx", language)}` : null}
       </span>
+      <span className="rl-status-item rl-num" data-testid="status-cell-position">{position}</span>
       {seatText ? (
         <span className="rl-status-item" data-testid="status-seat">
           {seatText}
@@ -538,7 +479,7 @@ export function CanvasStatusRight() {
           title={wp3t("zoom_fit_width", language)}
           onClick={() => fitCanvasWidth()}
         >
-          {`${pct}%`}
+          {`${(pct / 100).toFixed(2)}×`}
         </button>
         <button
           type="button"

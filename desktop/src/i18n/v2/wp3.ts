@@ -7,16 +7,17 @@ export interface Wp3VocabEntry {
 
 export const WP3_VOCABULARY = {
   // Document strip, view switch, grade label, stepper
-  canvas_view_marks: { ko: "변경 표시", en: "Show changes" },
-  canvas_view_clean: { ko: "표시 없이", en: "Without marks" },
+  canvas_view_marks: { ko: "교정부호", en: "Markup" },
+  canvas_view_clean: { ko: "완성본", en: "Clean copy" },
   canvas_view_base_source: { ko: "원본", en: "Original" },
   canvas_view_base_revision: { ko: "수정본 {0}", en: "Revision {0}" },
   canvas_grade_preview: {
     ko: "미리보기 · 인쇄 결과와 다를 수 있습니다",
     en: "Preview · Printed output may differ",
   },
-  canvas_grade_preview_short: { ko: "미리보기", en: "Preview" },
-  canvas_strip_pending: { ko: "{0} + 변경 {1}건", en: "{0} + {1} changes" },
+  status_cell_position: { ko: "{0}쪽 · 표 {1}줄 {2}칸", en: "Page {0} · Table row {1}, column {2}" },
+  status_page_position: { ko: "{0}쪽", en: "Page {0}" },
+  canvas_strip_breadcrumb: { ko: "{0} › 변경 {1}건", en: "{0} › {1} changes" },
   canvas_strip_stale: {
     ko: "{0} · 지난 제안 {1}건",
     en: "{0} · {1} outdated changes",

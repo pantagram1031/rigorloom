@@ -27,6 +27,7 @@ import {
   type PageViewMode,
 } from "../model/page";
 import { cellKey, useWorkspace } from "../store";
+import { deriveCellFieldLabel } from "../workspace/fieldLabels";
 import type {
   GraphCell,
   GraphParagraph,
@@ -34,7 +35,6 @@ import type {
   RegionText,
   UiLanguage,
 } from "../types";
-import { deriveCellFieldLabel } from "../workspace/fieldLabels";
 import {
   beginCellEditV2,
   commitCellEditV2,
@@ -44,7 +44,8 @@ import {
   stepCanvasZoom,
   toggleNarrowReadZoom,
 } from "./actions";
-import type { MeasuredMarkPos } from "./MarginMarks";
+import { PageGuides } from "./PageGuides";
+import { ReviewMark } from "./ReviewMark";
 import type { MarkToolbarAnchor } from "./MarkToolbar";
 import type { ScrollMapTick } from "./ScrollMap";
 import { useEngineEditOverlay } from "./EngineEditOverlay";
@@ -401,10 +402,8 @@ export interface PageSheetProps {
   onSelectChange: (itemId: string, options?: { fromCanvas?: boolean }) => void;
   onSelectSeat: (key: string | null, seatLabel: string | null) => void;
   onMeasurementsChange: (data: {
-    positions: Map<string, MeasuredMarkPos>;
     toolbarAnchor: MarkToolbarAnchor | null;
     scrollTicks: ScrollMapTick[];
-    gutterWidthPx: number;
     effectiveZoom: number;
   }) => void;
 }
@@ -559,10 +558,8 @@ export function PageSheet({
     const sheet = sheetRef.current;
     if (!sheet) {
       onMeasurementsChange({
-        positions: new Map(),
         toolbarAnchor: null,
         scrollTicks: [],
-        gutterWidthPx: Math.round(padLeftPx * effectiveZoom),
         effectiveZoom,
       });
       return;
@@ -574,7 +571,7 @@ export function PageSheet({
 
       const sheetRect = sheet.getBoundingClientRect();
       const scale = effectiveZoom || 1;
-      const positions = new Map<string, MeasuredMarkPos>();
+      const positions = new Map<string, number>();
       const markEls = sheet.querySelectorAll<HTMLElement>("[data-mark-item]");
 
       let toolbarAnchor: MarkToolbarAnchor | null = null;
@@ -583,44 +580,61 @@ export function PageSheet({
       for (const el of markEls) {
         const itemId = el.getAttribute("data-mark-item");
         if (!itemId) continue;
-        const r = el.getBoundingClientRect();
-        const topPx = (r.top - sheetRect.top) / scale;
-        const heightPx = Math.max(16, r.height / scale);
-        positions.set(itemId, { itemId, topPx, heightPx });
+        const block = el.closest<HTMLElement>("[data-cell-key], td, p") ?? el;
+        const r = rasterUrl ? block.getBoundingClientRect() : el.getBoundingClientRect();
+        const centerPx = (r.top - sheetRect.top + Math.max(16 * scale, r.height) / 2) / scale;
+        positions.set(itemId, centerPx);
 
         if (itemId === selectedChangeId) {
           // The toolbar floats outside the block's top-right corner (J1 §1
           // Borrow): anchored to the cell or paragraph that holds the mark,
           // never to the changed text itself, so it does not cover it.
-          const block = el.closest<HTMLElement>("[data-cell-key], td, p") ?? el;
           const br = block.getBoundingClientRect();
           const markRightInStage = br.right - sheetRect.left;
           const stageVisibleW = sheetRect.width;
-          const estimatedToolbarW = 248;
+          const estimatedToolbarW = 140;
           const minLeftPx = Math.max(8, Math.round(padLeftPx * scale));
           const maxLeftPx = Math.max(minLeftPx, stageVisibleW - estimatedToolbarW - 8);
           const leftPx = Math.min(maxLeftPx, Math.max(minLeftPx, markRightInStage - estimatedToolbarW));
-          toolbarAnchor = {
-            topPx: Math.max(4, br.top - sheetRect.top - 32),
-            leftPx,
-          };
+          const toolbarHeight = 22;
+          let topPx = br.top - sheetRect.top - toolbarHeight - 4;
+          const pointsToScreen = PX_PER_PT * scale;
+          // Move the toolbar above any printed lines it would cover.
+          const lines = (engineGeometry?.boxes ?? []).filter((box) => {
+            const text = box.text?.trim();
+            // The engine emits the enclosing table as a single control
+            // glyph whose geometry spans the entire table.
+            return box.kind === "line" && text && text !== "▣" && box.xs?.length;
+          });
+          lines.sort((a, b) => b.rect[1] - a.rect[1]);
+          for (const line of lines) {
+            const [x, y, , h] = line.rect;
+            const glyphs = line.xs ?? [];
+            const inkLeft = (glyphs[0] ?? x) * pointsToScreen;
+            const inkRight = (glyphs[glyphs.length - 1] ?? x) * pointsToScreen;
+            const inkTop = y * pointsToScreen;
+            const inkBottom = (y + h) * pointsToScreen;
+            if (inkLeft < leftPx + estimatedToolbarW && inkRight > leftPx &&
+                inkTop < topPx + toolbarHeight && inkBottom > topPx) {
+              topPx = inkTop - toolbarHeight - 18;
+            }
+          }
+          toolbarAnchor = { topPx: Math.max(4, topPx), leftPx };
         }
       }
 
       for (const ch of changes) {
-        const pos = positions.get(ch.id);
-        if (!pos) continue;
+        const top = positions.get(ch.id);
+        if (top === undefined) continue;
         ticks.push({
           item: ch,
-          topPct: ((pos.topPx + pos.heightPx / 2) / totalH) * 100,
+          topPct: (top / totalH) * 100,
         });
       }
 
       onMeasurementsChange({
-        positions,
         toolbarAnchor,
         scrollTicks: ticks,
-        gutterWidthPx: Math.max(28, Math.round(padLeftPx * scale) - 4),
         effectiveZoom,
       });
     };
@@ -640,6 +654,7 @@ export function PageSheet({
     inspect,
     texts,
     rasterUrl,
+    engineGeometry,
     positioned,
     onMeasurementsChange,
   ]);
@@ -1120,6 +1135,9 @@ export function PageSheet({
                     const hasSelectedMark = cellChanges.some(
                       (ch) => ch.id === selectedChangeId,
                     );
+                    const reviewChange = view === "marks" && !isEditing
+                      ? cellChanges.find((change) => change.id === selectedChangeId) ?? cellChanges[0]
+                      : undefined;
                     const fontInfo = regionFaceByCell.get(key);
                     const cellFontFamily = fontInfo
                       ? `${fontInfo.face ? `"${fontInfo.face.replace(/"/g, "")}", ` : ""}${
@@ -1194,6 +1212,7 @@ export function PageSheet({
                         }}
                       >
                         {renderCellContent(cell, key, cellChanges, region)}
+                        {reviewChange ? <ReviewMark change={reviewChange} zoom={effectiveZoom} selected={hasSelectedMark} /> : null}
                       </td>
                     );
                   })}
@@ -1207,6 +1226,9 @@ export function PageSheet({
           const rect = positioned.get(`p${para.at_para}`);
           if (hasEngineGeometry && !rect) return null;
           const paraChanges = changesByPara.get(para.at_para) ?? [];
+          const reviewChange = rasterUrl && view === "marks"
+            ? paraChanges.find((change) => change.id === selectedChangeId) ?? paraChanges[0]
+            : undefined;
           const region = textMap[`p:${para.at_para}`];
           const runMap = new Map<number, CanvasChangeRef>();
           for (const ch of paraChanges) {
@@ -1268,6 +1290,8 @@ export function PageSheet({
                   )
                 )}
               </p>
+              {reviewChange ? <ReviewMark change={reviewChange} zoom={effectiveZoom}
+                selected={reviewChange.id === selectedChangeId} /> : null}
             </div>
           );
         })}
@@ -1290,6 +1314,8 @@ export function PageSheet({
 
         <div className="rl-paper-veil" aria-hidden="true" />
       </article>
+      <PageGuides width={sheetOuterWidth} height={sheetOuterHeight} zoom={effectiveZoom}
+        margins={{ top: padTopPx, right: padRightPx, bottom: padBottomPx, left: padLeftPx }} />
     </div>
   );
 }
