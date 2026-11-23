@@ -247,7 +247,8 @@ rt_doc.edit("보고서.hwpx", [
   `HOOK_ABOVE`, `DOT_BELOW`), `char_border` (글자 테두리; `false` or
   `{"type": line_type, "width": width_mm, "color": "#RRGGBB"}` for all four
   sides, with line types and widths from Hancom's lists), `char_fill` (글자
-  배경; `#RRGGBB` or null), `color`, `underline_color`, `strike_color`
+  배경; `#RRGGBB` or null; given alone it changes only the background and
+  keeps the run's 글자 테두리), `color`, `underline_color`, `strike_color`
   (`#RRGGBB`), `shade` and `markpen` (형광펜; `#RRGGBB` or null to remove),
   `size` (pt, 1 to 4096), `font` (a face or `{"hangul": ..., "latin": ...}`),
   `ratio` (장평 %, 50 to 200), `spacing` (자간 %, -50 to 50), `rel_size` and
@@ -262,7 +263,10 @@ rt_doc.edit("보고서.hwpx", [
   (true/false), and 문단 테두리/배경 (`border`: `false` or
   `{"type", "width", "color"}` for all four sides, `fill`: `#RRGGBB` or null,
   `offsets`: `[left, right, top, bottom]` in pt from 0 to 1000 each,
-  `connect`: true/false; on a document whose `hh:paraPr` has no `hh:border`,
+  `connect`: true/false; 테두리 and 배경 are one borderFill, so `fill`
+  needs `border` too (`border: false` for a background without lines) and a
+  fill alone is `bad_input`, while `offsets` or `connect` alone keep the
+  paragraph's lines and background; on a document whose `hh:paraPr` has no `hh:border`,
   rigorloom's own .hwpx files among them, this needs hwp-engine 761147c (PR #34)
   or later, and an older engine fails the edit with nothing written). An unknown key or a value out of
   range is `bad_input` before anything runs. Both need the engine, which

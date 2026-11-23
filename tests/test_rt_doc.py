@@ -2267,6 +2267,10 @@ def test_more_char_and_para_shape_keys_are_checked_before_anything_runs(no_engin
         assert err({"op": "para_shape", "at": "p1", "set": {"fill": bad_pf}})["code"] == "bad_input", bad_pf
     for bad_off in ([1, 2, 3], [1, 2, 3, 4, 5], [-0.1, 0, 0, 0], [0, 0, 1000.1, 0], [True, 0, 0, 0], "0,0,0,0"):
         assert err({"op": "para_shape", "at": "p1", "set": {"offsets": bad_off}})["code"] == "bad_input", bad_off
+    # a fill alone would replace the paragraph's current 문단 테두리 (one borderFill), so it needs border too
+    e_fill = err({"op": "para_shape", "at": "p1", "set": {"fill": "#EEEEEE"}})
+    assert e_fill["code"] == "bad_input" and "border" in e_fill["message"]
+    assert err({"op": "style.create", "name": "새스타일", "para": {"fill": None}})["code"] == "bad_input"
 
     # style.create checks the same char and para tables
     assert err({"op": "style.create", "name": "새스타일", "char": {"outline": "WAVE"}})["code"] == "bad_input"
@@ -2341,6 +2345,16 @@ def test_engine_more_char_and_para_shape_keys(tmp_path, monkeypatch):
     assert '<hh:tabItem pos="4000" type="LEFT" leader="DOT" unit="HWPUNIT"/>' in tp
     assert '<hh:tabItem pos="12550" type="DECIMAL" leader="DASH" unit="HWPUNIT"/>' in tp
 
+    # char_fill alone keeps the run's 글자 테두리 and changes only the background
+    out_cf = tmp_path / "r7_cf.hwpx"
+    r_cf = D.edit(out, [{"op": "char_shape", "at": "p1:0-4", "set": {"char_fill": "#DDEBF7"}}],
+                  base=D.rev_of(out), out=out_cf)
+    assert r_cf["ok"], r_cf
+    with zipfile.ZipFile(out_cf) as z:
+        cp_cf, _, _ = _char_pr(z, base.top[1].text[:4])
+        sides_cf, face_cf = _border_fill(z.read("Contents/header.xml").decode("utf-8"), cp_cf)
+    assert all(v == ("DASH", "0.25 mm", "#1F3864") for v in sides_cf.values()) and face_cf == "#DDEBF7"
+
     # turning them off again (False / None / []) works and is verified
     out2 = tmp_path / "r7_off.hwpx"
     ops_off = [
@@ -2408,6 +2422,19 @@ def test_engine_more_char_and_para_shape_keys(tmp_path, monkeypatch):
         broken_pb = D.Doc(out_pb, got_pb.zip.rewrite({
             "Contents/header.xml": head_pb.replace(old_s, new_s, 1).encode("utf-8")}), "hwpx")
         assert not D._verify(base_pb, broken_pb, acts_pb), (old_s, new_s)
+
+    # offsets / connect alone keep the paragraph's 문단 테두리 and 배경
+    out_pb3 = tmp_path / "pb3.hwpx"
+    r_pb3 = D.edit(out_pb, [{"op": "para_shape", "at": "p1", "set": {"connect": False, "offsets": [0, 0, 0, 0]}}],
+                   base=D.rev_of(out_pb), out=out_pb3)
+    assert r_pb3["ok"], r_pb3
+    got_pb3 = D._load(out_pb3, meta=False)
+    head_pb3 = got_pb3.zip.read("Contents/header.xml").decode("utf-8")
+    pp3 = re.search(r'<hh:paraPr id="%s".*?</hh:paraPr>' % got_pb3.top[1].pr, head_pb3, re.S).group(0)
+    bd3 = re.search(r"<hh:border [^>]*/>", pp3).group(0)
+    assert 'connect="0"' in bd3 and 'offsetLeft="0"' in bd3
+    sides3, face3 = _border_fill(head_pb3, bd3)
+    assert all(v[0] == "DOUBLE_SLIM" for v in sides3.values()) and face3 == "#D9E1F2"
 
     # the same on BASIC, whose minimal paraPr has no hh:border (the engine adds Hancom's default element first)
     f_pb2 = _copy(BASIC, tmp_path)

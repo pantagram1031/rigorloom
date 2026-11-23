@@ -2774,6 +2774,11 @@ def _shape_fmt(name, op, i, at, table=None, key="set"):
         out[k] = v
     if out.get("sup") and out.get("sub"):
         raise DocError("bad_input", "%s: sup and sub cannot both be on" % name, i=i, at=at)
+    if table is PARA_SHAPE and "fill" in out and "border" not in out:
+        # the engine writes 문단 테두리 and 배경 as one borderFill, so a fill alone would drop the paragraph's lines
+        raise DocError("bad_input", "%s: fill needs border too (border: false for a background without lines); "
+                                    "a fill alone would replace the paragraph's current 문단 테두리" % name,
+                       i=i, at=at)
     return out
 
 
@@ -4936,7 +4941,7 @@ def _check_para_pr(pp, pa, bfs, tabs):
         if ls is None:
             return False
         v = pa["line_spacing"]
-        if isinstance(v, int):
+        if not isinstance(v, dict):
             if ls.get("type") != "PERCENT" or ls.get("value") != str(v):
                 return False
         else:
