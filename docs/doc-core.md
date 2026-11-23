@@ -430,6 +430,10 @@ rt_doc.edit("보고서.hwpx", [
     removing an existing note or caption has no op yet.
 - 책갈피, 하이퍼링크 and 차례 만들기 (입력 > 책갈피, 하이퍼링크; 도구 > 차례
   만들기) need the engine and take no `expect`.
+  `link` and `toc` need hwp-engine 1071d94 (PR #33) or later on documents
+  whose header lacks the charPr children, `hh:tabProperties` or the hp/hc
+  namespaces (rigorloom's own .hwpx files among them); an older engine fails
+  those edits and nothing is written.
   - `bookmark` inserts a point 책갈피 (`hp:bookmark`) in the paragraph at `at`
     with `name` (1 to 64 characters on one line, no control characters). A name
     that already exists in the document (or is duplicated in the same edit) is
