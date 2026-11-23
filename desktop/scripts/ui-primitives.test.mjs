@@ -302,3 +302,255 @@ test("Mark draws the 리을R as one path, the 16-px cut at small sizes and the f
   assert.match(small, /width="16"/);
   assert.match(large, /width="40"/);
 });
+
+test("ChangeItemRow, MarkToolbar, ApprovalSheet, and Composer render 'Label · Chord' titles", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const keysMod = await import("../src/shell/keys.ts");
+  const keymapMod = await import("../src/shell/keymap.ts");
+  const testidsMod = await import("../src/shell/testids.ts");
+  const changesMod = await import("../src/model/changes.ts");
+  const panelI18nMod = await import("../src/panel/i18n.ts");
+  const wp3Mod = await import("../src/i18n/v2/wp3.ts");
+  const buttonMod = await loadTsx("ui/Button.tsx", { "./attributes": { principleAttributes } });
+
+  const { MarkToolbar } = await loadTsx("canvas/MarkToolbar.tsx", {
+    "../i18n/v2/wp3": wp3Mod,
+    "../shell/keymap": keymapMod,
+    "../ui/Button": buttonMod,
+  });
+  const sampleMarkItem = {
+    id: "op-1",
+    n: 1,
+    at: "t0/r1/c0",
+    kind: "fill_cell",
+    opKind: "fill_cell",
+    label: "기관명",
+    before: "",
+    after: "가온공공기록원",
+    page: 1,
+    source: "agent",
+    decision: "pending",
+    contentHash: "h1",
+    guard: "none",
+    hard: false,
+    isFactChanged: false,
+    isStale: false,
+  };
+  const markPendingHtml = renderToStaticMarkup(
+    createElement(MarkToolbar, {
+      item: sampleMarkItem,
+      anchor: { topPx: 10, leftPx: 20 },
+      canEdit: true,
+      language: "ko",
+      onDecide: () => {},
+      onEdit: () => {},
+    }),
+  );
+  assert.match(markPendingHtml, /data-testid="mark-accept"[^>]*title="받아들이기 · Y"/);
+  assert.match(markPendingHtml, /data-testid="mark-reject"[^>]*title="빼기 · N"/);
+  assert.match(markPendingHtml, /data-testid="mark-edit"[^>]*title="고치기 · E"/);
+  const markRejectedHtml = renderToStaticMarkup(
+    createElement(MarkToolbar, {
+      item: { ...sampleMarkItem, decision: "rejected" },
+      anchor: { topPx: 10, leftPx: 20 },
+      canEdit: false,
+      language: "ko",
+      onDecide: () => {},
+      onEdit: () => {},
+    }),
+  );
+  assert.match(markRejectedHtml, /data-testid="mark-restore"[^>]*title="다시 넣기 · U"/);
+
+  const { ChangeItemRow } = await loadTsx("panel/ChangeItemRow.tsx", {
+    "../canvas/actions": { beginCellEditV2: () => false },
+    "../canvas/controller": { getPublishedChanges: () => [] },
+    "../shell/keys": keysMod,
+    "../shell/keymap": keymapMod,
+    "../shell/testids": testidsMod,
+    "../actions": { editOpValue: async () => {} },
+    "../model/changes": changesMod,
+    "../ui/Button": buttonMod,
+    "./actions": { decide: () => {}, select: () => {} },
+    "./bits": { SourceText: () => null },
+    "./i18n": panelI18nMod,
+  });
+  const baseRowItem = {
+    id: "op-1",
+    n: 1,
+    at: "t0/r1/c0",
+    kind: "fill",
+    label: "기관명",
+    opName: "빈칸 채움",
+    before: "",
+    after: "가온공공기록원",
+    page: 1,
+    source: "agent",
+    decision: "pending",
+    contentHash: "h1",
+    guard: { status: "none", facts: [] },
+    hard: [],
+  };
+  const rowPendingHtml = renderToStaticMarkup(
+    createElement(ChangeItemRow, { item: baseRowItem, selected: true, lang: "ko", locked: false }),
+  );
+  assert.match(rowPendingHtml, /data-testid="act-accept"[^>]*title="받아들이기 · Y"/);
+  assert.match(rowPendingHtml, /data-testid="act-reject"[^>]*title="빼기 · N"/);
+  assert.match(rowPendingHtml, /data-testid="act-edit"[^>]*title="고치기 · E"/);
+  const rowAcceptedHtml = renderToStaticMarkup(
+    createElement(ChangeItemRow, {
+      item: { ...baseRowItem, decision: "accepted" },
+      selected: true,
+      lang: "ko",
+      locked: false,
+    }),
+  );
+  assert.match(rowAcceptedHtml, /title="결정 취소 · U"/);
+  const rowRejectedHtml = renderToStaticMarkup(
+    createElement(ChangeItemRow, {
+      item: { ...baseRowItem, decision: "rejected" },
+      selected: true,
+      lang: "ko",
+      locked: false,
+    }),
+  );
+  assert.match(rowRejectedHtml, /data-testid="act-add-back"[^>]*title="다시 넣기 · U"/);
+
+  const { ApprovalSheet } = await loadTsx("panel/ApprovalSheet.tsx", {
+    "../model/changes": changesMod,
+    "../store": {
+      useWorkspace: (sel) =>
+        sel({
+          activeSessionId: "s1",
+          sessions: [{ sessionId: "s1", source: { sha256: "a".repeat(64) } }],
+        }),
+    },
+    "./actions": {
+      closeApproval: () => {},
+      confirmApproval: async () => {},
+      prepareConfirmation: () => {},
+      select: () => {},
+      toggleTick: () => {},
+    },
+    "../ui/ApprovalBox": { ApprovalBox: () => null },
+    "../ui/Button": buttonMod,
+    "../ui/icons": { Icon: () => null },
+    "./bits": { Parts: () => null },
+    "./ChangesPane": { checkText: () => "", proposerText: () => "" },
+    "./i18n": panelI18nMod,
+    "../shell/keys": keysMod,
+    "../shell/keymap": keymapMod,
+    "./state": {
+      panelSlice: {
+        use: (_doc, sel) => sel({ ticks: [], confirmPhase: "idle", confirmError: null }),
+      },
+    },
+  });
+  const sheetHtml = renderToStaticMarkup(
+    createElement(ApprovalSheet, {
+      view: {
+        id: "plan-1",
+        planHash: "a".repeat(64),
+        base: { kind: "source", revision: 0, sha256: "b".repeat(64) },
+        stale: null,
+        items: [{ ...baseRowItem, decision: "accepted" }],
+        provenance: { agent: "agent", provider: null, mock: false },
+        createdUtc: null,
+      },
+      lang: "ko",
+      guardState: "ready",
+    }),
+  );
+  assert.match(sheetHtml, /aria-label="닫기"[^>]*title="닫기 · Esc"/);
+  assert.match(sheetHtml, /data-testid="approve-cancel"[^>]*title="취소 · Esc"/);
+  assert.match(sheetHtml, /data-testid="approve-confirm"[^>]*title="승인 · Enter"/);
+
+  let composerBlockerVal = null;
+  const { Composer } = await loadTsx("panel/Composer.tsx", {
+    "../shell/bindings": { openSettings: () => {} },
+    "../shell/keys": keysMod,
+    "../shell/keymap": keymapMod,
+    "../ui/Button": buttonMod,
+    "../store": {
+      composerBlocker: () => composerBlockerVal,
+      composerDraftAfterSend: () => "",
+      composerDraftOf: () => ({ text: "" }),
+      setComposerDraft: () => {},
+      useComposerDraftText: () => "요청",
+      useWorkspace: (sel) =>
+        sel === composerBlockerVal
+          ? composerBlockerVal
+          : typeof sel === "function"
+            ? sel({ activeSessionId: "s1", provider: { provider: "anthropic" } })
+            : null,
+    },
+    "./actions": { cancelRequest: async () => {}, clearContext: () => {}, sendRequest: async () => true },
+    "./i18n": panelI18nMod,
+    "./state": { panelSlice: { use: (_doc, sel) => sel({ context: null }) } },
+  });
+  const composerReadyHtml = renderToStaticMarkup(createElement(Composer, { lang: "ko" }));
+  assert.match(composerReadyHtml, /data-testid="composer-input"[^>]*title="에이전트 요청 · Ctrl\+L"/);
+  assert.match(composerReadyHtml, /data-testid="composer-send"[^>]*title="요청 보내기 · Enter"/);
+  composerBlockerVal = "busy";
+  const composerBusyHtml = renderToStaticMarkup(createElement(Composer, { lang: "ko" }));
+  assert.match(composerBusyHtml, /data-testid="composer-cancel"[^>]*title="요청 취소 · Esc"/);
+});
+
+test(".rl-blank-loc uses var(--text-xs) instead of 9px", () => {
+  const panesCss = fs.readFileSync(path.join(SRC_DIR, "panes/panes.css"), "utf8");
+  const blankLocBlocks = [...panesCss.matchAll(/\.rl-blank-loc\s*\{([^}]+)\}/g)].map((m) => m[1]);
+  assert.ok(blankLocBlocks.length >= 1, "Expected .rl-blank-loc rule in panes.css");
+  for (const block of blankLocBlocks) {
+    if (/\bfont(?:-size)?\s*:/.test(block)) {
+      assert.match(block, /var\(--text-xs\)/);
+      assert.doesNotMatch(block, /\b9px\b/);
+    }
+  }
+});
+
+test("--text-disabled in v2-tokens.css is not var(--text-3) in light or dark and meets >= 3:1 contrast", () => {
+  const v2TokensCss = fs.readFileSync(path.join(SRC_DIR, "v2-tokens.css"), "utf8");
+  const lightBlock = v2TokensCss.match(/:root\[data-ui="v2"\]\s*\{([^}]+)\}/)?.[1] ?? "";
+  const darkBlock = v2TokensCss.match(/:root\[data-ui="v2"\]\[data-theme="dark"\]\s*\{([^}]+)\}/)?.[1] ?? "";
+  const autoDarkBlock = v2TokensCss.match(/:root\[data-ui="v2"\]:not\(\[data-theme\]\)\s*\{([^}]+)\}/)?.[1] ?? "";
+  const parseVars = (block) =>
+    Object.fromEntries([...block.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/gi)].map((m) => [m[1], m[2].trim()]));
+  const lightVars = parseVars(lightBlock);
+  const darkVars = { ...lightVars, ...parseVars(darkBlock) };
+  const autoDarkVars = { ...lightVars, ...parseVars(autoDarkBlock) };
+  const hexLum = (hex) => {
+    const h = hex.replace("#", "").trim();
+    const full = h.length === 3 ? [...h].map((c) => c + c).join("") : h;
+    const rgb = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255);
+    const lin = rgb.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+  };
+  const contrast = (a, b) => {
+    const l1 = hexLum(a);
+    const l2 = hexLum(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  };
+  for (const [mode, vars] of [
+    ["light", lightVars],
+    ["dark", darkVars],
+    ["auto-dark", autoDarkVars],
+  ]) {
+    assert.ok(vars["--text-disabled"], `Missing --text-disabled in ${mode}`);
+    assert.notEqual(vars["--text-disabled"], "var(--text-3)", `--text-disabled in ${mode} must not be var(--text-3)`);
+    assert.notEqual(vars["--text-disabled"].toLowerCase(), vars["--text-3"].toLowerCase(), `--text-disabled in ${mode} must differ from --text-3`);
+    for (const surf of ["--chrome", "--panel", "--field", "--raised"]) {
+      const disabledCr = contrast(vars["--text-disabled"], vars[surf]);
+      const text3Cr = contrast(vars["--text-3"], vars[surf]);
+      assert.ok(disabledCr >= 3.0, `${mode}: --text-disabled on ${surf} is ${disabledCr.toFixed(2)}:1 (< 3.0)`);
+      assert.ok(disabledCr < text3Cr, `${mode}: --text-disabled on ${surf} (${disabledCr.toFixed(2)}) must be lower than --text-3 (${text3Cr.toFixed(2)})`);
+    }
+  }
+});
+
+test("MarginMarks.tsx does not exist, is not exported, and its CSS rules are removed", () => {
+  assert.equal(fs.existsSync(path.join(SRC_DIR, "canvas/MarginMarks.tsx")), false, "MarginMarks.tsx must be deleted");
+  const canvasIndex = fs.readFileSync(path.join(SRC_DIR, "canvas/index.ts"), "utf8");
+  assert.doesNotMatch(canvasIndex, /MarginMarks/);
+  const canvasCss = fs.readFileSync(path.join(SRC_DIR, "canvas/canvas.css"), "utf8");
+  assert.doesNotMatch(canvasCss, /\.rl-margin-(?:layer|mark|num|bar)\b/);
+});
