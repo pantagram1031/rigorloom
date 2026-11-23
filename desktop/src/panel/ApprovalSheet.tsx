@@ -18,10 +18,12 @@ import {
 import { useWorkspace } from "../store";
 import { closeApproval, confirmApproval, prepareConfirmation, select, toggleTick } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
+import { buttonTitle } from "../ui/Button";
 import { Icon } from "../ui/icons";
 import { Parts } from "./bits";
 import { checkText, proposerText } from "./ChangesPane";
 import { revisionName, tp } from "./i18n";
+import { keymapChord } from "../shell/keymap";
 import { isComposingEvent } from "../shell/keys";
 import { panelSlice } from "./state";
 
@@ -247,7 +249,13 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
               .join(" · ")}
           </p>
         </div>
-        <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeApproval()} aria-label={tp("wp4_sheet_close", lang)} title="Esc">
+        <button
+          type="button"
+          className="rp-btn rp-btn--quiet"
+          onClick={() => closeApproval()}
+          aria-label={tp("wp4_sheet_close", lang)}
+          title={buttonTitle(tp("wp4_sheet_close", lang), keymapChord("shell.escape"))}
+        >
           <Icon name="close" />
         </button>
       </header>
@@ -369,7 +377,14 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
           </p>
         ) : null}
         <div className="rp-sheet-actions">
-          <button type="button" className="rp-btn" onClick={() => closeApproval()} disabled={busy} data-testid="approve-cancel" title="Esc">
+          <button
+            type="button"
+            className="rp-btn"
+            onClick={() => closeApproval()}
+            disabled={busy}
+            data-testid="approve-cancel"
+            title={buttonTitle(tp("wp4_sheet_cancel", lang), keymapChord("shell.escape"))}
+          >
             {tp("wp4_sheet_cancel", lang)}
           </button>
           <button
@@ -377,7 +392,8 @@ export function ApprovalSheet({ view, lang, guardState }: { view: ChangeSetView;
             className="rp-btn rp-btn--primary"
             data-variant="primary"
             data-confirm=""
-            data-testid="approve-confirm" title="Enter"
+            data-testid="approve-confirm"
+            title={buttonTitle(confirmLabel, keymapChord("sheet.confirm"))}
             disabled={!ready}
             aria-busy={busy || undefined}
             onClick={() => void confirmApproval()}

@@ -457,6 +457,6 @@
 }
 .rl-blank-btn { flex-direction: row; align-items: center; padding-inline: 6px; }
 .rl-blank-line1 { flex: 1; width: auto; }
-.rl-blank-loc { flex: none; padding: 0; font: 9px var(--font-mono); }
+.rl-blank-loc { flex: none; padding: 0; font: var(--text-xs) var(--font-mono); }
 .rl-blank-preview { display: none; }
 .rl-blank-dot { border-radius: 0; }

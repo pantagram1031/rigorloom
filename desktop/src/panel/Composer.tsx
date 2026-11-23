@@ -1,9 +1,11 @@
 import { useRef, type KeyboardEvent } from "react";
 
 import { openSettings } from "../shell/bindings";
+import { keymapChord } from "../shell/keymap";
 import { isComposingEvent } from "../shell/keys";
 import type { UiLanguage } from "../i18n/vocabulary";
 import { composerBlocker, composerDraftAfterSend, composerDraftOf, setComposerDraft, useComposerDraftText, useWorkspace } from "../store";
+import { buttonTitle } from "../ui/Button";
 import { cancelRequest, clearContext, sendRequest } from "./actions";
 import { tp } from "./i18n";
 import { panelSlice } from "./state";
@@ -86,15 +88,29 @@ export function Composer({ lang }: { lang: UiLanguage }) {
         aria-label={tp("wp4_composer_aria", lang)}
         onChange={(e) => setComposerDraft(e.target.value)}
         onKeyDown={onKey}
-        data-testid="composer-input" title="Ctrl+L"
+        data-testid="composer-input"
+        title={buttonTitle(tp("wp4_composer_aria", lang), keymapChord("composer.focus"))}
       />
       <div className="rp-composer-actions">
         {mode === "working" ? (
-          <button type="button" className="rp-btn" onClick={() => void cancelRequest()} data-testid="composer-cancel" title="Esc">
+          <button
+            type="button"
+            className="rp-btn"
+            onClick={() => void cancelRequest()}
+            data-testid="composer-cancel"
+            title={buttonTitle(tp("wp4_composer_cancel", lang), keymapChord("shell.escape"))}
+          >
             {tp("wp4_composer_cancel", lang)}
           </button>
         ) : (
-          <button type="button" className="rp-btn" onClick={() => void send()} disabled={!text.trim()} data-testid="composer-send" title="Enter">
+          <button
+            type="button"
+            className="rp-btn"
+            onClick={() => void send()}
+            disabled={!text.trim()}
+            data-testid="composer-send"
+            title={buttonTitle(tp("wp4_composer_send", lang), keymapChord("composer.send"))}
+          >
             {tp("wp4_composer_send", lang)}
           </button>
         )}

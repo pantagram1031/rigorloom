@@ -23,6 +23,14 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children?: ReactNode;
 }
 
+export function buttonTitle(
+  title: string | undefined,
+  shortcut?: string | readonly string[] | null,
+): string | undefined {
+  const chord = typeof shortcut === "string" ? shortcut : shortcut?.join("+");
+  return chord ? [title, chord].filter(Boolean).join(" · ") : title;
+}
+
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {
     variant = "outline",
@@ -49,8 +57,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     .filter(Boolean)
     .join(" ");
 
-  const chord = typeof shortcut === "string" ? shortcut : shortcut?.join("+");
-  const tooltip = chord ? [title, chord].filter(Boolean).join(" · ") : title;
+  const tooltip = buttonTitle(title, shortcut);
 
   return (
     <button

@@ -2,7 +2,6 @@ export * from "./actions";
 export * from "./CanvasPane";
 export * from "./controller";
 export * from "./DocumentStrip";
-export * from "./MarginMarks";
 export * from "./MarkToolbar";
 export * from "./PageSheet";
 export { registerCanvasModule, unregisterCanvasModule } from "./register";

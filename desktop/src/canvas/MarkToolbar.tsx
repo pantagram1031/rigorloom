@@ -1,6 +1,8 @@
 import { wp3t } from "../i18n/v2/wp3";
 import type { CanvasChangeDecision, CanvasChangeRef } from "../model/page";
+import { keymapChord } from "../shell/keymap";
 import type { UiLanguage } from "../types";
+import { buttonTitle } from "../ui/Button";
 
 export interface MarkToolbarAnchor {
   topPx: number;
@@ -47,7 +49,8 @@ export function MarkToolbar({
         <button
           type="button"
           className="rl-mark-btn"
-          data-testid="mark-restore" title="U"
+          data-testid="mark-restore"
+          title={buttonTitle(wp3t("mark_restore", language), keymapChord("change.undo"))}
           disabled={isStale}
           onClick={() => onDecide(item.id, "pending")}
         >
@@ -58,7 +61,8 @@ export function MarkToolbar({
           <button
             type="button"
             className={`rl-mark-btn${isAccepted ? " rl-mark-btn--active" : ""}`}
-            data-testid="mark-accept" title="Y"
+            data-testid="mark-accept"
+            title={buttonTitle(wp3t("mark_accept", language), keymapChord("change.accept"))}
             disabled={isStale}
             aria-pressed={isAccepted}
             onClick={() => onDecide(item.id, "accepted")}
@@ -69,7 +73,8 @@ export function MarkToolbar({
           <button
             type="button"
             className="rl-mark-btn"
-            data-testid="mark-reject" title="N"
+            data-testid="mark-reject"
+            title={buttonTitle(wp3t("mark_reject", language), keymapChord("change.reject"))}
             disabled={isStale}
             onClick={() => onDecide(item.id, "rejected")}
           >
@@ -82,7 +87,8 @@ export function MarkToolbar({
         <button
           type="button"
           className="rl-mark-btn"
-          data-testid="mark-edit" title="E"
+          data-testid="mark-edit"
+          title={buttonTitle(wp3t("mark_edit", language), keymapChord("change.edit"))}
           onClick={() => onEdit(item)}
         >
           <span>{wp3t("mark_edit", language)}</span>

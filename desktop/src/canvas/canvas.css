@@ -587,123 +587,6 @@
   min-height: 44px;
 }
 
-/* ── Margin marks gutter (outside [data-testid="paper"]) ─────────────────── */
-
-.rl-margin-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  pointer-events: none;
-  z-index: 6;
-  transition: opacity var(--dur-mark-dry) var(--ease-standard);
-}
-
-.rl-margin-layer--drying {
-  opacity: 0;
-}
-
-.rl-margin-mark {
-  position: absolute;
-  left: 4px;
-  right: 0;
-  min-height: 18px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: 5px;
-  pointer-events: auto;
-  cursor: pointer;
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  line-height: var(--lh-xs);
-  font-weight: var(--weight-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.rl-margin-num {
-  padding: 1px 4px;
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-}
-
-.rl-margin-bar {
-  width: 2px;
-  align-self: stretch;
-  flex: none;
-}
-
-.rl-margin-mark--pending {
-  color: var(--mark-insert);
-}
-.rl-margin-mark--pending .rl-margin-bar {
-  background: var(--mark-insert);
-}
-
-.rl-margin-mark--accepted {
-  color: var(--mark-delete-text);
-}
-.rl-margin-mark--accepted .rl-margin-bar {
-  background: var(--mark-accepted);
-  opacity: 0.45;
-}
-
-.rl-margin-mark--rejected {
-  color: var(--mark-delete-text);
-}
-.rl-margin-mark--rejected .rl-margin-bar {
-  background: transparent;
-  border-right: 2px dotted var(--mark-rejected);
-}
-
-.rl-margin-mark--test,
-.rl-margin-mark--stale {
-  color: color-mix(in srgb, var(--mark-test) 68%, var(--paper-ink));
-}
-.rl-margin-mark--test .rl-margin-bar,
-.rl-margin-mark--stale .rl-margin-bar {
-  background: transparent;
-  border-right: 2px dashed var(--mark-test);
-}
-
-.rl-margin-mark--fact {
-  color: var(--mark-fact);
-}
-.rl-margin-mark--fact .rl-margin-bar {
-  background: var(--mark-fact);
-}
-
-.rl-margin-mark--selected .rl-margin-bar {
-  width: 3px;
-}
-
-.rl-margin-mark--selected .rl-margin-num {
-  color: var(--paper);
-  background: var(--mark-insert);
-}
-
-.rl-margin-mark--fact.rl-margin-mark--selected .rl-margin-num {
-  background: var(--mark-fact);
-}
-
-.rl-margin-mark--accepted.rl-margin-mark--selected .rl-margin-num,
-.rl-margin-mark--rejected.rl-margin-mark--selected .rl-margin-num {
-  background: var(--mark-accepted);
-}
-
-.rl-margin-mark--test.rl-margin-mark--selected .rl-margin-num,
-.rl-margin-mark--stale.rl-margin-mark--selected .rl-margin-num {
-  background: color-mix(in srgb, var(--mark-test) 70%, var(--paper-ink));
-}
-
-.rl-margin-mark:focus-visible {
-  outline: var(--focus-width) solid var(--focus);
-  outline-offset: var(--focus-offset);
-}
-
 /* ── Floating Mark Toolbar (outside changed text) ────────────────────────── */
 
 .rl-mark-toolbar {
@@ -946,13 +829,6 @@
   .rl-status-right {
     gap: var(--s-8);
     font-size: var(--text-xs);
-  }
-  .rl-margin-mark {
-    left: 0;
-    gap: 2px;
-  }
-  .rl-margin-num {
-    padding: 0 2px;
   }
 }
 

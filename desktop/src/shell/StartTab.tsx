@@ -10,6 +10,7 @@ import { Mark } from "../brand";
 import { S } from "../i18n/v2/shell";
 import { useWorkspace } from "../store";
 import type { CorpusFileEntry, Recent } from "../types";
+import { buttonTitle } from "../ui/Button";
 import { corpusFormDisplayInfo, filterCorpusEntries, findSessionByPath, isHwpBackendAvailable, normalizePathKey, pathParentFolder } from "../workspace/openHelpers";
 import { engineState, formatShellDate, pendingCount } from "./docInfo";
 import { OPENABLE_EXTENSIONS, openRecent, openSample, pickAndOpenFile, pickFolder } from "./open";
@@ -58,13 +59,27 @@ export function StartTab() {
         ) : null}
 
         <div className="sh-start-actions">
-          <button type="button" className="sh-start-row" data-testid={TID.startOpenFile} title={openFileKey} disabled={missing} onClick={() => void pickAndOpenFile()}>
+          <button
+            type="button"
+            className="sh-start-row"
+            data-testid={TID.startOpenFile}
+            title={buttonTitle(S.t("shell_start_open_file", lang), openFileKey)}
+            disabled={missing}
+            onClick={() => void pickAndOpenFile()}
+          >
             <span className="sh-start-row-main">
               <span className="sh-start-row-label">{S.t("shell_start_open_file", lang)}</span>
               <span className="sh-start-exts sh-mono">{OPENABLE_EXTENSIONS.map((e) => `.${e}`).join(" ")}</span>
             </span>
           </button>
-          <button type="button" className="sh-start-row" data-testid={TID.startOpenFolder} title={openFolderKey} disabled={missing} onClick={() => void pickFolder()}>
+          <button
+            type="button"
+            className="sh-start-row"
+            data-testid={TID.startOpenFolder}
+            title={buttonTitle(S.t("shell_start_open_folder", lang), openFolderKey)}
+            disabled={missing}
+            onClick={() => void pickFolder()}
+          >
             <span className="sh-start-row-label">{S.t("shell_start_open_folder", lang)}</span>
           </button>
         </div>
