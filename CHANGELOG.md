@@ -23,7 +23,7 @@ the kernel's contract shape.
 
 ### Changed
 
-- **T217:** A new engine-only test checks, over every 한글 form in the test corpus, that the addresses editor v2 uses to place an inline preview point at the same paragraphs and tables as the review queue, so a preview cannot land on the wrong paragraph.
+- **T218:** A new engine-only test checks, over every 한글 form in the test corpus, that the addresses editor v2 uses to place an inline preview point at the same paragraphs and tables as the review queue, so a preview cannot land on the wrong paragraph.
 - **T216:** The engine page fidelity test now checks the lines a document actually draws. It reads each table cell's border settings, so edges set to no line are counted as suppressed rather than missing, and it compares each stroke against a threshold set from that line's own colour, so grey hairlines count. It also checks cell background colours and now fails instead of being marked as an expected failure when a drawn line, a fill or a page is missing.
 - **T215:** Editor v2 brings document tabs and view controls into one bar and puts a search field above the start screen’s document list. Pages have rulers and margin guides. The review pane shows before and after text for every change, a table for the selected change, and a three-cell approval box. The status line shows the page and table position.
 - **T214:** On engine-rendered pages in opt-in editor v2, Tab and Shift+Tab move between table cell editors. On narrow screens the bottom cell editor stays available and reopens with the queued text.
