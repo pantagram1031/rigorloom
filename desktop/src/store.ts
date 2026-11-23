@@ -1070,12 +1070,14 @@ export function locateSelection(selection: Selection) {
   setState({ selection, locateNonce: state.locateNonce + 1 });
 }
 
-let toastTimer: number | undefined;
+let toastTimer: ReturnType<typeof setTimeout> | number | undefined;
 
 export function showToast(text: string, ms = 1100) {
   setState({ toast: { text, at: Date.now() } });
-  window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => setState({ toast: null }), ms);
+  clearTimeout(toastTimer);
+  const timer = setTimeout(() => setState({ toast: null }), ms);
+  (timer as { unref?: () => void })?.unref?.();
+  toastTimer = timer;
 }
 
 export function toggleExpanded(id: string) {
@@ -1721,6 +1723,7 @@ type DocSlices = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 let docSlices: DocSlices = {};
 const docListeners = new Set<() => void>();
 const sliceKeys = new Set<string>();
+const definedSlices = new Map<string, DocSlice<unknown>>();
 
 const activeGetter = (): string | null => state.activeSessionId;
 
@@ -1848,7 +1851,21 @@ export function defineDocSlice<T>(key: string, initial: T | (() => T)): DocSlice
       );
     },
   } as DocSlice<T>;
+  definedSlices.set(key, slice as DocSlice<unknown>);
   return slice;
+}
+
+/** Patch a document slice by key (merging through its registered definition when present). */
+export function patchDocSlice(sliceKey: string, patch: Record<string, unknown>, doc?: DocArg): void {
+  const slice = definedSlices.get(sliceKey);
+  if (slice) {
+    slice.patch(doc, patch);
+    return;
+  }
+  const k = docKey(doc);
+  const prev = docSlices[k]?.[sliceKey];
+  const base = isPlainObject(prev) ? prev : {};
+  writeSlice(k, sliceKey, { ...base, ...patch });
 }
 
 /**
@@ -1939,5 +1956,121 @@ export function useActiveDoc<R>(select?: (doc: DocState | null) => R) {
 export function _resetDocsForTest(): void {
   docSlices = {};
   sliceKeys.clear();
+  definedSlices.clear();
   emitDocs();
+}
+
+let pendingDraftSaves = 0;
+
+export function beginDraftSave(): void {
+  pendingDraftSaves += 1;
+}
+
+export function endDraftSave(): void {
+  pendingDraftSaves = Math.max(0, pendingDraftSaves - 1);
+}
+
+function sameSavedOp(a: QueuedOp, b: QueuedOp): boolean {
+  return a.opId === b.opId && a.kind === b.kind && a.before === b.before && opSignature(a) === opSignature(b);
+}
+
+function draftHasUnsavedWork(
+  d: Draft | null | undefined,
+  fallbackSessionId: string | null,
+  savedDrafts: Record<string, SavedDraft>,
+): boolean {
+  if (!d) return false;
+  if (d.phase === "starting") return true;
+  if (d.ops.length === 0) return false;
+  if (d.reverses !== null) return true;
+  if (d.rewrittenFromAgent) return true;
+  const sid = d.sessionId ?? fallbackSessionId;
+  const userOps = d.ops.filter((op: QueuedOp) => op.origin === "user");
+  if (userOps.length > 0) {
+    if (!sid) return true;
+    const saved = savedDrafts?.[sid]?.ops;
+    if (!saved || saved.length !== userOps.length) return true;
+    for (let i = 0; i < userOps.length; i += 1) {
+      if (!sameSavedOp(userOps[i], saved[i])) return true;
+    }
+  }
+  if (d.ops.some((op: QueuedOp) => op.origin !== "user") && !d.plan) return true;
+  return false;
+}
+
+/**
+ * True when reloading the window to switch between editor v2 and v1 would drop
+ * an open inline edit, an in-flight proposal/apply/approval/undo/turn, a
+ * queued change not yet saved to prefs, or unsent composer text.
+ */
+export function hasUnsavedWorkForReload(s: WorkspaceState = state): boolean {
+  if (pendingDraftSaves > 0) return true;
+  if (s.inlineEdit !== null) return true;
+  if (
+    s.applyPhase === "starting" ||
+    s.approvalPhase === "requesting" ||
+    s.approvalPhase === "resolving" ||
+    s.undoPhase === "starting" ||
+    s.activeTurn !== null ||
+    s.agentPhase === "starting"
+  ) {
+    return true;
+  }
+  if (draftHasUnsavedWork(s.draft, s.activeSessionId, s.savedDrafts)) return true;
+  for (const [sid, parked] of Object.entries(s.parkedDrafts ?? {})) {
+    const parkedDraft = parked && "draft" in parked ? parked.draft : (parked as unknown as Draft);
+    if (draftHasUnsavedWork(parkedDraft, sid, s.savedDrafts)) return true;
+  }
+  if (composerDraftOf(s.activeSessionId).text.trim() !== "") return true;
+  for (const sess of s.sessions ?? []) {
+    if (composerDraftOf(sess.sessionId).text.trim() !== "") return true;
+  }
+  if (typeof document !== "undefined" && typeof document.querySelector === "function") {
+    if (
+      document.querySelector(
+        '[data-testid="seat-input"], [data-testid="engine-edit-pending"], [data-testid="change-edit-input"], [data-testid^="change-edit-input-"]',
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Drop any `ui=` parameter from a query string while keeping other parameters. */
+export function stripUiVariantQuery(search: string): string {
+  try {
+    const params = new URLSearchParams(search);
+    if (!params.has("ui")) return search;
+    params.delete("ui");
+    const rest = params.toString();
+    return rest ? `?${rest}` : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Drop any `ui=` query parameter from the current address and reload the window. */
+export function reloadWithoutUiVariantQuery(): void {
+  if (typeof window === "undefined") return;
+  const loc = window.location;
+  if (loc) {
+    const currentSearch = loc.search ?? "";
+    const nextSearch = stripUiVariantQuery(currentSearch);
+    if (nextSearch !== currentSearch) {
+      const nextUrl = `${loc.pathname ?? "/"}${nextSearch}${loc.hash ?? ""}`;
+      if (window.history && typeof window.history.replaceState === "function") {
+        window.history.replaceState(null, "", nextUrl);
+      } else {
+        try {
+          loc.search = nextSearch;
+        } catch {
+          // read-only location in some environments
+        }
+      }
+    }
+    if (typeof loc.reload === "function") {
+      loc.reload();
+    }
+  }
 }

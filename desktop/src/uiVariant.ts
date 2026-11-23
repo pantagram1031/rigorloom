@@ -1,10 +1,13 @@
 /**
- * Which editor the window shows: the v1 screens or the editor v2 shell.
+ * Which editor the window shows: the editor v2 shell (default) or the previous
+ * v1 screens.
  *
- * v1 stays the default until the switch. Editor v2 is opt-in: `?ui=v2` in the
- * browser, or the `devEditorV2` developer preference (prefs.json, read through
- * the same prefs route as `devMockAgent`) in the desktop app. `?ui=v1` always
- * wins, so a v1 link keeps working with the preference on.
+ * Precedence:
+ * 1. `?ui=v1|v2` in the address;
+ * 2. `editorVariant` ("v1" or "v2") in prefs.json;
+ * 3. `devEditorV2` (false -> "v1", true -> "v2"), kept only for reading old
+ *    prefs files;
+ * 4. otherwise "v2".
  *
  * The choice is marked on <html> as `data-ui`, which scopes the v1 palette
  * (v1-tokens.css) to the v1 screens.
@@ -12,7 +15,10 @@
 
 export type UiVariant = "v1" | "v2";
 
-/** The developer preference that opens editor v2 when no `?ui=` is given. */
+/** The preference that chooses between the editor v2 shell and the v1 screens. */
+export const EDITOR_VARIANT_PREF = "editorVariant";
+
+/** Legacy preference kept only for reading old prefs files (`false` -> v1, `true` -> v2). */
 export const EDITOR_V2_PREF = "devEditorV2";
 
 /** `?ui=v1` or `?ui=v2`, or null when the address names neither. */
@@ -25,13 +31,21 @@ export function uiVariantFromQuery(search: string): UiVariant | null {
   }
 }
 
-/** The address wins; then the developer preference; then v1. */
+/**
+ * Precedence: `?ui=v1|v2` > `editorVariant` ("v1" | "v2") > legacy `devEditorV2`
+ * (false -> v1, true -> v2) > default v2.
+ */
 export function resolveUiVariant(query: UiVariant | null, prefs: Record<string, unknown> | null | undefined): UiVariant {
-  if (query) return query;
-  return prefs?.[EDITOR_V2_PREF] === true ? "v2" : "v1";
+  if (query === "v1" || query === "v2") return query;
+  const saved = prefs?.[EDITOR_VARIANT_PREF];
+  if (saved === "v1" || saved === "v2") return saved;
+  const legacy = prefs?.[EDITOR_V2_PREF];
+  if (legacy === false) return "v1";
+  if (legacy === true) return "v2";
+  return "v2";
 }
 
-let current: UiVariant = "v1";
+let current: UiVariant = "v2";
 
 /** The variant chosen at start (or by the smoke driver since). */
 export function uiVariant(): UiVariant {

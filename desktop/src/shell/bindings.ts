@@ -4,7 +4,7 @@
 import { closeTopmostOverlay, toggleFullscreen, toggleTheme, setLanguage } from "../actions";
 import { S } from "../i18n/v2/shell";
 import * as rt from "../runtime";
-import { getState } from "../store";
+import { getState, hasUnsavedWorkForReload, patchDocSlice, reloadWithoutUiVariantQuery } from "../store";
 import { registerCommand } from "./commands";
 import { defineContext, dispatch, setBrowserMode } from "./keys";
 import { bindKey } from "./keymap";
@@ -178,6 +178,28 @@ export function installShellBindings(): () => void {
     keyId: "",
     when: () => lang() !== "en",
   });
+  offs.push(
+    registerCommand({
+      id: "shell.openV1",
+      title: (l) => S.t("shell_cmd_open_v1", l, ["v1"]),
+      group: "view",
+      keyId: "",
+      run: async () => {
+        if (hasUnsavedWorkForReload()) {
+          const note = S.t("shell_status_finish_edit_first", lang());
+          setShell({ statusNotice: note });
+          const sid = activeTabSessionId() ?? getState().activeSessionId;
+          if (sid) patchDocSlice("canvas.page", { statusNotice: note }, sid);
+          return;
+        }
+        setShell({ statusNotice: null });
+        const sid = activeTabSessionId() ?? getState().activeSessionId;
+        if (sid) patchDocSlice("canvas.page", { statusNotice: null }, sid);
+        await rt.savePrefs({ editorVariant: "v1" });
+        reloadWithoutUiVariantQuery();
+      },
+    }),
+  );
 
   setBrowserMode(!rt.isTauri());
 

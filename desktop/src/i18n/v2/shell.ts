@@ -87,6 +87,7 @@ export const S = defineStrings("shell", {
   shell_status_doc_folder: { ko: "문서 폴더 {0}", en: "Documents folder {0}" },
   shell_status_changes: { ko: "변경 {0}", en: "Changes {0}" },
   shell_status_zoom: { ko: "{0}%", en: "{0}%" },
+  shell_status_finish_edit_first: { ko: "입력 중이거나 아직 저장되지 않은 작업을 먼저 마치세요", en: "Finish the open edit or unsaved work first" },
 
   // command palette
   shell_palette_placeholder: { ko: "명령 찾기", en: "Find a command" },
@@ -123,6 +124,7 @@ export const S = defineStrings("shell", {
   shell_cmd_language_ko: { ko: "화면 언어 한국어", en: "Language Korean" },
   shell_cmd_language_en: { ko: "화면 언어 영어", en: "Language English" },
   shell_cmd_samples: { ko: "예시 양식 열기", en: "Open sample form" },
+  shell_cmd_open_v1: { ko: "이전 화면으로 열기 ({0})", en: "Open the previous screens ({0})" },
 
   // settings dialog
   shell_settings_title: { ko: "설정", en: "Settings" },

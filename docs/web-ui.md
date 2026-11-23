@@ -37,13 +37,17 @@ What you can do there:
   dialog, which writes `APPROVALS.md` (see below). The gate routes are
   unchanged; none of the five screens shows them outside that section.
 
-### Editor v2 (opt-in)
+### Editor v2 (default)
 
-The five screens above stay the default. The editor v2 shell (tabs, the
-Start tab, the 파일 pane, the palette) opens instead with `?ui=v2` in the
-address, or, in the browser and the desktop app alike, when the developer
-preference `devEditorV2` is `true` in `prefs.json` (read through the same
-prefs route as `devMockAgent`). `?ui=v1` always opens the five screens.
+The editor v2 shell (tabs, the Start tab, the 파일 pane, the page canvas, the
+right-hand 변경·에이전트·점검 panel, and the command palette) is the default
+window. The five screens above are the previous interface and open with
+`?ui=v1` in the address, the **이전 화면으로 열기 (v1)** palette command, or
+`"editorVariant": "v1"` in `prefs.json` (read through the same prefs route as
+`devMockAgent`). From the previous interface, the **새 편집기로 열기** palette
+command (or `"editorVariant": "v2"` / `?ui=v2`) returns to editor v2. The
+legacy `devEditorV2` preference (`false` → v1, `true` → v2) is still read for
+older `prefs.json` files when `editorVariant` is not set.
 
 ## Security model
 
