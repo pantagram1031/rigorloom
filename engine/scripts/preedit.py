@@ -490,6 +490,7 @@ def _replace_t_spans_preserving_inline(xml, spans, value, *, emit_log=True):
 
     open_begins = []
     markpen_pairs = {}
+    lone_marks = []
     non_markpen_indices = []
     for idx, (_off, _seq, raw_tag) in enumerate(tags):
         if _MARKPEN_BEGIN_RE.match(raw_tag):
@@ -497,8 +498,13 @@ def _replace_t_spans_preserving_inline(xml, spans, value, *, emit_log=True):
         elif _MARKPEN_END_RE.match(raw_tag):
             if open_begins:
                 markpen_pairs[open_begins.pop(0)] = idx
+            else:
+                lone_marks.append((idx, False))
         else:
             non_markpen_indices.append(idx)
+    # A begin whose end sits in another run of the paragraph is still half of a
+    # pair: it is never dropped, only moved to the changed-region edge.
+    lone_marks += [(idx, True) for idx in open_begins]
 
     kept_at = {}
     for idx in non_markpen_indices:
@@ -515,24 +521,24 @@ def _replace_t_spans_preserving_inline(xml, spans, value, *, emit_log=True):
         else:
             kept_at[idx] = new_end + (off - old_end)
 
+    def _mark_at(off, is_begin):
+        # Marks on the region edges stay on their side; a mark strictly inside
+        # moves to the edge on its side (begin to the start, end to the end).
+        if off <= p:
+            return off
+        if off < old_end:
+            return p if is_begin else new_end
+        return new_end + (off - old_end)
+
     for b_idx, e_idx in markpen_pairs.items():
-        b_off = tags[b_idx][0]
-        e_off = tags[e_idx][0]
-        if b_off < p:
-            new_b_off = b_off
-        elif b_off <= old_end:
-            new_b_off = p
-        else:
-            new_b_off = new_end + (b_off - old_end)
-        if e_off < p:
-            new_e_off = e_off
-        elif e_off <= old_end:
-            new_e_off = new_end
-        else:
-            new_e_off = new_end + (e_off - old_end)
-        if new_b_off < new_e_off:
-            kept_at[b_idx] = new_b_off
-            kept_at[e_idx] = new_e_off
+        b_off, e_off = tags[b_idx][0], tags[e_idx][0]
+        new_b_off, new_e_off = _mark_at(b_off, True), _mark_at(e_off, False)
+        if new_b_off == new_e_off and b_off < e_off:
+            continue  # the highlighted text was removed: no empty pair
+        kept_at[b_idx] = new_b_off
+        kept_at[e_idx] = new_e_off
+    for idx, is_begin in lone_marks:
+        kept_at[idx] = _mark_at(tags[idx][0], is_begin)
 
     dropped = [tags[idx][2] for idx in range(len(tags)) if idx not in kept_at]
     if dropped and emit_log:

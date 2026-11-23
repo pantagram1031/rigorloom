@@ -32,6 +32,7 @@ DOC = REPO / "tests" / "fixtures" / "rt_doc_contract" / "basic.hwpx"
 GONGMUN = REPO / "tests" / "corpus" / "forms" / "converted" / "gianmun-byeolji-1ho.hwpx"
 ADMRUL = REPO / "tests" / "corpus" / "forms" / "converted" / "admrul-gajokdolbom-hyuga-sinchengseo.hwpx"
 MOEL_2025 = REPO / "tests" / "corpus" / "forms" / "converted" / "moel-pyojun-geunrogyeyakseo-2025.hwpx"
+KSTARTUP = REPO / "tests" / "corpus" / "forms" / "converted" / "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
 RENDER_CHECK = REPO / "tests" / "corpus" / "render-check" / "render-check-01.hwpx"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -467,20 +468,21 @@ def test_changed_region_twin_matches_preedit_and_narrows_queued_run_edit():
 
 @pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
 @pytest.mark.parametrize(
-    "form_path, core_at, queue_at, run_idx, needle, replacement_word, inline_char",
+    "form_path, page, core_at, queue_at, run_idx, needle, replacement_word, inline_char",
     [
-        (ADMRUL, "p9", "p13", 1, "휴가", "휴업", "\u3000"),
-        (MOEL_2025, "p20", "p21", 1, "기재", "작성", "\n"),
+        (ADMRUL, 1, "p9", "p13", 1, "휴가", "휴업", "\u3000"),
+        (MOEL_2025, 1, "p20", "p21", 1, "기재", "작성", "\n"),
+        (KSTARTUP, 22, "p141", "p753", 0, "2026.", "2027.", "\t"),
     ],
-    ids=["fwSpace", "lineBreak"],
+    ids=["fwSpace", "lineBreak", "tab"],
 )
-def test_installed_engine_previews_queued_run_with_fwspace_or_linebreak(
-    serving, form_path, core_at, queue_at, run_idx, needle, replacement_word, inline_char,
+def test_installed_engine_previews_queued_run_with_inline_elements(
+    serving, form_path, page, core_at, queue_at, run_idx, needle, replacement_word, inline_char,
 ):
     root = serving.bridge.current_root()
     session = Session.open_path(root, str(form_path))
     base = binding(session)
-    status, _, geometry = request(serving, "geometry", {**base, "page": 1})
+    status, _, geometry = request(serving, "geometry", {**base, "page": page})
     assert status == 200
     para_box = next(box for box in geometry["boxes"] if box["at"] == core_at)
     assert para_box["queueAddress"] == queue_at
@@ -502,8 +504,8 @@ def test_installed_engine_previews_queued_run_with_fwspace_or_linebreak(
         {"at": at, "run": run["index"], "before": run["text"], "text": replacement},
     ]})
     assert status == 200, preview
-    assert 1 in preview["changedPages"]
-    params = {**base, "previewId": preview["previewId"], "page": 1}
+    assert page in preview["changedPages"]
+    params = {**base, "previewId": preview["previewId"], "page": page}
     status, _, geometry = request(serving, "geometry", params)
     assert status == 200 and geometry["changed"]
 
@@ -553,7 +555,7 @@ def test_installed_engine_previews_queued_run_with_fwspace_or_linebreak(
     assert preview_block["text"] == saved_block["text"]
     assert [r["text"] for r in preview_block["runs"]] == [r["text"] for r in saved_block["runs"]]
 
-    saved_geometry = rt_ui_doc.rt_doc.geometry(saved_path, 1)
+    saved_geometry = rt_ui_doc.rt_doc.geometry(saved_path, page)
     assert saved_geometry["ok"], saved_geometry
     assert (
         next(box for box in geometry["boxes"] if box["at"] == core_at)["text"]

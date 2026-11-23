@@ -237,8 +237,8 @@ class Preview:
 
 
 def _queue_form(text):
-    """Run text without U+3000 and newlines, the two inline elements the queue path drops."""
-    return text.replace("\u3000", "").replace("\n", "")
+    """Run text without U+3000, newlines and tabs, the inline elements the queue path drops."""
+    return text.replace("\u3000", "").replace("\n", "").replace("\t", "")
 
 
 def changed_region(old, new):
@@ -265,7 +265,7 @@ def _queued_run_edit(core_run, new_text):
     old = _queue_form(core_run)
     new = _queue_form(new_text)
     p, old_end, new_end = changed_region(old, new)
-    pos = [i for i, ch in enumerate(core_run) if ch not in ("\u3000", "\n")]
+    pos = [i for i, ch in enumerate(core_run) if ch not in ("\u3000", "\n", "\t")]
     if p < old_end:
         c_start, c_end = pos[p], pos[old_end - 1] + 1
     elif not pos:

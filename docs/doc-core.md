@@ -519,9 +519,9 @@ rt_doc.edit("보고서.hwpx", [
     `<hp:tab .../>`) at offsets in the unchanged prefix or suffix (including
     the changed-region edges) are re-emitted verbatim with their attributes in
     original order, and `PageGateway._preview` narrows the doc-core replacement
-    range to the changed region so `U+3000` (`<hp:fwSpace/>`) and `"\n"`
-    (`<hp:lineBreak/>`) outside the changed region survive in the preview as in
-    the applied document.
+    range to the changed region so `U+3000` (`<hp:fwSpace/>`), `"\n"`
+    (`<hp:lineBreak/>`) and `"\t"` (`<hp:tab/>`) outside the changed region
+    survive in the preview as in the applied document.
   - Inline tags strictly inside the old changed region are dropped (and each
     dropped tag is logged to `stderr`). If a single run edit changes two
     separate places in the same run, any inline tags between them sit inside the
@@ -534,7 +534,10 @@ rt_doc.edit("보고서.hwpx", [
     leave a half pair or an empty pair: when both marks fall inside the changed
     region they wrap the replacement changed text (or both are dropped if the
     replacement changed text is empty), and when one mark is inside and one is
-    outside the inner mark moves to the changed-region edge on its side.
+    outside the inner mark moves to the changed-region edge on its side. A mark
+    whose partner sits in another run is treated the same way: moved to the
+    edge, never dropped. A mark exactly on a changed-region edge stays on its
+    side, so a highlight neither grows over nor loses the new text.
 
 ## Rendering and pages
 

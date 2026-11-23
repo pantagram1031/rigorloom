@@ -1932,6 +1932,33 @@ class TestInlineElementPreservation:
             '</hp:run></hp:p>'
         )
 
+    def _rewrite(self, inner, value):
+        p_xml = ('<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+                 f'<hp:t>{inner}</hp:t></hp:run></hp:p>')
+        runs = preedit.paragraph_text_runs(p_xml)
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, sorted(runs[0]["t_spans"]), value)
+        head = '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0"><hp:t>'
+        assert new_p.startswith(head) and new_p.endswith('</hp:t></hp:run></hp:p>')
+        return new_p[len(head):-len('</hp:t></hp:run></hp:p>')], dropped
+
+    def test_markpen_on_changed_region_edges_stays_on_its_side(self):
+        b, e = '<hp:markpenBegin color="#ffff00"/>', '<hp:markpenEnd/>'
+        # The end sits right before the changed text: the new text stays unhighlighted.
+        assert self._rewrite(f"앞 {b}강조{e}옛말 뒤", "앞 강조새말 뒤") == (
+            f"앞 {b}강조{e}새말 뒤", [])
+        # The begin sits right after the changed text: the highlight does not grow back.
+        assert self._rewrite(f"앞 옛{b}강조{e} 뒤", "앞 새강조 뒤") == (
+            f"앞 새{b}강조{e} 뒤", [])
+
+    def test_markpen_half_pair_from_another_run_is_never_dropped(self):
+        b, e = '<hp:markpenBegin color="#ffff00"/>', '<hp:markpenEnd/>'
+        # A begin whose end is in a later run, outside the changed region.
+        assert self._rewrite(f"앞 옛말{b}강조", "앞 새말강조") == (f"앞 새말{b}강조", [])
+        # An end whose begin is in an earlier run, inside the changed region,
+        # moves to the end of the new text instead of being dropped.
+        assert self._rewrite(f"강{e}조 옛말", "새 옛말") == (f"새{e} 옛말", [])
+
     def test_markpen_both_inside_with_empty_replacement_drops_both(self, capsys):
         p_xml = (
             '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'

@@ -1443,8 +1443,8 @@ changed region `[p, len(old) - s)` -> `[p, len(new) - s)`):
   `<hp:tab .../>`) at offsets in the unchanged prefix or suffix (including the
   region edges) are re-emitted verbatim in original order, and
   `PageGateway._preview` narrows the doc-core replacement range to the same
-  changed region so `U+3000` and `"\n"` outside the changed region survive in
-  the preview.
+  changed region so `U+3000`, `"\n"` and `"\t"` outside the changed region
+  survive in the preview.
 - Tags strictly inside `[p, len(old) - s)` are dropped and logged to `stderr`;
   if an edit in one run changes two separate places, the tags between them fall
   inside the changed region and are dropped.
@@ -1455,7 +1455,8 @@ changed region `[p, len(old) - s)` -> `[p, len(new) - s)`):
 - `<hp:markpenBegin .../>` / `<hp:markpenEnd/>` pairs never leave a half pair
   or an empty pair: both inside wrap the replacement changed text (or both are
   dropped if the replacement changed text is empty); one inside and one outside
-  moves the inner mark to the changed-region edge on its side.
+  moves the inner mark to the changed-region edge on its side. A mark whose
+  partner sits in another run is moved the same way, never dropped.
 
 ---
 
