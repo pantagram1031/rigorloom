@@ -25,6 +25,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T218:** A new engine-only test checks, over every 한글 form in the test corpus, that the addresses editor v2 uses to place an inline preview point at the same paragraphs and tables as the review queue, so a preview cannot land on the wrong paragraph.
 - **T216:** The engine page fidelity test now checks the lines a document actually draws. It reads each table cell's border settings, so edges set to no line are counted as suppressed rather than missing, and it compares each stroke against a threshold set from that line's own colour, so grey hairlines count. It also checks cell background colours and now fails instead of being marked as an expected failure when a drawn line, a fill or a page is missing.
 - **T215:** Editor v2 brings document tabs and view controls into one bar and puts a search field above the start screen’s document list. Pages have rulers and margin guides. The review pane shows before and after text for every change, a table for the selected change, and a three-cell approval box. The status line shows the page and table position.
 - **T214:** On engine-rendered pages in opt-in editor v2, Tab and Shift+Tab move between table cell editors. On narrow screens the bottom cell editor stays available and reopens with the queued text.
@@ -59,6 +60,7 @@ the kernel's contract shape.
 
 ### Fixed
 
+- **T219:** In opt-in editor v2, typing on an engine page in a run that holds a full-width space or a line break now shows the inline preview instead of failing with "the queued run no longer matches the document". The preview replaces the whole run, as applying the edit does.
 - **T204:** The docx backend (`doc_backend: docx`) no longer stops when a figure is a file python-docx cannot read as an image (cut short, or not an image at all): the figure gets the same `[missing figure: …]` note as a missing file, and the rest of the document is built. Its table captions, which the docx build used to leave out, now appear above the table, as in the bundle backend.
 - **T195:** When `expect` does not hold, `edit` no longer says the text changed after it was read (a changed file is `stale`): it says the text at that place is not what was expected and tells the agent to `read` it again. For a table cell it also names the one other cell of the same table that holds the expected text (`found_at`), as when an agent counted rows from 1.
 - **T193:** The guard sees numbers trade places when the words between them give each its role: a source and a goal (`기준 금리를 3%에서 5%로` → `5%에서 3%로`, `3명에게서 5명에게로`, `3월 1일부터 3월 31일까지`), a whole and a part of it (`총 3건 중 1건` → `총 1건 중 3건`), and a list read against a list of things with 각각 (`현장 심사와 서면 심사를 각각 2회, 5회` → `각각 5회, 2회`). A sentence reworded around the numbers (`기존 3%에서 5%로`, `전체 3건 가운데 1건`) or with both lists reordered together stays quiet, and a 각각 list is read only when it names as many things as it has numbers (`서울, 부산, 대구에 각각 1명, 2명, 3명`). Two such pairs in one sentence stay apart (`갑은 10건 중 3건, 을은 20건 중 5건`). A swap is shown with each number's role as written, the second number of a pair with its pair (`3%에서`, `3%에서 5%로`; `현장 심사 2회`).

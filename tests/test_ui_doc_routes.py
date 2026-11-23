@@ -23,12 +23,15 @@ import rt_apply  # noqa: E402
 import rt_render  # noqa: E402
 import rt_ui  # noqa: E402
 import rt_ui_doc  # noqa: E402
+from rt_core import RuntimeCore  # noqa: E402
 from rt_jsonl import FrameWriter, canonical_bytes  # noqa: E402
 from rt_session import Session  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 DOC = REPO / "tests" / "fixtures" / "rt_doc_contract" / "basic.hwpx"
 GONGMUN = REPO / "tests" / "corpus" / "forms" / "converted" / "gianmun-byeolji-1ho.hwpx"
+ADMRUL = REPO / "tests" / "corpus" / "forms" / "converted" / "admrul-gajokdolbom-hyuga-sinchengseo.hwpx"
+MOEL_2025 = REPO / "tests" / "corpus" / "forms" / "converted" / "moel-pyojun-geunrogyeyakseo-2025.hwpx"
 RENDER_CHECK = REPO / "tests" / "corpus" / "render-check" / "render-check-01.hwpx"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -236,6 +239,17 @@ def test_preview_refuses_a_linked_source(serving, document, fake_engine):
     assert fake_engine == []
 
 
+def test_preview_refuses_mismatched_queued_paragraph_run(serving, document, fake_engine):
+    session, _ = document
+    base = binding(session)
+    addresses = rt_ui_doc.rt_doc.queue_addresses(session.source)["addresses"]
+    queue_at = addresses["p0"]
+    refuse(request(serving, "preview", {**base, "ops": [
+        {"at": queue_at, "run": 0, "before": "문서와 다른 런 텍스트", "text": "수정"},
+    ]}), 400, "bad_address")
+    assert fake_engine == []
+
+
 def test_native_page_image_can_exceed_inline_limit(serving, document, fake_engine, monkeypatch, tmp_path):
     from PIL import Image
 
@@ -398,6 +412,51 @@ def test_installed_engine_previews_the_queued_paragraph_run(serving):
     status, headers, png = request(serving, "render", {**params, "scale": 1})
     assert status == 200 and headers["X-Rigorloom-Preview-Rev"] == preview["previewRev"]
     assert png.startswith(PNG_SIGNATURE)
+
+
+@pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
+@pytest.mark.parametrize(
+    "form_path, core_at, queue_at, run_idx, replacement",
+    [
+        (ADMRUL, "p9", "p13", 1, "본인은 가족 돌봄을 위하여 (☑ 휴가)을 하고자 하오니"),
+        (MOEL_2025, "p20", "p21", 1, "※ (참고) 적용 예외 해당 시 예외 사항 및 사유 기재"),
+    ],
+    ids=["fwSpace", "lineBreak"],
+)
+def test_installed_engine_previews_queued_run_with_fwspace_or_linebreak(
+    serving, form_path, core_at, queue_at, run_idx, replacement,
+):
+    root = serving.bridge.current_root()
+    session = Session.open_path(root, str(form_path))
+    base = binding(session)
+    status, _, geometry = request(serving, "geometry", {**base, "page": 1})
+    assert status == 200
+    para_box = next(box for box in geometry["boxes"] if box["at"] == core_at)
+    assert para_box["queueAddress"] == queue_at
+
+    core = RuntimeCore(root, engine_root=REPO)
+    region = core.document_read_region(session.id, [{"atPara": int(queue_at[1:])}])["regions"][0]
+    run = region["runs"][run_idx]
+    at = f"p{region['at_para']}"
+    assert at == queue_at
+
+    refuse(request(serving, "preview", {**base, "ops": [
+        {"at": at, "run": run["index"], "before": run["text"] + " 불일치", "text": replacement},
+    ]}), 400, "bad_address")
+
+    status, _, preview = request(serving, "preview", {**base, "ops": [
+        {"at": at, "run": run["index"], "before": run["text"], "text": replacement},
+    ]})
+    assert status == 200, preview
+    assert 1 in preview["changedPages"]
+    params = {**base, "previewId": preview["previewId"], "page": 1}
+    status, _, geometry = request(serving, "geometry", params)
+    assert status == 200 and geometry["changed"]
+    expected_para = "".join(
+        replacement if r["index"] == run_idx else r["text"]
+        for r in region["runs"]
+    )
+    assert next(box for box in geometry["boxes"] if box["at"] == core_at)["text"] == expected_para
 
 
 def test_own_render_then_projection(serving, monkeypatch):
