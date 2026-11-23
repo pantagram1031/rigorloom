@@ -372,7 +372,7 @@ rt_doc.edit("보고서.hwpx", [
     page background without lines; `type` is required, so a fill alone never
     draws a frame). On a section whose `hp:secPr` has no
     `hp:startNum` or `hp:pageBorderFill` (rigorloom's own .hwpx files among
-    them), `start_page` and `border` need hwp-engine PR #35 or later, which
+    them), `start_page` and `border` need hwp-engine bc43585 (PR #35) or later, which
     adds Hancom's defaults first; an older engine leaves the section as it was,
     the check below fails, and nothing is written.
     Margins that leave no room are refused with `bad_input`: left + right +
