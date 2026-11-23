@@ -926,6 +926,8 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "table.cell_style": (("at", "set"), ("to",)),
     "table.style": (("at", "set"), ()),
     "style.create": (("name",), ("eng_name", "kind", "based_on", "char", "para")),
+    "note": (("at", "text"), ("kind", "after", "expect")),
+    "caption": (("at", "text"), ("side",)),
 }
 
 
@@ -958,6 +960,8 @@ OP_EXAMPLES = {
     "table.style": '{"op":"table.style","at":"t0","set":{"repeat_header":true}}',
     "style.create": '{"op":"style.create","name":"보고서 본문","based_on":"바탕글",'
                     '"char":{"size":11,"bold":false},"para":{"align":"JUSTIFY","after":4}}',
+    "note": '{"op":"note","at":"p1","kind":"foot","after":"2026년","text":"각주 설명"}',
+    "caption": '{"op":"caption","at":"t0","side":"top","text":"연도별 예산 현황"}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1047,6 +1051,13 @@ OP_NOTES = {
                     "English name or id); `based_on` an existing style (default 바탕글); `char` the "
                     "char_shape keys except markpen, `para` the para_shape keys (para styles only); "
                     "a `style` op cannot apply it in the same edit",
+    "note": "`at` is a paragraph; inserts a 각주 (`kind` foot, default) or 미주 (end) with `text` "
+            "(1 to 2000 characters, \\n starts a line) after `after` (text occurring once in the "
+            "paragraph; default end of paragraph); `expect` is the paragraph's text; one per "
+            "paragraph per edit; notes do not shift paragraph numbering of the body",
+    "caption": "`at` is a table without a caption; attaches a 캡션 on `side` (bottom default, top, "
+               "left, right) with `text` (1 to 500 characters on one line, after Hancom's 표 N ); "
+               "one per table per edit; captions do not shift paragraph numbering of the body",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}

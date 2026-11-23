@@ -213,7 +213,7 @@ rt_doc.edit("보고서.hwpx", [
   (`p3:2-5` only for `set`, `replace` and `char_shape`), `expect`
   (`expect_mismatch`; only `set`, `replace`, `delete`, `fill`,
   `table.delete_row`, `table.delete_col`, `char_shape`, `para_shape`,
-  `numbering` and `break` take one,
+  `numbering`, `break`, `header` and `note` take one,
   others refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
   and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
   or an op on something another op deletes (a paragraph, table or row; one
@@ -401,6 +401,29 @@ rt_doc.edit("보고서.hwpx", [
     `apply`, two `page_number` ops on one section, either beside a section
     break in that section, and a `delete` of the section's first paragraph in
     the same edit.
+- 각주·미주 and 캡션 (입력 > 각주/미주, 표 > 캡션 넣기) need the engine and
+  change no body paragraph or table addresses.
+  If the document's header has no 각주 (Footnote), 미주 (Endnote) or 캡션
+  (Caption) style, the edit first adds it, based on the document's first
+  style, because Hancom places notes and captions in those styles.
+  - `note` inserts a 각주 (`kind: "foot"`, the default) or 미주 (`kind: "end"`)
+    in the paragraph at `at` with `text` (one or more lines; `\n` starts a new
+    paragraph in the note). By default the note mark goes at the end of the
+    paragraph; `after` places it right after that substring of the paragraph,
+    which must occur once there (otherwise `bad_input` with `candidates`).
+    `expect` guards the paragraph's text. After the edit, the `.hwpx` section
+    must hold the new `hp:footNote` or `hp:endNote` inside that paragraph with
+    `text`, and the body text of other paragraphs must stay unchanged.
+  - `caption` attaches a 캡션 to the body table at `at` on `side` (`bottom`,
+    the default, `top`, `left` or `right`) with `text` (one line, placed after
+    Hancom's automatic `"표 N "` label). A table that already has a caption is
+    refused with `bad_input`. It takes no `expect`. After the edit, the table
+    must hold one `hp:caption` with that side and text, and other tables must
+    stay untouched.
+  - Conflicts: two `note` ops (or a `note` and a text edit) on the same
+    paragraph, two `caption` ops (or a `caption` and a row, style or shape op)
+    on the same table, and a `delete` of that paragraph or table in the same
+    edit. Editing or removing an existing note or caption has no op yet.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is

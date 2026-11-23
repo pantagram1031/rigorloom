@@ -1881,3 +1881,129 @@ def test_engine_table_cell_and_table_style(kit, tmp_path):
         open2, cells2, _ = _cells_xml(z)
     assert 'repeatHeader="0"' in open2 and 'pageBreak="TABLE"' in open2
     assert [c[2] for c in cells2] == [c[2] for c in cells]
+
+
+# ============================================================================ 각주·미주 (note), 표 캡션 (caption)
+BASIC = REPO / "tests" / "fixtures" / "rt_doc_contract" / "basic.hwpx"
+
+
+def test_note_and_caption_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(BASIC, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops):
+        return D.edit(src, ops if isinstance(ops, list) else [ops], base=rev, out=out)["error"]
+
+    # note: fields, kind, text bounds, address, expect, after
+    e = err({"op": "note", "at": "p1", "txt": "x"})
+    assert e["code"] == "bad_input" and "text" in e["candidates"]
+    assert err({"op": "note", "at": "p1"})["code"] == "bad_input"
+    e = err({"op": "note", "at": "p1", "kind": "side", "text": "x"})
+    assert e["code"] == "bad_input" and "FOOT" in e["candidates"] and "END" in e["candidates"]
+    for bad_text in ("", "   ", 123, "a\x01b", "가" * 2001):
+        assert err({"op": "note", "at": "p1", "text": bad_text})["code"] == "bad_input", bad_text
+    assert err({"op": "note", "at": "p1:0-3", "text": "x"})["code"] == "bad_address"
+    assert err({"op": "note", "at": "t0", "text": "x"})["code"] == "bad_address"
+    assert err({"op": "note", "at": "p99", "text": "x"})["code"] == "bad_address"
+    assert err({"op": "note", "at": "p1", "text": "x", "expect": "다른 문장"})["code"] == "expect_mismatch"
+    for bad_after in ("", 12, "a\nb", "a\x01b"):
+        assert err({"op": "note", "at": "p1", "text": "x", "after": bad_after})["code"] == "bad_input", bad_after
+    e = err({"op": "note", "at": "p1", "text": "x", "after": "2027년"})
+    assert e["code"] == "bad_input" and e.get("candidates")
+    e = err({"op": "note", "at": "p4", "text": "x", "after": "11월"})
+    assert e["code"] == "bad_input" and len(e.get("candidates") or []) >= 2
+    assert err({"op": "note", "at": "p4", "text": "x", "after": e["candidates"][0]})["code"] == "capability_unavailable"
+
+    # caption: fields, side, text bounds, table address
+    e = err({"op": "caption", "at": "t0", "txt": "x"})
+    assert e["code"] == "bad_input" and "text" in e["candidates"]
+    assert err({"op": "caption", "at": "t0"})["code"] == "bad_input"
+    assert err({"op": "caption", "at": "t0", "text": "x", "expect": "x"})["code"] == "bad_input"
+    e = err({"op": "caption", "at": "t0", "side": "middle", "text": "x"})
+    assert e["code"] == "bad_input" and "BOTTOM" in e["candidates"]
+    for bad_text in ("", "   ", 123, "첫 줄\n둘째 줄", "a\x01b", "가" * 501):
+        assert err({"op": "caption", "at": "t0", "text": bad_text})["code"] == "bad_input", bad_text
+    e = err({"op": "caption", "at": "t9", "text": "x"})
+    assert e["code"] == "bad_address" and "t0" in e["candidates"]
+    assert err({"op": "caption", "at": "p1", "text": "x"})["code"] == "bad_address"
+    assert err({"op": "caption", "at": "t0/r0/c0", "text": "x"})["code"] == "bad_address"
+
+    # conflicts: two ops on the same target, or with delete / text / shape ops on that target
+    assert err([{"op": "note", "at": "p1", "text": "가"},
+                {"op": "note", "at": "p1", "kind": "end", "after": "2026년", "text": "나"}])["code"] == "conflict"
+    assert err([{"op": "note", "at": "p1", "text": "가"},
+                {"op": "delete", "at": "p1"}])["code"] == "conflict"
+    assert err([{"op": "delete", "at": "p1"},
+                {"op": "note", "at": "p1", "text": "가"}])["code"] == "conflict"
+    assert err([{"op": "note", "at": "p1", "text": "가"},
+                {"op": "set", "at": "p1", "text": "나"}])["code"] == "conflict"
+    assert err([{"op": "note", "at": "t0/r0/c0/p0", "text": "가"},
+                {"op": "delete", "at": "t0"}])["code"] == "conflict"
+    assert err([{"op": "caption", "at": "t0", "text": "가"},
+                {"op": "caption", "at": "t0", "side": "top", "text": "나"}])["code"] == "conflict"
+    assert err([{"op": "caption", "at": "t0", "text": "가"},
+                {"op": "delete", "at": "t0"}])["code"] == "conflict"
+    assert err([{"op": "delete", "at": "t0"},
+                {"op": "caption", "at": "t0", "text": "가"}])["code"] == "conflict"
+    assert err([{"op": "caption", "at": "t0", "text": "가"},
+                {"op": "delete", "at": "p5"}])["code"] == "conflict"
+    assert err([{"op": "caption", "at": "t0", "text": "가"},
+                {"op": "table.add_row", "at": "t0", "after": 0}])["code"] == "conflict"
+    assert err([{"op": "caption", "at": "t0", "text": "가"},
+                {"op": "table.style", "at": "t0", "set": {"repeat_header": True}}])["code"] == "conflict"
+
+    # valid ops without engine: capability_unavailable and nothing written
+    e = err([{"op": "note", "at": "p1", "after": "2026년", "text": "각주"},
+             {"op": "caption", "at": "t0", "side": "top", "text": "표 제목"}])
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+@engine
+def test_engine_note_and_caption(tmp_path, monkeypatch):
+    f = _copy(BASIC, tmp_path)
+    base = D._load(f, meta=False)
+    out = tmp_path / "nc.hwpx"
+    ops = [
+        {"op": "note", "at": "p1", "after": "2026년 3월", "text": "각주 설명",
+         "expect": "본 사업은 2026년 3월에 시작한다."},
+        {"op": "note", "at": "p2", "kind": "end", "text": "미주 첫줄\n미주 둘째줄"},
+        {"op": "caption", "at": "t0", "side": "top", "text": "예산 현황"},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    got = D._load(out, meta=False)
+    assert [p.text for p in got.top] == [p.text for p in base.top]
+    assert D._notes_in(got, 0, "footNote", got.top[1]) == ["각주 설명"]
+    assert D._notes_in(got, 0, "endNote", got.top[2]) == ["미주 첫줄\n미주 둘째줄"]
+    assert D._table_captions(got, got.tables[0]) == [("TOP", "1", "표 ", " 예산 현황")]
+
+    # a second caption on a table that now has one is refused with bad_input
+    out2 = tmp_path / "nc2.hwpx"
+    e = D.edit(out, [{"op": "caption", "at": "t0", "text": "두 번째 캡션"}],
+               base=D.rev_of(out), out=out2)["error"]
+    assert e["code"] == "bad_input" and "already has a caption" in e["message"]
+    assert not out2.exists()
+
+    # verifier refuses hand-broken outputs (wrong note text, wrong caption side/text, altered body text)
+    acts = D._plan(base, ops)
+    assert D._verify(base, got, acts)
+    raw_sec = got.zip.read("Contents/section0.xml").decode("utf-8")
+    for broken_xml in (
+        raw_sec.replace("각주 설명", "다른 각주"),
+        raw_sec.replace('side="TOP"', 'side="BOTTOM"'),
+        raw_sec.replace("예산 현황", "다른 캡션"),
+        raw_sec.replace("세부 계획", "바뀐 본문"),
+    ):
+        broken_bytes = got.zip.rewrite({"Contents/section0.xml": broken_xml.encode("utf-8")})
+        broken_doc = D.Doc(out, broken_bytes, "hwpx")
+        assert not D._verify(base, broken_doc, acts)
+
+    # end-to-end: if the engine produces a broken output, edit fails and nothing is written
+    bad_bytes = got.zip.rewrite({"Contents/section0.xml": raw_sec.replace("각주 설명", "깨진 각주").encode("utf-8")})
+    monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_bytes, {}, None))
+    out_bad = tmp_path / "bad.hwpx"
+    res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
+    assert not res_bad["ok"] and res_bad["error"]["code"] == "internal"
+    assert res_bad["error"]["written"] is False and not out_bad.exists()

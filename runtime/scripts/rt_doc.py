@@ -101,7 +101,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
-       "table.cell_style", "table.style", "style.create")
+       "table.cell_style", "table.style", "style.create", "note", "caption")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2493,6 +2493,8 @@ class _Act:
         self.cell_delta = []    # (table g, cells table.add_col adds)
         self.text_of = None     # the base paragraph whose text this act changes
         self.new_style = None   # style.create: {name, eng, kind, char, para} the output's header must have
+        self.note = None        # note: (base Para, "footNote" | "endNote", text)
+        self.caption = None     # caption: (table g, side, text)
 
 
 class _Claims:
@@ -2551,7 +2553,7 @@ def _no_list_twice(cl, q, i, name, at):
 
 
 EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape", "numbering",
-              "table.delete_col", "break", "header")
+              "table.delete_col", "break", "header", "note")
 RANGE_OPS = ("set", "replace", "char_shape")
 
 
@@ -3248,6 +3250,56 @@ def _section_claim(cl, si, i, name, at):
 STYLE_CREATE_KEYS = ("name", "eng_name", "kind", "based_on", "char", "para")
 STYLE_CHAR = {k: v for k, v in CHAR_SHAPE.items() if k != "markpen"}
 STYLE_NAME_MAX = 64
+NOTE_KINDS = ("FOOT", "END")
+NOTE_TEXT_MAX = 2000
+CAPTION_SIDES = ("BOTTOM", "TOP", "LEFT", "RIGHT")
+CAPTION_TEXT_MAX = 500
+_AUTO_STYLE_NAMES = {"footNote": ("Footnote", "각주"), "endNote": ("Endnote", "미주"), "caption": ("Caption", "캡션")}
+
+
+def _after_candidates(txt, after, hits):
+    """Candidates from paragraph text `txt` when note's `after` is missing or matches more than once."""
+    if not hits:
+        words = txt.split()
+        return _cands_near(words, after) or ([txt[:40]] if txt else ["p0"])
+    out = []
+    for j in hits[:5]:
+        a = txt.rfind(" ", 0, j)
+        a = 0 if a < 0 else a + 1
+        b = txt.find(" ", j + len(after))
+        if b < 0:
+            b = len(txt)
+        else:
+            b2 = txt.find(" ", b + 1)
+            b = len(txt) if b2 < 0 else b2
+        cand = txt[a:b].strip()
+        if not cand or cand == after or cand == txt:
+            cand = txt[max(0, j - 8):min(len(txt), j + len(after) + 8)].strip() or after
+        if cand not in out:
+            out.append(cand)
+    return out or [txt[:40]]
+
+
+def _auto_styles(doc, acts):
+    """[(eng, sname, act)] of built-in styles the engine's note_run / caption_xml looks up by English name
+    that this document's header.xml does not have yet."""
+    have = _style_names(doc)
+    for a in acts:
+        if a.new_style:
+            have.add(a.new_style["name"])
+            if a.new_style.get("eng"):
+                have.add(a.new_style["eng"])
+    out = []
+    for a in acts:
+        key = a.note[1] if a.note else ("caption" if a.caption else None)
+        if key is None:
+            continue
+        eng, ko = _AUTO_STYLE_NAMES[key]
+        if eng not in have:
+            sname = ko if ko not in have else eng
+            have.update((eng, sname))
+            out.append((eng, sname, a))
+    return out
 
 
 def _style_names(doc):
@@ -3856,6 +3908,76 @@ def _plan_op(doc, cl, i, name, op, at):
             acts.append(_Act(i, name, at, q, q.start, side=2, steps=[["goto", q.k, 0, q.si], ["apply_style", sty]]))
     elif name == "style.create":
         acts.append(_style_create(doc, cl, i, op, at))
+    elif name == "note":
+        known = ("text", "kind", "after", "expect")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "note takes %s, not %s" % (", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
+        kind = _enum(op.get("kind"), NOTE_KINDS, "note: kind", i, at, "FOOT")
+        nkind = "footNote" if kind == "FOOT" else "endNote"
+        text = _clean(op.get("text"), "note: text", i, at)
+        if not text.strip() or not 1 <= len(text) <= NOTE_TEXT_MAX:
+            raise DocError("bad_input", "note: text is 1 to %d characters" % NOTE_TEXT_MAX, i=i, at=at)
+        r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
+        if r.get("range"):
+            raise DocError("bad_address", "note takes a whole paragraph, not a character range", i=i, at=at)
+        if r.get("cell") is not None and r["kind"] in ("cell", "place"):
+            _check_expect(op, i, at, _cell_text(r["cell"]), r.get("table"))
+            p = r["cell"].paras[-1]
+        else:
+            p = r["para"]
+            _check_expect(op, i, at, p.text)
+        after = op.get("after")
+        if after is not None:
+            if not isinstance(after, str) or not after or _CTRL.search(after) or "\n" in after:
+                raise DocError("bad_input", "note: after is non-empty text in the paragraph", i=i, at=at)
+            hits = []
+            j = p.ptext.find(after)
+            while j >= 0:
+                hits.append(j)
+                j = p.ptext.find(after, j + len(after))
+            if len(hits) != 1:
+                why = ("%r does not occur in %s" % (after, at) if not hits else
+                       "%r occurs %d times in %s; give a longer after" % (after, len(hits), at))
+                raise DocError("bad_input", "note: " + why, i=i, at=at,
+                               candidates=_after_candidates(p.text, after, [_pub(p, x) for x in hits]))
+            pos = hits[0] + len(after)
+        else:
+            pos = len(p.chars)
+        cl.span(p, 0, len(p.chars), i, name, whole=True)
+        step = ({"op": "insert_footnote", "kwargs": {"text": text, "kind": "footNote"}} if kind == "FOOT"
+                else {"op": "insert_endnote", "kwargs": {"text": text}})
+        a = _Act(i, name, at, p, p.start, side=1, intra=pos, rank=0,
+                 steps=[["goto", p.k, pos, p.si], step])
+        a.note = (p, nkind, text)
+        acts.append(a)
+    elif name == "caption":
+        known = ("text", "side")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "caption takes %s, not %s" % (", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
+        side = _enum(op.get("side"), CAPTION_SIDES, "caption: side", i, at, "BOTTOM")
+        text = _clean(op.get("text"), "caption: text", i, at)
+        if not text.strip() or not 1 <= len(text) <= CAPTION_TEXT_MAX or "\n" in text:
+            raise DocError("bad_input", "caption: text is 1 to %d characters on one line" % CAPTION_TEXT_MAX,
+                           i=i, at=at)
+        r = resolve(doc, at, allow=("table",))
+        t = r["table"]
+        if t.addr is None:
+            raise DocError("bad_address", "caption only works on a body table", i=i, at=at)
+        if t.caption:
+            raise DocError("bad_input", "table %s already has a caption (%r)"
+                           % (t.addr, " ".join(q.text for q in t.caption).strip()), i=i, at=at)
+        _table_mark(cl, t, i, name, at, "table")
+        cl.touch(t.si, t.start, i, name, at)
+        c0 = t.cells[0]
+        a = _Act(i, name, at, c0.paras[0], t.start, side=0,
+                 steps=[{"op": "insert_caption", "kwargs": {"text": text, "side": side, "obj": t.id}}])
+        a.restyled = [t.g]
+        a.caption = (t.g, side, text)
+        acts.append(a)
     elif name in ("char_shape", "para_shape"):
         fmt = _shape_fmt(name, op, i, at)
         r = resolve(doc, at, allow=("para", "cell", "cellpara", "row", "table", "heading", "place"))
@@ -4297,6 +4419,10 @@ def _verify(doc, newdoc, acts):
         return False
     if not _verify_styles(doc, newdoc, acts):
         return False
+    if not _verify_notes(doc, newdoc, acts, st):
+        return False
+    if not _verify_captions(doc, newdoc, acts, st):
+        return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
         ng = st["newt"][t.g]
@@ -4343,7 +4469,7 @@ def _verify_styles(doc, newdoc, acts):
     made = [a.new_style for a in acts if a.new_style]
     if not made:
         return True
-    if len(newdoc.styles) != len(doc.styles) + len(made):
+    if len(newdoc.styles) != len(doc.styles) + len(made) + len(_auto_styles(doc, acts)):
         return False
     try:
         root = ET.fromstring(newdoc.zip.read("Contents/header.xml"))
@@ -4375,6 +4501,135 @@ def _verify_styles(doc, newdoc, acts):
         if "align" in want["para"]:
             al = next((x for x in pp.iter() if _local(x.tag) == "align"), None)
             if al is None or al.get("horizontal") != want["para"]["align"]:
+                return False
+    return True
+
+
+def _new_para(doc, newdoc, p, st):
+    """The paragraph in `newdoc` that corresponds to base paragraph `p` of `doc`, or None."""
+    if p.top:
+        ngp = st["newtop"](p.gp)
+        return newdoc.top[ngp] if ngp is not None and 0 <= ngp < len(newdoc.top) else None
+    if p.cell is not None:
+        t = doc.table_of(p.cell)
+        ng = st["newt"].get(t.g) if t is not None else None
+        rc = st["newcell"](t.g, p.cell) if ng is not None and 0 <= ng < len(newdoc.tables) else None
+        nc = newdoc.tables[ng].at(*rc) if rc is not None else None
+        k = p.cell.paras.index(p)
+        adds = st["cadds"].get(id(p.cell), (p.cell, []))[1]
+        dels = st["cdels"].get(id(p.cell), (p.cell, set()))[1]
+        if k in dels:
+            return None
+        nk = k + sum(n for kk, n in adds if kk < k) - sum(1 for kk in dels if kk < k)
+        return nc.paras[nk] if nc is not None and 0 <= nk < len(nc.paras) else None
+    return None
+
+
+def _notes_in(d, si, nkind, para=None):
+    """The texts of the hp:footNote / hp:endNote controls in section si (or directly inside `para`)."""
+    s = d.secs[si]
+    out = []
+    for m in re.finditer(r"<hp:%s\b[^>]*>.*?</hp:%s>" % (nkind, nkind), s, re.S):
+        a, b = m.start(), m.end()
+        ps = [q for q in d.sec_paras[si] if a < q.start < b]
+        if para is not None:
+            host = ps[0].parent if ps else next(
+                (q for q in reversed(d.sec_paras[si]) if q.start < a < q.end), None)
+            if host is not para:
+                continue
+        if not ps:
+            out.append(None)
+            continue
+        raw = "\n".join(q.text for q in ps)
+        out.append(raw[1:] if raw.startswith(" ") else raw)
+    return out
+
+
+def _verify_notes(doc, newdoc, acts, st):
+    """Each note op added one hp:footNote / hp:endNote in its section, inside the addressed paragraph, with the
+    text asked."""
+    notes = [a for a in acts if a.note]
+    if not notes:
+        return True
+    if len(newdoc.secs) < len(doc.secs):
+        return False
+    for si in range(len(doc.secs)):
+        for nkind in ("footNote", "endNote"):
+            want_n = sum(1 for a in notes if a.si == si and a.note[1] == nkind)
+            before_sec = _notes_in(doc, si, nkind)
+            after_sec = _notes_in(newdoc, si, nkind)
+            if None in after_sec or len(after_sec) != len(before_sec) + want_n:
+                return False
+    for a in notes:
+        p, nkind, text = a.note
+        np = _new_para(doc, newdoc, p, st)
+        if np is None or np.text != p.text:
+            return False
+        before_p = _notes_in(doc, p.si, nkind, p)
+        after_p = list(_notes_in(newdoc, np.si, nkind, np))
+        if len(after_p) != len(before_p) + 1:
+            return False
+        for old in before_p:
+            if old not in after_p:
+                return False
+            after_p.remove(old)
+        if after_p != [text]:
+            return False
+    return True
+
+
+def _table_captions(d, t):
+    """[(side, num, before_num, after_num)] of the direct <hp:caption> controls on table `t`."""
+    s = d.secs[t.si]
+    inner = [t2 for t2 in d.sec_tables[t.si] if t.start < t2.start < t.end]
+    out = []
+    for m in re.finditer(r"<hp:caption\b[^>]*>.*?</hp:caption>", s[t.start:t.end], re.S):
+        ca, cb = t.start + m.start(), t.start + m.end()
+        if any(t2.start < ca < t2.end for t2 in inner):
+            continue
+        raw = m.group(0)
+        open_tag = raw[:raw.find(">") + 1]
+        side = _attr(open_tag, "side")
+        an = re.search(r"<hp:autoNum\b[^>]*>", raw)
+        num = _attr(an.group(0), "num") if an and _attr(an.group(0), "numType") == "TABLE" else None
+        ps = [q for q in t.caption if ca < q.start < cb]
+        if len(ps) != 1 or an is None:
+            out.append((side, num, None, "\n".join(q.text for q in ps)))
+            continue
+        q = ps[0]
+        an_pos = ca + an.start()
+        before = "".join(ch for ch, xp in zip(q.chars, q.xpos) if ch != OBJ and xp < an_pos)
+        after = "".join(ch for ch, xp in zip(q.chars, q.xpos) if ch != OBJ and xp > an_pos)
+        out.append((side, num, before, after))
+    return out
+
+
+def _verify_captions(doc, newdoc, acts, st):
+    """Each table a caption op targeted now has one hp:caption with the side and text after Hancom's automatic
+    number ("표 N "), and all other tables' captions are untouched."""
+    caps = {a.caption[0]: (a.caption[1], a.caption[2]) for a in acts if a.caption}
+    if not caps:
+        return True
+    changed_paras = {id(a.text_of) for a in acts if a.text_of is not None}
+    for t in doc.tables:
+        ng = st["newt"].get(t.g)
+        if ng is None:
+            continue
+        nt = newdoc.tables[ng]
+        got = _table_captions(newdoc, nt)
+        if t.g in caps:
+            want_side, want_text = caps[t.g]
+            if len(got) != 1 or len(nt.caption) != 1:
+                return False
+            side, num, before, after = got[0]
+            if side != want_side or not (num and num.isdigit() and int(num) >= 1):
+                return False
+            if before != "표 " or after != " " + want_text:
+                return False
+            if not any(id(q) in changed_paras for q in doc.table_paras(t)) and _table_text(nt) != _table_text(t):
+                return False
+        else:
+            if got != _table_captions(doc, t) or [q.text for q in nt.caption] != [q.text for q in t.caption]:
                 return False
     return True
 
@@ -4428,7 +4683,7 @@ def _remap_result(doc, newdoc, acts):
     if newdoc is None or _verify(doc, newdoc, acts):
         return remap, False
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
-            or a.hf or a.new_style]
+            or a.hf or a.new_style or a.note or a.caption]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
@@ -4667,6 +4922,10 @@ def _engine_apply(e, doc, order, target, draft=False):
     draft: a preview copy, never handed to the user: the engine may keep the source's thumbnail instead of drawing
     page 1 again (edit(draft=True) inside its serve worker). An engine without that option is asked without it."""
     script, owner = [], []
+    base_style = "0" if "0" in doc.styles else (next(iter(doc.styles), "바탕글"))
+    for eng, sname, act in _auto_styles(doc, order):
+        script.append({"op": "create_style", "kwargs": {"name": sname, "eng_name": eng, "base": base_style}})
+        owner.append(act)
     for a in order:
         for st in a.steps:
             script.append(st)
