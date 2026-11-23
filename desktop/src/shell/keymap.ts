@@ -64,6 +64,8 @@ export const SHELL_BINDINGS: KeymapEntry[] = [
   { id: "panel.agent", chords: ["Alt+7"] },
   { id: "panel.checks", chords: ["Alt+8", "Ctrl+Shift+M"] },
   { id: "composer.focus", chords: ["Ctrl+L"] },
+  // Display only: gives the Composer send button its title chord. Deliberately
+  // unbound; Composer.onKeyDown already sends on Enter, so binding it would send twice.
   { id: "composer.send", chords: ["Enter"], when: "composer", inEditable: true },
   { id: "checks.style", chords: ["F8"] },
   { id: "change.next", chords: ["J", "ArrowDown", "Alt+ArrowDown"], when: "review" },
