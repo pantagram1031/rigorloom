@@ -931,6 +931,8 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "bookmark": (("at", "name"), ("after",)),
     "link": (("at", "phrase", "target"), ()),
     "toc": (("at",), ("levels", "leader")),
+    "hide": (("at",), ("header", "footer", "page_num", "border", "fill", "master_page")),
+    "new_number": (("at", "kind", "num"), ()),
 }
 
 
@@ -968,6 +970,8 @@ OP_EXAMPLES = {
     "bookmark": '{"op":"bookmark","at":"p1","after":"2026년","name":"시작"}',
     "link": '{"op":"link","at":"p2","phrase":"메타데이터","target":"#시작"}',
     "toc": '{"op":"toc","at":"p0","levels":2,"leader":"DASH"}',
+    "hide": '{"op":"hide","at":"p0","header":true,"page_num":true}',
+    "new_number": '{"op":"new_number","at":"p4","kind":"PAGE","num":1}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1021,8 +1025,13 @@ OP_NOTES = {
                   "paper (A3, A4, A5, B4, B5, LETTER, LEGAL) or width_mm / height_mm (50 to "
                   "1000), landscape, margins {left, right, top, bottom, header, footer, gutter} "
                   "in mm (0 to 500; left out keeps the value), gutter_type (LEFT_ONLY, "
-                  "LEFT_RIGHT, TOP_BOTTOM); margins must leave room on the page; one page_setup "
-                  "per section per edit, and none on the section of a section break",
+                  "LEFT_RIGHT, TOP_BOTTOM), start_page (시작 쪽 번호, 1 to 65535), "
+                  "border (쪽 테두리·배경: false to reset, or {type (NONE: background only), width, "
+                  "color, fill?: #RRGGBB or null, offset_mm?: [left, right, top, bottom] or one "
+                  "number in mm 0 to 500, apply?: BOTH|ODD|EVEN, text_border?: PAPER|CONTENT, "
+                  "header_inside?: bool, footer_inside?: bool}); margins must leave room on the "
+                  "page; one page_setup per section per edit, and none on the section of a "
+                  "section break",
     "columns": "`at` is a body paragraph; the 다단 definition that governs it changes, and with "
                "it every paragraph under it. `set` keys: count (1 to 255), gap_mm (0 to 100), "
                "line (구분선), kind (NEWSPAPER, BALANCED_NEWSPAPER, PARALLEL), layout (LEFT, "
@@ -1080,6 +1089,14 @@ OP_NOTES = {
            "top-level paragraphs so later body addresses shift in `remap`; one per edit, on a "
            "document without a TABLEOFCONTENTS field; the page numbers come from rigorloom's "
            "layout; 한글's 차례 새로 고침 updates them",
+    "hide": "`at` is a body paragraph; hides elements on the page that paragraph starts on "
+            "(`header`, `footer`, `page_num`, `border`, `fill`, `master_page`: booleans, at "
+            "least one true); refuses a paragraph that already has a pageHiding control; one "
+            "per paragraph per edit; no address changes",
+    "new_number": "`at` is a body paragraph; restarts numbering (`kind`: PAGE, FOOTNOTE, ENDNOTE, "
+                  "PICTURE, TABLE or EQUATION) at `num` (1 to 65535) from that paragraph; refuses "
+                  "a paragraph that already has a newNum control of that kind; one per paragraph "
+                  "per edit; no address changes",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}

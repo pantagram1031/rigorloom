@@ -101,7 +101,8 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
-       "table.cell_style", "table.style", "style.create", "note", "caption", "bookmark", "link", "toc")
+       "table.cell_style", "table.style", "style.create", "note", "caption", "bookmark", "link", "toc",
+       "hide", "new_number")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2506,6 +2507,9 @@ class _Act:
         self.toc = None         # toc: (base Para, levels, leader, n_added)
         self.char_shape = None  # char_shape: (base Para, (a0, b0), fmt)
         self.para_shape = None  # para_shape: (base Para, fmt)
+        self.page_setup = None  # page_setup: (si, {start_page?, border?})
+        self.hide = None        # hide: (base Para, {header, footer, page_num, border, fill, master_page})
+        self.new_num = None     # new_number: (base Para, kind, num)
 
 
 class _Claims:
@@ -3217,16 +3221,84 @@ COLUMN_LAYOUTS = ("LEFT", "RIGHT", "MIRROR")
 COLUMN_COUNT = (1, 255)
 COLUMN_GAP_MM = (0, 100)
 BREAK_KINDS = ("page", "column", "section")
+PAGE_NUM_RANGE = (1, 65535)
+PAGE_BORDER_KEYS = ("type", "width", "color", "fill", "offset_mm", "apply", "text_border",
+                    "header_inside", "footer_inside")
+PAGE_TEXT_BORDERS = ("PAPER", "CONTENT")
+HIDE_KEYS = ("header", "footer", "page_num", "border", "fill", "master_page")
+HIDE_ATTRS = (("header", "hideHeader"), ("footer", "hideFooter"), ("master_page", "hideMasterPage"),
+              ("border", "hideBorder"), ("fill", "hideFill"), ("page_num", "hidePageNum"))
+NEW_NUM_KINDS = ("PAGE", "FOOTNOTE", "ENDNOTE", "PICTURE", "TABLE", "EQUATION")
 
 
 def _in(v, lo, hi):
     return _num(v) and lo <= v <= hi
 
 
+def _page_border_kwargs(bd, i, at):
+    """The checked ``border`` of a page_setup op: None (for border: false) or the engine's border dict."""
+    if bd is False:
+        return None
+    if not isinstance(bd, dict) or not bd:
+        raise DocError("bad_input", "page_setup: border is false or {type, width, color, fill?, offset_mm?, "
+                       "apply?, text_border?, header_inside?, footer_inside?}", i=i, at=at)
+    bad = sorted(str(k) for k in bd if k not in PAGE_BORDER_KEYS)
+    if bad:
+        raise DocError("bad_input", "page_setup: border has no %s (keys: %s)"
+                       % (bad[0], ", ".join(PAGE_BORDER_KEYS)), i=i, at=at,
+                       candidates=_cands_near(list(PAGE_BORDER_KEYS), bad[0]) or list(PAGE_BORDER_KEYS))
+    line_in = {k: bd[k] for k in ("type", "width", "color") if k in bd} or {"type": "SOLID"}
+    if isinstance(bd.get("type"), str) and bd["type"].upper() == "NONE":    # 쪽 배경 only, no lines
+        if "width" in bd or "color" in bd:
+            raise DocError("bad_input", "page_setup: border.type NONE (a background without lines) takes no "
+                           "width or color", i=i, at=at)
+        ok, line = True, {"type": "NONE", "width": 0.1, "color": "#000000"}
+    else:
+        ok, line = _parse_border_dict(line_in)
+    if not ok:
+        if "type" in bd and (not isinstance(bd["type"], str) or bd["type"].upper() not in LINE_TYPES):
+            raise DocError("bad_input", "page_setup: border.type is one of %s" % ", ".join(LINE_TYPES),
+                           i=i, at=at,
+                           candidates=_cands_near(list(LINE_TYPES), str(bd["type"])) or list(LINE_TYPES))
+        if "width" in bd and _parse_width_mm(bd["width"]) is None:
+            raise DocError("bad_input", "page_setup: border.width is one of Hancom's line widths in millimetres",
+                           i=i, at=at, candidates=list(LINE_WIDTHS_MM))
+        raise DocError("bad_input", "page_setup: border=%r is out of range (%s)"
+                       % (bd, _shape_hint(("border",))), i=i, at=at)
+    out = dict(line)
+    if "fill" in bd:
+        f = bd["fill"]
+        if f is not None and not (isinstance(f, str) and _COLOR.match(f)):
+            raise DocError("bad_input", "page_setup: border.fill is #RRGGBB or null", i=i, at=at)
+        out["fill"] = None if f is None else f.upper()
+    if "offset_mm" in bd:
+        off = bd["offset_mm"]
+        if _in(off, *MARGIN_MM):
+            out["offset_mm"] = {k: float(off) for k in BORDER_SIDES}
+        elif isinstance(off, (list, tuple)) and len(off) == 4 and all(_in(x, *MARGIN_MM) for x in off):
+            out["offset_mm"] = dict(zip(BORDER_SIDES, (float(x) for x in off)))
+        elif isinstance(off, dict) and off and set(off) <= set(BORDER_SIDES) \
+                and all(_in(x, *MARGIN_MM) for x in off.values()):
+            out["offset_mm"] = {k: float(x) for k, x in off.items()}
+        else:
+            raise DocError("bad_input", "page_setup: border.offset_mm is a number or [left, right, top, bottom] "
+                           "from %d to %d mm" % MARGIN_MM, i=i, at=at)
+    if "apply" in bd:
+        out["apply"] = _enum(bd["apply"], HF_APPLY, "page_setup: border.apply", i, at)
+    if "text_border" in bd:
+        out["text_border"] = _enum(bd["text_border"], PAGE_TEXT_BORDERS, "page_setup: border.text_border", i, at)
+    for k in ("header_inside", "footer_inside"):
+        if k in bd:
+            if not isinstance(bd[k], bool):
+                raise DocError("bad_input", "page_setup: border.%s is true or false" % k, i=i, at=at)
+            out[k] = bd[k]
+    return out
+
+
 def _page_setup_kwargs(op, i, at):
     """The checked ``set`` of a page_setup op as hnc_edit.page_setup keyword arguments."""
     v = op.get("set")
-    keys = ("paper", "width_mm", "height_mm", "landscape", "margins", "gutter_type")
+    keys = ("paper", "width_mm", "height_mm", "landscape", "margins", "gutter_type", "start_page", "border")
     if not isinstance(v, dict) or not v:
         raise DocError("bad_input", "page_setup needs set: {key: value} (keys: %s)" % ", ".join(keys), i=i, at=at)
     bad = sorted(str(k) for k in v if k not in keys)
@@ -3269,6 +3341,14 @@ def _page_setup_kwargs(op, i, at):
             raise DocError("bad_input", "page_setup: gutter_type is one of %s" % ", ".join(GUTTER_TYPES), i=i,
                            at=at, candidates=list(GUTTER_TYPES))
         kw["gutter_type"] = g
+    if "start_page" in v:
+        sp = v["start_page"]
+        if not (_is_int(sp) and PAGE_NUM_RANGE[0] <= sp <= PAGE_NUM_RANGE[1]):
+            raise DocError("bad_input", "page_setup: start_page is %d to %d" % PAGE_NUM_RANGE,
+                           i=i, at=at, range=list(PAGE_NUM_RANGE))
+        kw["start_page"] = int(sp)
+    if "border" in v:
+        kw["border"] = _page_border_kwargs(v["border"], i, at)
     return kw
 
 
@@ -3477,6 +3557,43 @@ def _toc_fields(d):
 
 def _has_toc(d):
     return bool(_toc_fields(d)) or any('type="TABLEOFCONTENTS"' in s for s in d.secs)
+
+
+def _page_hidings_in(d, p):
+    """[{header, footer, page_num, border, fill, master_page}] of direct <hp:pageHiding> controls in `p`."""
+    s = d.secs[p.si]
+    out = []
+    for m in re.finditer(r"<hp:pageHiding\b[^>]*/?>", s[p.start:p.end]):
+        pos = p.start + m.start()
+        host = next((q for q in reversed(d.sec_paras[p.si]) if q.start < pos < q.end), None)
+        if host is not p:
+            continue
+        tag = m.group(0)
+        vals = {k: _attr(tag, attr) for k, attr in HIDE_ATTRS}
+        if any(v not in ("0", "1") for v in vals.values()):
+            out.append(None)
+        else:
+            out.append({k: v == "1" for k, v in vals.items()})
+    return out
+
+
+def _new_nums_in(d, p):
+    """[(kind, num)] of direct <hp:newNum> controls in paragraph `p`."""
+    s = d.secs[p.si]
+    out = []
+    for m in re.finditer(r"<hp:newNum\b[^>]*/?>", s[p.start:p.end]):
+        pos = p.start + m.start()
+        host = next((q for q in reversed(d.sec_paras[p.si]) if q.start < pos < q.end), None)
+        if host is not p:
+            continue
+        tag = m.group(0)
+        kind = _attr(tag, "numType")
+        num = _attr(tag, "num")
+        if kind not in NEW_NUM_KINDS or not (num and num.isdigit() and 1 <= int(num) <= 65535):
+            out.append((None, None))
+        else:
+            out.append((kind, int(num)))
+    return out
 
 
 def _act_needed_styles(a):
@@ -4356,7 +4473,10 @@ def _plan_op(doc, cl, i, name, op, at):
         if name == "page_setup":
             _page_fit(doc, p.si, kw, i, at)
             _section_claim(cl, p.si, i, name, at)
-            acts.append(_Act(i, name, at, p, p.start, side=2, steps=[go, {"op": "page_setup", "kwargs": kw}]))
+            a = _Act(i, name, at, p, p.start, side=2, steps=[go, {"op": "page_setup", "kwargs": kw}])
+            if "start_page" in kw or "border" in kw:
+                a.page_setup = (p.si, {k: kw[k] for k in ("start_page", "border") if k in kw})
+            acts.append(a)
         elif name == "columns":
             _section_claim(cl, p.si, i, name, at)
             acts.append(_Act(i, name, at, p, p.start, side=2, steps=[go, {"op": "set_columns", "kwargs": kw}]))
@@ -4428,6 +4548,63 @@ def _plan_op(doc, cl, i, name, op, at):
             a = _Act(i, name, at, first, first.start, side=0, rank=0, steps=steps)
             a.hf = [(first.si, "pageNum", pos, fmt)]
         cl.touch(first.si, first.start, i, name, at)
+        acts.append(a)
+    elif name == "hide":
+        known = HIDE_KEYS
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "hide takes %s, not %s" % (", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
+        for k in HIDE_KEYS:
+            if k in op and not isinstance(op[k], bool):
+                raise DocError("bad_input", "hide: %s is true or false" % k, i=i, at=at)
+        kw = {k: bool(op.get(k, False)) for k in HIDE_KEYS}
+        if not any(kw.values()):
+            raise DocError("bad_input", "hide needs at least one of %s set to true" % ", ".join(HIDE_KEYS),
+                           i=i, at=at, candidates=list(HIDE_KEYS))
+        r = resolve(doc, at, allow=("para", "heading"))
+        if r.get("range"):
+            raise DocError("bad_address", "hide takes a whole paragraph, not a character range", i=i, at=at)
+        p = r["para"]
+        if not p.top:
+            raise DocError("bad_address", "hide needs a body paragraph, not one in a table, note or box", i=i, at=at)
+        if _page_hidings_in(doc, p):
+            raise DocError("bad_input", "hide: %s already has a pageHiding (감추기) control" % at, i=i, at=at)
+        for s2, pos, j, op2, _at2 in cl.touched:
+            if j != i and s2 == p.si and pos == p.start and op2 == "hide":
+                cl._conflict(i, name, j, op2, at)
+        cl.touch(p.si, p.start, i, name, at)
+        a = _Act(i, name, at, p, p.start, side=2,
+                 steps=[["goto", p.k, 0, p.si], {"op": "hide_on_page", "kwargs": kw}])
+        a.hide = (p, kw)
+        acts.append(a)
+    elif name == "new_number":
+        known = ("kind", "num")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "new_number takes %s, not %s" % (", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
+        kind = _enum(op.get("kind"), NEW_NUM_KINDS, "new_number: kind", i, at)
+        num = op.get("num")
+        if not (_is_int(num) and PAGE_NUM_RANGE[0] <= num <= PAGE_NUM_RANGE[1]):
+            raise DocError("bad_input", "new_number: num is %d to %d" % PAGE_NUM_RANGE,
+                           i=i, at=at, range=list(PAGE_NUM_RANGE))
+        r = resolve(doc, at, allow=("para", "heading"))
+        if r.get("range"):
+            raise DocError("bad_address", "new_number takes a whole paragraph, not a character range", i=i, at=at)
+        p = r["para"]
+        if not p.top:
+            raise DocError("bad_address", "new_number needs a body paragraph, not one in a table, note or box",
+                           i=i, at=at)
+        if any(k == kind for k, _n in _new_nums_in(doc, p)):
+            raise DocError("bad_input", "new_number: %s already has a newNum (%s) control" % (at, kind), i=i, at=at)
+        for s2, pos, j, op2, _at2 in cl.touched:
+            if j != i and s2 == p.si and pos == p.start and op2 == "new_number":
+                cl._conflict(i, name, j, op2, at)
+        cl.touch(p.si, p.start, i, name, at)
+        a = _Act(i, name, at, p, p.start, side=2,
+                 steps=[["goto", p.k, 0, p.si], {"op": "new_number", "kwargs": {"kind": kind, "num": int(num)}}])
+        a.new_num = (p, kind, int(num))
         acts.append(a)
     elif name == "numbering":
         want = _numbering_set(op, i, at)
@@ -4741,6 +4918,12 @@ def _verify(doc, newdoc, acts):
     if not _verify_links(doc, newdoc, acts, st):
         return False
     if not _verify_toc(doc, newdoc, acts, st):
+        return False
+    if not _verify_page_setup(doc, newdoc, acts):
+        return False
+    if not _verify_hide(doc, newdoc, acts, st):
+        return False
+    if not _verify_new_numbers(doc, newdoc, acts, st):
         return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
@@ -5366,6 +5549,125 @@ def _verify_toc(doc, newdoc, acts, st):
     return True
 
 
+def _mm_hu(mm):
+    return int(float(mm) * 7200 / 25.4 + 1e-6)
+
+
+def _verify_page_setup(doc, newdoc, acts):
+    """Each page_setup op that set start_page or border wrote startNum/@page or pageBorderFill (and its
+    borderFill in header.xml) in the target section."""
+    ps_acts = [a for a in acts if a.page_setup]
+    if not ps_acts:
+        return True
+    hm = None
+    for a in ps_acts:
+        si, kw = a.page_setup
+        if si >= len(newdoc.secs):
+            return False
+        m = re.search(r"<hp:secPr\b.*?</hp:secPr>", newdoc.secs[si], re.S)
+        if not m:
+            return False
+        secpr = m.group(0)
+        if "start_page" in kw:
+            sn = re.search(r"<hp:startNum\b[^<>]*/?>", secpr)
+            if not sn or _attr(sn.group(0), "page") != str(kw["start_page"]):
+                return False
+        if "border" in kw:
+            if hm is None:
+                hm = _header_maps(newdoc)
+                if hm is None:
+                    return False
+            _, _, bfs, _, _ = hm
+            bd = kw["border"]
+            typ = bd.get("apply", "BOTH") if isinstance(bd, dict) else "BOTH"
+            pm = re.search(r'<hp:pageBorderFill\b[^>]*\btype="%s"[^>]*>(?:[^<]*<hp:offset\b[^>]*/?>)?' % typ, secpr)
+            if not pm:
+                return False
+            pbf_xml = pm.group(0)
+            pbf_open = pbf_xml[:pbf_xml.find(">") + 1]
+            bf = bfs.get(_attr(pbf_open, "borderFillIDRef"))
+            if bf is None:
+                return False
+            if bd is None:
+                if not _check_bf_sides(bf, False) or not _check_bf_fill(bf, None):
+                    return False
+            else:
+                line = {"type": bd["type"], "width": bd["width"], "color": bd["color"]}
+                if not _check_bf_sides(bf, line) or not _check_bf_fill(bf, bd.get("fill")):
+                    return False
+                if "text_border" in bd and _attr(pbf_open, "textBorder") != bd["text_border"]:
+                    return False
+                for key, attr_name in (("header_inside", "headerInside"), ("footer_inside", "footerInside")):
+                    if key in bd and _attr(pbf_open, attr_name) != ("1" if bd[key] else "0"):
+                        return False
+                if "offset_mm" in bd:
+                    om = re.search(r"<hp:offset\b[^>]*/?>", pbf_xml)
+                    if not om:
+                        return False
+                    for side, val in bd["offset_mm"].items():
+                        if _attr(om.group(0), side) != str(_mm_hu(val)):
+                            return False
+    return True
+
+
+def _verify_hide(doc, newdoc, acts, st):
+    """Each hide op added one <hp:pageHiding> with the requested flags in the addressed body paragraph, and left
+    every other paragraph's pageHiding controls unchanged."""
+    hides = {id(a.hide[0]): a.hide for a in acts if a.hide}
+    if not hides:
+        return True
+    for p in doc.paras:
+        np = _new_para(doc, newdoc, p, st)
+        if np is None:
+            if id(p) in hides:
+                return False
+            continue
+        before_h = _page_hidings_in(doc, p)
+        after_h = _page_hidings_in(newdoc, np)
+        if None in after_h:
+            return False
+        if id(p) not in hides:
+            if after_h != before_h:
+                return False
+        else:
+            _p, want_kw = hides[id(p)]
+            if after_h != before_h + [want_kw]:
+                return False
+    return True
+
+
+def _verify_new_numbers(doc, newdoc, acts, st):
+    """Each new_number op added one <hp:newNum> with the requested numType and num in the addressed body
+    paragraph, and left every other paragraph's newNum controls unchanged."""
+    nns = {id(a.new_num[0]): a.new_num for a in acts if a.new_num}
+    if not nns:
+        return True
+    for p in doc.paras:
+        np = _new_para(doc, newdoc, p, st)
+        if np is None:
+            if id(p) in nns:
+                return False
+            continue
+        before_n = _new_nums_in(doc, p)
+        after_n = list(_new_nums_in(newdoc, np))
+        if (None, None) in after_n:
+            return False
+        if id(p) not in nns:
+            if after_n != before_n:
+                return False
+        else:
+            _p, want_kind, want_num = nns[id(p)]
+            if len(after_n) != len(before_n) + 1:
+                return False
+            for old in before_n:
+                if old not in after_n:
+                    return False
+                after_n.remove(old)
+            if after_n != [(want_kind, want_num)]:
+                return False
+    return True
+
+
 def _verify_shapes(doc, newdoc, acts, st):
     """The tables the table.* shape ops changed have the grid, cell count and merged cells they planned."""
     want = {}               # g -> expected change in the number of cells
@@ -5416,7 +5718,7 @@ def _remap_result(doc, newdoc, acts):
         return remap, False
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
             or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc
-            or a.char_shape or a.para_shape]
+            or a.char_shape or a.para_shape or a.page_setup or a.hide or a.new_num]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
