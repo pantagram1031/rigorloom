@@ -128,6 +128,30 @@ def _queue_paragraphs_and_tables(source: Path):
     return queue_paras, queue_tables
 
 
+def _queue_form(text: str) -> str:
+    """Doc-core text in the queue path's form.
+
+    The queue path reads run text by stripping tags, so inline ``hp:fwSpace``
+    and ``hp:lineBreak`` elements vanish there, while doc-core reads them as
+    U+3000 and a newline. Addresses are what this test pins; the text only
+    proves that both sides point at the same paragraph or table.
+    """
+    return text.replace("\u3000", "").replace("\n", "")
+
+
+def _same_text(core: str, queue: str) -> bool:
+    """Equal after the queue form and with all whitespace removed (cells join paragraphs differently)."""
+    return "".join(_queue_form(core).split()) == "".join(queue.split())
+
+
+def _fallback_tables(source: Path) -> set[str]:
+    """Queue table addresses doc-core leaves unmapped (switch fallback copies it does not draw)."""
+    doc = rt_doc._load(source, meta=False)
+    sections = sorted(range(len(doc.section_names)), key=doc.section_names.__getitem__)
+    tables = (t for si in sections for t in doc.sec_tables[si])
+    return {f"t{i}" for i, t in enumerate(tables) if not t.addr}
+
+
 def _core_table_first_cell_text(source: Path, core_addr: str, cells_grid: list[list[str]]) -> str:
     for r_idx, row in enumerate(cells_grid):
         for c_idx, cell_text in enumerate(row):
@@ -175,18 +199,26 @@ def test_queue_address_parity(doc_id: str, source: Path, expected_sha256: str | 
         assert read_res["ok"] and read_res["blocks"], (
             f"{doc_id}: doc-core {core_addr} -> queue {q_addr} read failed: {read_res}"
         )
-        core_text = read_res["blocks"][0]["text"].strip()
+        core_text = _queue_form(read_res["blocks"][0]["text"]).strip()
         assert q_addr in queue_paras, (
             f"{doc_id}: doc-core {core_addr} -> queue {q_addr} not found in queue paragraphs "
             f"(core text: {core_text[:40]!r} vs queue text: '<missing>')"
         )
         queue_text = queue_paras[q_addr].strip()
-        assert core_text == queue_text, (
+        assert _same_text(core_text, queue_text), (
             f"{doc_id}: paragraph text mismatch at doc-core {core_addr} -> queue {q_addr}: "
             f"core={core_text[:40]!r} vs queue={queue_text[:40]!r}"
         )
 
+    fallback = _fallback_tables(source)
+    unmapped = {q for q in queue_tables if q not in core_table_map.values()}
+    assert unmapped == fallback, (
+        f"{doc_id}: queue tables without a doc-core address {sorted(unmapped)} differ from "
+        f"doc-core's undrawn fallback tables {sorted(fallback)}"
+    )
     for q_addr, q_table in queue_tables.items():
+        if q_addr in fallback:
+            continue
         count = sum(1 for v in core_table_map.values() if v == q_addr)
         assert count == 1, (
             f"{doc_id}: doc-core <unmapped> -> queue {q_addr} appears {count} times in mapped tables "
@@ -199,7 +231,7 @@ def test_queue_address_parity(doc_id: str, source: Path, expected_sha256: str | 
             f"{doc_id}: doc-core {core_addr} -> queue {q_addr} read failed: {read_res}"
         )
         block = read_res["blocks"][0]
-        core_first = _core_table_first_cell_text(source, core_addr, block["cells"]).strip()
+        core_first = _queue_form(_core_table_first_cell_text(source, core_addr, block["cells"])).strip()
         assert q_addr in queue_tables, (
             f"{doc_id}: doc-core {core_addr} -> queue {q_addr} not found in queue tables "
             f"(core text: {core_first[:40]!r} vs queue text: '<missing>')"
@@ -211,7 +243,7 @@ def test_queue_address_parity(doc_id: str, source: Path, expected_sha256: str | 
             f"core=({block['rows']}, {block['cols']}) ({core_first[:40]!r}) vs "
             f"queue=({q_table['rows']}, {q_table['cols']}) ({queue_first[:40]!r})"
         )
-        assert core_first == queue_first, (
+        assert _same_text(core_first, queue_first), (
             f"{doc_id}: table first non-empty cell text mismatch at doc-core {core_addr} -> queue {q_addr}: "
             f"core={core_first[:40]!r} vs queue={queue_first[:40]!r}"
         )
