@@ -539,9 +539,12 @@ def test_corpus_forms_with_no_anomaly_are_never_refused(tmp_path):
         profile, _ = form_inspect.analyze(form)
         if profile["script_anomaly_targets"]:
             continue
+        # A cell whose every paragraph holds a table or picture has no slot to
+        # write (T228); fill_cells refuses it for that reason, not for charPr.
         targets = [(t["index"], c) for t in profile["table_map"]
                    for c in t["cells"]
-                   if c.get("classification") == "fill_target" and c["addr"]]
+                   if c.get("classification") == "fill_target" and c["addr"]
+                   and not (c.get("has_object") and c.get("lead_para") is None)]
         if targets:
             clean.append((form, targets[0]))
     assert len(clean) >= 3, [f.name for f, _ in clean]
@@ -552,6 +555,20 @@ def test_corpus_forms_with_no_anomaly_are_never_refused(tmp_path):
                             table=table)
         assert result["filled"] == 1, form.name
         assert result["cells"][0]["charpr"] is None   # charPr 보존
+
+
+def test_picture_only_cell_has_no_slot_and_fill_refuses(tmp_path):
+    """T228: 문단이 모두 그림을 담은 사진 칸은 쓸 자리가 없다. 검사는 그 사실을
+    알리고(has_object, lead_para None), fill_cells는 그림 옆에 글을 쓰지 않고 거부한다."""
+    form = CORPUS / "jumin-deungchobon-sinchengseo.hwpx"
+    profile, _ = form_inspect.analyze(form)
+    cell = next(c for t in profile["table_map"] if t["index"] == 0
+                for c in t["cells"]
+                if c["addr"] and (c["addr"]["row"], c["addr"]["col"]) == (0, 8))
+    assert cell.get("has_object") is True
+    assert cell.get("lead_para") is None and cell.get("lead_paras") == []
+    with pytest.raises(preedit.PreeditError, match="개체"):
+        fill_cells(form, tmp_path / "out.hwpx", [(0, 8, "값")], table=0)
 
 
 # ---------------------------------------------------------------------------
