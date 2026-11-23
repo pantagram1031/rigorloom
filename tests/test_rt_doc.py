@@ -2457,3 +2457,296 @@ def test_engine_more_char_and_para_shape_keys(tmp_path, monkeypatch):
     assert not res_bad["ok"] and res_bad["error"]["code"] == "internal"
     assert res_bad["error"]["written"] is False and not out_bad.exists()
 
+
+# ============================================================================ R8: 시작 쪽 번호, 새 번호로 시작, 감추기, 쪽 테두리·배경
+def test_page_level_ops_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(BASIC, tmp_path)
+    fx = _copy(FX_DOC, tmp_path)
+    rev, fx_rev, out = D.rev_of(src), D.rev_of(fx), tmp_path / "o.hwpx"
+
+    def err(ops, doc_path=src, base_rev=None):
+        return D.edit(doc_path, ops if isinstance(ops, list) else [ops],
+                      base=base_rev or (fx_rev if doc_path == fx else rev), out=out)["error"]
+
+    # page_setup start_page: bounds, types, and section without hp:startNum (basic.hwpx)
+    for bad_sp in (0, 65536, -1, True, False, "1", 1.5, None, []):
+        assert err({"op": "page_setup", "at": "p0", "set": {"start_page": bad_sp}})["code"] == "bad_input", bad_sp
+    for bad_bd in ({"type": "none", "width": 0.4}, {"type": "NONE", "color": "#000000"}, {"fill": "#FFFFCC"},
+                   {"offset_mm": 5}, {"apply": "BOTH", "header_inside": True}, {"width": 0.4, "color": "#000000"}):
+        assert err({"op": "page_setup", "at": "p0", "set": {"border": bad_bd}})["code"] == "bad_input", bad_bd
+    assert err({"op": "page_setup", "at": "p0:0-2", "set": {"start_page": 3}}, doc_path=fx)["code"] == "bad_address"
+    assert err({"op": "page_setup", "at": "t0/r0/c0/p0", "set": {"start_page": 3}},
+               doc_path=fx)["code"] == "bad_address"
+
+    # unverified engine page_setup keys are not exposed
+    for unverified in ("page_starts_on", "text_direction", "grid", "visibility"):
+        assert err({"op": "page_setup", "at": "p0", "set": {unverified: "BOTH"}})["code"] == "bad_input", unverified
+
+    # page_setup border: false or dict with checked line/fill/offset_mm/apply/text_border/header_inside/footer_inside
+    for bad_bd in (
+        True, None, "none", 123, [], {},
+        {"type": "SOLID", "extra": 1},
+        {"type": "THIN"},
+        {"type": 123},
+        {"width": 0.33},
+        {"width": 0},
+        {"width": -0.1},
+        {"width": True},
+        {"width": "thick"},
+        {"color": "black"},
+        {"color": "#12345"},
+        {"color": "#1234567"},
+        {"color": 123},
+        {"color": None},
+        {"fill": False},
+        {"fill": "none"},
+        {"fill": "grey"},
+        {"fill": "#12345"},
+        {"fill": 123},
+        {"offset_mm": -0.1},
+        {"offset_mm": 500.1},
+        {"offset_mm": True},
+        {"offset_mm": "5"},
+        {"offset_mm": [1, 2, 3]},
+        {"offset_mm": [1, 2, 3, 4, 5]},
+        {"offset_mm": [-0.1, 0, 0, 0]},
+        {"offset_mm": [0, 0, 500.1, 0]},
+        {"offset_mm": [True, 0, 0, 0]},
+        {"offset_mm": {}},
+        {"offset_mm": {"inner": 5}},
+        {"offset_mm": {"left": -1}},
+        {"apply": "ALL"},
+        {"apply": 1},
+        {"text_border": "PAGE"},
+        {"text_border": True},
+        {"header_inside": 1},
+        {"header_inside": "true"},
+        {"footer_inside": 0},
+        {"footer_inside": None},
+    ):
+        assert err({"op": "page_setup", "at": "p0", "set": {"border": bad_bd}})["code"] == "bad_input", bad_bd
+    e_bt = err({"op": "page_setup", "at": "p0", "set": {"border": {"type": "THIN"}}})
+    assert e_bt["code"] == "bad_input" and "THICK_SLIM" in e_bt["candidates"]
+    e_bw = err({"op": "page_setup", "at": "p0", "set": {"border": {"type": "SOLID", "width": 0.33}}})
+    assert e_bw["code"] == "bad_input" and 0.3 in e_bw["candidates"]
+    e_ba = err({"op": "page_setup", "at": "p0", "set": {"border": {"type": "SOLID", "apply": "ALL"}}})
+    assert e_ba["code"] == "bad_input" and "BOTH" in e_ba["candidates"]
+    e_tb = err({"op": "page_setup", "at": "p0", "set": {"border": {"type": "SOLID", "text_border": "MARGIN"}}})
+    assert e_tb["code"] == "bad_input" and "PAPER" in e_tb["candidates"]
+
+    # hide: unknown key, expect, at least one flag true, boolean types, body paragraph only, existing pageHiding
+    e_hk = err({"op": "hide", "at": "p0", "headers": True})
+    assert e_hk["code"] == "bad_input" and "header" in e_hk["candidates"]
+    assert err({"op": "hide", "at": "p0", "header": True, "expect": "사업 개요"})["code"] == "bad_input"
+    assert err({"op": "hide", "at": "p0"})["code"] == "bad_input"
+    assert err({"op": "hide", "at": "p0", "header": False, "page_num": False})["code"] == "bad_input"
+    for k in D.HIDE_KEYS:
+        for bad_b in (1, 0, "true", None, []):
+            assert err({"op": "hide", "at": "p0", k: bad_b})["code"] == "bad_input", (k, bad_b)
+    assert err({"op": "hide", "at": "p0:0-2", "header": True})["code"] == "bad_address"
+    assert err({"op": "hide", "at": "t0", "header": True})["code"] == "bad_address"
+    assert err({"op": "hide", "at": "t0/r0/c0", "header": True})["code"] == "bad_address"
+    assert err({"op": "hide", "at": "t0/r0/c0/p0", "header": True})["code"] == "bad_address"
+    assert err([{"op": "hide", "at": "p1", "header": True},
+                {"op": "hide", "at": "p1", "footer": True}])["code"] == "conflict"
+    assert err([{"op": "hide", "at": "p1", "header": True},
+                {"op": "delete", "at": "p1"}])["code"] == "conflict"
+    base_doc = D._load(src, meta=False)
+    sec_with_hide = base_doc.secs[0].replace(
+        "<hp:t>사업 개요</hp:t>",
+        '<hp:ctrl><hp:pageHiding hideHeader="1" hideFooter="0" hideMasterPage="0" hideBorder="0" '
+        'hideFill="0" hidePageNum="0"/></hp:ctrl><hp:t>사업 개요</hp:t>', 1)
+    has_hide = tmp_path / "has_hide.hwpx"
+    has_hide.write_bytes(base_doc.zip.rewrite({"Contents/section0.xml": sec_with_hide.encode("utf-8")}))
+    e_has_hide = err({"op": "hide", "at": "p0", "footer": True}, doc_path=has_hide, base_rev=D.rev_of(has_hide))
+    assert e_has_hide["code"] == "bad_input" and "pageHiding" in e_has_hide["message"]
+
+    # new_number: unknown key, expect, kind enum, num range, body paragraph only, existing newNum of same kind
+    e_nk = err({"op": "new_number", "at": "p0", "kind": "PAGE", "num": 1, "extra": 1})
+    assert e_nk["code"] == "bad_input" and "kind" in e_nk["candidates"]
+    assert err({"op": "new_number", "at": "p0", "kind": "PAGE", "num": 1, "expect": "사업 개요"})["code"] == "bad_input"
+    assert err({"op": "new_number", "at": "p0", "num": 1})["code"] == "bad_input"
+    assert err({"op": "new_number", "at": "p0", "kind": "PAGE"})["code"] == "bad_input"
+    for bad_kind in ("SECTION", "HEADING", "", 1, None, True):
+        assert err({"op": "new_number", "at": "p0", "kind": bad_kind, "num": 1})["code"] == "bad_input", bad_kind
+    e_nkind = err({"op": "new_number", "at": "p0", "kind": "PAGES", "num": 1})
+    assert e_nkind["code"] == "bad_input" and "PAGE" in e_nkind["candidates"]
+    for bad_num in (0, 65536, -1, True, False, "2", 1.5, None):
+        assert err({"op": "new_number", "at": "p0", "kind": "PAGE", "num": bad_num})["code"] == "bad_input", bad_num
+    assert err({"op": "new_number", "at": "p0:0-2", "kind": "PAGE", "num": 2})["code"] == "bad_address"
+    assert err({"op": "new_number", "at": "t0", "kind": "TABLE", "num": 2})["code"] == "bad_address"
+    assert err({"op": "new_number", "at": "t0/r0/c0", "kind": "TABLE", "num": 2})["code"] == "bad_address"
+    assert err({"op": "new_number", "at": "t0/r0/c0/p0", "kind": "TABLE", "num": 2})["code"] == "bad_address"
+    assert err([{"op": "new_number", "at": "p1", "kind": "PAGE", "num": 2},
+                {"op": "new_number", "at": "p1", "kind": "TABLE", "num": 3}])["code"] == "conflict"
+    assert err([{"op": "new_number", "at": "p1", "kind": "PAGE", "num": 2},
+                {"op": "delete", "at": "p1"}])["code"] == "conflict"
+    sec_with_nn = base_doc.secs[0].replace(
+        "<hp:t>사업 개요</hp:t>",
+        '<hp:ctrl><hp:newNum num="2" numType="PAGE"/></hp:ctrl><hp:t>사업 개요</hp:t>', 1)
+    has_nn = tmp_path / "has_nn.hwpx"
+    has_nn.write_bytes(base_doc.zip.rewrite({"Contents/section0.xml": sec_with_nn.encode("utf-8")}))
+    e_has_nn = err({"op": "new_number", "at": "p0", "kind": "PAGE", "num": 5},
+                   doc_path=has_nn, base_rev=D.rev_of(has_nn))
+    assert e_has_nn["code"] == "bad_input" and "newNum" in e_has_nn["message"]
+
+    # valid ops without engine: capability_unavailable and nothing written
+    e_ok = err([
+        {"op": "page_setup", "at": "p0", "set": {
+            "start_page": 3,
+            "border": {"type": "double_slim", "width": 0.4, "color": "#1F3864", "fill": "#FFF2CC",
+                       "offset_mm": [5, 5, 6, 6], "apply": "both", "text_border": "paper",
+                       "header_inside": True, "footer_inside": False}}},
+        {"op": "hide", "at": "p1", "header": True, "page_num": True},
+        {"op": "new_number", "at": "p2", "kind": "page", "num": 5},
+    ], doc_path=fx)
+    assert e_ok["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+@engine
+def test_engine_page_level_ops(tmp_path, monkeypatch):
+    # 1. hide and new_number on BASIC (tests/fixtures/rt_doc_contract/basic.hwpx)
+    f = _copy(BASIC, tmp_path)
+    base = D._load(f, meta=False)
+    out = tmp_path / "r8_basic.hwpx"
+    ops = [
+        {"op": "hide", "at": "p1", "header": True, "footer": True, "page_num": True, "fill": True},
+        {"op": "hide", "at": "p3", "border": True, "master_page": True},
+        {"op": "new_number", "at": "p1", "kind": "page", "num": 5},
+        {"op": "new_number", "at": "p3", "kind": "table", "num": 2},
+        {"op": "new_number", "at": "p4", "kind": "equation", "num": 10},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    got = D._load(out, meta=False)
+    assert [p.text for p in got.top] == [p.text for p in base.top]
+    acts = D._plan(base, ops)
+    assert D._verify(base, got, acts)
+    assert D._page_hidings_in(got, got.top[1]) == [{
+        "header": True, "footer": True, "page_num": True, "border": False, "fill": True, "master_page": False}]
+    assert D._page_hidings_in(got, got.top[3]) == [{
+        "header": False, "footer": False, "page_num": False, "border": True, "fill": False, "master_page": True}]
+    assert D._new_nums_in(got, got.top[1]) == [("PAGE", 5)]
+    assert D._new_nums_in(got, got.top[3]) == [("TABLE", 2)]
+    assert D._new_nums_in(got, got.top[4]) == [("EQUATION", 10)]
+
+    # refusing duplicate hide or same-kind new_number on the edited document
+    out_dup = tmp_path / "r8_dup.hwpx"
+    assert D.edit(out, [{"op": "hide", "at": "p1", "border": True}],
+                  base=D.rev_of(out), out=out_dup)["error"]["code"] == "bad_input"
+    assert D.edit(out, [{"op": "new_number", "at": "p1", "kind": "page", "num": 9}],
+                  base=D.rev_of(out), out=out_dup)["error"]["code"] == "bad_input"
+    assert not out_dup.exists()
+
+    # verifier refuses hand-broken outputs for hide and new_number on BASIC
+    raw_sec = got.zip.read("Contents/section0.xml").decode("utf-8")
+    for old_s, new_s in (
+        ('hideHeader="1"', 'hideHeader="0"'),
+        ('hidePageNum="1"', 'hidePageNum="0"'),
+        ('hideMasterPage="1"', 'hideMasterPage="0"'),
+        ('num="5" numType="PAGE"', 'num="6" numType="PAGE"'),
+        ('num="2" numType="TABLE"', 'num="2" numType="PICTURE"'),
+        ('num="10" numType="EQUATION"', 'num="0" numType="EQUATION"'),
+    ):
+        assert old_s in raw_sec, old_s
+        broken = D.Doc(out, got.zip.rewrite({
+            "Contents/section0.xml": raw_sec.replace(old_s, new_s, 1).encode("utf-8")}), "hwpx")
+        assert not D._verify(base, broken, acts), (old_s, new_s)
+
+    # 2. page_setup start_page and border (plus hide and new_number) on FX_DOC (whose secPr carries startNum & pageBorderFill)
+    f_pg = _copy(FX_DOC, tmp_path)
+    base_pg = D._load(f_pg, meta=False)
+    out_pg = tmp_path / "r8_pg.hwpx"
+    ops_pg = [
+        {"op": "page_setup", "at": "p0", "set": {
+            "start_page": 7,
+            "border": {"type": "double_slim", "width": 0.4, "color": "#1F3864", "fill": "#FFF2CC",
+                       "offset_mm": [4, 5, 6, 7], "apply": "both", "text_border": "content",
+                       "header_inside": True, "footer_inside": True}}},
+        {"op": "hide", "at": "p1", "header": True, "border": True},
+        {"op": "new_number", "at": "p2", "kind": "footnote", "num": 4},
+    ]
+    r_pg = D.edit(f_pg, ops_pg, base=D.rev_of(f_pg), out=out_pg)
+    assert r_pg["ok"], r_pg
+    got_pg = D._load(out_pg, meta=False)
+    acts_pg = D._plan(base_pg, ops_pg)
+    assert D._verify(base_pg, got_pg, acts_pg)
+    sec_pg = got_pg.zip.read("Contents/section0.xml").decode("utf-8")
+    head_pg = got_pg.zip.read("Contents/header.xml").decode("utf-8")
+    assert 'page="7"' in re.search(r"<hp:startNum\b[^<>]*/>", sec_pg).group(0)
+    pbf_pg = re.search(r'<hp:pageBorderFill type="BOTH"[^>]*><hp:offset [^>]*/>', sec_pg).group(0)
+    assert 'textBorder="CONTENT"' in pbf_pg and 'headerInside="1"' in pbf_pg and 'footerInside="1"' in pbf_pg
+    for side, mm_v in (("left", 4), ("right", 5), ("top", 6), ("bottom", 7)):
+        assert '%s="%d"' % (side, D._mm_hu(mm_v)) in pbf_pg
+
+    # verifier refuses hand-broken section0.xml and header.xml for start_page, page border, hide and new_number
+    for old_s, new_s in (
+        ('page="7"', 'page="1"'),
+        ('textBorder="CONTENT"', 'textBorder="PAPER"'),
+        ('headerInside="1"', 'headerInside="0"'),
+        ('footerInside="1"', 'footerInside="0"'),
+        ('left="%d"' % D._mm_hu(4), 'left="0"'),
+        ('hideBorder="1"', 'hideBorder="0"'),
+        ('num="4" numType="FOOTNOTE"', 'num="1" numType="FOOTNOTE"'),
+    ):
+        assert old_s in sec_pg, old_s
+        broken_pg = D.Doc(out_pg, got_pg.zip.rewrite({
+            "Contents/section0.xml": sec_pg.replace(old_s, new_s, 1).encode("utf-8")}), "hwpx")
+        assert not D._verify(base_pg, broken_pg, acts_pg), (old_s, new_s)
+    for old_h, new_h in (
+        ('type="DOUBLE_SLIM"', 'type="SOLID"'),
+        ('width="0.4 mm"', 'width="0.12 mm"'),
+        ('color="#1F3864"', 'color="#000000"'),
+        ('faceColor="#FFF2CC"', 'faceColor="none"'),
+    ):
+        assert old_h in head_pg, old_h
+        broken_hdr = D.Doc(out_pg, got_pg.zip.rewrite({
+            "Contents/header.xml": head_pg.replace(old_h, new_h, 1).encode("utf-8")}), "hwpx")
+        assert not D._verify(base_pg, broken_hdr, acts_pg), (old_h, new_h)
+
+    # border: false removes the existing page border
+    out_rm = tmp_path / "r8_rm.hwpx"
+    ops_rm = [{"op": "page_setup", "at": "p0", "set": {"border": False}}]
+    r_rm = D.edit(out_pg, ops_rm, base=D.rev_of(out_pg), out=out_rm)
+    assert r_rm["ok"], r_rm
+    got_rm = D._load(out_rm, meta=False)
+    assert D._verify(got_pg, got_rm, D._plan(got_pg, ops_rm))
+    sec_rm = got_rm.zip.read("Contents/section0.xml").decode("utf-8")
+    pbf_rm = re.search(r'<hp:pageBorderFill type="BOTH"[^>]*>', sec_rm).group(0)
+    assert 'borderFillIDRef="1"' in pbf_rm
+
+    # 3. on BASIC, whose secPr has no startNum and no pageBorderFill: the engine adds Hancom's defaults first;
+    # border type NONE is a page background without lines
+    out_min = tmp_path / "r8_min.hwpx"
+    ops_min = [{"op": "page_setup", "at": "p0", "set": {"start_page": 3, "border": {"type": "none", "fill": "#FFFFCC"}}}]
+    r_min = D.edit(f, ops_min, base=D.rev_of(f), out=out_min)
+    assert r_min["ok"], r_min
+    got_min = D._load(out_min, meta=False)
+    assert D._verify(base, got_min, D._plan(base, ops_min))
+    sec_min = got_min.zip.read("Contents/section0.xml").decode("utf-8")
+    assert 'page="3"' in re.search(r"<hp:startNum\b[^<>]*/>", sec_min).group(0)
+    ref = re.search(r'<hp:pageBorderFill type="BOTH" borderFillIDRef="(\d+)"', sec_min).group(1)
+    head_min = got_min.zip.read("Contents/header.xml").decode("utf-8")
+    bf_min = re.search(r'<hh:borderFill id="%s".*?</hh:borderFill>' % ref, head_min, re.S).group(0)
+    assert bf_min.count('Border type="NONE"') == 4 and 'faceColor="#FFFFCC"' in bf_min
+
+    # end-to-end: if the engine produces a broken output for page border or hide, edit fails and writes nothing
+    bad_hide = got.zip.rewrite({
+        "Contents/section0.xml": raw_sec.replace('hideHeader="1"', 'hideHeader="0"', 1).encode("utf-8")
+    })
+    monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_hide, {}, None))
+    out_bad_hide = tmp_path / "bad_hide.hwpx"
+    res_bad_hide = D.edit(f, ops, base=D.rev_of(f), out=out_bad_hide)
+    assert not res_bad_hide["ok"] and res_bad_hide["error"]["code"] == "internal"
+    assert res_bad_hide["error"]["written"] is False and not out_bad_hide.exists()
+
+    bad_border = got_pg.zip.rewrite({
+        "Contents/header.xml": head_pg.replace('type="DOUBLE_SLIM"', 'type="NONE"', 1).encode("utf-8")
+    })
+    monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_border, {}, None))
+    out_bad_bd = tmp_path / "bad_bd.hwpx"
+    res_bad_bd = D.edit(f_pg, ops_pg, base=D.rev_of(f_pg), out=out_bad_bd)
+    assert not res_bad_bd["ok"] and res_bad_bd["error"]["code"] == "internal"
+    assert res_bad_bd["error"]["written"] is False and not out_bad_bd.exists()

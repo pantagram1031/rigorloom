@@ -354,20 +354,49 @@ rt_doc.edit("보고서.hwpx", [
     `table.delete_row` or a shape op on the same table, or a second
     `table.style`, is a conflict. Text ops on the table's cells are fine: they
     run before the style op rewrites the table.
-- Page ops (쪽 > 편집 용지, 다단 설정, 쪽·단·구역 나누기) need the engine and take
+- Page ops (쪽 > 편집 용지, 쪽 테두리/배경, 다단 설정, 쪽·단·구역 나누기, 감추기, 새 번호로 시작) need the engine and take
   `at`, a body paragraph (not one in a table, note or box, and not a range).
-  - `page_setup` changes the 편집 용지 of the section that holds the
+  - `page_setup` changes the 편집 용지 (and 쪽 테두리/배경 or 시작 쪽 번호) of the section that holds the
     paragraph: `set` takes `paper` (`A3`, `A4`, `A5`, `B4`, `B5`, `LETTER`,
     `LEGAL`, portrait sizes) or `width_mm` / `height_mm` (50 to 1000),
     `landscape` (true/false; the engine keeps width and height as they are and
     writes the orientation), `margins` (`left`, `right`, `top`, `bottom`,
     `header`, `footer`, `gutter`, 0 to 500 mm; margins left out keep their
-    value) and `gutter_type` (제본: `LEFT_ONLY`, `LEFT_RIGHT`, `TOP_BOTTOM`).
+    value), `gutter_type` (제본: `LEFT_ONLY`, `LEFT_RIGHT`, `TOP_BOTTOM`),
+    `start_page` (시작 쪽 번호: integer `1` to `65535`, the section's
+    `hp:startNum/@page`) and `border` (쪽 테두리/단색 배경:
+    `false` resets the section's `BOTH` (양쪽) page border to borderFill 1, or
+    `{"type": line_type, "width": width_mm, "color": "#RRGGBB", "fill"?: "#RRGGBB"|null, "offset_mm"?: [left, right, top, bottom]|number (0..500 mm), "apply"?: "BOTH"|"ODD"|"EVEN", "text_border"?: "PAPER"|"CONTENT", "header_inside"?: bool, "footer_inside"?: bool}`,
+    using the same line types and widths from Hancom's lists as `char_border` /
+    `para_shape` `border`, plus `type` `NONE` (no `width` or `color`) for a
+    page background without lines; `type` is required, so a fill alone never
+    draws a frame). On a section whose `hp:secPr` has no
+    `hp:startNum` or `hp:pageBorderFill` (rigorloom's own .hwpx files among
+    them), `start_page` and `border` need hwp-engine bc43585 (PR #35) or later, which
+    adds Hancom's defaults first; an older engine leaves the section as it was,
+    the check below fails, and nothing is written.
     Margins that leave no room are refused with `bad_input`: left + right +
     gutter (top + bottom + header + footer, plus the gutter for
     `TOP_BOTTOM`) must stay below the page's width (height), using the
     section's paper and margins for what the op leaves out; a landscape page
-    lays the paper's height across.
+    lays the paper's height across. After the edit, the section's `hp:startNum`
+    and `hp:pageBorderFill` (plus its referenced `hh:borderFill` in
+    `header.xml`) are verified before anything is written.
+  - `hide` (쪽 > 감추기) hides page elements on the
+    page where the body paragraph at `at` starts: takes boolean flags `header`,
+    `footer`, `page_num`, `border`, `fill` and `master_page` (at least one must
+    be `true`), and inserts `<hp:pageHiding>` at the start of the paragraph. A
+    paragraph that already holds a `pageHiding` control is refused with
+    `bad_input`. It takes no `expect` and changes no addresses. After the edit,
+    the target paragraph must hold the new `hp:pageHiding` with those six attributes.
+  - `new_number` (쪽 > 새 번호로 시작) restarts
+    numbering at the start of the body paragraph at `at`: takes `kind`
+    (`PAGE`, `FOOTNOTE`, `ENDNOTE`, `PICTURE`, `TABLE` or `EQUATION`) and `num`
+    (integer `1` to `65535`), inserting `<hp:newNum>` at the paragraph start. A
+    paragraph that already holds a `newNum` control of that `kind` is refused
+    with `bad_input`. It takes no `expect` and changes no addresses. After the
+    edit, the target paragraph must hold the new `hp:newNum` with `numType` and
+    `num`.
   - `columns` changes the column definition (다단) that governs the paragraph,
     the last one before it in its section: `set` takes `count` (1 to 255),
     `gap_mm` (0 to 100), `line` (구분선, true/false), `kind` (`NEWSPAPER`,
@@ -389,7 +418,8 @@ rt_doc.edit("보고서.hwpx", [
     `page` or `column` break on one paragraph in one edit both apply.
   - Conflicts: two `page_setup` or two `columns` ops on one section are a
     `conflict`; so is either of them on the section of a section break, a
-    second section break in the same edit, a second break on one paragraph,
+    second section break in the same edit, a second `break`, `hide` or
+    `new_number` on one paragraph,
     and any other op on a paragraph a section break moves. Send them in
     separate edits.
 - 머리말·꼬리말 and 쪽 번호 매기기 (쪽 > 머리말/꼬리말, 쪽 번호 매기기) need the
