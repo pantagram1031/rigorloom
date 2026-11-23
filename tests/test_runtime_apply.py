@@ -637,7 +637,7 @@ def test_execute_preedit_steps_refusal_and_cancellation_parity(tmp_path):
             "작성",
             "<hp:lineBreak/>",
             1,
-            "필요한 사유를 작성<hp:lineBreak/>",
+            "예외 사항 및 사유를 작성<hp:lineBreak/>",
         ),
     ],
     ids=["fwspace-admrul-p13-r1", "linebreak-moel2025-p21-r1"],
@@ -714,4 +714,128 @@ def test_apply_set_run_preserves_inline_elements_in_saved_xml(
     assert needle not in saved_p_xml
     assert saved_p_xml.count(inline_tag) == expected_count
     assert expected_fragment in saved_p_xml
+
+
+def test_apply_replace_at_cell_preserves_fwspace_in_jumin_cell_7_1_run_2(tmp_path):
+    from pathlib import Path
+    import sys
+    import zipfile
+
+    engine_scripts = Path(__file__).resolve().parents[1] / "engine" / "scripts"
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import hwpx_tables
+
+    source = tmp_path / "jumin-deungchobon-sinchengseo.hwpx"
+    shutil.copyfile(CORPUS_FORM.parent / "jumin-deungchobon-sinchengseo.hwpx", source)
+
+    with RuntimeClient(tmp_path / "root") as client:
+        client.initialize()
+        session = client.ok("workspace/openPath", {"path": str(source)})["sessionId"]
+        region = client.ok("document/readRegion", {
+            "sessionId": session,
+            "regions": [{"table": 0, "row": 7, "col": 1}],
+        })["regions"][0]
+        before_text = next(r["text"] for r in region["runs"] if r["index"] == 2)
+        after_text = before_text.replace("3쪽 유의사항 3번", "3쪽 유의사항 4번", 1)
+        assert after_text != before_text
+
+        ops = [{
+            "kind": "replace_at_cell",
+            "table": 0,
+            "row": 7,
+            "col": 1,
+            "run": 2,
+            "mode": "replace",
+            "text": after_text,
+        }]
+        plan = client.ok("plan/propose", {
+            "sessionId": session,
+            "backend": "preedit",
+            "ops": ops,
+        })["plan"]
+        validation = client.ok("plan/validate", {"planId": plan["planId"]})["validation"]
+        assert validation["ok"] is True, validation["hard"]
+        approval = client.ok("approval/request", {"planId": plan["planId"]})["approval"]
+        client.ok("approval/resolve", {
+            "approvalId": approval["approvalId"],
+            "planId": plan["planId"],
+            "planHash": plan["planHash"],
+            "decision": "approved",
+            "approver": "test-operator",
+        })
+        result = client.ok("plan/apply", {
+            "planId": plan["planId"],
+            "approvalId": approval["approvalId"],
+        })
+        run_id = result["candidate"]["runId"]
+        artifact = (
+            tmp_path / "root" / "sessions" / session / "candidates"
+            / run_id / result["candidate"]["candidate"]["path"]
+        )
+
+    with zipfile.ZipFile(artifact) as zf:
+        saved_xml = zf.read("Contents/section0.xml").decode("utf-8")
+    cell = hwpx_tables.find_cell(hwpx_tables.scan_tables(saved_xml)[0], 7, 1)
+    cell_body = saved_xml[cell["body_start"]:cell["body_end"]]
+    assert "※<hp:fwSpace/>수수료 면제 대상에 대해서는 3쪽 유의사항 4번을 참고하시기 바랍니다." in cell_body
+
+
+def test_apply_set_run_preserves_tab_attributes_in_kstartup_p751_run_0(tmp_path):
+    from pathlib import Path
+    import sys
+    import zipfile
+
+    engine_scripts = Path(__file__).resolve().parents[1] / "engine" / "scripts"
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import preedit
+
+    source = tmp_path / "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
+    shutil.copyfile(
+        CORPUS_FORM.parent / "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx",
+        source,
+    )
+    tab_tag = '<hp:tab width="4000" leader="0" type="1"/>'
+    new_date = "      서명일 : 2026. 11. 23. "
+
+    with RuntimeClient(tmp_path / "root") as client:
+        client.initialize()
+        session = client.ok("workspace/openPath", {"path": str(source)})["sessionId"]
+        ops = [
+            {"kind": "set_run", "atPara": 751, "run": 0, "text": new_date},
+            {"kind": "set_run", "atPara": 753, "run": 0, "text": new_date},
+        ]
+        plan = client.ok("plan/propose", {
+            "sessionId": session,
+            "backend": "preedit",
+            "ops": ops,
+        })["plan"]
+        validation = client.ok("plan/validate", {"planId": plan["planId"]})["validation"]
+        assert validation["ok"] is True, validation["hard"]
+        approval = client.ok("approval/request", {"planId": plan["planId"]})["approval"]
+        client.ok("approval/resolve", {
+            "approvalId": approval["approvalId"],
+            "planId": plan["planId"],
+            "planHash": plan["planHash"],
+            "decision": "approved",
+            "approver": "test-operator",
+        })
+        result = client.ok("plan/apply", {
+            "planId": plan["planId"],
+            "approvalId": approval["approvalId"],
+        })
+        run_id = result["candidate"]["runId"]
+        artifact = (
+            tmp_path / "root" / "sessions" / session / "candidates"
+            / run_id / result["candidate"]["candidate"]["path"]
+        )
+
+    with zipfile.ZipFile(artifact) as zf:
+        saved_xml = zf.read("Contents/section0.xml").decode("utf-8")
+    paras = list(preedit._iter_document_paragraphs(saved_xml))
+    for at_para in (751, 753):
+        _, _, saved_p_xml = paras[at_para]
+        assert saved_p_xml.count(tab_tag) == 5
+        assert (tab_tag * 5 + new_date) in saved_p_xml
 
