@@ -22,7 +22,7 @@ type Placement = {
   caret?: number | null | "end";
 };
 
-type Pending = Placement & { value: string };
+type Pending = Placement & { value: string; idle: boolean };
 
 function lineStyle({ line }: Placement): CSSProperties {
   const { x, y, w, h } = rectPt(line.rect);
@@ -87,7 +87,7 @@ export function useEngineEditOverlay({
   useEffect(() => {
     if (!settled || !geometry || pending.length === 0) return;
     const submitted = lastSubmitted.current;
-    if (submitted?.page === geometry.page && submitted.id === activeId && latestValue.current === submitted.value) {
+    if (submitted && !submitted.idle && submitted.page === geometry.page && submitted.id === activeId && latestValue.current === submitted.value) {
       cancelEdit();
     }
     setPending((items) => items.filter((item) => item.page !== geometry.page));
@@ -156,10 +156,11 @@ export function useEngineEditOverlay({
         geometry?.rev !== head) return false;
     const previous = lastSubmitted.current;
     if (value === (previous ? previous.value : initial)) {
+      if (previous && !keepOpen) previous.idle = false;
       if (!keepOpen) cancelEdit();
       return true;
     }
-    const item = { ...placement, value };
+    const item = { ...placement, value, idle: keepOpen };
     lastSubmitted.current = item;
     setPending((items) => [...items.filter((other) => other.id !== item.id), item]);
     if (edit.kind === "cell") void commitCellEditV2(value, { inspect, keepOpen });

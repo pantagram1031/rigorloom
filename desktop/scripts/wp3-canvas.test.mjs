@@ -720,30 +720,49 @@ test("changing operation formatting or flags invalidates a shared decision", () 
   assert.equal(project({ ...replace, expect: "Original" }, replaceDecisions).decision, "pending");
 });
 
-function createHookRunner() {
+function createHookRunner({ runEffects = false } = {}) {
   const slots = new Map();
   let currentKey = "default";
   let stateCursor = 0;
   let refCursor = 0;
+  let effectCursor = 0;
   const bucket = () => {
-    if (!slots.has(currentKey)) slots.set(currentKey, { states: [], refs: [] });
+    if (!slots.has(currentKey)) {
+      slots.set(currentKey, { states: [], refs: [], effects: [], pendingEffects: null, dirty: false });
+    }
     return slots.get(currentKey);
   };
   return {
     ...React,
+    reset(key) {
+      slots.delete(key);
+    },
     renderWith(key, fn) {
       const prevKey = currentKey;
       const prevState = stateCursor;
       const prevRef = refCursor;
+      const prevEffect = effectCursor;
       currentKey = key;
-      stateCursor = 0;
-      refCursor = 0;
       try {
-        return fn();
+        const b = bucket();
+        let result;
+        do {
+          b.dirty = false;
+          stateCursor = 0;
+          refCursor = 0;
+          effectCursor = 0;
+          const pendingEffects = [];
+          b.pendingEffects = pendingEffects;
+          result = fn();
+          b.pendingEffects = null;
+          for (const effect of pendingEffects) effect();
+        } while (runEffects && b.dirty);
+        return result;
       } finally {
         currentKey = prevKey;
         stateCursor = prevState;
         refCursor = prevRef;
+        effectCursor = prevEffect;
       }
     },
     useState(initial) {
@@ -753,7 +772,11 @@ function createHookRunner() {
         b.states[idx] = typeof initial === "function" ? initial() : initial;
       }
       const set = (next) => {
-        b.states[idx] = typeof next === "function" ? next(b.states[idx]) : next;
+        const value = typeof next === "function" ? next(b.states[idx]) : next;
+        if (!Object.is(value, b.states[idx])) {
+          b.states[idx] = value;
+          b.dirty = true;
+        }
       };
       return [b.states[idx], set];
     },
@@ -765,7 +788,22 @@ function createHookRunner() {
       }
       return b.refs[idx];
     },
-    useEffect() {},
+    useEffect(fn, deps) {
+      if (!runEffects) return;
+      const b = bucket();
+      const idx = effectCursor++;
+      const prev = b.effects[idx];
+      const changed =
+        !prev ||
+        !deps ||
+        !prev.deps ||
+        deps.length !== prev.deps.length ||
+        deps.some((d, i) => !Object.is(d, prev.deps[i]));
+      if (changed) {
+        b.effects[idx] = { deps };
+        b.pendingEffects?.push(fn);
+      }
+    },
   };
 }
 
@@ -924,6 +962,176 @@ test("SeatEditor and EngineEditOverlay preserve the next blur commit when Tab ca
     overlay = renderOverlay(headGeometry);
     assert.equal(overlay.editor.props.onCycleBlank(1, "기록정책담당관"), true);
     assert.deepEqual(cycled, [[0, 5, 1, 1]]);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test("EngineEditOverlay keeps the inline editor open on idle commit settle and closes on explicit commit", () => {
+  const stack = loadWp3Stack();
+  const previousWindow = globalThis.window;
+  let pendingTimer = null;
+  globalThis.window = {
+    clearTimeout: (id) => {
+      if (pendingTimer && pendingTimer.id === id) pendingTimer = null;
+    },
+    setTimeout: (fn) => {
+      const id = (pendingTimer?.id ?? 0) + 1;
+      pendingTimer = { id, fn };
+      return id;
+    },
+  };
+  const flushIdleTimer = () => {
+    const timer = pendingTimer;
+    assert.ok(timer, "Expected idle commit timer to be scheduled");
+    pendingTimer = null;
+    timer.fn();
+  };
+
+  try {
+    const hookReact = createHookRunner({ runEffects: true });
+    const storeWithHook = {
+      ...stack.store,
+      useWorkspace: (sel) => sel(stack.store.getState()),
+    };
+    const canvasSeatMod = loadTsModule("src/canvas/SeatEditor.tsx", {
+      react: hookReact,
+      "../i18n/v2/wp3": stack.wp3,
+      "../store": storeWithHook,
+    });
+    const enginePage = loadTsModule("src/model/enginePage.ts", {
+      "./page": stack.pageModel,
+    });
+    let cancelCalls = 0;
+    const { useEngineEditOverlay } = loadTsModule("src/canvas/EngineEditOverlay.tsx", {
+      react: hookReact,
+      "../actions": {
+        cancelEdit: () => {
+          cancelCalls += 1;
+          stack.store.setState({ inlineEdit: null });
+        },
+        setInlineEditMultiline: () => {},
+      },
+      "../model/enginePage": enginePage,
+      "../model/page": stack.pageModel,
+      "../run_map": { locateSpanInRuns: () => ({ kind: "refused" }) },
+      "../revision": { runTextAfterEdit: (_edit, val) => val },
+      "../runtime": { readRegion: async () => ({ subject: null, regions: [] }) },
+      "../store": storeWithHook,
+      "./actions": stack.actions,
+      "./SeatEditor": canvasSeatMod,
+    });
+
+    const headGeometry = {
+      page: 1,
+      rev: corpus.source.sha256,
+      widthPt: 595,
+      heightPt: 842,
+      boxes: [
+        {
+          at: "t0/r5/c1/p0#L0",
+          kind: "line",
+          rect: [10, 10, 80, 16],
+          text: "",
+        },
+      ],
+    };
+    const renderOverlay = (settled) => {
+      const res = hookReact.renderWith("engine-overlay", () =>
+        useEngineEditOverlay({
+          sessionId: "sess-1",
+          geometry: headGeometry,
+          editable: true,
+          isNarrow: false,
+          settled,
+          displayedEdits: [],
+          inspect: corpus.inspect,
+          hit: null,
+          onCycleCell: () => {},
+        }),
+      );
+      if (!res.editor) hookReact.reset("engine-seat");
+      return res;
+    };
+    const renderInput = (overlay) =>
+      hookReact.renderWith("engine-seat", () =>
+        overlay.editor.type(overlay.editor.props),
+      );
+    const enterEvent = () => ({
+      key: "Enter",
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      keyCode: 13,
+      nativeEvent: { isComposing: false },
+      preventDefault() {},
+      stopPropagation() {},
+    });
+
+    // 1. idle commit + preview settles with unchanged value -> editor stays open (cancelEdit not called).
+    stack.actions.beginCellEditV2(0, 5, 1);
+    let overlay = renderOverlay(true);
+    assert.ok(overlay.editor);
+    let input = renderInput(overlay);
+    input.props.onChange({ target: { value: "기록정책담당관" } });
+    input = renderInput(overlay);
+    flushIdleTimer();
+    overlay = renderOverlay(false);
+    assert.ok(overlay.editor);
+    overlay = renderOverlay(true);
+    assert.equal(cancelCalls, 0);
+    assert.ok(stack.store.getState().inlineEdit);
+    assert.ok(overlay.editor);
+
+    // 2. explicit commit (Enter) + settle -> editor closes.
+    input = renderInput(overlay);
+    input.props.onChange({ target: { value: "기록정책담당관 수정" } });
+    input = renderInput(overlay);
+    input.props.onKeyDown(enterEvent());
+    overlay = renderOverlay(false);
+    overlay = renderOverlay(true);
+    assert.equal(stack.store.getState().inlineEdit, null);
+    assert.equal(overlay.editor, null);
+
+    // 3. idle commit, then Enter with the same value (dedupe path), then settle -> editor closes.
+    stack.actions.beginCellEditV2(0, 5, 1);
+    overlay = renderOverlay(true);
+    assert.ok(overlay.editor);
+    input = renderInput(overlay);
+    input.props.onChange({ target: { value: "기획조정실" } });
+    input = renderInput(overlay);
+    flushIdleTimer();
+    overlay = renderOverlay(false);
+    assert.ok(overlay.editor);
+    cancelCalls = 0;
+    input = renderInput(overlay);
+    input.props.onKeyDown(enterEvent());
+    overlay = renderOverlay(true);
+    assert.equal(cancelCalls, 1);
+    assert.equal(stack.store.getState().inlineEdit, null);
+    assert.equal(overlay.editor, null);
+
+    // 4. idle commit + settle, then Enter with the same value after it already settled -> editor closes (no hang).
+    stack.actions.beginCellEditV2(0, 5, 1);
+    overlay = renderOverlay(true);
+    assert.ok(overlay.editor);
+    input = renderInput(overlay);
+    input.props.onChange({ target: { value: "운영지원과" } });
+    input = renderInput(overlay);
+    flushIdleTimer();
+    overlay = renderOverlay(false);
+    cancelCalls = 0;
+    overlay = renderOverlay(true);
+    assert.equal(cancelCalls, 0);
+    assert.ok(stack.store.getState().inlineEdit);
+    assert.ok(overlay.editor);
+    input = renderInput(overlay);
+    input.props.onKeyDown(enterEvent());
+    overlay = renderOverlay(true);
+    assert.equal(cancelCalls, 1);
+    assert.equal(stack.store.getState().inlineEdit, null);
+    assert.equal(overlay.editor, null);
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
