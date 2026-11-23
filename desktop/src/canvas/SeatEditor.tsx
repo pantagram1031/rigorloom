@@ -32,7 +32,7 @@ export interface SeatEditorProps {
   multiline?: boolean;
   allowMultiline?: boolean;
   onMultilineChange?: (multi: boolean) => void;
-  onCycleBlank?: (direction: 1 | -1, currentValue: string) => void;
+  onCycleBlank?: (direction: 1 | -1, currentValue: string) => boolean | void;
   onEscapeExit?: () => void;
   ariaLabel?: string;
   placeholder?: string;
@@ -183,7 +183,7 @@ export function SeatEditor({
       e.preventDefault();
       clearEditTimer();
       skipBlurRef.current = true;
-      onCycleBlank(e.shiftKey ? -1 : 1, cur);
+      if (onCycleBlank(e.shiftKey ? -1 : 1, cur) === false) skipBlurRef.current = false;
       e.stopPropagation();
       return;
     }

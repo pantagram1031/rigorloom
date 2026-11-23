@@ -184,7 +184,9 @@ export function useEngineEditOverlay({
       onIdleCommit={(value) => submit(value, true)}
       onCommit={(value) => submit(value, false)}
       onCycleBlank={edit.kind === "cell" ? (dir, value) => {
-        if (submit(value, false)) onCycleCell(edit.table, edit.row, edit.col, dir);
+        if (!submit(value, false)) return false;
+        onCycleCell(edit.table, edit.row, edit.col, dir);
+        return true;
       } : undefined}
       onCancel={cancelEdit}
     />

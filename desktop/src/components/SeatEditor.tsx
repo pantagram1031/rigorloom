@@ -68,7 +68,7 @@ export function SeatEditor({
   allowMultiline?: boolean;
   onMultilineChange?: (multi: boolean) => void;
   /** Optional blank cycling on Tab / Shift+Tab (Fill mode). */
-  onCycleBlank?: (direction: 1 | -1, currentValue: string) => void;
+  onCycleBlank?: (direction: 1 | -1, currentValue: string) => boolean | void;
   /** Optional Esc override to return focus to the page sheet container (Ruling H). */
   onEscapeExit?: () => void;
   ariaLabel?: string;
@@ -169,7 +169,7 @@ export function SeatEditor({
     if (e.key === "Tab" && onCycleBlank) {
       e.preventDefault();
       skipBlurRef.current = true;
-      onCycleBlank(e.shiftKey ? -1 : 1, cur);
+      if (onCycleBlank(e.shiftKey ? -1 : 1, cur) === false) skipBlurRef.current = false;
       e.stopPropagation();
       return;
     }
