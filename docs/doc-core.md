@@ -405,7 +405,9 @@ rt_doc.edit("보고서.hwpx", [
   change no body paragraph or table addresses.
   If the document's header has no 각주 (Footnote), 미주 (Endnote) or 캡션
   (Caption) style, the edit first adds it, based on the document's first
-  style, because Hancom places notes and captions in those styles.
+  style (so an auto-added note style uses that body font size rather than
+  Hancom's smaller 각주 default), reports the header addition in that op's
+  `applied[].warnings`, and checks that the output header holds the style.
   - `note` inserts a 각주 (`kind: "foot"`, the default) or 미주 (`kind: "end"`)
     in the paragraph at `at` with `text` (one or more lines; `\n` starts a new
     paragraph in the note). By default the note mark goes at the end of the
@@ -422,8 +424,53 @@ rt_doc.edit("보고서.hwpx", [
     stay untouched.
   - Conflicts: two `note` ops (or a `note` and a text edit) on the same
     paragraph, two `caption` ops (or a `caption` and a row, style or shape op)
-    on the same table, and a `delete` of that paragraph or table in the same
-    edit. Editing or removing an existing note or caption has no op yet.
+    on the same table, a `delete` of that paragraph or table in the same edit,
+    and a `style.create` of 각주/미주/캡션 (`Footnote`/`Endnote`/`Caption`)
+    together with a `note` or `caption` that needs it auto-added. Editing or
+    removing an existing note or caption has no op yet.
+- 책갈피, 하이퍼링크 and 차례 만들기 (입력 > 책갈피, 하이퍼링크; 도구 > 차례
+  만들기) need the engine and take no `expect`.
+  `link` and `toc` need hwp-engine 1071d94 (PR #33) or later on documents
+  whose header lacks the charPr children, `hh:tabProperties` or the hp/hc
+  namespaces (rigorloom's own .hwpx files among them); an older engine fails
+  those edits and nothing is written.
+  - `bookmark` inserts a point 책갈피 (`hp:bookmark`) in the paragraph at `at`
+    with `name` (1 to 64 characters on one line, no control characters). A name
+    that already exists in the document (or is duplicated in the same edit) is
+    refused with `bad_input`. By default the bookmark goes at the end of the
+    paragraph; `after` places it right after that substring of the paragraph,
+    which must occur once there (otherwise `bad_input` with `candidates`). No
+    address changes. After the edit, the `.hwpx` section must hold one more
+    `hp:bookmark` with `name` inside that paragraph and the body text must stay
+    unchanged.
+  - `link` turns `phrase` (which must occur once in the paragraph at `at`,
+    otherwise `bad_input` with `candidates`) into a `HYPERLINK` field to
+    `target`: an `http://`, `https://` or `mailto:` URL, or `#name` of a
+    bookmark that exists in the document or is created by an earlier `bookmark`
+    op in the same edit (otherwise `bad_input`). The engine replaces the
+    selected phrase with a `HYPERLINK` field whose text run gets Hancom's blue
+    underlined link look. No address changes. After the edit, the paragraph
+    text must stay unchanged and hold one more `HYPERLINK` `fieldBegin` whose
+    `Command` holds `target` and whose range text equals `phrase`.
+  - `toc` inserts Hancom's 제목 차례 (`TABLEOFCONTENTS` field) as new
+    top-level paragraphs right after the body paragraph at `at`, with one
+    hyperlinked line per 개요 heading up to `levels` (1 to 3, default 2) and
+    tab `leader` (`DASH`, the default, `DOT`, `SOLID` or `NONE`), with table,
+    picture and equation lists turned off. Because `toc` adds top-level
+    paragraphs, later body addresses shift and are reported in `remap`. At most
+    one `toc` per edit; a document that already has a `TABLEOFCONTENTS` field
+    is refused with `bad_input`. If the header lacks `차례 제목` (`TOC
+    Heading`) or `차례 1..N` (`TOC 1..N`), the edit adds them from the
+    document's first style, reports them in `applied[].warnings` and checks the
+    output header. The page numbers in the 차례 come from rigorloom's layout,
+    and 한글 updates them when the user runs 차례 새로 고침. After the edit, the section must hold one `TABLEOFCONTENTS` field
+    right after `at`, and the original paragraphs' text must stay unchanged and
+    in order.
+  - Conflicts: two ops on the same target paragraph, a `delete` of that
+    paragraph (or its table), a text edit of the same paragraph together with
+    `bookmark`, `link` or `toc`, and a `style.create` of a 차례 style that
+    `toc` needs auto-added in the same edit. Editing or removing an existing
+    bookmark, hyperlink or table of contents has no op yet.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is
