@@ -241,6 +241,42 @@ def _queue_form(text):
     return text.replace("\u3000", "").replace("\n", "")
 
 
+def changed_region(old, new):
+    """Return (prefix_len, old_end, new_end) for the changed region of old vs new.
+
+    Aligns by common prefix p and common suffix s, capping s so p + s never
+    exceeds min(len(old), len(new)). Changed region in old is [p, old_end),
+    in new is [p, new_end), where old_end = len(old) - s and new_end = len(new) - s.
+    """
+    n_old, n_new = len(old), len(new)
+    limit = min(n_old, n_new)
+    p = 0
+    while p < limit and old[p] == new[p]:
+        p += 1
+    s = 0
+    max_s = limit - p
+    while s < max_s and old[n_old - 1 - s] == new[n_new - 1 - s]:
+        s += 1
+    return p, n_old - s, n_new - s
+
+
+def _queued_run_edit(core_run, new_text):
+    """Map a queue-form run edit onto the changed range [start, end) of a doc-core run."""
+    old = _queue_form(core_run)
+    new = _queue_form(new_text)
+    p, old_end, new_end = changed_region(old, new)
+    pos = [i for i, ch in enumerate(core_run) if ch not in ("\u3000", "\n")]
+    if p < old_end:
+        c_start, c_end = pos[p], pos[old_end - 1] + 1
+    elif not pos:
+        c_start = c_end = len(core_run)
+    elif p == len(pos):
+        c_start = c_end = pos[-1] + 1
+    else:
+        c_start = c_end = pos[p]
+    return c_start, c_end, new[p:new_end]
+
+
 class PageGateway:
     def __init__(self):
         self._ready = Condition()
@@ -316,6 +352,7 @@ class PageGateway:
                 raise PageError("bad_address", "the queued text target is unavailable")
             at = core_addresses[base_at] + sep + tail
             targets.append(at)
+            text = op["text"]
             if "run" in op:
                 if at not in paragraphs:
                     read = _engine_result(rt_doc.read(head.path, at, with_runs=True), head.rev)
@@ -325,15 +362,16 @@ class PageGateway:
                 idx = op["run"]
                 # The queue path strips inline <hp:fwSpace/> and <hp:lineBreak/> tags
                 # when reading run text, while doc-core reads them as U+3000 and "\n".
-                # preedit.set_runs replaces the full <hp:t> interior span (dropping those
-                # inline elements), so replacing the full doc-core run range matches apply.
+                # Narrow the doc-core replacement range to the changed region in queue
+                # form so inline elements outside the changed region survive, matching apply.
                 if (idx >= len(runs)
                         or _queue_form(runs[idx]) != _queue_form(op["before"])
                         or "".join(runs) != block["text"]):
                     raise PageError("bad_address", "the queued run no longer matches the document")
                 start = sum(map(len, runs[:idx]))
-                at = f"{at}:{start}-{start + len(runs[idx])}"
-            edits.append({"op": "set", "at": at, "text": op["text"]})
+                c_start, c_end, text = _queued_run_edit(runs[idx], text)
+                at = f"{at}:{start + c_start}-{start + c_end}"
+            edits.append({"op": "set", "at": at, "text": text})
         # rt_doc snapshots the session head and writes the edit to its own private scratch.
         result = _engine_result(rt_doc.edit(head.path, edits,
                                             base=head.rev[:12], preview=True), None)
