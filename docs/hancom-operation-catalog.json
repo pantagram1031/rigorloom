@@ -14,7 +14,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/preedit.py",
-        "line": 1438,
+        "line": 1473,
         "symbol": "fill_cells"
       },
       "test_references": [
@@ -50,7 +50,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/preedit.py",
-        "line": 1828,
+        "line": 1863,
         "symbol": "replace_at_cells"
       },
       "test_references": [
@@ -120,7 +120,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/preedit.py",
-        "line": 2075,
+        "line": 2110,
         "symbol": "delete_guide_paragraphs"
       },
       "test_references": [

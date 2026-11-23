@@ -665,7 +665,10 @@ def document_graph(profile: dict, session: Session) -> dict:
                                  ("script_anomaly", "scriptAnomaly"),
                                  ("color_anomaly", "colorAnomaly"),
                                  ("color_value", "colorValue"),
-                                 ("spacer_pattern", "spacerPattern")):
+                                 ("spacer_pattern", "spacerPattern"),
+                                 ("has_object", "hasObject"),
+                                 ("lead_para", "leadPara"),
+                                 ("lead_paras", "leadParas")):
                 if key in cell:
                     row[out_key] = cell[key]
             cells.append(row)
@@ -702,6 +705,12 @@ def editable_regions(profile: dict, session: Session) -> dict:
                 region["colorAnomaly"] = cell["color_anomaly"]
             if "color_value" in cell:
                 region["colorValue"] = cell["color_value"]
+            if "has_object" in cell:
+                region["hasObject"] = cell["has_object"]
+            if "lead_para" in cell:
+                region["leadPara"] = cell["lead_para"]
+            if "lead_paras" in cell:
+                region["leadParas"] = cell["lead_paras"]
             regions.append(region)
     return {"sessionId": session.id,
             "documentHash": profile.get("form_hash"),

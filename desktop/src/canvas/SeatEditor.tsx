@@ -38,6 +38,8 @@ export interface SeatEditorProps {
   placeholder?: string;
   fontCategory?: "serif" | "sans";
   fontFace?: string | null;
+  readOnly?: boolean;
+  readOnlyMessage?: string;
 }
 
 export function SeatEditor({
@@ -59,12 +61,15 @@ export function SeatEditor({
   placeholder,
   fontCategory = "serif",
   fontFace,
+  readOnly = false,
+  readOnlyMessage,
 }: SeatEditorProps) {
   const language = useWorkspace((s) => s.language);
   const resolvedAriaLabel = ariaLabel ?? wp3t("seat_editor_label", language);
-  const [text, setText] = useState(value);
+  const resolvedValue = readOnly && readOnlyMessage ? readOnlyMessage : value;
+  const [text, setText] = useState(resolvedValue);
   const [isMultiline, setIsMultiline] = useState(
-    Boolean(initialMultiline || value.includes("\n")),
+    Boolean(initialMultiline || resolvedValue.includes("\n")),
   );
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -80,6 +85,7 @@ export function SeatEditor({
   useEffect(() => () => window.clearTimeout(editTimer.current), []);
 
   const changeText = (next: string) => {
+    if (readOnly) return;
     dirtyRef.current = true;
     setText(next);
     onValueChange?.(next);
@@ -97,9 +103,9 @@ export function SeatEditor({
   const dirtyRef = useRef(false);
   useEffect(() => {
     if (dirtyRef.current) return;
-    setText(value);
-    setIsMultiline(Boolean(initialMultiline || value.includes("\n")));
-  }, [initialMultiline, value]);
+    setText(resolvedValue);
+    setIsMultiline(Boolean(initialMultiline || resolvedValue.includes("\n")));
+  }, [initialMultiline, resolvedValue]);
 
   useEffect(() => {
     const el = currentField();
@@ -153,7 +159,7 @@ export function SeatEditor({
     }
     const cur = currentField()?.value ?? text;
     if (e.key === "Enter") {
-      if (e.shiftKey && allowMultiline && !isMultiline) {
+      if (e.shiftKey && allowMultiline && !isMultiline && !readOnly) {
         e.preventDefault();
         const el = inputRef.current;
         const start = el?.selectionStart ?? cur.length;
@@ -168,11 +174,11 @@ export function SeatEditor({
         e.stopPropagation();
         return;
       }
-      if (!isMultiline || e.ctrlKey || e.metaKey) {
+      if (!isMultiline || e.ctrlKey || e.metaKey || readOnly) {
         e.preventDefault();
         clearEditTimer();
         skipBlurRef.current = true;
-        onCommit(cur, "enter");
+        if (readOnly) onCancel(); else onCommit(cur, "enter");
         e.stopPropagation();
         return;
       }
@@ -209,6 +215,10 @@ export function SeatEditor({
       return;
     }
     clearEditTimer();
+    if (readOnly) {
+      onCancel();
+      return;
+    }
     onCommit(currentField()?.value ?? text, "blur");
   };
 
@@ -222,17 +232,23 @@ export function SeatEditor({
     fontFamily: computedFontFamily,
     ...style,
   };
+  const effectiveClassName = readOnly ? `${className} rl-seat-input--readonly` : className;
+  const effectivePlaceholder = readOnly ? (readOnlyMessage ?? placeholder) : placeholder;
 
   if (isMultiline) {
     return (
       <textarea
         ref={textareaRef}
-        className={`${className} rl-seat-input--multiline`}
+        className={`${effectiveClassName} rl-seat-input--multiline`}
         data-testid="seat-input"
+        data-readonly={readOnly ? "true" : undefined}
+        readOnly={readOnly}
+        aria-readonly={readOnly ? "true" : undefined}
+        title={readOnlyMessage}
         value={text}
         style={mergedStyle}
         rows={Math.max(2, Math.min(10, text.split(/\r?\n/).length + 1))}
-        placeholder={placeholder}
+        placeholder={effectivePlaceholder}
         aria-label={resolvedAriaLabel}
         onChange={(e) => changeText(e.target.value)}
         onCompositionStart={handleCompositionStart}
@@ -247,11 +263,15 @@ export function SeatEditor({
   return (
     <input
       ref={inputRef}
-      className={className}
+      className={effectiveClassName}
       data-testid="seat-input"
+      data-readonly={readOnly ? "true" : undefined}
+      readOnly={readOnly}
+      aria-readonly={readOnly ? "true" : undefined}
+      title={readOnlyMessage}
       value={text}
       style={mergedStyle}
-      placeholder={placeholder}
+      placeholder={effectivePlaceholder}
       aria-label={resolvedAriaLabel}
       onChange={(e) => changeText(e.target.value)}
       onCompositionStart={handleCompositionStart}

@@ -40,6 +40,9 @@ export interface GraphCell {
   colorAnomaly?: boolean;
   scriptAnomaly?: boolean;
   spacerPattern?: string;
+  hasObject?: boolean;
+  leadPara?: number | null;
+  leadParas?: number[];
 }
 
 export interface GraphTable {
@@ -91,6 +94,9 @@ export interface EditableRegion {
   charPrSuggestedFace?: TypefaceByLang | null;
   colorAnomaly?: boolean;
   scriptAnomaly?: boolean;
+  hasObject?: boolean;
+  leadPara?: number | null;
+  leadParas?: number[];
 }
 
 export interface DocumentSummary {

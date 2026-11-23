@@ -197,8 +197,10 @@ export function CanvasPane() {
   const scrollReq = getScrollRequestState();
   const visiblePage = pageRaster.raster?.page ?? slice.page;
   const narrowEditDraft = inlineEdit?.kind === "cell"
-    ? changes.find((change) => change.id === inlineEdit.opId && change.decision !== "rejected")?.after ??
-      inlineEdit.before
+    ? inlineEdit.readOnly && inlineEdit.readOnlyMessage
+      ? inlineEdit.readOnlyMessage
+      : changes.find((change) => change.id === inlineEdit.opId && change.decision !== "rejected")?.after ??
+        inlineEdit.before
     : "";
   const activeSeatLabel =
     inlineEdit?.kind === "cell"
@@ -319,6 +321,8 @@ export function CanvasPane() {
               value={narrowEditDraft}
               caret="end"
               multiline={inlineEdit.multiline}
+              readOnly={Boolean(inlineEdit.readOnly)}
+              readOnlyMessage={inlineEdit.readOnlyMessage}
               className="rl-narrow-seat-input"
               onCommit={(val) => {
                 void commitCellEditV2(val, { inspect });
@@ -336,8 +340,10 @@ export function CanvasPane() {
             <button
               type="button"
               className="rl-narrow-seat-btn rl-narrow-seat-btn--commit"
+              disabled={Boolean(inlineEdit.readOnly)}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
+                if (inlineEdit.readOnly) return;
                 const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
                   '[data-testid="seat-input"]',
                 );

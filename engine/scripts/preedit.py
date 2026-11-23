@@ -1181,7 +1181,7 @@ def _blank_paragraph_text(p_xml):
         changed = True
         return m.group(1) + m.group(3)
 
-    if TBL_TAG_RE.search(p_xml):     # 중첩 표를 품은 문단은 건드리지 않는다
+    if OBJECT_TAG_RE.search(p_xml):  # 중첩 표·그림 등 개체를 품은 문단은 건드리지 않는다
         return p_xml, False
     return T_FULL_RE.sub(_sub, p_xml), changed
 
@@ -1258,13 +1258,13 @@ def _script_anomaly(profile, baseline_profile, baseline_id):
 
 
 def _fill_target_paragraph_index(paras):
-    """fill_cells가 쓸 문단의 색인(중첩 표를 담지 않은 첫 문단). 없으면 None."""
+    """fill_cells가 쓸 문단의 색인(중첩 표·개체를 담지 않은 첫 문단). 없으면 None."""
     return next((i for i, (_s, _e, p) in enumerate(paras)
-                 if not TBL_TAG_RE.search(p)), None)
+                 if not OBJECT_TAG_RE.search(p)), None)
 
 
 def _fill_slot_indices(paras, target):
-    """target에서 시작하는 **연속** 비-중첩표 문단들의 색인(= 쓸 수 있는 자리).
+    """target에서 시작하는 **연속** 비-개체 문단들의 색인(= 쓸 수 있는 자리).
 
     T39 다문단 채우기의 지형이다. 연속(contiguous)인 것이 핵심 — 기안문
     별지의 본문 셀은 빈 문단 18개 다음에 직인·발신명의를 담은 **중첩 표
@@ -1273,10 +1273,45 @@ def _fill_slot_indices(paras, target):
     """
     slots = []
     for i in range(target, len(paras)):
-        if TBL_TAG_RE.search(paras[i][2]):
+        if OBJECT_TAG_RE.search(paras[i][2]):
             break
         slots.append(i)
     return slots
+
+
+def cell_fill_slot_info(body):
+    """셀 몸통(hp:tc의 자식 스팬)의 개체 포함 여부, 연속 선행 문단 자리, 비울 문단 색인.
+
+    반환: (has_object: bool, fill_slots: list[int], blank_indices: list[int]).
+    ``fill_cells``와 정확히 같은 ``_find_paragraphs`` · ``_fill_target_paragraph_index``
+    · ``_fill_slot_indices`` · ``_blank_paragraph_text``를 공유하므로 미리보기/검사와
+    실제 적용이 다른 문단 색인을 가리킬 수 없다.
+    """
+    paras = _find_paragraphs(body)
+    has_object = any(bool(OBJECT_TAG_RE.search(p)) for _s, _e, p in paras)
+    blank_indices = [
+        i for i, (_s, _e, p) in enumerate(paras)
+        if _blank_paragraph_text(p)[1]
+    ]
+    if not paras:
+        return has_object, [], blank_indices
+    target = _fill_target_paragraph_index(paras)
+    if target is None:
+        return has_object, [], blank_indices
+    return has_object, _fill_slot_indices(paras, target), blank_indices
+
+
+def cell_lead_paragraphs(hwpx_in, table, row, col):
+    """문서 내 (table, row, col) 셀의 (has_object, fill_slots, blank_indices) 조회."""
+    _infos, contents = _read_zip(hwpx_in)
+    section_names = _section_names(contents)
+    _sname, target_table, _total, xml = _locate_table(
+        contents, section_names, int(table))
+    cell = find_cell(target_table, int(row), int(col))
+    if cell is None:
+        raise PreeditError(f"표 {table}에 cellAddr ({row},{col}) 없음")
+    body = xml[cell["body_start"]:cell["body_end"]]
+    return cell_fill_slot_info(body)
 
 
 def _para_first_run_charpr(p_xml):
@@ -1384,7 +1419,7 @@ def _fill_cell_body(body, lines, *, overwrite, charpr, parapr=None):
         raise PreeditError("셀에 문단(hp:p)이 없음 — 쓸 자리 없음")
     target = _fill_target_paragraph_index(paras)
     if target is None:
-        raise PreeditError("셀의 모든 문단이 중첩 표를 담고 있음 — 쓸 자리 없음")
+        raise PreeditError("셀의 모든 문단이 표·그림 같은 개체를 담고 있음 — 쓸 자리 없음")
 
     slots = _fill_slot_indices(paras, target)
     reused = slots[:len(lines)]

@@ -613,3 +613,124 @@ def test_a_prepared_pdf_outside_the_session_is_refused(serving, document, monkey
     session.meta["derivedPdf"] = {"sourceSha256": session.meta["sourceSha256"], "path": str(original)}
     session.meta_path.write_text(json.dumps(session.meta), encoding="utf-8")
     refuse(request(serving, "render", {**binding(session), "page": 1, "scale": 1}), 404, "not_found")
+
+
+def test_preview_addresses_lead_paragraphs_of_object_holding_cell(serving, fake_engine, monkeypatch):
+    import sys
+
+    engine_scripts = REPO / "engine" / "scripts"
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import preedit
+
+    recorded_ops = []
+    orig_edit = rt_ui_doc.rt_doc.edit
+
+    def capture_edit(path, ops, *, base, preview):
+        recorded_ops.append(list(ops))
+        return orig_edit(path, ops, base=base, preview=preview)
+
+    monkeypatch.setattr(rt_ui_doc.rt_doc, "edit", capture_edit)
+
+    session = Session.open_path(serving.bridge.current_root(), str(GONGMUN))
+    base = binding(session)
+    has_obj, slots, blank_indices = preedit.cell_lead_paragraphs(session.source, 0, 2, 0)
+    assert has_obj is True
+    assert slots == list(range(20))
+    assert blank_indices == [19]
+
+    recorded_ops.clear()
+    status, _, preview = request(serving, "preview", {
+        **base,
+        "ops": [{"at": "t0/r2/c0", "text": "붙임 자료를 보내 드립니다."}],
+    })
+    assert status == 200, preview
+    assert recorded_ops == [[
+        {"op": "set", "at": "t0/r2/c0/p0", "text": "붙임 자료를 보내 드립니다."},
+        {"op": "set", "at": "t0/r2/c0/p19", "text": ""},
+    ]]
+
+    recorded_ops.clear()
+    status, _, preview = request(serving, "preview", {
+        **base,
+        "ops": [{"at": "t0/r2/c0", "text": "첫째 줄\n둘째 줄"}],
+    })
+    assert status == 200, preview
+    assert recorded_ops == [[
+        {"op": "set", "at": "t0/r2/c0/p0", "text": "첫째 줄"},
+        {"op": "set", "at": "t0/r2/c0/p1", "text": "둘째 줄"},
+        {"op": "set", "at": "t0/r2/c0/p19", "text": ""},
+    ]]
+
+    # Too many lines (more than the 20 reserved slots) is refused by preview.
+    recorded_ops.clear()
+    too_many_lines = "\n".join(f"줄 {i}" for i in range(len(slots) + 1))
+    refuse(
+        request(serving, "preview", {
+            **base,
+            "ops": [{"at": "t0/r2/c0", "text": too_many_lines}],
+        }),
+        400,
+        "bad_input",
+    )
+    assert recorded_ops == []
+
+    # Leaf cell without objects keeps addressing the cell itself.
+    recorded_ops.clear()
+    status, _, preview = request(serving, "preview", {
+        **base,
+        "ops": [{"at": "t0/r5/c1", "text": "기획조정실"}],
+    })
+    assert status == 200, preview
+    assert recorded_ops == [[{"op": "set", "at": "t0/r5/c1", "text": "기획조정실"}]]
+
+
+@pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
+def test_installed_engine_previews_object_holding_body_cell_at_lead_paragraph(serving):
+    root = serving.bridge.current_root()
+    session = Session.open_path(root, str(GONGMUN))
+    base = binding(session)
+    text = "붙임 자료를 보내 드립니다."
+
+    status, _, preview = request(serving, "preview", {
+        **base,
+        "ops": [{"at": "t0/r2/c0", "text": text}],
+    })
+    assert status == 200, preview
+    assert 1 in preview["changedPages"]
+
+    params = {**base, "previewId": preview["previewId"], "page": 1}
+    status, _, geometry = request(serving, "geometry", params)
+    assert status == 200 and geometry["changed"]
+    assert next(box for box in geometry["boxes"] if box["at"] == "t0/r2/c0/p0")["text"] == text
+    assert next(box for box in geometry["boxes"] if box["at"] == "t0/r2/c0/p19")["text"] == ""
+    assert any(box["at"] == "t0/r2/c0/t0" and box.get("text") == "직인" for box in geometry["boxes"])
+    assert any(box["at"] == "t0/r2/c0/t1" and box.get("text") == "발신명의" for box in geometry["boxes"])
+
+    core = RuntimeCore(root, engine_root=REPO)
+    plan = core.plan_propose(
+        session.id,
+        "preedit",
+        [{"kind": "fill_cell", "table": 0, "row": 2, "col": 0, "text": text, "charPr": "23"}],
+        "test-operator",
+    )["plan"]
+    assert "at" not in plan["ops"][0]["params"]
+    validation = core.plan_validate(plan["planId"])["validation"]
+    assert validation["ok"] is True, validation["hard"]
+    approval = core.approval_request(plan["planId"], "test-operator")["approval"]
+    core.approval_resolve(
+        approval["approvalId"],
+        plan["planId"],
+        plan["planHash"],
+        "approved",
+        "test-operator",
+    )
+    applied = core.plan_apply(plan["planId"], approval["approvalId"])["candidate"]
+    saved_path = (
+        root / "sessions" / session.id / "candidates"
+        / applied["runId"] / applied["candidate"]["path"]
+    )
+    saved_block = rt_ui_doc.rt_doc.read(saved_path, "t0/r2/c0/p0")["blocks"][0]
+    assert saved_block["text"] == text
+    blanked_block = rt_ui_doc.rt_doc.read(saved_path, "t0/r2/c0/p19")["blocks"][0]
+    assert blanked_block["text"] == ""

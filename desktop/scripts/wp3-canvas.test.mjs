@@ -1137,3 +1137,193 @@ test("EngineEditOverlay keeps the inline editor open on idle commit settle and c
     else globalThis.window = previousWindow;
   }
 });
+
+test("object-holding cells address lead paragraphs in preview and queue, and open read-only when every paragraph holds an object", async () => {
+  const stack = loadWp3Stack();
+  const previousWindow = globalThis.window;
+  let pendingTimer = null;
+  globalThis.window = {
+    clearTimeout: (id) => {
+      if (pendingTimer && pendingTimer.id === id) pendingTimer = null;
+    },
+    setTimeout: (fn) => {
+      const id = (pendingTimer?.id ?? 0) + 1;
+      pendingTimer = { id, fn };
+      return id;
+    },
+  };
+
+  try {
+    const hookReact = createHookRunner({ runEffects: true });
+    const storeWithHook = {
+      ...stack.store,
+      useWorkspace: (sel) => sel(stack.store.getState()),
+    };
+    const canvasSeatMod = loadTsModule("src/canvas/SeatEditor.tsx", {
+      react: hookReact,
+      "../i18n/v2/wp3": stack.wp3,
+      "../store": storeWithHook,
+    });
+    const enginePage = loadTsModule("src/model/enginePage.ts", {
+      "./page": stack.pageModel,
+    });
+    let cancelCalls = 0;
+    const { useEngineEditOverlay } = loadTsModule("src/canvas/EngineEditOverlay.tsx", {
+      react: hookReact,
+      "../actions": {
+        cancelEdit: () => {
+          cancelCalls += 1;
+          stack.store.setState({ inlineEdit: null });
+        },
+        setInlineEditMultiline: () => {},
+      },
+      "../i18n/v2/wp3": stack.wp3,
+      "../model/enginePage": enginePage,
+      "../model/page": stack.pageModel,
+      "../run_map": { locateSpanInRuns: () => ({ kind: "refused" }) },
+      "../revision": { runTextAfterEdit: (_edit, val) => val },
+      "../runtime": { readRegion: async () => ({ subject: null, regions: [] }) },
+      "../store": storeWithHook,
+      "./actions": stack.actions,
+      "./SeatEditor": canvasSeatMod,
+    });
+
+    // 1. t0/r2/c0 holds nested tables and lead paragraphs p0..p19: queued op has no `at`, engineTextEdit uses cell address.
+    const openedBody = stack.actions.beginCellEditV2(0, 2, 0);
+    assert.equal(openedBody, true);
+    assert.equal(stack.store.getState().inlineEdit.leadPara, 0);
+    assert.equal(stack.store.getState().inlineEdit.readOnly, undefined);
+    const bodyCommit = await stack.actions.commitCellEditV2("붙임 자료를 보내 드립니다.");
+    assert.equal(bodyCommit.committed, true);
+    assert.equal(stack.upsertCalls.length, 1);
+    assert.equal("at" in stack.upsertCalls[0], false);
+    assert.equal(stack.upsertCalls[0].at, undefined);
+    assert.deepEqual(enginePage.engineTextEdit(stack.upsertCalls[0]), [
+      { at: "t0/r2/c0", text: "붙임 자료를 보내 드립니다." },
+    ]);
+    const bodyRef = stack.changes.indexedChangesToCanvasRefs(
+      [{ op: stack.upsertCalls[0], opId: stack.upsertCalls[0].opId, beforeText: "", afterText: stack.upsertCalls[0].text }],
+      {},
+      {},
+      {},
+    )[0];
+    assert.equal(bodyRef.at, "t0/r2/c0");
+
+    // Multi-line edit in t0/r2/c0 also sends cell address t0/r2/c0 with no `at` on the queued op.
+    stack.actions.beginCellEditV2(0, 2, 0);
+    await stack.actions.commitCellEditV2("첫째 줄\n둘째 줄");
+    const multiOp = stack.upsertCalls[stack.upsertCalls.length - 1];
+    assert.equal("at" in multiOp, false);
+    assert.equal(multiOp.at, undefined);
+    assert.deepEqual(enginePage.engineTextEdit(multiOp), [
+      { at: "t0/r2/c0", text: "첫째 줄\n둘째 줄" },
+    ]);
+
+    // 2. Object-only cell with no usable lead paragraph (leadPara: null, leadParas: []) opens read-only and sends no edit.
+    const koMsg = stack.wp3.wp3t("cell_object_only_readonly", "ko");
+    const enMsg = stack.wp3.wp3t("cell_object_only_readonly", "en");
+    assert.ok(typeof koMsg === "string" && koMsg.length > 0 && koMsg !== enMsg);
+    assert.ok(typeof enMsg === "string" && enMsg.length > 0);
+
+    const objectOnlyInspect = {
+      ...corpus.inspect,
+      graph: {
+        ...corpus.inspect.graph,
+        tables: corpus.inspect.graph.tables.map((t) =>
+          t.index === 0
+            ? {
+                ...t,
+                cells: [
+                  ...t.cells,
+                  {
+                    addr: { row: 31, col: 0 },
+                    classification: "static",
+                    textPreview: "",
+                    truncated: false,
+                    hasObject: true,
+                    leadPara: null,
+                    leadParas: [],
+                  },
+                ],
+              }
+            : t,
+        ),
+      },
+    };
+    stack.store.setState({ inspects: { "sess-1": objectOnlyInspect } });
+    const beforeUpserts = stack.upsertCalls.length;
+
+    const openedReadOnly = stack.actions.beginCellEditV2(0, 31, 0, { inspect: objectOnlyInspect });
+    assert.equal(openedReadOnly, true);
+    const roEdit = stack.store.getState().inlineEdit;
+    assert.ok(roEdit);
+    assert.equal(roEdit.readOnly, true);
+    assert.equal(roEdit.readOnlyMessage, koMsg);
+
+    const geometry = {
+      page: 1,
+      rev: corpus.source.sha256,
+      widthPt: 595,
+      heightPt: 842,
+      boxes: [
+        {
+          at: "t0/r31/c0",
+          kind: "cell",
+          rect: [20, 40, 200, 32],
+          text: "▣",
+        },
+      ],
+    };
+    const overlay = hookReact.renderWith("ro-overlay", () =>
+      useEngineEditOverlay({
+        sessionId: "sess-1",
+        geometry,
+        editable: true,
+        isNarrow: false,
+        settled: true,
+        displayedEdits: [],
+        inspect: objectOnlyInspect,
+        hit: null,
+        onCycleCell: () => {},
+      }),
+    );
+    assert.ok(overlay.editor);
+    assert.equal(overlay.editor.props.readOnly, true);
+    assert.equal(overlay.editor.props.value, koMsg);
+
+    const input = hookReact.renderWith("ro-seat", () =>
+      overlay.editor.type(overlay.editor.props),
+    );
+    assert.equal(input.props.readOnly, true);
+    assert.equal(input.props.value, koMsg);
+
+    // Typing and Enter on read-only editor must not schedule idle timer or send any edit.
+    input.props.onChange({ target: { value: "무시되어야 함" } });
+    assert.equal(pendingTimer, null);
+    assert.equal(stack.upsertCalls.length, beforeUpserts);
+
+    const directCommit = await stack.actions.commitCellEditV2("무시되어야 함", {
+      inspect: objectOnlyInspect,
+      keepOpen: true,
+    });
+    assert.equal(directCommit.committed, false);
+    assert.equal(stack.upsertCalls.length, beforeUpserts);
+
+    input.props.onKeyDown({
+      key: "Enter",
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      keyCode: 13,
+      nativeEvent: { isComposing: false },
+      preventDefault() {},
+      stopPropagation() {},
+    });
+    assert.equal(cancelCalls, 1);
+    assert.equal(stack.store.getState().inlineEdit, null);
+    assert.equal(stack.upsertCalls.length, beforeUpserts);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});

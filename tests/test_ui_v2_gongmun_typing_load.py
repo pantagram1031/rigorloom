@@ -42,8 +42,14 @@ def _build_walkthrough_steps() -> list[SeatStep]:
         key = (params["table"], params["row"], params["col"])
         if op["kind"] == "replace_at_cell" and params.get("text"):
             by_cell.setdefault(key, params["text"])
+        elif op["kind"] == "fill_cell":
+            lines = params.get("lines")
+            text = lines[0] if isinstance(lines, list) and lines else params.get("text")
+            if text:
+                by_cell.setdefault(key, text)
 
     return [
+        SeatStep("c:0:2:0", "본문", by_cell[(0, 2, 0)], 6, "Enter"),
         SeatStep("c:0:4:0", "기안자", by_cell[(0, 4, 0)], 4, "Tab"),
         SeatStep("c:0:4:3", "검토자", by_cell[(0, 4, 3)], 4, "Tab"),
         SeatStep("c:0:4:9", "결재권자", by_cell[(0, 4, 9)], 3, "Enter"),
@@ -154,6 +160,8 @@ def test_editor_v2_gongmun_walkthrough_typing_load(tmp_path: Path, monkeypatch) 
                     preview_ok_responses = 0
                     preview_superseded_responses = 0
                     preview_failed_responses: list[tuple[int, str]] = []
+                    preview_addresses: list[str] = []
+                    proposed_ops_snapshots: list[list[dict]] = []
                     typing_phase = False
 
                     def on_request(req) -> None:
@@ -161,12 +169,18 @@ def test_editor_v2_gongmun_walkthrough_typing_load(tmp_path: Path, monkeypatch) 
                         sample_scratch()
                         if req.url.endswith("/rpc") and req.post_data:
                             try:
-                                method = json.loads(req.post_data).get("method") or "unknown"
+                                payload = json.loads(req.post_data)
+                                method = payload.get("method") or "unknown"
                             except json.JSONDecodeError:
+                                payload = {}
                                 method = "invalid_json"
                             rpc_all[method] += 1
                             if typing_phase:
                                 rpc_typing[method] += 1
+                            if method == "plan/propose":
+                                ops = (payload.get("params") or {}).get("ops")
+                                if isinstance(ops, list):
+                                    proposed_ops_snapshots.append(ops)
                         elif "/api/doc/" in req.url:
                             op = req.url.split("/api/doc/", 1)[1].split("?", 1)[0]
                             doc_all[op] += 1
@@ -174,6 +188,14 @@ def test_editor_v2_gongmun_walkthrough_typing_load(tmp_path: Path, monkeypatch) 
                                 doc_typing[op] += 1
                             if op == "preview":
                                 preview_requests += 1
+                                if req.post_data:
+                                    try:
+                                        body = json.loads(req.post_data)
+                                    except json.JSONDecodeError:
+                                        body = {}
+                                    for item in body.get("ops") or []:
+                                        if isinstance(item, dict) and isinstance(item.get("at"), str):
+                                            preview_addresses.append(item["at"])
 
                     def on_response(resp) -> None:
                         nonlocal preview_ok_responses, preview_superseded_responses
@@ -302,7 +324,18 @@ def test_editor_v2_gongmun_walkthrough_typing_load(tmp_path: Path, monkeypatch) 
                     assert page_errors == [], page_errors
                     assert server_errors == [], server_errors
                     assert preview_failed_responses == [], preview_failed_responses
-                    assert len(steps) == 13
+                    assert preview_ok_responses > 0
+                    assert len(steps) == 14
+                    assert "t0/r2/c0" in preview_addresses
+                    assert proposed_ops_snapshots, "Expected plan/propose calls"
+                    body_op = next(
+                        (
+                            op for op in proposed_ops_snapshots[-1]
+                            if op.get("table") == 0 and op.get("row") == 2 and op.get("col") == 0
+                        ),
+                        None,
+                    )
+                    assert body_op is not None and body_op.get("kind") == "fill_cell" and "at" not in body_op, body_op
                     assert characters_typed == sum(len(s.text) for s in steps)
                     assert idle_commits >= len(steps)
                     assert 1 <= preview_requests <= total_commits + preview_superseded_responses
