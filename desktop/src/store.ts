@@ -326,6 +326,11 @@ export interface InlineCellEdit extends InlineEditBase {
   table: number;
   row: number;
   col: number;
+  leadPara?: number | null;
+  leadParas?: number[];
+  /** True when every paragraph in the cell holds an object and no text paragraph can be edited. */
+  readOnly?: boolean;
+  readOnlyMessage?: string;
   /** True when explicitly replacing a static cell's existing content (`replace_at_cell`). */
   replaceExisting?: boolean;
   /** True when the inline editor is opened or promoted to multi-line (`<textarea>`). */

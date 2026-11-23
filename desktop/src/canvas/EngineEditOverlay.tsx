@@ -58,10 +58,27 @@ export function useEngineEditOverlay({
   const baselineFace = inspect.summary?.baselineCharPr?.face?.hangul ?? null;
 
   const cellAt = edit?.kind === "cell" ? formatCellAddress(edit.table, edit.row, edit.col) : null;
-  const cellLines = cellAt ? geometry?.boxes.filter((box) => box.kind === "line" &&
+  const leadSlotSet = edit?.kind === "cell" && edit.leadParas && edit.leadParas.length > 0
+    ? new Set(edit.leadParas)
+    : edit?.kind === "cell" && typeof edit.leadPara === "number"
+      ? new Set([edit.leadPara])
+      : null;
+  const allCellLines = cellAt ? geometry?.boxes.filter((box) => box.kind === "line" &&
     (box.queueAddress ?? box.at)?.startsWith(`${cellAt}/p`)) ?? [] : [];
+  const cellLines = edit?.kind === "cell" && edit.readOnly
+    ? []
+    : leadSlotSet && cellAt
+      ? allCellLines.filter((box) => {
+          const addr = box.queueAddress ?? box.at ?? "";
+          const m = addr.slice(cellAt.length).match(/^\/p(\d+)(?:#L\d+)?$/);
+          return m ? leadSlotSet.has(Number(m[1])) : false;
+        })
+      : allCellLines;
   const pickedCellLine = cellLines.find((box) => box.at === hit?.lineAddress);
-  const cellLine = pickedCellLine ?? cellLines[0];
+  const fallbackCellBox = edit?.kind === "cell" && edit.readOnly && cellAt
+    ? geometry?.boxes.find((box) => box.kind === "cell" && (box.queueAddress ?? box.at) === cellAt)
+    : undefined;
+  const cellLine = pickedCellLine ?? cellLines[0] ?? fallbackCellBox;
   const queuedCell = edit?.kind === "cell" ? queuedCellOpAt(getState(), edit.table, edit.row, edit.col) : null;
   const cellValue = queuedCell?.kind === "replace_at_cell" && queuedCell.run === undefined && queuedCell.mode === "append"
     ? queuedCell.before + queuedCell.text
@@ -76,7 +93,10 @@ export function useEngineEditOverlay({
           caret: cellCaret(cellValue, pickedCellLine, hit, cellLines),
         } : null;
   const initial = edit?.kind === "run"
-    ? (edit.rangeText ?? edit.before).slice(edit.rangeStart, edit.rangeEnd) : cellValue;
+    ? (edit.rangeText ?? edit.before).slice(edit.rangeStart, edit.rangeEnd)
+    : edit?.kind === "cell" && edit.readOnly && edit.readOnlyMessage
+      ? edit.readOnlyMessage
+      : cellValue;
   const activeId = placement?.id;
 
   useEffect(() => {
@@ -154,6 +174,10 @@ export function useEngineEditOverlay({
     const head = headCandidate(state)?.sha256 ?? activeSession(state)?.source.sha256;
     if (!placement || !edit || state.inlineEdit !== edit || state.activeSessionId !== sessionId ||
         geometry?.rev !== head) return false;
+    if (edit.kind === "cell" && edit.readOnly) {
+      if (!keepOpen) cancelEdit();
+      return false;
+    }
     const previous = lastSubmitted.current;
     if (value === (previous ? previous.value : initial)) {
       if (previous && !keepOpen) previous.idle = false;
@@ -174,7 +198,9 @@ export function useEngineEditOverlay({
       value={initial}
       caret={placement.caret}
       multiline={edit.kind === "cell" && edit.multiline}
-      allowMultiline={edit.kind === "cell"}
+      allowMultiline={edit.kind === "cell" && !edit.readOnly}
+      readOnly={edit.kind === "cell" && Boolean(edit.readOnly)}
+      readOnlyMessage={edit.kind === "cell" ? edit.readOnlyMessage : undefined}
       onMultilineChange={setInlineEditMultiline}
       fontCategory={resolvePageFontCategory(placement.face)}
       fontFace={placement.face}
@@ -182,10 +208,10 @@ export function useEngineEditOverlay({
       style={lineStyle(placement)}
       onValueChange={(value) => { latestValue.current = value; }}
       onCompositionStart={() => { latestValue.current = null; }}
-      onIdleCommit={(value) => submit(value, true)}
+      onIdleCommit={edit.kind === "cell" && edit.readOnly ? undefined : (value) => submit(value, true)}
       onCommit={(value) => submit(value, false)}
       onCycleBlank={edit.kind === "cell" ? (dir, value) => {
-        if (!submit(value, false)) return false;
+        if (!edit.readOnly && !submit(value, false)) return false;
         onCycleCell(edit.table, edit.row, edit.col, dir);
         return true;
       } : undefined}

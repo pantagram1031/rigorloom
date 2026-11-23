@@ -61,6 +61,10 @@ export const WP3_VOCABULARY = {
     ko: "이 문단은 아직 화면에서 고칠 수 없습니다",
     en: "This paragraph cannot be edited on the page yet",
   },
+  cell_object_only_readonly: {
+    ko: "표나 그림만 담긴 칸이라 글자를 입력할 문단이 없습니다",
+    en: "This cell holds only tables or objects and has no text paragraph to edit",
+  },
   status_page_pos: { ko: "{0} / {1}쪽", en: "Page {0} of {1}" },
   page_previous: { ko: "이전 쪽", en: "Previous page" },
   page_next: { ko: "다음 쪽", en: "Next page" },

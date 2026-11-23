@@ -11,10 +11,12 @@ import json
 import math
 from pathlib import Path
 import re
+import sys
 from tempfile import TemporaryDirectory
 from threading import Condition
 import time
 from uuid import uuid4
+import zipfile
 
 try:
     from . import rt_apply, rt_doc, rt_font_install, rt_own, rt_render
@@ -30,6 +32,14 @@ except ImportError:
     from rt_codes import MAX_INLINE_IMAGE_BYTES, MIN_RENDER_DPI, RpcError
     from rt_engine import EngineTools
     from rt_session import Session, sha256_file
+
+
+def _preedit(tools=None):
+    scripts = (tools.preedit if tools is not None else EngineTools().preedit).parent
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    import preedit
+    return preedit
 
 
 MAX_SCALE = 3
@@ -322,7 +332,7 @@ class PageGateway:
             if operation in {"render", "preview"}:
                 with self._render_turn((root, session_id)) as seq:
                     if operation == "preview":
-                        result, png = self._preview(head, **args), None
+                        result, png = self._preview(head, tools, **args), None
                     else:
                         result, png = self._render(head, tools, **args)
                     _head(root, session_id, rev)
@@ -339,7 +349,7 @@ class PageGateway:
                             HTTPStatus.UNPROCESSABLE_ENTITY) from None
         return {**result, "rev": rev, "seq": seq}, png
 
-    def _preview(self, head, ops):
+    def _preview(self, head, tools=None, *, ops):
         if not self._uses_engine(head):
             raise PageError("capability_unavailable", "preview needs the document engine",
                             HTTPStatus.SERVICE_UNAVAILABLE)
@@ -350,14 +360,16 @@ class PageGateway:
         edits = []
         targets = []
         paragraphs = {}
+        lead_cache: dict[tuple[int, int, int], tuple[bool, list[int], list[int]]] = {}
+        preedit_mod = None
         for op in ops:
             base_at, sep, tail = op["at"].partition("/")
             if base_at not in core_addresses:
                 raise PageError("bad_address", "the queued text target is unavailable")
             at = core_addresses[base_at] + sep + tail
-            targets.append(at)
             text = op["text"]
             if "run" in op:
+                targets.append(at)
                 if at not in paragraphs:
                     read = _engine_result(rt_doc.read(head.path, at, with_runs=True), head.rev)
                     paragraphs[at] = read["blocks"][0]
@@ -375,6 +387,46 @@ class PageGateway:
                 start = sum(map(len, runs[:idx]))
                 c_start, c_end, text = _queued_run_edit(runs[idx], text)
                 at = f"{at}:{start + c_start}-{start + c_end}"
+                edits.append({"op": "set", "at": at, "text": text})
+                continue
+
+            cell_match = re.fullmatch(r"t([0-9]+)/r([0-9]+)/c([0-9]+)", op["at"])
+            if cell_match and head.path.suffix.lower() == ".hwpx":
+                if preedit_mod is None:
+                    preedit_mod = _preedit(tools)
+                q_table = int(cell_match.group(1))
+                row = int(cell_match.group(2))
+                col = int(cell_match.group(3))
+                cache_key = (q_table, row, col)
+                if cache_key not in lead_cache:
+                    try:
+                        lead_cache[cache_key] = preedit_mod.cell_lead_paragraphs(
+                            head.path, q_table, row, col)
+                    except (preedit_mod.PreeditError, KeyError, IndexError,
+                            ValueError, OSError, zipfile.BadZipFile):
+                        lead_cache[cache_key] = (False, [], [])
+                has_obj, slots, blank_indices = lead_cache[cache_key]
+                core_cell_at = f"{core_addresses[base_at]}/r{row}/c{col}"
+                if has_obj:
+                    lines = preedit_mod.split_fill_lines(text)
+                    if len(lines) > len(slots):
+                        raise PageError(
+                            "bad_input",
+                            "preview cannot show more lines than the form reserves",
+                        )
+                    used = set(slots[:len(lines)])
+                    for idx_line, line in enumerate(lines):
+                        slot = slots[idx_line]
+                        para_at = f"{core_cell_at}/p{slot}"
+                        targets.append(para_at)
+                        edits.append({"op": "set", "at": para_at, "text": line})
+                    for idx in blank_indices:
+                        if idx not in used:
+                            para_at = f"{core_cell_at}/p{idx}"
+                            targets.append(para_at)
+                            edits.append({"op": "set", "at": para_at, "text": ""})
+                    continue
+            targets.append(at)
             edits.append({"op": "set", "at": at, "text": text})
         # rt_doc snapshots the session head and writes the edit to its own private scratch.
         result = _engine_result(rt_doc.edit(head.path, edits,

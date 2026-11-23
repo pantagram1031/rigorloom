@@ -10,7 +10,7 @@ import {
   setState,
   type QueuedOp,
 } from "../store";
-import type { InspectResult, RegionText, UiLanguage } from "../types";
+import type { GraphCell, InspectResult, RegionText, UiLanguage } from "../types";
 import { classifyCellEditMode } from "../workspace/fieldLabels";
 import {
   canvas,
@@ -32,9 +32,47 @@ function autoCharPr(
   return undefined;
 }
 
+function graphCellAt(
+  inspect: InspectResult | null | undefined,
+  table: number,
+  row: number,
+  col: number,
+): GraphCell | null {
+  const tbl = inspect?.graph.tables.find((t) => t.index === table);
+  return tbl?.cells.find((c) => c.addr.row === row && c.addr.col === col) ?? null;
+}
+
+function resolveCellLeadInfo(
+  inspect: InspectResult | null | undefined,
+  table: number,
+  row: number,
+  col: number,
+): { hasObject: boolean; leadPara: number | null; leadParas: number[] } {
+  const seat = legacyActions.seatAt(inspect ?? null, table, row, col);
+  const gcell = graphCellAt(inspect, table, row, col);
+  const hasObject = Boolean(seat?.hasObject ?? gcell?.hasObject);
+  if (!hasObject) {
+    return { hasObject: false, leadPara: null, leadParas: [] };
+  }
+  const rawParas = seat?.leadParas ?? gcell?.leadParas;
+  const rawLead = seat?.leadPara !== undefined ? seat.leadPara : gcell?.leadPara;
+  const leadParas = Array.isArray(rawParas)
+    ? rawParas.filter((p): p is number => typeof p === "number" && Number.isInteger(p) && p >= 0)
+    : typeof rawLead === "number" && Number.isInteger(rawLead) && rawLead >= 0
+      ? [rawLead]
+      : [];
+  const leadPara =
+    typeof rawLead === "number" && Number.isInteger(rawLead) && rawLead >= 0
+      ? rawLead
+      : leadParas[0] ?? null;
+  return { hasObject: true, leadPara, leadParas };
+}
+
 /**
  * Open ANY table cell for in-place typing. Every cell is typable (`D1` Calls):
  * never emits a refusal when a cell already contains text or is `static`/`guide`.
+ * If every paragraph in the cell holds an object (`hasObject && leadPara === null`),
+ * opens in read-only state and reports why in the status bar.
  */
 export function beginCellEditV2(
   table: number,
@@ -52,6 +90,11 @@ export function beginCellEditV2(
   const texts = activeHeadTexts(state) ?? options?.texts ?? (sessionId ? state.texts[sessionId] ?? [] : []);
   const queued = queuedCellOpAt(state, table, row, col);
   const seat = legacyActions.seatAt(inspect, table, row, col);
+  const { hasObject, leadPara, leadParas } = resolveCellLeadInfo(inspect, table, row, col);
+  const isObjectOnlyReadOnly = hasObject && leadPara === null;
+  const readOnlyMessage = isObjectOnlyReadOnly
+    ? wp3t("cell_object_only_readonly", state.language)
+    : undefined;
   const baseText =
     queued?.kind === "replace_at_cell" && queued.run !== undefined
       ? legacyActions.seatText(inspect, texts, table, row, col)
@@ -66,7 +109,7 @@ export function beginCellEditV2(
 
   setCanvasSlice({
     selectedSeatKey: key,
-    statusNotice: null,
+    statusNotice: readOnlyMessage ?? null,
   });
 
   setState({
@@ -76,6 +119,8 @@ export function beginCellEditV2(
       table,
       row,
       col,
+      ...(hasObject ? { leadPara, leadParas } : {}),
+      ...(isObjectOnlyReadOnly ? { readOnly: true, readOnlyMessage } : {}),
       before: baseText,
       charPr: autoCharPr(seat, queued?.charPr),
       opId: queued?.opId ?? null,
@@ -110,6 +155,12 @@ export async function commitCellEditV2(
   if (!edit || edit.kind !== "cell") {
     return { committed: false };
   }
+  if (edit.readOnly) {
+    if (!options?.keepOpen) {
+      setState({ inlineEdit: null, sawComposition: false });
+    }
+    return { committed: false };
+  }
 
   setState({
     ...(options?.keepOpen ? {} : { inlineEdit: null }),
@@ -129,6 +180,11 @@ export async function commitCellEditV2(
   const sessionId = state.activeSessionId;
   const inspect = options?.inspect ?? (sessionId ? state.inspects[sessionId] ?? null : null);
   const seat = legacyActions.seatAt(inspect, edit.table, edit.row, edit.col);
+  const leadInfo = resolveCellLeadInfo(inspect, edit.table, edit.row, edit.col);
+  const leadPara = edit.leadPara !== undefined ? edit.leadPara : leadInfo.leadPara;
+  if (leadInfo.hasObject && leadPara === null) {
+    return { committed: false };
+  }
   const resolvedCharPr = autoCharPr(seat, edit.charPr);
   const classification = classifyCellEditMode(before, nextValue);
   const opId =

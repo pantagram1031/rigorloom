@@ -911,19 +911,28 @@ export function PageSheet({
         cellChanges.length === 1 && cellChanges[0].decision !== "rejected"
           ? cellChanges[0]
           : null;
-      const editVal = activeChange ? activeChange.after : inlineEdit.before;
+      const editVal =
+        inlineEdit.readOnly && inlineEdit.readOnlyMessage
+          ? inlineEdit.readOnlyMessage
+          : activeChange
+            ? activeChange.after
+            : inlineEdit.before;
       return (
         <SeatEditor
           key={`${sessionId}-${key}`}
           value={editVal}
           caret={editVal.trim().length > 0 ? "end" : "select"}
           multiline={inlineEdit.multiline}
-          allowMultiline
+          allowMultiline={!inlineEdit.readOnly}
+          readOnly={Boolean(inlineEdit.readOnly)}
+          readOnlyMessage={inlineEdit.readOnlyMessage}
           fontCategory={fontInfo.category}
           fontFace={fontInfo.face}
           onMultilineChange={(multi) => setInlineEditMultiline(multi)}
           onCycleBlank={(dir, cur) => {
-            void commitCellEditV2(cur, { inspect });
+            if (!inlineEdit.readOnly) {
+              void commitCellEditV2(cur, { inspect });
+            }
             cycleCell(inlineEdit.table, inlineEdit.row, inlineEdit.col, dir);
           }}
           onCommit={(next) => {

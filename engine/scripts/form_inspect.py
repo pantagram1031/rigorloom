@@ -99,8 +99,8 @@ import charpr_script  # noqa: E402
 # 런과 **같은 열거**여야 한다(T34) — 그래서 같은 함수를 쓴다.
 from preedit import (_find_paragraphs,
                      _iter_document_paragraphs as _iter_document_paragraphs_with_offsets,
-                     cell_text_runs, fill_target_run_charpr,
-                     paragraph_text_runs)  # noqa: E402
+                     cell_fill_slot_info, cell_text_runs,
+                     fill_target_run_charpr, paragraph_text_runs)  # noqa: E402
 
 NS = r'[A-Za-z0-9]+'  # 임의 네임스페이스 prefix(hp/hh 고정 가정 X)
 Q = r'["\']'  # 큰따옴표/작은따옴표 모두 허용
@@ -1159,6 +1159,12 @@ def _table_map(section_names, z, defs, borderfill_shaded,
             _mark_spacers(cells, int(col_cnt) if col_cnt is not None else 0)
             for entry in cells:
                 raw_body = entry.pop("_raw_body", None)
+                if raw_body is not None:
+                    has_obj, fill_slots, _blank_indices = cell_fill_slot_info(raw_body)
+                    if has_obj:
+                        entry["has_object"] = True
+                        entry["lead_para"] = fill_slots[0] if fill_slots else None
+                        entry["lead_paras"] = fill_slots
                 if entry["classification"] == "fill_target" and raw_body is not None:
                     entry.update(_fill_preflight(
                         raw_body, script_profiles or {}, baseline_id, defs))
