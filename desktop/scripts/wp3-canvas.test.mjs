@@ -719,3 +719,213 @@ test("changing operation formatting or flags invalidates a shared decision", () 
   const replaceDecisions = changeModel.recordDecision({}, project(replace), "accepted");
   assert.equal(project({ ...replace, expect: "Original" }, replaceDecisions).decision, "pending");
 });
+
+function createHookRunner() {
+  const slots = new Map();
+  let currentKey = "default";
+  let stateCursor = 0;
+  let refCursor = 0;
+  const bucket = () => {
+    if (!slots.has(currentKey)) slots.set(currentKey, { states: [], refs: [] });
+    return slots.get(currentKey);
+  };
+  return {
+    ...React,
+    renderWith(key, fn) {
+      const prevKey = currentKey;
+      const prevState = stateCursor;
+      const prevRef = refCursor;
+      currentKey = key;
+      stateCursor = 0;
+      refCursor = 0;
+      try {
+        return fn();
+      } finally {
+        currentKey = prevKey;
+        stateCursor = prevState;
+        refCursor = prevRef;
+      }
+    },
+    useState(initial) {
+      const b = bucket();
+      const idx = stateCursor++;
+      if (!(idx in b.states)) {
+        b.states[idx] = typeof initial === "function" ? initial() : initial;
+      }
+      const set = (next) => {
+        b.states[idx] = typeof next === "function" ? next(b.states[idx]) : next;
+      };
+      return [b.states[idx], set];
+    },
+    useRef(initial) {
+      const b = bucket();
+      const idx = refCursor++;
+      if (!(idx in b.refs)) {
+        b.refs[idx] = { current: initial };
+      }
+      return b.refs[idx];
+    },
+    useEffect() {},
+  };
+}
+
+test("SeatEditor and EngineEditOverlay preserve the next blur commit when Tab cannot move", () => {
+  const stack = loadWp3Stack();
+  const previousWindow = globalThis.window;
+  globalThis.window = { clearTimeout, setTimeout };
+  try {
+    const hookReact = createHookRunner();
+    const storeWithHook = {
+      ...stack.store,
+      useWorkspace: (sel) => sel(stack.store.getState()),
+    };
+    const vocabulary = loadTsModule("src/i18n/vocabulary.ts");
+    const canvasSeatMod = loadTsModule("src/canvas/SeatEditor.tsx", {
+      react: hookReact,
+      "../i18n/v2/wp3": stack.wp3,
+      "../store": storeWithHook,
+    });
+    const componentsSeatMod = loadTsModule("src/components/SeatEditor.tsx", {
+      react: hookReact,
+      "../i18n/vocabulary": vocabulary,
+      "../store": storeWithHook,
+    });
+
+    const tabEvent = () => ({
+      key: "Tab",
+      shiftKey: false,
+      keyCode: 9,
+      nativeEvent: { isComposing: false },
+      preventDefault() {},
+      stopPropagation() {},
+    });
+
+    for (const [label, SeatEditor] of [
+      ["canvas/SeatEditor", canvasSeatMod.SeatEditor],
+      ["components/SeatEditor", componentsSeatMod.SeatEditor],
+    ]) {
+      // 1. When onCycleBlank returns false, Tab did not move so the next blur must commit.
+      const refusedCommits = [];
+      const refusedCycles = [];
+      const refusedEl = hookReact.renderWith(`${label}-refused`, () =>
+        SeatEditor({
+          value: "기록정책담당관",
+          onCommit: (next, reason) => refusedCommits.push([next, reason]),
+          onCancel: () => {},
+          onCycleBlank: (dir, cur) => {
+            refusedCycles.push([dir, cur]);
+            return false;
+          },
+        }),
+      );
+      refusedEl.props.onKeyDown(tabEvent());
+      assert.deepEqual(refusedCycles, [[1, "기록정책담당관"]], label);
+      refusedEl.props.onBlur();
+      assert.deepEqual(refusedCommits, [["기록정책담당관", "blur"]], label);
+
+      // 2. When onCycleBlank returns nothing (void), blur does not commit.
+      const movedCommits = [];
+      const movedCycles = [];
+      const movedEl = hookReact.renderWith(`${label}-moved`, () =>
+        SeatEditor({
+          value: "기록정책담당관",
+          onCommit: (next, reason) => movedCommits.push([next, reason]),
+          onCancel: () => {},
+          onCycleBlank: (dir, cur) => {
+            movedCycles.push([dir, cur]);
+          },
+        }),
+      );
+      movedEl.props.onKeyDown(tabEvent());
+      assert.deepEqual(movedCycles, [[1, "기록정책담당관"]], label);
+      movedEl.props.onBlur();
+      assert.deepEqual(movedCommits, [], label);
+    }
+
+    // 3. EngineEditOverlay: refused submit on Tab returns false and lets the subsequent blur commit.
+    const enginePage = loadTsModule("src/model/enginePage.ts", {
+      "./page": stack.pageModel,
+    });
+    const { useEngineEditOverlay } = loadTsModule("src/canvas/EngineEditOverlay.tsx", {
+      react: hookReact,
+      "../actions": {
+        cancelEdit: () => stack.store.setState({ inlineEdit: null }),
+        setInlineEditMultiline: () => {},
+      },
+      "../model/enginePage": enginePage,
+      "../model/page": stack.pageModel,
+      "../run_map": { locateSpanInRuns: () => ({ kind: "refused" }) },
+      "../revision": { runTextAfterEdit: (_edit, val) => val },
+      "../runtime": { readRegion: async () => ({ subject: null, regions: [] }) },
+      "../store": storeWithHook,
+      "./actions": stack.actions,
+      "./SeatEditor": canvasSeatMod,
+    });
+
+    stack.actions.beginCellEditV2(0, 5, 1);
+    const lineBox = {
+      at: "t0/r5/c1/p0#L0",
+      kind: "line",
+      rect: [10, 10, 80, 16],
+      text: "",
+    };
+    const staleGeometry = {
+      page: 1,
+      rev: "stale-geometry-rev",
+      widthPt: 595,
+      heightPt: 842,
+      boxes: [lineBox],
+    };
+    const cycled = [];
+    const renderOverlay = (geometry) =>
+      hookReact.renderWith("engine-overlay", () =>
+        useEngineEditOverlay({
+          sessionId: "sess-1",
+          geometry,
+          editable: true,
+          isNarrow: false,
+          settled: true,
+          displayedEdits: [],
+          inspect: corpus.inspect,
+          hit: null,
+          onCycleCell: (t, r, c, dir) => cycled.push([t, r, c, dir]),
+        }),
+      );
+
+    let overlay = renderOverlay(staleGeometry);
+    assert.ok(overlay.editor);
+    let input = hookReact.renderWith("engine-seat", () =>
+      overlay.editor.type(overlay.editor.props),
+    );
+    input.props.onChange({ target: { value: "기록정책담당관" } });
+    overlay = renderOverlay(staleGeometry);
+    input = hookReact.renderWith("engine-seat", () =>
+      overlay.editor.type(overlay.editor.props),
+    );
+
+    // Tab while geometry.rev !== head: submit returns false, editor does not cycle.
+    assert.equal(overlay.editor.props.onCycleBlank(1, "기록정책담당관"), false);
+    input.props.onKeyDown(tabEvent());
+    assert.deepEqual(cycled, []);
+    assert.equal(stack.upsertCalls.length, 0);
+
+    // Once geometry catches up to session head, blurring the still-open editor commits.
+    const headGeometry = { ...staleGeometry, rev: corpus.source.sha256 };
+    overlay = renderOverlay(headGeometry);
+    input = hookReact.renderWith("engine-seat", () =>
+      overlay.editor.type(overlay.editor.props),
+    );
+    input.props.onBlur();
+    assert.equal(stack.upsertCalls.length, 1);
+    assert.equal(stack.upsertCalls[0].text, "기록정책담당관");
+
+    // When submit succeeds on Tab, EngineEditOverlay cycles to the next cell and returns true.
+    stack.actions.beginCellEditV2(0, 5, 1);
+    overlay = renderOverlay(headGeometry);
+    assert.equal(overlay.editor.props.onCycleBlank(1, "기록정책담당관"), true);
+    assert.deepEqual(cycled, [[0, 5, 1, 1]]);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
