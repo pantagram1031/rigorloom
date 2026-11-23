@@ -570,7 +570,9 @@ rt_doc.edit("보고서.hwpx", [
     require the picture to be floating after the op (`bad_input` otherwise).
     Unverified engine picture properties (crop, border, effect, brightness,
     contrast, alpha, rotation and flip) are not exposed and are refused as
-    unknown keys (`bad_input`). At most one `picture` op per picture per edit
+    unknown keys (`bad_input`). Switching a picture between inline and floating
+    (`inline`, or `wrap` on an inline picture) is checked in the saved XML only;
+    its 한글 rendering has not been compared yet. At most one `picture` op per picture per edit
     (`conflict` otherwise), and no address changes. After the edit,
     `_verify_picture` checks that the output `<hp:pic>` (matched by `id`) has the
     requested `hp:sz` / `hp:curSz` width and height, `textWrap`, `hp:pos`
