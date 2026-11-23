@@ -729,6 +729,18 @@ export const VOCABULARY = {
     ko: "에이전트 연결 및 작업 기록 (자세히)",
     en: "Agent connection and activity log (details)",
   },
+  cmd_open_new_editor: {
+    ko: "새 편집기로 열기",
+    en: "Open the new editor",
+  },
+  cmd_kw_open_new_editor: {
+    ko: "새 편집기 화면 전환 열기",
+    en: "open new editor switch",
+  },
+  toast_finish_edit_before_switch: {
+    ko: "입력 중이거나 아직 저장되지 않은 작업을 먼저 마치세요",
+    en: "Finish the open edit or unsaved work first.",
+  },
 
   // Splash, error boundary, dialogs, operator modal, details
   splash_loading: {

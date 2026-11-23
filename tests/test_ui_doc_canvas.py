@@ -139,6 +139,9 @@ def test_engine_body_line_edit_queues_the_document_run(browser, server):
         op, = request.value.post_data_json["ops"]
         assert op["at"] == "p3" and op["run"] == 0
         expect(raster).not_to_have_attribute("src", url, timeout=12_000)
+        # An idle commit keeps the inline input open; Enter commits and closes it.
+        expect(entry).to_have_value("검토 제목")
+        entry.press("Enter")
         expect(entry).to_have_count(0)
         expect(page.get_by_test_id("page-render-failed")).to_have_count(0)
 

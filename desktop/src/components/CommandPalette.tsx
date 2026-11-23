@@ -14,10 +14,13 @@ import {
   toggleTheme,
 } from "../actions";
 import { t, type VocabularyKey } from "../i18n/vocabulary";
+import * as rt from "../runtime";
 import {
   activeSession,
   getState,
+  hasUnsavedWorkForReload,
   headCandidate,
+  reloadWithoutUiVariantQuery,
   setState,
   showToast,
   useWorkspace,
@@ -190,6 +193,19 @@ export function CommandPalette() {
         keywordsKey: "cmd_kw_operator_agent",
         run: () => openOperatorModal(),
       },
+      {
+        id: "open-new-editor",
+        labelKey: "cmd_open_new_editor",
+        keywordsKey: "cmd_kw_open_new_editor",
+        run: async () => {
+          if (hasUnsavedWorkForReload()) {
+            showToast(t("toast_finish_edit_before_switch", getState().language), 2600);
+            return;
+          }
+          await rt.savePrefs({ editorVariant: "v2" });
+          reloadWithoutUiVariantQuery();
+        },
+      },
     );
 
     return items;
@@ -224,7 +240,7 @@ export function CommandPalette() {
   function runItem(item: PaletteItem | undefined) {
     if (!item) return;
     closeCommandPalette();
-    item.run();
+    return item.run();
   }
 
   return (

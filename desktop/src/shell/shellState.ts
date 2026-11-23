@@ -50,6 +50,8 @@ export interface ShellState {
   docFolder: string | null;
   /** The current breakpoint, kept by the shell on resize. */
   breakpoint: Breakpoint;
+  /** Status-bar notice when no document tab is active (or mirrored across tabs). */
+  statusNotice?: string | null;
 }
 
 /** Per-document chrome. Read by WP4 (`rightTab`) and WP3. */
@@ -83,6 +85,7 @@ let state: ShellState = {
   savedPulse: 0,
   docFolder: null,
   breakpoint: "wide",
+  statusNotice: null,
 };
 
 const listeners = new Set<() => void>();
@@ -240,5 +243,6 @@ export function _resetShellForTest(): void {
     lastOpened: "right",
     paletteOpen: false,
     settingsOpen: false,
+    statusNotice: null,
   };
 }

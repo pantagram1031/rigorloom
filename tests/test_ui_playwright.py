@@ -32,9 +32,11 @@ import time
 import urllib.request
 from pathlib import Path
 
+from urllib.parse import urlsplit
+
 from _browser_gate import no_browser
 from _editor_v2 import editor_v2_url
-from _v1_identity import launch_browser
+from _v1_identity import launch_browser, start_bridge
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "runtime" / "scripts" / "cli.py"
@@ -190,6 +192,47 @@ def _open_sample(page, index: int) -> str:
     after = page.evaluate("[...document.querySelectorAll('[data-tab-id^=\"doc:\"]')].map(e => e.dataset.tabId)")
     new = [t for t in after if t not in before]
     return new[0].split(":", 1)[1]
+
+
+def test_ui_default_url_with_empty_prefs_opens_editor_v2_shell(tmp_path: Path) -> None:
+    sync_playwright = _import_playwright()
+    if not _bundle_has_shell():
+        no_browser("runtime/scripts/ui_dist predates the v2 shell; rebuild with `npm run build:web`")
+
+    prefs_path = tmp_path / "prefs.json"
+    prefs_path.write_text("{}\n", encoding="utf-8")
+    server, thread = start_bridge(tmp_path)
+    try:
+        assert json.loads(prefs_path.read_text(encoding="utf-8")) == {}
+        assert urlsplit(server.url).query == ""
+        with sync_playwright() as pw:
+            browser = _launch_chromium(pw)
+            context = browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
+            page = context.new_page()
+            page_errors: list[str] = []
+            page.on("pageerror", lambda e: page_errors.append(str(e)))
+            page.goto(server.url, wait_until="domcontentloaded")
+            page.wait_for_selector(
+                '[data-testid="shell"], [data-testid="open-view"], [data-testid="splash"]',
+                timeout=30000,
+            )
+            splash = page.locator('[data-testid="splash"]')
+            if splash.count() > 0:
+                try:
+                    splash.first.click(force=True, timeout=3000)
+                except Exception:
+                    pass
+            page.wait_for_selector('[data-testid="shell"], [data-testid="open-view"]', timeout=30000)
+            assert page.locator('[data-testid="shell"]').count() == 1
+            assert page.locator('[data-testid="start"]').count() == 1
+            assert page.locator('[data-testid="open-view"]').count() == 0
+            assert page.evaluate("document.documentElement.dataset.ui") == "v2"
+            assert page_errors == [], page_errors
+            context.close()
+            browser.close()
+    finally:
+        server.shutdown_bridge()
+        thread.join(timeout=5)
 
 
 def test_ui_shell_e2e_keys_isolation_tabs_and_budgets(tmp_path: Path) -> None:

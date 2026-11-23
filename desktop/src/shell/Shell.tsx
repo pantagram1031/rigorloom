@@ -546,6 +546,7 @@ function StatusBar({ sessionId, rightDocked }: { sessionId: string | null; right
   const count = useWorkspace((s) => (sessionId ? pendingCount(s, sessionId) : 0));
   const docFolder = useShell((s) => s.docFolder);
   const pulse = useShell((s) => s.savedPulse);
+  const statusNotice = useShell((s) => s.statusNotice);
   const tabKind = useShell((s) => activeTab(s)?.kind);
   const [pulsing, setPulsing] = useState(false);
   useEffect(() => {
@@ -558,7 +559,13 @@ function StatusBar({ sessionId, rightDocked }: { sessionId: string | null; right
   return (
     <footer className="sh-status" data-testid={TID.statusbar} data-docked="true">
       <div className="sh-status-side">
-        {sessionId ? <Slot name="statusLeft" sessionId={sessionId} quiet /> : null}
+        {sessionId ? (
+          <Slot name="statusLeft" sessionId={sessionId} quiet />
+        ) : statusNotice ? (
+          <span className="sh-status-item" data-attn="true" data-testid={statusTid("notice")}>
+            {statusNotice}
+          </span>
+        ) : null}
       </div>
       <div className="sh-status-side sh-status-side--end">
         {sessionId ? <Slot name="statusRight" sessionId={sessionId} quiet /> : null}

@@ -43,6 +43,8 @@ import {
   bumpEditIntent,
   bumpPlanGeneration,
   currentPlanGeneration,
+  beginDraftSave,
+  endDraftSave,
   opSignature,
   type Draft,
   type QueuedOp,
@@ -465,7 +467,13 @@ function persistDraft(sessionId: string, draft: Draft | null): void {
     );
   }
   setState({ savedDrafts: next });
-  void rt.savePrefs({ drafts: next }).catch(() => undefined);
+  beginDraftSave();
+  void rt
+    .savePrefs({ drafts: next })
+    .catch(() => undefined)
+    .finally(() => {
+      endDraftSave();
+    });
 }
 
 /**

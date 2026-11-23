@@ -1,7 +1,8 @@
 /**
- * The v1 screens (열기/검토/채우기/기록/설정): the default UI until the switch
- * to editor v2, and reachable with `?ui=v1` after it. Editor v2 is opt-in with
- * `?ui=v2` or the devEditorV2 developer preference (uiVariant.ts).
+ * The previous v1 screens (열기/검토/채우기/기록/설정). Editor v2 is now the
+ * default window; v1 stays reachable with `?ui=v1`, the palette command,
+ * `"editorVariant": "v1"` in prefs.json, or legacy `"devEditorV2": false`
+ * (uiVariant.ts).
  */
 import { useEffect } from "react";
 
@@ -48,7 +49,7 @@ const REVIEW_KEY_CODES = new Set([
   "BracketRight",
 ]);
 
-/** The v1 screens are the default; editor v2 is opt-in (uiVariant.ts). */
+/** Editor v2 is the default; true when the previous v1 screens were chosen (uiVariant.ts). */
 export function isLegacyUi(): boolean {
   return uiVariant() === "v1";
 }

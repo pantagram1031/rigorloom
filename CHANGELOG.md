@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T230:** The editor v2 shell is now the default window. The previous five screens open with `?ui=v1`, the 이전 화면으로 열기 command, or `"editorVariant": "v1"` in prefs.json.
 - **T225:** A new engine-only browser test types the gongmun example into editor v2 seat by seat, with real pauses, Tab between cells and Enter at the end, and records how many previews, preview files and plan rounds that costs. It checks that no preview fails and that the counts stay within the commits made; the measured numbers go with each run's record, not into the product.
 - **T218:** A new engine-only test checks, over every 한글 form in the test corpus, that the addresses editor v2 uses to place an inline preview point at the same paragraphs and tables as the review queue, so a preview cannot land on the wrong paragraph.
 - **T216:** The engine page fidelity test now checks the lines a document actually draws. It reads each table cell's border settings, so edges set to no line are counted as suppressed rather than missing, and it compares each stroke against a threshold set from that line's own colour, so grey hairlines count. It also checks cell background colours and now fails instead of being marked as an expected failure when a drawn line, a fill or a page is missing.

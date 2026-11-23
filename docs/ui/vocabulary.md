@@ -781,3 +781,6 @@
 | `guard_noun_citations` | 출처 표기 | citation |
 | `guard_noun_inline_math` | 수식 | formula |
 | `guard_noun_headings` | 제목·보호 문구 | heading or protected text |
+| `cmd_open_new_editor` | 새 편집기로 열기 | Open the new editor |
+| `cmd_kw_open_new_editor` | 새 편집기 화면 전환 열기 | open new editor switch |
+| `toast_finish_edit_before_switch` | 입력 중이거나 아직 저장되지 않은 작업을 먼저 마치세요 | Finish the open edit or unsaved work first. |

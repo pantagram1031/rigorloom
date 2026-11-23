@@ -50,6 +50,7 @@ import tempfile
 import threading
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO_ROOT / "runtime" / "scripts"
@@ -202,14 +203,26 @@ def start_bridge(tmp: Path, ui_dist: Path | None = None):
     return server, thread
 
 
-def capture_v1(browser, base_url: str, *, query: str = "") -> dict[str, Any]:
+def _v1_url(url: str) -> str:
+    """`url` with `ui=v1` in its query, keeping any other parameters."""
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "ui"]
+    query.append(("ui", "v1"))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", urlencode(query), parts.fragment))
+
+
+v1_url = _v1_url
+
+
+def capture_v1(browser, base_url: str, *, query: str = "?ui=v1") -> dict[str, Any]:
     """Drive the v1 screens at `base_url + query` and capture each one."""
     context = browser.new_context(viewport={"width": WIDTH, "height": HEIGHT}, color_scheme="light")
     page = context.new_page()
     errors: list[str] = []
     page.on("pageerror", lambda err: errors.append(str(err)))
     try:
-        page.goto(base_url + query, wait_until="domcontentloaded")
+        target = base_url + query if query else _v1_url(base_url)
+        page.goto(target, wait_until="domcontentloaded")
         splash = page.locator('[data-testid="splash"]')
         try:
             splash.first.click(force=True, timeout=3000)
@@ -325,7 +338,7 @@ def pack(screens: dict[str, Any]) -> dict[str, Any]:
     return {"screens": packed, "styles": styles}
 
 
-def record(ui_dist: Path | None, out: Path, query: str = "") -> None:
+def record(ui_dist: Path | None, out: Path, query: str = "?ui=v1") -> None:
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -359,7 +372,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ui-dist", type=Path, help="bundle to capture (default: runtime/scripts/ui_dist)")
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--query", default="", help="URL query to open, e.g. ?ui=v1")
+    parser.add_argument("--query", default="?ui=v1", help="URL query to open, e.g. ?ui=v1")
     args = parser.parse_args()
     record(args.ui_dist, args.out, args.query)
 

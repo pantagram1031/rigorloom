@@ -7,8 +7,8 @@ import { loadPrefs } from "./runtime";
 import "./styles.css";
 import { resolveUiVariant, setUiVariant, uiVariantFromQuery } from "./uiVariant";
 
-// The v1 screens keep main's palette (v1-tokens.css applies under this mark).
-setUiVariant("v1");
+// Editor v2 is the default; v1-tokens.css applies only when data-ui is "v1".
+setUiVariant("v2");
 
 if (import.meta.env.DEV) {
   // Hot reload re-evaluates modules; let defineDocSlice accept a re-definition.
@@ -26,7 +26,7 @@ async function start() {
     const { installDevMock } = await import("./devMock");
     installDevMock();
   }
-  // v1 unless `?ui=v2` or the devEditorV2 developer preference opts in.
+  // Editor v2 by default; `?ui=v1|v2`, `editorVariant`, or legacy `devEditorV2` can override.
   const query = uiVariantFromQuery(window.location.search);
   const prefs = query ? null : await loadPrefs().catch(() => null);
   setUiVariant(resolveUiVariant(query, prefs));
