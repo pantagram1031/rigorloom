@@ -2504,6 +2504,8 @@ class _Act:
         self.bookmark = None    # bookmark: (base Para, name, after)
         self.link = None        # link: (base Para, phrase, target)
         self.toc = None         # toc: (base Para, levels, leader, n_added)
+        self.char_shape = None  # char_shape: (base Para, (a0, b0), fmt)
+        self.para_shape = None  # para_shape: (base Para, fmt)
 
 
 class _Claims:
@@ -2576,13 +2578,30 @@ _COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _UL = ("BOTTOM", "CENTER", "TOP")
 _LINE_SHAPES = ("SOLID", "DASH", "DOT", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE", "DOUBLE_SLIM",
                 "SLIM_THICK", "THICK_SLIM", "SLIM_THICK_SLIM", "WAVE", "DOUBLE_WAVE")
+#: 선 종류 as the engine writes them (Hancom's HwpLineType 0..17)
+LINE_TYPES = ("SOLID", "DOT", "DASH", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE", "DOUBLE_SLIM",
+              "SLIM_THICK", "THICK_SLIM", "SLIM_THICK_SLIM", "WAVE", "DOUBLEWAVE", "THICK3D", "THICKREV3D", "3D",
+              "REV3D")
+#: 선 굵기 in millimetres, the list Hancom offers (HwpLineWidth 0..15)
+LINE_WIDTHS_MM = (0.1, 0.12, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0)
+_OUTLINE_TYPES = ("SOLID", "DOT", "THICK", "DASH", "DASH_DOT", "DASH_DOT_DOT")
+_SHADOW_TYPES = ("DROP", "CONTINUOUS")
+_SYM_MARKS = ("DOT_ABOVE", "RING_ABOVE", "TILDE", "CARON", "SIDE", "COLON", "GRAVE_ACCENT", "ACUTE_ACCENT",
+              "CIRCUMFLEX", "MACRON", "HOOK_ABOVE", "DOT_BELOW")
+_TAB_TYPES = ("LEFT", "RIGHT", "CENTER", "DECIMAL")
+_TAB_LEADERS = ("NONE",) + LINE_TYPES
+_TAB_MAX = 32
 _BOOL = ("bool",)
 #: 글자 모양 (서식 > 글자 모양) an agent can set: key -> kind and range. The engine's hnc_edit.set_char_shape
-#: takes them as they are; markpen (형광펜) is its own engine step.
+#: takes them (through _char_engine_fmt); markpen (형광펜) is its own engine step.
 CHAR_SHAPE = {
     "bold": _BOOL, "italic": _BOOL, "emboss": _BOOL, "engrave": _BOOL, "sup": _BOOL, "sub": _BOOL,
     "underline": ("underline",), "underline_shape": ("enum", _LINE_SHAPES), "underline_color": ("color",),
     "strike": ("strike",), "strike_color": ("color",),
+    "outline": ("false_or_enum", _OUTLINE_TYPES),
+    "shadow": ("false_or_enum", _SHADOW_TYPES), "shadow_color": ("color",), "shadow_offset": ("shadow_offset",),
+    "emphasis": ("false_or_enum", _SYM_MARKS),
+    "char_border": ("border",), "char_fill": ("color_or_none",),
     "color": ("color",), "shade": ("color_or_none",), "markpen": ("color_or_none",),
     "size": ("num", 1.0, 4096.0), "ratio": ("int", 50, 200), "spacing": ("int", -50, 50),
     "rel_size": ("int", 10, 250), "offset": ("int", -100, 100),
@@ -2595,8 +2614,70 @@ PARA_SHAPE = {
     "before": ("num", 0.0, 1000.0), "after": ("num", 0.0, 1000.0),
     "line_spacing": ("spacing",),
     "keep_next": _BOOL, "keep_lines": _BOOL, "widow_orphan": _BOOL, "page_break_before": _BOOL,
+    "tabs": ("tabs",), "auto_tab_left": _BOOL, "auto_tab_right": _BOOL,
+    "border": ("border",), "fill": ("color_or_none",), "offsets": ("offsets",), "connect": _BOOL,
 }
 _LS_TYPES = ("PERCENT", "FIXED", "BETWEEN_LINES", "AT_LEAST")
+
+
+def _parse_width_mm(w):
+    if isinstance(w, str):
+        try:
+            w = float(w.lower().replace("mm", "").strip())
+        except ValueError:
+            return None
+    if isinstance(w, bool) or not isinstance(w, (int, float)):
+        return None
+    for x in LINE_WIDTHS_MM:
+        if abs(float(w) - x) < 1e-9:
+            return float(x)
+    return None
+
+
+def _parse_border_dict(v):
+    if v is False:
+        return True, False
+    if not isinstance(v, dict) or not v or not (set(v) <= {"type", "width", "color"}):
+        return False, v
+    typ = v.get("type", "SOLID")
+    if not isinstance(typ, str) or typ.upper() not in LINE_TYPES:
+        return False, v
+    w = _parse_width_mm(v.get("width", 0.12))
+    if w is None:
+        return False, v
+    col = v.get("color", "#000000")
+    if not isinstance(col, str) or not _COLOR.match(col):
+        return False, v
+    return True, {"type": typ.upper(), "width": w, "color": col.upper()}
+
+
+def _char_engine_fmt(fmt):
+    out = dict(fmt)
+    if "outline" in out:
+        out["text_outline"] = out.pop("outline")
+    if "emphasis" in out:
+        out["sym_mark"] = out.pop("emphasis")
+    return out
+
+
+def _para_engine_fmt(fmt):
+    out = dict(fmt)
+    if "tabs" in out or "auto_tab_left" in out or "auto_tab_right" in out:
+        out["tab_stops"] = out.pop("tabs", [])
+    if any(k in out for k in ("border", "fill", "offsets", "connect")):
+        pb = {}
+        has_bf = "border" in out or "fill" in out
+        bd = out.pop("border", False)
+        if has_bf:
+            pb["border"] = bd
+        if "fill" in out:
+            pb["fill"] = out.pop("fill")
+        if "offsets" in out:
+            pb["offsets_pt"] = out.pop("offsets")
+        if "connect" in out:
+            pb["connect"] = out.pop("connect")
+        out["para_border"] = pb
+    return out
 
 
 def _shape_fmt(name, op, i, at, table=None, key="set"):
@@ -2627,6 +2708,9 @@ def _shape_fmt(name, op, i, at, table=None, key="set"):
         elif t == "enum":
             ok = isinstance(v, str) and v.upper() in kind[1]
             v = v.upper() if ok else v
+        elif t == "false_or_enum":
+            ok = v is False or (isinstance(v, str) and v.upper() in kind[1])
+            v = v.upper() if ok and isinstance(v, str) else v
         elif t == "color":
             ok = isinstance(v, str) and bool(_COLOR.match(v))
         elif t == "color_or_none":
@@ -2637,6 +2721,39 @@ def _shape_fmt(name, op, i, at, table=None, key="set"):
         elif t == "strike":
             ok = isinstance(v, bool) or (isinstance(v, str) and v.upper() in _LINE_SHAPES)
             v = v.upper() if ok and isinstance(v, str) else v
+        elif t == "shadow_offset":
+            ok = isinstance(v, (list, tuple)) and len(v) == 2 and all(_is_int(x) and -100 <= x <= 100 for x in v)
+            v = [int(v[0]), int(v[1])] if ok else v
+        elif t == "border":
+            ok, v = _parse_border_dict(v)
+        elif t == "tabs":
+            if not isinstance(v, list) or len(v) > _TAB_MAX:
+                ok = False
+            else:
+                norm_tabs = []
+                prev_pos = -1.0
+                for st in v:
+                    if not isinstance(st, dict) or "pos" not in st or not (set(st) <= {"pos", "type", "leader"}):
+                        ok = False
+                        break
+                    pos = st["pos"]
+                    typ = st.get("type", "LEFT")
+                    lead = st.get("leader", "NONE")
+                    if not (_num(pos) and 0.0 <= float(pos) <= 1000.0 and float(pos) > prev_pos):
+                        ok = False
+                        break
+                    if not (isinstance(typ, str) and typ.upper() in _TAB_TYPES
+                            and isinstance(lead, str) and lead.upper() in _TAB_LEADERS):
+                        ok = False
+                        break
+                    prev_pos = float(pos)
+                    norm_tabs.append({"pos": float(pos), "type": typ.upper(), "leader": lead.upper()})
+                if ok:
+                    v = norm_tabs
+        elif t == "offsets":
+            ok = (isinstance(v, (list, tuple)) and len(v) == 4
+                  and all(_num(x) and 0.0 <= float(x) <= 1000.0 for x in v))
+            v = [float(x) for x in v] if ok else v
         elif t == "font":
             ok = (isinstance(v, str) and 0 < len(v) <= 64 and not _CTRL.search(v)) or (
                 isinstance(v, dict) and v and all(kk in ("hangul", "latin", "hanja", "japanese", "other",
@@ -2657,6 +2774,11 @@ def _shape_fmt(name, op, i, at, table=None, key="set"):
         out[k] = v
     if out.get("sup") and out.get("sub"):
         raise DocError("bad_input", "%s: sup and sub cannot both be on" % name, i=i, at=at)
+    if table is PARA_SHAPE and "fill" in out and "border" not in out:
+        # the engine writes 문단 테두리 and 배경 as one borderFill, so a fill alone would drop the paragraph's lines
+        raise DocError("bad_input", "%s: fill needs border too (border: false for a background without lines); "
+                                    "a fill alone would replace the paragraph's current 문단 테두리" % name,
+                       i=i, at=at)
     return out
 
 
@@ -2750,8 +2872,14 @@ def _shape_hint(kind):
         return "%s to %s" % (kind[1], kind[2])
     if t == "enum":
         return "one of " + ", ".join(kind[1])
+    if t == "false_or_enum":
+        return "false or one of " + ", ".join(kind[1])
     return {"bool": "true or false", "color": "#RRGGBB", "color_or_none": "#RRGGBB or null",
             "underline": "true, false or BOTTOM/CENTER/TOP", "strike": "true, false or a line shape",
+            "shadow_offset": "[x, y] in % from -100 to 100",
+            "border": "false or {type, width, color}",
+            "tabs": "up to 32 of {pos: 0-1000 pt, type: LEFT|RIGHT|CENTER|DECIMAL, leader}",
+            "offsets": "[left, right, top, bottom] in pt from 0 to 1000",
             "font": "a face name or {hangul, latin, ...}",
             "spacing": "a percent 50-500 or {type: FIXED|BETWEEN_LINES|AT_LEAST|PERCENT, value}"}[t]
 
@@ -2900,12 +3028,6 @@ def _merge_paras(inside):
 
 
 CELL_VALIGN = ("TOP", "CENTER", "BOTTOM")
-#: 선 종류 as the engine writes them (Hancom's HwpLineType 0..17)
-LINE_TYPES = ("SOLID", "DOT", "DASH", "DASH_DOT", "DASH_DOT_DOT", "LONG_DASH", "CIRCLE", "DOUBLE_SLIM",
-              "SLIM_THICK", "THICK_SLIM", "SLIM_THICK_SLIM", "WAVE", "DOUBLEWAVE", "THICK3D", "THICKREV3D", "3D",
-              "REV3D")
-#: 선 굵기 in millimetres, the list Hancom offers (HwpLineWidth 0..15)
-LINE_WIDTHS_MM = (0.1, 0.12, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0)
 BORDER_SIDES = ("left", "right", "top", "bottom")
 CELL_MARGIN_MM = (0, 50)
 TABLE_PAGE_BREAK = ("CELL", "TABLE", "NONE")
@@ -3472,9 +3594,9 @@ def _style_create(doc, cl, i, op, at):
     if eng:
         kw["eng_name"] = eng
     if char:
-        kw["char"] = dict(char)
+        kw["char"] = _char_engine_fmt(char)
     if para:
-        kw["para"] = dict(para)
+        kw["para"] = _para_engine_fmt(para)
     # intra -i: style.create ops run in input order, so the new styles get ids in that order
     a = _Act(i, name, None, first, first.start, side=0, intra=-i, rank=0,
              steps=[{"op": "create_style", "kwargs": kw}])
@@ -4178,12 +4300,16 @@ def _plan_op(doc, cl, i, name, op, at):
             if rng:
                 raise DocError("bad_address", "para_shape takes whole paragraphs, not a character range", i=i,
                                at=at)
+            eng_fmt = _para_engine_fmt(fmt)
             for q in paras:
                 cl.touch(q.si, q.start, i, name, at)
-                acts.append(_Act(i, name, at, q, q.start, side=2,
-                                 steps=[["goto", q.k, 0, q.si], {"op": "set_para_shape", "kwargs": dict(fmt)}]))
+                a = _Act(i, name, at, q, q.start, side=2,
+                         steps=[["goto", q.k, 0, q.si], {"op": "set_para_shape", "kwargs": dict(eng_fmt)}])
+                a.para_shape = (q, dict(fmt))
+                acts.append(a)
         else:
             mp = fmt.pop("markpen", False)
+            eng_fmt = _char_engine_fmt(fmt)
             for q in paras:
                 if rng:
                     a0 = _ppos(q, rng[0])
@@ -4194,11 +4320,14 @@ def _plan_op(doc, cl, i, name, op, at):
                     continue                    # an empty paragraph has no characters to shape
                 cl.span(q, a0, b0, i, name)
                 st = [["goto", q.k, a0, q.si], ["select", b0 - a0]]
-                if fmt:
-                    st.append({"op": "set_char_shape", "kwargs": dict(fmt)})
+                if eng_fmt:
+                    st.append({"op": "set_char_shape", "kwargs": dict(eng_fmt)})
                 if mp is not False:
                     st.append(["markpen", mp])
-                acts.append(_Act(i, name, at, q, q.start, side=2, intra=a0, steps=st))
+                a = _Act(i, name, at, q, q.start, side=2, intra=a0, steps=st)
+                if fmt:
+                    a.char_shape = (q, (a0, b0), dict(fmt))
+                acts.append(a)
             if not any(a.i == i for a in acts):
                 raise DocError("bad_input", "%s has no characters to shape" % at, i=i, at=at)
     elif name in ("page_setup", "columns", "break"):
@@ -4601,6 +4730,8 @@ def _verify(doc, newdoc, acts):
         return False
     if not _verify_styles(doc, newdoc, acts):
         return False
+    if not _verify_char_para(doc, newdoc, acts, st):
+        return False
     if not _verify_notes(doc, newdoc, acts, st):
         return False
     if not _verify_captions(doc, newdoc, acts, st):
@@ -4650,10 +4781,236 @@ def _verify_hf(newdoc, acts, st):
     return True
 
 
+def _width_str(w):
+    w = float(str(w).replace("mm", "").strip())
+    return f"{w:g} mm"
+
+
+def _header_maps(newdoc):
+    try:
+        root = ET.fromstring(newdoc.zip.read("Contents/header.xml"))
+    except (ET.ParseError, KeyError, OSError):
+        return None
+    char_prs, para_prs, bfs, tabs, fonts = {}, {}, {}, {}, {}
+    for el in root.iter():
+        t = _local(el.tag)
+        if t == "charPr":
+            char_prs[el.get("id")] = el
+        elif t == "paraPr":
+            para_prs[el.get("id")] = el
+        elif t == "borderFill":
+            bfs[el.get("id")] = el
+        elif t == "tabPr":
+            tabs[el.get("id")] = el
+        elif t == "fontface":
+            lang = el.get("lang")
+            fonts[lang] = {x.get("id"): x.get("face") for x in el if _local(x.tag) == "font"}
+    return char_prs, para_prs, bfs, tabs, fonts
+
+
+def _check_bf_sides(bf, bd):
+    for sname in ("leftBorder", "rightBorder", "topBorder", "bottomBorder"):
+        sb = next((x for x in bf if _local(x.tag) == sname), None)
+        if sb is None:
+            return False
+        if bd is False:
+            if sb.get("type") != "NONE":
+                return False
+        else:
+            if sb.get("type") != bd["type"] or sb.get("width") != _width_str(bd["width"]) \
+                    or (sb.get("color") or "").upper() != bd["color"].upper():
+                return False
+    return True
+
+
+def _check_bf_fill(bf, fill):
+    wb = next((x for x in bf.iter() if _local(x.tag) == "winBrush"), None)
+    if fill is None:
+        return wb is None or (wb.get("faceColor") or "none").lower() == "none"
+    return wb is not None and (wb.get("faceColor") or "").upper() == fill.upper()
+
+
+def _check_char_pr(cp, ch, bfs, fonts):
+    if "size" in ch and cp.get("height") != str(int(round(ch["size"] * 100))):
+        return False
+    if "color" in ch and (cp.get("textColor") or "").upper() != ch["color"].upper():
+        return False
+    if "shade" in ch:
+        want_sh = "none" if ch["shade"] is None else ch["shade"].upper()
+        if (cp.get("shadeColor") or "").upper() != want_sh.upper():
+            return False
+    for k in ("bold", "italic", "emboss", "engrave"):
+        if k in ch and any(_local(x.tag) == k for x in cp) != ch[k]:
+            return False
+    for k, tag_name in (("sup", "supscript"), ("sub", "subscript")):
+        if k in ch and any(_local(x.tag) == tag_name for x in cp) != ch[k]:
+            return False
+    if any(k in ch for k in ("underline", "underline_shape", "underline_color")):
+        ul = next((x for x in cp if _local(x.tag) == "underline"), None)
+        if ul is None:
+            return False
+        if "underline" in ch:
+            u = ch["underline"]
+            if u is False and ul.get("type") != "NONE":
+                return False
+            if u is True and ul.get("type") in (None, "NONE"):
+                return False
+            if isinstance(u, str) and ul.get("type") != u:
+                return False
+        if "underline_shape" in ch and ul.get("shape") != ch["underline_shape"]:
+            return False
+        if "underline_color" in ch and (ul.get("color") or "").upper() != ch["underline_color"].upper():
+            return False
+    if "strike" in ch or "strike_color" in ch:
+        sk = next((x for x in cp if _local(x.tag) == "strikeout"), None)
+        if sk is None:
+            return False
+        if "strike" in ch:
+            s = ch["strike"]
+            if s is False and sk.get("shape") != "NONE":
+                return False
+            if s is True and sk.get("shape") in (None, "NONE"):
+                return False
+            if isinstance(s, str) and sk.get("shape") != s:
+                return False
+        if "strike_color" in ch and (sk.get("color") or "").upper() != ch["strike_color"].upper():
+            return False
+    for k, tag_name in (("ratio", "ratio"), ("spacing", "spacing"), ("rel_size", "relSz"), ("offset", "offset")):
+        if k in ch:
+            el = next((x for x in cp if _local(x.tag) == tag_name), None)
+            if el is None or el.get("hangul") != str(int(ch[k])):
+                return False
+    if "font" in ch:
+        fref = next((x for x in cp if _local(x.tag) == "fontRef"), None)
+        if fref is None:
+            return False
+        if isinstance(ch["font"], str):
+            if fonts.get("HANGUL", {}).get(fref.get("hangul")) != ch["font"]:
+                return False
+        elif isinstance(ch["font"], dict):
+            for lk, lv in ch["font"].items():
+                if fonts.get(lk.upper(), {}).get(fref.get(lk)) != lv:
+                    return False
+    if "outline" in ch:
+        ol = next((x for x in cp if _local(x.tag) == "outline"), None)
+        want_ol = "NONE" if ch["outline"] is False else ch["outline"]
+        if ol is None or ol.get("type") != want_ol:
+            return False
+    if any(k in ch for k in ("shadow", "shadow_color", "shadow_offset")):
+        sh = next((x for x in cp if _local(x.tag) == "shadow"), None)
+        if sh is None:
+            return False
+        if "shadow" in ch:
+            want_sh = "NONE" if ch["shadow"] is False else ch["shadow"]
+            if sh.get("type") != want_sh:
+                return False
+        if "shadow_color" in ch and (sh.get("color") or "").upper() != ch["shadow_color"].upper():
+            return False
+        if "shadow_offset" in ch:
+            ox, oy = ch["shadow_offset"]
+            if sh.get("offsetX") != str(int(ox)) or sh.get("offsetY") != str(int(oy)):
+                return False
+    if "emphasis" in ch:
+        want_em = "NONE" if ch["emphasis"] is False else ch["emphasis"]
+        if (cp.get("symMark") or "NONE") != want_em:
+            return False
+    if "char_border" in ch or "char_fill" in ch:
+        bf = bfs.get(cp.get("borderFillIDRef"))
+        if bf is None:
+            return False
+        if "char_border" in ch and not _check_bf_sides(bf, ch["char_border"]):
+            return False
+        if "char_fill" in ch and not _check_bf_fill(bf, ch["char_fill"]):
+            return False
+    return True
+
+
+def _check_para_pr(pp, pa, bfs, tabs):
+    if "align" in pa:
+        al = next((x for x in pp.iter() if _local(x.tag) == "align"), None)
+        if al is None or al.get("horizontal") != pa["align"]:
+            return False
+    for k, tag_name in (("left", "left"), ("right", "right"), ("indent", "intent"),
+                        ("before", "prev"), ("after", "next")):
+        if k in pa:
+            el = next((x for x in pp.iter() if _local(x.tag) == tag_name), None)
+            if el is None or el.get("value") != str(int(round(pa[k] * 100))):
+                return False
+    if "line_spacing" in pa:
+        ls = next((x for x in pp.iter() if _local(x.tag) == "lineSpacing"), None)
+        if ls is None:
+            return False
+        v = pa["line_spacing"]
+        if not isinstance(v, dict):
+            if ls.get("type") != "PERCENT" or ls.get("value") != str(v):
+                return False
+        else:
+            want_v = str(int(round(v["value"]))) if v["type"] == "PERCENT" else str(int(round(v["value"] * 100)))
+            if ls.get("type") != v["type"] or ls.get("value") != want_v:
+                return False
+    if any(k in pa for k in ("keep_next", "keep_lines", "widow_orphan", "page_break_before")):
+        bs = next((x for x in pp.iter() if _local(x.tag) == "breakSetting"), None)
+        if bs is None:
+            return False
+        for k, attr_name in (("keep_next", "keepWithNext"), ("keep_lines", "keepLines"),
+                             ("widow_orphan", "widowOrphan"), ("page_break_before", "pageBreakBefore")):
+            if k in pa and bs.get(attr_name) != ("1" if pa[k] else "0"):
+                return False
+    if any(k in pa for k in ("tabs", "auto_tab_left", "auto_tab_right")):
+        tp = tabs.get(pp.get("tabPrIDRef"))
+        if tp is None:
+            return False
+        if "auto_tab_left" in pa and tp.get("autoTabLeft") != ("1" if pa["auto_tab_left"] else "0"):
+            return False
+        if "auto_tab_right" in pa and tp.get("autoTabRight") != ("1" if pa["auto_tab_right"] else "0"):
+            return False
+        if "tabs" in pa:
+            cases = [x for x in tp.iter() if _local(x.tag) == "case"]
+            defaults = [x for x in tp.iter() if _local(x.tag) == "default"]
+            items = [x for c in cases for x in c if _local(x.tag) == "tabItem"] if cases else [
+                x for x in tp if _local(x.tag) == "tabItem"]
+            if len(items) != len(pa["tabs"]):
+                return False
+            for item, want_st in zip(items, pa["tabs"]):
+                want_pos = str(int(round(want_st["pos"] * 100)))
+                if item.get("pos") != want_pos or item.get("type") != want_st["type"] \
+                        or item.get("leader") != want_st["leader"]:
+                    return False
+            if defaults:
+                ditems = [x for d in defaults for x in d if _local(x.tag) == "tabItem"]
+                if len(ditems) != len(pa["tabs"]):
+                    return False
+                for item, want_st in zip(ditems, pa["tabs"]):
+                    want_pos = str(2 * int(round(want_st["pos"] * 100)))
+                    if item.get("pos") != want_pos or item.get("type") != want_st["type"] \
+                            or item.get("leader") != want_st["leader"]:
+                        return False
+    if any(k in pa for k in ("border", "fill", "offsets", "connect")):
+        bd_el = next((x for x in pp if _local(x.tag) == "border"), None)
+        if bd_el is None:
+            return False
+        if "connect" in pa and bd_el.get("connect") != ("1" if pa["connect"] else "0"):
+            return False
+        if "offsets" in pa:
+            want_offs = [str(int(round(float(v) * 100))) for v in pa["offsets"]]
+            if [bd_el.get("offsetLeft"), bd_el.get("offsetRight"),
+                    bd_el.get("offsetTop"), bd_el.get("offsetBottom")] != want_offs:
+                return False
+        if "border" in pa or "fill" in pa:
+            bf = bfs.get(bd_el.get("borderFillIDRef"))
+            if bf is None:
+                return False
+            if "border" in pa and not _check_bf_sides(bf, pa["border"]):
+                return False
+            if "fill" in pa and not _check_bf_fill(bf, pa["fill"]):
+                return False
+    return True
+
+
 def _verify_styles(doc, newdoc, acts):
     """Each style a style.create op made (or _auto_styles added) is in the output's header.xml, once, with its
-    type and English name, and its charPr / paraPr hold the values asked that can be read back (size, bold,
-    italic, color, align); no style of the base document went missing."""
+    type and English name, and its charPr / paraPr / borderFill / tabPr hold the values asked; no style of the
+    base document went missing."""
     made = [a.new_style for a in acts if a.new_style]
     auto = _auto_styles(doc, acts)
     if not made and not auto:
@@ -4665,15 +5022,10 @@ def _verify_styles(doc, newdoc, acts):
             return False
     if not made:
         return True
-    try:
-        root = ET.fromstring(newdoc.zip.read("Contents/header.xml"))
-    except (ET.ParseError, KeyError, OSError):
+    hm = _header_maps(newdoc)
+    if hm is None:
         return False
-    prs = {}
-    for el in root.iter():
-        t = _local(el.tag)
-        if t in ("charPr", "paraPr"):
-            prs[(t, el.get("id"))] = el
+    char_prs, para_prs, bfs, tabs, fonts = hm
     for want in made:
         got = [st for st in newdoc.styles.values() if st["name"] == want["name"]]
         if len(got) != 1:
@@ -4681,20 +5033,70 @@ def _verify_styles(doc, newdoc, acts):
         st = got[0]
         if st["type"] != want["kind"] or (st["engName"] or "") != want["eng"]:
             return False
-        cp, pp = prs.get(("charPr", st["charPr"])), prs.get(("paraPr", st["paraPr"]))
+        cp, pp = char_prs.get(st["charPr"]), para_prs.get(st["paraPr"])
         if cp is None or pp is None:
             return False
-        ch = want["char"]
-        if "size" in ch and cp.get("height") != str(int(round(ch["size"] * 100))):
+        if not _check_char_pr(cp, want["char"], bfs, fonts):
             return False
-        if "color" in ch and (cp.get("textColor") or "").upper() != ch["color"].upper():
+        if not _check_para_pr(pp, want["para"], bfs, tabs):
             return False
-        for k in ("bold", "italic"):
-            if k in ch and any(_local(x.tag) == k for x in cp) != ch[k]:
-                return False
-        if "align" in want["para"]:
-            al = next((x for x in pp.iter() if _local(x.tag) == "align"), None)
-            if al is None or al.get("horizontal") != want["para"]["align"]:
+    return True
+
+
+def _verify_char_para(doc, newdoc, acts, st):
+    """Each char_shape / para_shape op wrote its requested properties to the target runs' charPr or paragraph's
+    paraPr (and any referenced borderFill / tabPr / fontface) in header.xml."""
+    c_acts = [a for a in acts if a.char_shape]
+    p_acts = [a for a in acts if a.para_shape]
+    if not c_acts and not p_acts:
+        return True
+    hm = _header_maps(newdoc)
+    if hm is None:
+        return False
+    char_prs, para_prs, bfs, tabs, fonts = hm
+    by_p = {}
+    for a in sorted(p_acts, key=lambda x: x.key, reverse=True):
+        q, fmt = a.para_shape
+        by_p.setdefault(id(q), (q, {}))[1].update(fmt)
+    for q, fmt in by_p.values():
+        np = _new_para(doc, newdoc, q, st)
+        if np is None:
+            return False
+        pp = para_prs.get(np.pr)
+        if pp is None or not _check_para_pr(pp, fmt, bfs, tabs):
+            return False
+    for a in c_acts:
+        q, (a0, b0), fmt = a.char_shape
+        np = _new_para(doc, newdoc, q, st)
+        if np is None:
+            return False
+        shift = 0
+        split_before = False
+        for a2 in acts:
+            if a2.fb and a2.fb[0] == "replace" and a2.fb[1] is q:
+                _, _, ra, rlen, rtext = a2.fb
+                if ra + rlen <= a0:
+                    if "\n" in rtext:
+                        split_before = True
+                    else:
+                        shift += len(rtext) - rlen
+        if split_before:
+            continue
+        na0, nb0 = a0 + shift, b0 + shift
+        if na0 < 0 or nb0 > len(np.chars):
+            return False
+        cp_ids = []
+        for pos in range(na0, nb0):
+            pm = np.posmap[pos]
+            if pm is not None:
+                cid = np.tnodes[pm[0]]["run"].get("cp")
+                if cid is not None and cid not in cp_ids:
+                    cp_ids.append(cid)
+        if not cp_ids and any(np.posmap[pos] is not None for pos in range(na0, nb0)):
+            return False
+        for cid in cp_ids:
+            cp = char_prs.get(cid)
+            if cp is None or not _check_char_pr(cp, fmt, bfs, fonts):
                 return False
     return True
 
@@ -5013,7 +5415,8 @@ def _remap_result(doc, newdoc, acts):
     if newdoc is None or _verify(doc, newdoc, acts):
         return remap, False
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
-            or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc]
+            or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc
+            or a.char_shape or a.para_shape]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)

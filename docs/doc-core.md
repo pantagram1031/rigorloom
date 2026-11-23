@@ -238,21 +238,42 @@ rt_doc.edit("보고서.hwpx", [
   `char_shape` works on a paragraph, a character range, a cell, a row or a
   table: `bold`, `italic`, `emboss`, `engrave`, `sup`, `sub` (true/false),
   `underline` (true/false or `BOTTOM`/`CENTER`/`TOP`), `underline_shape`,
-  `strike` (true/false or a line shape), `color`, `underline_color`,
-  `strike_color` (`#RRGGBB`), `shade` and `markpen` (형광펜; `#RRGGBB` or
-  null to remove), `size` (pt, 1 to 4096), `font` (a face or
-  `{"hangul": ..., "latin": ...}`), `ratio` (장평 %, 50 to 200), `spacing`
-  (자간 %, -50 to 50), `rel_size` and `offset` (%). `para_shape` takes whole
-  paragraphs (a range is refused): `align` (`JUSTIFY`, `LEFT`, `RIGHT`,
-  `CENTER`, `DISTRIBUTE`, `DISTRIBUTE_SPACE`), `left`, `right`, `indent`
-  (negative = 내어쓰기), `before`, `after` (pt), `line_spacing` (a percent,
-  or `{"type": "FIXED"|"BETWEEN_LINES"|"AT_LEAST"|"PERCENT", "value": pt}`),
-  `keep_next`, `keep_lines`, `widow_orphan`, `page_break_before`. An unknown
-  key or a value out of range is `bad_input` before anything runs. Both need
-  the engine, which applies them to the selected text or paragraphs; the keys
-  are fields of the 글자 모양 / 문단 모양 dialogs. They change no addresses,
-  and run before text edits in the same paragraph, so a range means what it
-  meant in `base`.
+  `strike` (true/false or a line shape), `outline` (외곽선; `false` or one of
+  `SOLID`, `DOT`, `THICK`, `DASH`, `DASH_DOT`, `DASH_DOT_DOT`), `shadow`
+  (그림자; `false`, `DROP` or `CONTINUOUS`), `shadow_color` (`#RRGGBB`),
+  `shadow_offset` (`[x, y]` in %, `-100` to `100` each), `emphasis` (강조점;
+  `false` or one of `DOT_ABOVE`, `RING_ABOVE`, `TILDE`, `CARON`, `SIDE`,
+  `COLON`, `GRAVE_ACCENT`, `ACUTE_ACCENT`, `CIRCUMFLEX`, `MACRON`,
+  `HOOK_ABOVE`, `DOT_BELOW`), `char_border` (글자 테두리; `false` or
+  `{"type": line_type, "width": width_mm, "color": "#RRGGBB"}` for all four
+  sides, with line types and widths from Hancom's lists), `char_fill` (글자
+  배경; `#RRGGBB` or null; given alone it changes only the background and
+  keeps the run's 글자 테두리), `color`, `underline_color`, `strike_color`
+  (`#RRGGBB`), `shade` and `markpen` (형광펜; `#RRGGBB` or null to remove),
+  `size` (pt, 1 to 4096), `font` (a face or `{"hangul": ..., "latin": ...}`),
+  `ratio` (장평 %, 50 to 200), `spacing` (자간 %, -50 to 50), `rel_size` and
+  `offset` (%). `para_shape` takes whole paragraphs (a range is refused):
+  `align` (`JUSTIFY`, `LEFT`, `RIGHT`, `CENTER`, `DISTRIBUTE`,
+  `DISTRIBUTE_SPACE`), `left`, `right`, `indent` (negative = 내어쓰기),
+  `before`, `after` (pt), `line_spacing` (a percent, or
+  `{"type": "FIXED"|"BETWEEN_LINES"|"AT_LEAST"|"PERCENT", "value": pt}`),
+  `keep_next`, `keep_lines`, `widow_orphan`, `page_break_before`, `tabs` (탭
+  설정; up to 32 tab stops `{"pos": pt (0..1000), "type": "LEFT"|"RIGHT"|"CENTER"|"DECIMAL", "leader": "NONE"|"SOLID"|"DASH"|"DOT"|...}`
+  with strictly increasing positions), `auto_tab_left` and `auto_tab_right`
+  (true/false), and 문단 테두리/배경 (`border`: `false` or
+  `{"type", "width", "color"}` for all four sides, `fill`: `#RRGGBB` or null,
+  `offsets`: `[left, right, top, bottom]` in pt from 0 to 1000 each,
+  `connect`: true/false; 테두리 and 배경 are one borderFill, so `fill`
+  needs `border` too (`border: false` for a background without lines) and a
+  fill alone is `bad_input`, while `offsets` or `connect` alone keep the
+  paragraph's lines and background; on a document whose `hh:paraPr` has no `hh:border`,
+  rigorloom's own .hwpx files among them, this needs hwp-engine 761147c (PR #34)
+  or later, and an older engine fails the edit with nothing written). An unknown key or a value out of
+  range is `bad_input` before anything runs. Both need the engine, which
+  applies them to the selected text or paragraphs, and the edit checks that
+  `header.xml` (`charPr`, `paraPr`, `borderFill`, `tabPr`) holds the requested
+  values before anything is written. They change no addresses, and run before
+  text edits in the same paragraph, so a range means what it meant in `base`.
 - `style.create` (서식 > 스타일 > 추가) makes a new style in the document's
   header. It takes `name` (1 to 64 characters on one line, not only digits),
   `eng_name` (optional), `kind` (`para`, the default, or `char`), `based_on`
@@ -269,10 +290,10 @@ rt_doc.edit("보고서.hwpx", [
   are a `conflict`. A `style` op cannot apply a style that a `style.create`
   in the same edit makes (`bad_input`): apply it in a later edit. Needs the
   engine. After the edit a .hwpx output's header must hold the style once, with
-  its type and English name and the size, bold, italic, colour and alignment
-  asked; otherwise the edit fails and nothing is written. Changing,
-  renaming or deleting an existing style has no op yet: the engine has no
-  such step.
+  its type and English name and the requested `char` / `para` properties in
+  `charPr`, `paraPr`, `borderFill` and `tabPr`; otherwise the edit fails and
+  nothing is written. Changing, renaming or deleting an existing style has no
+  op yet: the engine has no such step.
 - `numbering` puts whole paragraphs into 개요 번호, 문단 번호 or 글머리표, or
   takes them out: `set` is `{"kind": "outline"|"number"|"bullet"|"none"}`
   with `level` 1 to 7 (the XML's level 0 to 6; `outline` defaults to 1 and
