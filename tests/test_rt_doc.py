@@ -2471,7 +2471,8 @@ def test_page_level_ops_are_checked_before_anything_runs(no_engine, tmp_path):
     # page_setup start_page: bounds, types, and section without hp:startNum (basic.hwpx)
     for bad_sp in (0, 65536, -1, True, False, "1", 1.5, None, []):
         assert err({"op": "page_setup", "at": "p0", "set": {"start_page": bad_sp}})["code"] == "bad_input", bad_sp
-    for bad_bd in ({"type": "none", "width": 0.4}, {"type": "NONE", "color": "#000000"}):
+    for bad_bd in ({"type": "none", "width": 0.4}, {"type": "NONE", "color": "#000000"}, {"fill": "#FFFFCC"},
+                   {"offset_mm": 5}, {"apply": "BOTH", "header_inside": True}, {"width": 0.4, "color": "#000000"}):
         assert err({"op": "page_setup", "at": "p0", "set": {"border": bad_bd}})["code"] == "bad_input", bad_bd
     assert err({"op": "page_setup", "at": "p0:0-2", "set": {"start_page": 3}}, doc_path=fx)["code"] == "bad_address"
     assert err({"op": "page_setup", "at": "t0/r0/c0/p0", "set": {"start_page": 3}},
@@ -2526,11 +2527,11 @@ def test_page_level_ops_are_checked_before_anything_runs(no_engine, tmp_path):
         assert err({"op": "page_setup", "at": "p0", "set": {"border": bad_bd}})["code"] == "bad_input", bad_bd
     e_bt = err({"op": "page_setup", "at": "p0", "set": {"border": {"type": "THIN"}}})
     assert e_bt["code"] == "bad_input" and "THICK_SLIM" in e_bt["candidates"]
-    e_bw = err({"op": "page_setup", "at": "p0", "set": {"border": {"width": 0.33}}})
+    e_bw = err({"op": "page_setup", "at": "p0", "set": {"border": {"type": "SOLID", "width": 0.33}}})
     assert e_bw["code"] == "bad_input" and 0.3 in e_bw["candidates"]
-    e_ba = err({"op": "page_setup", "at": "p0", "set": {"border": {"apply": "ALL"}}})
+    e_ba = err({"op": "page_setup", "at": "p0", "set": {"border": {"type": "SOLID", "apply": "ALL"}}})
     assert e_ba["code"] == "bad_input" and "BOTH" in e_ba["candidates"]
-    e_tb = err({"op": "page_setup", "at": "p0", "set": {"border": {"text_border": "MARGIN"}}})
+    e_tb = err({"op": "page_setup", "at": "p0", "set": {"border": {"type": "SOLID", "text_border": "MARGIN"}}})
     assert e_tb["code"] == "bad_input" and "PAPER" in e_tb["candidates"]
 
     # hide: unknown key, expect, at least one flag true, boolean types, body paragraph only, existing pageHiding

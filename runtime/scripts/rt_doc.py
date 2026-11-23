@@ -3247,7 +3247,10 @@ def _page_border_kwargs(bd, i, at):
         raise DocError("bad_input", "page_setup: border has no %s (keys: %s)"
                        % (bad[0], ", ".join(PAGE_BORDER_KEYS)), i=i, at=at,
                        candidates=_cands_near(list(PAGE_BORDER_KEYS), bad[0]) or list(PAGE_BORDER_KEYS))
-    line_in = {k: bd[k] for k in ("type", "width", "color") if k in bd} or {"type": "SOLID"}
+    if "type" not in bd:    # a default line here would draw a frame on every page when only a background was asked
+        raise DocError("bad_input", "page_setup: border needs type (a line type, or NONE for a background without "
+                       "lines)", i=i, at=at, candidates=["NONE"] + list(LINE_TYPES))
+    line_in = {k: bd[k] for k in ("type", "width", "color") if k in bd}
     if isinstance(bd.get("type"), str) and bd["type"].upper() == "NONE":    # 쪽 배경 only, no lines
         if "width" in bd or "color" in bd:
             raise DocError("bad_input", "page_setup: border.type NONE (a background without lines) takes no "

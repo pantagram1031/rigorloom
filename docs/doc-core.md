@@ -369,7 +369,8 @@ rt_doc.edit("보고서.hwpx", [
     `{"type": line_type, "width": width_mm, "color": "#RRGGBB", "fill"?: "#RRGGBB"|null, "offset_mm"?: [left, right, top, bottom]|number (0..500 mm), "apply"?: "BOTH"|"ODD"|"EVEN", "text_border"?: "PAPER"|"CONTENT", "header_inside"?: bool, "footer_inside"?: bool}`,
     using the same line types and widths from Hancom's lists as `char_border` /
     `para_shape` `border`, plus `type` `NONE` (no `width` or `color`) for a
-    page background without lines). On a section whose `hp:secPr` has no
+    page background without lines; `type` is required, so a fill alone never
+    draws a frame). On a section whose `hp:secPr` has no
     `hp:startNum` or `hp:pageBorderFill` (rigorloom's own .hwpx files among
     them), `start_page` and `border` need hwp-engine PR #35 or later, which
     adds Hancom's defaults first; an older engine leaves the section as it was,
