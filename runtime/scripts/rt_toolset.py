@@ -994,9 +994,10 @@ OP_NOTES = {
     "style": "`style` is a paragraph style name this document has",
     "char_shape": "`at` is a paragraph, a range in one (p3:5-9), a cell, a row or a table; "
                   "`set` holds only what changes; size is in pt, ratio (장평), spacing (자간), "
-                  "rel_size and offset in %",
+                  "rel_size, offset and shadow_offset in %, char_border width in mm",
     "para_shape": "`at` is a paragraph, a cell, a row or a table, never a range; `set` holds "
-                  "only what changes; lengths are in pt and an indent below 0 is 내어쓰기",
+                  "only what changes; lengths, tab positions and border offsets are in pt, "
+                  "border width in mm, and an indent below 0 is 내어쓰기",
     "numbering": "`at` is a paragraph or a cell (all its paragraphs), never a range; `set` "
                  "keys: kind (outline, number, bullet or none), level (1 to 7; outline "
                  "defaults to 1), char (bullet: one character), start (number: 1 to 9999) "
