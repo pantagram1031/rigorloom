@@ -2917,3 +2917,325 @@ def test_engine_page_level_ops(tmp_path, monkeypatch):
     res_bad_bd = D.edit(f_pg, ops_pg, base=D.rev_of(f_pg), out=out_bad_bd)
     assert not res_bad_bd["ok"] and res_bad_bd["error"]["code"] == "internal"
     assert res_bad_bd["error"]["written"] is False and not out_bad_bd.exists()
+
+
+# ============================================================================ R10: 그림 크기·위치·배치 (insert_picture placement + picture op)
+def _pic_xml(pid, bin_ref="image1", w=8504, h=4252, wrap="TOP_AND_BOTTOM", treat="1",
+             vrel="PARA", hrel="PARA", voff=0, hoff=0):
+    return (
+        '<hp:run charPrIDRef="0">'
+        '<hp:pic id="%s" zOrder="0" numberingType="PICTURE" textWrap="%s" textFlow="BOTH_SIDES" '
+        'lock="0" dropcapstyle="None" href="" groupLevel="0" instid="%s" reverse="0">'
+        '<hp:offset x="0" y="0"/>'
+        '<hp:orgSz width="%d" height="%d"/>'
+        '<hp:curSz width="%d" height="%d"/>'
+        '<hp:flip horizontal="0" vertical="0"/>'
+        '<hp:rotationInfo angle="0" centerX="%d" centerY="%d" rotateimage="1"/>'
+        '<hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '<hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/>'
+        '<hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo>'
+        '<hc:img binaryItemIDRef="%s" bright="0" contrast="0" effect="REAL_PIC" alpha="0"/>'
+        '<hp:imgRect><hc:pt0 x="0" y="0"/><hc:pt1 x="%d" y="0"/>'
+        '<hc:pt2 x="%d" y="%d"/><hc:pt3 x="0" y="%d"/></hp:imgRect>'
+        '<hp:imgClip left="0" right="%d" top="0" bottom="%d"/>'
+        '<hp:inMargin left="0" right="0" top="0" bottom="0"/>'
+        '<hp:imgDim dimwidth="%d" dimheight="%d"/>'
+        '<hp:effects/>'
+        '<hp:sz width="%d" widthRelTo="ABSOLUTE" height="%d" heightRelTo="ABSOLUTE" protect="0"/>'
+        '<hp:pos treatAsChar="%s" affectLSpacing="0" flowWithText="1" allowOverlap="0" '
+        'holdAnchorAndSO="0" vertRelTo="%s" horzRelTo="%s" vertAlign="TOP" horzAlign="LEFT" '
+        'vertOffset="%d" horzOffset="%d"/>'
+        '<hp:outMargin left="0" right="0" top="0" bottom="0"/>'
+        '</hp:pic></hp:run>'
+    ) % (pid, wrap, pid, w, h, w, h, w // 2, h // 2, bin_ref, w, w, h, h, w, h, w, h, w, h,
+         treat, vrel, hrel, voff, hoff)
+
+
+def _doc_with_pics(tmp_path):
+    """Copy BASIC and inject 1 inline pic in p1, 1 floating + 1 inline pic in p2, and 1 inline pic in t0/r0/c0/p0."""
+    src = _copy(BASIC, tmp_path, "pics.hwpx")
+    d = D._load(src, meta=False)
+    sec = d.secs[0]
+    p1 = d.top[1]
+    p2 = d.top[2]
+    cp = D.resolve(d, "t0/r0/c0/p0")["para"]
+    pic1 = _pic_xml("9001", "image1", 8504, 4252, wrap="TOP_AND_BOTTOM", treat="1", vrel="PARA", hrel="COLUMN")
+    pic2a = _pic_xml("9002", "image2", 5669, 2835, wrap="SQUARE", treat="0", vrel="PAGE", hrel="PARA", voff=283, hoff=566)
+    pic2b = _pic_xml("9003", "image3", 4000, 4000, wrap="TOP_AND_BOTTOM", treat="1", vrel="PARA", hrel="COLUMN")
+    pic_cell = _pic_xml("9004", "image4", 3000, 1500, wrap="TOP_AND_BOTTOM", treat="1", vrel="PARA", hrel="COLUMN")
+    # replace from highest offset to lowest so indices stay valid
+    edits = sorted([
+        (p1.end - len("</hp:p>"), pic1),
+        (p2.end - len("</hp:p>"), pic2a + pic2b),
+        (cp.end - len("</hp:p>"), pic_cell),
+    ], key=lambda x: x[0], reverse=True)
+    for pos, xml in edits:
+        sec = sec[:pos] + xml + sec[pos:]
+    src.write_bytes(d.zip.rewrite({"Contents/section0.xml": sec.encode("utf-8")}))
+    return src
+
+
+def test_picture_ops_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _doc_with_pics(tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+    img = _png(tmp_path / "fig.png")
+
+    def err(ops):
+        return D.edit(src, ops if isinstance(ops, list) else [ops], base=rev, out=out)["error"]
+
+    # 1. insert_picture validation
+    e = err({"op": "insert_picture", "at": "p1", "path": str(img), "wrap_mode": "SQUARE"})
+    assert e["code"] == "bad_input" and "wrap" in e["candidates"]
+    assert err({"op": "insert_picture", "at": "p1", "path": ""})["code"] == "bad_input"
+    assert err({"op": "insert_picture", "at": "p1", "path": str(tmp_path / "nope.png")})["code"] == "not_found"
+    for k in ("width_mm", "height_mm"):
+        for bad_sz in (0, -5, 1001, True, False, "30"):
+            assert err({"op": "insert_picture", "at": "p1", "path": str(img), k: bad_sz})["code"] == "bad_input", (k, bad_sz)
+    e = err({"op": "insert_picture", "at": "p1", "path": str(img), "wrap": "FLOAT"})
+    assert e["code"] == "bad_input" and "SQUARE" in e["candidates"]
+    e = err({"op": "insert_picture", "at": "p1", "path": str(img), "wrap": "SQUARE", "vert_rel": "COLUMN"})
+    assert e["code"] == "bad_input" and e["candidates"] == ["PARA", "PAGE", "PAPER"]
+    e = err({"op": "insert_picture", "at": "p1", "path": str(img), "wrap": "SQUARE", "horz_rel": "LINE"})
+    assert e["code"] == "bad_input" and "COLUMN" in e["candidates"]
+    for k in ("x_mm", "y_mm"):
+        for bad_off in (-1001, 1001, True, False, "10", None):
+            assert err({"op": "insert_picture", "at": "p1", "path": str(img), "wrap": "SQUARE", k: bad_off})["code"] == "bad_input", (k, bad_off)
+    # vert_rel / horz_rel / x_mm / y_mm without wrap -> bad_input
+    for k, v in (("vert_rel", "PAGE"), ("horz_rel", "PARA"), ("x_mm", 10), ("y_mm", -5)):
+        e = err({"op": "insert_picture", "at": "p1", "path": str(img), k: v})
+        assert e["code"] == "bad_input" and "wrap" in e["message"], k
+    assert err({"op": "insert_picture", "at": "p1:0-2", "path": str(img)})["code"] == "bad_address"
+    assert err({"op": "insert_picture", "at": "t0", "path": str(img)})["code"] == "bad_address"
+    assert err({"op": "insert_picture", "at": "t0/r0", "path": str(img)})["code"] == "bad_address"
+
+    # 2. picture op validation
+    e = err({"op": "picture", "at": "p1", "idx": 0, "set": {"width_mm": 30}})
+    assert e["code"] == "bad_input" and "index" in e["candidates"]
+    assert err({"op": "picture", "at": "p1", "expect": "x", "set": {"width_mm": 30}})["code"] == "bad_input"
+    assert err({"op": "picture", "at": "p1"})["code"] == "bad_input"
+    assert err({"op": "picture", "at": "p1", "set": {}})["code"] == "bad_input"
+    # unknown keys in set, including unverified engine set_picture parameters
+    e = err({"op": "picture", "at": "p1", "set": {"w_mm": 30}})
+    assert e["code"] == "bad_input" and "width_mm" in e["candidates"]
+    for unverified in ("crop_mm", "border", "effect", "bright", "contrast", "alpha", "rotate", "flip"):
+        e = err({"op": "picture", "at": "p1", "set": {unverified: 1}})
+        assert e["code"] == "bad_input" and e["candidates"] and set(e["candidates"]) <= set(D.PICTURE_SET_KEYS), unverified
+    for bad_idx in (-1, True, False, "0", 1.5):
+        assert err({"op": "picture", "at": "p1", "index": bad_idx, "set": {"width_mm": 30}})["code"] == "bad_input", bad_idx
+    for k in ("width_mm", "height_mm"):
+        for bad_sz in (0, 0.5, -10, 1001, True, False, "40", None):
+            assert err({"op": "picture", "at": "p1", "set": {k: bad_sz}})["code"] == "bad_input", (k, bad_sz)
+    for k in ("keep_ratio", "inline"):
+        for bad_b in (1, 0, "true", None):
+            assert err({"op": "picture", "at": "p1", "set": {k: bad_b, "width_mm": 30}})["code"] == "bad_input", (k, bad_b)
+    # keep_ratio alone without width_mm or height_mm
+    assert err({"op": "picture", "at": "p1", "set": {"keep_ratio": True}})["code"] == "bad_input"
+    # keep_ratio: true with incompatible width_mm and height_mm on a 2:1 picture
+    assert err({"op": "picture", "at": "p1", "set": {"width_mm": 40, "height_mm": 40, "keep_ratio": True}})["code"] == "bad_input"
+    e = err({"op": "picture", "at": "p1", "set": {"wrap": "INLINE"}})
+    assert e["code"] == "bad_input" and e["candidates"] and set(e["candidates"]) <= set(D.PICTURE_WRAPS)
+    e = err({"op": "picture", "at": "p1", "set": {"wrap": "SQUARE", "vert_rel": "COLUMN"}})
+    assert e["code"] == "bad_input" and e["candidates"] == ["PARA", "PAGE", "PAPER"]
+    e = err({"op": "picture", "at": "p1", "set": {"wrap": "SQUARE", "horz_rel": "ROW"}})
+    assert e["code"] == "bad_input" and "PARA" in e["candidates"]
+    for k in ("x_mm", "y_mm"):
+        for bad_off in (-1001, 1001, True, False, "5", None):
+            assert err({"op": "picture", "at": "p1", "set": {"wrap": "SQUARE", k: bad_off}})["code"] == "bad_input", (k, bad_off)
+    # inline: true with wrap or offsets/rels -> bad_input
+    for k, v in (("wrap", "SQUARE"), ("vert_rel", "PAGE"), ("horz_rel", "PARA"), ("x_mm", 5), ("y_mm", 5)):
+        e = err({"op": "picture", "at": "p1", "set": {"inline": True, k: v}})
+        assert e["code"] == "bad_input" and "inline" in e["message"], k
+    # vert_rel / horz_rel / x_mm / y_mm on an inline picture (p1) without wrap -> bad_input
+    for k, v in (("vert_rel", "PAGE"), ("horz_rel", "PARA"), ("x_mm", 5), ("y_mm", 5)):
+        e = err({"op": "picture", "at": "p1", "set": {k: v}})
+        assert e["code"] == "bad_input" and "floating" in e["message"], k
+    # missing picture: p0 has no picture; p3 holds table t0 whose cell t0/r0/c0/p0 has a picture,
+    # so p3's own hp:pic list is empty and must answer not_found
+    for no_pic_addr in ("p0", "p3", "t0/r0/c1/p0"):
+        e = err({"op": "picture", "at": no_pic_addr, "set": {"width_mm": 20}})
+        assert e["code"] == "not_found" and "p1" in (e.get("candidates") or []), no_pic_addr
+    # ambiguous index: p2 holds 2 pictures
+    e = err({"op": "picture", "at": "p2", "set": {"width_mm": 20}})
+    assert e["code"] == "bad_input" and "2 pictures" in e["message"] and e["range"] == [0, 1]
+    assert err({"op": "picture", "at": "p1", "index": 1, "set": {"width_mm": 20}})["code"] == "bad_input"
+    assert err({"op": "picture", "at": "p2", "index": 2, "set": {"width_mm": 20}})["code"] == "bad_input"
+    # bad addresses
+    for bad_addr in ("p1:0-2", "t0", "t0/r0", "t0/r0/c0"):
+        assert err({"op": "picture", "at": bad_addr, "set": {"width_mm": 20}})["code"] == "bad_address", bad_addr
+
+    # conflicts: two picture ops on the same picture, or picture + delete of the paragraph/table
+    assert err([
+        {"op": "picture", "at": "p1", "set": {"width_mm": 20}},
+        {"op": "picture", "at": "p1", "index": 0, "set": {"height_mm": 10}},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "picture", "at": "p2", "index": 1, "set": {"width_mm": 20}},
+        {"op": "picture", "at": "p2", "index": 1, "set": {"wrap": "SQUARE"}},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "picture", "at": "p1", "set": {"width_mm": 20}},
+        {"op": "delete", "at": "p1", "expect": D.read(src, "p1")["blocks"][0]["text"]},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "picture", "at": "t0/r0/c0/p0", "set": {"width_mm": 20}},
+        {"op": "table.delete_col", "at": "t0", "col": 0},
+    ])["code"] == "conflict"
+
+    # valid ops without engine (including two distinct pictures in p2, and offset change on an already floating pic)
+    e = err([
+        {"op": "insert_picture", "at": "p0", "path": str(img), "width_mm": 35,
+         "wrap": "square", "vert_rel": "page", "horz_rel": "para", "x_mm": 10, "y_mm": -5},
+        {"op": "picture", "at": "p1", "set": {"width_mm": 40, "wrap": "tight", "x_mm": 12, "y_mm": 4}},
+        {"op": "picture", "at": "p2", "index": 0, "set": {"x_mm": 15, "y_mm": 6}},
+        {"op": "picture", "at": "p2", "index": 1, "set": {"height_mm": 25, "inline": True}},
+        {"op": "picture", "at": "t0/r0/c0/p0", "set": {"width_mm": 18}},
+    ])
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+@engine
+def test_engine_insert_picture_placement_and_picture_op(kit, tmp_path, monkeypatch):
+    img = _png(tmp_path / "fig.png", w=40, h=20)
+    img2 = _png(tmp_path / "fig2.png", w=30, h=30)
+
+    # tests/fixtures/rt_doc_contract/basic.hwpx has <hs:sec> without xmlns:hc: the engine declares it on save
+    # (hwp-engine PR #36), so a floating picture goes in and verifies there too.
+    f_basic = _copy(BASIC, tmp_path, "basic_pic.hwpx")
+    out_basic = tmp_path / "basic_pic_out.hwpx"
+    ops_basic = [{"op": "insert_picture", "at": "p1", "path": str(img), "width_mm": 30,
+                  "wrap": "SQUARE", "vert_rel": "PAGE", "horz_rel": "PARA", "x_mm": 10, "y_mm": 5}]
+    r_basic = D.edit(f_basic, ops_basic, base=D.rev_of(f_basic), out=out_basic)
+    assert r_basic["ok"], r_basic
+    got_basic = D._load(out_basic, meta=False)
+    basic_pics = [pp for q in got_basic.paras for pp in D._pics_in(got_basic, q)]
+    assert len(basic_pics) == 1 and basic_pics[0]["wrap"] == "SQUARE" and basic_pics[0]["vert_rel"] == "PAGE"
+    assert basic_pics[0]["horz_offset"] == D._mm_hu(10) and basic_pics[0]["vert_offset"] == D._mm_hu(5)
+
+    # 1. insert_picture: floating with wrap/vert_rel/horz_rel/x_mm/y_mm, inline, and inside a table cell paragraph
+    f = _copy(FX_DOC, tmp_path, "r10.hwpx")
+    base = D._load(f, meta=False)
+    out1 = tmp_path / "r10_ins.hwpx"
+    ops_ins = [
+        {"op": "insert_picture", "at": "p1", "path": str(img), "width_mm": 40, "offset": 0,
+         "wrap": "square", "vert_rel": "page", "horz_rel": "para", "x_mm": 12.5, "y_mm": -4},
+        {"op": "insert_picture", "at": "p2", "path": str(img), "width_mm": 30, "offset": 0},
+        {"op": "insert_picture", "at": "t0/r1/c1/p0", "path": str(img2), "width_mm": 20, "offset": 0},
+    ]
+    r1 = D.edit(f, ops_ins, base=D.rev_of(f), out=out1)
+    assert r1["ok"], r1
+    assert r1["remap"] == [] and not r1.get("remap_approx")
+    got1 = D._load(out1, meta=False)
+    acts1 = D._plan(base, ops_ins)
+    assert D._verify(base, got1, acts1)
+
+    p1_pics = D._pics_in(got1, got1.top[1])
+    assert len(p1_pics) == 1
+    pic_p1 = p1_pics[0]
+    assert pic_p1["wrap"] == "SQUARE" and pic_p1["treat_as_char"] == "0"
+    assert pic_p1["vert_rel"] == "PAGE" and pic_p1["horz_rel"] == "PARA"
+    assert pic_p1["horz_offset"] == D._mm_hu(12.5) and pic_p1["vert_offset"] == D._mm_hu(-4)
+    assert abs(pic_p1["width"] - round(40 * D.HU_PER_MM)) <= 2
+    assert abs(pic_p1["height"] - round(20 * D.HU_PER_MM)) <= 2
+
+    p2_pics = D._pics_in(got1, got1.top[2])
+    assert len(p2_pics) == 1
+    pic_p2 = p2_pics[0]
+    assert pic_p2["treat_as_char"] == "1"
+    assert abs(pic_p2["width"] - round(30 * D.HU_PER_MM)) <= 2
+    assert abs(pic_p2["height"] - round(15 * D.HU_PER_MM)) <= 2
+
+    cell_p = D.resolve(got1, "t0/r1/c1/p0")["para"]
+    cell_pics = D._pics_in(got1, cell_p)
+    assert len(cell_pics) == 1 and cell_pics[0]["treat_as_char"] == "1"
+    assert abs(cell_pics[0]["width"] - round(20 * D.HU_PER_MM)) <= 2
+    assert abs(cell_pics[0]["height"] - round(20 * D.HU_PER_MM)) <= 2
+
+    # 2. picture op:
+    # - p1 (floating 40x20): resize width_mm only (50 -> 50x25 keeping 2:1 ratio) + floating -> inline
+    # - p2 (inline 30x15): inline -> floating with wrap=TIGHT, vert_rel=PAPER, horz_rel=PAGE, x_mm=18, y_mm=7
+    #   and height_mm only (20 -> 40x20 keeping 2:1 ratio)
+    # - t0/r1/c1/p0 (inline 20x20 in table cell): resize width_mm=30 with keep_ratio=False (30x20) + float BEHIND_TEXT
+    out2 = tmp_path / "r10_mod.hwpx"
+    ops_mod = [
+        {"op": "picture", "at": "p1", "set": {"width_mm": 50, "inline": True}},
+        {"op": "picture", "at": "p2", "set": {
+            "height_mm": 20, "wrap": "tight", "vert_rel": "paper", "horz_rel": "page", "x_mm": 18, "y_mm": 7}},
+        {"op": "picture", "at": "t0/r1/c1/p0", "set": {
+            "width_mm": 30, "keep_ratio": False, "wrap": "behind_text", "x_mm": 3, "y_mm": 2}},
+    ]
+    r2 = D.edit(out1, ops_mod, base=D.rev_of(out1), out=out2)
+    assert r2["ok"], r2
+    assert r2["remap"] == [] and not r2.get("remap_approx")
+    got2 = D._load(out2, meta=False)
+    acts2 = D._plan(got1, ops_mod)
+    assert D._verify(got1, got2, acts2)
+
+    mod_p1 = D._pics_in(got2, got2.top[1])[0]
+    assert mod_p1["id"] == pic_p1["id"] and mod_p1["bin_ref"] == pic_p1["bin_ref"]
+    assert mod_p1["treat_as_char"] == "1"
+    assert abs(mod_p1["width"] - round(50 * D.HU_PER_MM)) <= 2
+    assert abs(mod_p1["height"] - round(25 * D.HU_PER_MM)) <= 2
+    assert mod_p1["cur_width"] == mod_p1["width"] and mod_p1["cur_height"] == mod_p1["height"]
+
+    mod_p2 = D._pics_in(got2, got2.top[2])[0]
+    assert mod_p2["id"] == pic_p2["id"] and mod_p2["bin_ref"] == pic_p2["bin_ref"]
+    assert mod_p2["treat_as_char"] == "0" and mod_p2["wrap"] == "TIGHT"
+    assert mod_p2["vert_rel"] == "PAPER" and mod_p2["horz_rel"] == "PAGE"
+    assert mod_p2["horz_offset"] == D._mm_hu(18) and mod_p2["vert_offset"] == D._mm_hu(7)
+    assert abs(mod_p2["width"] - round(40 * D.HU_PER_MM)) <= 2
+    assert abs(mod_p2["height"] - round(20 * D.HU_PER_MM)) <= 2
+
+    mod_cell = D._pics_in(got2, D.resolve(got2, "t0/r1/c1/p0")["para"])[0]
+    assert mod_cell["id"] == cell_pics[0]["id"] and mod_cell["bin_ref"] == cell_pics[0]["bin_ref"]
+    assert mod_cell["treat_as_char"] == "0" and mod_cell["wrap"] == "BEHIND_TEXT"
+    assert mod_cell["horz_offset"] == D._mm_hu(3) and mod_cell["vert_offset"] == D._mm_hu(2)
+    assert abs(mod_cell["width"] - round(30 * D.HU_PER_MM)) <= 2
+    assert abs(mod_cell["height"] - round(20 * D.HU_PER_MM)) <= 2
+
+    # 3. two pictures in one paragraph: index selects the target picture and leaves the sibling unchanged
+    out3 = tmp_path / "r10_two.hwpx"
+    r3 = D.edit(out2, [{"op": "insert_picture", "at": "p1", "path": str(img2), "width_mm": 16, "offset": 0}],
+                base=D.rev_of(out2), out=out3)
+    assert r3["ok"], r3
+    assert D.edit(out3, [{"op": "picture", "at": "p1", "set": {"width_mm": 25}}],
+                  base=D.rev_of(out3), out=tmp_path / "ambig.hwpx")["error"]["code"] == "bad_input"
+    out4 = tmp_path / "r10_idx1.hwpx"
+    r4 = D.edit(out3, [{"op": "picture", "at": "p1", "index": 1, "set": {"width_mm": 24}}],
+                base=D.rev_of(out3), out=out4)
+    assert r4["ok"], r4
+    pics_p1_after = D._pics_in(D._load(out4, meta=False), D._load(out4, meta=False).top[1])
+    assert len(pics_p1_after) == 2
+    assert abs(pics_p1_after[0]["width"] - round(24 * D.HU_PER_MM)) <= 4 or abs(pics_p1_after[1]["width"] - round(24 * D.HU_PER_MM)) <= 4
+    widths_p1 = sorted(p["width"] for p in pics_p1_after)
+    assert abs(widths_p1[0] - round(24 * D.HU_PER_MM)) <= 2 and abs(widths_p1[1] - round(50 * D.HU_PER_MM)) <= 2
+
+    # 4. verifier refuses hand-broken outputs for size (sz and curSz), wrap, treatAsChar, rels, offsets, and binaryItemIDRef
+    raw_sec2 = got2.zip.read("Contents/section0.xml").decode("utf-8")
+    for label, old_s, new_s in (
+        ("sz_width", '<hp:sz width="%d"' % mod_p2["width"], '<hp:sz width="%d"' % (mod_p2["width"] + 500)),
+        ("curSz_height", '<hp:curSz width="%d" height="%d"' % (mod_p2["cur_width"], mod_p2["cur_height"]),
+         '<hp:curSz width="%d" height="%d"' % (mod_p2["cur_width"], mod_p2["cur_height"] + 500)),
+        ("wrap", 'textWrap="TIGHT"', 'textWrap="SQUARE"'),
+        ("treatAsChar", 'treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PAPER"',
+         'treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PAPER"'),
+        ("vertRelTo", 'vertRelTo="PAPER"', 'vertRelTo="PARA"'),
+        ("horzRelTo", 'horzRelTo="PAGE"', 'horzRelTo="COLUMN"'),
+        ("vertOffset", 'vertOffset="%d"' % D._mm_hu(7), 'vertOffset="0"'),
+        ("horzOffset", 'horzOffset="%d"' % D._mm_hu(18), 'horzOffset="0"'),
+        ("binaryItemIDRef", 'binaryItemIDRef="%s"' % mod_p2["bin_ref"], 'binaryItemIDRef="image999"'),
+    ):
+        assert old_s in raw_sec2, (label, old_s)
+        broken_bytes = got2.zip.rewrite({"Contents/section0.xml": raw_sec2.replace(old_s, new_s, 1).encode("utf-8")})
+        broken_doc = D.Doc(out2, broken_bytes, "hwpx")
+        assert not D._verify(got1, broken_doc, acts2), label
+
+    # end-to-end: if the engine produces a broken picture output, edit fails with internal and writes nothing
+    bad_pic_bytes = got2.zip.rewrite({
+        "Contents/section0.xml": raw_sec2.replace('textWrap="TIGHT"', 'textWrap="SQUARE"', 1).encode("utf-8")
+    })
+    monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_pic_bytes, {}, None))
+    out_bad_pic = tmp_path / "bad_pic.hwpx"
+    res_bad_pic = D.edit(out1, ops_mod, base=D.rev_of(out1), out=out_bad_pic)
+    assert not res_bad_pic["ok"] and res_bad_pic["error"]["code"] == "internal"
+    assert res_bad_pic["error"]["written"] is False and not out_bad_pic.exists()

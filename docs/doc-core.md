@@ -533,6 +533,51 @@ rt_doc.edit("보고서.hwpx", [
     `bookmark`, `link` or `toc`, and a `style.create` of a 차례 style that
     `toc` needs auto-added in the same edit. Editing or removing an existing
     bookmark, hyperlink or table of contents has no op yet.
+- 그림 넣기 and 그림 속성 (입력 > 그림; 개체 속성 > 기본/위치) need the engine and take
+  no `expect`.
+  - `insert_picture` inserts an image file (`path`) at `at` (a body paragraph,
+    heading, cell, cell paragraph or fill place; `offset` places it at that code
+    point in the paragraph, and omitting `offset` adds a paragraph after `at` for
+    it), with optional `width_mm` / `height_mm` (`1` to `1000` mm; `width_mm`
+    alone keeps the image's aspect ratio, or 96-dpi size when neither is given).
+    By default the picture is inline (`treatAsChar="1"`, 글자처럼 취급). Giving
+    `wrap` (`SQUARE`, `TIGHT`, `THROUGH`, `TOP_AND_BOTTOM`, `BEHIND_TEXT` or
+    `IN_FRONT_OF_TEXT`) makes the picture float (`treatAsChar="0"`), with
+    optional `vert_rel` (`PARA`, the default, `PAGE` or `PAPER`), `horz_rel`
+    (`COLUMN`, the default, `PARA`, `PAGE` or `PAPER`) and `x_mm` / `y_mm`
+    offsets (`-1000` to `1000` mm, converted to HWPUNIT by truncating like
+    `MiliToHwpUnit`). Giving `vert_rel`, `horz_rel`, `x_mm` or `y_mm` without
+    `wrap` is `bad_input`. On a section whose `<hs:sec>` root does not declare
+    `xmlns:hc` (rigorloom's own .hwpx files among them), a picture needs
+    hwp-engine a6fdd06 (PR #36) or later, which adds the declaration on save; an
+    older engine fails the edit and nothing is written. `insert_picture` is a
+    document-layer op; the `edit` tool does not list it.
+  - `picture` changes an existing picture in the body or cell paragraph at `at`
+    (a table, row, cell or character range is `bad_address`, and a paragraph with
+    no own `<hp:pic>` is `not_found`). `index` (0-based in XML order among the
+    paragraph's own `<hp:pic>`, excluding pictures nested in a table, text box,
+    caption or note inside it) defaults to `0` when the paragraph holds one
+    picture; when the paragraph holds more than one and `index` is omitted, the
+    op is refused with `bad_input` naming the count. `set` takes `width_mm` and
+    `height_mm` (`1` to `1000` mm; one alone keeps the picture's aspect ratio
+    unless `keep_ratio` is `false`), `keep_ratio` (boolean), `inline` (`true` for
+    글자처럼 취급, `treatAsChar="1"`, which refuses `wrap`, `vert_rel`,
+    `horz_rel`, `x_mm` and `y_mm`; `false` floats the picture), `wrap`
+    (`SQUARE`, `TIGHT`, `THROUGH`, `TOP_AND_BOTTOM`, `BEHIND_TEXT` or
+    `IN_FRONT_OF_TEXT`; floats the picture), `vert_rel` (`PARA`, `PAGE`,
+    `PAPER`), `horz_rel` (`COLUMN`, `PARA`, `PAGE`, `PAPER`), and `x_mm` /
+    `y_mm` (`-1000` to `1000` mm). `vert_rel`, `horz_rel`, `x_mm` and `y_mm`
+    require the picture to be floating after the op (`bad_input` otherwise).
+    Unverified engine picture properties (crop, border, effect, brightness,
+    contrast, alpha, rotation and flip) are not exposed and are refused as
+    unknown keys (`bad_input`). Switching a picture between inline and floating
+    (`inline`, or `wrap` on an inline picture) is checked in the saved XML only;
+    its 한글 rendering has not been compared yet. At most one `picture` op per picture per edit
+    (`conflict` otherwise), and no address changes. After the edit,
+    `_verify_picture` checks that the output `<hp:pic>` (matched by `id`) has the
+    requested `hp:sz` / `hp:curSz` width and height, `textWrap`, `hp:pos`
+    `treatAsChar`, `vertRelTo`, `horzRelTo`, `vertOffset` and `horzOffset`, and
+    the same `hc:img/@binaryItemIDRef` before anything is written.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is

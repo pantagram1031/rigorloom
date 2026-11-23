@@ -102,7 +102,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
        "table.cell_style", "table.style", "style.create", "note", "caption", "bookmark", "link", "toc",
-       "hide", "new_number")
+       "hide", "new_number", "picture")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2510,6 +2510,7 @@ class _Act:
         self.page_setup = None  # page_setup: (si, {start_page?, border?})
         self.hide = None        # hide: (base Para, {header, footer, page_num, border, fill, master_page})
         self.new_num = None     # new_number: (base Para, kind, num)
+        self.picture = None     # insert_picture / picture: verification spec
 
 
 class _Claims:
@@ -2527,6 +2528,7 @@ class _Claims:
         self.auto_styles = {}   # style name -> (i, op) of the first op that needs _auto_styles to add it
         self.bookmarks = {}     # bookmark name -> i of the bookmark op that creates it in this edit
         self.toc_op = None      # i of the toc op in this edit
+        self.pictures = {}      # (si, pic_id) -> (i, op) of the picture op in this edit
 
     def _conflict(self, i, op, j, op2, at):
         raise DocError("conflict", "ops %d (%s) and %d (%s) both change %s; send them in separate edits or as "
@@ -3229,6 +3231,89 @@ HIDE_KEYS = ("header", "footer", "page_num", "border", "fill", "master_page")
 HIDE_ATTRS = (("header", "hideHeader"), ("footer", "hideFooter"), ("master_page", "hideMasterPage"),
               ("border", "hideBorder"), ("fill", "hideFill"), ("page_num", "hidePageNum"))
 NEW_NUM_KINDS = ("PAGE", "FOOTNOTE", "ENDNOTE", "PICTURE", "TABLE", "EQUATION")
+HU_PER_MM = 7200 / 25.4
+PICTURE_WRAPS = ("SQUARE", "TIGHT", "THROUGH", "TOP_AND_BOTTOM", "BEHIND_TEXT", "IN_FRONT_OF_TEXT")
+PICTURE_VERT_RELS = ("PARA", "PAGE", "PAPER")
+PICTURE_HORZ_RELS = ("COLUMN", "PARA", "PAGE", "PAPER")
+PICTURE_OFFSET_MM = (-1000, 1000)
+INSERT_PICTURE_KEYS = ("path", "width_mm", "height_mm", "offset", "wrap", "vert_rel", "horz_rel", "x_mm", "y_mm")
+PICTURE_SET_KEYS = ("width_mm", "height_mm", "keep_ratio", "wrap", "inline", "vert_rel", "horz_rel", "x_mm", "y_mm")
+
+
+def _pic_elem_end(s, start):
+    """End offset in `s` of the <hp:pic ...> element starting at `start`."""
+    pat = re.compile(r"<(/?)hp:pic\b(?:[^>\"']|\"[^\"]*\"|'[^']*')*?(/?)>", re.S)
+    depth = 0
+    for m in pat.finditer(s, start):
+        if m.group(2) == "/":
+            if depth == 0:
+                return m.end()
+            continue
+        depth += -1 if m.group(1) else 1
+        if depth == 0:
+            return m.end()
+    return len(s)
+
+
+def _int_attr(tag, name):
+    if not tag:
+        return None
+    v = _attr(tag, name)
+    return int(v) if v is not None and re.fullmatch(r"-?\d+", v) else None
+
+
+def _parse_pic(raw):
+    """Parsed attributes of one <hp:pic> element (excluding any nested <hp:caption>)."""
+    body = re.sub(r"<hp:caption\b[^>]*>.*?</hp:caption>", "", raw, flags=re.S)
+    open_tag = body[:body.find(">") + 1]
+    sz_m = re.search(r"<hp:sz\b[^<>]*/>", body)
+    cur_m = re.search(r"<hp:curSz\b[^<>]*/>", body)
+    org_m = re.search(r"<hp:orgSz\b[^<>]*/>", body)
+    pos_m = re.search(r"<hp:pos\b[^<>]*/>", body)
+    img_m = re.search(r"<hc:img\b[^<>]*/>", body)
+    sz_tag = sz_m.group(0) if sz_m else None
+    cur_tag = cur_m.group(0) if cur_m else None
+    org_tag = org_m.group(0) if org_m else None
+    pos_tag = pos_m.group(0) if pos_m else None
+    img_tag = img_m.group(0) if img_m else None
+    return {
+        "id": _attr(open_tag, "id"),
+        "wrap": _attr(open_tag, "textWrap"),
+        "width": _int_attr(sz_tag, "width"),
+        "height": _int_attr(sz_tag, "height"),
+        "cur_width": _int_attr(cur_tag, "width"),
+        "cur_height": _int_attr(cur_tag, "height"),
+        "org_width": _int_attr(org_tag, "width"),
+        "org_height": _int_attr(org_tag, "height"),
+        "treat_as_char": _attr(pos_tag, "treatAsChar") if pos_tag else None,
+        "vert_rel": _attr(pos_tag, "vertRelTo") if pos_tag else None,
+        "horz_rel": _attr(pos_tag, "horzRelTo") if pos_tag else None,
+        "vert_offset": _int_attr(pos_tag, "vertOffset"),
+        "horz_offset": _int_attr(pos_tag, "horzOffset"),
+        "bin_ref": _attr(img_tag, "binaryItemIDRef") if img_tag else None,
+    }
+
+
+def _pics_in(d, p):
+    """[parsed_pic, ...] of direct <hp:pic> elements in paragraph `p` in XML order (excluding pictures inside
+    nested tables, text boxes, captions, notes, headers or footers)."""
+    s = d.secs[p.si]
+    seg = s[p.start:p.end]
+    draw_spans = [(p.start + m.start(), p.start + m.end())
+                  for m in re.finditer(r"<hp:drawText\b[^>]*>.*?</hp:drawText>", seg, re.S)]
+    out = []
+    for m in re.finditer(r"<hp:pic\b[^>]*>", seg):
+        pos = p.start + m.start()
+        host = next((q for q in reversed(d.sec_paras[p.si]) if q.start < pos < q.end), None)
+        if host is not p:
+            continue
+        if any(p.start < t.start < pos < t.end for t in d.sec_tables[p.si]):
+            continue
+        if any(da < pos < db for da, db in draw_spans):
+            continue
+        end_pos = (pos + len(m.group(0))) if m.group(0).endswith("/>") else _pic_elem_end(s, pos)
+        out.append(_parse_pic(s[pos:end_pos]))
+    return out
 
 
 def _in(v, lo, hi):
@@ -4724,6 +4809,9 @@ def _plan_op(doc, cl, i, name, op, at):
                 acts.append(_Act(i, name, at, q, q.start, side=2, steps=st))
     elif name in ("insert_table", "insert_picture", "insert_equation"):
         r = resolve(doc, at, allow=("para", "cellpara", "heading", "cell", "place"))
+        if r.get("range"):
+            raise DocError("bad_address", "%s takes a paragraph or cell address, not a character range" % name,
+                           i=i, at=at)
         p = r["cell"].paras[-1] if (r.get("cell") is not None and r["kind"] in ("cell", "place")) else r["para"]
         inline = op.get("offset")
         if inline is not None and (not _is_int(inline) or not 0 <= inline <= len(p.text)):
@@ -4759,18 +4847,58 @@ def _plan_op(doc, cl, i, name, op, at):
             a.tbl_adds = [(p.si, xml_at, p.cell if p.cell is not None else ("top" if p.top else None))]
             acts.append(a)
         elif name == "insert_picture":
-            img = op.get("path")
-            if not isinstance(img, str) or not Path(img).is_file():
-                raise DocError("not_found", "insert_picture: no image at %r" % img, i=i, at=at)
+            extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(INSERT_PICTURE_KEYS))
+            if extra:
+                raise DocError("bad_input", "insert_picture takes %s, not %s"
+                               % (", ".join(("at",) + INSERT_PICTURE_KEYS), extra[0]),
+                               i=i, at=at,
+                               candidates=_cands_near(list(INSERT_PICTURE_KEYS), extra[0])
+                               or list(INSERT_PICTURE_KEYS))
             kwp = {}
             for k in ("width_mm", "height_mm"):
-                if op.get(k) is not None:
-                    if not _num(op[k]) or op[k] <= 0:
-                        raise DocError("bad_input", "%s is a positive number" % k, i=i, at=at)
+                if k in op:
+                    if not _in(op[k], *SIZE_MM):
+                        raise DocError("bad_input", "insert_picture: %s is %d to %d mm" % ((k,) + SIZE_MM),
+                                       i=i, at=at, range=list(SIZE_MM))
                     kwp[k] = float(op[k])
+            has_place_extra = any(k in op for k in ("vert_rel", "horz_rel", "x_mm", "y_mm"))
+            if "wrap" in op:
+                kwp["treat_as_char"] = False
+                kwp["wrap"] = _enum(op["wrap"], PICTURE_WRAPS, "insert_picture: wrap", i, at)
+            elif has_place_extra:
+                raise DocError("bad_input",
+                               "insert_picture: vert_rel, horz_rel, x_mm and y_mm require wrap (a floating picture)",
+                               i=i, at=at)
+            if "vert_rel" in op:
+                kwp["vert_rel"] = _enum(op["vert_rel"], PICTURE_VERT_RELS, "insert_picture: vert_rel", i, at)
+            if "horz_rel" in op:
+                kwp["horz_rel"] = _enum(op["horz_rel"], PICTURE_HORZ_RELS, "insert_picture: horz_rel", i, at)
+            for k in ("x_mm", "y_mm"):
+                if k in op:
+                    if not _in(op[k], *PICTURE_OFFSET_MM):
+                        raise DocError("bad_input", "insert_picture: %s is %d to %d mm" % ((k,) + PICTURE_OFFSET_MM),
+                                       i=i, at=at, range=list(PICTURE_OFFSET_MM))
+                    kwp[k] = float(op[k])
+            img = op.get("path")
+            if not isinstance(img, str) or not img.strip():
+                raise DocError("bad_input", "insert_picture needs path (an image file path)", i=i, at=at)
+            if not Path(img).is_file():
+                raise DocError("not_found", "insert_picture: no image at %r" % img, i=i, at=at)
             steps = head + [{"op": "insert_picture", "args": [str(Path(img).resolve())], "kwargs": kwp}]
             a = _Act(i, name, at, p, kw.pop("anchor"), steps=steps, **kw)
             _adds_for(doc, a, p, 1 if inline is None else 0)
+            floating = "wrap" in kwp
+            a.picture = ("insert", p, {
+                "inline_offset": inline is not None,
+                "width": int(round(kwp["width_mm"] * HU_PER_MM)) if "width_mm" in kwp else None,
+                "height": int(round(kwp["height_mm"] * HU_PER_MM)) if "height_mm" in kwp else None,
+                "wrap": kwp["wrap"] if floating else "TOP_AND_BOTTOM",
+                "treat_as_char": "0" if floating else "1",
+                "vert_rel": kwp.get("vert_rel", "PARA"),
+                "horz_rel": kwp.get("horz_rel", "COLUMN"),
+                "vert_offset": _mm_hu(kwp.get("y_mm", 0)),
+                "horz_offset": _mm_hu(kwp.get("x_mm", 0)),
+            })
             acts.append(a)
         else:
             has_l, has_h = op.get("latex") is not None, op.get("hwpeqn") is not None
@@ -4797,6 +4925,152 @@ def _plan_op(doc, cl, i, name, op, at):
             a = _Act(i, name, at, p, kw.pop("anchor"), steps=head + [step], info=info, **kw)
             _adds_for(doc, a, p, 1 if inline is None else 0)
             acts.append(a)
+    elif name == "picture":
+        known = ("index", "set")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "picture takes at, index, set, not %s" % extra[0],
+                           i=i, at=at,
+                           candidates=_cands_near(list(("at",) + known), extra[0]) or list(("at",) + known))
+        has_idx = "index" in op
+        idx = op.get("index", 0)
+        if not _is_int(idx) or idx < 0:
+            raise DocError("bad_input", "picture: index is a non-negative integer", i=i, at=at)
+        want = op.get("set")
+        if not isinstance(want, dict) or not want:
+            raise DocError("bad_input", "picture needs set: {%s}" % ", ".join(PICTURE_SET_KEYS),
+                           i=i, at=at, candidates=list(PICTURE_SET_KEYS))
+        bad = sorted(str(k) for k in want if k not in PICTURE_SET_KEYS)
+        if bad:
+            raise DocError("bad_input", "picture: unknown key(s) %s in set (keys: %s)"
+                           % (", ".join(bad), ", ".join(PICTURE_SET_KEYS)),
+                           i=i, at=at,
+                           candidates=_cands_near(list(PICTURE_SET_KEYS), bad[0]) or list(PICTURE_SET_KEYS))
+        for k in ("width_mm", "height_mm"):
+            if k in want and not _in(want[k], *SIZE_MM):
+                raise DocError("bad_input", "picture: %s is %d to %d mm" % ((k,) + SIZE_MM),
+                               i=i, at=at, range=list(SIZE_MM))
+        if "keep_ratio" in want:
+            _bool(want["keep_ratio"], "picture: keep_ratio", i, at)
+            if "width_mm" not in want and "height_mm" not in want:
+                raise DocError("bad_input", "picture: keep_ratio goes with width_mm or height_mm", i=i, at=at)
+        if "inline" in want:
+            _bool(want["inline"], "picture: inline", i, at)
+        wrap = _enum(want["wrap"], PICTURE_WRAPS, "picture: wrap", i, at) if "wrap" in want else None
+        vrel = _enum(want["vert_rel"], PICTURE_VERT_RELS, "picture: vert_rel", i, at) if "vert_rel" in want else None
+        hrel = _enum(want["horz_rel"], PICTURE_HORZ_RELS, "picture: horz_rel", i, at) if "horz_rel" in want else None
+        for k in ("x_mm", "y_mm"):
+            if k in want and not _in(want[k], *PICTURE_OFFSET_MM):
+                raise DocError("bad_input", "picture: %s is %d to %d mm" % ((k,) + PICTURE_OFFSET_MM),
+                               i=i, at=at, range=list(PICTURE_OFFSET_MM))
+        if want.get("inline") is True and any(k in want for k in ("wrap", "vert_rel", "horz_rel", "x_mm", "y_mm")):
+            raise DocError("bad_input",
+                           "picture: inline: true (글자처럼 취급) cannot be combined with wrap, vert_rel, horz_rel, x_mm or y_mm",
+                           i=i, at=at)
+        r = resolve(doc, at, allow=("para", "cellpara", "heading"))
+        if r.get("range"):
+            raise DocError("bad_address", "picture takes a whole paragraph, not a character range", i=i, at=at)
+        p = r["para"]
+        pics = _pics_in(doc, p)
+        if not pics:
+            cands = [para_address(doc, q) for q in doc.paras if para_address(doc, q) and _pics_in(doc, q)][:8]
+            raise DocError("not_found", "picture: %s holds no picture" % at, i=i, at=at,
+                           candidates=cands or None)
+        if not has_idx and len(pics) > 1:
+            raise DocError("bad_input", "picture: %s holds %d pictures; give index (0..%d)"
+                           % (at, len(pics), len(pics) - 1), i=i, at=at, range=[0, len(pics) - 1])
+        if idx >= len(pics):
+            raise DocError("bad_input", "picture: index must be 0..%d (%s holds %d picture(s))"
+                           % (len(pics) - 1, at, len(pics)), i=i, at=at, range=[0, len(pics) - 1])
+        base_pic = pics[idx]
+        pic_id = base_pic["id"]
+        if not pic_id or not base_pic["width"] or not base_pic["height"]:
+            raise DocError("bad_input", "picture: the picture in %s has no valid id or size" % at, i=i, at=at)
+        if want.get("inline") is True:
+            treat_as_char = True
+            after_floating = False
+        elif wrap is not None or want.get("inline") is False:
+            treat_as_char = False
+            after_floating = True
+        else:
+            treat_as_char = None
+            after_floating = (base_pic["treat_as_char"] == "0")
+        if any(k in want for k in ("vert_rel", "horz_rel", "x_mm", "y_mm")) and not after_floating:
+            raise DocError("bad_input",
+                           "picture: vert_rel, horz_rel, x_mm and y_mm require a floating picture (give wrap, or edit a floating picture)",
+                           i=i, at=at)
+        w0, h0 = base_pic["width"], base_pic["height"]
+        keep_ratio = want.get("keep_ratio", True)
+        pic_kw = {"obj": pic_id}
+        want_w, want_h = w0, h0
+        size_changed = "width_mm" in want or "height_mm" in want
+        if "width_mm" in want and "height_mm" in want:
+            w_mm, h_mm = float(want["width_mm"]), float(want["height_mm"])
+            want_w, want_h = int(round(w_mm * HU_PER_MM)), int(round(h_mm * HU_PER_MM))
+            if want.get("keep_ratio") is True and abs(want_w * h0 - want_h * w0) > max(w0, h0):
+                raise DocError("bad_input",
+                               "picture: width_mm and height_mm do not keep the picture's aspect ratio; give one of them or keep_ratio: false",
+                               i=i, at=at)
+            pic_kw["width_mm"] = w_mm
+            pic_kw["height_mm"] = h_mm
+        elif "width_mm" in want:
+            w_mm = float(want["width_mm"])
+            want_w = int(round(w_mm * HU_PER_MM))
+            pic_kw["width_mm"] = w_mm
+            if keep_ratio:
+                want_h = int(round(h0 * want_w / w0))
+            else:
+                want_h = h0
+                pic_kw["height_mm"] = h0 / HU_PER_MM
+        elif "height_mm" in want:
+            h_mm = float(want["height_mm"])
+            want_h = int(round(h_mm * HU_PER_MM))
+            pic_kw["height_mm"] = h_mm
+            if keep_ratio:
+                want_w = int(round(w0 * want_h / h0))
+                pic_kw["width_mm"] = want_w / HU_PER_MM
+            else:
+                want_w = w0
+        if wrap is not None:
+            pic_kw["wrap"] = wrap
+        if treat_as_char is not None:
+            pic_kw["treat_as_char"] = treat_as_char
+        pos_kw = {}
+        if vrel is not None:
+            pos_kw["vertRelTo"] = vrel
+        if hrel is not None:
+            pos_kw["horzRelTo"] = hrel
+        if "y_mm" in want:
+            pos_kw["vertOffset"] = str(_mm_hu(want["y_mm"]))
+        if "x_mm" in want:
+            pos_kw["horzOffset"] = str(_mm_hu(want["x_mm"]))
+        pic_key = (p.si, pic_id)
+        if pic_key in cl.pictures:
+            j, op2 = cl.pictures[pic_key]
+            cl._conflict(i, name, j, op2, at)
+        cl.pictures[pic_key] = (i, name)
+        cl.touch(p.si, p.start, i, name, at)
+        steps = [{"op": "set_picture", "kwargs": pic_kw}]
+        if pos_kw:
+            steps.append({"op": "set_obj_pos", "args": [pic_id], "kwargs": {"tag": "hp:pic", **pos_kw}})
+        expected_pic = {
+            "id": pic_id,
+            "bin_ref": base_pic["bin_ref"],
+            "size_changed": size_changed,
+            "width": want_w,
+            "height": want_h,
+            "cur_width": want_w if size_changed else base_pic["cur_width"],
+            "cur_height": want_h if size_changed else base_pic["cur_height"],
+            "wrap": wrap if wrap is not None else base_pic["wrap"],
+            "treat_as_char": ("1" if treat_as_char else "0") if treat_as_char is not None else base_pic["treat_as_char"],
+            "vert_rel": vrel if vrel is not None else base_pic["vert_rel"],
+            "horz_rel": hrel if hrel is not None else base_pic["horz_rel"],
+            "vert_offset": _mm_hu(want["y_mm"]) if "y_mm" in want else base_pic["vert_offset"],
+            "horz_offset": _mm_hu(want["x_mm"]) if "x_mm" in want else base_pic["horz_offset"],
+        }
+        a = _Act(i, name, at, p, p.start, side=2, steps=steps)
+        a.picture = ("modify", p, expected_pic)
+        acts.append(a)
     return acts
 
 
@@ -5019,6 +5293,8 @@ def _verify(doc, newdoc, acts):
     if not _verify_hide(doc, newdoc, acts, st):
         return False
     if not _verify_new_numbers(doc, newdoc, acts, st):
+        return False
+    if not _verify_picture(doc, newdoc, acts, st):
         return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
@@ -5763,6 +6039,128 @@ def _verify_new_numbers(doc, newdoc, acts, st):
     return True
 
 
+def _check_modified_pic(pic, exp):
+    if pic.get("id") != exp["id"] or pic.get("bin_ref") != exp["bin_ref"]:
+        return False
+    if pic.get("width") is None or pic.get("height") is None:
+        return False
+    if abs(pic["width"] - exp["width"]) > 2 or abs(pic["height"] - exp["height"]) > 2:
+        return False
+    if exp["size_changed"]:
+        if pic.get("cur_width") is None or pic.get("cur_height") is None:
+            return False
+        if abs(pic["cur_width"] - exp["cur_width"]) > 2 or abs(pic["cur_height"] - exp["cur_height"]) > 2:
+            return False
+    elif pic.get("cur_width") != exp["cur_width"] or pic.get("cur_height") != exp["cur_height"]:
+        return False
+    if pic.get("wrap") != exp["wrap"] or pic.get("treat_as_char") != exp["treat_as_char"]:
+        return False
+    if pic.get("vert_rel") != exp["vert_rel"] or pic.get("horz_rel") != exp["horz_rel"]:
+        return False
+    if pic.get("vert_offset") != exp["vert_offset"] or pic.get("horz_offset") != exp["horz_offset"]:
+        return False
+    return True
+
+
+def _check_inserted_pic(pic, exp):
+    if not pic.get("id") or not pic.get("bin_ref"):
+        return False
+    if pic.get("width") is None or pic.get("height") is None or pic["width"] <= 0 or pic["height"] <= 0:
+        return False
+    if exp["width"] is not None and abs(pic["width"] - exp["width"]) > 5:
+        return False
+    if exp["height"] is not None and abs(pic["height"] - exp["height"]) > 5:
+        return False
+    if pic.get("wrap") != exp["wrap"] or pic.get("treat_as_char") != exp["treat_as_char"]:
+        return False
+    if pic.get("vert_rel") != exp["vert_rel"] or pic.get("horz_rel") != exp["horz_rel"]:
+        return False
+    if pic.get("vert_offset") != exp["vert_offset"] or pic.get("horz_offset") != exp["horz_offset"]:
+        return False
+    return True
+
+
+def _verify_picture(doc, newdoc, acts, st):
+    """Each insert_picture and picture op produced the requested hp:pic size, textWrap, hp:pos and unchanged
+    binaryItemIDRef, and left all other pictures in the document unchanged."""
+    pic_acts = [a for a in acts if a.picture]
+    if not pic_acts:
+        return True
+    base_for_new = {}
+    for p in doc.paras:
+        np = _new_para(doc, newdoc, p, st)
+        if np is not None:
+            base_for_new[id(np)] = p
+    ins_by_newp = {}
+    mod_by_newp = {}
+    for a in pic_acts:
+        mode, p, exp = a.picture
+        np = _new_para(doc, newdoc, p, st)
+        if np is None:
+            return False
+        if mode == "modify":
+            mod_by_newp.setdefault(id(np), {})[exp["id"]] = exp
+        else:
+            if exp["inline_offset"]:
+                tnp = np
+            elif np.top:
+                tnp = newdoc.top[np.gp + 1] if np.gp + 1 < len(newdoc.top) else None
+            elif np.cell is not None:
+                nk = np.cell.paras.index(np)
+                tnp = np.cell.paras[nk + 1] if nk + 1 < len(np.cell.paras) else None
+            else:
+                tnp = None
+            if tnp is None:
+                return False
+            ins_by_newp.setdefault(id(tnp), []).append(exp)
+    for nq in newdoc.paras:
+        bp_para = base_for_new.get(id(nq))
+        before_pics = _pics_in(doc, bp_para) if bp_para is not None else []
+        after_pics = _pics_in(newdoc, nq)
+        if id(nq) not in ins_by_newp and id(nq) not in mod_by_newp:
+            if after_pics != before_pics:
+                return False
+            continue
+        ins_exps = ins_by_newp.get(id(nq), [])
+        mod_exps = mod_by_newp.get(id(nq), {})
+        if len(after_pics) != len(before_pics) + len(ins_exps):
+            return False
+        before_by_id = {bp["id"]: bp for bp in before_pics if bp.get("id")}
+        if len(before_by_id) != len(before_pics):
+            return False
+        after_by_id = {}
+        added_pics = []
+        for ap in after_pics:
+            aid = ap.get("id")
+            if not aid or aid in after_by_id:
+                return False
+            after_by_id[aid] = ap
+            if aid not in before_by_id:
+                added_pics.append(ap)
+        if len(added_pics) != len(ins_exps):
+            return False
+        for pid, bp in before_by_id.items():
+            ap = after_by_id.get(pid)
+            if ap is None:
+                return False
+            if pid in mod_exps:
+                if not _check_modified_pic(ap, mod_exps[pid]):
+                    return False
+            elif ap != bp:
+                return False
+        used = [False] * len(added_pics)
+        for exp in ins_exps:
+            matched = False
+            for k, ap in enumerate(added_pics):
+                if not used[k] and _check_inserted_pic(ap, exp):
+                    used[k] = True
+                    matched = True
+                    break
+            if not matched:
+                return False
+    return True
+
+
 def _verify_shapes(doc, newdoc, acts, st):
     """The tables the table.* shape ops changed have the grid, cell count and merged cells they planned."""
     want = {}               # g -> expected change in the number of cells
@@ -5813,7 +6211,7 @@ def _remap_result(doc, newdoc, acts):
         return remap, False
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
             or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc
-            or a.char_shape or a.para_shape or a.page_setup or a.hide or a.new_num]
+            or a.char_shape or a.para_shape or a.page_setup or a.hide or a.new_num or a.picture]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)

@@ -933,6 +933,7 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "toc": (("at",), ("levels", "leader")),
     "hide": (("at",), ("header", "footer", "page_num", "border", "fill", "master_page")),
     "new_number": (("at", "kind", "num"), ()),
+    "picture": (("at", "set"), ("index",)),
 }
 
 
@@ -972,6 +973,7 @@ OP_EXAMPLES = {
     "toc": '{"op":"toc","at":"p0","levels":2,"leader":"DASH"}',
     "hide": '{"op":"hide","at":"p0","header":true,"page_num":true}',
     "new_number": '{"op":"new_number","at":"p4","kind":"PAGE","num":1}',
+    "picture": '{"op":"picture","at":"p2","set":{"width_mm":60,"wrap":"SQUARE","x_mm":10}}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1099,6 +1101,15 @@ OP_NOTES = {
                   "PICTURE, TABLE or EQUATION) at `num` (1 to 65535) from that paragraph; refuses "
                   "a paragraph that already has a newNum control of that kind; one per paragraph "
                   "per edit; no address changes",
+    "picture": "`at` is a body or cell paragraph that holds an `hp:pic` (never a range); `index` "
+               "picks which of the paragraph's own pictures in XML order (default 0; required when "
+               "the paragraph holds more than one); `set` keys: `width_mm`, `height_mm` (1 to 1000; "
+               "one alone keeps aspect ratio unless `keep_ratio` is false), `keep_ratio` (bool), "
+               "`inline` (true for 글자처럼 취급; refuses wrap and offsets), `wrap` (SQUARE, TIGHT, "
+               "THROUGH, TOP_AND_BOTTOM, BEHIND_TEXT, IN_FRONT_OF_TEXT; floats the picture), "
+               "`vert_rel` (PARA, PAGE, PAPER), `horz_rel` (COLUMN, PARA, PAGE, PAPER), `x_mm`, "
+               "`y_mm` (-1000 to 1000; vert_rel, horz_rel, x_mm and y_mm require the picture to be "
+               "floating after the op); one `picture` op per picture per edit; no address changes",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
