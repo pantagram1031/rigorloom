@@ -261,10 +261,14 @@ def changed_region(old, new):
 
 
 def _queued_run_edit(core_run, new_text):
-    """Map a queue-form run edit onto the changed range [start, end) of a doc-core run."""
+    """Map a queued run edit onto the changed range [start, end) of a doc-core run.
+
+    The old side is the run in queue form, as the engine reads it; the new side
+    is the raw value, as the engine writes it, so a full-width space, line break
+    or tab typed into the value is part of the change.
+    """
     old = _queue_form(core_run)
-    new = _queue_form(new_text)
-    p, old_end, new_end = changed_region(old, new)
+    p, old_end, new_end = changed_region(old, new_text)
     pos = [i for i, ch in enumerate(core_run) if ch not in ("\u3000", "\n", "\t")]
     if p < old_end:
         c_start, c_end = pos[p], pos[old_end - 1] + 1
@@ -274,7 +278,7 @@ def _queued_run_edit(core_run, new_text):
         c_start = c_end = pos[-1] + 1
     else:
         c_start = c_end = pos[p]
-    return c_start, c_end, new[p:new_end]
+    return c_start, c_end, new_text[p:new_end]
 
 
 class PageGateway:

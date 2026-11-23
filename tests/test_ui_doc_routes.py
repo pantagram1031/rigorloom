@@ -466,6 +466,35 @@ def test_changed_region_twin_matches_preedit_and_narrows_queued_run_edit():
         assert core_boundary[:b_start] + b_repl + core_boundary[b_end:] == expected
 
 
+@pytest.mark.parametrize(
+    "core_run, inner, value",
+    [
+        ("가나다", "가나다", "가\u3000나다"),
+        ("가\u3000나다", "가<hp:fwSpace/>나다", "가나\t다"),
+        ("가\u3000나다", "가<hp:fwSpace/>나다", "가나\n다라"),
+    ],
+    ids=["typed-fwspace", "typed-tab", "typed-linebreak"],
+)
+def test_queued_run_edit_keeps_inline_characters_typed_into_the_value(core_run, inner, value):
+    import sys
+    from html import unescape
+
+    engine_scripts = REPO / "engine" / "scripts"
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import preedit
+
+    p_xml = f'<hp:p><hp:run charPrIDRef="0"><hp:t>{inner}</hp:t></hp:run></hp:p>'
+    run = preedit.paragraph_text_runs(p_xml)[0]
+    written, _dropped = preedit._replace_t_spans_preserving_inline(
+        p_xml, sorted(run["t_spans"]), value)
+    written_inner = written.split("<hp:t>", 1)[1].rsplit("</hp:t>", 1)[0]
+    applied = unescape(written_inner.replace("<hp:fwSpace/>", "\u3000"))
+
+    c_start, c_end, repl = rt_ui_doc._queued_run_edit(core_run, value)
+    assert core_run[:c_start] + repl + core_run[c_end:] == applied
+
+
 @pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
 @pytest.mark.parametrize(
     "form_path, page, core_at, queue_at, run_idx, needle, replacement_word, inline_char",
