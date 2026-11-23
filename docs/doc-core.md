@@ -549,7 +549,7 @@ rt_doc.edit("보고서.hwpx", [
     `MiliToHwpUnit`). Giving `vert_rel`, `horz_rel`, `x_mm` or `y_mm` without
     `wrap` is `bad_input`. On a section whose `<hs:sec>` root does not declare
     `xmlns:hc` (rigorloom's own .hwpx files among them), a picture needs
-    hwp-engine PR #36 or later, which adds the declaration on save; an
+    hwp-engine a6fdd06 (PR #36) or later, which adds the declaration on save; an
     older engine fails the edit and nothing is written. `insert_picture` is a
     document-layer op; the `edit` tool does not list it.
   - `picture` changes an existing picture in the body or cell paragraph at `at`
