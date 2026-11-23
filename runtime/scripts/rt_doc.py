@@ -3423,6 +3423,10 @@ def _columns_kwargs(op, i, at):
 HF_KINDS = ("header", "footer")
 HF_APPLY = ("BOTH", "ODD", "EVEN")
 HF_TEXT_MAX = 1000
+HF_PLACEHOLDERS = ("{page}", "{pages}")
+_HF_TOKEN = re.compile(r"\{\{|\}\}|\{([^{}]*)\}|([{}])")
+_HF_AUTONUM_TEXT = {"PAGE": "{page}", "TOTAL_PAGE": "{pages}"}
+_HF_AUTONUM_SEQ = {"PAGE": "\x01", "TOTAL_PAGE": "\x02"}
 PAGE_NUM_POS = ("BOTTOM_CENTER", "BOTTOM_LEFT", "BOTTOM_RIGHT", "TOP_CENTER", "TOP_LEFT", "TOP_RIGHT",
                 "OUTSIDE_TOP", "OUTSIDE_BOTTOM", "INSIDE_TOP", "INSIDE_BOTTOM", "NONE")
 PAGE_NUM_FORMATS = ("DIGIT", "CIRCLED_DIGIT", "ROMAN_CAPITAL", "ROMAN_SMALL", "LATIN_CAPITAL", "LATIN_SMALL",
@@ -3440,6 +3444,80 @@ def _enum(v, allowed, what, i, at, default=None):
     return x
 
 
+def _parse_hf_text(text, i, at):
+    """Parse header/footer text into (pieces, want_seq, has_fields).
+    `{{` and `}}` are literal `{` and `}`; `{page}` and `{pages}` are PAGE and TOTAL_PAGE autoNum fields."""
+    pieces, buf, seq = [], [], []
+    has_fields = False
+    last = 0
+    for m in _HF_TOKEN.finditer(text):
+        if m.start() > last:
+            lit = text[last:m.start()]
+            buf.append(lit)
+            seq.append(lit)
+        last = m.end()
+        tok = m.group(0)
+        if tok == "{{":
+            buf.append("{")
+            seq.append("{")
+        elif tok == "}}":
+            buf.append("}")
+            seq.append("}")
+        elif m.group(2) is not None:
+            raise DocError("bad_input",
+                           "header: unmatched %r in text (placeholders are {page} and {pages}; "
+                           "use {{ and }} for literal braces)" % m.group(2),
+                           i=i, at=at, candidates=list(HF_PLACEHOLDERS))
+        else:
+            name = m.group(1)
+            if name not in ("page", "pages"):
+                raise DocError("bad_input",
+                               "header: unknown placeholder {%s} (placeholders are {page} and {pages}; "
+                               "use {{ and }} for literal braces)" % name,
+                               i=i, at=at, candidates=list(HF_PLACEHOLDERS))
+            if buf:
+                pieces.append(("text", "".join(buf)))
+                buf.clear()
+            has_fields = True
+            pieces.append(("field", "page" if name == "page" else "total"))
+            seq.append("\x01" if name == "page" else "\x02")
+    if last < len(text):
+        lit = text[last:]
+        buf.append(lit)
+        seq.append(lit)
+    if buf:
+        pieces.append(("text", "".join(buf)))
+    return pieces, "".join(seq), has_fields
+
+
+def _hf_para_read(doc, q):
+    """(display_text, sentinel_seq) of a header/footer paragraph `q`, interleaving its text characters and its own
+    <hp:autoNum> controls in XML order."""
+    s = doc.secs[q.si]
+    items = [(xp, ch, ch if ch != OBJ else "") for ch, xp in zip(q.chars, q.xpos)]
+    for m in re.finditer(r"<hp:autoNum\b[^>]*>", s[q.start:q.end]):
+        xp = q.start + m.start()
+        if any(q2 is not q and q.start < q2.start < xp < q2.end for q2 in doc.sec_paras[q.si]):
+            continue
+        nt = _attr(m.group(0), "numType") or ""
+        items.append((xp, _HF_AUTONUM_SEQ.get(nt, "\x03" + nt), _HF_AUTONUM_TEXT.get(nt, "")))
+    items.sort(key=lambda x: x[0])
+    return "".join(x[2] for x in items), "".join(x[1] for x in items)
+
+
+class _HfPara:
+    """A paragraph inside an <hp:header> or <hp:footer>, with page-number autoNums read as {page}/{pages} in text
+    and as sentinel markers in seq."""
+    __slots__ = ("_p", "text", "seq")
+
+    def __init__(self, doc, p):
+        self._p = p
+        self.text, self.seq = _hf_para_read(doc, p)
+
+    def __getattr__(self, name):
+        return getattr(self._p, name)
+
+
 def _hf_controls(doc, sec_first, kind, apply=None):
     """The section's own 머리말/꼬리말 (or 쪽 번호) controls: (attrs tag, [their paragraphs]) in its first
     paragraph, where Hancom and the engine keep them."""
@@ -3455,7 +3533,7 @@ def _hf_controls(doc, sec_first, kind, apply=None):
             continue
         end = seg.find("</hp:%s>" % kind, m.end())
         a, b = sec_first.start + m.start(), sec_first.start + (end if end >= 0 else len(seg))
-        out.append((m.group(0), [q for q in doc.sec_paras[sec_first.si] if a < q.start < b]))
+        out.append((m.group(0), [_HfPara(doc, q) for q in doc.sec_paras[sec_first.si] if a < q.start < b]))
     return out
 
 
@@ -4518,6 +4596,7 @@ def _plan_op(doc, cl, i, name, op, at):
             text = _clean(op["text"], "header: text", i, at)
             if len(text) > HF_TEXT_MAX:
                 raise DocError("bad_input", "header: text is at most %d characters" % HF_TEXT_MAX, i=i, at=at)
+            pieces, want_seq, has_fields = _parse_hf_text(text, i, at)
         else:
             pos = _enum(op.get("pos"), PAGE_NUM_POS, "page_number: pos", i, at, "BOTTOM_CENTER")
             fmt = _enum(op.get("format"), PAGE_NUM_FORMATS, "page_number: format", i, at, "DIGIT")
@@ -4540,10 +4619,23 @@ def _plan_op(doc, cl, i, name, op, at):
             have = _hf_controls(doc, first, kind, apply)
             _check_expect(op, i, at, "\n".join(q.text for _tag, ps in have for q in ps))
             _section_claim(cl, p.si, i, "%s %s" % (kind, apply), at)
-            steps = [["goto", first.k, 0, first.si],
-                     {"op": "insert_header", "kwargs": {"text": text, "kind": kind, "apply": apply, "replace": True}}]
+            if not has_fields:
+                lit = pieces[0][1] if pieces else ""
+                steps = [["goto", first.k, 0, first.si],
+                         {"op": "insert_header", "kwargs": {"text": lit, "kind": kind, "apply": apply,
+                                                            "replace": True}}]
+            else:
+                steps = [["goto", first.k, 0, first.si],
+                         {"op": "insert_header", "kwargs": {"text": None, "kind": kind, "apply": apply,
+                                                            "replace": True}}]
+                for pkind, pval in pieces:
+                    if pkind == "text":
+                        if pval:
+                            steps.append(["type", pval])
+                    else:
+                        steps.append(["insert_page_field", pval])
             a = _Act(i, name, at, first, first.start, side=0, rank=0, steps=steps)
-            a.hf = [(first.si, kind, apply, text)]
+            a.hf = [(first.si, kind, apply, want_seq)]
         else:
             _section_claim(cl, p.si, i, name, at)
             steps = [["goto", first.k, 0, first.si],
@@ -4949,8 +5041,8 @@ def _verify(doc, newdoc, acts):
 
 
 def _verify_hf(newdoc, acts, st):
-    """Each section a header / page_number op changed has exactly one such control, with the text (position,
-    format) asked."""
+    """Each section a header / page_number op changed has exactly one such control, with the text and page
+    fields (or position and format) asked."""
     for a in acts:
         for si, kind, x, y in a.hf:
             first = next((q for q in newdoc.top if q.si == si), None)
@@ -4962,7 +5054,7 @@ def _verify_hf(newdoc, acts, st):
                     return False
                 continue
             have = _hf_controls(newdoc, first, kind, x)
-            if len(have) != 1 or "\n".join(q.text for q in have[0][1]) != y:
+            if len(have) != 1 or not have[0][1] or [q.seq for q in have[0][1]] != y.split("\n"):
                 return False
     return True
 

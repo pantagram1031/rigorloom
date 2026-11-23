@@ -427,13 +427,24 @@ rt_doc.edit("보고서.hwpx", [
   not a range); the op changes that paragraph's section.
   - `header` writes the section's own 머리말 (`kind: "header"`, the default) or
     꼬리말 (`kind: "footer"`) for `apply` `BOTH` (양쪽, the default), `ODD` or
-    `EVEN`, with `text` (up to 1000 characters; `\n` starts a new line in it).
+    `EVEN`, with `text` (up to 1000 characters as given; `\n` starts a new line
+    in it). `{page}` and `{pages}` in `text` insert 쪽 번호 (`hp:autoNum` with
+    `numType="PAGE"`) and 전체 쪽수 (`numType="TOTAL_PAGE"`), and `{{` and `}}`
+    write literal `{` and `}`; any other `{...}` or unmatched brace is
+    `bad_input` with `["{page}", "{pages}"]` as `candidates`. Without `{page}`
+    or `{pages}`, the edit runs the single-step `insert_header(text=..., ...)`;
+    with them, it enters the control via `insert_header(text=None, ...)` and
+    runs `type` and `insert_page_field("page"|"total")` for each piece in order.
     It replaces the section's own control of that kind and apply, so the
     section keeps one; the other kinds and applies stay. `expect` is the text
-    of the one it replaces (its lines joined by `\n`; `""` when the section
-    has none). The new control gets the document's 머리말 style; a document
-    without that style answers `capability_unavailable` (`engine_needs_style`)
-    and nothing is written.
+    of the one it replaces (its lines joined by `\n`, with existing `PAGE` and
+    `TOTAL_PAGE` `hp:autoNum` fields read as `{page}` and `{pages}`; `""` when
+    the section has none). After the edit, the saved control must hold the
+    literal text pieces and `PAGE` / `TOTAL_PAGE` `hp:autoNum` controls in the
+    exact positions and paragraphs requested; otherwise the edit fails and
+    nothing is written. The new control gets the document's 머리말 style; a
+    document without that style answers `capability_unavailable`
+    (`engine_needs_style`) and nothing is written.
   - `page_number` sets the section's 쪽 번호: `pos` (`BOTTOM_CENTER`, the
     default, `BOTTOM_LEFT`, `BOTTOM_RIGHT`, `TOP_CENTER`, `TOP_LEFT`,
     `TOP_RIGHT`, `OUTSIDE_TOP`, `OUTSIDE_BOTTOM`, `INSIDE_TOP`,
