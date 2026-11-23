@@ -1,4 +1,5 @@
 import { useCanvasSlice } from "../canvas/controller";
+import { keymapChord } from "../shell/keymap";
 import { isComposingEvent } from "../shell/keys";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
@@ -24,6 +25,7 @@ import {
   setTab,
 } from "./actions";
 import { ApprovalBox } from "../ui/ApprovalBox";
+import { buttonTitle } from "../ui/Button";
 import { Parts, PlanHash, proposerLine, sourceLabel } from "./bits";
 import { ChangeItemRow } from "./ChangeItemRow";
 import { clockTime, revisionName, tp } from "./i18n";
@@ -128,7 +130,12 @@ export function ReturnPopover({ lang, connected }: { lang: UiLanguage; connected
         data-testid="return-reason"
       />
       <div className="rp-pop-actions">
-        <button type="button" className="rp-btn rp-btn--quiet" onClick={() => closeReturn()} title="Esc">
+        <button
+          type="button"
+          className="rp-btn rp-btn--quiet"
+          onClick={() => closeReturn()}
+          title={buttonTitle(tp("wp4_return_cancel", lang), keymapChord("shell.escape"))}
+        >
           {tp("wp4_return_cancel", lang)}
         </button>
         {connected ? (
@@ -136,7 +143,13 @@ export function ReturnPopover({ lang, connected }: { lang: UiLanguage; connected
             {tp("wp4_return_rerequest", lang)}
           </button>
         ) : null}
-        <button type="submit" className="rp-btn" disabled={busy} data-testid="return-confirm" title="Enter">
+        <button
+          type="submit"
+          className="rp-btn"
+          disabled={busy}
+          data-testid="return-confirm"
+          title={buttonTitle(tp("wp4_return_confirm", lang), keymapChord("sheet.confirm"))}
+        >
           {tp("wp4_return_confirm", lang)}
         </button>
       </div>
@@ -228,14 +241,22 @@ function GateFooter({
         </p>
       ) : null}
       <div className="rp-footer-row">
-        <button type="button" className="rp-btn" onClick={() => openReturn()} data-testid="return" title="R" disabled={busy}>
+        <button
+          type="button"
+          className="rp-btn"
+          onClick={() => openReturn()}
+          data-testid="return"
+          title={buttonTitle(tp("wp4_act_return", lang), keymapChord("proposal.return"))}
+          disabled={busy}
+        >
           {tp("wp4_act_return", lang)}
         </button>
         <button
           type="button"
           className="rp-btn rp-btn--primary"
           data-variant="primary"
-          data-testid="approve" title="Ctrl+Shift+Enter"
+          data-testid="approve"
+          title={buttonTitle(tp("wp4_act_approve", lang), keymapChord("approval.open"))}
           disabled={!gate.canApprove}
           aria-disabled={!gate.canApprove}
           onClick={() => openApproval()}
@@ -270,7 +291,13 @@ export function AppliedFooter({ applied, lang }: { applied: AppliedRecord; lang:
         <span className="rp-footer-status" data-testid="applied-status">
           {tp("wp4_applied_status", lang, [applied.revision])}
           <span className="rp-sep">·</span>
-          <button type="button" className="rp-link" onClick={() => void exportApplied(undefined, applied.runId)} data-testid="applied-export" title="Ctrl+E">
+          <button
+            type="button"
+            className="rp-link"
+            onClick={() => void exportApplied(undefined, applied.runId)}
+            data-testid="applied-export"
+            title={buttonTitle(tp("wp4_applied_export", lang), keymapChord("history.export"))}
+          >
             {tp("wp4_applied_export", lang)}
           </button>
         </span>

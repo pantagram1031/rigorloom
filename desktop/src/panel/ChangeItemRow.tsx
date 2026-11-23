@@ -2,11 +2,13 @@ import { memo, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { beginCellEditV2 } from "../canvas/actions";
 import { getPublishedChanges } from "../canvas/controller";
+import { keymapChord } from "../shell/keymap";
 import { isComposingEvent } from "../shell/keys";
 import { changeRowTid } from "../shell/testids";
 import { editOpValue } from "../actions";
 import type { UiLanguage } from "../i18n/vocabulary";
 import { hasNewValues, isChangedFact, needsLook, type ChangeItem } from "../model/changes";
+import { buttonTitle } from "../ui/Button";
 import { decide, select } from "./actions";
 import { SourceText } from "./bits";
 import { tp } from "./i18n";
@@ -152,17 +154,38 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
         {selected && item.hard.length > 0 ? <p className="rp-row-reason rp-row-reason--full">{item.hard.join(" ")}</p> : null}
         <div className="rp-row-actions">
           {item.decision === "rejected" ? (
-            <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "pending")} data-testid="act-add-back" title="U">
+            <button
+              type="button"
+              className="rp-btn"
+              disabled={locked}
+              onClick={() => decide(item.id, "pending")}
+              data-testid="act-add-back"
+              title={buttonTitle(tp("wp4_act_add_back", lang), keymapChord("change.undo"))}
+            >
               {tp("wp4_act_add_back", lang)}
             </button>
           ) : (
             <>
               {item.decision !== "accepted" ? (
-                <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "accepted")} data-testid="act-accept" title="Y">
+                <button
+                  type="button"
+                  className="rp-btn"
+                  disabled={locked}
+                  onClick={() => decide(item.id, "accepted")}
+                  data-testid="act-accept"
+                  title={buttonTitle(tp("wp4_act_accept", lang), keymapChord("change.accept"))}
+                >
                   {tp("wp4_act_accept", lang)}
                 </button>
               ) : null}
-              <button type="button" className="rp-btn" disabled={locked} onClick={() => decide(item.id, "rejected")} data-testid="act-reject" title="N">
+              <button
+                type="button"
+                className="rp-btn"
+                disabled={locked}
+                onClick={() => decide(item.id, "rejected")}
+                data-testid="act-reject"
+                title={buttonTitle(tp("wp4_act_reject", lang), keymapChord("change.reject"))}
+              >
                 {tp("wp4_act_reject", lang)}
               </button>
               <button
@@ -173,12 +196,19 @@ function RowImpl({ item, selected, lang, locked }: RowProps) {
                   if (!selected) select(item.id);
                   requestEdit(item.id);
                 }}
-                data-testid="act-edit" title="E"
+                data-testid="act-edit"
+                title={buttonTitle(tp("wp4_act_edit", lang), keymapChord("change.edit"))}
               >
                 {tp("wp4_act_edit", lang)}
               </button>
               {item.decision === "accepted" ? (
-                <button type="button" className="rp-btn rp-btn--quiet" disabled={locked} onClick={() => decide(item.id, "pending")} title="U">
+                <button
+                  type="button"
+                  className="rp-btn rp-btn--quiet"
+                  disabled={locked}
+                  onClick={() => decide(item.id, "pending")}
+                  title={buttonTitle(tp("wp4_act_undo", lang), keymapChord("change.undo"))}
+                >
                   {tp("wp4_act_undo", lang)}
                 </button>
               ) : null}

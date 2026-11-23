@@ -4,6 +4,7 @@ export {
 } from "./ApprovalBox";
 export {
   Button,
+  buttonTitle,
   type ButtonProps,
   type ButtonSize,
 } from "./Button";

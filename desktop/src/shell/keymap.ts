@@ -15,7 +15,7 @@
  * - `composer`  the agent composer has focus (WP4; keys there have `inEditable`)
  * Owners keep `review` and `sheet` mutually exclusive.
  */
-import { type KeyBinding, register } from "./keys.ts";
+import { chordCaps, type KeyBinding, register } from "./keys.ts";
 
 export type KeymapEntry = Omit<KeyBinding, "run">;
 
@@ -64,6 +64,9 @@ export const SHELL_BINDINGS: KeymapEntry[] = [
   { id: "panel.agent", chords: ["Alt+7"] },
   { id: "panel.checks", chords: ["Alt+8", "Ctrl+Shift+M"] },
   { id: "composer.focus", chords: ["Ctrl+L"] },
+  // Display only: gives the Composer send button its title chord. Deliberately
+  // unbound; Composer.onKeyDown already sends on Enter, so binding it would send twice.
+  { id: "composer.send", chords: ["Enter"], when: "composer", inEditable: true },
   { id: "checks.style", chords: ["F8"] },
   { id: "change.next", chords: ["J", "ArrowDown", "Alt+ArrowDown"], when: "review" },
   { id: "change.prev", chords: ["K", "ArrowUp", "Alt+ArrowUp"], when: "review" },
@@ -103,6 +106,11 @@ const byId = new Map(SHELL_BINDINGS.map((b) => [b.id, b]));
 
 export function keymapEntry(id: string): KeymapEntry | null {
   return byId.get(id) ?? null;
+}
+
+export function keymapChord(id: string): string[] | undefined {
+  const chord = byId.get(id)?.chords[0];
+  return chord ? chordCaps(chord) : undefined;
 }
 
 /**

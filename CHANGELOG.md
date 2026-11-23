@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T232:** In editor v2, action tooltips in change rows, the mark toolbar, the approval sheet and the agent composer pair each control's label with its shortcut from the keymap, the blanks list location uses `--text-xs`, `--text-disabled` has its own light and dark values with lower contrast than `--text-3`, and the unreferenced `MarginMarks` component and its styles are removed.
 - **T230:** The editor v2 shell is now the default window. The previous five screens open with `?ui=v1`, the 이전 화면으로 열기 command, or `"editorVariant": "v1"` in prefs.json.
 - **T225:** A new engine-only browser test types the gongmun example into editor v2 seat by seat, with real pauses, Tab between cells and Enter at the end, and records how many previews, preview files and plan rounds that costs. It checks that no preview fails and that the counts stay within the commits made; the measured numbers go with each run's record, not into the product.
 - **T218:** A new engine-only test checks, over every 한글 form in the test corpus, that the addresses editor v2 uses to place an inline preview point at the same paragraphs and tables as the review queue, so a preview cannot land on the wrong paragraph.

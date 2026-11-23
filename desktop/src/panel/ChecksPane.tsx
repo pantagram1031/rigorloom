@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 
 import type { UiLanguage } from "../i18n/vocabulary";
 import { isChangedFact, needsLook, type ChangeItem, type ChangeSetView } from "../model/changes";
+import { keymapChord } from "../shell/keymap";
 import { useWorkspace } from "../store";
+import { buttonTitle } from "../ui/Button";
 import { runStyleCheck, select, setTab } from "./actions";
 import { tp } from "./i18n";
 import { panelSlice } from "./state";
@@ -103,7 +105,11 @@ export function ChecksPane({ view, lang, guardState }: { view: ChangeSetView | n
               className="rp-btn"
               onClick={() => void runStyleCheck()}
               disabled={!doc || style.phase === "running"}
-              data-testid="style-run" title="F8"
+              data-testid="style-run"
+              title={buttonTitle(
+                style.phase === "running" ? tp("wp4_checks_style_running", lang) : tp("wp4_checks_style_run", lang),
+                keymapChord("checks.style"),
+              )}
             >
               {style.phase === "running" ? tp("wp4_checks_style_running", lang) : tp("wp4_checks_style_run", lang)}
             </button>

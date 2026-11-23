@@ -65,7 +65,7 @@ def test_panel_keys_share_changes_and_apply_only_the_reviewed_subset(browser, se
         page.get_by_test_id("change-summary-1").click()
         expect(first.get_by_text("변경 전", exact=True)).to_be_visible()
         expect(first.get_by_text("변경 후", exact=True)).to_be_visible()
-        expect(first.get_by_test_id("act-accept")).to_have_attribute("title", "Y")
+        expect(first.get_by_test_id("act-accept")).to_have_attribute("title", "받아들이기 · Y")
         expect(first.locator("button kbd")).to_have_count(0)
         page.keyboard.press("j")
         expect(second).to_have_attribute("aria-selected", "true")

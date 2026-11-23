@@ -7,7 +7,9 @@ import {
 
 import { tWp1b } from "../i18n/v2/wp1b";
 import type { UiLanguage } from "../i18n/vocabulary";
+import { keymapChord } from "../shell/keymap";
 import { isImeComposing, principleAttributes } from "./attributes";
+import { buttonTitle } from "./Button";
 import { Icon } from "./icons";
 
 export type SheetPlacement = "right" | "bottom" | "dialog";
@@ -93,7 +95,8 @@ export function Sheet({
         {onClose ? (
           <button
             type="button"
-            className="rl-sheet-close" title="Esc"
+            className="rl-sheet-close"
+            title={buttonTitle(resolvedCloseLabel, keymapChord("shell.escape"))}
             aria-label={resolvedCloseLabel}
             onClick={onClose}
           >
