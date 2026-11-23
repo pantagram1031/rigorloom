@@ -90,6 +90,14 @@ def _list_preview_scratch(baseline: set[str]) -> list[str]:
         return []
 
 
+def _server_page_gateway(server) -> rt_ui_doc.PageGateway:
+    handler = server.extensions.post_routes["/api/doc/preview"]
+    for cell in handler.__closure__ or ():
+        if isinstance(cell.cell_contents, rt_ui_doc.PageGateway):
+            return cell.cell_contents
+    raise AssertionError("PageGateway not found on /api/doc/preview route")
+
+
 @pytest.mark.skipif(
     not os.environ.get("RIGORLOOM_HWP_ENGINE"),
     reason="RIGORLOOM_HWP_ENGINE is unset",
@@ -268,6 +276,9 @@ def test_editor_v2_gongmun_walkthrough_typing_load(tmp_path: Path, monkeypatch) 
 
                     idle_commits = int(page.evaluate("window.__rlIdleCommits"))
                     scratch_remaining = sample_scratch()
+                    gateway = _server_page_gateway(server)
+                    with gateway._ready:
+                        live_previews = len(gateway._previews)
                     with scratch_lock:
                         scratch_total_created = len(scratch_seen)
                         peak_scratch = scratch_peak
@@ -298,6 +309,7 @@ def test_editor_v2_gongmun_walkthrough_typing_load(tmp_path: Path, monkeypatch) 
                             "scratch_files_total_created": scratch_total_created,
                             "scratch_files_peak": peak_scratch,
                             "scratch_files_remaining": scratch_remaining,
+                            "gateway_live_previews": live_previews,
                             "gateway_preview_limit": rt_ui_doc.PREVIEW_LIMIT,
                             "scratch_ttl_s": rt_doc.SCRATCH_TTL_S,
                         },
@@ -340,8 +352,10 @@ def test_editor_v2_gongmun_walkthrough_typing_load(tmp_path: Path, monkeypatch) 
                     assert idle_commits >= len(steps)
                     assert 1 <= preview_requests <= total_commits + preview_superseded_responses
                     assert 1 <= scratch_total_created <= preview_requests
-                    assert 1 <= peak_scratch <= scratch_total_created
-                    assert 0 <= scratch_remaining <= peak_scratch
+                    assert 1 < peak_scratch <= scratch_total_created
+                    assert 0 <= scratch_remaining < peak_scratch
+                    assert 1 <= live_previews <= 1
+                    assert scratch_remaining <= live_previews <= len(steps)
                     assert scratch_remaining <= rt_ui_doc.PREVIEW_LIMIT
                     assert 1 <= rpc_all["plan/propose"] <= total_commits
                     assert 1 <= rpc_all["plan/validate"] <= rpc_all["plan/propose"]
