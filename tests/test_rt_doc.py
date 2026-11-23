@@ -2213,3 +2213,247 @@ def test_engine_bookmark_link_and_toc(tmp_path, monkeypatch):
     res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
     assert not res_bad["ok"] and res_bad["error"]["code"] == "internal"
     assert res_bad["error"]["written"] is False and not out_bad.exists()
+
+
+# ============================================================================ R7: 외곽선·그림자·강조점·글자 테두리/배경, 탭, 문단 테두리/배경
+def test_more_char_and_para_shape_keys_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(BASIC, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops):
+        return D.edit(src, ops if isinstance(ops, list) else [ops], base=rev, out=out)["error"]
+
+    # char_shape: outline, shadow, shadow_color, shadow_offset, emphasis, char_border, char_fill
+    for bad_ol in (True, None, "NONE", "WAVE", 1, {}):
+        assert err({"op": "char_shape", "at": "p1", "set": {"outline": bad_ol}})["code"] == "bad_input", bad_ol
+    for bad_sh in (True, None, "NONE", "INNER", 1, []):
+        assert err({"op": "char_shape", "at": "p1", "set": {"shadow": bad_sh}})["code"] == "bad_input", bad_sh
+    for bad_sc in (None, False, "grey", "#12345", "#1234567"):
+        assert err({"op": "char_shape", "at": "p1", "set": {"shadow_color": bad_sc}})["code"] == "bad_input", bad_sc
+    for bad_so in ([10], [10, 20, 30], [101, 0], [0, -101], [10.5, 0], [True, 0], "10,10", None):
+        assert err({"op": "char_shape", "at": "p1", "set": {"shadow_offset": bad_so}})["code"] == "bad_input", bad_so
+    for bad_em in (True, None, "NONE", "STAR", 1, {}):
+        assert err({"op": "char_shape", "at": "p1", "set": {"emphasis": bad_em}})["code"] == "bad_input", bad_em
+    for bad_cb in (True, None, "none", {}, {"type": "NONE"}, {"type": "THIN"},
+                   {"width": 0.33}, {"width": 0}, {"width": True},
+                   {"color": "black"}, {"type": "SOLID", "extra": 1}):
+        assert err({"op": "char_shape", "at": "p1", "set": {"char_border": bad_cb}})["code"] == "bad_input", bad_cb
+    for bad_cf in (False, "yellow", "#12345", 123):
+        assert err({"op": "char_shape", "at": "p1", "set": {"char_fill": bad_cf}})["code"] == "bad_input", bad_cf
+
+    # para_shape: tabs, auto_tab_left, auto_tab_right, border, fill, offsets, connect
+    for bad_tabs in (
+        {},
+        "40",
+        [{"pos": k + 1} for k in range(33)],
+        [{}],
+        [{"pos": 10, "extra": 1}],
+        [{"pos": -1}],
+        [{"pos": 1000.1}],
+        [{"pos": True}],
+        [{"pos": 50}, {"pos": 50}],
+        [{"pos": 80}, {"pos": 40}],
+        [{"pos": 40, "type": "MIDDLE"}],
+        [{"pos": 40, "leader": "STAR"}],
+    ):
+        assert err({"op": "para_shape", "at": "p1", "set": {"tabs": bad_tabs}})["code"] == "bad_input", bad_tabs
+    for k in ("auto_tab_left", "auto_tab_right", "connect"):
+        for bad_b in (1, 0, "true", None):
+            assert err({"op": "para_shape", "at": "p1", "set": {k: bad_b}})["code"] == "bad_input", (k, bad_b)
+    for bad_pb in (True, None, "none", {}, {"type": "NONE"}, {"type": "THIN"},
+                   {"width": 0.33}, {"color": "blue"}, {"type": "SOLID", "extra": 1}):
+        assert err({"op": "para_shape", "at": "p1", "set": {"border": bad_pb}})["code"] == "bad_input", bad_pb
+    for bad_pf in (False, "grey", "#12345", 123):
+        assert err({"op": "para_shape", "at": "p1", "set": {"fill": bad_pf}})["code"] == "bad_input", bad_pf
+    for bad_off in ([1, 2, 3], [1, 2, 3, 4, 5], [-0.1, 0, 0, 0], [0, 0, 1000.1, 0], [True, 0, 0, 0], "0,0,0,0"):
+        assert err({"op": "para_shape", "at": "p1", "set": {"offsets": bad_off}})["code"] == "bad_input", bad_off
+    # a fill alone would replace the paragraph's current 문단 테두리 (one borderFill), so it needs border too
+    e_fill = err({"op": "para_shape", "at": "p1", "set": {"fill": "#EEEEEE"}})
+    assert e_fill["code"] == "bad_input" and "border" in e_fill["message"]
+    assert err({"op": "style.create", "name": "새스타일", "para": {"fill": None}})["code"] == "bad_input"
+
+    # style.create checks the same char and para tables
+    assert err({"op": "style.create", "name": "새스타일", "char": {"outline": "WAVE"}})["code"] == "bad_input"
+    assert err({"op": "style.create", "name": "새스타일", "char": {"emphasis": True}})["code"] == "bad_input"
+    assert err({"op": "style.create", "name": "새스타일",
+                "para": {"tabs": [{"pos": 50}, {"pos": 30}]}})["code"] == "bad_input"
+    assert err({"op": "style.create", "name": "새스타일", "para": {"offsets": [1, 2]}})["code"] == "bad_input"
+
+    # valid ops without engine: capability_unavailable and nothing written
+    e = err([
+        {"op": "char_shape", "at": "p1:0-4", "set": {
+            "outline": "solid", "shadow": "drop", "shadow_color": "#808080", "shadow_offset": [10, -5],
+            "emphasis": "dot_above", "char_border": {"type": "dash", "width": 0.25, "color": "#1F3864"},
+            "char_fill": "#FFF2CC"}},
+        {"op": "para_shape", "at": "p1", "set": {
+            "tabs": [{"pos": 40, "type": "left", "leader": "dot"},
+                     {"pos": 120.5, "type": "decimal", "leader": "dash"}],
+            "auto_tab_left": True, "auto_tab_right": False,
+            "border": {"type": "solid", "width": 0.12, "color": "#000000"},
+            "fill": "#EEEEEE", "offsets": [2, 3, 1, 1], "connect": True}},
+        {"op": "style.create", "name": "새스타일",
+         "char": {"outline": False, "shadow": "continuous", "emphasis": "ring_above", "char_border": False},
+         "para": {"tabs": [{"pos": 60, "type": "right", "leader": "solid"}], "auto_tab_right": True}},
+    ])
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+@engine
+def test_engine_more_char_and_para_shape_keys(tmp_path, monkeypatch):
+    f = _copy(BASIC, tmp_path)
+    base = D._load(f, meta=False)
+    out = tmp_path / "r7.hwpx"
+    ops = [
+        {"op": "char_shape", "at": "p1:0-4", "set": {
+            "outline": "solid", "shadow": "drop", "shadow_color": "#808080", "shadow_offset": [15, -10],
+            "emphasis": "dot_above",
+            "char_border": {"type": "dash", "width": 0.25, "color": "#1F3864"},
+            "char_fill": "#FFF2CC"}},
+        {"op": "para_shape", "at": "p1", "set": {
+            "tabs": [{"pos": 40, "type": "left", "leader": "dot"},
+                     {"pos": 125.5, "type": "decimal", "leader": "dash"}],
+            "auto_tab_left": True, "auto_tab_right": True}},
+        {"op": "style.create", "name": "강조 본문", "eng_name": "Accent Body",
+         "char": {"outline": "dot", "shadow": "continuous", "shadow_color": "#404040",
+                  "shadow_offset": [5, 5], "emphasis": "tilde",
+                  "char_border": {"type": "solid", "width": 0.12, "color": "#C00000"},
+                  "char_fill": "#E2EFDA"},
+         "para": {"tabs": [{"pos": 80, "type": "right", "leader": "solid"}],
+                  "auto_tab_left": False, "auto_tab_right": True}},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    got = D._load(out, meta=False)
+    assert [p.text for p in got.top] == [p.text for p in base.top]
+    acts = D._plan(base, ops)
+    assert D._verify(base, got, acts)
+
+    with zipfile.ZipFile(out) as z:
+        cp, pp, _ = _char_pr(z, base.top[1].text[:4])
+        head = z.read("Contents/header.xml").decode("utf-8")
+    assert 'symMark="DOT_ABOVE"' in cp
+    assert '<hh:outline type="SOLID"/>' in cp
+    assert '<hh:shadow type="DROP" color="#808080" offsetX="15" offsetY="-10"/>' in cp
+    sides, face = _border_fill(head, cp)
+    assert all(v == ("DASH", "0.25 mm", "#1F3864") for v in sides.values())
+    assert face == "#FFF2CC"
+    tid = re.search(r'tabPrIDRef="(\d+)"', pp).group(1)
+    tp = re.search(r'<hh:tabPr id="%s"[^>]*>.*?</hh:tabPr>' % tid, head, re.S).group(0)
+    assert 'autoTabLeft="1"' in tp and 'autoTabRight="1"' in tp
+    assert '<hh:tabItem pos="4000" type="LEFT" leader="DOT" unit="HWPUNIT"/>' in tp
+    assert '<hh:tabItem pos="12550" type="DECIMAL" leader="DASH" unit="HWPUNIT"/>' in tp
+
+    # char_fill alone keeps the run's 글자 테두리 and changes only the background
+    out_cf = tmp_path / "r7_cf.hwpx"
+    r_cf = D.edit(out, [{"op": "char_shape", "at": "p1:0-4", "set": {"char_fill": "#DDEBF7"}}],
+                  base=D.rev_of(out), out=out_cf)
+    assert r_cf["ok"], r_cf
+    with zipfile.ZipFile(out_cf) as z:
+        cp_cf, _, _ = _char_pr(z, base.top[1].text[:4])
+        sides_cf, face_cf = _border_fill(z.read("Contents/header.xml").decode("utf-8"), cp_cf)
+    assert all(v == ("DASH", "0.25 mm", "#1F3864") for v in sides_cf.values()) and face_cf == "#DDEBF7"
+
+    # turning them off again (False / None / []) works and is verified
+    out2 = tmp_path / "r7_off.hwpx"
+    ops_off = [
+        {"op": "char_shape", "at": "p1:0-4", "set": {
+            "outline": False, "shadow": False, "emphasis": False,
+            "char_border": False, "char_fill": None}},
+        {"op": "para_shape", "at": "p1", "set": {
+            "tabs": [], "auto_tab_left": False, "auto_tab_right": False}},
+    ]
+    r2 = D.edit(out, ops_off, base=D.rev_of(out), out=out2)
+    assert r2["ok"], r2
+    with zipfile.ZipFile(out2) as z:
+        cp2, pp2, _ = _char_pr(z, base.top[1].text[:4])
+        head2 = z.read("Contents/header.xml").decode("utf-8")
+    assert 'symMark="NONE"' in cp2 and '<hh:outline type="NONE"/>' in cp2
+    assert '<hh:shadow type="NONE"' in cp2
+    sides2, face2 = _border_fill(head2, cp2)
+    assert all(v[0] == "NONE" for v in sides2.values()) and face2 in (None, "none")
+
+    # verifier refuses hand-broken header values for every new key
+    for old_s, new_s in (
+        ('<hh:outline type="SOLID"/>', '<hh:outline type="NONE"/>'),
+        ('type="DROP"', 'type="NONE"'),
+        ('color="#808080"', 'color="#111111"'),
+        ('offsetX="15"', 'offsetX="0"'),
+        ('symMark="DOT_ABOVE"', 'symMark="NONE"'),
+        ('width="0.25 mm"', 'width="0.5 mm"'),
+        ('faceColor="#FFF2CC"', 'faceColor="#000000"'),
+        ('pos="4000"', 'pos="5000"'),
+        ('leader="DOT"', 'leader="NONE"'),
+        ('autoTabRight="1"', 'autoTabRight="0"'),
+        ('symMark="TILDE"', 'symMark="CARON"'),
+        ('pos="8000" type="RIGHT"', 'pos="9000" type="RIGHT"'),
+    ):
+        assert old_s in head, old_s
+        broken_bytes = got.zip.rewrite({"Contents/header.xml": head.replace(old_s, new_s, 1).encode("utf-8")})
+        broken_doc = D.Doc(out, broken_bytes, "hwpx")
+        assert not D._verify(base, broken_doc, acts), (old_s, new_s)
+
+    # para_shape border / fill / offsets / connect on FX_DOC (whose paraPr carries hh:border)
+    f_pb = _copy(FX_DOC, tmp_path)
+    base_pb = D._load(f_pb, meta=False)
+    out_pb = tmp_path / "pb.hwpx"
+    ops_pb = [
+        {"op": "para_shape", "at": "p1", "set": {
+            "border": {"type": "double_slim", "width": 0.4, "color": "#1F3864"},
+            "fill": "#D9E1F2", "offsets": [2.5, 3.0, 1.5, 1.0], "connect": True}},
+        {"op": "style.create", "name": "상자 문단", "para": {
+            "border": {"type": "solid", "width": 0.12, "color": "#333333"},
+            "fill": "#F2F2F2", "offsets": [1, 1, 1, 1], "connect": False}},
+    ]
+    r_pb = D.edit(f_pb, ops_pb, base=D.rev_of(f_pb), out=out_pb)
+    assert r_pb["ok"], r_pb
+    got_pb = D._load(out_pb, meta=False)
+    acts_pb = D._plan(base_pb, ops_pb)
+    assert D._verify(base_pb, got_pb, acts_pb)
+    head_pb = got_pb.zip.read("Contents/header.xml").decode("utf-8")
+    for old_s, new_s in (
+        ('offsetLeft="250"', 'offsetLeft="0"'),
+        ('connect="1"', 'connect="0"'),
+        ('faceColor="#D9E1F2"', 'faceColor="none"'),
+        ('type="DOUBLE_SLIM"', 'type="NONE"'),
+    ):
+        assert old_s in head_pb, old_s
+        broken_pb = D.Doc(out_pb, got_pb.zip.rewrite({
+            "Contents/header.xml": head_pb.replace(old_s, new_s, 1).encode("utf-8")}), "hwpx")
+        assert not D._verify(base_pb, broken_pb, acts_pb), (old_s, new_s)
+
+    # offsets / connect alone keep the paragraph's 문단 테두리 and 배경
+    out_pb3 = tmp_path / "pb3.hwpx"
+    r_pb3 = D.edit(out_pb, [{"op": "para_shape", "at": "p1", "set": {"connect": False, "offsets": [0, 0, 0, 0]}}],
+                   base=D.rev_of(out_pb), out=out_pb3)
+    assert r_pb3["ok"], r_pb3
+    got_pb3 = D._load(out_pb3, meta=False)
+    head_pb3 = got_pb3.zip.read("Contents/header.xml").decode("utf-8")
+    pp3 = re.search(r'<hh:paraPr id="%s".*?</hh:paraPr>' % got_pb3.top[1].pr, head_pb3, re.S).group(0)
+    bd3 = re.search(r"<hh:border [^>]*/>", pp3).group(0)
+    assert 'connect="0"' in bd3 and 'offsetLeft="0"' in bd3
+    sides3, face3 = _border_fill(head_pb3, bd3)
+    assert all(v[0] == "DOUBLE_SLIM" for v in sides3.values()) and face3 == "#D9E1F2"
+
+    # the same on BASIC, whose minimal paraPr has no hh:border (the engine adds Hancom's default element first)
+    f_pb2 = _copy(BASIC, tmp_path)
+    base_pb2 = D._load(f_pb2, meta=False)
+    out_pb2 = tmp_path / "pb2.hwpx"
+    ops_pb2 = [ops_pb[0]]
+    r_pb2 = D.edit(f_pb2, ops_pb2, base=D.rev_of(f_pb2), out=out_pb2)
+    assert r_pb2["ok"], r_pb2
+    got_pb2 = D._load(out_pb2, meta=False)
+    assert D._verify(base_pb2, got_pb2, D._plan(base_pb2, ops_pb2))
+    assert 'offsetLeft="250"' in got_pb2.zip.read("Contents/header.xml").decode("utf-8")
+
+    # end-to-end: if the engine produces a broken header for a char_shape/para_shape op, edit fails and writes nothing
+    bad_bytes = got.zip.rewrite({
+        "Contents/header.xml": head.replace('<hh:outline type="SOLID"/>', '<hh:outline type="NONE"/>', 1).encode("utf-8")
+    })
+    monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_bytes, {}, None))
+    out_bad = tmp_path / "bad_r7.hwpx"
+    res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
+    assert not res_bad["ok"] and res_bad["error"]["code"] == "internal"
+    assert res_bad["error"]["written"] is False and not out_bad.exists()
+
