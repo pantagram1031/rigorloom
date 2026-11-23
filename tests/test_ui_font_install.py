@@ -21,6 +21,33 @@ def open_font_fixture(page, server):
     expect(page.get_by_test_id("paper")).to_have_attribute("data-engine-geometry", "true")
 
 
+def test_no_engine_fallback_shows_builtin_source_and_font_guidance(browser, server, monkeypatch):
+    import rt_font_install
+    import rt_ui_doc
+
+    monkeypatch.setattr(rt_ui_doc.rt_doc, "engine_status", lambda: {"available": False})
+    monkeypatch.setattr(rt_font_install, "installed_states", lambda names: dict.fromkeys(names, "missing"))
+
+    with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
+        page.goto(editor_v2_url(server.url))
+        with page.expect_file_chooser() as opened:
+            page.get_by_test_id("start-open-file").click()
+        opened.value.set_files(FIXTURE)
+        expect(page.get_by_test_id("page-raster")).to_be_visible(timeout=20_000)
+        expect(page.get_by_test_id("status-page-source")).to_have_attribute("data-page-source", "own-uncertified")
+        expect(page.get_by_test_id("status-page-source")).to_contain_text("내장 기능으로 그린 쪽")
+        expect(page.get_by_test_id("strip-grade")).to_contain_text("인쇄 결과와 다를 수 있습니다")
+        trigger = page.get_by_role("button", name="글꼴 대체 1")
+        trigger.click()
+        panel = page.get_by_test_id("font-install-panel")
+        expect(panel).to_be_visible()
+        expect(panel.get_by_text("함초롬바탕", exact=True)).to_be_visible()
+        expect(panel.get_by_text("공식 배포처에서 받아 설치", exact=False)).to_be_visible()
+        link = panel.get_by_role("link", name="공식 배포처 열기")
+        url = json.loads((REPO / "desktop" / "src" / "model" / "hancomFontSource.json").read_text())
+        expect(link).to_have_attribute("href", url)
+
+
 @pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
 def test_engine_font_panel_lists_real_substitution_and_rechecks(browser, server, monkeypatch):
     state = "missing"

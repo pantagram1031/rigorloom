@@ -65,6 +65,7 @@ from pathlib import Path
 import pytest
 
 from _browser_gate import no_browser  # noqa: E402
+from _v1_identity import _v1_url  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "runtime" / "scripts" / "cli.py"
@@ -552,7 +553,7 @@ def test_ui_walkthrough_gongmun_e2e_and_canonical_docs(tmp_path: Path) -> None:
             page.on("response", _on_response)
 
             # 1) Load Open view, check Item 13/14 surface controls, cleanliness & contrast
-            page.goto(url, wait_until="domcontentloaded")
+            page.goto(_v1_url(url), wait_until="domcontentloaded")
             splash = page.locator('[data-testid="splash"]')
             if splash.count() > 0:
                 splash.first.click(force=True)

@@ -42,13 +42,13 @@ import subprocess
 import sys
 import time
 import urllib.request
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import zipfile
 from pathlib import Path
 
 import pytest
 
 from _browser_gate import no_browser  # noqa: E402
+from _v1_identity import _v1_url  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "runtime" / "scripts" / "cli.py"
@@ -62,14 +62,6 @@ EXPECTED_TEMP_SCREENSHOTS = [
     for width in (1440, 390)
     for theme in ("light", "dark")
 ]
-
-
-def _v1_url(url: str) -> str:
-    """`url` with `ui=v1` in its query, keeping any other parameters."""
-    parts = urlsplit(url)
-    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "ui"]
-    query.append(("ui", "v1"))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", urlencode(query), parts.fragment))
 
 
 def _import_playwright():

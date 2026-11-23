@@ -43,8 +43,7 @@ def captures(tmp_path_factory):
                 # A fresh bridge per URL: the v1 UI reopens a session the
                 # bridge already holds, so the second run would skip 열기.
                 for label, query, dist in (
-                    ("main", "", v1.MAIN_UI_DIST),
-                    ("default", "", None),
+                    ("main", "?ui=v1", v1.MAIN_UI_DIST),
                     ("?ui=v1", "?ui=v1", None),
                 ):
                     tmp = tmp_path_factory.mktemp("v1-identity")
@@ -72,7 +71,7 @@ def expected(captures):
     return screens
 
 
-@pytest.mark.parametrize("url", ["default", "?ui=v1"])
+@pytest.mark.parametrize("url", ["?ui=v1"])
 def test_v1_screens_match_main(captures, expected, url):
     problems = v1.compare(expected, captures[url])
     assert not problems, f"v1 at {url} differs from main after PR #403 (T189):\n" + "\n".join(problems)
