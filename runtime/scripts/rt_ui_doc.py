@@ -403,7 +403,10 @@ class PageGateway:
                         lead_cache[cache_key] = preedit_mod.cell_lead_paragraphs(
                             head.path, q_table, row, col)
                     except (preedit_mod.PreeditError, KeyError, IndexError,
-                            ValueError, OSError, zipfile.BadZipFile):
+                            ValueError, OSError, zipfile.BadZipFile) as exc:
+                        sys.stderr.write(
+                            f"preview: could not read the paragraph slots of t{q_table}/r{row}/c{col}; "
+                            f"previewing the whole cell ({type(exc).__name__}: {exc})\n")
                         lead_cache[cache_key] = (False, [], [])
                 has_obj, slots, blank_indices = lead_cache[cache_key]
                 core_cell_at = f"{core_addresses[base_at]}/r{row}/c{col}"
