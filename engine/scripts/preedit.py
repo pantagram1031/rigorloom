@@ -422,6 +422,154 @@ def _strip_tags(xml_text):
     return re.sub(r"<[^>]+>", "", xml_text)
 
 
+_INLINE_TAG_RE = re.compile(r"<[^>]+>")
+_MARKPEN_BEGIN_RE = re.compile(r"^<\s*(?:[A-Za-z_][\w.-]*:)?markpenBegin\b")
+_MARKPEN_END_RE = re.compile(r"^<\s*(?:[A-Za-z_][\w.-]*:)?markpenEnd\b")
+
+
+def changed_region(old, new):
+    """Return (prefix_len, old_end, new_end) for the changed region of old vs new.
+
+    Aligns by common prefix p and common suffix s, capping s so p + s never
+    exceeds min(len(old), len(new)). Changed region in old is [p, old_end),
+    in new is [p, new_end), where old_end = len(old) - s and new_end = len(new) - s.
+    """
+    n_old, n_new = len(old), len(new)
+    limit = min(n_old, n_new)
+    p = 0
+    while p < limit and old[p] == new[p]:
+        p += 1
+    s = 0
+    max_s = limit - p
+    while s < max_s and old[n_old - 1 - s] == new[n_new - 1 - s]:
+        s += 1
+    return p, n_old - s, n_new - s
+
+
+def _replace_t_spans_preserving_inline(xml, spans, value, *, emit_log=True):
+    """Replace <hp:t> interior spans with value while preserving inline XML elements.
+
+    Returns (new_xml, dropped_tags).
+    """
+    spans = sorted(spans)
+    if not spans:
+        return xml, []
+    new_text = str(value)
+    raw_inner = "".join(xml[s:e] for s, e in spans)
+    if "<" not in raw_inner:
+        esc = escape(new_text)
+        pieces, last = [], 0
+        for i, (s, e) in enumerate(spans):
+            pieces.append(xml[last:s])
+            pieces.append(esc if i == 0 else "")
+            last = e
+        pieces.append(xml[last:])
+        return "".join(pieces), []
+
+    text_parts = []
+    tags = []  # [(plain_offset, seq_idx, raw_tag), ...]
+    offset = 0
+    last = 0
+    for seq_idx, m in enumerate(_INLINE_TAG_RE.finditer(raw_inner)):
+        if m.start() > last:
+            chunk = unescape(raw_inner[last:m.start()])
+            text_parts.append(chunk)
+            offset += len(chunk)
+        tags.append((offset, seq_idx, m.group(0)))
+        last = m.end()
+    if last < len(raw_inner):
+        chunk = unescape(raw_inner[last:])
+        text_parts.append(chunk)
+        offset += len(chunk)
+    old_text = "".join(text_parts)
+
+    if len(spans) == 1 and new_text == old_text:
+        return xml, []
+
+    p, old_end, new_end = changed_region(old_text, new_text)
+
+    open_begins = []
+    markpen_pairs = {}
+    lone_marks = []
+    non_markpen_indices = []
+    for idx, (_off, _seq, raw_tag) in enumerate(tags):
+        if _MARKPEN_BEGIN_RE.match(raw_tag):
+            open_begins.append(idx)
+        elif _MARKPEN_END_RE.match(raw_tag):
+            if open_begins:
+                markpen_pairs[open_begins.pop(0)] = idx
+            else:
+                lone_marks.append((idx, False))
+        else:
+            non_markpen_indices.append(idx)
+    # A begin whose end sits in another run of the paragraph is still half of a
+    # pair: it is never dropped, only moved to the changed-region edge.
+    lone_marks += [(idx, True) for idx in open_begins]
+
+    kept_at = {}
+    for idx in non_markpen_indices:
+        off = tags[idx][0]
+        if p < off < old_end:
+            continue
+        if p == old_end:
+            if off < p or (off == p and (p < len(old_text) or len(old_text) == 0)):
+                kept_at[idx] = off
+            else:
+                kept_at[idx] = new_end + (off - old_end)
+        elif off <= p:
+            kept_at[idx] = off
+        else:
+            kept_at[idx] = new_end + (off - old_end)
+
+    def _mark_at(off, is_begin):
+        # Marks on the region edges stay on their side; a mark strictly inside
+        # moves to the edge on its side (begin to the start, end to the end).
+        if off <= p:
+            return off
+        if off < old_end:
+            return p if is_begin else new_end
+        return new_end + (off - old_end)
+
+    for b_idx, e_idx in markpen_pairs.items():
+        b_off, e_off = tags[b_idx][0], tags[e_idx][0]
+        new_b_off, new_e_off = _mark_at(b_off, True), _mark_at(e_off, False)
+        if new_b_off == new_e_off and b_off < e_off:
+            continue  # the highlighted text was removed: no empty pair
+        kept_at[b_idx] = new_b_off
+        kept_at[e_idx] = new_e_off
+    for idx, is_begin in lone_marks:
+        kept_at[idx] = _mark_at(tags[idx][0], is_begin)
+
+    dropped = [tags[idx][2] for idx in range(len(tags)) if idx not in kept_at]
+    if dropped and emit_log:
+        for tag in dropped:
+            sys.stderr.write(
+                f"preedit: dropped inline tag inside changed region: {tag}\n")
+
+    tags_at = {}
+    for idx in sorted(kept_at):
+        tags_at.setdefault(kept_at[idx], []).append(tags[idx][2])
+
+    out_parts = []
+    cursor = 0
+    for pos in sorted(tags_at):
+        if pos > cursor:
+            out_parts.append(escape(new_text[cursor:pos]))
+            cursor = pos
+        out_parts.extend(tags_at[pos])
+    if cursor < len(new_text):
+        out_parts.append(escape(new_text[cursor:]))
+    new_first_inner = "".join(out_parts)
+
+    pieces, last = [], 0
+    for i, (s, e) in enumerate(spans):
+        pieces.append(xml[last:s])
+        pieces.append(new_first_inner if i == 0 else "")
+        last = e
+    pieces.append(xml[last:])
+    return "".join(pieces), dropped
+
+
 def _iter_document_paragraphs(xml, base_offset=0):
     """Yield paragraphs in the same depth-first order as replacement.
 
@@ -542,7 +690,11 @@ def _apply_tiers(text, mapping, hits, log=None):
                 continue
             if _overlaps(m.start(2), m.end(2), protected):
                 continue
-            edits.append((m.start(2), m.end(2), value_esc))
+            repl, _dropped = _replace_t_spans_preserving_inline(
+                inner, [(0, len(inner))], str(value), emit_log=(log is None))
+            if inner == repl:
+                continue
+            edits.append((m.start(2), m.end(2), repl))
         if edits:
             hits[key] += len(edits)
             if log is not None:
@@ -910,13 +1062,8 @@ def set_runs(hwpx_in, hwpx_out, sets):
                         f"텍스트 런 {len(runs)}개{hint}")
                 run = runs[run_index]
                 spans = sorted(run["t_spans"])
-                pieces, last = [], 0
-                for i, (s, e) in enumerate(spans):
-                    pieces.append(new_p[last:s])
-                    pieces.append(escape(value) if i == 0 else "")
-                    last = e
-                pieces.append(new_p[last:])
-                new_p = "".join(pieces)
+                new_p, _dropped = _replace_t_spans_preserving_inline(
+                    new_p, spans, value)
                 written.append({"at_para": at_para, "run": run_index,
                                 "charpr": run["charpr"],
                                 "previous": run["text"]})
@@ -1647,31 +1794,31 @@ def _edit_cell_runs(body, items):
     out = body
     for (p_start, p_end), group in sorted(by_para.items(), reverse=True):
         p_xml = body[p_start:p_end]
-        edits, text_changed = [], False
-        for item in group:
+        text_changed = False
+        for item in sorted(group, key=lambda it: it["run"]["open_start"],
+                           reverse=True):
             run = item["run"]
             if item["text"] is not None:
                 text_changed = True
-                esc = escape(str(item["text"]))
                 spans = [(s - p_start, e - p_start) for s, e in run["t_spans"]]
                 if item["mode"] == "append":
                     # 인쇄된 접두를 남기고 뒤에 이어붙인다(T31의 정상 형태).
                     # 분할 런이면 마지막 hp:t 뒤 — 그게 '끝'이다.
                     s, e = spans[-1]
-                    edits.append((s, e, p_xml[s:e] + esc))
+                    esc = escape(str(item["text"]))
+                    p_xml = p_xml[:s] + p_xml[s:e] + esc + p_xml[e:]
                 else:
                     # 런 텍스트 전체 교체: 첫 hp:t에 값을 쓰고 나머지를 비운다.
-                    # 사이의 탭·제어 요소는 스팬 밖이므로 바이트 그대로 남는다.
-                    s, e = spans[0]
-                    edits.append((s, e, esc))
-                    edits += [(s2, e2, "") for s2, e2 in spans[1:]]
+                    # 인라인 요소와 스팬 밖 탭·제어 요소를 보존한다.
+                    p_xml, _dropped = _replace_t_spans_preserving_inline(
+                        p_xml, spans, item["text"])
             if item["charpr"] is not None:
                 o_s = run["open_start"] - p_start
                 o_e = run["open_end"] - p_start
-                edits.append((o_s, o_e, _tag_set_attr(
-                    p_xml[o_s:o_e], "charPrIDRef", str(item["charpr"]))))
-        for s, e, repl in sorted(edits, reverse=True):
-            p_xml = p_xml[:s] + repl + p_xml[e:]
+                p_xml = (p_xml[:o_s]
+                         + _tag_set_attr(p_xml[o_s:o_e], "charPrIDRef",
+                                         str(item["charpr"]))
+                         + p_xml[o_e:])
         if text_changed:
             p_xml = LINESEG_RE.sub("", p_xml)
         out = out[:p_start] + p_xml + out[p_end:]

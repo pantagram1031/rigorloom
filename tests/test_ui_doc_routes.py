@@ -32,6 +32,7 @@ DOC = REPO / "tests" / "fixtures" / "rt_doc_contract" / "basic.hwpx"
 GONGMUN = REPO / "tests" / "corpus" / "forms" / "converted" / "gianmun-byeolji-1ho.hwpx"
 ADMRUL = REPO / "tests" / "corpus" / "forms" / "converted" / "admrul-gajokdolbom-hyuga-sinchengseo.hwpx"
 MOEL_2025 = REPO / "tests" / "corpus" / "forms" / "converted" / "moel-pyojun-geunrogyeyakseo-2025.hwpx"
+KSTARTUP = REPO / "tests" / "corpus" / "forms" / "converted" / "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
 RENDER_CHECK = REPO / "tests" / "corpus" / "render-check" / "render-check-01.hwpx"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -414,31 +415,115 @@ def test_installed_engine_previews_the_queued_paragraph_run(serving):
     assert png.startswith(PNG_SIGNATURE)
 
 
+def test_changed_region_twin_matches_preedit_and_narrows_queued_run_edit():
+    import sys
+
+    engine_scripts = REPO / "engine" / "scripts"
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import preedit
+
+    pairs = [
+        ("", ""),
+        ("", "새값"),
+        ("기존", ""),
+        ("동일", "동일"),
+        ("aaa", "aa"),
+        ("aa", "aaa"),
+        ("ababa", "aba"),
+        ("aXba", "aba"),
+        ("본인은 가족 돌봄을 위하여 (□휴직, □휴가)을 하고자 하오니",
+         "본인은 가족 돌봄을 위하여 (□휴직, □휴업)을 하고자 하오니"),
+        ("※ (참고) 적용(가입) 예외에 해당하는 경우에는 예외 사항 및 사유를 기재",
+         "※ (참고) 적용(가입) 예외에 해당하는 경우에는 예외 사항 및 사유를 작성"),
+        ("앞 왼쪽오른쪽 뒤", "앞 좌측우측 뒤"),
+        ("완전히 다른 옛날 문구", "새로 쓴 문구"),
+    ]
+    for old, new in pairs:
+        assert rt_ui_doc.changed_region(old, new) == preedit.changed_region(old, new)
+
+    core_fw = "본인은 가족 돌봄을 위하여 (□\u3000휴직, □\u3000휴가)을 하고자 하오니"
+    c_start, c_end, repl = rt_ui_doc._queued_run_edit(
+        core_fw, "본인은 가족 돌봄을 위하여 (□휴직, □휴업)을 하고자 하오니",
+    )
+    assert (c_start, c_end, repl) == (25, 26, "업")
+    assert core_fw[:c_start] + repl + core_fw[c_end:] == (
+        "본인은 가족 돌봄을 위하여 (□\u3000휴직, □\u3000휴업)을 하고자 하오니"
+    )
+
+    core_lb = "※ (참고) 적용(가입) 예외에 해당하는 경우에는 예외 사항 및 사유를 기재\n"
+    c_start, c_end, repl = rt_ui_doc._queued_run_edit(
+        core_lb, "※ (참고) 적용(가입) 예외에 해당하는 경우에는 예외 사항 및 사유를 작성",
+    )
+    assert repl == "작성"
+    assert core_lb[:c_start] + repl + core_lb[c_end:] == (
+        "※ (참고) 적용(가입) 예외에 해당하는 경우에는 예외 사항 및 사유를 작성\n"
+    )
+
+    core_boundary = "\u3000삭제대상\n"
+    for target, expected in [("새값", "\u3000새값\n"), ("", "\u3000\n")]:
+        b_start, b_end, b_repl = rt_ui_doc._queued_run_edit(core_boundary, target)
+        assert core_boundary[:b_start] + b_repl + core_boundary[b_end:] == expected
+
+
+@pytest.mark.parametrize(
+    "core_run, inner, value",
+    [
+        ("가나다", "가나다", "가\u3000나다"),
+        ("가\u3000나다", "가<hp:fwSpace/>나다", "가나\t다"),
+        ("가\u3000나다", "가<hp:fwSpace/>나다", "가나\n다라"),
+    ],
+    ids=["typed-fwspace", "typed-tab", "typed-linebreak"],
+)
+def test_queued_run_edit_keeps_inline_characters_typed_into_the_value(core_run, inner, value):
+    import sys
+    from html import unescape
+
+    engine_scripts = REPO / "engine" / "scripts"
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import preedit
+
+    p_xml = f'<hp:p><hp:run charPrIDRef="0"><hp:t>{inner}</hp:t></hp:run></hp:p>'
+    run = preedit.paragraph_text_runs(p_xml)[0]
+    written, _dropped = preedit._replace_t_spans_preserving_inline(
+        p_xml, sorted(run["t_spans"]), value)
+    written_inner = written.split("<hp:t>", 1)[1].rsplit("</hp:t>", 1)[0]
+    applied = unescape(written_inner.replace("<hp:fwSpace/>", "\u3000"))
+
+    c_start, c_end, repl = rt_ui_doc._queued_run_edit(core_run, value)
+    assert core_run[:c_start] + repl + core_run[c_end:] == applied
+
+
 @pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
 @pytest.mark.parametrize(
-    "form_path, core_at, queue_at, run_idx, replacement",
+    "form_path, page, core_at, queue_at, run_idx, needle, replacement_word, inline_char",
     [
-        (ADMRUL, "p9", "p13", 1, "본인은 가족 돌봄을 위하여 (☑ 휴가)을 하고자 하오니"),
-        (MOEL_2025, "p20", "p21", 1, "※ (참고) 적용 예외 해당 시 예외 사항 및 사유 기재"),
+        (ADMRUL, 1, "p9", "p13", 1, "휴가", "휴업", "\u3000"),
+        (MOEL_2025, 1, "p20", "p21", 1, "기재", "작성", "\n"),
+        (KSTARTUP, 22, "p141", "p753", 0, "2026.", "2027.", "\t"),
     ],
-    ids=["fwSpace", "lineBreak"],
+    ids=["fwSpace", "lineBreak", "tab"],
 )
-def test_installed_engine_previews_queued_run_with_fwspace_or_linebreak(
-    serving, form_path, core_at, queue_at, run_idx, replacement,
+def test_installed_engine_previews_queued_run_with_inline_elements(
+    serving, form_path, page, core_at, queue_at, run_idx, needle, replacement_word, inline_char,
 ):
     root = serving.bridge.current_root()
     session = Session.open_path(root, str(form_path))
     base = binding(session)
-    status, _, geometry = request(serving, "geometry", {**base, "page": 1})
+    status, _, geometry = request(serving, "geometry", {**base, "page": page})
     assert status == 200
     para_box = next(box for box in geometry["boxes"] if box["at"] == core_at)
     assert para_box["queueAddress"] == queue_at
 
     core = RuntimeCore(root, engine_root=REPO)
-    region = core.document_read_region(session.id, [{"atPara": int(queue_at[1:])}])["regions"][0]
+    at_para = int(queue_at[1:])
+    region = core.document_read_region(session.id, [{"atPara": at_para}])["regions"][0]
     run = region["runs"][run_idx]
     at = f"p{region['at_para']}"
     assert at == queue_at
+    assert needle in run["text"]
+    replacement = run["text"].replace(needle, replacement_word, 1)
 
     refuse(request(serving, "preview", {**base, "ops": [
         {"at": at, "run": run["index"], "before": run["text"] + " 불일치", "text": replacement},
@@ -448,15 +533,63 @@ def test_installed_engine_previews_queued_run_with_fwspace_or_linebreak(
         {"at": at, "run": run["index"], "before": run["text"], "text": replacement},
     ]})
     assert status == 200, preview
-    assert 1 in preview["changedPages"]
-    params = {**base, "previewId": preview["previewId"], "page": 1}
+    assert page in preview["changedPages"]
+    params = {**base, "previewId": preview["previewId"], "page": page}
     status, _, geometry = request(serving, "geometry", params)
     assert status == 200 and geometry["changed"]
-    expected_para = "".join(
-        replacement if r["index"] == run_idx else r["text"]
-        for r in region["runs"]
+
+    # Apply the same queued set_run op and verify preview doc-core text equals saved doc-core text.
+    plan = core.plan_propose(
+        session.id,
+        "preedit",
+        [{"kind": "set_run", "atPara": at_para, "run": run_idx, "text": replacement}],
+        "test-operator",
+    )["plan"]
+    validation = core.plan_validate(plan["planId"])["validation"]
+    assert validation["ok"] is True, validation["hard"]
+    approval = core.approval_request(plan["planId"], "test-operator")["approval"]
+    core.approval_resolve(
+        approval["approvalId"],
+        plan["planId"],
+        plan["planHash"],
+        "approved",
+        "test-operator",
     )
-    assert next(box for box in geometry["boxes"] if box["at"] == core_at)["text"] == expected_para
+    applied = core.plan_apply(plan["planId"], approval["approvalId"])["candidate"]
+    saved_path = (
+        root / "sessions" / session.id / "candidates"
+        / applied["runId"] / applied["candidate"]["path"]
+    )
+
+    c_start, c_end, repl_slice = rt_ui_doc._queued_run_edit(
+        rt_ui_doc.rt_doc.read(session.source, core_at, with_runs=True)["blocks"][0]["runs"][run_idx]["text"],
+        replacement,
+    )
+    base_runs = [
+        r["text"]
+        for r in rt_ui_doc.rt_doc.read(session.source, core_at, with_runs=True)["blocks"][0]["runs"]
+    ]
+    run_offset = sum(map(len, base_runs[:run_idx]))
+    preview_edit = rt_ui_doc.rt_doc.edit(
+        session.source,
+        [{"op": "set", "at": f"{core_at}:{run_offset + c_start}-{run_offset + c_end}", "text": repl_slice}],
+        base=base["rev"][:12],
+        preview=True,
+    )
+    assert preview_edit["ok"], preview_edit
+    preview_block = rt_ui_doc.rt_doc.read(preview_edit["out"], core_at, with_runs=True)["blocks"][0]
+    saved_block = rt_ui_doc.rt_doc.read(saved_path, core_at, with_runs=True)["blocks"][0]
+
+    assert inline_char in preview_block["text"]
+    assert preview_block["text"] == saved_block["text"]
+    assert [r["text"] for r in preview_block["runs"]] == [r["text"] for r in saved_block["runs"]]
+
+    saved_geometry = rt_ui_doc.rt_doc.geometry(saved_path, page)
+    assert saved_geometry["ok"], saved_geometry
+    assert (
+        next(box for box in geometry["boxes"] if box["at"] == core_at)["text"]
+        == next(box for box in saved_geometry["boxes"] if box["at"] == core_at)["text"]
+    )
 
 
 def test_own_render_then_projection(serving, monkeypatch):

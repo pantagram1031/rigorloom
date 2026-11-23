@@ -1771,3 +1771,269 @@ class TestSetRuns:
         assert 'textpos="0"' not in xml     # the edited paragraph's own: gone
         assert 'textpos="9"' in xml         # the nested paragraph's: preserved
         assert 'textpos="5"' in xml         # an untouched paragraph's: preserved
+
+
+# ---------------------------------------------------------------------------
+# 10) Inline element preservation in <hp:t> spans (T221)
+# ---------------------------------------------------------------------------
+
+CORPUS_FORMS = ROOT.parent / "tests" / "corpus" / "forms" / "converted"
+
+
+class TestInlineElementPreservation:
+
+    def test_fast_path_without_tags_is_byte_identical(self):
+        p_xml = '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0"><hp:t>기존 &amp; 값</hp:t></hp:run></hp:p>'
+        runs = preedit.paragraph_text_runs(p_xml)
+        spans = sorted(runs[0]["t_spans"])
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, spans, "새 <값> & 텍스트")
+        assert dropped == []
+        assert new_p == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>새 &lt;값&gt; &amp; 텍스트</hp:t></hp:run></hp:p>'
+        )
+
+    def test_noop_write_on_tagged_run_is_byte_identical(self):
+        p_xml = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="8">'
+            '<hp:t>본인은 가족 돌봄을 위하여 (□<hp:fwSpace/>휴직, □<hp:fwSpace/>휴가)을 하고자 하오니</hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs = preedit.paragraph_text_runs(p_xml)
+        spans = sorted(runs[0]["t_spans"])
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, spans, runs[0]["text"])
+        assert dropped == []
+        assert new_p == p_xml
+
+    def test_whole_run_replacement_keeps_boundary_tags(self):
+        p_xml = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t><hp:fwSpace/><hp:tab width="4000" leader="0" type="1"/>'
+            '기존문구'
+            '<hp:fwSpace/><hp:lineBreak/></hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs = preedit.paragraph_text_runs(p_xml)
+        assert runs[0]["text"] == "기존문구"
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, sorted(runs[0]["t_spans"]), "완전히새로운값")
+        assert dropped == []
+        assert new_p == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t><hp:fwSpace/><hp:tab width="4000" leader="0" type="1"/>'
+            '완전히새로운값'
+            '<hp:fwSpace/><hp:lineBreak/></hp:t>'
+            '</hp:run></hp:p>'
+        )
+
+    def test_empty_value_keeps_boundary_tags(self):
+        p_xml = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t><hp:fwSpace/>삭제대상<hp:lineBreak/></hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs = preedit.paragraph_text_runs(p_xml)
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, sorted(runs[0]["t_spans"]), "")
+        assert dropped == []
+        assert new_p == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t><hp:fwSpace/><hp:lineBreak/></hp:t>'
+            '</hp:run></hp:p>'
+        )
+
+    def test_split_run_keeps_tags_from_later_span_in_order(self):
+        p_xml = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞<hp:fwSpace/>가운데</hp:t>'
+            '<hp:t>뒤<hp:tab width="4000" leader="0" type="1"/>끝<hp:lineBreak/></hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs = preedit.paragraph_text_runs(p_xml)
+        assert runs[0]["text"] == "앞가운데뒤끝"
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, sorted(runs[0]["t_spans"]), "앞새값뒤끝")
+        assert dropped == []
+        assert new_p == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞<hp:fwSpace/>새값뒤<hp:tab width="4000" leader="0" type="1"/>끝<hp:lineBreak/></hp:t>'
+            '<hp:t></hp:t>'
+            '</hp:run></hp:p>'
+        )
+
+    def test_two_place_edit_drops_tag_between_and_reports_it(self, capsys):
+        p_xml = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>머리 <hp:fwSpace/>왼쪽<hp:lineBreak/>오른쪽 꼬리</hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs = preedit.paragraph_text_runs(p_xml)
+        assert runs[0]["text"] == "머리 왼쪽오른쪽 꼬리"
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, sorted(runs[0]["t_spans"]), "머리 좌측우측 꼬리")
+        assert dropped == ["<hp:lineBreak/>"]
+        assert new_p == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>머리 <hp:fwSpace/>좌측우측 꼬리</hp:t>'
+            '</hp:run></hp:p>'
+        )
+        captured = capsys.readouterr()
+        assert "<hp:lineBreak/>" in captured.err
+
+    def test_markpen_both_inside_wraps_replacement(self):
+        p_xml = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞 옛<hp:markpenBegin color="#ffff00"/>강조<hp:markpenEnd/>문구 뒤</hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs = preedit.paragraph_text_runs(p_xml)
+        assert runs[0]["text"] == "앞 옛강조문구 뒤"
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, sorted(runs[0]["t_spans"]), "앞 새표현 뒤")
+        assert dropped == []
+        assert new_p == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞 <hp:markpenBegin color="#ffff00"/>새표현<hp:markpenEnd/> 뒤</hp:t>'
+            '</hp:run></hp:p>'
+        )
+
+    def test_markpen_one_inside_moves_to_changed_region_edge(self):
+        # 1) begin outside (in prefix), end inside changed region
+        p_xml_end_in = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞 <hp:markpenBegin color="#ffff00"/>고정 옛날<hp:markpenEnd/>문구 뒤</hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs1 = preedit.paragraph_text_runs(p_xml_end_in)
+        new_p1, dropped1 = preedit._replace_t_spans_preserving_inline(
+            p_xml_end_in, sorted(runs1[0]["t_spans"]), "앞 고정 새값 뒤")
+        assert dropped1 == []
+        assert new_p1 == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞 <hp:markpenBegin color="#ffff00"/>고정 새값<hp:markpenEnd/> 뒤</hp:t>'
+            '</hp:run></hp:p>'
+        )
+
+        # 2) begin inside changed region, end outside (in suffix)
+        p_xml_begin_in = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞 옛날<hp:markpenBegin color="#ffff00"/>문구 고정<hp:markpenEnd/> 뒤</hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs2 = preedit.paragraph_text_runs(p_xml_begin_in)
+        new_p2, dropped2 = preedit._replace_t_spans_preserving_inline(
+            p_xml_begin_in, sorted(runs2[0]["t_spans"]), "앞 새값 고정 뒤")
+        assert dropped2 == []
+        assert new_p2 == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞 <hp:markpenBegin color="#ffff00"/>새값 고정<hp:markpenEnd/> 뒤</hp:t>'
+            '</hp:run></hp:p>'
+        )
+
+    def _rewrite(self, inner, value):
+        p_xml = ('<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+                 f'<hp:t>{inner}</hp:t></hp:run></hp:p>')
+        runs = preedit.paragraph_text_runs(p_xml)
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, sorted(runs[0]["t_spans"]), value)
+        head = '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0"><hp:t>'
+        assert new_p.startswith(head) and new_p.endswith('</hp:t></hp:run></hp:p>')
+        return new_p[len(head):-len('</hp:t></hp:run></hp:p>')], dropped
+
+    def test_markpen_on_changed_region_edges_stays_on_its_side(self):
+        b, e = '<hp:markpenBegin color="#ffff00"/>', '<hp:markpenEnd/>'
+        # The end sits right before the changed text: the new text stays unhighlighted.
+        assert self._rewrite(f"앞 {b}강조{e}옛말 뒤", "앞 강조새말 뒤") == (
+            f"앞 {b}강조{e}새말 뒤", [])
+        # The begin sits right after the changed text: the highlight does not grow back.
+        assert self._rewrite(f"앞 옛{b}강조{e} 뒤", "앞 새강조 뒤") == (
+            f"앞 새{b}강조{e} 뒤", [])
+
+    def test_markpen_half_pair_from_another_run_is_never_dropped(self):
+        b, e = '<hp:markpenBegin color="#ffff00"/>', '<hp:markpenEnd/>'
+        # A begin whose end is in a later run, outside the changed region.
+        assert self._rewrite(f"앞 옛말{b}강조", "앞 새말강조") == (f"앞 새말{b}강조", [])
+        # An end whose begin is in an earlier run, inside the changed region,
+        # moves to the end of the new text instead of being dropped.
+        assert self._rewrite(f"강{e}조 옛말", "새 옛말") == (f"새{e} 옛말", [])
+
+    def test_markpen_both_inside_with_empty_replacement_drops_both(self, capsys):
+        p_xml = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞 <hp:markpenBegin color="#ffff00"/>지울강조<hp:markpenEnd/> 뒤</hp:t>'
+            '</hp:run></hp:p>'
+        )
+        runs = preedit.paragraph_text_runs(p_xml)
+        assert runs[0]["text"] == "앞 지울강조 뒤"
+        new_p, dropped = preedit._replace_t_spans_preserving_inline(
+            p_xml, sorted(runs[0]["t_spans"]), "앞  뒤")
+        assert dropped == [
+            '<hp:markpenBegin color="#ffff00"/>',
+            '<hp:markpenEnd/>',
+        ]
+        assert new_p == (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:t>앞  뒤</hp:t>'
+            '</hp:run></hp:p>'
+        )
+        assert "markpen" not in new_p
+        err = capsys.readouterr().err
+        assert '<hp:markpenBegin color="#ffff00"/>' in err
+        assert '<hp:markpenEnd/>' in err
+
+    def test_changed_region_caps_overlapping_prefix_and_suffix(self):
+        p, old_end, new_end = preedit.changed_region("aaa", "aa")
+        assert (p, old_end, new_end) == (2, 3, 2)
+        s = 3 - old_end
+        assert p + s <= 2
+
+    def test_tier_a_placeholder_preserves_boundary_inline_elements(self, tmp_path):
+        src = make_hwpx(
+            tmp_path, make_header([CP_BLACK]),
+            SEC(P('<hp:run charPrIDRef="0">'
+                  '<hp:t><hp:fwSpace/>{{성명_자리}}<hp:lineBreak/></hp:t>'
+                  '</hp:run>')))
+        out = tmp_path / "out.hwpx"
+        result = replace_placeholders(src, out, {"{{성명_자리}}": "홍길동"})
+        assert result["hits"] == {"{{성명_자리}}": 1}
+        xml = section_xml(out)
+        ET.fromstring(xml)
+        assert "<hp:t><hp:fwSpace/>홍길동<hp:lineBreak/></hp:t>" in xml
+
+    def test_replace_at_cells_preserves_fwspace_on_jumin_cell_7_1_run_2(self, tmp_path):
+        src = CORPUS_FORMS / "jumin-deungchobon-sinchengseo.hwpx"
+        out = tmp_path / "jumin-out.hwpx"
+        xml_in = section_xml(src)
+        c_in = find_cell(scan_tables(xml_in)[0], 7, 1)
+        runs_in = preedit.cell_text_runs(xml_in[c_in["body_start"]:c_in["body_end"]])
+        before_text = runs_in[2]["text"]
+        assert "3쪽 유의사항 3번" in before_text
+        after_text = before_text.replace("3쪽 유의사항 3번", "3쪽 유의사항 4번", 1)
+
+        result = preedit.replace_at_cells(
+            src, out, [(7, 1, 2, after_text, "replace")], table=0)
+        assert result["replaced"] == 1
+        xml_out = section_xml(out)
+        c_out = find_cell(scan_tables(xml_out)[0], 7, 1)
+        cell_body = xml_out[c_out["body_start"]:c_out["body_end"]]
+        assert "※<hp:fwSpace/>수수료 면제 대상에 대해서는 3쪽 유의사항 4번을 참고하시기 바랍니다." in cell_body
+
+    def test_set_runs_preserves_tab_attributes_on_kstartup_p751_and_p753(self, tmp_path):
+        src = CORPUS_FORMS / "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
+        out = tmp_path / "kstartup-out.hwpx"
+        tab_tag = '<hp:tab width="4000" leader="0" type="1"/>'
+        new_date = "      서명일 : 2026. 11. 23. "
+
+        result = preedit.set_runs(src, out, [
+            (751, 0, new_date),
+            (753, 0, new_date),
+        ])
+        assert result["written"] == 2
+        xml_out = section_xml(out)
+        paras_out = list(preedit._iter_document_paragraphs(xml_out))
+        for at_para in (751, 753):
+            _, _, p_xml = paras_out[at_para]
+            assert p_xml.count(tab_tag) == 5
+            assert (tab_tag * 5 + new_date) in p_xml
