@@ -104,6 +104,7 @@ def _queue_paragraphs_and_tables(source: Path):
         queue_tables[q_addr] = {
             "rows": table["rowCnt"],
             "cols": table["colCnt"],
+            "first_cell": None,
             "first_cell_text": "",
         }
         non_empty = next(
@@ -114,6 +115,7 @@ def _queue_paragraphs_and_tables(source: Path):
             row = int(non_empty["addr"]["row"])
             col = int(non_empty["addr"]["col"])
             first_cells[q_addr] = (row, col)
+            queue_tables[q_addr]["first_cell"] = (row, col)
             cell_requests.append((t_idx, row, col))
 
     if cell_requests:
@@ -152,7 +154,17 @@ def _fallback_tables(source: Path) -> set[str]:
     return {f"t{i}" for i, t in enumerate(tables) if not t.addr}
 
 
-def _core_table_first_cell_text(source: Path, core_addr: str, cells_grid: list[list[str]]) -> str:
+def _core_table_first_cell_text(
+    source: Path,
+    core_addr: str,
+    first_cell: tuple[int, int] | None,
+    cells_grid: list[list[str]],
+) -> str:
+    if first_cell is not None:
+        r_idx, c_idx = first_cell
+        cell_read = rt_doc.read(source, f"{core_addr}/r{r_idx}/c{c_idx}")
+        assert cell_read["ok"], f"{source.name}: read({core_addr}/r{r_idx}/c{c_idx}) failed: {cell_read}"
+        return "".join(block["text"] for block in cell_read["blocks"])
     for r_idx, row in enumerate(cells_grid):
         for c_idx, cell_text in enumerate(row):
             if cell_text.strip():
@@ -180,7 +192,7 @@ def test_queue_address_parity(doc_id: str, source: Path, expected_sha256: str | 
     for core_addr, queue_addr in addresses.items():
         assert queue_addr not in seen_values, (
             f"{doc_id}: mapping is not one-to-one; doc-core {seen_values[queue_addr]} and {core_addr} "
-            f"both map to queue {queue_addr} (texts: '' vs '')"
+            f"both map to queue {queue_addr}"
         )
         seen_values[queue_addr] = core_addr
 
@@ -231,12 +243,13 @@ def test_queue_address_parity(doc_id: str, source: Path, expected_sha256: str | 
             f"{doc_id}: doc-core {core_addr} -> queue {q_addr} read failed: {read_res}"
         )
         block = read_res["blocks"][0]
-        core_first = _queue_form(_core_table_first_cell_text(source, core_addr, block["cells"])).strip()
         assert q_addr in queue_tables, (
-            f"{doc_id}: doc-core {core_addr} -> queue {q_addr} not found in queue tables "
-            f"(core text: {core_first[:40]!r} vs queue text: '<missing>')"
+            f"{doc_id}: doc-core {core_addr} -> queue {q_addr} not found in queue tables"
         )
         q_table = queue_tables[q_addr]
+        core_first = _queue_form(
+            _core_table_first_cell_text(source, core_addr, q_table["first_cell"], block["cells"]),
+        ).strip()
         queue_first = q_table["first_cell_text"].strip()
         assert (block["rows"], block["cols"]) == (q_table["rows"], q_table["cols"]), (
             f"{doc_id}: table shape mismatch at doc-core {core_addr} -> queue {q_addr}: "

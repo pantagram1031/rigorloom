@@ -236,6 +236,11 @@ class Preview:
     expires: float
 
 
+def _queue_form(text):
+    """Run text without U+3000 and newlines, the two inline elements the queue path drops."""
+    return text.replace("\u3000", "").replace("\n", "")
+
+
 class PageGateway:
     def __init__(self):
         self._ready = Condition()
@@ -318,7 +323,13 @@ class PageGateway:
                 block = paragraphs[at]
                 runs = [run["text"] for run in block["runs"]]
                 idx = op["run"]
-                if idx >= len(runs) or runs[idx] != op["before"] or "".join(runs) != block["text"]:
+                # The queue path strips inline <hp:fwSpace/> and <hp:lineBreak/> tags
+                # when reading run text, while doc-core reads them as U+3000 and "\n".
+                # preedit.set_runs replaces the full <hp:t> interior span (dropping those
+                # inline elements), so replacing the full doc-core run range matches apply.
+                if (idx >= len(runs)
+                        or _queue_form(runs[idx]) != _queue_form(op["before"])
+                        or "".join(runs) != block["text"]):
                     raise PageError("bad_address", "the queued run no longer matches the document")
                 start = sum(map(len, runs[:idx]))
                 at = f"{at}:{start}-{start + len(runs[idx])}"
