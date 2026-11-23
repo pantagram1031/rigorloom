@@ -138,7 +138,11 @@ def test_multiple_pages_are_refused(serving, document, page_args):
 @pytest.fixture
 def fake_engine(monkeypatch, tmp_path):
     engine = rt_ui_doc.rt_doc
+    scratch_dir = tmp_path / "scratch"
+    scratch_dir.mkdir()
+    monkeypatch.setattr(engine, "_SCRATCH", str(scratch_dir))
     seen = []
+    counter = 0
 
     def engine_result(path, **fields):
         seen.append(path)
@@ -151,9 +155,11 @@ def fake_engine(monkeypatch, tmp_path):
                                            "width_pt": 600, "height_pt": 800}])
 
     def edit(path, ops, *, base, preview):
+        nonlocal counter
         assert preview is True
         assert base == engine.rev_of(path)
-        output = tmp_path / "preview.hwpx"
+        counter += 1
+        output = engine._scratch_sub("preview") / f"preview-{counter}.hwpx"
         output.write_bytes(path.read_bytes() + json.dumps(ops).encode())
         seen.append(path)
         return {"ok": True, "rev_before": base, "rev": engine.rev_of(output), "out": str(output), "remap": [],
@@ -734,3 +740,107 @@ def test_installed_engine_previews_object_holding_body_cell_at_lead_paragraph(se
     assert saved_block["text"] == text
     blanked_block = rt_ui_doc.rt_doc.read(saved_path, "t0/r2/c0/p19")["blocks"][0]
     assert blanked_block["text"] == ""
+
+
+def test_preview_eviction_ttl_and_inflight_render_unlink_scratch_files(
+    serving, document, fake_engine, monkeypatch, tmp_path,
+):
+    engine = rt_ui_doc.rt_doc
+    base_render = engine.render
+    gateway = rt_ui_doc.PageGateway()
+    root = serving.bridge.current_root()
+    tools = rt_ui_doc.EngineTools(REPO)
+    _, original = document
+
+    clock = [1000.0]
+    monkeypatch.setattr(rt_ui_doc.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(rt_ui_doc, "PREVIEW_LIMIT", 2)
+
+    def make_preview(session, text):
+        payload, _ = gateway.read(root, tools, "preview", {
+            **binding(session),
+            "ops": [{"at": "t0/r0/c0", "text": text}],
+        })
+        preview_id = payload["previewId"]
+        return preview_id, gateway._previews[preview_id].path
+
+    # 1. Driving PREVIEW_LIMIT + 1 previews evicts the oldest and unlinks its file while live ones remain.
+    s0 = Session.open_path(root, str(original))
+    s1 = Session.open_path(root, str(original))
+    s2 = Session.open_path(root, str(original))
+    p0_id, p0_path = make_preview(s0, "세션 0")
+    p1_id, p1_path = make_preview(s1, "세션 1")
+    assert p0_path.is_file() and p1_path.is_file()
+    clock[0] = 1100.0
+    p2_id, p2_path = make_preview(s2, "세션 2")
+    assert p0_id not in gateway._previews
+    assert not p0_path.exists()
+    assert p1_path.is_file() and p2_path.is_file()
+    assert list(gateway._previews) == [p1_id, p2_id]
+
+    # 2. Newer preview on the same session supersedes and unlinks the older preview for that session.
+    p1_next_id, p1_next_path = make_preview(s1, "세션 1 교체")
+    assert p1_id not in gateway._previews
+    assert not p1_path.exists()
+    assert p1_next_path.is_file() and p2_path.is_file()
+    p1_id, p1_path = p1_next_id, p1_next_path
+    clock[0] = 1150.0
+    p2_id, p2_path = make_preview(s2, "세션 2 교체")
+
+    # 3. TTL expiry drops the expired preview and unlinks its scratch file while live ones remain.
+    clock[0] = 1100.0 + rt_ui_doc.PREVIEW_TTL + 10.0
+    with pytest.raises(rt_ui_doc.PageError) as expired_err:
+        gateway.read(root, tools, "render", {
+            **binding(s1), "previewId": p1_id, "page": 2, "scale": 1,
+        })
+    assert expired_err.value.code == "preview_expired"
+    assert p1_id not in gateway._previews
+    assert not p1_path.exists()
+    assert p2_id in gateway._previews and p2_path.is_file()
+
+    # 4. Evicted while a render turn for that preview is in flight: file survives until render returns.
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_render(path, page, *, scale, out_dir):
+        if Path(path) == p2_path:
+            started.set()
+            assert release.wait(10)
+            assert p2_path.is_file()
+        return base_render(path, page, scale=scale, out_dir=out_dir)
+
+    monkeypatch.setattr(engine, "render", slow_render)
+    s3 = Session.open_path(root, str(original))
+    s4 = Session.open_path(root, str(original))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        inflight = pool.submit(gateway.read, root, tools, "render", {
+            **binding(s2), "previewId": p2_id, "page": 2, "scale": 1,
+        })
+        try:
+            assert started.wait(5)
+            p3_id, p3_path = make_preview(s3, "세션 3")
+            p4_id, p4_path = make_preview(s4, "세션 4")
+            assert p2_id not in gateway._previews
+            assert p2_path.is_file()
+        finally:
+            release.set()
+        payload, png = inflight.result(timeout=5)
+    assert payload["previewId"] == p2_id and png.startswith(PNG_SIGNATURE)
+    assert not p2_path.exists()
+    assert p3_path.is_file() and p4_path.is_file()
+    assert list(gateway._previews) == [p3_id, p4_id]
+
+    # 5. Files outside the rt_doc preview scratch folder are never unlinked, and missing files are tolerated.
+    outside = tmp_path / "outside-preview.hwpx"
+    outside.write_bytes(b"outside")
+    p3_path.unlink()
+    gateway._previews[p3_id] = rt_ui_doc.Preview(
+        p3_id, s3.dir, binding(s3)["rev"], outside, gateway._previews[p3_id].rev,
+        2, frozenset({2}), [], [], {}, clock[0] + rt_ui_doc.PREVIEW_TTL,
+    )
+    s5 = Session.open_path(root, str(original))
+    p5_id, p5_path = make_preview(s5, "세션 5")
+    assert p3_id not in gateway._previews
+    assert outside.is_file()
+    assert p4_path.is_file() and p5_path.is_file()
+
