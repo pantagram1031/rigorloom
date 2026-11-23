@@ -291,12 +291,94 @@ def _queued_run_edit(core_run, new_text):
     return c_start, c_end, new_text[p:new_end]
 
 
+def _preview_scratch_dir() -> Path:
+    return (rt_doc._scratch() / "preview").resolve()
+
+
+def _unlink_preview_file(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        if path.is_symlink():
+            return
+        scratch_dir = _preview_scratch_dir()
+        resolved = path.resolve()
+        if resolved != scratch_dir and resolved.is_relative_to(scratch_dir):
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 class PageGateway:
     def __init__(self):
         self._ready = Condition()
         self._sequence = count(1)
         self._renders: dict[tuple[Path, str], RenderQueue] = {}
         self._previews: OrderedDict[str, Preview] = OrderedDict()
+        self._preview_in_flight: dict[str, int] = {}
+        self._deferred_unlinks: dict[str, Path] = {}
+
+    def _can_unlink_locked(self, path: Path) -> bool:
+        return (
+            all(p.path != path for p in self._previews.values())
+            and all(p != path for p in self._deferred_unlinks.values())
+        )
+
+    def _drop_preview_locked(self, preview_id: str) -> Path | None:
+        preview = self._previews.pop(preview_id, None)
+        if preview is None:
+            return None
+        if self._preview_in_flight.get(preview.id, 0) > 0:
+            self._deferred_unlinks[preview.id] = preview.path
+            return None
+        return preview.path if self._can_unlink_locked(preview.path) else None
+
+    def _sweep_previews_locked(
+        self,
+        *,
+        now: float | None = None,
+        session_dir: Path | None = None,
+        base: str | None = None,
+        supersede_session: bool = False,
+    ) -> list[Path]:
+        if now is None:
+            now = time.monotonic()
+        dropped = [
+            pid
+            for pid, p in self._previews.items()
+            if p.expires < now
+            or not p.session_dir.is_dir()
+            or not p.path.is_file()
+            or (
+                session_dir is not None
+                and p.session_dir == session_dir
+                and (supersede_session or (base is not None and p.base != base))
+            )
+        ]
+        paths: list[Path] = []
+        for pid in dropped:
+            path = self._drop_preview_locked(pid)
+            if path is not None:
+                paths.append(path)
+        return paths
+
+    def _sweep_previews(
+        self,
+        *,
+        now: float | None = None,
+        session_dir: Path | None = None,
+        base: str | None = None,
+        supersede_session: bool = False,
+    ) -> None:
+        with self._ready:
+            paths = self._sweep_previews_locked(
+                now=now,
+                session_dir=session_dir,
+                base=base,
+                supersede_session=supersede_session,
+            )
+        for path in paths:
+            _unlink_preview_file(path)
 
     @contextmanager
     def _render_turn(self, key):
@@ -329,13 +411,22 @@ class PageGateway:
         root = root.resolve()
         try:
             head = _head(root, session_id, rev)
+            self._sweep_previews(session_dir=head.session.dir, base=head.rev)
             if operation in {"render", "preview"}:
-                with self._render_turn((root, session_id)) as seq:
+                key = (root, session_id)
+                with self._render_turn(key) as seq:
                     if operation == "preview":
-                        result, png = self._preview(head, tools, **args), None
+                        result, png = self._preview(
+                            head,
+                            tools,
+                            check_head=lambda: _head(root, session_id, rev),
+                            render_key=key,
+                            render_seq=seq,
+                            **args,
+                        ), None
                     else:
                         result, png = self._render(head, tools, **args)
-                    _head(root, session_id, rev)
+                        _head(root, session_id, rev)
             else:
                 seq = next(self._sequence)
                 result, png = self._read(head, operation, args), None
@@ -349,7 +440,7 @@ class PageGateway:
                             HTTPStatus.UNPROCESSABLE_ENTITY) from None
         return {**result, "rev": rev, "seq": seq}, png
 
-    def _preview(self, head, tools=None, *, ops):
+    def _preview(self, head, tools=None, *, ops, check_head=None, render_key=None, render_seq=None):
         if not self._uses_engine(head):
             raise PageError("capability_unavailable", "preview needs the document engine",
                             HTTPStatus.SERVICE_UNAVAILABLE)
@@ -434,37 +525,105 @@ class PageGateway:
         # rt_doc snapshots the session head and writes the edit to its own private scratch.
         result = _engine_result(rt_doc.edit(head.path, edits,
                                             base=head.rev[:12], preview=True), None)
-        if result["rev_before"] != head.rev[:12]:
-            raise _stale()
         path = Path(result["out"])
-        info = _engine_result(rt_doc.pages(path), result["rev"])
-        changed = result["changed"]
-        pages = frozenset(page for page in (*result["changed_pages"], *(row["page"] for row in changed))
-                          if type(page) is int and 1 <= page <= info["count"])
-        remap = {item["from"]: item["to"] for item in result["remap"]}
-        targets = [rt_doc.follow_remap(remap, at) for at in targets]
-        preview_addresses = {mapped: at for core, at in addresses.items()
-                             if (mapped := rt_doc.follow_remap(remap, core)) is not None}
-        preview = Preview(uuid4().hex, head.session.dir, head.rev, path, result["rev"], info["count"],
-                          pages, changed, targets, preview_addresses, time.monotonic() + PREVIEW_TTL)
-        with self._ready:
-            self._previews[preview.id] = preview
-            while len(self._previews) > PREVIEW_LIMIT:
-                self._previews.popitem(last=False)
+        try:
+            if result["rev_before"] != head.rev[:12]:
+                raise _stale()
+            info = _engine_result(rt_doc.pages(path), result["rev"])
+            changed = result["changed"]
+            pages = frozenset(page for page in (*result["changed_pages"], *(row["page"] for row in changed))
+                              if type(page) is int and 1 <= page <= info["count"])
+            remap = {item["from"]: item["to"] for item in result["remap"]}
+            targets = [rt_doc.follow_remap(remap, at) for at in targets]
+            preview_addresses = {mapped: at for core, at in addresses.items()
+                                 if (mapped := rt_doc.follow_remap(remap, core)) is not None}
+            if check_head is not None:
+                check_head()
+            now = time.monotonic()
+            preview = Preview(uuid4().hex, head.session.dir, head.rev, path, result["rev"], info["count"],
+                              pages, changed, targets, preview_addresses, now + PREVIEW_TTL)
+            evicted_paths: list[Path] = []
+            with self._ready:
+                if render_key is not None and render_seq is not None:
+                    queue = self._renders.get(render_key)
+                    if queue is None or queue.latest != render_seq:
+                        raise PageError("render_superseded", "a newer render was requested", HTTPStatus.CONFLICT)
+                evicted_paths.extend(
+                    self._sweep_previews_locked(
+                        now=now,
+                        session_dir=head.session.dir,
+                        base=head.rev,
+                        supersede_session=True,
+                    )
+                )
+                self._previews[preview.id] = preview
+                while len(self._previews) > PREVIEW_LIMIT:
+                    oldest_id = next(iter(self._previews))
+                    evicted = self._drop_preview_locked(oldest_id)
+                    if evicted is not None:
+                        evicted_paths.append(evicted)
+        except BaseException:
+            _unlink_preview_file(path)
+            raise
+        for evicted_path in evicted_paths:
+            _unlink_preview_file(evicted_path)
         return {"previewId": preview.id, "previewRev": preview.rev, "count": preview.count,
                 "changedPages": sorted(preview.pages), "changed": changed}
 
-    def _get_preview(self, head, preview_id, page):
+    def _acquire_preview(self, head, preview_id, page, *, retain: bool = False):
         if preview_id is None:
+            self._sweep_previews(session_dir=head.session.dir, base=head.rev)
             return None
+        now = time.monotonic()
         with self._ready:
             preview = self._previews.get(preview_id)
-        if (preview is None or preview.session_dir != head.session.dir or preview.base != head.rev
-                or preview.expires < time.monotonic() or not preview.path.is_file()):
+            stale_paths = self._sweep_previews_locked(
+                now=now,
+                session_dir=head.session.dir,
+                base=head.rev,
+            )
+            expired = (
+                preview is None
+                or preview.id not in self._previews
+                or preview.session_dir != head.session.dir
+                or preview.base != head.rev
+                or preview.expires < now
+                or not preview.path.is_file()
+            )
+            unchanged = not expired and page not in preview.pages
+            if not expired and not unchanged and retain:
+                self._preview_in_flight[preview.id] = self._preview_in_flight.get(preview.id, 0) + 1
+        for path in stale_paths:
+            _unlink_preview_file(path)
+        if expired:
             raise PageError("preview_expired", "the page preview is unavailable", HTTPStatus.NOT_FOUND)
-        if page not in preview.pages:
+        if unchanged:
             raise PageError("page_unchanged", "the page is outside the preview's changed set")
         return preview
+
+    def _get_preview(self, head, preview_id, page):
+        return self._acquire_preview(head, preview_id, page, retain=False)
+
+    @contextmanager
+    def _use_preview(self, head, preview_id, page):
+        preview = self._acquire_preview(head, preview_id, page, retain=True)
+        try:
+            yield preview
+        finally:
+            if preview is not None:
+                deferred_path = None
+                with self._ready:
+                    remaining = self._preview_in_flight.get(preview.id, 0) - 1
+                    if remaining <= 0:
+                        self._preview_in_flight.pop(preview.id, None)
+                        candidate = self._deferred_unlinks.pop(preview.id, None)
+                        if candidate is not None and self._can_unlink_locked(candidate):
+                            deferred_path = candidate
+                    else:
+                        self._preview_in_flight[preview.id] = remaining
+                    self._ready.notify_all()
+                if deferred_path is not None:
+                    _unlink_preview_file(deferred_path)
 
     @staticmethod
     def _uses_engine(head):
@@ -500,61 +659,61 @@ class PageGateway:
             result = _engine_result(rt_doc.pages(head.path), head.rev)
             return {"source": "engine", **{key: result[key] for key in ("count", "pages", "approx")}}
         page = args["page"]
-        preview = self._get_preview(head, args.get("preview_id"), page)
-        result = _engine_result(rt_doc.geometry(preview.path if preview else head.path, page),
-                                preview.rev if preview else head.rev)
-        payload = {key: value for key, value in result.items() if key not in {"ok", "rev"}}
-        addresses = (preview.addresses if preview else
-                     _engine_result(rt_doc.queue_addresses(head.path), head.rev)["addresses"])
-        for box in payload["boxes"]:
-            at = box["at"] or ""
-            if at.startswith("t") and "/r" in at:
-                base_at, tail = at.rsplit("/r", 1)
-                suffix = "/r" + tail
-            else:
-                base_at, sep, tail = at.partition("#")
-                suffix = sep + tail
-            if base_at in addresses:
-                box["queueAddress"] = addresses[base_at] + suffix
-        if preview:
-            changed = [row for row in preview.changed if row["page"] == page and row["rect"]]
-            measured = {row["i"] for row in changed}
-            # Some engine versions return the affected page without an edit rect.
-            # Use the actual target box on that page when available.
-            boxes = defaultdict(list)
-            for box in result["boxes"]:
-                if box["at"] and box["kind"] in {"para", "cell"}:
-                    boxes[box["at"]].append(box["rect"])
-            for i, at in enumerate(preview.targets):
-                if i not in measured:
-                    changed.extend({"i": i, "page": page, "rect": rect} for rect in boxes.get(at, []))
-            payload.update(previewId=preview.id, previewRev=preview.rev, changed=changed)
-        return payload
+        with self._use_preview(head, args.get("preview_id"), page) as preview:
+            result = _engine_result(rt_doc.geometry(preview.path if preview else head.path, page),
+                                    preview.rev if preview else head.rev)
+            payload = {key: value for key, value in result.items() if key not in {"ok", "rev"}}
+            addresses = (preview.addresses if preview else
+                         _engine_result(rt_doc.queue_addresses(head.path), head.rev)["addresses"])
+            for box in payload["boxes"]:
+                at = box["at"] or ""
+                if at.startswith("t") and "/r" in at:
+                    base_at, tail = at.rsplit("/r", 1)
+                    suffix = "/r" + tail
+                else:
+                    base_at, sep, tail = at.partition("#")
+                    suffix = sep + tail
+                if base_at in addresses:
+                    box["queueAddress"] = addresses[base_at] + suffix
+            if preview:
+                changed = [row for row in preview.changed if row["page"] == page and row["rect"]]
+                measured = {row["i"] for row in changed}
+                # Some engine versions return the affected page without an edit rect.
+                # Use the actual target box on that page when available.
+                boxes = defaultdict(list)
+                for box in result["boxes"]:
+                    if box["at"] and box["kind"] in {"para", "cell"}:
+                        boxes[box["at"]].append(box["rect"])
+                for i, at in enumerate(preview.targets):
+                    if i not in measured:
+                        changed.extend({"i": i, "page": page, "rect": rect} for rect in boxes.get(at, []))
+                payload.update(previewId=preview.id, previewRev=preview.rev, changed=changed)
+            return payload
 
     def _render(self, head, tools, page, scale, preview_id=None, refresh_fonts=False):
-        preview = self._get_preview(head, preview_id, page)
-        if self._uses_engine(head):
-            path, rev = (preview.path, preview.rev) if preview else (head.path, head.rev)
-            info = _engine_result(rt_doc.pages(path), rev)
-            with TemporaryDirectory(prefix="rigorloom-page-") as output:
-                # Hand the engine the canonical directory: the temp root can be
-                # a link or, on Windows, an 8.3 short name, and the containment
-                # check compares canonical paths.
-                output_dir = Path(output).resolve()
-                result = _engine_result(rt_doc.render(path, page, scale=scale, out_dir=str(output_dir)), rev)
-                image = result["pages"][0]
-                image_path = Path(image["file"])
-                _confined(output_dir, image_path)
-                png = image_path.read_bytes()
-            payload = {"source": "engine", "page": page, "count": info["count"], "approx": bool(info["approx"]),
-                       "widthPt": image["width_pt"], "heightPt": image["height_pt"]}
-            if preview:
-                payload.update(previewId=preview.id, previewRev=preview.rev)
-            return payload, png
+        with self._use_preview(head, preview_id, page) as preview:
+            if self._uses_engine(head):
+                path, rev = (preview.path, preview.rev) if preview else (head.path, head.rev)
+                info = _engine_result(rt_doc.pages(path), rev)
+                with TemporaryDirectory(prefix="rigorloom-page-") as output:
+                    # Hand the engine the canonical directory: the temp root can be
+                    # a link or, on Windows, an 8.3 short name, and the containment
+                    # check compares canonical paths.
+                    output_dir = Path(output).resolve()
+                    result = _engine_result(rt_doc.render(path, page, scale=scale, out_dir=str(output_dir)), rev)
+                    image = result["pages"][0]
+                    image_path = Path(image["file"])
+                    _confined(output_dir, image_path)
+                    png = image_path.read_bytes()
+                payload = {"source": "engine", "page": page, "count": info["count"], "approx": bool(info["approx"]),
+                           "widthPt": image["width_pt"], "heightPt": image["height_pt"]}
+                if preview:
+                    payload.update(previewId=preview.id, previewRev=preview.rev)
+                return payload, png
 
-        if preview:
-            raise PageError("capability_unavailable", "preview needs the document engine",
-                            HTTPStatus.SERVICE_UNAVAILABLE)
+            if preview:
+                raise PageError("capability_unavailable", "preview needs the document engine",
+                                HTTPStatus.SERVICE_UNAVAILABLE)
 
         dpi = max(MIN_RENDER_DPI, round(72 * scale))
         result = rt_render.render_page(head.session, page=page - 1, dpi=dpi,
