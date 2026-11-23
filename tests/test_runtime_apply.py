@@ -614,3 +614,104 @@ def test_execute_preedit_steps_refusal_and_cancellation_parity(tmp_path):
     assert cancel_direct_exc.value.message == cancel_apply_exc.value.message
     assert (cancel_work / "step1.hwpx").is_file()
     assert not (cancel_work / "step2.hwpx").exists()
+
+
+@pytest.mark.parametrize(
+    ("form_name", "at_para", "run_idx", "needle", "replacement", "inline_tag", "expected_count", "expected_fragment"),
+    [
+        (
+            "admrul-gajokdolbom-hyuga-sinchengseo.hwpx",
+            13,
+            1,
+            "휴가",
+            "휴업",
+            "<hp:fwSpace/>",
+            2,
+            "(□<hp:fwSpace/>휴직, □<hp:fwSpace/>휴업)",
+        ),
+        (
+            "moel-pyojun-geunrogyeyakseo-2025.hwpx",
+            21,
+            1,
+            "기재",
+            "작성",
+            "<hp:lineBreak/>",
+            1,
+            "필요한 사유를 작성<hp:lineBreak/>",
+        ),
+    ],
+    ids=["fwspace-admrul-p13-r1", "linebreak-moel2025-p21-r1"],
+)
+def test_apply_set_run_preserves_inline_elements_in_saved_xml(
+    tmp_path,
+    form_name,
+    at_para,
+    run_idx,
+    needle,
+    replacement,
+    inline_tag,
+    expected_count,
+    expected_fragment,
+):
+    import zipfile
+    from pathlib import Path
+
+    engine_scripts = Path(__file__).resolve().parents[1] / "engine" / "scripts"
+    import sys
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import preedit
+
+    source = tmp_path / form_name
+    shutil.copyfile(CORPUS_FORM.parent / form_name, source)
+
+    with zipfile.ZipFile(source) as zf:
+        base_xml = zf.read("Contents/section0.xml").decode("utf-8")
+    _, _, base_p_xml = list(preedit._iter_document_paragraphs(base_xml))[at_para]
+    assert base_p_xml.count(inline_tag) == expected_count
+
+    with RuntimeClient(tmp_path / "root") as client:
+        client.initialize()
+        session = client.ok("workspace/openPath", {"path": str(source)})["sessionId"]
+        region = client.ok("document/readRegion", {
+            "sessionId": session,
+            "regions": [{"atPara": at_para}],
+        })["regions"][0]
+        before_text = next(r["text"] for r in region["runs"] if r["index"] == run_idx)
+        assert needle in before_text
+        after_text = before_text.replace(needle, replacement, 1)
+
+        ops = [{"kind": "set_run", "atPara": at_para, "run": run_idx, "text": after_text}]
+        plan = client.ok("plan/propose", {
+            "sessionId": session,
+            "backend": "preedit",
+            "ops": ops,
+        })["plan"]
+        validation = client.ok("plan/validate", {"planId": plan["planId"]})["validation"]
+        assert validation["ok"] is True, validation["hard"]
+        approval = client.ok("approval/request", {"planId": plan["planId"]})["approval"]
+        client.ok("approval/resolve", {
+            "approvalId": approval["approvalId"],
+            "planId": plan["planId"],
+            "planHash": plan["planHash"],
+            "decision": "approved",
+            "approver": "test-operator",
+        })
+        result = client.ok("plan/apply", {
+            "planId": plan["planId"],
+            "approvalId": approval["approvalId"],
+        })
+        run_id = result["candidate"]["runId"]
+        artifact = (
+            tmp_path / "root" / "sessions" / session / "candidates"
+            / run_id / result["candidate"]["candidate"]["path"]
+        )
+
+    with zipfile.ZipFile(artifact) as zf:
+        saved_xml = zf.read("Contents/section0.xml").decode("utf-8")
+    _, _, saved_p_xml = list(preedit._iter_document_paragraphs(saved_xml))[at_para]
+    assert replacement in saved_p_xml
+    assert needle not in saved_p_xml
+    assert saved_p_xml.count(inline_tag) == expected_count
+    assert expected_fragment in saved_p_xml
+
