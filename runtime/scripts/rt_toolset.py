@@ -958,7 +958,7 @@ OP_EXAMPLES = {
     "page_setup": '{"op":"page_setup","at":"p0","set":{"paper":"A4","margins":{"left":20,"right":20}}}',
     "columns": '{"op":"columns","at":"p0","set":{"count":2,"gap_mm":8,"line":true}}',
     "break": '{"op":"break","at":"p12","kind":"page"}',
-    "header": '{"op":"header","at":"p0","kind":"footer","text":"2027년 업무계획"}',
+    "header": '{"op":"header","at":"p0","kind":"footer","text":"- {page} / {pages} -"}',
     "page_number": '{"op":"page_number","at":"p0","pos":"BOTTOM_CENTER","format":"DIGIT"}',
     "table.cell_style": '{"op":"table.cell_style","at":"t0/r0","set":{"fill":"#D9D9D9","header":true,'
                         '"border":{"bottom":{"type":"DOUBLE_SLIM","width":0.5}}}}',
@@ -1044,8 +1044,10 @@ OP_NOTES = {
              "paragraph both apply",
     "header": "`at` is a body paragraph; its section's own 머리말 (`kind` header, the default) "
               "or 꼬리말 (footer) for `apply` BOTH (default), ODD or EVEN is replaced; `text` "
-              "up to 1000 characters, \\n starts a line; `expect` is the replaced one's text "
-              "(\"\" when the section has none); one per section, kind and apply per edit",
+              "up to 1000 characters, \\n starts a line, `{page}` and `{pages}` insert 쪽 번호 "
+              "and 전체 쪽수 (`{{` and `}}` for literal braces); `expect` is the replaced one's "
+              "text, with its page fields as `{page}` / `{pages}` (\"\" when the section has "
+              "none); one per section, kind and apply per edit",
     "page_number": "`at` is a body paragraph; its section's 쪽 번호 is replaced: `pos` "
                    "(BOTTOM_CENTER default, TOP_/BOTTOM_ LEFT/RIGHT/CENTER, OUTSIDE_/INSIDE_ "
                    "TOP/BOTTOM, or NONE), `format` (번호 모양: DIGIT default, ROMAN_CAPITAL, "

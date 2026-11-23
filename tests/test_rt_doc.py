@@ -1551,6 +1551,44 @@ def test_header_ops_are_checked_before_anything_runs(no_engine, tmp_path):
     assert err({"op": "header", "at": "p0", "text": 3})["code"] == "bad_input"
     assert err({"op": "header", "at": "p0", "text": "a\x01b"})["code"] == "bad_input"
     assert err({"op": "header", "at": "p0", "text": "가" * 1001})["code"] == "bad_input"
+    # placeholders: {page} and {pages} only; {{ and }} escape literal braces; length limit counts text as given
+    for bad_ph in ("{total}", "{PAGE}", "{PAGES}", "{}", "{page_num}", "{ page }", "- {page} / {total} -"):
+        e = err({"op": "header", "at": "p0", "text": bad_ph})
+        assert e["code"] == "bad_input" and e["candidates"] == ["{page}", "{pages}"], bad_ph
+        assert "{page}" in e["message"] and "{pages}" in e["message"], bad_ph
+    for bad_br in ("{", "}", "{page", "page}", "{{page}", "{page}}", "{a{page}}", "머리말 { 쪽", "머리말 } 쪽"):
+        e = err({"op": "header", "at": "p0", "text": bad_br})
+        assert e["code"] == "bad_input" and e["candidates"] == ["{page}", "{pages}"], bad_br
+        assert "{page}" in e["message"] and "{pages}" in e["message"], bad_br
+    assert err({"op": "header", "at": "p0", "text": "가" * 995 + "{page}"})["code"] == "bad_input"      # 1001 as given
+    assert err({"op": "header", "at": "p0", "text": "{{" * 500 + "가"})["code"] == "bad_input"          # 1001 as given
+    assert err({"op": "header", "at": "p0", "text": "가" * 994 + "{page}"})["code"] == "capability_unavailable"
+    assert err({"op": "header", "at": "p0", "text": "{{" * 500})["code"] == "capability_unavailable"
+    for ok_txt in ("- {page} / {pages} -", "{{쪽}} {page}", "{{{page}}}", "{{literal}}", "{page}\n{pages}"):
+        assert err({"op": "header", "at": "p0", "text": ok_txt})["code"] == "capability_unavailable", ok_txt
+    doc_g = D._load(src, meta=False)
+    # plain text without placeholders keeps the single-step insert_header(text=...) path
+    act_plain = D._plan(doc_g, [{"op": "header", "at": "p0", "text": "보고서 머리말\n둘째 줄"}])[0]
+    assert act_plain.steps == [
+        ["goto", 0, 0, 0],
+        {"op": "insert_header", "kwargs": {"text": "보고서 머리말\n둘째 줄", "kind": "header", "apply": "BOTH",
+                                           "replace": True}},
+    ]
+    act_esc = D._plan(doc_g, [{"op": "header", "at": "p0", "text": "보고서 {{1}}"}])[0]
+    assert act_esc.steps == [
+        ["goto", 0, 0, 0],
+        {"op": "insert_header", "kwargs": {"text": "보고서 {1}", "kind": "header", "apply": "BOTH", "replace": True}},
+    ]
+    act_ph = D._plan(doc_g, [{"op": "header", "at": "p0", "kind": "footer", "text": "- {page} / {pages} -"}])[0]
+    assert act_ph.steps == [
+        ["goto", 0, 0, 0],
+        {"op": "insert_header", "kwargs": {"text": None, "kind": "footer", "apply": "BOTH", "replace": True}},
+        ["type", "- "],
+        ["insert_page_field", "page"],
+        ["type", " / "],
+        ["insert_page_field", "total"],
+        ["type", " -"],
+    ]
     assert err({"op": "header", "at": "p0:0-2", "text": "x"})["code"] == "bad_address"
     assert err({"op": "header", "at": "t0/r0/c0/p0", "text": "x"})["code"] == "bad_address"
     assert err({"op": "header", "at": "p0", "text": "x", "expect": "있는 머리말"})["code"] == "expect_mismatch"
@@ -1660,6 +1698,135 @@ def test_engine_header_goes_in_the_paragraphs_section(kit, tmp_path):
     e = D.edit(f, [{"op": "header", "at": "p13", "kind": "footer", "text": "x"},
                    {"op": "break", "at": "p15", "kind": "section"}], base=D.rev_of(f), out=out2)["error"]
     assert e["code"] == "conflict" and not out2.exists()
+
+
+@engine
+def test_engine_header_page_fields(tmp_path, monkeypatch):
+    # 1. plain-text header output is unchanged byte-for-byte in XML versus the single-step insert_header(text=...) path
+    f_fx = _copy(FX_DOC, tmp_path)
+    out_plain = tmp_path / "plain.hwpx"
+    r_plain = D.edit(f_fx, [{"op": "header", "at": "p0", "text": "보고서 머리말\n둘째 줄"}],
+                     base=D.rev_of(f_fx), out=out_plain)
+    assert r_plain["ok"] and not r_plain.get("remap_approx"), r_plain
+    sec_plain = _hf_xml(out_plain)
+    m_plain = re.search(r"<hp:header\b.*?</hp:header>", sec_plain, re.S)
+    assert m_plain is not None
+    assert m_plain.group(0) == (
+        '<hp:header id="1" applyPageType="BOTH"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" '
+        'vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="42520" textHeight="4252" '
+        'hasTextRef="0" hasNumRef="0"><hp:p id="0" paraPrIDRef="9" styleIDRef="14" pageBreak="0" columnBreak="0" '
+        'merged="0"><hp:run charPrIDRef="2"><hp:t>보고서 머리말</hp:t></hp:run><hp:linesegarray><hp:lineseg '
+        'textpos="0" vertpos="0" vertsize="900" textheight="900" baseline="765" spacing="452" horzpos="0" '
+        'horzsize="42520" flags="393216"/></hp:linesegarray></hp:p><hp:p id="0" paraPrIDRef="9" styleIDRef="14" '
+        'pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="2"><hp:t>둘째 줄</hp:t></hp:run>'
+        '<hp:linesegarray><hp:lineseg textpos="0" vertpos="1352" vertsize="900" textheight="900" baseline="765" '
+        'spacing="452" horzpos="0" horzsize="42520" flags="393216"/></hp:linesegarray></hp:p></hp:subList></hp:header>'
+    )
+
+    # 2. footer "- {page} / {pages} -" and multi-line header with \n + {page} + escaped braces
+    # tested on feat_header_footer.hwpx (the existing header engine fixture) and on BASIC (once Header style is added)
+    hf_src = Path(ENGINE_DIR) / "tests" / "features" / "feat_header_footer.hwpx"
+    f = _copy(hf_src if hf_src.is_file() else FX_DOC, tmp_path, "hf_base.hwpx")
+    base = D._load(f, meta=False)
+    out = tmp_path / "hf_fields.hwpx"
+    ops = [
+        {"op": "header", "at": "p0", "kind": "footer", "text": "- {page} / {pages} -"},
+        {"op": "header", "at": "p0", "kind": "header", "text": "보고서 {{1}}\n쪽 {page}"},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"] and not r.get("remap_approx") and r["remap"] == [], r
+    got = D._load(out, meta=False)
+    assert [p.text for p in got.top] == [p.text for p in base.top]
+    acts = D._plan(base, ops)
+    assert D._verify(base, got, acts)
+
+    sec = _hf_xml(out)
+    foot_xml = re.search(r'<hp:footer id="\d+" applyPageType="BOTH">.*?</hp:footer>', sec, re.S).group(0)
+    assert re.findall(r'<hp:autoNum\b[^>]*numType="([^"]+)"', foot_xml) == ["PAGE", "TOTAL_PAGE"]
+    assert "<hp:t>- </hp:t>" in foot_xml and "<hp:t> / </hp:t>" in foot_xml and "<hp:t> -</hp:t>" in foot_xml
+    head_xml = re.search(r'<hp:header id="\d+" applyPageType="BOTH">.*?</hp:header>', sec, re.S).group(0)
+    assert re.findall(r'<hp:autoNum\b[^>]*numType="([^"]+)"', head_xml) == ["PAGE"]
+    assert "<hp:t>보고서 {1}</hp:t>" in head_xml and "<hp:t>쪽 </hp:t>" in head_xml
+
+    # _hf_controls reads existing autoNum fields back as {page} and {pages}
+    assert [q.text for _t, ps in D._hf_controls(got, got.top[0], "footer", "BOTH") for q in ps] == [
+        "- {page} / {pages} -"]
+    assert [q.text for _t, ps in D._hf_controls(got, got.top[0], "header", "BOTH") for q in ps] == [
+        "보고서 {1}", "쪽 {page}"]
+
+    # 3. expect reads existing placeholders; wrong expect is expect_mismatch; replacing with new placeholders works
+    out_wrong = tmp_path / "wrong.hwpx"
+    e_mis = D.edit(out, [{"op": "header", "at": "p0", "kind": "footer", "text": "새 꼬리말",
+                          "expect": "- {pages} / {page} -"}], base=D.rev_of(out), out=out_wrong)["error"]
+    assert e_mis["code"] == "expect_mismatch" and e_mis["actual"] == "- {page} / {pages} -"
+    assert not out_wrong.exists()
+
+    out2 = tmp_path / "hf_replaced.hwpx"
+    r2 = D.edit(out, [
+        {"op": "header", "at": "p0", "kind": "footer", "text": "{page}쪽 (총 {pages}쪽)",
+         "expect": "- {page} / {pages} -"},
+        {"op": "header", "at": "p0", "kind": "header", "text": "단일 머리말",
+         "expect": "보고서 {1}\n쪽 {page}"},
+    ], base=D.rev_of(out), out=out2)
+    assert r2["ok"] and not r2.get("remap_approx"), r2
+    got2 = D._load(out2, meta=False)
+    assert [q.text for _t, ps in D._hf_controls(got2, got2.top[0], "footer", "BOTH") for q in ps] == [
+        "{page}쪽 (총 {pages}쪽)"]
+    assert [q.text for _t, ps in D._hf_controls(got2, got2.top[0], "header", "BOTH") for q in ps] == [
+        "단일 머리말"]
+
+    # also on BASIC once the Header style is created
+    f_basic = _copy(BASIC, tmp_path, "basic_hf.hwpx")
+    f_basic_hdr = tmp_path / "basic_with_hdr_style.hwpx"
+    assert D.edit(f_basic, [{"op": "style.create", "name": "머리말", "eng_name": "Header"}],
+                  base=D.rev_of(f_basic), out=f_basic_hdr)["ok"]
+    out_basic = tmp_path / "basic_hf_out.hwpx"
+    r_basic = D.edit(f_basic_hdr, [
+        {"op": "header", "at": "p0", "kind": "footer", "text": "- {page} / {pages} -"},
+        {"op": "header", "at": "p0", "kind": "header", "text": "첫 줄\n{page}"},
+    ], base=D.rev_of(f_basic_hdr), out=out_basic)
+    assert r_basic["ok"], r_basic
+    got_basic = D._load(out_basic, meta=False)
+    assert [q.text for _t, ps in D._hf_controls(got_basic, got_basic.top[0], "footer", "BOTH") for q in ps] == [
+        "- {page} / {pages} -"]
+    assert [q.text for _t, ps in D._hf_controls(got_basic, got_basic.top[0], "header", "BOTH") for q in ps] == [
+        "첫 줄", "{page}"]
+
+    # 4. hand-broken outputs refused: numType swapped, field removed, field replaced by literal, extra field, literal changed
+    swapped_foot = (
+        foot_xml.replace('numType="PAGE"', 'numType="__TMP__"', 1)
+        .replace('numType="TOTAL_PAGE"', 'numType="PAGE"', 1)
+        .replace('numType="__TMP__"', 'numType="TOTAL_PAGE"', 1)
+    )
+    removed_field = re.sub(r"<hp:ctrl><hp:autoNum\b.*?</hp:autoNum></hp:ctrl>", "", foot_xml, count=1)
+    literal_for_field = re.sub(r"<hp:ctrl><hp:autoNum\b.*?</hp:autoNum></hp:ctrl>", "<hp:t>{page}</hp:t>",
+                               foot_xml, count=1)
+    extra_field = foot_xml.replace(
+        "<hp:t> -</hp:t>",
+        '<hp:t> -</hp:t><hp:ctrl><hp:autoNum num="1" numType="PAGE"><hp:autoNumFormat type="DIGIT" '
+        'userChar="" prefixChar="" suffixChar="" supscript="0"/></hp:autoNum></hp:ctrl>', 1)
+    wrong_numtype = foot_xml.replace('numType="PAGE"', 'numType="FOOTNOTE"', 1)
+    literal_changed = foot_xml.replace("<hp:t>- </hp:t>", "<hp:t>-- </hp:t>", 1)
+    head_lit_changed = head_xml.replace("<hp:t>보고서 {1}</hp:t>", "<hp:t>보고서 1</hp:t>", 1)
+
+    for label, broken_sec in (
+        ("swapped", sec.replace(foot_xml, swapped_foot, 1)),
+        ("removed_field", sec.replace(foot_xml, removed_field, 1)),
+        ("literal_for_field", sec.replace(foot_xml, literal_for_field, 1)),
+        ("extra_field", sec.replace(foot_xml, extra_field, 1)),
+        ("wrong_numtype", sec.replace(foot_xml, wrong_numtype, 1)),
+        ("literal_changed", sec.replace(foot_xml, literal_changed, 1)),
+        ("head_lit_changed", sec.replace(head_xml, head_lit_changed, 1)),
+    ):
+        assert broken_sec != sec, label
+        broken_bytes = got.zip.rewrite({"Contents/section0.xml": broken_sec.encode("utf-8")})
+        broken_doc = D.Doc(out, broken_bytes, "hwpx")
+        assert not D._verify(base, broken_doc, acts), label
+        monkeypatch.setattr(D, "_engine_apply", lambda *a, _b=broken_bytes, **k: (_b, {}, None))
+        out_bad = tmp_path / ("bad_%s.hwpx" % label)
+        res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
+        assert not res_bad["ok"] and res_bad["error"]["code"] == "internal", (label, res_bad)
+        assert res_bad["error"]["written"] is False and not out_bad.exists(), label
 
 
 # ============================================================================ 표·셀 꾸미기: 테두리, 배경, 정렬, 여백, 제목 줄
