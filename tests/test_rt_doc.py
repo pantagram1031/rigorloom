@@ -1958,6 +1958,19 @@ def test_note_and_caption_are_checked_before_anything_runs(no_engine, tmp_path):
     assert e["code"] == "capability_unavailable"
     assert not out.exists()
 
+    # follow-up c: style.create of 각주/미주/캡션 together with a note/caption that needs it in the same edit
+    for sname, eng, op2 in (
+        ("각주", None, {"op": "note", "at": "p1", "text": "가"}),
+        ("내각주", "Footnote", {"op": "note", "at": "p1", "text": "가"}),
+        ("미주", None, {"op": "note", "at": "p1", "kind": "end", "text": "가"}),
+        ("내미주", "Endnote", {"op": "note", "at": "p1", "kind": "end", "text": "가"}),
+        ("캡션", None, {"op": "caption", "at": "t0", "text": "가"}),
+        ("내캡션", "Caption", {"op": "caption", "at": "t0", "text": "가"}),
+    ):
+        sc = {"op": "style.create", "name": sname, **({"eng_name": eng} if eng else {})}
+        assert err([sc, op2])["code"] == "conflict", (sname, eng)
+        assert err([op2, sc])["code"] == "conflict", (sname, eng)
+
 
 @engine
 def test_engine_note_and_caption(tmp_path, monkeypatch):
@@ -1973,6 +1986,8 @@ def test_engine_note_and_caption(tmp_path, monkeypatch):
     r = D.edit(f, ops, base=D.rev_of(f), out=out)
     assert r["ok"], r
     assert r["remap"] == [] and not r.get("remap_approx")
+    for idx, want_style in ((0, "각주 (Footnote)"), (1, "미주 (Endnote)"), (2, "캡션 (Caption)")):
+        assert any(want_style in w for w in (r["applied"][idx].get("warnings") or [])), r["applied"][idx]
     got = D._load(out, meta=False)
     assert [p.text for p in got.top] == [p.text for p in base.top]
     assert D._notes_in(got, 0, "footNote", got.top[1]) == ["각주 설명"]
@@ -1986,7 +2001,7 @@ def test_engine_note_and_caption(tmp_path, monkeypatch):
     assert e["code"] == "bad_input" and "already has a caption" in e["message"]
     assert not out2.exists()
 
-    # verifier refuses hand-broken outputs (wrong note text, wrong caption side/text, altered body text)
+    # verifier refuses hand-broken outputs (wrong note text, wrong caption side/text, altered body text, missing auto style)
     acts = D._plan(base, ops)
     assert D._verify(base, got, acts)
     raw_sec = got.zip.read("Contents/section0.xml").decode("utf-8")
@@ -1999,11 +2014,202 @@ def test_engine_note_and_caption(tmp_path, monkeypatch):
         broken_bytes = got.zip.rewrite({"Contents/section0.xml": broken_xml.encode("utf-8")})
         broken_doc = D.Doc(out, broken_bytes, "hwpx")
         assert not D._verify(base, broken_doc, acts)
+    raw_hdr = got.zip.read("Contents/header.xml").decode("utf-8")
+    broken_hdr_doc = D.Doc(out, got.zip.rewrite({
+        "Contents/header.xml": raw_hdr.replace('name="각주"', 'name="다른각주"').encode("utf-8")}), "hwpx")
+    assert not D._verify_styles(base, broken_hdr_doc, acts)
+    assert not D._verify(base, broken_hdr_doc, acts)
 
     # end-to-end: if the engine produces a broken output, edit fails and nothing is written
     bad_bytes = got.zip.rewrite({"Contents/section0.xml": raw_sec.replace("각주 설명", "깨진 각주").encode("utf-8")})
     monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_bytes, {}, None))
     out_bad = tmp_path / "bad.hwpx"
+    res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
+    assert not res_bad["ok"] and res_bad["error"]["code"] == "internal"
+    assert res_bad["error"]["written"] is False and not out_bad.exists()
+
+
+# ============================================================================ 책갈피 (bookmark), 하이퍼링크 (link), 차례 (toc)
+def test_bookmark_link_and_toc_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(BASIC, tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops, doc_path=src, base_rev=None):
+        return D.edit(doc_path, ops if isinstance(ops, list) else [ops],
+                      base=base_rev or rev, out=out)["error"]
+
+    # bookmark: fields, name bounds, address, expect, after
+    e = err({"op": "bookmark", "at": "p1", "nm": "앞"})
+    assert e["code"] == "bad_input" and "name" in e["candidates"]
+    assert err({"op": "bookmark", "at": "p1"})["code"] == "bad_input"
+    assert err({"op": "bookmark", "at": "p1", "name": "앞", "expect": "x"})["code"] == "bad_input"
+    for bad_name in ("", "   ", " 앞", "앞 ", 123, "a\nb", "a\tb", "a\x01b", "가" * 65):
+        assert err({"op": "bookmark", "at": "p1", "name": bad_name})["code"] == "bad_input", bad_name
+    assert err({"op": "bookmark", "at": "p1:0-3", "name": "앞"})["code"] == "bad_address"
+    assert err({"op": "bookmark", "at": "t0", "name": "앞"})["code"] == "bad_address"
+    assert err({"op": "bookmark", "at": "p99", "name": "앞"})["code"] == "bad_address"
+    for bad_after in ("", 12, "a\nb", "a\x01b"):
+        assert err({"op": "bookmark", "at": "p1", "name": "앞", "after": bad_after})["code"] == "bad_input", bad_after
+    e = err({"op": "bookmark", "at": "p1", "name": "앞", "after": "2027년"})
+    assert e["code"] == "bad_input" and e.get("candidates")
+    e = err({"op": "bookmark", "at": "p4", "name": "앞", "after": "11월"})
+    assert e["code"] == "bad_input" and len(e.get("candidates") or []) >= 2
+
+    # duplicate bookmark name: in the same edit, or already in the document
+    assert err([{"op": "bookmark", "at": "p1", "name": "앞"},
+                {"op": "bookmark", "at": "p2", "name": "앞"}])["code"] == "bad_input"
+    base_doc = D._load(src, meta=False)
+    sec_with_bm = base_doc.secs[0].replace(
+        "<hp:t>사업 개요</hp:t>", '<hp:t>사업 개요</hp:t><hp:ctrl><hp:bookmark name="기존"/></hp:ctrl>', 1)
+    has_bm = tmp_path / "has_bm.hwpx"
+    has_bm.write_bytes(base_doc.zip.rewrite({"Contents/section0.xml": sec_with_bm.encode("utf-8")}))
+    assert err({"op": "bookmark", "at": "p1", "name": "기존"},
+               doc_path=has_bm, base_rev=D.rev_of(has_bm))["code"] == "bad_input"
+
+    # link: fields, phrase not found or ambiguous, bad target, unknown bookmark target
+    e = err({"op": "link", "at": "p1", "phrase": "2026년", "url": "https://www.hancom.com"})
+    assert e["code"] == "bad_input" and "target" in e["candidates"]
+    assert err({"op": "link", "at": "p1", "phrase": "2026년"})["code"] == "bad_input"
+    assert err({"op": "link", "at": "p1", "phrase": "2026년", "target": "https://www.hancom.com",
+                "expect": "x"})["code"] == "bad_input"
+    assert err({"op": "link", "at": "p1:0-3", "phrase": "본", "target": "https://www.hancom.com"})["code"] \
+        == "bad_address"
+    assert err({"op": "link", "at": "t0", "phrase": "항목", "target": "https://www.hancom.com"})["code"] \
+        == "bad_address"
+    for bad_phrase in ("", 12, "a\nb", "a\x01b"):
+        assert err({"op": "link", "at": "p1", "phrase": bad_phrase,
+                    "target": "https://www.hancom.com"})["code"] == "bad_input", bad_phrase
+    e = err({"op": "link", "at": "p1", "phrase": "2027년", "target": "https://www.hancom.com"})
+    assert e["code"] == "bad_input" and e.get("candidates")
+    e = err({"op": "link", "at": "p4", "phrase": "11월", "target": "https://www.hancom.com"})
+    assert e["code"] == "bad_input" and len(e.get("candidates") or []) >= 2
+    for bad_target in ("", "   ", 123, "http://", "https://", "mailto:", "mailto:user", "ftp://example.com/a",
+                       "javascript:alert(1)", "file:///etc/passwd", "www.hancom.com", "https://example.com/a b",
+                       "#", "#없는책갈피", "https://example.com/\x01"):
+        assert err({"op": "link", "at": "p1", "phrase": "2026년",
+                    "target": bad_target})["code"] == "bad_input", bad_target
+    # bookmark created later in the same edit is not yet available to an earlier link
+    assert err([{"op": "link", "at": "p2", "phrase": "메타데이터", "target": "#나중"},
+                {"op": "bookmark", "at": "p1", "name": "나중"}])["code"] == "bad_input"
+
+    # toc: fields, levels, leader, address, second toc, document that already has a TABLEOFCONTENTS field
+    e = err({"op": "toc", "at": "p0", "level": 2})
+    assert e["code"] == "bad_input" and "levels" in e["candidates"]
+    assert err({"op": "toc", "at": "p0", "expect": "사업 개요"})["code"] == "bad_input"
+    for bad_levels in (0, 4, -1, True, "2", 1.5):
+        assert err({"op": "toc", "at": "p0", "levels": bad_levels})["code"] == "bad_input", bad_levels
+    e = err({"op": "toc", "at": "p0", "leader": "wave"})
+    assert e["code"] == "bad_input" and "DASH" in e["candidates"] and "DOT" in e["candidates"]
+    assert err({"op": "toc", "at": "p0:0-2"})["code"] == "bad_address"
+    assert err({"op": "toc", "at": "t0"})["code"] == "bad_address"
+    assert err({"op": "toc", "at": "t0/r0/c0"})["code"] == "bad_address"
+    assert err({"op": "toc", "at": "t0/r0/c0/p0"})["code"] == "bad_address"
+    assert err([{"op": "toc", "at": "p0"}, {"op": "toc", "at": "p3"}])["code"] == "bad_input"
+    sec_with_toc = base_doc.secs[0].replace(
+        "<hp:t>사업 개요</hp:t>",
+        '<hp:ctrl><hp:fieldBegin id="99" type="TABLEOFCONTENTS" name="" editable="1" dirty="0" '
+        'zorder="-1" fieldid="628387683"/></hp:ctrl><hp:t>사업 개요</hp:t>'
+        '<hp:ctrl><hp:fieldEnd beginIDRef="99" fieldid="628387683"/></hp:ctrl>', 1)
+    has_toc = tmp_path / "has_toc.hwpx"
+    has_toc.write_bytes(base_doc.zip.rewrite({"Contents/section0.xml": sec_with_toc.encode("utf-8")}))
+    assert err({"op": "toc", "at": "p0"}, doc_path=has_toc, base_rev=D.rev_of(has_toc))["code"] == "bad_input"
+
+    # conflicts: two ops on the same target, delete of target, text edit with bookmark/link/toc, toc auto-style
+    assert err([{"op": "bookmark", "at": "p1", "name": "가"},
+                {"op": "bookmark", "at": "p1", "after": "2026년", "name": "나"}])["code"] == "conflict"
+    assert err([{"op": "link", "at": "p1", "phrase": "사업", "target": "https://www.hancom.com"},
+                {"op": "link", "at": "p1", "phrase": "2026년", "target": "mailto:a@b.kr"}])["code"] == "conflict"
+    assert err([{"op": "bookmark", "at": "p1", "name": "가"},
+                {"op": "link", "at": "p1", "phrase": "2026년", "target": "#가"}])["code"] == "conflict"
+    assert err([{"op": "bookmark", "at": "p1", "name": "가"},
+                {"op": "delete", "at": "p1"}])["code"] == "conflict"
+    assert err([{"op": "link", "at": "p1", "phrase": "2026년", "target": "https://www.hancom.com"},
+                {"op": "delete", "at": "p1"}])["code"] == "conflict"
+    assert err([{"op": "toc", "at": "p0"},
+                {"op": "delete", "at": "p0"}])["code"] == "conflict"
+    assert err([{"op": "toc", "at": "p0"},
+                {"op": "toc", "at": "p0"}])["code"] == "conflict"
+    assert err([{"op": "toc", "at": "p0"},
+                {"op": "insert_after", "at": "p0", "markdown": "추가"}])["code"] == "conflict"
+    assert err([{"op": "bookmark", "at": "p1", "name": "가"},
+                {"op": "set", "at": "p1", "text": "나"}])["code"] == "conflict"
+    assert err([{"op": "link", "at": "p1", "phrase": "2026년", "target": "https://www.hancom.com"},
+                {"op": "replace", "at": "p1", "find": "3월", "with": "4월"}])["code"] == "conflict"
+    assert err([{"op": "bookmark", "at": "t0/r0/c0/p0", "name": "가"},
+                {"op": "delete", "at": "t0"}])["code"] == "conflict"
+    assert err([{"op": "style.create", "name": "차례 제목"},
+                {"op": "toc", "at": "p0"}])["code"] == "conflict"
+
+    # valid ops without engine: capability_unavailable and nothing written
+    e = err([{"op": "bookmark", "at": "p1", "after": "2026년 3월", "name": "시작"},
+             {"op": "link", "at": "p2", "phrase": "보존 포맷 메타데이터", "target": "#시작"},
+             {"op": "link", "at": "p4", "phrase": "11월 18일", "target": "https://www.hancom.com"},
+             {"op": "toc", "at": "p0", "levels": 2, "leader": "dot"}])
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+@engine
+def test_engine_bookmark_link_and_toc(tmp_path, monkeypatch):
+    f = _copy(BASIC, tmp_path)
+    base = D._load(f, meta=False)
+    out = tmp_path / "blt.hwpx"
+    ops = [
+        {"op": "bookmark", "at": "p1", "after": "2026년 3월", "name": "시작"},
+        {"op": "bookmark", "at": "p7", "name": "회신"},
+        {"op": "link", "at": "p2", "phrase": "보존 포맷 메타데이터", "target": "#시작"},
+        {"op": "link", "at": "p4", "phrase": "11월 18일", "target": "https://www.hancom.com"},
+        {"op": "toc", "at": "p0", "levels": 2, "leader": "dot"},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert not r.get("remap_approx")
+    # toc after p0 adds 5 paragraphs (<제목 차례>, 3 outline headings up to level 2, closing fieldEnd paragraph)
+    assert r["remap"] == [{"from": "p%d" % k, "to": "p%d" % (k + 5)} for k in range(1, len(base.top))]
+    # follow-up a warning is present on the op that triggered _auto_styles
+    toc_applied = next(a for a in r["applied"] if a["op"] == "toc")
+    assert any("차례 제목 (TOC Heading)" in w for w in (toc_applied.get("warnings") or [])), toc_applied
+
+    got = D._load(out, meta=False)
+    assert len(got.top) == len(base.top) + 5
+    assert got.top[0].text == base.top[0].text
+    assert [p.text for p in got.top[6:]] == [p.text for p in base.top[1:]]
+    assert got.top[1].text == "<제목 차례>"
+    assert D._bookmarks_in(got, 0, got.top[6], with_before=True) == [("시작", "본 사업은 2026년 3월")]
+    assert D._bookmarks_in(got, 0, got.top[12], with_before=True) == [("회신", base.top[7].text)]
+    assert D._links_in(got.top[7]) == [("?시작;0;0;0;", "보존 포맷 메타데이터")]
+    assert D._links_in(got.top[9]) == [("https://www.hancom.com;1;0;0;", "11월 18일")]
+    assert len(D._toc_fields(got)) == 1
+
+    # duplicate bookmark name or a second toc on the edited document is refused with bad_input
+    out2 = tmp_path / "blt2.hwpx"
+    e = D.edit(out, [{"op": "bookmark", "at": "p6", "name": "시작"}], base=D.rev_of(out), out=out2)["error"]
+    assert e["code"] == "bad_input"
+    e = D.edit(out, [{"op": "toc", "at": "p0"}], base=D.rev_of(out), out=out2)["error"]
+    assert e["code"] == "bad_input"
+    assert not out2.exists()
+
+    # verifiers refuse hand-broken outputs for bookmark, link and toc
+    acts = D._plan(base, ops)
+    assert D._verify(base, got, acts)
+    raw_sec = got.zip.read("Contents/section0.xml").decode("utf-8")
+    for broken_xml in (
+        raw_sec.replace('name="시작"', 'name="다른이름"'),
+        raw_sec.replace("?시작;0;0;0;", "?없는이름;0;0;0;"),
+        raw_sec.replace("보존 포맷 메타데이터", "바뀐 링크 문구"),
+        raw_sec.replace("https://www.hancom.com;1;0;0;", "https://example.org;1;0;0;"),
+        raw_sec.replace('type="TABLEOFCONTENTS"', 'type="CLICK_HERE"'),
+        raw_sec.replace("ContentsLevel:int:2", "ContentsLevel:int:3"),
+        raw_sec.replace("세부 계획", "바뀐 본문 제목"),
+    ):
+        broken_bytes = got.zip.rewrite({"Contents/section0.xml": broken_xml.encode("utf-8")})
+        broken_doc = D.Doc(out, broken_bytes, "hwpx")
+        assert not D._verify(base, broken_doc, acts)
+
+    # end-to-end: if the engine produces a broken bookmark/link/toc output, edit fails and nothing is written
+    bad_bytes = got.zip.rewrite({"Contents/section0.xml": raw_sec.replace('name="시작"', 'name="깨짐"').encode("utf-8")})
+    monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_bytes, {}, None))
+    out_bad = tmp_path / "bad_blt.hwpx"
     res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
     assert not res_bad["ok"] and res_bad["error"]["code"] == "internal"
     assert res_bad["error"]["written"] is False and not out_bad.exists()

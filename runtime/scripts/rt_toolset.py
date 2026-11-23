@@ -928,6 +928,9 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "style.create": (("name",), ("eng_name", "kind", "based_on", "char", "para")),
     "note": (("at", "text"), ("kind", "after", "expect")),
     "caption": (("at", "text"), ("side",)),
+    "bookmark": (("at", "name"), ("after",)),
+    "link": (("at", "phrase", "target"), ()),
+    "toc": (("at",), ("levels", "leader")),
 }
 
 
@@ -962,6 +965,9 @@ OP_EXAMPLES = {
                     '"char":{"size":11,"bold":false},"para":{"align":"JUSTIFY","after":4}}',
     "note": '{"op":"note","at":"p1","kind":"foot","after":"2026년","text":"각주 설명"}',
     "caption": '{"op":"caption","at":"t0","side":"top","text":"연도별 예산 현황"}',
+    "bookmark": '{"op":"bookmark","at":"p1","after":"2026년","name":"시작"}',
+    "link": '{"op":"link","at":"p2","phrase":"메타데이터","target":"#시작"}',
+    "toc": '{"op":"toc","at":"p0","levels":2,"leader":"DASH"}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1054,10 +1060,25 @@ OP_NOTES = {
     "note": "`at` is a paragraph; inserts a 각주 (`kind` foot, default) or 미주 (end) with `text` "
             "(1 to 2000 characters, \\n starts a line) after `after` (text occurring once in the "
             "paragraph; default end of paragraph); `expect` is the paragraph's text; one per "
-            "paragraph per edit; notes do not shift paragraph numbering of the body",
+            "paragraph per edit; notes do not shift paragraph numbering of the body; if the "
+            "document has no 각주 or 미주 style, one is added from its first style (body size, not "
+            "Hancom's smaller 각주 default) and reported in warnings",
     "caption": "`at` is a table without a caption; attaches a 캡션 on `side` (bottom default, top, "
                "left, right) with `text` (1 to 500 characters on one line, after Hancom's 표 N ); "
                "one per table per edit; captions do not shift paragraph numbering of the body",
+    "bookmark": "`at` is a paragraph; inserts a point 책갈피 with `name` (1 to 64 characters, no "
+                "control characters, new to the document) at the end of the paragraph or right "
+                "after `after` (text occurring once in the paragraph); one per paragraph per edit; "
+                "bookmarks do not shift paragraph numbering of the body",
+    "link": "`at` is a paragraph; turns `phrase` (text occurring once in the paragraph) into a "
+            "하이퍼링크 to `target` (an http(s):// or mailto: URL, or `#name` of a bookmark in the "
+            "document or created by an earlier `bookmark` op in the same edit); one per paragraph "
+            "per edit; paragraph text and numbering do not change",
+    "toc": "`at` is a body paragraph; inserts Hancom's 제목 차례 after it for 개요 headings up to "
+           "`levels` (1 to 3, default 2) with tab `leader` (DASH default, DOT, SOLID, NONE); adds "
+           "top-level paragraphs so later body addresses shift in `remap`; one per edit, on a "
+           "document without a TABLEOFCONTENTS field; the page numbers come from rigorloom's "
+           "layout; 한글's 차례 새로 고침 updates them",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
@@ -1118,11 +1139,11 @@ def _edit_description() -> str:
     spelled = ", ".join(_op_signature(n) + (" (one plain paragraph per line, no tables)"
                                             if n == "insert_after" else "") for n in OPS_SPELLED)
     named = _op_names([n for n in OP_FIELDS if n not in OPS_SPELLED and n != "fill"])
-    return ("Change the document with declarative ops, staged into a draft; the person's "
-            "file changes only on `save`. Ops: " + spelled + "; also " + named + ". Each "
-            "op's fields and an example: guide topic `ops`. Addresses count from 0 "
-            "(t0/r0/c0 is the first cell). Pass the `rev` you read as `base`; `expect` "
-            "guards the text you change. Returns changed pages: preview them.")
+    return ("Change the document with declarative ops, staged in a draft; the file changes "
+            "only on `save`. Ops: " + spelled + "; also " + named + ". Fields and examples: "
+            "guide topic `ops`. Addresses count from 0 (t0/r0/c0 is the first cell). Pass "
+            "the `rev` you read as `base`; `expect` guards changed text. Preview changed "
+            "pages.")
 
 
 #: A GFM table's delimiter row: | --- | :---: |

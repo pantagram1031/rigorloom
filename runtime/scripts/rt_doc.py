@@ -101,7 +101,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "table.delete_row", "fill", "style", "insert_table", "insert_picture", "insert_equation",
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
-       "table.cell_style", "table.style", "style.create", "note", "caption")
+       "table.cell_style", "table.style", "style.create", "note", "caption", "bookmark", "link", "toc")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -1283,6 +1283,7 @@ def _scan_section(s, si, canon=None):
 
 
 _DIRECTION = re.compile(r"<[\w:.-]*stringParam\b[^>]*\bname=\"Direction\"[^>]*>(.*?)</", re.S)
+_COMMAND = re.compile(r"<[\w:.-]*stringParam\b[^>]*\bname=\"Command\"[^>]*>(.*?)</", re.S)
 
 
 def _switch_has_case(s, m):
@@ -1307,14 +1308,19 @@ def _switch_has_case(s, m):
 def _field_mark(s, m, name, tag, selfc, p, stack, paras):
     """Record a field's begin (in the paragraph that holds it) and its end (ptext positions, XML offsets)."""
     if name == "hp:fieldBegin":
-        direction = None
+        direction = command = None
         if not selfc:
             close = s.find("</%s" % m.group(2), m.end())
-            d = _DIRECTION.search(s, m.end(), close if close >= 0 else len(s))
+            end_at = close if close >= 0 else len(s)
+            d = _DIRECTION.search(s, m.end(), end_at)
             if d:
                 direction = "".join(_xml_char(x) for x in _XCHAR.finditer(d.group(1)))
+            c = _COMMAND.search(s, m.end(), end_at)
+            if c:
+                command = "".join(_xml_char(x) for x in _XCHAR.finditer(c.group(1)))
         f = {"type": _attr(tag, "type"), "name": _xml_unescape(_attr(tag, "name") or ""), "id": _attr(tag, "id"),
-             "direction": direction, "b": len(p.chars), "e": None, "after": m.end(), "endx": None, "para": p}
+             "direction": direction, "command": command, "b": len(p.chars), "e": None, "after": m.end(),
+             "endx": None, "para": p}
         p.fields.append(f)
         for fr in reversed(stack):              # the control around it, when there is one
             if fr[0] == "hp:ctrl":
@@ -1330,7 +1336,7 @@ def _field_mark(s, m, name, tag, selfc, p, stack, paras):
                 if q is p:
                     f["e"], f["endx"] = len(p.chars), m.start()
                 else:
-                    f["e"] = "elsewhere"            # a field across paragraphs
+                    f["e"], f["end_para"] = "elsewhere", p            # a field across paragraphs
                 break
 
 
@@ -2495,6 +2501,9 @@ class _Act:
         self.new_style = None   # style.create: {name, eng, kind, char, para} the output's header must have
         self.note = None        # note: (base Para, "footNote" | "endNote", text)
         self.caption = None     # caption: (table g, side, text)
+        self.bookmark = None    # bookmark: (base Para, name, after)
+        self.link = None        # link: (base Para, phrase, target)
+        self.toc = None         # toc: (base Para, levels, leader, n_added)
 
 
 class _Claims:
@@ -2508,7 +2517,10 @@ class _Claims:
         self.touched = []       # (si, pos, i, op, at)
         self.tables = {}        # table g -> [(i, op, at, kind, rect, border)]: row and style ops on one table
         self.new_styles = {}    # style name -> the first style.create op that makes it in this edit
-        self.created = {}       # style name -> (i, op) of the style.create planned so far
+        self.created = {}       # style name -> i of the style.create planned so far
+        self.auto_styles = {}   # style name -> (i, op) of the first op that needs _auto_styles to add it
+        self.bookmarks = {}     # bookmark name -> i of the bookmark op that creates it in this edit
+        self.toc_op = None      # i of the toc op in this edit
 
     def _conflict(self, i, op, j, op2, at):
         raise DocError("conflict", "ops %d (%s) and %d (%s) both change %s; send them in separate edits or as "
@@ -2532,6 +2544,9 @@ class _Claims:
         for s2, x, y, j, op2, at2 in self.removed:
             if j != i and s2 == si and x <= pos < y:
                 self._conflict(i, op, j, op2, at2)
+        for s2, pos2, j, op2, _at2 in self.touched:
+            if j != i and s2 == si and pos2 == pos and "toc" in (op, op2):
+                self._conflict(i, op, j, op2, at)
         self.touched.append((si, pos, i, op, at))
 
     def remove(self, si, start, end, i, op, at):
@@ -3061,6 +3076,10 @@ def _plan(doc, ops):
             exc.extra.setdefault("i", i)
             exc.extra.setdefault("at", at if isinstance(at, str) else None)
             raise
+    base_sname = doc.style_name("0") or next((s.get("name") for s in doc.styles.values() if s.get("name")), "바탕글")
+    for eng, sname, act in _auto_styles(doc, acts):
+        act.info.setdefault("warnings", []).append(
+            "auto_style: added missing style %s (%s) to header.xml based on %s" % (sname, eng, base_sname))
     return acts
 
 
@@ -3254,6 +3273,8 @@ NOTE_KINDS = ("FOOT", "END")
 NOTE_TEXT_MAX = 2000
 CAPTION_SIDES = ("BOTTOM", "TOP", "LEFT", "RIGHT")
 CAPTION_TEXT_MAX = 500
+TOC_LEADERS = ("DASH", "DOT", "SOLID", "NONE")
+_LINK_URL = re.compile(r"^(?:https?://[^/\s?#][^\s]*|mailto:[^@\s]+@[^@\s]+)$", re.I)
 _AUTO_STYLE_NAMES = {"footNote": ("Footnote", "각주"), "endNote": ("Endnote", "미주"), "caption": ("Caption", "캡션")}
 
 
@@ -3280,9 +3301,87 @@ def _after_candidates(txt, after, hits):
     return out or [txt[:40]]
 
 
+def _once_in_para(p, sub, op_name, field_name, i, at):
+    """ptext offset of `sub` in paragraph `p`; bad_input (with candidates when missing or ambiguous) otherwise."""
+    if not isinstance(sub, str) or not sub or _CTRL.search(sub) or "\n" in sub or "\r" in sub:
+        raise DocError("bad_input", "%s: %s is non-empty text in the paragraph" % (op_name, field_name), i=i, at=at)
+    hits = []
+    j = p.ptext.find(sub)
+    while j >= 0:
+        hits.append(j)
+        j = p.ptext.find(sub, j + len(sub))
+    if len(hits) != 1:
+        why = ("%r does not occur in %s" % (sub, at) if not hits else
+               "%r occurs %d times in %s; give a longer %s" % (sub, len(hits), at, field_name))
+        raise DocError("bad_input", "%s: %s" % (op_name, why), i=i, at=at,
+                       candidates=_after_candidates(p.text, sub, [_pub(p, x) for x in hits]))
+    return hits[0]
+
+
+def _bookmarks_in(d, si=None, para=None, with_before=False):
+    """The names of the <hp:bookmark> controls in `d`, in section `si`, or directly inside `para` (with_before:
+    [(name, text_before_bookmark_in_para)])."""
+    secs = range(len(d.secs)) if si is None else (si,)
+    out = []
+    for s_i in secs:
+        s = d.secs[s_i]
+        for m in re.finditer(r"<hp:bookmark\b[^>]*>", s):
+            if para is not None:
+                host = next((q for q in reversed(d.sec_paras[s_i]) if q.start < m.start() < q.end), None)
+                if host is not para:
+                    continue
+            bname = _xml_unescape(_attr(m.group(0), "name") or "")
+            if with_before and para is not None:
+                before = "".join(ch for ch, xp in zip(para.chars, para.xpos) if ch != OBJ and xp < m.start())
+                out.append((bname, before))
+            else:
+                out.append(bname)
+    return out
+
+
+def _doc_bookmarks(doc):
+    """All bookmark names in `doc` (point <hp:bookmark> controls and BOOKMARK fields)."""
+    out = set(_bookmarks_in(doc))
+    for q in doc.paras:
+        for f in q.fields:
+            if (f.get("type") or "").upper() == "BOOKMARK" and f.get("name"):
+                out.add(f["name"])
+    return out
+
+
+def _toc_fields(d):
+    return [f for q in d.paras for f in q.fields if (f.get("type") or "").upper() == "TABLEOFCONTENTS"]
+
+
+def _has_toc(d):
+    return bool(_toc_fields(d)) or any('type="TABLEOFCONTENTS"' in s for s in d.secs)
+
+
+def _act_needed_styles(a):
+    if a.note:
+        return [_AUTO_STYLE_NAMES[a.note[1]]]
+    if a.caption:
+        return [_AUTO_STYLE_NAMES["caption"]]
+    if a.toc:
+        return [("TOC Heading", "차례 제목")] + [("TOC %d" % k, "차례 %d" % k) for k in range(1, a.toc[1] + 1)]
+    return []
+
+
+def _claim_auto_style(doc, cl, i, name, at, eng, ko):
+    have = _style_names(doc)
+    if eng in have:
+        return
+    for v in (eng, ko):
+        j = cl.created.get(v)
+        if j is not None:
+            cl._conflict(i, name, j, "style.create", "style %r" % v)
+    for v in (eng, ko):
+        cl.auto_styles.setdefault(v, (i, name))
+
+
 def _auto_styles(doc, acts):
-    """[(eng, sname, act)] of built-in styles the engine's note_run / caption_xml looks up by English name
-    that this document's header.xml does not have yet."""
+    """[(eng, sname, act)] of built-in styles the engine's note_run / caption_xml / toc_xml looks up by
+    English name that this document's header.xml does not have yet."""
     have = _style_names(doc)
     for a in acts:
         if a.new_style:
@@ -3290,15 +3389,12 @@ def _auto_styles(doc, acts):
             if a.new_style.get("eng"):
                 have.add(a.new_style["eng"])
     out = []
-    for a in acts:
-        key = a.note[1] if a.note else ("caption" if a.caption else None)
-        if key is None:
-            continue
-        eng, ko = _AUTO_STYLE_NAMES[key]
-        if eng not in have:
-            sname = ko if ko not in have else eng
-            have.update((eng, sname))
-            out.append((eng, sname, a))
+    for a in sorted(acts, key=lambda x: x.i):
+        for eng, ko in _act_needed_styles(a):
+            if eng not in have:
+                sname = ko if ko not in have else eng
+                have.update((eng, sname))
+                out.append((eng, sname, a))
     return out
 
 
@@ -3344,9 +3440,14 @@ def _style_create(doc, cl, i, op, at):
     if eng and eng == sname:
         raise DocError("bad_input", "style.create: eng_name is the same as name", i=i, at=at)
     for v in (sname, eng):
-        j = cl.created.get(v) if v else None
+        if not v:
+            continue
+        j = cl.created.get(v)
         if j is not None:
             cl._conflict(i, name, j, name, "style %r" % v)
+        if v in cl.auto_styles:
+            j2, op2 = cl.auto_styles[v]
+            cl._conflict(i, name, j2, op2, "style %r" % v)
     kind = _enum(op.get("kind"), ("PARA", "CHAR"), "style.create: kind", i, at, "PARA")
     base = op.get("based_on", "바탕글")
     if not isinstance(base, str) or base not in have:
@@ -3929,22 +4030,8 @@ def _plan_op(doc, cl, i, name, op, at):
             p = r["para"]
             _check_expect(op, i, at, p.text)
         after = op.get("after")
-        if after is not None:
-            if not isinstance(after, str) or not after or _CTRL.search(after) or "\n" in after:
-                raise DocError("bad_input", "note: after is non-empty text in the paragraph", i=i, at=at)
-            hits = []
-            j = p.ptext.find(after)
-            while j >= 0:
-                hits.append(j)
-                j = p.ptext.find(after, j + len(after))
-            if len(hits) != 1:
-                why = ("%r does not occur in %s" % (after, at) if not hits else
-                       "%r occurs %d times in %s; give a longer after" % (after, len(hits), at))
-                raise DocError("bad_input", "note: " + why, i=i, at=at,
-                               candidates=_after_candidates(p.text, after, [_pub(p, x) for x in hits]))
-            pos = hits[0] + len(after)
-        else:
-            pos = len(p.chars)
+        pos = _once_in_para(p, after, "note", "after", i, at) + len(after) if after is not None else len(p.chars)
+        _claim_auto_style(doc, cl, i, name, at, *_AUTO_STYLE_NAMES[nkind])
         cl.span(p, 0, len(p.chars), i, name, whole=True)
         step = ({"op": "insert_footnote", "kwargs": {"text": text, "kind": "footNote"}} if kind == "FOOT"
                 else {"op": "insert_endnote", "kwargs": {"text": text}})
@@ -3970,6 +4057,7 @@ def _plan_op(doc, cl, i, name, op, at):
         if t.caption:
             raise DocError("bad_input", "table %s already has a caption (%r)"
                            % (t.addr, " ".join(q.text for q in t.caption).strip()), i=i, at=at)
+        _claim_auto_style(doc, cl, i, name, at, *_AUTO_STYLE_NAMES["caption"])
         _table_mark(cl, t, i, name, at, "table")
         cl.touch(t.si, t.start, i, name, at)
         c0 = t.cells[0]
@@ -3977,6 +4065,100 @@ def _plan_op(doc, cl, i, name, op, at):
                  steps=[{"op": "insert_caption", "kwargs": {"text": text, "side": side, "obj": t.id}}])
         a.restyled = [t.g]
         a.caption = (t.g, side, text)
+        acts.append(a)
+    elif name == "bookmark":
+        known = ("name", "after")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "bookmark takes %s, not %s" % (", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
+        bname = op.get("name")
+        if not isinstance(bname, str) or not bname.strip() or bname != bname.strip() \
+                or len(bname) > STYLE_NAME_MAX or _CTRL.search(bname) or re.search(r"[\t\n\r]", bname):
+            raise DocError("bad_input", "bookmark: name is 1 to %d characters on one line, no control characters"
+                           % STYLE_NAME_MAX, i=i, at=at)
+        if bname in _doc_bookmarks(doc):
+            raise DocError("bad_input", "bookmark: this document already has a bookmark called %r" % bname,
+                           i=i, at=at)
+        r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
+        if r.get("range"):
+            raise DocError("bad_address", "bookmark takes a whole paragraph, not a character range", i=i, at=at)
+        p = r["cell"].paras[-1] if (r.get("cell") is not None and r["kind"] in ("cell", "place")) else r["para"]
+        after = op.get("after")
+        pos = _once_in_para(p, after, "bookmark", "after", i, at) + len(after) if after is not None else len(p.chars)
+        cl.span(p, 0, len(p.chars), i, name, whole=True)
+        if bname in cl.bookmarks:
+            raise DocError("bad_input", "bookmark: duplicate bookmark name %r in this edit (already at op %d)"
+                           % (bname, cl.bookmarks[bname]), i=i, at=at)
+        cl.bookmarks[bname] = i
+        a = _Act(i, name, at, p, p.start, side=1, intra=pos, rank=0,
+                 steps=[["goto", p.k, pos, p.si], {"op": "insert_bookmark", "kwargs": {"name": bname}}])
+        a.bookmark = (p, bname, after)
+        acts.append(a)
+    elif name == "link":
+        known = ("phrase", "target")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "link takes %s, not %s" % (", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
+        r = resolve(doc, at, allow=("para", "cell", "cellpara", "heading", "place"))
+        if r.get("range"):
+            raise DocError("bad_address", "link takes a whole paragraph, not a character range", i=i, at=at)
+        p = r["cell"].paras[-1] if (r.get("cell") is not None and r["kind"] in ("cell", "place")) else r["para"]
+        phrase = op.get("phrase")
+        pos = _once_in_para(p, phrase, "link", "phrase", i, at)
+        target = op.get("target")
+        if not isinstance(target, str) or not target or target != target.strip() or len(target) > 2048 \
+                or _CTRL.search(target) or re.search(r"[\t\n\r]", target):
+            raise DocError("bad_input", "link: target is an http(s):// or mailto: URL, or #bookmark", i=i, at=at)
+        if target.startswith("#"):
+            bname = target[1:]
+            have_bm = _doc_bookmarks(doc) | set(cl.bookmarks)
+            if not bname or len(bname) > STYLE_NAME_MAX or _CTRL.search(bname) or bname not in have_bm:
+                raise DocError("bad_input", "link: no bookmark %r in this document" % bname, i=i, at=at,
+                               candidates=["#" + x for x in sorted(have_bm)][:8] if have_bm else None)
+        elif not _LINK_URL.match(target):
+            raise DocError("bad_input", "link: target must be an http(s):// or mailto: URL, or #bookmark", i=i, at=at)
+        cl.span(p, 0, len(p.chars), i, name, whole=True)
+        steps = [["goto", p.k, pos, p.si], ["select", len(phrase)], ["delete"],
+                 {"op": "insert_hyperlink", "kwargs": {"text": phrase, "target": target}}]
+        a = _Act(i, name, at, p, p.start, side=1, intra=pos, rank=1, steps=steps)
+        a.link = (p, phrase, target)
+        acts.append(a)
+    elif name == "toc":
+        known = ("levels", "leader")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "toc takes %s, not %s" % (", ".join(("at",) + known), extra[0]),
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
+        levels = op.get("levels", 2)
+        if not _is_int(levels) or not 1 <= levels <= 3:
+            raise DocError("bad_input", "toc: levels is 1 to 3", i=i, at=at, range=[1, 3])
+        leader = _enum(op.get("leader"), TOC_LEADERS, "toc: leader", i, at, "DASH")
+        r = resolve(doc, at, allow=("para", "heading"))
+        if r.get("range"):
+            raise DocError("bad_address", "toc takes a whole paragraph, not a character range", i=i, at=at)
+        p = r["para"]
+        if not p.top:
+            raise DocError("bad_address", "toc needs a body paragraph, not one in a table, note or box", i=i, at=at)
+        if _has_toc(doc):
+            raise DocError("bad_input", "toc: this document already has a table of contents", i=i, at=at)
+        cl.span(p, 0, len(p.chars), i, name, whole=True)
+        if cl.toc_op is not None:
+            raise DocError("bad_input", "toc: only one table of contents per edit (already at op %d)" % cl.toc_op,
+                           i=i, at=at)
+        for eng, ko in [("TOC Heading", "차례 제목")] + [("TOC %d" % k, "차례 %d" % k) for k in range(1, levels + 1)]:
+            _claim_auto_style(doc, cl, i, name, at, eng, ko)
+        cl.toc_op = i
+        n_heads = sum(1 for q in doc.top if (doc.para_heading.get(q.pr) or ("", 99))[0] == "OUTLINE"
+                      and doc.para_heading[q.pr][1] < levels)
+        n_added = 2 + n_heads
+        steps = [["goto", p.k, 0, p.si],
+                 {"op": "insert_toc", "kwargs": {"levels": levels, "leader": leader, "tables": False,
+                                                 "pictures": False, "equations": False}}]
+        a = _Act(i, name, at, p, p.end, side=0, rank=0, steps=steps)
+        _adds_for(doc, a, p, n_added)
+        a.toc = (p, levels, leader, n_added)
         acts.append(a)
     elif name in ("char_shape", "para_shape"):
         fmt = _shape_fmt(name, op, i, at)
@@ -4423,6 +4605,12 @@ def _verify(doc, newdoc, acts):
         return False
     if not _verify_captions(doc, newdoc, acts, st):
         return False
+    if not _verify_bookmarks(doc, newdoc, acts, st):
+        return False
+    if not _verify_links(doc, newdoc, acts, st):
+        return False
+    if not _verify_toc(doc, newdoc, acts, st):
+        return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
         ng = st["newt"][t.g]
@@ -4463,14 +4651,20 @@ def _verify_hf(newdoc, acts, st):
 
 
 def _verify_styles(doc, newdoc, acts):
-    """Each style a style.create op made is in the output's header.xml, once, with its type and English name,
-    and its charPr / paraPr hold the values asked that can be read back (size, bold, italic, color, align);
-    no style of the base document went missing."""
+    """Each style a style.create op made (or _auto_styles added) is in the output's header.xml, once, with its
+    type and English name, and its charPr / paraPr hold the values asked that can be read back (size, bold,
+    italic, color, align); no style of the base document went missing."""
     made = [a.new_style for a in acts if a.new_style]
+    auto = _auto_styles(doc, acts)
+    if not made and not auto:
+        return True
+    if len(newdoc.styles) != len(doc.styles) + len(made) + len(auto):
+        return False
+    for eng, sname, _act in auto:
+        if not any(st.get("name") == sname and (st.get("engName") or "") == eng for st in newdoc.styles.values()):
+            return False
     if not made:
         return True
-    if len(newdoc.styles) != len(doc.styles) + len(made) + len(_auto_styles(doc, acts)):
-        return False
     try:
         root = ET.fromstring(newdoc.zip.read("Contents/header.xml"))
     except (ET.ParseError, KeyError, OSError):
@@ -4634,6 +4828,142 @@ def _verify_captions(doc, newdoc, acts, st):
     return True
 
 
+def _verify_bookmarks(doc, newdoc, acts, st):
+    """Each bookmark op added one <hp:bookmark> with its name inside the addressed paragraph, and left the
+    paragraph's text unchanged."""
+    bms = [a for a in acts if a.bookmark]
+    if not bms:
+        return True
+    if len(newdoc.secs) < len(doc.secs):
+        return False
+    for si in range(len(doc.secs)):
+        want = [a.bookmark[1] for a in bms if a.si == si]
+        before_sec = _bookmarks_in(doc, si)
+        after_sec = list(_bookmarks_in(newdoc, si))
+        if len(after_sec) != len(before_sec) + len(want):
+            return False
+        for old in before_sec:
+            if old not in after_sec:
+                return False
+            after_sec.remove(old)
+        if sorted(after_sec) != sorted(want):
+            return False
+    for a in bms:
+        p, bname, after = a.bookmark
+        np = _new_para(doc, newdoc, p, st)
+        if np is None or np.text != p.text:
+            return False
+        before_p = _bookmarks_in(doc, p.si, p, with_before=True)
+        after_p = list(_bookmarks_in(newdoc, np.si, np, with_before=True))
+        if len(after_p) != len(before_p) + 1:
+            return False
+        for old in before_p:
+            if old not in after_p:
+                return False
+            after_p.remove(old)
+        want_before = p.text if after is None else p.text[:p.text.find(after) + len(after)]
+        if after_p != [(bname, want_before)]:
+            return False
+    return True
+
+
+def _links_in(p):
+    """[(command, range_text)] of the HYPERLINK fields in paragraph `p`."""
+    out = []
+    for f in p.fields:
+        if (f.get("type") or "").upper() != "HYPERLINK":
+            continue
+        if not isinstance(f.get("e"), int):
+            out.append((None, None))
+            continue
+        rtext = "".join(c for c in p.chars[f["b"]:f["e"]] if c != OBJ)
+        out.append((f.get("command") or "", rtext))
+    return out
+
+
+def _link_cmd_matches(cmd, target):
+    if not isinstance(cmd, str):
+        return False
+    if target.startswith("#"):
+        return cmd.startswith("?" + target[1:] + ";")
+    return cmd.startswith(target.replace(";", "\\;") + ";")
+
+
+def _verify_links(doc, newdoc, acts, st):
+    """Each link op kept the paragraph's text unchanged and added one HYPERLINK fieldBegin whose Command holds
+    the target and whose range text equals the phrase."""
+    links = {id(a.link[0]): a.link for a in acts if a.link}
+    if not links:
+        return True
+    for p in doc.paras:
+        np = _new_para(doc, newdoc, p, st)
+        if np is None:
+            continue
+        before_p = _links_in(p)
+        after_p = list(_links_in(np))
+        if (None, None) in after_p:
+            return False
+        if id(p) not in links:
+            if after_p != before_p:
+                return False
+            continue
+        _p, phrase, target = links[id(p)]
+        if np.text != p.text or len(after_p) != len(before_p) + 1:
+            return False
+        for old in before_p:
+            if old not in after_p:
+                return False
+            after_p.remove(old)
+        cmd, rtext = after_p[0]
+        if rtext != phrase or not _link_cmd_matches(cmd, target):
+            return False
+    return True
+
+
+def _verify_toc(doc, newdoc, acts, st):
+    """A toc op inserts one TABLEOFCONTENTS field right after the addressed paragraph, and leaves the original
+    paragraphs' text unchanged and in order."""
+    tocs = [a for a in acts if a.toc]
+    if not tocs:
+        return True
+    if len(tocs) != 1:
+        return False
+    p, levels, leader, n_added = tocs[0].toc
+    np = _new_para(doc, newdoc, p, st)
+    if np is None or not np.top or np.text != p.text:
+        return False
+    fields = _toc_fields(newdoc)
+    if len(fields) != 1:
+        return False
+    f = fields[0]
+    fid = f.get("id")
+    if not fid or sum(s.count('type="TABLEOFCONTENTS"') for s in newdoc.secs) != 1:
+        return False
+    if sum(len(re.findall(r'<hp:fieldEnd\b[^>]*\bbeginIDRef="%s"' % re.escape(fid), s)) for s in newdoc.secs) != 1:
+        return False
+    if np.gp + n_added >= len(newdoc.top):
+        return False
+    if f.get("para") is not newdoc.top[np.gp + 1] or f.get("end_para") is not newdoc.top[np.gp + n_added]:
+        return False
+    if newdoc.top[np.gp + 1].text != "<제목 차례>" or newdoc.top[np.gp + n_added].text != "":
+        return False
+    heads = [q for q in doc.top if (doc.para_heading.get(q.pr) or ("", 99))[0] == "OUTLINE"
+             and doc.para_heading[q.pr][1] < levels]
+    entries = newdoc.top[np.gp + 2:np.gp + n_added]
+    if len(entries) != len(heads) or any(h.text not in e.text or "\t" not in e.text for h, e in zip(heads, entries)):
+        return False
+    cmd = f.get("command") or ""
+    lead_num = {"NONE": 0, "SOLID": 1, "DOT": 2, "DASH": 3}[leader]
+    if "ContentsLevel:int:%d" % levels not in cmd or "ContentsLeader:int:%d" % lead_num not in cmd:
+        return False
+    changed = {id(a.text_of) for a in acts if a.text_of is not None}
+    orig = [q for q in doc.top if st["newtop"](q.gp) is not None and id(q) not in changed]
+    mapped = [st["newtop"](q.gp) for q in orig]
+    if mapped != sorted(mapped) or [newdoc.top[g].text for g in mapped] != [q.text for q in orig]:
+        return False
+    return True
+
+
 def _verify_shapes(doc, newdoc, acts, st):
     """The tables the table.* shape ops changed have the grid, cell count and merged cells they planned."""
     want = {}               # g -> expected change in the number of cells
@@ -4683,7 +5013,7 @@ def _remap_result(doc, newdoc, acts):
     if newdoc is None or _verify(doc, newdoc, acts):
         return remap, False
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
-            or a.hf or a.new_style or a.note or a.caption]
+            or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
