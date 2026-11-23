@@ -1435,6 +1435,29 @@ run-wide: `set_run` carries the whole new text. An offset therefore says where
 the cursor goes and what the user is editing around — it does not make the
 operation a splice, and a client must not describe it as one.
 
+When `set_run` (or `replace_at_cell` with `mode: "replace"`) writes the new run
+value, `preedit` aligns the old plain-text run and the new value by their
+common prefix `p` and capped common suffix `s` (`p + s <= min(len(old), len(new))`,
+changed region `[p, len(old) - s)` -> `[p, len(new) - s)`):
+- Inline elements inside `<hp:t>` (`<hp:fwSpace/>`, `<hp:lineBreak/>`,
+  `<hp:tab .../>`) at offsets in the unchanged prefix or suffix (including the
+  region edges) are re-emitted verbatim in original order, and
+  `PageGateway._preview` narrows the doc-core replacement range to the same
+  changed region so `U+3000`, `"\n"` and `"\t"` outside the changed region
+  survive in the preview.
+- Tags strictly inside `[p, len(old) - s)` are dropped and logged to `stderr`;
+  if an edit in one run changes two separate places, the tags between them fall
+  inside the changed region and are dropped.
+- When there is no common prefix and no common suffix (whole run replaced, or
+  an empty replacement value), every boundary tag at offset `0` and offset
+  `len(old)` (`<hp:fwSpace/>` included) is kept: a separator the editor cannot
+  show cannot be removed through a run edit.
+- `<hp:markpenBegin .../>` / `<hp:markpenEnd/>` pairs never leave a half pair
+  or an empty pair: both inside wrap the replacement changed text (or both are
+  dropped if the replacement changed text is empty); one inside and one outside
+  moves the inner mark to the changed-region edge on its side. A mark whose
+  partner sits in another run is moved the same way, never dropped.
+
 ---
 
 ## 13. Distribution-module checkers on the wire (gap 17)
