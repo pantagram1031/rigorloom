@@ -3239,4 +3239,3 @@ def test_engine_insert_picture_placement_and_picture_op(kit, tmp_path, monkeypat
     res_bad_pic = D.edit(out1, ops_mod, base=D.rev_of(out1), out=out_bad_pic)
     assert not res_bad_pic["ok"] and res_bad_pic["error"]["code"] == "internal"
     assert res_bad_pic["error"]["written"] is False and not out_bad_pic.exists()
-
