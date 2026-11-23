@@ -318,7 +318,13 @@ class PageGateway:
                 block = paragraphs[at]
                 runs = [run["text"] for run in block["runs"]]
                 idx = op["run"]
-                if idx >= len(runs) or runs[idx] != op["before"] or "".join(runs) != block["text"]:
+                # The queue path strips inline <hp:fwSpace/> and <hp:lineBreak/> tags
+                # when reading run text, while doc-core reads them as U+3000 and "\n".
+                # preedit.set_runs replaces the full <hp:t> interior span (dropping those
+                # inline elements), so replacing the full doc-core run range matches apply.
+                if (idx >= len(runs)
+                        or runs[idx].replace("\u3000", "").replace("\n", "") != op["before"]
+                        or "".join(runs) != block["text"]):
                     raise PageError("bad_address", "the queued run no longer matches the document")
                 start = sum(map(len, runs[:idx]))
                 at = f"{at}:{start}-{start + len(runs[idx])}"

@@ -239,6 +239,17 @@ def test_preview_refuses_a_linked_source(serving, document, fake_engine):
     assert fake_engine == []
 
 
+def test_preview_refuses_mismatched_queued_paragraph_run(serving, document, fake_engine):
+    session, _ = document
+    base = binding(session)
+    addresses = rt_ui_doc.rt_doc.queue_addresses(session.source)["addresses"]
+    queue_at = addresses["p0"]
+    refuse(request(serving, "preview", {**base, "ops": [
+        {"at": queue_at, "run": 0, "before": "문서와 다른 런 텍스트", "text": "수정"},
+    ]}), 400, "bad_address")
+    assert fake_engine == []
+
+
 def test_native_page_image_can_exceed_inline_limit(serving, document, fake_engine, monkeypatch, tmp_path):
     from PIL import Image
 
@@ -428,6 +439,10 @@ def test_installed_engine_previews_queued_run_with_fwspace_or_linebreak(
     run = region["runs"][run_idx]
     at = f"p{region['at_para']}"
     assert at == queue_at
+
+    refuse(request(serving, "preview", {**base, "ops": [
+        {"at": at, "run": run["index"], "before": run["text"] + " 불일치", "text": replacement},
+    ]}), 400, "bad_address")
 
     status, _, preview = request(serving, "preview", {**base, "ops": [
         {"at": at, "run": run["index"], "before": run["text"], "text": replacement},
