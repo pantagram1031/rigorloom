@@ -139,17 +139,23 @@ def test_canvas_and_panes_mount_from_start(browser, server, theme, size):
 def test_blanks_editing_and_keyboard_decisions(browser, server):
     with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
         _open_sample(page, server)
+        _wait_for_cell_geometry(page)
         expect(page.get_by_test_id("status-font-sub")).to_contain_text("글꼴 대체")
         expect(page.get_by_test_id("blanks-counter")).to_contain_text("빈칸")
+        expected_heading = "1쪽 · 표 1" if os.environ.get("RIGORLOOM_HWP_ENGINE") else "표 1"
+        expect(page.get_by_test_id("blanks-group-heading").first).to_have_text(expected_heading)
         agency = page.get_by_test_id("blanks-agency-toggle")
         expect(agency).to_have_attribute("aria-expanded", "false")
         agency.click()
         expect(page.get_by_test_id("blanks-agency-list")).to_be_visible()
+        expect(
+            page.get_by_test_id("blanks-agency-list").get_by_test_id("blanks-group-heading").first
+        ).to_have_text(expected_heading)
         agency.click()
 
         coop = page.get_by_test_id("blank-seat-t0/r5/c1")
         expect(coop).to_contain_text("협조자 1")
-        expect(coop).to_contain_text("표 1 6행 2열")
+        expect(coop.locator(".rl-blank-loc")).to_have_text("6행 2열")
         coop.hover()
         expect(page.get_by_test_id("status-seat")).to_contain_text("협조자 1")
         assert "rl-cell--hovered" in page.locator(COOP_CELL).get_attribute("class")

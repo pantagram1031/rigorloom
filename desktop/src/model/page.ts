@@ -88,9 +88,10 @@ export interface PageSeat {
   table: number;
   row: number;
   col: number;
-  page: number;
+  page: number | null;
   baseLabel: string;
   displayLabel: string;
+  cellLocationLabel: string;
   locationLabel: string;
   duplicateIndex: number | null;
   duplicateTotal: number;
@@ -427,14 +428,135 @@ export function isAgencyUseLabelOrText(label: string, rawText: string): boolean 
   );
 }
 
+function isKnownPage(page: number | null | undefined): page is number {
+  return typeof page === "number" && Number.isFinite(page) && page >= 1;
+}
+
+export function formatSeatCellLocation(
+  row: number,
+  col: number,
+  lang: UiLanguage = "ko",
+): string {
+  return wp3t("seat_location_cell", lang, [row + 1, col + 1]);
+}
+
+export function formatSeatGroupHeading(
+  page: number | null | undefined,
+  table: number,
+  lang: UiLanguage = "ko",
+): string {
+  if (isKnownPage(page)) {
+    return wp3t("seat_group_page_table", lang, [page, table + 1]);
+  }
+  return wp3t("seat_group_table", lang, [table + 1]);
+}
+
 export function formatSeatLocation(
-  page: number,
+  page: number | null | undefined,
   table: number,
   row: number,
   col: number,
   lang: UiLanguage = "ko",
 ): string {
-  return wp3t("seat_location_short", lang, [page, table + 1, row + 1, col + 1]);
+  if (isKnownPage(page)) {
+    return wp3t("seat_location_short", lang, [page, table + 1, row + 1, col + 1]);
+  }
+  return wp3t("seat_location_no_page", lang, [table + 1, row + 1, col + 1]);
+}
+
+export interface SeatLocationGroup<
+  S extends Pick<PageSeat, "page" | "table"> = PageSeat,
+> {
+  key: string;
+  page: number | null;
+  table: number;
+  heading: string;
+  seats: S[];
+}
+
+export function groupSeatsByLocation<
+  S extends Pick<PageSeat, "page" | "table">,
+>(
+  seats: readonly S[],
+  lang: UiLanguage = "ko",
+): SeatLocationGroup<S>[] {
+  const groups = new Map<string, SeatLocationGroup<S>>();
+  for (const seat of seats) {
+    const page = isKnownPage(seat.page) ? seat.page : null;
+    const table = seat.table;
+    const key = `${page ?? "unknown"}:t${table}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        page,
+        table,
+        heading: formatSeatGroupHeading(page, table, lang),
+        seats: [],
+      };
+      groups.set(key, group);
+    }
+    group.seats.push(seat);
+  }
+  return [...groups.values()];
+}
+
+export function resolveSeatPages(
+  seats: readonly PageSeat[],
+  pageSource?: Pick<PageSource, "kind" | "seats"> | null,
+  lang: UiLanguage = "ko",
+  knownPages?: ReadonlyMap<string, number>,
+): PageSeat[] {
+  const byKey = new Map<string, number>();
+  const byAddress = new Map<string, number>();
+  if (knownPages) {
+    for (const [k, p] of knownPages.entries()) {
+      if (isKnownPage(p)) {
+        byKey.set(k, p);
+        byAddress.set(k, p);
+      }
+    }
+  }
+  if (pageSource) {
+    for (const s of pageSource.seats()) {
+      if (isKnownPage(s.page)) {
+        if (s.key) byKey.set(s.key, s.page);
+        if (s.address) byAddress.set(s.address, s.page);
+      }
+    }
+  }
+  return seats.map((seat) => {
+    const rawPage =
+      byKey.get(seat.key) ??
+      byAddress.get(seat.address) ??
+      (isKnownPage(seat.page) ? seat.page : null);
+    const page = isKnownPage(rawPage) ? rawPage : null;
+    const locationLabel = formatSeatLocation(
+      page,
+      seat.table,
+      seat.row,
+      seat.col,
+      lang,
+    );
+    const cellLocationLabel = formatSeatCellLocation(
+      seat.row,
+      seat.col,
+      lang,
+    );
+    if (
+      seat.page === page &&
+      seat.locationLabel === locationLabel &&
+      seat.cellLocationLabel === cellLocationLabel
+    ) {
+      return seat;
+    }
+    return {
+      ...seat,
+      page,
+      locationLabel,
+      cellLocationLabel,
+    };
+  });
 }
 
 function estimateCellRectPt(
@@ -464,6 +586,7 @@ export function detectDocumentSeats(
   lang: UiLanguage = "ko",
   sizePt?: PageSizePt,
   measuredRects?: ReadonlyMap<string, PageRectPt>,
+  seatPages?: ReadonlyMap<string, number>,
 ): PageSeat[] {
   if (!inspect) return [];
   const size = sizePt ?? sizeFromInspect(inspect);
@@ -612,33 +735,39 @@ export function detectDocumentSeats(
   }
 
   const disambiguated = disambiguateBlankLabels(rawSeats);
-  return disambiguated.map((seat) => ({
-    id: seat.key,
-    key: seat.key,
-    address: formatCellAddress(seat.table, seat.row, seat.col),
-    table: seat.table,
-    row: seat.row,
-    col: seat.col,
-    page: 1,
-    baseLabel: seat.baseLabel,
-    displayLabel: seat.displayLabel,
-    locationLabel: formatSeatLocation(1, seat.table, seat.row, seat.col, lang),
-    duplicateIndex: seat.duplicateIndex,
-    duplicateTotal: seat.duplicateTotal,
-    group: seat.group,
-    filled: seat.filled,
-    hasFormText: seat.hasFormText,
-    isFillTarget: seat.isFillTarget,
-    beforeText: seat.beforeText,
-    currentText: seat.currentText,
-    charPr: seat.charPr,
-    charPrSuggested: seat.charPrSuggested,
-    scriptAnomaly: seat.scriptAnomaly,
-    colorAnomaly: seat.colorAnomaly,
-    fontCategory: seat.fontCategory,
-    fontFace: seat.fontFace,
-    rect: seat.rect,
-  }));
+  return disambiguated.map((seat) => {
+    const address = formatCellAddress(seat.table, seat.row, seat.col);
+    const rawPage = seatPages?.get(seat.key) ?? seatPages?.get(address) ?? null;
+    const page = isKnownPage(rawPage) ? rawPage : null;
+    return {
+      id: seat.key,
+      key: seat.key,
+      address,
+      table: seat.table,
+      row: seat.row,
+      col: seat.col,
+      page,
+      baseLabel: seat.baseLabel,
+      displayLabel: seat.displayLabel,
+      cellLocationLabel: formatSeatCellLocation(seat.row, seat.col, lang),
+      locationLabel: formatSeatLocation(page, seat.table, seat.row, seat.col, lang),
+      duplicateIndex: seat.duplicateIndex,
+      duplicateTotal: seat.duplicateTotal,
+      group: seat.group,
+      filled: seat.filled,
+      hasFormText: seat.hasFormText,
+      isFillTarget: seat.isFillTarget,
+      beforeText: seat.beforeText,
+      currentText: seat.currentText,
+      charPr: seat.charPr,
+      charPrSuggested: seat.charPrSuggested,
+      scriptAnomaly: seat.scriptAnomaly,
+      colorAnomaly: seat.colorAnomaly,
+      fontCategory: seat.fontCategory,
+      fontFace: seat.fontFace,
+      rect: seat.rect,
+    };
+  });
 }
 
 function formatMarkRange(items: readonly CanvasChangeRef[]): string | null {
@@ -1117,7 +1246,7 @@ export function createProjectionPageSource({
       }
     }
     for (const seat of cachedSeats) {
-      if (seat.page !== page) continue;
+      if (seat.page !== null && seat.page !== page) continue;
       if (contains(seat.rect)) {
         return {
           kind: "seat",

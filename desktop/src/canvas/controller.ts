@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 import type {
   CanvasChangeDecision,
   CanvasChangeRef,
@@ -131,17 +133,77 @@ export function restoreCanvasDecision(changes: readonly DecidableChange[]): stri
 
 type SelectListener = (itemId: string | null) => void;
 const selectListeners = new Set<SelectListener>();
+const contextListeners = new Set<() => void>();
 let activeChangesSnapshot: readonly CanvasChangeRef[] = [];
 let activePageSource: PageSource | null = null;
+let activeKnownPagesRev: string | null = null;
+let activeKnownPages = new Map<string, number>();
 let scrollRequestNonce = 0;
 let lastSelectOrigin: "canvas" | "external" = "external";
+
+function subscribeCanvasContext(cb: () => void): () => void {
+  contextListeners.add(cb);
+  return () => {
+    contextListeners.delete(cb);
+  };
+}
 
 export function publishCanvasContext(
   changes: readonly CanvasChangeRef[],
   pageSource: PageSource | null,
 ): void {
+  const prevSource = activePageSource;
   activeChangesSnapshot = changes;
   activePageSource = pageSource;
+  let pagesChanged = false;
+  if (!pageSource) {
+    if (activeKnownPages.size > 0) {
+      activeKnownPages = new Map();
+      activeKnownPagesRev = null;
+      pagesChanged = true;
+    }
+  } else {
+    if (pageSource.rev !== activeKnownPagesRev) {
+      activeKnownPages = new Map();
+      activeKnownPagesRev = pageSource.rev;
+      pagesChanged = true;
+    }
+    if (pageSource.kind === "engine") {
+      let nextMap: Map<string, number> | null = null;
+      const record = (k: string | undefined, p: number) => {
+        if (!k) return;
+        const cur = (nextMap ?? activeKnownPages).get(k);
+        if (cur !== p) {
+          if (!nextMap) nextMap = new Map(activeKnownPages);
+          nextMap.set(k, p);
+        }
+      };
+      for (const s of pageSource.seats()) {
+        if (typeof s.page === "number" && Number.isFinite(s.page) && s.page >= 1) {
+          record(s.key, s.page);
+          record(s.address, s.page);
+        }
+      }
+      const total = Math.max(1, pageSource.pageCount());
+      for (let p = 1; p <= total; p += 1) {
+        const layer = pageSource.layer(p, "clean");
+        if (layer.kind === "engine") {
+          for (const box of layer.boxes) {
+            if (box.address) record(box.address, p);
+          }
+        }
+      }
+      if (nextMap) {
+        activeKnownPages = nextMap;
+        pagesChanged = true;
+      }
+    }
+  }
+  if (prevSource !== pageSource || pagesChanged) {
+    for (const cb of contextListeners) {
+      cb();
+    }
+  }
 }
 
 export function getPublishedChanges(): readonly CanvasChangeRef[] {
@@ -150,6 +212,18 @@ export function getPublishedChanges(): readonly CanvasChangeRef[] {
 
 export function getPublishedPageSource(): PageSource | null {
   return activePageSource;
+}
+
+export function getPublishedKnownPages(): ReadonlyMap<string, number> {
+  return activeKnownPages;
+}
+
+export function usePublishedPageSource(): PageSource | null {
+  return useSyncExternalStore(
+    subscribeCanvasContext,
+    getPublishedPageSource,
+    getPublishedPageSource,
+  );
 }
 
 export function getScrollRequestState(): { nonce: number; origin: "canvas" | "external" } {

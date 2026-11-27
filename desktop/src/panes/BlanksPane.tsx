@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 
 import { wp3t } from "../i18n/v2/wp3";
 import {
   detectDocumentSeats,
+  groupSeatsByLocation,
+  resolveSeatPages,
   type PageSeat,
+  type SeatLocationGroup,
 } from "../model/page";
 import {
   activeInspect,
@@ -16,9 +19,11 @@ import { getShell, setShell } from "../shell/shellState";
 import { useCanvasChanges } from "../canvas/changes";
 import { beginCellEditV2 } from "../canvas/actions";
 import {
+  getPublishedKnownPages,
   scrollCanvasToTarget,
   setCanvasSlice,
   useCanvasSlice,
+  usePublishedPageSource,
 } from "../canvas/controller";
 import "./panes.css";
 
@@ -28,6 +33,7 @@ export function BlanksPane() {
   const texts = useWorkspace(activeDisplayText);
   const language = useWorkspace((s) => s.language);
   const slice = useCanvasSlice(session?.sessionId);
+  const pageSource = usePublishedPageSource();
 
   // `J1 §3` & `BlanksPane`: receiving-agency blanks start collapsed by default.
   const [agencyOpen, setAgencyOpen] = useState(false);
@@ -38,8 +44,14 @@ export function BlanksPane() {
 
   const seats = useMemo(() => {
     if (!inspect) return [];
-    return detectDocumentSeats(inspect, textMap, changes, language);
-  }, [inspect, textMap, changes, language]);
+    const detected = detectDocumentSeats(inspect, textMap, changes, language);
+    return resolveSeatPages(
+      detected,
+      pageSource,
+      language,
+      pageSource?.kind === "engine" ? getPublishedKnownPages() : undefined,
+    );
+  }, [inspect, textMap, changes, language, pageSource]);
 
   const primarySeats = useMemo(
     () => seats.filter((s) => s.group === "primary"),
@@ -48,6 +60,14 @@ export function BlanksPane() {
   const agencySeats = useMemo(
     () => seats.filter((s) => s.group === "agency"),
     [seats],
+  );
+  const primaryGroups = useMemo(
+    () => groupSeatsByLocation(primarySeats, language),
+    [primarySeats, language],
+  );
+  const agencyGroups = useMemo(
+    () => groupSeatsByLocation(agencySeats, language),
+    [agencySeats, language],
   );
 
   const counterPool = primarySeats.length > 0 ? primarySeats : seats;
@@ -117,11 +137,26 @@ export function BlanksPane() {
               </span>
             ) : null}
           </span>
-          <span className="rl-blank-loc rl-num">{seat.locationLabel}</span>
+          <span className="rl-blank-loc rl-num">{seat.cellLocationLabel}</span>
         </button>
       </li>
     );
   };
+
+  const renderSeatGroups = (groups: readonly SeatLocationGroup<PageSeat>[]) =>
+    groups.map((group) => (
+      <Fragment key={group.key}>
+        <li
+          className="rl-blanks-group-hdr rl-num"
+          data-testid="blanks-group-heading"
+          data-group-key={group.key}
+          role="presentation"
+        >
+          {group.heading}
+        </li>
+        {group.seats.map(renderSeatRow)}
+      </Fragment>
+    ));
 
   return (
     <section
@@ -142,7 +177,7 @@ export function BlanksPane() {
         <div className="rl-pane-scroll">
           {primarySeats.length > 0 ? (
             <ul className="rl-blanks-list" role="list">
-              {primarySeats.map(renderSeatRow)}
+              {renderSeatGroups(primaryGroups)}
             </ul>
           ) : null}
 
@@ -171,7 +206,7 @@ export function BlanksPane() {
                   data-testid="blanks-agency-list"
                   role="list"
                 >
-                  {agencySeats.map(renderSeatRow)}
+                  {renderSeatGroups(agencyGroups)}
                 </ul>
               ) : null}
             </div>
