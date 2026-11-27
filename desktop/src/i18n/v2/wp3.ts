@@ -15,7 +15,7 @@ export const WP3_VOCABULARY = {
     ko: "미리보기 · 인쇄 결과와 다를 수 있습니다",
     en: "Preview · Printed output may differ",
   },
-  status_cell_position: { ko: "{0}쪽 · 표 {1}줄 {2}칸", en: "Page {0} · Table row {1}, column {2}" },
+  status_cell_position: { ko: "{0}쪽 · 표 {1} {2}행 {3}열", en: "Page {0} · Table {1}, row {2}, col {3}" },
   status_page_position: { ko: "{0}쪽", en: "Page {0}" },
   canvas_strip_breadcrumb: { ko: "{0} › 변경 {1}건", en: "{0} › {1} changes" },
   canvas_strip_stale: {

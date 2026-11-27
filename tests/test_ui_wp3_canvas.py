@@ -157,7 +157,7 @@ def test_blanks_editing_and_keyboard_decisions(browser, server):
 
         # The form's printed header line is not a blank: no made-up "빈칸 N" name.
         page.locator('[data-cell-key="c:0:0:0"]').first.hover()
-        expect(page.get_by_test_id("status-cell-position")).to_contain_text("1줄 1칸")
+        expect(page.get_by_test_id("status-cell-position")).to_contain_text("표 1 1행 1열")
         expect(page.get_by_test_id("status-seat")).to_have_count(0)
 
         coop = page.get_by_test_id("blank-seat-t0/r5/c1")
