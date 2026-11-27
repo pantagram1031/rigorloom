@@ -273,11 +273,11 @@ def _start_bare_bridge(tmp_path: Path) -> tuple[rt_ui.BridgeHTTPServer, threadin
     return srv, t
 
 
-def _post_head(port: int, headers: dict[str, str]) -> socket.socket:
-    """Send only the head of an untokened POST /rpc; the caller sends any body."""
-    lines = ["POST /rpc HTTP/1.1", f"Host: 127.0.0.1:{port}", "Content-Type: application/json"]
+def _post_head(port: int, headers: dict[str, str], path: str = "/rpc", timeout: float = 30) -> socket.socket:
+    """Send only the head of a POST (untokened unless `headers` has the token); the caller sends any body."""
+    lines = [f"POST {path} HTTP/1.1", f"Host: 127.0.0.1:{port}", "Content-Type: application/json"]
     lines += [f"{k}: {v}" for k, v in headers.items()]
-    sock = socket.create_connection(("127.0.0.1", port), timeout=30)
+    sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
     sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("ascii"))
     return sock
 
@@ -345,6 +345,50 @@ def test_a_refused_body_too_large_or_unframed_is_not_read(tmp_path: Path, header
         finally:
             sock.close()
         assert data.startswith(b"HTTP/1.1 403")
+    finally:
+        srv.shutdown_bridge()
+        t.join(timeout=5)
+
+
+def test_a_post_outside_rpc_and_api_drains_its_body_and_closes(tmp_path: Path):
+    """The 404 for a path the bridge does not serve never reads the body: it
+    drains a small one like a refusal, and closes so the body is not read as
+    the next request."""
+    srv, t = _start_bare_bridge(tmp_path)
+    try:
+        sock = _post_head(srv.port, {"Content-Length": "2"}, path="/nope", timeout=5)
+        try:
+            readable, _, _ = select.select([sock], [], [], 0.3)
+            assert not readable, "the bridge answered before the body it was sent"
+            sock.sendall(b"{}")
+            data = _read_to_eof(sock)   # a kept-alive connection times out here
+        finally:
+            sock.close()
+        assert data.startswith(b"HTTP/1.1 404")
+        assert data.count(b"HTTP/1.1 ") == 1
+    finally:
+        srv.shutdown_bridge()
+        t.join(timeout=5)
+
+
+@pytest.mark.parametrize("path, headers, status", [
+    ("/api/doc-folder", {"Content-Length": str(rt_ui.SMALL_JSON_BODY_BYTES + 1)}, b"413"),
+    ("/rpc", {"Content-Length": "abc"}, b"400"),
+    ("/rpc", {"Transfer-Encoding": "chunked"}, b"400"),
+], ids=["too-large", "bad-length", "chunked"])
+def test_a_post_body_the_bridge_will_not_read_closes_the_connection(tmp_path: Path, path, headers, status):
+    """An authorised POST whose body is left unread (too large, unreadable
+    length, chunked) is answered and the connection closed, instead of kept
+    alive with the body still waiting on it."""
+    srv, t = _start_bare_bridge(tmp_path)
+    try:
+        sock = _post_head(srv.port, {"X-Rigorloom-Token": srv.token, **headers}, path=path, timeout=5)
+        try:
+            data = _read_to_eof(sock)   # a kept-alive connection times out here
+        finally:
+            sock.close()
+        assert data.startswith(b"HTTP/1.1 " + status), data[:80]
+        assert data.count(b"HTTP/1.1 ") == 1
     finally:
         srv.shutdown_bridge()
         t.join(timeout=5)

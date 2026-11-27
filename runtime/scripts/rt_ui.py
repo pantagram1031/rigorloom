@@ -2519,19 +2519,28 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         try:
             length = int(raw_len)
         except ValueError as exc:
+            # The body stays unread, so it must not be read as the next request.
+            self.close_connection = True
             raise BridgeError("invalid_params", "invalid Content-Length") from exc
         if length < 0 or length > limit:
+            self.close_connection = True
             raise BridgeError("body_too_large", "request body exceeds maximum allowed size", status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
         return length
 
     def _check_extension_body(self, *, allow_body: bool) -> None:
         if self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
             raise BridgeError("invalid_params", "transfer encoding is not supported")
         length = self._body_length(SMALL_JSON_BODY_BYTES)
         if length and not allow_body:
             raise BridgeError("invalid_params", "GET does not accept a request body")
 
     def _read_json_body(self, limit: int = MAX_JSON_BODY_BYTES) -> dict[str, Any]:
+        if self.headers.get("Transfer-Encoding"):
+            # A chunked body is not read; it used to pass as an empty one and
+            # stay on the connection.
+            self.close_connection = True
+            raise BridgeError("invalid_params", "transfer encoding is not supported")
         length = self._body_length(limit)
         if not length:
             return {}
@@ -2690,6 +2699,10 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         path = parsed.path
         if path != "/rpc" and not path.startswith("/api/"):
+            # This answer never reads the body: drain a small one and close,
+            # as a refusal does, so it is not read as the next request.
+            self.close_connection = True
+            self._drain_refused_body()
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"code": "not_found", "message": path}})
             return
         if not self._require_header_token():
