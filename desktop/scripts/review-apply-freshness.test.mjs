@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
+import { draftValidationPending } from "../src/store.ts";
 
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 
@@ -134,6 +135,8 @@ function fixture() {
     currentPlanGeneration: () => generation,
     headCandidate: (current) => (current.head ? { runId: current.head } : null),
     canRequestApproval: () => true,
+    draftValidationPending,
+    flushDraftValidation: async () => {},
     loadCandidates: async () => {
       candidateRefreshes += 1;
     },

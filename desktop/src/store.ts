@@ -1426,6 +1426,19 @@ function computeStaleness(s: WorkspaceState): Staleness {
   return null;
 }
 
+/** True once a proposed plan has landed and its deferred validation is still pending. */
+export function draftValidationPending(
+  draft: Pick<Draft, "plan" | "validation" | "phase"> | null | undefined,
+): boolean {
+  return Boolean(
+    draft &&
+      draft.plan !== null &&
+      draft.plan !== undefined &&
+      draft.validation === null &&
+      draft.phase === "starting",
+  );
+}
+
 /** The queue is approvable only when it validates and nothing has moved. */
 export function canRequestApproval(s: WorkspaceState): boolean {
   return (

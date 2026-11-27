@@ -4,11 +4,21 @@ import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
 
+import * as store from "../src/store.ts";
+import { swapSessionDrafts } from "../src/workspace/trust.ts";
+
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 const ownerStart = source.indexOf("interface DraftOwner {");
 const ownerEnd = source.indexOf("/** Load a session's inspect", ownerStart);
 assert.ok(ownerStart >= 0 && ownerEnd > ownerStart, "draft owner source boundary changed");
 const ownerImplementation = source.slice(ownerStart, ownerEnd);
+
+const selectStart = source.indexOf("let eventSelectionGeneration = 0;");
+const selectEnd = source.indexOf("export async function refreshSessions(", selectStart);
+assert.ok(selectStart >= 0 && selectEnd > selectStart, "selectSession source boundary changed");
+const selectImplementation = source
+  .slice(selectStart, selectEnd)
+  .replace(/^export /gm, "");
 
 const setQueueStart = source.indexOf("async function setQueue(");
 const setQueueEnd = source.indexOf("/** Re-propose the queue", setQueueStart);
@@ -53,6 +63,10 @@ function fixture({ manualValidate = false } = {}) {
   let state = {
     activeSessionId: "session-A",
     draft: { ...EMPTY_DRAFT },
+    parkedDrafts: {},
+    redoStack: [],
+    editIntentGeneration: 0,
+    corpusFiles: ["sample.hwpx"],
     head: null,
     approval: null,
     approvalPhase: "idle",
@@ -72,6 +86,7 @@ function fixture({ manualValidate = false } = {}) {
   const draftHistory = [];
 
   const rt = {
+    async savePrefs() {},
     async proposePlan(sessionId, ops, options) {
       const planId = `plan-${++planCounter}`;
       const plan = {
@@ -146,6 +161,18 @@ function fixture({ manualValidate = false } = {}) {
     rt,
     EMPTY_DRAFT,
     REAPPROVAL_PROMPT: "stale",
+    swapSessionDrafts,
+    stopDocumentEvents: () => {},
+    applyPresentation: () => ({}),
+    loadCorpusFiles: async () => [],
+    loadInspect: async () => true,
+    loadText: async () => true,
+    loadCandidates: async () => {},
+    rememberRecent: () => {},
+    startEvents: async () => {},
+    loadHeadTexts: async () => true,
+    restoreSavedDraft: async () => {},
+    uiVariant: () => "v2",
     draftStaleness: () => null,
     showToast: () => {},
     persistDraft: (sessionId, draft) => {
@@ -173,10 +200,12 @@ function fixture({ manualValidate = false } = {}) {
 
   vm.runInContext(
     `${stripTypeScriptTypes(ownerImplementation)}
+${stripTypeScriptTypes(selectImplementation)}
 ${stripTypeScriptTypes(setQueueImplementation)}
 ${stripTypeScriptTypes(revalidateImplementation)}
 globalThis.invokeSetQueue = setQueue;
 globalThis.invokeRevalidate = revalidateActiveDraft;
+globalThis.invokeSelectSession = selectSession;
 globalThis.settleMs = typeof DRAFT_VALIDATE_SETTLE_MS === "number" ? DRAFT_VALIDATE_SETTLE_MS : 700;`,
     context,
   );
@@ -198,6 +227,7 @@ globalThis.settleMs = typeof DRAFT_VALIDATE_SETTLE_MS === "number" ? DRAFT_VALID
     },
     set: (text) => context.invokeSetQueue([op(text)]),
     revalidate: () => context.invokeRevalidate(),
+    selectSession: (sessionId) => context.invokeSelectSession(sessionId),
     settleMs: context.settleMs,
     proposals,
     validations,
@@ -337,3 +367,74 @@ test("the draft never shows phase ready with validation null and revalidate flus
     );
   }
 });
+
+test("selectSession cancels a pending validate so validatePlan is not called after the window", async () => {
+  const f = fixture();
+
+  await f.set("parked-before-validate");
+  await f.tick();
+
+  assert.equal(f.proposals.length, 1);
+  assert.equal(f.validations.length, 0);
+  assert.equal(f.timers.size, 1);
+  assert.equal(f.read().draft.plan?.planId, "plan-1");
+  assert.equal(f.read().draft.validation, null);
+  assert.equal(f.read().draft.phase, "starting");
+
+  await f.selectSession("session-B");
+  assert.equal(f.read().activeSessionId, "session-B");
+  assert.equal(f.read().parkedDrafts["session-A"]?.draft.plan?.planId, "plan-1");
+  assert.equal(f.timers.size, 0, "selectSession must cancel the pending validate timer");
+
+  // Even if session-A's parked draft is swapped back before restoreSavedDraft re-proposes it,
+  // the old timer must not fire when the original settle window elapses.
+  await f.selectSession("session-A");
+  await f.advanceTime(f.settleMs * 2);
+  assert.equal(f.validations.length, 0);
+});
+
+test("draftValidationPending is true only for plan != null, validation null, phase starting", () => {
+  assert.equal(typeof store.draftValidationPending, "function");
+  const plan = {
+    planId: "plan-1",
+    planHash: "hash-1",
+    boundSha256: "source-A",
+    sessionId: "session-A",
+  };
+  const validation = {
+    ok: true,
+    stale: false,
+    hard: [],
+    boundSha256: "source-A",
+    currentSha256: "source-A",
+    planId: "plan-1",
+  };
+
+  assert.equal(
+    store.draftValidationPending({ ...EMPTY_DRAFT, plan, validation: null, phase: "starting" }),
+    true,
+  );
+  assert.equal(
+    store.draftValidationPending({ ...EMPTY_DRAFT, plan: null, validation: null, phase: "starting" }),
+    false,
+  );
+  assert.equal(
+    store.draftValidationPending({ ...EMPTY_DRAFT, plan, validation, phase: "starting" }),
+    false,
+  );
+  for (const phase of ["idle", "ready", "failed"]) {
+    assert.equal(
+      store.draftValidationPending({ ...EMPTY_DRAFT, plan, validation: null, phase }),
+      false,
+      `expected false for phase=${phase}`,
+    );
+  }
+  assert.equal(store.draftValidationPending(null), false);
+  assert.equal(store.draftValidationPending(undefined), false);
+
+  const changeListSource = readFileSync(new URL("../src/components/ChangeList.tsx", import.meta.url), "utf8");
+  const reviewViewSource = readFileSync(new URL("../src/views/ReviewView.tsx", import.meta.url), "utf8");
+  assert.match(changeListSource, /draftValidationPending\(/);
+  assert.match(reviewViewSource, /draftValidationPending\(/);
+});
+
