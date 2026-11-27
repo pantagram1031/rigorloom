@@ -44,7 +44,7 @@ import {
   stepCanvasZoom,
   toggleNarrowReadZoom,
 } from "./actions";
-import { PageGuides } from "./PageGuides";
+import { PageCropMarks } from "./PageGuides";
 import { ReviewMark } from "./ReviewMark";
 import type { MarkToolbarAnchor } from "./MarkToolbar";
 import type { ScrollMapTick } from "./ScrollMap";
@@ -405,6 +405,9 @@ export interface PageSheetProps {
     toolbarAnchor: MarkToolbarAnchor | null;
     scrollTicks: ScrollMapTick[];
     effectiveZoom: number;
+    sheetWidth: number;
+    sheetHeight: number;
+    margins: { top: number; right: number; bottom: number; left: number };
   }) => void;
 }
 
@@ -556,11 +559,21 @@ export function PageSheet({
   // Measure mark positions, toolbar anchor, and scrollmap ticks after layout
   useLayoutEffect(() => {
     const sheet = sheetRef.current;
+    const margins = {
+      top: padTopPx,
+      right: padRightPx,
+      bottom: padBottomPx,
+      left: padLeftPx,
+    };
+    const outerWidth = Math.floor(naturalWidthPx * effectiveZoom);
     if (!sheet) {
       onMeasurementsChange({
         toolbarAnchor: null,
         scrollTicks: [],
         effectiveZoom,
+        sheetWidth: outerWidth,
+        sheetHeight: Math.round(naturalHeightPx * effectiveZoom),
+        margins,
       });
       return;
     }
@@ -636,6 +649,9 @@ export function PageSheet({
         toolbarAnchor,
         scrollTicks: ticks,
         effectiveZoom,
+        sheetWidth: outerWidth,
+        sheetHeight: Math.round(totalH * effectiveZoom),
+        margins,
       });
     };
 
@@ -649,7 +665,11 @@ export function PageSheet({
     selectedChangeId,
     view,
     effectiveZoom,
+    naturalWidthPx,
     naturalHeightPx,
+    padTopPx,
+    padRightPx,
+    padBottomPx,
     padLeftPx,
     inspect,
     texts,
@@ -1323,7 +1343,7 @@ export function PageSheet({
 
         <div className="rl-paper-veil" aria-hidden="true" />
       </article>
-      <PageGuides width={sheetOuterWidth} height={sheetOuterHeight} zoom={effectiveZoom}
+      <PageCropMarks width={sheetOuterWidth} height={sheetOuterHeight} zoom={effectiveZoom}
         margins={{ top: padTopPx, right: padRightPx, bottom: padBottomPx, left: padLeftPx }} />
     </div>
   );

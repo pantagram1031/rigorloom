@@ -44,6 +44,7 @@ import {
 } from "./controller";
 import { FontStatus } from "./FontStatus";
 import { MarkToolbar, type MarkToolbarAnchor } from "./MarkToolbar";
+import { PageGuides } from "./PageGuides";
 import { PageSheet } from "./PageSheet";
 import { ScrollMap, type ScrollMapTick } from "./ScrollMap";
 import { SeatEditor } from "./SeatEditor";
@@ -69,10 +70,16 @@ export function CanvasPane() {
     toolbarAnchor: MarkToolbarAnchor | null;
     scrollTicks: ScrollMapTick[];
     effectiveZoom: number;
+    sheetWidth: number;
+    sheetHeight: number;
+    margins: { top: number; right: number; bottom: number; left: number };
   }>({
     toolbarAnchor: null,
     scrollTicks: [],
     effectiveZoom: 1,
+    sheetWidth: 794,
+    sheetHeight: 1123,
+    margins: { top: 60, right: 60, bottom: 54, left: 68 },
   });
 
   const [scrollThumb, setScrollThumb] = useState<{ topPct: number; heightPct: number }>({
@@ -170,6 +177,9 @@ export function CanvasPane() {
       toolbarAnchor: MarkToolbarAnchor | null;
       scrollTicks: ScrollMapTick[];
       effectiveZoom: number;
+      sheetWidth: number;
+      sheetHeight: number;
+      margins: { top: number; right: number; bottom: number; left: number };
     }) => {
       setMeasured(data);
       const nextPct = Math.round(data.effectiveZoom * 100);
@@ -222,6 +232,13 @@ export function CanvasPane() {
       data-seat-status={activeSeatLabel ?? ""}
     >
       <div className="rl-desk">
+        <PageGuides
+          width={measured.sheetWidth}
+          height={measured.sheetHeight}
+          zoom={measured.effectiveZoom}
+          margins={measured.margins}
+          scrollContainerRef={scrollRef}
+        />
         {pageRaster.failed ? (
           <div className="rl-redraw-notice" data-testid="page-render-failed" role="status">
             {wp3t("page_render_failed", language)}
