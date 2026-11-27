@@ -163,7 +163,7 @@
 
 .rl-redraw-notice {
   position: absolute;
-  inset-block-start: var(--s-8);
+  inset-block-start: calc(var(--h-ruler) + var(--s-8));
   inset-inline-start: 50%;
   transform: translateX(-50%);
   z-index: 5;
@@ -179,9 +179,9 @@
 
 .rl-desk-scroll {
   position: absolute;
-  inset: 0;
+  inset: var(--h-ruler) 0 0 var(--h-ruler);
   overflow: auto;
-  padding: calc(var(--h-ruler) + 6px) 24px 32px calc(var(--h-ruler) + 9px);
+  padding: 6px 24px 32px 9px;
   display: flex;
   justify-content: safe center;
   align-items: flex-start;
@@ -190,7 +190,7 @@
 
 @media (max-width: 599px) {
   .rl-desk-scroll {
-    padding: 26px 8px 18px 26px;
+    padding: 6px 8px 18px 6px;
   }
 }
 
@@ -653,7 +653,7 @@
 
 .rl-scrollmap {
   position: absolute;
-  top: 6px;
+  top: calc(var(--h-ruler) + 6px);
   bottom: 6px;
   z-index: 15;
   width: 10px;
@@ -937,16 +937,25 @@ span.rl-font-trigger--narrow {
 .rl-font-actions { justify-content: flex-end; }
 .rl-font-feedback:not(:empty) { margin: 0 0 var(--s-8); color: var(--text-2); }
 
-/* Rulers and crop marks share the page stage and follow its scroll. */
+/* Rulers stay pinned to the canvas viewport; crop marks stay on the page stage. */
 .rl-page-guides {
   inset: 0;
   position: absolute;
-  z-index: 5;
+  z-index: 6;
   pointer-events: none;
 }
 
 .rl-page-guides svg { position: absolute; overflow: hidden; }
-.rl-cropmarks { inset: 0; stroke: var(--crop-ink); fill: none; stroke-width: 1; }
+.rl-cropmarks {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: hidden;
+  pointer-events: none;
+  stroke: var(--crop-ink);
+  fill: none;
+  stroke-width: 1;
+}
 :is(.rl-ruler-h, .rl-ruler-v, .rl-ruler-corner) {
   position: absolute;
   background: var(--chrome);
@@ -954,13 +963,23 @@ span.rl-font-trigger--narrow {
   color: var(--text-2);
   font: 9px var(--font-mono);
 }
-.rl-ruler-h { top: calc(-1 * var(--h-ruler) - 3px); left: 0; }
-.rl-ruler-v { left: calc(-1 * var(--h-ruler) - 3px); top: 0; }
+.rl-ruler-h {
+  top: 0;
+  left: var(--h-ruler);
+  width: calc(100% - var(--h-ruler));
+  height: var(--h-ruler);
+}
+.rl-ruler-v {
+  top: var(--h-ruler);
+  left: 0;
+  width: var(--h-ruler);
+  height: calc(100% - var(--h-ruler));
+}
 .rl-ruler-corner {
   width: var(--h-ruler);
   height: var(--h-ruler);
-  top: calc(-1 * var(--h-ruler) - 3px);
-  left: calc(-1 * var(--h-ruler) - 3px);
+  top: 0;
+  left: 0;
   display: grid;
   place-items: center;
 }

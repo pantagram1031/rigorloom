@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T234:** In editor v2, the canvas rulers sit in fixed top and left viewport bands with the unit corner where they meet, while their tick markings and margin highlights follow the page as it scrolls, zooms or resizes and the crop marks stay on the page.
 - **T233:** In the narrow document layout, the bottom changes sheet now opens at a compact height that leaves the page in view, with a top grab handle button to toggle between compact and expanded heights; closing the sheet or switching tabs resets it to compact, and pressing Escape inside the expanded sheet collapses it first.
 - **T232:** In editor v2, action tooltips in change rows, the mark toolbar, the approval sheet and the agent composer pair each control's label with its shortcut from the keymap, the blanks list location uses `--text-xs`, `--text-disabled` has its own light and dark values with lower contrast than `--text-3`, and the unreferenced `MarginMarks` component and its styles are removed.
 - **T230:** The editor v2 shell is now the default window. The previous five screens open with `?ui=v1`, the 이전 화면으로 열기 command, or `"editorVariant": "v1"` in prefs.json.
