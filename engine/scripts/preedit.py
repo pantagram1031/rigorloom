@@ -343,13 +343,16 @@ class _ReplaceCtx:
         section, preceded_by = self.section, self.last_nonempty
         context_before = list(self.recent_nonempty[-12:])
 
-        def _log(key, tier, matched):
-            self.record.append({
+        def _log(key, tier, matched, dropped=None):
+            entry = {
                 "key": key, "tier": tier, "matched": matched[:80],
                 "section": section, "at_para": at_para,
                 "para_text": (para_text or "")[:90] or None,
                 "preceded_by": preceded_by,
-                "context_before": context_before})
+                "context_before": context_before}
+            if dropped:
+                entry["dropped_inline"] = [t[:80] for t in dropped]
+            self.record.append(entry)
         return _log
 
 
@@ -425,6 +428,46 @@ def _strip_tags(xml_text):
 _INLINE_TAG_RE = re.compile(r"<[^>]+>")
 _MARKPEN_BEGIN_RE = re.compile(r"^<\s*(?:[A-Za-z_][\w.-]*:)?markpenBegin\b")
 _MARKPEN_END_RE = re.compile(r"^<\s*(?:[A-Za-z_][\w.-]*:)?markpenEnd\b")
+_INLINE_TAG_NAME_RE = re.compile(r"^<\s*(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)\b")
+_INLINE_ATTR_RE = re.compile(r'\b([A-Za-z_][\w.-]*)\s*=\s*(["\'])(.*?)\2')
+_INLINE_PAIR_SPECS = (
+    ("markpen", "markpenBegin", "markpenEnd", ()),
+    ("insert", "insertBegin", "insertEnd", ("id", "tcid")),
+    ("delete", "deleteBegin", "deleteEnd", ("id", "tcid")),
+)
+_INLINE_PAIR_BY_TAG = {
+    tag_name: (kind, is_begin, id_attrs)
+    for kind, begin_tag, end_tag, id_attrs in _INLINE_PAIR_SPECS
+    for tag_name, is_begin in ((begin_tag, True), (end_tag, False))
+}
+
+
+def _extract_pair_ids(raw_tag, id_attrs):
+    if not id_attrs:
+        return {}
+    return {
+        k.lower(): v
+        for k, _q, v in _INLINE_ATTR_RE.findall(raw_tag)
+        if k.lower() in id_attrs
+    }
+
+
+def _pop_matching_begin(open_list, e_ids, id_attrs):
+    if not open_list:
+        return None
+    if e_ids:
+        for i, (b_idx, b_ids) in enumerate(open_list):
+            shared = [k for k in id_attrs if k in b_ids and k in e_ids]
+            if shared:
+                if b_ids[shared[0]] == e_ids[shared[0]]:
+                    open_list.pop(i)
+                    return b_idx
+                continue
+    for i, (b_idx, b_ids) in enumerate(open_list):
+        if not (b_ids.keys() & e_ids.keys()):
+            open_list.pop(i)
+            return b_idx
+    return None
 
 
 def changed_region(old, new):
@@ -488,26 +531,34 @@ def _replace_t_spans_preserving_inline(xml, spans, value, *, emit_log=True):
 
     p, old_end, new_end = changed_region(old_text, new_text)
 
-    open_begins = []
-    markpen_pairs = {}
+    open_begins = {}
+    range_pairs = {}
     lone_marks = []
-    non_markpen_indices = []
+    non_pair_indices = []
     for idx, (_off, _seq, raw_tag) in enumerate(tags):
-        if _MARKPEN_BEGIN_RE.match(raw_tag):
-            open_begins.append(idx)
-        elif _MARKPEN_END_RE.match(raw_tag):
-            if open_begins:
-                markpen_pairs[open_begins.pop(0)] = idx
+        tag_m = _INLINE_TAG_NAME_RE.match(raw_tag)
+        spec = _INLINE_PAIR_BY_TAG.get(tag_m.group(1)) if tag_m else None
+        if spec is None:
+            non_pair_indices.append(idx)
+            continue
+        kind, is_begin, id_attrs = spec
+        tag_ids = _extract_pair_ids(raw_tag, id_attrs)
+        kind_open = open_begins.setdefault(kind, [])
+        if is_begin:
+            kind_open.append((idx, tag_ids))
+        else:
+            b_idx = _pop_matching_begin(kind_open, tag_ids, id_attrs)
+            if b_idx is not None:
+                range_pairs[b_idx] = idx
             else:
                 lone_marks.append((idx, False))
-        else:
-            non_markpen_indices.append(idx)
     # A begin whose end sits in another run of the paragraph is still half of a
     # pair: it is never dropped, only moved to the changed-region edge.
-    lone_marks += [(idx, True) for idx in open_begins]
+    for kind_open in open_begins.values():
+        lone_marks += [(idx, True) for idx, _ids in kind_open]
 
     kept_at = {}
-    for idx in non_markpen_indices:
+    for idx in non_pair_indices:
         off = tags[idx][0]
         if p < off < old_end:
             continue
@@ -530,11 +581,11 @@ def _replace_t_spans_preserving_inline(xml, spans, value, *, emit_log=True):
             return p if is_begin else new_end
         return new_end + (off - old_end)
 
-    for b_idx, e_idx in markpen_pairs.items():
+    for b_idx, e_idx in range_pairs.items():
         b_off, e_off = tags[b_idx][0], tags[e_idx][0]
         new_b_off, new_e_off = _mark_at(b_off, True), _mark_at(e_off, False)
         if new_b_off == new_e_off and b_off < e_off:
-            continue  # the highlighted text was removed: no empty pair
+            continue  # the marked text was removed: no empty pair
         kept_at[b_idx] = new_b_off
         kept_at[e_idx] = new_e_off
     for idx, is_begin in lone_marks:
@@ -684,22 +735,25 @@ def _apply_tiers(text, mapping, hits, log=None):
         # tier A — 런 텍스트 strip-비교(whole-run). 이미 쓴 스팬과 겹치는
         # 런은 건너뛴다(그 런의 내용은 앞선 키가 확정한 값이다).
         edits = []
+        edit_drops = []
         for m in T_FULL_RE.finditer(text):
             inner = m.group(2)
             if _strip_tags(inner).strip() != key_stripped or inner == value_esc:
                 continue
             if _overlaps(m.start(2), m.end(2), protected):
                 continue
-            repl, _dropped = _replace_t_spans_preserving_inline(
+            repl, dropped = _replace_t_spans_preserving_inline(
                 inner, [(0, len(inner))], str(value), emit_log=(log is None))
             if inner == repl:
                 continue
             edits.append((m.start(2), m.end(2), repl))
+            edit_drops.append((m.start(2), m.end(2), dropped))
         if edits:
             hits[key] += len(edits)
             if log is not None:
-                for start, end, _repl in sorted(edits):
-                    log(key, "A", unescape(_strip_tags(text[start:end])))
+                for start, end, dropped in sorted(edit_drops):
+                    log(key, "A", unescape(_strip_tags(text[start:end])),
+                        dropped=dropped)
             text, protected = _apply_edits(text, edits, protected)
 
         # tier B — raw 부분문자열. protected 스팬(방금 쓴 값 포함)은 불가침.

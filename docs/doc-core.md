@@ -630,21 +630,26 @@ rt_doc.edit("보고서.hwpx", [
     (`<hp:lineBreak/>`) and `"\t"` (`<hp:tab/>`) outside the changed region
     survive in the preview as in the applied document.
   - Inline tags strictly inside the old changed region are dropped (and each
-    dropped tag is logged to `stderr`). If a single run edit changes two
-    separate places in the same run, any inline tags between them sit inside the
-    changed region `[p, len(old) - s)` and are dropped.
+    dropped tag is logged to `stderr`, or recorded under `dropped_inline` on
+    the scan entry when `replace_placeholders` scans occurrences with a log). If
+    a single run edit changes two separate places in the same run, any inline
+    tags between them sit inside the changed region `[p, len(old) - s)` and are
+    dropped.
   - When there is no common prefix and no common suffix (the whole run text is
     replaced, including when the new value is empty), every boundary tag at
     offset `0` and offset `len(old)` (`<hp:fwSpace/>` included) is kept: a
     separator the editor cannot show cannot be removed through a run edit.
-  - Highlight range pairs (`<hp:markpenBegin .../>` / `<hp:markpenEnd/>`) never
-    leave a half pair or an empty pair: when both marks fall inside the changed
-    region they wrap the replacement changed text (or both are dropped if the
-    replacement changed text is empty), and when one mark is inside and one is
-    outside the inner mark moves to the changed-region edge on its side. A mark
-    whose partner sits in another run is treated the same way: moved to the
-    edge, never dropped. A mark exactly on a changed-region edge stays on its
-    side, so a highlight neither grows over nor loses the new text.
+  - Range-mark pairs (`<hp:markpenBegin .../>` / `<hp:markpenEnd/>`,
+    `<hp:insertBegin .../>` / `<hp:insertEnd .../>`, and
+    `<hp:deleteBegin .../>` / `<hp:deleteEnd .../>`, paired by `Id` or `TcId`
+    when present or in order otherwise) never leave a half pair or an empty
+    pair: when both marks fall inside the changed region they wrap the
+    replacement changed text (or both are dropped if the replacement changed
+    text is empty), and when one mark is inside and one is outside the inner
+    mark moves to the changed-region edge on its side. A mark whose partner
+    sits in another run is treated the same way: moved to the edge, never
+    dropped. A mark exactly on a changed-region edge stays on its side, so a
+    range mark neither grows over nor loses the new text.
 
 ## Rendering and pages
 

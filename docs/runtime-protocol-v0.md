@@ -1445,18 +1445,22 @@ changed region `[p, len(old) - s)` -> `[p, len(new) - s)`):
   `PageGateway._preview` narrows the doc-core replacement range to the same
   changed region so `U+3000`, `"\n"` and `"\t"` outside the changed region
   survive in the preview.
-- Tags strictly inside `[p, len(old) - s)` are dropped and logged to `stderr`;
-  if an edit in one run changes two separate places, the tags between them fall
-  inside the changed region and are dropped.
+- Tags strictly inside `[p, len(old) - s)` are dropped and logged to `stderr`
+  (or recorded under `dropped_inline` on the scan record entry when Tier A
+  scans occurrences with a log); if an edit in one run changes two separate
+  places, the tags between them fall inside the changed region and are dropped.
 - When there is no common prefix and no common suffix (whole run replaced, or
   an empty replacement value), every boundary tag at offset `0` and offset
   `len(old)` (`<hp:fwSpace/>` included) is kept: a separator the editor cannot
   show cannot be removed through a run edit.
-- `<hp:markpenBegin .../>` / `<hp:markpenEnd/>` pairs never leave a half pair
-  or an empty pair: both inside wrap the replacement changed text (or both are
-  dropped if the replacement changed text is empty); one inside and one outside
-  moves the inner mark to the changed-region edge on its side. A mark whose
-  partner sits in another run is moved the same way, never dropped.
+- Range-mark pairs (`<hp:markpenBegin .../>` / `<hp:markpenEnd/>`,
+  `<hp:insertBegin .../>` / `<hp:insertEnd .../>`, and
+  `<hp:deleteBegin .../>` / `<hp:deleteEnd .../>`, paired by `Id` or `TcId`
+  when present or in order otherwise) never leave a half pair or an empty pair:
+  both inside wrap the replacement changed text (or both are dropped if the
+  replacement changed text is empty); one inside and one outside moves the
+  inner mark to the changed-region edge on its side. A mark whose partner sits
+  in another run is moved the same way, never dropped.
 
 ---
 

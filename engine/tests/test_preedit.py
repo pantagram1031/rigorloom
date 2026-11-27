@@ -1983,6 +1983,103 @@ class TestInlineElementPreservation:
         assert '<hp:markpenBegin color="#ffff00"/>' in err
         assert '<hp:markpenEnd/>' in err
 
+    def test_insert_pair_preserves_balance_and_positions(self, capsys):
+        b, e = '<hp:insertBegin Id="1" TcId="10"/>', '<hp:insertEnd Id="1"/>'
+
+        # 1) both halves inside: wrap the replacement
+        out_wrap, dropped_wrap = self._rewrite(
+            f"앞 옛{b}추가{e}문구 뒤", "앞 새표현 뒤")
+        assert dropped_wrap == []
+        assert out_wrap == f"앞 {b}새표현{e} 뒤"
+        assert out_wrap.count("<hp:insertBegin") == out_wrap.count("<hp:insertEnd") == 1
+
+        # 2) one half strictly inside, the other on a changed-region edge
+        out_end_in, dropped_end_in = self._rewrite(
+            f"앞 {b}옛날{e}문구 뒤", "앞 새값 뒤")
+        assert dropped_end_in == []
+        assert out_end_in == f"앞 {b}새값{e} 뒤"
+        assert out_end_in.count("<hp:insertBegin") == out_end_in.count("<hp:insertEnd") == 1
+
+        out_begin_in, dropped_begin_in = self._rewrite(
+            f"앞 옛날{b}문구{e} 뒤", "앞 새값 뒤")
+        assert dropped_begin_in == []
+        assert out_begin_in == f"앞 {b}새값{e} 뒤"
+        assert out_begin_in.count("<hp:insertBegin") == out_begin_in.count("<hp:insertEnd") == 1
+
+        # 3) lone Begin whose End sits in another run: moved to edge, never dropped
+        out_lone, dropped_lone = self._rewrite(
+            f"앞 옛{b}말 뒤", "앞 새표현 뒤")
+        assert dropped_lone == []
+        assert out_lone == f"앞 {b}새표현 뒤"
+
+        # 4) both halves inside with an empty replacement: drop both
+        out_empty, dropped_empty = self._rewrite(
+            f"앞 {b}지울추가{e} 뒤", "앞  뒤")
+        assert dropped_empty == [b, e]
+        assert out_empty == "앞  뒤"
+        assert out_empty.count("<hp:insertBegin") == out_empty.count("<hp:insertEnd") == 0
+        err = capsys.readouterr().err
+        assert b in err and e in err
+
+        # 5) Id-linked pairing does not pair mismatched Ids across runs
+        b1, e2 = '<hp:insertBegin Id="1"/>', '<hp:insertEnd Id="2"/>'
+        out_cross, dropped_cross = self._rewrite(
+            f"앞 옛{e2}가운데{b1}말 뒤", "앞 새표현 뒤")
+        assert dropped_cross == []
+        assert out_cross == f"앞 {b1}새표현{e2} 뒤"
+        assert out_cross.count("<hp:insertBegin") == out_cross.count("<hp:insertEnd") == 1
+
+    def test_delete_pair_preserves_balance_and_positions(self):
+        b, e = '<hp:deleteBegin Id="2" TcId="11"/>', '<hp:deleteEnd/>'
+
+        # 1) both halves inside: wrap the replacement (in-order fallback when End lacks Id)
+        out_wrap, dropped_wrap = self._rewrite(
+            f"앞 옛{b}삭제{e}문구 뒤", "앞 새표현 뒤")
+        assert dropped_wrap == []
+        assert out_wrap == f"앞 {b}새표현{e} 뒤"
+        assert out_wrap.count("<hp:deleteBegin") == out_wrap.count("<hp:deleteEnd") == 1
+
+        # 2) one half strictly inside, the other on a changed-region edge
+        out_end_in, dropped_end_in = self._rewrite(
+            f"앞 {b}옛날{e}문구 뒤", "앞 새값 뒤")
+        assert dropped_end_in == []
+        assert out_end_in == f"앞 {b}새값{e} 뒤"
+        assert out_end_in.count("<hp:deleteBegin") == out_end_in.count("<hp:deleteEnd") == 1
+
+        # 3) lone Begin whose End sits in another run: moved, never dropped
+        out_lone, dropped_lone = self._rewrite(
+            f"앞 옛{b}말 뒤", "앞 새표현 뒤")
+        assert dropped_lone == []
+        assert out_lone == f"앞 {b}새표현 뒤"
+
+        # 4) both halves inside with an empty replacement: drop both
+        out_empty, dropped_empty = self._rewrite(
+            f"앞 {b}지울삭제{e} 뒤", "앞  뒤")
+        assert dropped_empty == [b, e]
+        assert out_empty == "앞  뒤"
+        assert out_empty.count("<hp:deleteBegin") == out_empty.count("<hp:deleteEnd") == 0
+
+    def test_tier_a_scan_with_log_records_dropped_inline_only_when_dropped(self, tmp_path):
+        src = make_hwpx(
+            tmp_path, make_header([CP_BLACK]),
+            SEC(
+                P('<hp:run charPrIDRef="0">'
+                  '<hp:t>머리 <hp:lineBreak/>꼬리</hp:t>'
+                  '</hp:run>'),
+                P('<hp:run charPrIDRef="0">'
+                  '<hp:t><hp:fwSpace/>머리 꼬리</hp:t>'
+                  '</hp:run>'),
+            ))
+        with pytest.raises(preedit.AmbiguousReplaceKeyError) as excinfo:
+            replace_placeholders(src, tmp_path / "out.hwpx",
+                                 {"머리 꼬리": "바뀐 문구"})
+        occ = excinfo.value.keys[0]["occurrences"]
+        assert len(occ) == 2
+        assert occ[0]["tier"] == "A"
+        assert occ[0]["dropped_inline"] == ["<hp:lineBreak/>"]
+        assert occ[1]["tier"] == "A"
+        assert "dropped_inline" not in occ[1]
+
     def test_changed_region_caps_overlapping_prefix_and_suffix(self):
         p, old_end, new_end = preedit.changed_region("aaa", "aa")
         assert (p, old_end, new_end) == (2, 3, 2)
