@@ -79,9 +79,11 @@ export interface PageBox {
   id: string;
   itemId?: string;
   address?: string;
-  kind: "cell" | "para" | "table" | "seat" | "mark" | "guide";
+  kind: "cell" | "para" | "table" | "seat" | "mark" | "guide" | "object";
   rect: PageRectPt;
   label?: string;
+  /** kind "object": what the engine's renderer left undrawn there ("chart"). */
+  object?: string;
   fontCategory?: "serif" | "sans";
 }
 

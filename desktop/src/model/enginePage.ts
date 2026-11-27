@@ -69,7 +69,9 @@ export interface EngineGeometry {
 export interface EngineBox {
   at: string | null;
   queueAddress?: string;
-  kind: "para" | "line" | "table" | "cell" | "place";
+  kind: "para" | "line" | "table" | "cell" | "place" | "object";
+  /** kind "object": an inline object the engine does not draw ("chart"); such a box has no address. */
+  object?: string;
   rect: RectTuple;
   text?: string;
   xs?: number[];
@@ -152,10 +154,13 @@ export function createEnginePageSource({
   const boxes: PageBox[] = [];
   for (const [index, box] of (geometry?.boxes ?? []).entries()) {
     const kind = box.kind === "line" ? "para" : box.kind === "place" ? "seat" : box.kind;
-    const mapped: PageBox = {
-      id: `geometry-${index}`, address: box.queueAddress ?? box.at ?? undefined,
-      kind, rect: rectPt(box.rect), label: box.text,
-    };
+    // an object box (a chart the engine does not draw) is never an address: no seat, mark or caret uses it
+    const mapped: PageBox = box.kind === "object"
+      ? { id: `geometry-${index}`, kind, rect: rectPt(box.rect), object: box.object }
+      : {
+        id: `geometry-${index}`, address: box.queueAddress ?? box.at ?? undefined,
+        kind, rect: rectPt(box.rect), label: box.text,
+      };
     boxes.push(mapped);
     if (mapped.address && box.kind !== "line" && !byAddress.has(mapped.address)) byAddress.set(mapped.address, mapped);
   }

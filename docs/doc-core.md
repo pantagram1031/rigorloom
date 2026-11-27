@@ -725,6 +725,42 @@ rt_doc.edit("보고서.hwpx", [
     asked size (`hp:sz`, `hp:orgSz`), `textWrap`, `hp:pos`, `lineShape` colour,
     `winBrush` colour and box text and shapes, that its text is unchanged, and
     that every other shape in the body is unchanged, before anything is written.
+  - `insert_chart` adds a new paragraph right after the body paragraph at `at`
+    holding only an inline 차트 (글자처럼 취급, `TOP_AND_BOTTOM`): `type` is
+    `column`, `line`, `pie` or `scatter` (a horizontal `bar` has not been checked
+    against 한글 yet and is refused, naming `column`); `categories` (1 to 50
+    labels, not for `scatter`); `series` (1 to 8, a pie 1) of `{name, values}`
+    with one number per category (`scatter`: `{name, x, values}`, one x per
+    value), finite numbers that are not true/false, no negatives in a pie;
+    `title`; `width_mm`, `height_mm` (`1` to `1000`; default 32250 x 18750
+    HWPUNIT). A whole number is written as an integer and any other number as a
+    decimal, and the verifier reads them back with that rule. The new paragraph
+    takes the paragraph and character shape of `at` (as Enter at its end gives).
+    The chart's data goes into a new `Chart/chartN.xml` part (the next free N,
+    so a document that already has charts keeps them as they were) with cached
+    values only, no embedded sheet, and no `hp:ole` fallback: 한글 adds that
+    fallback when it saves the file, and until then a viewer that does not read
+    the `ooxmlchart` case shows nothing. Whether the data can be edited in
+    한글's chart sheet before 한글 has saved the file has not been checked. The
+    standard behind this: 한글 2024 opened the engine's charts of these four
+    kinds, kept every title, name, category and value, and drew them when it
+    saved them again (hwp-engine tests/nogt; the edit route gives the same
+    chart, hwp-engine a456d5b or later, tests/edit/check.py
+    `u_chart_nogt`). A `.hwp` document or a `.hwp` output is refused
+    (`capability_unavailable`, reason `chart_needs_hwpx`): saving as `.hwp`
+    would lose the chart. The preview does not draw charts: the engine's page
+    geometry gives the chart's box (`kind: "object"`, `object: "chart"`, no
+    address) and the editor shows a labelled box there (차트: 이 화면에는 그리지
+    않습니다) whenever the engine draws the page; 한글 draws the saved file.
+    `read` lists the paragraph's object as `hp:chart`; `read` and `find` do not
+    show the chart's data. `insert_chart` and another op that inserts at the
+    same paragraph (`insert_after`, `insert_table`, `insert_picture`,
+    `insert_equation`, `insert_shape`, `memo`, `insert_chart`) in one edit are
+    a `conflict`. After the edit, `_verify_chart` checks that
+    the new paragraph holds only the chart, with the asked size and an unused
+    part name, that the part's cached title, series names, categories and
+    values are the asked ones, and that every other chart and chart part is
+    unchanged, before anything is written.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is

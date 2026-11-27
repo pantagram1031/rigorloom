@@ -468,6 +468,13 @@ export function PageSheet({
     }
     return rects;
   }, [hasEngineGeometry, pageSource, page]);
+  // charts the engine leaves blank on its page: a label on each box, only over the engine's own raster
+  const undrawnCharts = useMemo(
+    () => (layer?.kind === "engine" && rasterUrl && hasEngineGeometry && pageSource
+      ? pageSource.boxes(page).filter((box) => box.kind === "object" && box.object === "chart")
+      : []),
+    [layer?.kind, rasterUrl, hasEngineGeometry, pageSource, page],
+  );
   const caretRect = hasEngineGeometry && caret && caret.page === page && caret.rasterUrl === rasterUrl
     ? pageSource?.caretRect(page, caret.address, caret.offset) : null;
 
@@ -1133,6 +1140,10 @@ export function PageSheet({
       >
         {rasterUrl ? <img className="rl-paper-raster" data-testid="page-raster" src={rasterUrl} alt="" draggable={false} /> : null}
         {caretRect ? <span className="rl-raster-caret" style={rectStyle(caretRect)} aria-hidden="true" /> : null}
+        {undrawnCharts.map((box) => (
+          <span key={box.id} className="rl-engine-object-label" data-testid="engine-chart-label"
+            style={rectStyle(box.rect)}>{wp3t("canvas_chart_not_drawn", language)}</span>
+        ))}
         {previewRects.flatMap(({ i, page: changedPage, rect }, index) => changedPage === page && rect
           ? [<span key={`${i}-${index}`} className="rl-engine-changed-rect" data-testid="engine-changed-rect"
               style={rectStyle(rectPt(rect))} aria-hidden="true" />]

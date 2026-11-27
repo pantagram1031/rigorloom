@@ -938,6 +938,7 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "memo": (("at", "text"), ("on", "author", "expect")),
     "insert_shape": (("at", "shape"), ("width_mm", "height_mm", "wrap", "vert_rel", "horz_rel", "x_mm", "y_mm",
                                        "line_color", "fill_color", "text")),
+    "insert_chart": (("at", "type", "series"), ("categories", "title", "width_mm", "height_mm")),
 }
 
 
@@ -981,6 +982,8 @@ OP_EXAMPLES = {
     "table.formula": '{"op":"table.formula","at":"t0/r0/c3","func":"SUM","from":"t0/r0/c0"}',
     "memo": '{"op":"memo","at":"p1","on":"2026년","text":"일정 확인","author":"홍길동"}',
     "insert_shape": '{"op":"insert_shape","at":"p2","shape":"textbox","width_mm":60,"height_mm":20,"text":"참고"}',
+    "insert_chart": '{"op":"insert_chart","at":"p3","type":"column","title":"측정 결과","categories":["1회","2회"],'
+                    '"series":[{"name":"A","values":[3,5]}]}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1143,6 +1146,12 @@ OP_NOTES = {
                     "characters, \\n starts a paragraph) can only be written at insert: the box's text has "
                     "no address and read and find do not show it; one per paragraph per edit; no address "
                     "changes",
+    "insert_chart": "a new paragraph after the body paragraph `at` (not a table cell) holding only an inline "
+                    "chart; `type` column, line, pie or scatter (no horizontal bar yet); `categories` (1 to 50 "
+                    "labels; not for scatter); `series` [{name, values}] (1 to 8; pie 1; values one number per "
+                    "category, no negatives in a pie; scatter: {name, x, values}); `title`; `width_mm`, "
+                    "`height_mm` (1 to 1000); .hwpx only (.hwp would lose it); the chart's data is not "
+                    "readable or editable afterwards; the preview shows a labelled box, not the chart",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
