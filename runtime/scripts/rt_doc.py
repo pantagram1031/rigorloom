@@ -5498,6 +5498,9 @@ def _plan_op(doc, cl, i, name, op, at):
         if "fill_color" in op:
             kws["fill"] = op["fill_color"].upper()
         lines = None
+        if kind == "textbox" and "text" not in op:
+            raise DocError("bad_input", "insert_shape: a textbox needs its text (an empty box is shape rect)",
+                           i=i, at=at)
         if "text" in op:
             if kind != "textbox":
                 raise DocError("bad_input", "insert_shape: text goes with shape textbox only", i=i, at=at)
@@ -5519,7 +5522,7 @@ def _plan_op(doc, cl, i, name, op, at):
                            "not supported yet)", i=i, at=at)
         if _in_field_body(doc, p):
             raise DocError("bad_address", "insert_shape: %s is inside a field" % at, i=i, at=at)
-        sid0 = doc.styles.get("0") if hasattr(doc, "styles") else None
+        sid0 = doc.styles.get("0")
         if kind == "textbox" and (not sid0 or sid0.get("paraPr") is None or sid0.get("charPr") is None):
             raise DocError("bad_input", "insert_shape: the document has no 바탕글 style (style 0) for the text "
                            "box's text", i=i, at=at)
@@ -5543,7 +5546,7 @@ def _plan_op(doc, cl, i, name, op, at):
             "vert_offset": _mm_hu(kws.get("y_mm", 0)), "horz_offset": _mm_hu(kws.get("x_mm", 0)),
             "line_color": kws.get("line", {}).get("color", "#000000"), "line_width": 33, "line_style": "SOLID",
             "fill_color": None if kind == "line" else kws.get("fill", "#FFFFFF"),
-            "text": (lines if lines is not None else [""]) if kind == "textbox" else None,
+            "text": lines if kind == "textbox" else None,
             "text_refs": ({"para": [(sid0.get("paraPr"), "0")], "char": [sid0.get("charPr")]}
                           if kind == "textbox" else None),
         })

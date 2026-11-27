@@ -707,7 +707,8 @@ rt_doc.edit("보고서.hwpx", [
     `vert_rel`, `horz_rel`, `x_mm` and `y_mm` take the `picture` op's values
     (default `SQUARE`, `PARA`, `COLUMN`, `0`). `line_color` and `fill_color` are
     `#RRGGBB` (default black outline of Hancom's default width and a white fill;
-    a line has no fill). `text` (textbox only, `1` to `1000` characters, `\n`
+    a line has no fill). `text` (textbox only and required for it, so an empty box
+    is a `rect`; `1` to `1000` characters, `\n`
     starts a new paragraph in the box, other control characters refused) is
     written in 바탕글's paragraph and character shapes. 글상자 본문은 삽입할 때만 쓸
     수 있고, 나중에 고치려면 지금은 지원하지 않습니다: the box's paragraphs have no

@@ -3352,6 +3352,9 @@ def test_insert_shape_is_checked_before_anything_runs(no_engine, tmp_path):
     assert err({"op": "insert_shape", "at": "p2", "shape": "rect", "text": "글"})["code"] == "bad_input"
     for bad_t in ("", "  ", None, 3, "x" * (D.SHAPE_TEXT_MAX + 1), "a\tb", "a\rb", "a\x07b"):
         assert err({"op": "insert_shape", "at": "p2", "shape": "textbox", "text": bad_t})["code"] == "bad_input"
+    # a textbox needs its text (an empty box is a rect)
+    e = err({"op": "insert_shape", "at": "p2", "shape": "textbox"})
+    assert e["code"] == "bad_input" and "rect" in e["message"]
     # anchors: body paragraphs only (no Hancom file with a shape anchored in a table cell yet)
     assert err({"op": "insert_shape", "at": "t0/r0/c0/p0", "shape": "rect"})["code"] == "bad_address"
     assert err({"op": "insert_shape", "at": "t0", "shape": "rect"})["code"] == "bad_address"
@@ -3437,6 +3440,11 @@ def test_engine_insert_shape_writes_the_four_shapes(kit, tmp_path, monkeypatch):
         broken = D.Doc(out, got.zip.rewrite({"Contents/section0.xml": raw.replace(old_s, new_s).encode("utf-8")}),
                        "hwpx")
         assert not D._verify(base, broken, acts), label
+    # a shape whose hp:sz differs from the asked size is refused
+    sz = re.compile(r'<hp:sz width="(\d+)"').search(raw, raw.index("<hp:ellipse"))
+    resized = raw[:sz.start(1)] + str(int(sz.group(1)) + 500) + raw[sz.end(1):]
+    assert not D._verify(base, D.Doc(out, got.zip.rewrite({"Contents/section0.xml": resized.encode("utf-8")}),
+                                     "hwpx"), acts)
     # a resized shape whose scale matrix no longer matches its curSz / orgSz is refused
     flat = re.sub(r'<hc:scaMatrix e1="(?!1")[^"]*"', '<hc:scaMatrix e1="1"', raw, count=1)
     assert flat != raw

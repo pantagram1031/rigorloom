@@ -1139,7 +1139,7 @@ OP_NOTES = {
     "insert_shape": "`at` is a body paragraph (not a table cell); anchors a floating `shape` (rect, ellipse, "
                     "line or textbox) at its start; `width_mm`, `height_mm` (1 to 1000), `wrap`, `vert_rel`, "
                     "`horz_rel`, `x_mm`, `y_mm` as in `picture` (default SQUARE, PARA, COLUMN, 0); "
-                    "`line_color`, `fill_color` (#RRGGBB; no fill on a line); `text` (textbox only, 1 to 1000 "
+                    "`line_color`, `fill_color` (#RRGGBB; no fill on a line); `text` (required for a textbox, 1 to 1000 "
                     "characters, \\n starts a paragraph) can only be written at insert: the box's text has "
                     "no address and read and find do not show it; one per paragraph per edit; no address "
                     "changes",
