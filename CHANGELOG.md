@@ -34,6 +34,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T266:** In editor v2, clicking in a table cell below its text no longer draws a caret down the table's left edge. The engine's line for the table itself is not a caret target. While a cell is being edited on an engine-drawn page, the cell loses its selection outline, so the editor no longer looks like it has an extra empty line below it.
 - **T261:** In editor v2, going to a find result, blank, outline item or change on another page now turns to that page. Once the drawn page is ready, the editor measures the document's other pages in the background, so the blanks list and find results know every page, and the status bar shows a selected cell's own page.
 - **T259:** The hover label, find results, change list and narrow seat bar no longer call printed form text `빈칸 N`; they use the cell's position instead.
 - **T258:** In editor v2, the status bar no longer gives a made-up `빈칸 N` name to a cell that is not a blank. A blank still shows its name; a cell with the form's printed text (a row title, or a guide line such as the form's header) shows only its position and character shape.

@@ -109,7 +109,13 @@ interface Line {
   vertical: boolean;
   positions: number[];
   start: number;
+  /** A line holding only an object's control glyph (a table, say); its box spans the whole object. */
+  object: boolean;
 }
+
+// The engine emits a table or other object anchored in a paragraph as one
+// control glyph whose line box spans the whole object.
+const OBJECT_GLYPH = "\u25a3";
 
 function linesFromGeometry(geometry: EngineGeometry): Line[] {
   const offsets = new Map<string, number>();
@@ -121,7 +127,10 @@ function linesFromGeometry(geometry: EngineGeometry): Line[] {
     const start = box.start ?? offsets.get(address) ?? 0;
     offsets.set(address, start + length);
     if (!positions.length) return [];
-    return [{ id: box.at, address, rect: rectPt(box.rect), vertical: Boolean(box.vertical), positions, start }];
+    return [{
+      id: box.at, address, rect: rectPt(box.rect), vertical: Boolean(box.vertical), positions, start,
+      object: box.text !== undefined && box.text.trim() === OBJECT_GLYPH,
+    }];
   });
 }
 
@@ -205,7 +214,9 @@ export function createEnginePageSource({
     const pointPt = { x: xPt, y: yPt };
     const seat = seats.find((entry) => contains(entry.rect, xPt, yPt));
     const mark = marks.find((entry) => contains(entry.rect, xPt, yPt));
-    const line = lines.filter((entry) => contains(entry.rect, xPt, yPt))
+    // An object's control glyph is not text to put a caret in: a click in a
+    // table cell below its text would otherwise land on the table's left edge.
+    const line = lines.filter((entry) => !entry.object && contains(entry.rect, xPt, yPt))
       .sort((a, b) => a.rect.w * a.rect.h - b.rect.w * b.rect.h)[0];
     const para = boxes.find((entry) => entry.kind === "para" && contains(entry.rect, xPt, yPt));
     if (!line && !seat && !mark && !para) return { kind: "none", page, pointPt };
