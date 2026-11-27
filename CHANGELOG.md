@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T238:** In editor v2, a preview of a table cell that also holds an object (such as the 기안문 body cell with the seal and sender tables) no longer refuses text with more lines than the form reserves: as apply does, the extra lines become new paragraphs right after the last reserved one.
 - **T237:** Settings has an 편집기 row in both editor v2 and the previous screens to switch between 새 편집기 and 이전 화면 with the existing unsaved-work check, and the legacy `devEditorV2` preference is migrated once to `editorVariant` and removed from `prefs.json`, both when the runtime reads the file and when the window starts (the desktop app reads it without the runtime), and `resolveUiVariant` no longer reads it. The v1 identity check now leaves out the new v1 편집기 section and still compares everything else with main's v1.
 - **T236:** Without the document engine, the strip names the page source 간이로 그린 쪽 (Simplified page), so it no longer reads 간이 미리보기 미리보기 next to the preview label.
 - **T234:** In editor v2, the canvas rulers sit in fixed top and left viewport bands with the unit corner where they meet, while their tick markings and margin highlights follow the page as it scrolls, zooms or resizes and the crop marks stay on the page.

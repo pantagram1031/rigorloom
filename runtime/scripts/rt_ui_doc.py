@@ -503,11 +503,13 @@ class PageGateway:
                 core_cell_at = f"{core_addresses[base_at]}/r{row}/c{col}"
                 if has_obj:
                     lines = preedit_mod.split_fill_lines(text)
+                    if not slots:
+                        raise PageError("bad_input", "the form reserves no paragraph for text in this cell")
                     if len(lines) > len(slots):
-                        raise PageError(
-                            "bad_input",
-                            "preview cannot show more lines than the form reserves",
-                        )
+                        # Apply writes the lines past the last reserved slot as
+                        # new paragraphs right after it; typing them as line
+                        # breaks in that slot puts them in the same place.
+                        lines = [*lines[:len(slots) - 1], "\n".join(lines[len(slots) - 1:])]
                     used = set(slots[:len(lines)])
                     for idx_line, line in enumerate(lines):
                         slot = slots[idx_line]
