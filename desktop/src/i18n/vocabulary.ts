@@ -373,7 +373,10 @@ export const ERROR_CODE_VOCAB = {
     en: "The cell text differs from what was expected.",
   },
   replace_key_ambiguous: MSG_REPLACE_AMBIGUOUS,
-  at_cell_run_ambiguous: MSG_REPLACE_AMBIGUOUS,
+  at_cell_run_ambiguous: {
+    ko: "이 칸은 글자 모양이 다른 부분으로 나뉘어 있어, 한 번에 한 부분 안에서만 고칠 수 있습니다.",
+    en: "This cell is split into parts with different character shapes. Change one part at a time.",
+  },
   run_inventory_unavailable: MSG_RUN_UNAVAILABLE,
   run_address_unknown: MSG_RUN_UNAVAILABLE,
   op_field_invalid: MSG_OP_INVALID,

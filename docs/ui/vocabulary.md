@@ -175,7 +175,7 @@
 | `run_color_anomaly` | 바꾸려는 문구에 강조색이 있습니다. | The text to replace contains an emphasis colour. |
 | `at_cell_expect_mismatch` | 칸의 문구가 예상한 내용과 다릅니다. | The cell text differs from what was expected. |
 | `replace_key_ambiguous` | 같은 칸에 같은 문구가 여러 번 있어 바꿀 위치를 찾을 수 없습니다. | The same text appears more than once in this cell. Could not identify which occurrence to change. |
-| `at_cell_run_ambiguous` | 같은 칸에 같은 문구가 여러 번 있어 바꿀 위치를 찾을 수 없습니다. | The same text appears more than once in this cell. Could not identify which occurrence to change. |
+| `at_cell_run_ambiguous` | 이 칸은 글자 모양이 다른 부분으로 나뉘어 있어, 한 번에 한 부분 안에서만 고칠 수 있습니다. | This cell is split into parts with different character shapes. Change one part at a time. |
 | `run_inventory_unavailable` | 이 문구의 위치나 서식 정보를 확인할 수 없어 직접 고칠 수 없습니다. | Could not find the text or its formatting information. Inline editing is unavailable. |
 | `run_address_unknown` | 이 문구의 위치나 서식 정보를 확인할 수 없어 직접 고칠 수 없습니다. | Could not find the text or its formatting information. Inline editing is unavailable. |
 | `op_field_invalid` | 입력한 변경 내용을 확인해야 합니다. | Check the change details. |

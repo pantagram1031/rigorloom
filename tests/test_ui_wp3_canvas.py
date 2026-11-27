@@ -137,6 +137,51 @@ def test_canvas_and_panes_mount_from_start(browser, server, theme, size):
         assert not errors, errors
 
 
+def test_editing_one_part_of_a_mixed_cell_keeps_the_other_parts(browser, server):
+    # The form's header line is one cell of four runs; the last, the revision
+    # note, is blue. Typing in it changes only that run.
+    with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
+        proposals = []
+        validations = []
+
+        def record(request):
+            payload = _rpc_payload(request)
+            if payload.get("method") == "plan/propose":
+                proposals.append(payload["params"]["ops"])
+
+        def record_response(response):
+            if _rpc_payload(response.request).get("method") == "plan/validate":
+                validations.append(response.json())
+
+        page.on("request", record)
+        page.on("response", record_response)
+        _open_sample(page, server)
+        _wait_for_cell_geometry(page)
+        header = page.locator('[data-cell-key="c:0:0:0"]').first
+        if not os.environ.get("RIGORLOOM_HWP_ENGINE"):
+            # The cell's full text arrives after the page's first short previews.
+            expect(header).to_contain_text("<개정 2016. 7. 11.>", timeout=20_000)
+        header.click()
+        seat = page.get_by_test_id("seat-input")
+        expect(seat).to_have_value(re.compile(r"<개정 2016\. 7\. 11\.>$"))
+        seat.press("End")
+        seat.type("X")
+        seat.press("Enter")
+        expect(page.get_by_test_id("change-list")).to_contain_text("<개정 2016. 7. 11.>X")
+        page.wait_for_timeout(500)
+        assert proposals, "no plan was proposed"
+        [op] = proposals[-1]
+        assert op["kind"] == "replace_at_cell" and op["run"] == 3
+        assert op["text"] == "<개정 2016. 7. 11.>X" and op["expect"] == "<개정 2016. 7. 11.>"
+        assert "runStart" not in op and "before" not in op
+        expect(page.get_by_test_id("change-list")).not_to_contain_text("고쳐야 함")
+        assert not any("at_cell_run_ambiguous" in json.dumps(v) for v in validations)
+
+        # Reopening the cell shows its whole edited text.
+        header.click()
+        expect(seat).to_have_value(re.compile(r"^■ 행정업무.*<개정 2016\. 7\. 11\.>X$"))
+
+
 def test_blanks_editing_and_keyboard_decisions(browser, server):
     with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
         _open_sample(page, server)

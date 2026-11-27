@@ -798,6 +798,15 @@ rt_doc.edit("보고서.hwpx", [
   (`Preview/PrvImage.png`) instead of drawing page 1 again, so it is never
   the file to hand on; applying the same ops without `preview` writes the real
   one.
+- A page preview of a cell edit (`{at: "tN/rN/cN", before, text}`) whose cell
+  is one paragraph still holding `before` is narrowed the same way, to the
+  changed region of that paragraph, so the cell's other runs keep their
+  character shapes in the preview as they do when the edit is applied. Without
+  `before`, or when the cell differs, the preview rewrites the whole cell.
+  The editor queues an edit it made in a multi-run cell as `replace_at_cell`
+  on the one run it changes (`run`, `expect` = that run's old text); a change
+  across runs stays a whole-cell edit, which the plan refuses with
+  `at_cell_run_ambiguous`.
 - Queued run edits (`set_run`, `replace_at_cell` with `mode="replace"`, and
   whole-run placeholder replacement in `preedit.py`, together with
   `PageGateway._preview` in `runtime/scripts/rt_ui_doc.py`) align the old

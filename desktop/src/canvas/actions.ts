@@ -5,12 +5,15 @@ import {
   activeHeadTexts,
   cellKey,
   getState,
+  headCandidate,
   queuedCellOpAt,
   queuedRunOpAt,
   setState,
   type QueuedOp,
 } from "../store";
 import type { GraphCell, InspectResult, RegionText, UiLanguage } from "../types";
+import { resolveCellRunEdit, type CellRunEdit } from "../run_map";
+import { readRegion } from "../runtime";
 import { classifyCellEditMode } from "../workspace/fieldLabels";
 import {
   canvas,
@@ -143,6 +146,29 @@ export interface CommitCellEditResult {
  * Commit an in-place cell edit. The engine overlay may stay open through
  * its debounced commit while the new raster is still being drawn.
  */
+/**
+ * The run of a one-paragraph cell that a whole-cell edit changes, read from
+ * the head the editor shows. Any failure to read leaves the edit a whole-cell
+ * edit.
+ */
+async function cellRunEdit(
+  sessionId: string | null,
+  edit: { table: number; row: number; col: number },
+  before: string,
+  after: string,
+): Promise<CellRunEdit> {
+  if (!sessionId || before.includes("\n") || after.includes("\n")) return { kind: "none" };
+  try {
+    const runId = headCandidate(getState())?.runId ?? null;
+    const { regions } = await readRegion(sessionId, [{ table: edit.table, row: edit.row, col: edit.col }], runId);
+    const region = regions.find((item) => (item.table ?? 0) === edit.table &&
+      item.addr?.row === edit.row && item.addr?.col === edit.col);
+    return resolveCellRunEdit(before, after, region?.runs ?? []);
+  } catch {
+    return { kind: "none" };
+  }
+}
+
 export async function commitCellEditV2(
   nextValue: string,
   options?: {
@@ -192,6 +218,7 @@ export async function commitCellEditV2(
 
   let nextOp: QueuedOp;
   let modeLabelKey: CommitCellEditResult["modeLabelKey"];
+  let runEdit: CellRunEdit = { kind: "none" };
 
   if (classification.kind === "fill_cell") {
     modeLabelKey = "fill_cell";
@@ -205,6 +232,25 @@ export async function commitCellEditV2(
       ...(nextValue.includes("\n") ? { lines: nextValue.split(/\r?\n/) } : {}),
       ...(resolvedCharPr ? { charPr: resolvedCharPr } : {}),
       before,
+      origin: "user",
+    };
+  } else if ((runEdit = await cellRunEdit(sessionId, edit, before, nextValue)).kind === "run") {
+    // A cell whose text is split into runs of different character shapes: only
+    // the run that changed is rewritten, so the others keep their shapes.
+    modeLabelKey = "replace_at_cell:replace";
+    nextOp = {
+      opId,
+      kind: "replace_at_cell",
+      table: edit.table,
+      row: edit.row,
+      col: edit.col,
+      run: runEdit.run,
+      text: runEdit.text,
+      mode: "replace",
+      expect: runEdit.runText,
+      ...(resolvedCharPr ? { charPr: resolvedCharPr } : {}),
+      before,
+      runStart: runEdit.runStart,
       origin: "user",
     };
   } else {

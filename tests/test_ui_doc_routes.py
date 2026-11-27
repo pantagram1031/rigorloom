@@ -35,6 +35,7 @@ ADMRUL = REPO / "tests" / "corpus" / "forms" / "converted" / "admrul-gajokdolbom
 MOEL_2025 = REPO / "tests" / "corpus" / "forms" / "converted" / "moel-pyojun-geunrogyeyakseo-2025.hwpx"
 KSTARTUP = REPO / "tests" / "corpus" / "forms" / "converted" / "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
 RENDER_CHECK = REPO / "tests" / "corpus" / "render-check" / "render-check-01.hwpx"
+MIXED_RUN_FORM = REPO / "tests" / "corpus" / "forms" / "converted" / "gianmun-byeolji-1ho.hwpx"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -283,6 +284,46 @@ def test_preview_refuses_mismatched_queued_paragraph_run(serving, document, fake
         {"at": queue_at, "run": 0, "before": "문서와 다른 런 텍스트", "text": "수정"},
     ]}), 400, "bad_address")
     assert fake_engine == []
+
+
+def test_preview_changes_only_the_changed_part_of_a_one_paragraph_cell(
+        serving, tmp_path, fake_engine, monkeypatch):
+    # The form's header cell is one paragraph of several runs; the last is a
+    # blue revision note. A cell edit that names the cell's text before it is
+    # previewed as a change of the changed region, so the other runs keep
+    # their character shapes, as the applied run edit does.
+    original = tmp_path / "mixed.hwpx"
+    shutil.copyfile(MIXED_RUN_FORM, original)
+    session = Session.open_path(serving.bridge.current_root(), str(original))
+    sent = []
+    fake_edit = rt_ui_doc.rt_doc.edit
+
+    def edit(path, ops, **kwargs):
+        sent.append(ops)
+        return fake_edit(path, ops, **kwargs)
+
+    monkeypatch.setattr(rt_ui_doc.rt_doc, "edit", edit)
+    before = "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙 [별지 제1호서식] <개정 2016. 7. 11.>"
+    after = before.replace("2016. 7. 11.", "2016. 7. 12.")
+    status, _, _ = request(serving, "preview", {**binding(session), "ops": [
+        {"at": "t0/r0/c0", "before": before, "text": after},
+    ]})
+    assert status == 200
+    [ops] = sent
+    assert len(ops) == 1 and ops[0]["op"] == "set" and ops[0]["text"] == "2"
+    at, _, span = ops[0]["at"].rpartition(":")
+    assert at.endswith("/r0/c0/p0")
+    start = before.index("11.>") + 1
+    assert span == f"{start}-{start + 1}"
+
+    # A "before" the cell no longer holds falls back to rewriting the cell.
+    sent.clear()
+    status, _, _ = request(serving, "preview", {**binding(session), "ops": [
+        {"at": "t0/r0/c0", "before": "다른 문구", "text": after},
+    ]})
+    assert status == 200
+    assert [op["at"].rpartition("/")[2] for op in sent[0]] == ["c0"]
+    assert sent[0][0]["text"] == after
 
 
 def test_native_page_image_can_exceed_inline_limit(serving, document, fake_engine, monkeypatch, tmp_path):

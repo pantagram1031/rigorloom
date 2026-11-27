@@ -125,3 +125,27 @@ test("a chart box the engine does not draw keeps no address and catches no hit",
   // a click on the chart lands on its paragraph, never on the object box
   assert.equal(source.hitTest(1, 50, 50).address, "p0");
 });
+
+test("a whole-cell edit names the one run it changes", async () => {
+  const { resolveCellRunEdit } = await import("../src/run_map.ts");
+  const runs = [{ index: 0, text: "■ " }, { index: 1, text: "규정" }, { index: 2, text: "<개정>" }];
+  const before = "■ 규정<개정>";
+  // inside a run
+  assert.deepEqual(resolveCellRunEdit(before, "■ 규칙<개정>", runs),
+    { kind: "run", run: 1, runText: "규정", runStart: 2, text: "규칙" });
+  // typing at a boundary goes to the run on its left, at the start to the first run
+  assert.deepEqual(resolveCellRunEdit(before, "■ 규정!<개정>", runs),
+    { kind: "run", run: 1, runText: "규정", runStart: 2, text: "규정!" });
+  assert.deepEqual(resolveCellRunEdit(before, "!■ 규정<개정>", runs),
+    { kind: "run", run: 0, runText: "■ ", runStart: 0, text: "!■ " });
+  // appending at the end goes to the last run
+  assert.equal(resolveCellRunEdit(before, `${before}!`, runs).run, 2);
+  // deleting inside one run
+  assert.deepEqual(resolveCellRunEdit(before, "■ 규<개정>", runs),
+    { kind: "run", run: 1, runText: "규정", runStart: 2, text: "규" });
+  // a change over two runs, or a cell the runs do not spell, or one run
+  assert.deepEqual(resolveCellRunEdit(before, "■ 새<개정>!", runs), { kind: "cross_run" });
+  assert.deepEqual(resolveCellRunEdit("다른 글", "다른 글!", runs), { kind: "none" });
+  assert.deepEqual(resolveCellRunEdit("규정", "규칙", [{ index: 0, text: "규정" }]), { kind: "none" });
+  assert.deepEqual(resolveCellRunEdit(before, "■ 규정\n<개정>", runs), { kind: "none" });
+});
