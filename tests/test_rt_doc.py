@@ -3054,9 +3054,18 @@ def test_picture_ops_are_checked_before_anything_runs(no_engine, tmp_path):
     # unknown keys in set, including unverified engine set_picture parameters
     e = err({"op": "picture", "at": "p1", "set": {"w_mm": 30}})
     assert e["code"] == "bad_input" and "width_mm" in e["candidates"]
-    for unverified in ("crop_mm", "border", "effect", "bright", "contrast", "alpha", "rotate", "flip"):
+    for unverified in ("crop_mm", "border", "alpha", "rotate", "flip"):
         e = err({"op": "picture", "at": "p1", "set": {unverified: 1}})
         assert e["code"] == "bad_input" and e["candidates"] and set(e["candidates"]) <= set(D.PICTURE_SET_KEYS), unverified
+    # 그림 효과 and 밝기/대비: names and Hancom's dialog range only
+    for bad_eff in ("GRAY_SCALE", "grey", "watermark", 1, None, True):
+        e = err({"op": "picture", "at": "p1", "set": {"effect": bad_eff}})
+        assert e["code"] == "bad_input", bad_eff
+    assert "gray" in err({"op": "picture", "at": "p1", "set": {"effect": "grey"}})["candidates"]
+    for k in ("bright", "contrast"):
+        for bad_v in (-101, 101, 1.5, True, "10", None):
+            e = err({"op": "picture", "at": "p1", "set": {k: bad_v}})
+            assert e["code"] == "bad_input" and e.get("range") == [-100, 100], (k, bad_v)
     for bad_idx in (-1, True, False, "0", 1.5):
         assert err({"op": "picture", "at": "p1", "index": bad_idx, "set": {"width_mm": 30}})["code"] == "bad_input", bad_idx
     for k in ("width_mm", "height_mm"):
@@ -3246,6 +3255,36 @@ def test_engine_insert_picture_placement_and_picture_op(kit, tmp_path, monkeypat
     assert abs(pics_p1_after[0]["width"] - round(24 * D.HU_PER_MM)) <= 4 or abs(pics_p1_after[1]["width"] - round(24 * D.HU_PER_MM)) <= 4
     widths_p1 = sorted(p["width"] for p in pics_p1_after)
     assert abs(widths_p1[0] - round(24 * D.HU_PER_MM)) <= 2 and abs(widths_p1[1] - round(50 * D.HU_PER_MM)) <= 2
+
+    # 3b. 그림 효과 and 밝기/대비 on the cell picture: hc:img effect / bright / contrast as Hancom writes them
+    # (pc3 objects/pictures: GRAY_SCALE, BLACK_WHITE; objects/picture_props: bright="30" contrast="30"), the rest kept
+    assert mod_cell["effect"] == "REAL_PIC" and mod_cell["bright"] == 0 and mod_cell["contrast"] == 0
+    out5 = tmp_path / "r10_effect.hwpx"
+    ops_eff = [{"op": "picture", "at": "t0/r1/c1/p0", "set": {"effect": "gray", "bright": 30, "contrast": -20}}]
+    r5 = D.edit(out2, ops_eff, base=D.rev_of(out2), out=out5)
+    assert r5["ok"], r5
+    got5 = D._load(out5, meta=False)
+    assert D._verify(got2, got5, D._plan(got2, ops_eff))
+    eff_cell = D._pics_in(got5, D.resolve(got5, "t0/r1/c1/p0")["para"])[0]
+    assert (eff_cell["effect"], eff_cell["bright"], eff_cell["contrast"]) == ("GRAY_SCALE", 30, -20)
+    assert {k: v for k, v in eff_cell.items() if k not in ("effect", "bright", "contrast")} == \
+        {k: v for k, v in mod_cell.items() if k not in ("effect", "bright", "contrast")}
+    assert D._pics_in(got5, got5.top[2]) == D._pics_in(got2, got2.top[2])
+    out6 = tmp_path / "r10_bw.hwpx"
+    r6 = D.edit(out5, [{"op": "picture", "at": "t0/r1/c1/p0", "set": {"effect": "black_white"}}],
+                base=D.rev_of(out5), out=out6)
+    assert r6["ok"], r6
+    bw = D._pics_in(D._load(out6, meta=False), D.resolve(D._load(out6, meta=False), "t0/r1/c1/p0")["para"])[0]
+    assert (bw["effect"], bw["bright"], bw["contrast"]) == ("BLACK_WHITE", 30, -20)
+    raw_sec5 = got5.zip.read("Contents/section0.xml").decode("utf-8")
+    acts5 = D._plan(got2, ops_eff)
+    for label, old_s, new_s in (("effect", 'effect="GRAY_SCALE"', 'effect="REAL_PIC"'),
+                                ("bright", 'bright="30"', 'bright="0"'),
+                                ("contrast", 'contrast="-20"', 'contrast="20"')):
+        assert raw_sec5.count(old_s) == 1, label
+        broken = D.Doc(out5, got5.zip.rewrite({"Contents/section0.xml": raw_sec5.replace(old_s, new_s).encode("utf-8")}),
+                       "hwpx")
+        assert not D._verify(got2, broken, acts5), label
 
     # 4. verifier refuses hand-broken outputs for size (sz and curSz), wrap, treatAsChar, rels, offsets, and binaryItemIDRef
     raw_sec2 = got2.zip.read("Contents/section0.xml").decode("utf-8")
