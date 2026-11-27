@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import random
 import shutil
+import sys
 import threading
 from urllib.parse import urlencode
 
@@ -82,6 +83,33 @@ def request(server, operation, params, *, headers=None, token=True, body=None):
 
 def binding(session):
     return {"sessionId": session.id, "rev": session.meta["sourceSha256"]}
+
+
+def _import_preedit():
+    engine_scripts = REPO / "engine" / "scripts"
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import preedit
+
+    return preedit
+
+
+def _geometry_page_holding(serving, base, at, hint):
+    """The engine geometry page whose boxes include paragraph ``at``.
+
+    Pagination depends on the fonts installed where the engine runs, so a
+    paragraph deep in a long form can land a page away from where it did on
+    the machine the test was written on. Look at ``hint`` first, then outward.
+    """
+    status, _, pages = request(serving, "pages", base)
+    assert status == 200
+    count = pages["count"] or hint
+    for page in sorted(range(1, count + 1), key=lambda p: (abs(p - hint), p)):
+        status, _, geometry = request(serving, "geometry", {**base, "page": page})
+        assert status == 200
+        if any(box["at"] == at for box in geometry["boxes"]):
+            return page, geometry
+    pytest.fail(f"no geometry page holds {at}")
 
 
 def refuse(result, status, code):
@@ -422,12 +450,7 @@ def test_installed_engine_previews_the_queued_paragraph_run(serving):
 
 
 def test_changed_region_twin_matches_preedit_and_narrows_queued_run_edit():
-    import sys
-
-    engine_scripts = REPO / "engine" / "scripts"
-    if str(engine_scripts) not in sys.path:
-        sys.path.insert(0, str(engine_scripts))
-    import preedit
+    preedit = _import_preedit()
 
     pairs = [
         ("", ""),
@@ -482,13 +505,9 @@ def test_changed_region_twin_matches_preedit_and_narrows_queued_run_edit():
     ids=["typed-fwspace", "typed-tab", "typed-linebreak"],
 )
 def test_queued_run_edit_keeps_inline_characters_typed_into_the_value(core_run, inner, value):
-    import sys
     from html import unescape
 
-    engine_scripts = REPO / "engine" / "scripts"
-    if str(engine_scripts) not in sys.path:
-        sys.path.insert(0, str(engine_scripts))
-    import preedit
+    preedit = _import_preedit()
 
     p_xml = f'<hp:p><hp:run charPrIDRef="0"><hp:t>{inner}</hp:t></hp:run></hp:p>'
     run = preedit.paragraph_text_runs(p_xml)[0]
@@ -517,8 +536,7 @@ def test_installed_engine_previews_queued_run_with_inline_elements(
     root = serving.bridge.current_root()
     session = Session.open_path(root, str(form_path))
     base = binding(session)
-    status, _, geometry = request(serving, "geometry", {**base, "page": page})
-    assert status == 200
+    page, geometry = _geometry_page_holding(serving, base, core_at, page)
     para_box = next(box for box in geometry["boxes"] if box["at"] == core_at)
     assert para_box["queueAddress"] == queue_at
 
@@ -622,12 +640,7 @@ def test_a_prepared_pdf_outside_the_session_is_refused(serving, document, monkey
 
 
 def test_preview_addresses_lead_paragraphs_of_object_holding_cell(serving, fake_engine, monkeypatch):
-    import sys
-
-    engine_scripts = REPO / "engine" / "scripts"
-    if str(engine_scripts) not in sys.path:
-        sys.path.insert(0, str(engine_scripts))
-    import preedit
+    preedit = _import_preedit()
 
     recorded_ops = []
     orig_edit = rt_ui_doc.rt_doc.edit
@@ -728,12 +741,7 @@ def test_installed_engine_previews_object_holding_body_cell_at_lead_paragraph(se
             boxes.setdefault(box["at"], box.get("text"))
     assert [boxes.get(f"t0/r2/c0/p{k}") for k in range(22)] == lines
     # Apply (preedit fill_cells) puts the same lines in the same paragraphs.
-    import sys
-
-    engine_scripts = REPO / "engine" / "scripts"
-    if str(engine_scripts) not in sys.path:
-        sys.path.insert(0, str(engine_scripts))
-    import preedit
+    preedit = _import_preedit()
 
     filled = tmp_path / "filled.hwpx"
     preedit.fill_cells(session.source, filled, [(2, 0, lines)], table=0, overwrite=True,

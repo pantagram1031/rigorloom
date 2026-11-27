@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T240:** The engine preview test for a queued run that holds a tab looks for the page that holds the paragraph instead of assuming one page number, because pagination depends on the fonts installed where the engine runs.
 - **T239:** Queued edits still propose a plan right away, while validation waits until the queue settles after typing pauses or is flushed when approval starts, so superseded intermediate proposals are not validated and the draft stays in its starting phase until validation lands.
 - **T238:** In editor v2, a preview of a table cell that also holds an object (such as the 기안문 body cell with the seal and sender tables) no longer refuses text with more lines than the form reserves: as apply does, the extra lines become new paragraphs right after the last reserved one.
 - **T237:** Settings has an 편집기 row in both editor v2 and the previous screens to switch between 새 편집기 and 이전 화면 with the existing unsaved-work check, and the legacy `devEditorV2` preference is migrated once to `editorVariant` and removed from `prefs.json`, both when the runtime reads the file and when the window starts (the desktop app reads it without the runtime), and `resolveUiVariant` no longer reads it. The v1 identity check now leaves out the new v1 편집기 section and still compares everything else with main's v1.
