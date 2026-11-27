@@ -426,8 +426,6 @@ def _strip_tags(xml_text):
 
 
 _INLINE_TAG_RE = re.compile(r"<[^>]+>")
-_MARKPEN_BEGIN_RE = re.compile(r"^<\s*(?:[A-Za-z_][\w.-]*:)?markpenBegin\b")
-_MARKPEN_END_RE = re.compile(r"^<\s*(?:[A-Za-z_][\w.-]*:)?markpenEnd\b")
 _INLINE_TAG_NAME_RE = re.compile(r"^<\s*(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)\b")
 _INLINE_ATTR_RE = re.compile(r'\b([A-Za-z_][\w.-]*)\s*=\s*(["\'])(.*?)\2')
 _INLINE_PAIR_SPECS = (

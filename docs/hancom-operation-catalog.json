@@ -14,7 +14,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/preedit.py",
-        "line": 1527,
+        "line": 1525,
         "symbol": "fill_cells"
       },
       "test_references": [
@@ -50,7 +50,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/preedit.py",
-        "line": 1917,
+        "line": 1915,
         "symbol": "replace_at_cells"
       },
       "test_references": [
@@ -85,7 +85,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/preedit.py",
-        "line": 1054,
+        "line": 1052,
         "symbol": "set_runs"
       },
       "test_references": [
@@ -120,7 +120,7 @@
       ],
       "implementation_reference": {
         "path": "engine/scripts/preedit.py",
-        "line": 2164,
+        "line": 2162,
         "symbol": "delete_guide_paragraphs"
       },
       "test_references": [
@@ -1158,7 +1158,7 @@
         "symbol": "PREEDIT_NOT_IMPLEMENTED"
       },
       "status": "unimplemented_constant",
-      "description": "Preedit subcommand normalize-clones for header-level charPr rewrite with post-check (engine/scripts/preedit.py:2526), deliberately not exposed in runtime plan slice.",
+      "description": "Preedit subcommand normalize-clones for header-level charPr rewrite with post-check (engine/scripts/preedit.py:2378), deliberately not exposed in runtime plan slice.",
       "minimum_closure_evidence": [
         "dedicated_plan_shape",
         "header_charpr_rewrite_verification",
