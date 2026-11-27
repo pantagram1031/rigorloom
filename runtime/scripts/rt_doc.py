@@ -69,6 +69,7 @@ import importlib.util
 import io
 import itertools
 import json
+import math
 import os
 import queue
 import re
@@ -81,6 +82,7 @@ import threading
 import time
 import zipfile
 import zlib
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -102,7 +104,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
        "table.cell_style", "table.style", "style.create", "note", "caption", "bookmark", "link", "toc",
-       "hide", "new_number", "picture")
+       "hide", "new_number", "picture", "table.formula")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -1320,8 +1322,8 @@ def _field_mark(s, m, name, tag, selfc, p, stack, paras):
             if c:
                 command = "".join(_xml_char(x) for x in _XCHAR.finditer(c.group(1)))
         f = {"type": _attr(tag, "type"), "name": _xml_unescape(_attr(tag, "name") or ""), "id": _attr(tag, "id"),
-             "direction": direction, "command": command, "b": len(p.chars), "e": None, "after": m.end(),
-             "endx": None, "para": p}
+             "direction": direction, "command": command, "b": len(p.chars), "e": None, "startx": m.start(),
+             "after": m.end(), "endx": None, "para": p}
         p.fields.append(f)
         for fr in reversed(stack):              # the control around it, when there is one
             if fr[0] == "hp:ctrl":
@@ -2511,6 +2513,7 @@ class _Act:
         self.hide = None        # hide: (base Para, {header, footer, page_num, border, fill, master_page})
         self.new_num = None     # new_number: (base Para, kind, num)
         self.picture = None     # insert_picture / picture: verification spec
+        self.formula = None     # table.formula: (base Para, "func" | "formula", spec)
 
 
 class _Claims:
@@ -3133,7 +3136,8 @@ def _table_mark(cl, t, i, name, at, kind, rect=None, border=False):
         if j == i:
             continue
         clash = False
-        if "rows" in (kind, kind2) and ("cell" in (kind, kind2) or "table" in (kind, kind2)):
+        if "rows" in (kind, kind2) and ("cell" in (kind, kind2) or "table" in (kind, kind2)
+                                        or "formula" in (kind, kind2)):
             clash = True
         elif kind == kind2 == "table":
             clash = True
@@ -3238,6 +3242,83 @@ PICTURE_HORZ_RELS = ("COLUMN", "PARA", "PAGE", "PAPER")
 PICTURE_OFFSET_MM = (-1000, 1000)
 INSERT_PICTURE_KEYS = ("path", "width_mm", "height_mm", "offset", "wrap", "vert_rel", "horz_rel", "x_mm", "y_mm")
 PICTURE_SET_KEYS = ("width_mm", "height_mm", "keep_ratio", "wrap", "inline", "vert_rel", "horz_rel", "x_mm", "y_mm")
+FORMULA_FUNCS = ("SUM", "AVG", "PRODUCT")
+FORMULA_ENGINE_FUNC = {"SUM": "Sum", "AVG": "Avg", "PRODUCT": "Pro"}
+FORMULA_MAX = 200
+_FORMULA_LEADING_NUM = re.compile(r"\s*([-+]?(?:\d[\d,]*)?\.?\d+)")
+_STRING_PARAM = re.compile(r'<[\w:.-]*stringParam\b[^>]*\bname="([^"]*)"[^>]*>(.*?)</', re.S)
+_CELL_CTRL_RE = re.compile(
+    r"<(?:[\w.-]+:)?(?:ctrl|fieldBegin|fieldEnd|bookmark|autoNum|newNum|pageHiding|indexmark|footNote|endNote)\b"
+)
+
+
+def _cell_is_empty(doc, t, c):
+    """True when cell `c` of table `t` has one empty paragraph with no text, objects or controls."""
+    if len(c.paras) != 1:
+        return False
+    p = c.paras[0]
+    if p.chars or p.objs or p.fields:
+        return False
+    return not _CELL_CTRL_RE.search(doc.secs[t.si], p.start, p.end)
+
+
+def _formula_auto_expect(func, src_cells, is_row):
+    """(formula, fmt, res) that Hancom / hnc_edit.formula_auto writes for `func` (SUM|AVG|PRODUCT) over
+    `src_cells` along a row (`is_row=True`) or down a column (`is_row=False`)."""
+    vals = []
+    for x in src_cells:
+        txt = "".join(p.text for p in x.paras)
+        m = _FORMULA_LEADING_NUM.match(txt)
+        vals.append(float(m.group(1).replace(",", "")) if m else 0.0)
+    if is_row:
+        ref = "%s?:%s?" % (chr(65 + src_cells[0].col), chr(65 + src_cells[-1].col))
+    else:
+        ref = "?%d:?%d" % (src_cells[0].row + 1, src_cells[-1].row + 1)
+    v = (sum(vals) if func == "SUM"
+         else (sum(vals) / len(vals) if vals else 0.0) if func == "AVG"
+         else math.prod(vals))
+    if func == "AVG":
+        fmt = "%.2f,"
+        q = Decimal(repr(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        ip, _, fp = str(q).partition(".")
+        res = "{:,}".format(int(ip)) + "." + fp
+    else:
+        fmt = "%g,"
+        if float(v).is_integer():
+            res = "{:,}".format(int(v))
+        else:
+            ip, _, fp = repr(float(v)).partition(".")
+            res = "{:,}".format(int(ip)) + "." + fp
+    return "=%s(%s)" % (func, ref), fmt, res
+
+
+def _formula_fields_in(d, p):
+    """[(formula, command, result_format, last_result, range_text)] of direct FORMULA fields in paragraph `p`."""
+    s = d.secs[p.si]
+    out = []
+    for f in p.fields:
+        if (f.get("type") or "").upper() != "FORMULA":
+            continue
+        fid = f.get("id")
+        if not fid or not isinstance(f.get("e"), int) or f.get("startx") is None or f.get("endx") is None:
+            out.append(None)
+            continue
+        close = s.find("fieldBegin>", f["startx"], f["endx"])
+        if close < 0:
+            out.append(None)
+            continue
+        if len(re.findall(r'<[\w:.-]*fieldEnd\b[^>]*\bbeginIDRef="%s"' % re.escape(fid), s[p.start:p.end])) != 1:
+            out.append(None)
+            continue
+        params = {}
+        for pm in _STRING_PARAM.finditer(s, f["startx"], close):
+            pname = _xml_unescape(pm.group(1))
+            pval = "".join(_xml_char(x) for x in _XCHAR.finditer(pm.group(2)))
+            params[pname] = pval
+        rtext = "".join(c for c in p.chars[f["b"]:f["e"]] if c != OBJ)
+        out.append((params.get("Formula"), params.get("Command"),
+                    params.get("ResultFormat"), params.get("LastResult"), rtext))
+    return out
 
 
 def _pic_elem_end(s, start):
@@ -5071,6 +5152,99 @@ def _plan_op(doc, cl, i, name, op, at):
         a = _Act(i, name, at, p, p.start, side=2, steps=steps)
         a.picture = ("modify", p, expected_pic)
         acts.append(a)
+    elif name == "table.formula":
+        known = ("func", "from", "formula")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "table.formula takes at, func, from, formula, not %s" % extra[0],
+                           i=i, at=at,
+                           candidates=_cands_near(list(("at",) + known), extra[0]) or list(("at",) + known))
+        has_func = "func" in op
+        has_formula = "formula" in op
+        if has_func == has_formula:
+            raise DocError("bad_input", "table.formula needs exactly one of func (with from) or formula",
+                           i=i, at=at)
+        if has_formula and "from" in op:
+            raise DocError("bad_input", "table.formula: from goes with func, not formula", i=i, at=at)
+        r = resolve(doc, at, allow=("cell",))
+        t, target = r["table"], r["cell"]
+        if t.addr is None:
+            raise DocError("bad_address", "table.formula only works on a body table", i=i, at=at)
+        pa = parse_address(at)
+        if (target.row, target.col) != (pa["r"], pa["c"]):
+            raise DocError("bad_address", "%s is inside the merged cell %s" % (at, cell_address(t, target)),
+                           i=i, at=at, candidates=[cell_address(t, target)])
+        if not _cell_is_empty(doc, t, target):
+            raise DocError("bad_input", "table.formula: target cell %s must be empty (no text or controls)" % at,
+                           i=i, at=at)
+        tp = target.paras[0]
+        if has_func:
+            func = _enum(op.get("func"), FORMULA_FUNCS, "table.formula: func", i, at)
+            from_addr = op.get("from")
+            if not isinstance(from_addr, str):
+                raise DocError("bad_input",
+                               "table.formula with func needs from (the first cell of the row or column block)",
+                               i=i, at=at)
+            r_from = resolve(doc, from_addr, allow=("cell",))
+            if r_from["table"] is not t:
+                raise DocError("bad_address", "table.formula: from must be a cell of %s" % t.addr,
+                               i=i, at=from_addr)
+            c_from = r_from["cell"]
+            pf = parse_address(from_addr)
+            if (c_from.row, c_from.col) != (pf["r"], pf["c"]):
+                raise DocError("bad_address", "%s is inside the merged cell %s" % (from_addr, cell_address(t, c_from)),
+                               i=i, at=from_addr, candidates=[cell_address(t, c_from)])
+            if (c_from.row, c_from.col) == (target.row, target.col):
+                raise DocError("bad_input",
+                               "table.formula: from (%s) must be left of or above at (%s), not the same cell"
+                               % (from_addr, at), i=i, at=at)
+            if c_from.row != target.row and c_from.col != target.col:
+                raise DocError("bad_input",
+                               "table.formula: from (%s) and at (%s) must be in the same row or the same column"
+                               % (from_addr, at), i=i, at=at)
+            if c_from.row == target.row and c_from.col > target.col:
+                raise DocError("bad_input", "table.formula: from (%s) must be left of at (%s)" % (from_addr, at),
+                               i=i, at=at)
+            if c_from.col == target.col and c_from.row > target.row:
+                raise DocError("bad_input", "table.formula: from (%s) must be above at (%s)" % (from_addr, at),
+                               i=i, at=at)
+            is_row = (c_from.row == target.row)
+            if is_row and target.col >= 26:
+                raise DocError("bad_input", "table.formula: row formula columns must be A..Z (0..25)",
+                               i=i, at=at)
+            block_cells = ([t.at(target.row, c) for c in range(c_from.col, target.col + 1)] if is_row
+                           else [t.at(rr, target.col) for rr in range(c_from.row, target.row + 1)])
+            ra, rb, ca, cb = _merge_rect(t, c_from.row, c_from.col, target.row, target.col)
+            if (ra, rb, ca, cb) != (c_from.row, target.row, c_from.col, target.col) \
+                    or any(x is None or x.rs != 1 or x.cs != 1 for x in block_cells):
+                raise DocError("bad_input", "table.formula: block %s..%s crosses a merged cell" % (from_addr, at),
+                               i=i, at=at)
+            steps = [
+                ["goto_cell", t.lt, c_from.row, c_from.col, False, t.si],
+                ["cell_block", target.row, target.col],
+                ["formula_auto", FORMULA_ENGINE_FUNC[func]],
+            ]
+            f_spec = (tp, "func", (func, block_cells[:-1], is_row))
+        else:
+            formula = op.get("formula")
+            if not isinstance(formula, str) or not formula.startswith("=") or not formula[1:].strip() \
+                    or formula != formula.strip() or len(formula) > FORMULA_MAX \
+                    or _CTRL.search(formula) or re.search(r"[\t\n\r]", formula):
+                raise DocError("bad_input",
+                               "table.formula: formula is '=' followed by an expression (2 to %d characters on one line, no control characters)"
+                               % FORMULA_MAX, i=i, at=at)
+            steps = [
+                ["goto_cell", t.lt, target.row, target.col, False, t.si],
+                ["insert_formula_field", formula],
+            ]
+            f_spec = (tp, "formula", formula)
+        _table_mark(cl, t, i, name, at, "formula")
+        cl.span(tp, 0, len(tp.chars), i, name, whole=True)
+        cl.remove(t.si, target.start, target.end, i, name, at)
+        a = _Act(i, name, at, tp, t.start, side=0, intra=-i, rank=0, steps=steps)
+        a.text_of = tp
+        a.formula = f_spec
+        acts.append(a)
     return acts
 
 
@@ -5295,6 +5469,8 @@ def _verify(doc, newdoc, acts):
     if not _verify_new_numbers(doc, newdoc, acts, st):
         return False
     if not _verify_picture(doc, newdoc, acts, st):
+        return False
+    if not _verify_table_formula(doc, newdoc, acts, st):
         return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
@@ -6161,6 +6337,74 @@ def _verify_picture(doc, newdoc, acts, st):
     return True
 
 
+def _verify_table_formula(doc, newdoc, acts, st):
+    """Each table.formula op wrote one FORMULA field in its empty target cell with the expected Formula, Command
+    and result text, and left every other cell and paragraph unchanged."""
+    f_acts = [a for a in acts if a.formula]
+    if not f_acts:
+        return True
+    if sum(len(_formula_fields_in(newdoc, nq)) for nq in newdoc.paras) != \
+            sum(len(_formula_fields_in(doc, q)) for q in doc.paras) + len(f_acts):
+        return False
+    changed = {id(a.text_of) for a in acts if a.text_of is not None}
+    targets = {}
+    for a in f_acts:
+        p = a.formula[0]
+        if id(p) in targets:
+            return False
+        targets[id(p)] = a.formula
+    for p in doc.paras:
+        np = _new_para(doc, newdoc, p, st)
+        if np is None:
+            if id(p) in targets:
+                return False
+            continue
+        before_f = _formula_fields_in(doc, p)
+        after_f = _formula_fields_in(newdoc, np)
+        if None in after_f:
+            return False
+        if id(p) not in targets:
+            if after_f != before_f:
+                return False
+            if p.cell is not None and id(p) not in changed:
+                if np.cell is None or np.text != p.text:
+                    return False
+                if not any(id(q) in changed for q in p.cell.paras) and len(np.cell.paras) != len(p.cell.paras):
+                    return False
+            continue
+        if before_f or np.objs or np.cell is None or len(np.cell.paras) != 1:
+            return False
+        if len(after_f) != 1:
+            return False
+        got_formula, got_cmd, got_fmt, got_last, rtext = after_f[0]
+        if np.text != rtext:
+            return False
+        _p, mode, spec = targets[id(p)]
+        if mode == "formula":
+            want_cmd = spec + ";48"
+            if got_formula != want_cmd or got_cmd != want_cmd or rtext != "":
+                return False
+            if got_fmt is not None or got_last is not None:
+                return False
+        else:
+            func, src_cells, is_row = spec
+            new_src = []
+            for sc in src_cells:
+                if not sc.paras:
+                    return False
+                nsp = _new_para(doc, newdoc, sc.paras[0], st)
+                if nsp is None or nsp.cell is None:
+                    return False
+                new_src.append(nsp.cell)
+            want_formula, want_fmt, want_res = _formula_auto_expect(func, new_src, is_row)
+            want_cmd = "%s??%s;;%s" % (want_formula, want_fmt, want_res)
+            if got_formula != want_formula or got_cmd != want_cmd:
+                return False
+            if got_fmt != want_fmt or got_last != want_res or rtext != want_res:
+                return False
+    return True
+
+
 def _verify_shapes(doc, newdoc, acts, st):
     """The tables the table.* shape ops changed have the grid, cell count and merged cells they planned."""
     want = {}               # g -> expected change in the number of cells
@@ -6211,7 +6455,7 @@ def _remap_result(doc, newdoc, acts):
         return remap, False
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
             or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc
-            or a.char_shape or a.para_shape or a.page_setup or a.hide or a.new_num or a.picture]
+            or a.char_shape or a.para_shape or a.page_setup or a.hide or a.new_num or a.picture or a.formula]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)

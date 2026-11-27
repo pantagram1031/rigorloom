@@ -126,6 +126,7 @@ VERB_HELP = {
              "header(머리말·꼬리말), page_number(쪽 번호 매기기), "
              "hide(감추기), new_number(새 번호로 시작), "
              "table.cell_style(셀 테두리·배경·정렬·여백·제목 셀), table.style(제목 줄 반복, 쪽 경계에서 나눔), "
+             "table.formula(표 계산식), "
              "style.create(스타일 추가: 이름, 바탕 스타일, 글자 모양, 문단 모양), "
              "note(각주·미주), caption(표 캡션), "
              "bookmark(책갈피), link(하이퍼링크), toc(차례 만들기), picture(그림 크기·위치·배치)",

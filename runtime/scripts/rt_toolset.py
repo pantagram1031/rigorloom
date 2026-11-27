@@ -934,6 +934,7 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "hide": (("at",), ("header", "footer", "page_num", "border", "fill", "master_page")),
     "new_number": (("at", "kind", "num"), ()),
     "picture": (("at", "set"), ("index",)),
+    "table.formula": (("at",), ("func", "from", "formula")),
 }
 
 
@@ -974,6 +975,7 @@ OP_EXAMPLES = {
     "hide": '{"op":"hide","at":"p0","header":true,"page_num":true}',
     "new_number": '{"op":"new_number","at":"p4","kind":"PAGE","num":1}',
     "picture": '{"op":"picture","at":"p2","set":{"width_mm":60,"wrap":"SQUARE","x_mm":10}}',
+    "table.formula": '{"op":"table.formula","at":"t0/r0/c3","func":"SUM","from":"t0/r0/c0"}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1110,6 +1112,14 @@ OP_NOTES = {
                "`vert_rel` (PARA, PAGE, PAPER), `horz_rel` (COLUMN, PARA, PAGE, PAPER), `x_mm`, "
                "`y_mm` (-1000 to 1000; vert_rel, horz_rel, x_mm and y_mm require the picture to be "
                "floating after the op); one `picture` op per picture per edit; no address changes",
+    "table.formula": "`at` is an empty target cell (no text or controls); give either `func` "
+                     "(SUM, AVG or PRODUCT) with `from` (the first cell of an unmerged block in "
+                     "the same row left of `at` or the same column above `at`, which writes the "
+                     "relative FORMULA field and the result text from each source cell's leading "
+                     "number, 0 when none) or `formula` (`=` followed by an expression up to 200 "
+                     "characters, which writes the FORMULA field without result text, as "
+                     "Hancom's own file has none); one per target cell per edit; no "
+                     "address changes",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}
@@ -1170,11 +1180,10 @@ def _edit_description() -> str:
     spelled = ", ".join(_op_signature(n) + (" (one plain paragraph per line, no tables)"
                                             if n == "insert_after" else "") for n in OPS_SPELLED)
     named = _op_names([n for n in OP_FIELDS if n not in OPS_SPELLED and n != "fill"])
-    return ("Change the document with declarative ops, staged in a draft; the file changes "
+    return ("Edit the document with declarative ops, staged in a draft; the file changes "
             "only on `save`. Ops: " + spelled + "; also " + named + ". Fields and examples: "
             "guide topic `ops`. Addresses count from 0 (t0/r0/c0 is the first cell). Pass "
-            "the `rev` you read as `base`; `expect` guards changed text. Preview changed "
-            "pages.")
+            "the `rev` you read as `base`; `expect` guards text. Preview changed pages.")
 
 
 #: A GFM table's delimiter row: | --- | :---: |

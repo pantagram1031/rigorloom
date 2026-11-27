@@ -69,7 +69,7 @@ RETRYABLE = frozenset({"stale", "locked"})
 CONVERT_TARGETS = ("hwpx", "hwp", "pdf", "png", "md", "docx")
 EDIT_OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add_row",
             "table.delete_row", "fill", "style", "insert_table", "insert_equation",
-            "insert_picture", "picture")
+            "insert_picture", "picture", "table.formula")
 
 PARA_KINDS = ("heading", "para", "place")
 
@@ -802,7 +802,7 @@ def _grid(value, step: int) -> list[list]:
 def _apply(s: _Session, i: int, op: dict, done: list[int]) -> dict:
     doc = s.base
     kind = op.get("op")
-    if kind in ("insert_equation", "insert_picture", "picture"):
+    if kind in ("insert_equation", "insert_picture", "picture", "table.formula"):
         raise _Refusal("capability_unavailable", f"가짜 rt_doc은 {kind}를 못 합니다", step=i,
                        done=list(done))
 

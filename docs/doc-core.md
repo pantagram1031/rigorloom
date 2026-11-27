@@ -354,6 +354,45 @@ rt_doc.edit("보고서.hwpx", [
     `table.delete_row` or a shape op on the same table, or a second
     `table.style`, is a conflict. Text ops on the table's cells are fine: they
     run before the style op rewrites the table.
+- Table formula op (`table.formula`, 표 > 블록 계산식 / 계산식) needs the engine,
+  changes no address, and takes no `expect`.
+  - `at` is the target cell of a body table (`tN/rR/cC`) and must be empty (one
+    empty paragraph with no text, objects or controls; a non-empty cell is
+    refused with `bad_input`, and a covered coordinate inside a merged cell is
+    `bad_address`).
+  - Pass either `func` (`SUM`, `AVG` or `PRODUCT`, case-insensitive) with
+    `from` (a cell in the same table, in the same row to the left of `at` or in
+    the same column above `at`) or `formula` (a string starting with `=`, 2 to
+    200 characters on one line with no control characters), never both.
+  - With `func` and `from`, the block from `from` to `at` inclusive must be a
+    single unmerged row (`A`..`Z`, columns `0`..`25`) or column of cells;
+    `from` in another table is `bad_address`, and `from` diagonal from, equal
+    to, right of or below `at`, or a block crossing a merged cell, is
+    `bad_input`. The engine (`formula_auto("Sum"|"Avg"|"Pro")`) writes a
+    `FORMULA` field in `at` with Hancom's relative formula (`=SUM(A?:C?)` along
+    a row or `=SUM(?1:?4)` down a column, 1-based row numbers), `ResultFormat`
+    (`%g,` for `SUM`/`PRODUCT`, `%.2f,` for `AVG`), `LastResult` and `Command`,
+    plus the formatted value as the cell's text (`%g` with thousands grouping
+    for `SUM`/`PRODUCT`; 2 decimal places rounded half-up with thousands
+    grouping for `AVG`). Each source cell contributes its leading number
+    (optional sign, digits with optional commas, optional decimal part; text
+    after the leading number is ignored, and a cell without a leading number
+    counts as `0`).
+  - With `formula`, the engine (`insert_formula_field(formula)`) writes a
+    `FORMULA` field in `at` whose `Command` and `Formula` parameters are
+    `formula + ";48"` and writes no result text, as Hancom's own saved
+    `TableFormula` field holds none either; when 한글 shows the value has not
+    been checked yet.
+  - Conflicts: at most one `table.formula` per target cell per edit; any other
+    op touching that target cell, or a `table.add_row` / `table.delete_row` or
+    shape op on the same table, is a `conflict`.
+  - After the edit, `_verify_table_formula` checks that the target cell holds
+    one `FORMULA` field with the expected `Formula`, `Command`, `ResultFormat`,
+    `LastResult` and cell text (for `func`, computed in rigorloom from the
+    source cells' leading numbers; for `formula`, empty text), and that every
+    other cell of the table and every other paragraph in the document is
+    unchanged; any mismatch fails the edit and nothing is written. Editing or
+    removing an existing formula field has no op yet.
 - Page ops (쪽 > 편집 용지, 쪽 테두리/배경, 다단 설정, 쪽·단·구역 나누기, 감추기, 새 번호로 시작) need the engine and take
   `at`, a body paragraph (not one in a table, note or box, and not a range).
   - `page_setup` changes the 편집 용지 (and 쪽 테두리/배경 or 시작 쪽 번호) of the section that holds the
