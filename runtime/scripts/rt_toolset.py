@@ -1180,10 +1180,12 @@ def _edit_description() -> str:
     spelled = ", ".join(_op_signature(n) + (" (one plain paragraph per line, no tables)"
                                             if n == "insert_after" else "") for n in OPS_SPELLED)
     named = _op_names([n for n in OP_FIELDS if n not in OPS_SPELLED and n != "fill"])
-    return ("Edit the document with declarative ops, staged in a draft; the file changes "
-            "only on `save`. Ops: " + spelled + "; also " + named + ". Fields and examples: "
-            "guide topic `ops`. Addresses count from 0 (t0/r0/c0 is the first cell). Pass "
-            "the `rev` you read as `base`; `expect` guards text. Preview changed pages.")
+    # Under 700 characters, and every new op adds its name to `named`: keep
+    # the fixed prose short so the list has room.
+    return ("Declarative ops, staged in a draft; the file changes only on `save`. Ops: "
+            + spelled + "; also " + named + ". Fields and examples: guide `ops`. Addresses "
+            "count from 0 (t0/r0/c0 is the first cell). Pass the `rev` you read as `base`; "
+            "`expect` guards text. Preview changed pages.")
 
 
 #: A GFM table's delimiter row: | --- | :---: |
