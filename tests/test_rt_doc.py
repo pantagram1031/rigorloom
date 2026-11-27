@@ -870,6 +870,42 @@ def test_outline_known_is_feature_detected(no_engine, tmp_path, known_ok):
         assert doc.engine_outline is None and doc.engine_places == []      # today's analyze() path
 
 
+class _FieldOutlineEngine(_OutlineEngine):
+    """An engine whose outline lists 누름틀 seats as kind "field" (hwp-engine 83c63d7 and later)."""
+
+    def __init__(self, places):
+        super().__init__(True)
+        self.places = places
+
+    def call(self, fn, *args, **kw):
+        if fn == "outline":
+            self.seen.append((fn, kw))
+            return {"ok": True, "places": self.places}
+        return super().call(fn, *args, **kw)
+
+
+def test_engine_listed_field_seats_join_the_field_they_name(no_engine, tmp_path):
+    # basic.hwpx holds 누름틀 신청인 (p8) and 작성일 (p9); p1 holds none
+    src = _copy(BASIC, tmp_path, "fields.hwpx")
+    doc = D._load(src, meta=False)
+    e = _FieldOutlineEngine([{"id": "e1", "at": "p8", "label": "신청인", "kind": "field"},
+                             {"id": "e2", "at": "p9", "label": "작성일", "kind": "field"},
+                             {"id": "e3", "at": "p1", "label": "없음", "kind": "field"}])
+    D._ensure_meta(doc, e)
+    pls = {p["at"]: p for p in D._places(doc)}
+    for at, name in (("p8", "신청인"), ("p9", "작성일")):
+        seat = pls[at]
+        assert seat["kind"] == "field" and seat.get("field") is not None and seat.get("field_id"), seat
+        assert seat["field"]["name"] == name or seat["field"]["direction"] == name
+        acts = D._plan(doc, [{"op": "fill", "place": seat["id"], "text": "홍길동"}])
+        assert acts and acts[0].fb[0] == "field"
+    lone = pls["p1"]
+    assert lone["kind"] == "field" and lone.get("field") is None
+    with pytest.raises(D.DocError) as ei:
+        D._plan(doc, [{"op": "fill", "place": lone["id"], "text": "x"}])
+    assert ei.value.code == "bad_address"
+
+
 def test_bottom_heading_is_not_a_finding_on_the_last_page():
     # a short final section ("## 4. 향후 계획" and one bullet) is short because the document ends, not because the
     # page breaks: the same heading on an earlier page, with the text continuing overleaf, is still reported
@@ -2285,7 +2321,7 @@ def test_bookmark_link_and_toc_are_checked_before_anything_runs(no_engine, tmp_p
     assert err([{"op": "bookmark", "at": "p1", "name": "가"},
                 {"op": "bookmark", "at": "p1", "after": "2026년", "name": "나"}])["code"] == "conflict"
     assert err([{"op": "link", "at": "p1", "phrase": "사업", "target": "https://www.hancom.com"},
-                {"op": "link", "at": "p1", "phrase": "2026년", "target": "mailto:a@b.kr"}])["code"] == "conflict"
+                {"op": "link", "at": "p1", "phrase": "2026년", "target": "https://www.example.org"}])["code"] == "conflict"
     assert err([{"op": "bookmark", "at": "p1", "name": "가"},
                 {"op": "link", "at": "p1", "phrase": "2026년", "target": "#가"}])["code"] == "conflict"
     assert err([{"op": "bookmark", "at": "p1", "name": "가"},
