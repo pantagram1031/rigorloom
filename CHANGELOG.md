@@ -30,6 +30,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T248:** On engine-rendered pages in editor v2, the in-place text editor and the edit text shown until the page redraws now use the size of the text being edited instead of the line box height, and drop the black box border for a thin focus outline; read-only cells keep a distinct look. To supply that size, the form profile gains `charpr_heights` (charPr id to point size), editable cell regions carry `charPrHeightPt`, and paragraph runs carry `charpr_height_pt`, each absent when the header declares no height.
 - **T245:** In editor v2 settings, the 편집기 row's note that unsaved work stopped the switch to 이전 화면 now goes away once that work is finished.
 - **T244:** In the narrow document layout, dragging the bottom sheet's grab handle up or down now expands or collapses the sheet on release, while a short drag or click still toggles it once. The command palette's 변경 승인 command now checks `validation.ok` alongside pending validation, matching the change lists.
 - **T243:** In editor v2 settings, when unsaved work stops the switch to 이전 화면, the 편집기 row now says so under the control, since the dialog covers the status line that also says it.

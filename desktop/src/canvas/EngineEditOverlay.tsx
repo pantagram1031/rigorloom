@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { cancelEdit, setInlineEditMultiline } from "../actions";
-import { rectPt, type EngineBox, type EngineGeometry, type EngineTextEdit } from "../model/enginePage";
+import {
+  ENGINE_PX_PER_PT,
+  engineLineFontSizePx,
+  rectPt,
+  type EngineBox,
+  type EngineGeometry,
+  type EngineTextEdit,
+} from "../model/enginePage";
 import { formatCellAddress, resolvePageFontCategory, type PageHitResult } from "../model/page";
 import { locateSpanInRuns } from "../run_map";
 import { runTextAfterEdit } from "../revision";
@@ -11,7 +18,7 @@ import type { InspectResult } from "../types";
 import { commitCellEditV2, commitEngineRunEdit, notifyParagraphNotEditable } from "./actions";
 import { SeatEditor } from "./SeatEditor";
 
-const PX_PER_PT = 96 / 72;
+const PX_PER_PT = ENGINE_PX_PER_PT;
 const utf16 = (text: string, codePoints: number) => [...text].slice(0, codePoints).join("").length;
 
 type Placement = {
@@ -19,19 +26,27 @@ type Placement = {
   page: number;
   line: EngineBox;
   face: string | null;
+  sizePt?: number | null;
   caret?: number | null | "end";
 };
 
 type Pending = Placement & { value: string; idle: boolean };
 
-function lineStyle({ line }: Placement): CSSProperties {
+function pendingFontFamily(face: string | null): string {
+  const fallbackVar =
+    resolvePageFontCategory(face) === "sans" ? "var(--font-page-sans)" : "var(--font-page-serif)";
+  return face ? `"${face.replace(/"/g, "")}", ${fallbackVar}` : fallbackVar;
+}
+
+function lineStyle({ line, sizePt }: Pick<Placement, "line" | "sizePt">): CSSProperties {
   const { x, y, w, h } = rectPt(line.rect);
+  const fontSize = engineLineFontSizePx(line, sizePt);
   return {
     left: x * PX_PER_PT, top: y * PX_PER_PT,
     width: Math.max(line.vertical ? 20 : 28, w * PX_PER_PT),
-    minHeight: Math.max(18, h * PX_PER_PT),
+    minHeight: Math.max(fontSize, h * PX_PER_PT),
     writingMode: line.vertical ? "vertical-rl" : undefined,
-    fontSize: Math.min(18, Math.max(10, (line.vertical ? w : h) * PX_PER_PT)),
+    fontSize,
   };
 }
 
@@ -56,8 +71,13 @@ export function useEngineEditOverlay({
   const geometryRef = useRef(geometry);
   geometryRef.current = geometry;
   const baselineFace = inspect.summary?.baselineCharPr?.face?.hangul ?? null;
+  const baselineSizePt = inspect.summary?.baselineCharPr?.height_pt ?? null;
 
   const cellAt = edit?.kind === "cell" ? formatCellAddress(edit.table, edit.row, edit.col) : null;
+  const cellRegion = edit?.kind === "cell"
+    ? inspect.regions.regions.find((region) =>
+        region.table === edit.table && region.row === edit.row && region.col === edit.col)
+    : undefined;
   const leadSlotSet = edit?.kind === "cell" && edit.leadParas && edit.leadParas.length > 0
     ? new Set(edit.leadParas)
     : edit?.kind === "cell" && typeof edit.leadPara === "number"
@@ -85,11 +105,14 @@ export function useEngineEditOverlay({
     : queuedCell?.kind === "fill_cell" ? queuedCell.lines?.join("\n") ?? queuedCell.text
       : queuedCell?.kind === "replace_at_cell" && queuedCell.run === undefined ? queuedCell.text : edit?.before ?? "";
   const placement: Placement | null = !editable || !geometry || !edit ? null
-    : edit.kind === "run" ? paragraph
+    : edit.kind === "run" ? (paragraph ? {
+        ...paragraph,
+        sizePt: paragraph.sizePt ?? edit.sizePt ?? baselineSizePt,
+      } : null)
       : !isNarrow && cellLine && cellAt ? {
           id: cellAt, line: cellLine, page: geometry.page,
-          face: inspect.regions.regions.find((region) => region.table === edit.table &&
-            region.row === edit.row && region.col === edit.col)?.charPrFace?.hangul ?? baselineFace,
+          face: cellRegion?.charPrFace?.hangul ?? baselineFace,
+          sizePt: cellRegion?.charPrHeightPt ?? baselineSizePt,
           caret: cellCaret(cellValue, pickedCellLine, hit, cellLines),
         } : null;
   const initial = edit?.kind === "run"
@@ -150,16 +173,19 @@ export function useEngineEditOverlay({
       const [x, y, w, h] = line.rect;
       const runStart = [...line.text.slice(0, located.spanOffset)].length;
       const firstX = line.xs?.[runStart] ?? x;
+      const runSizePt = run.charpr_height_pt ?? baselineSizePt;
       setParagraph({
         id: `p${atPara}#${run.index}`, page: geometry.page,
         line: { ...line, rect: [firstX, y, Math.max(0, x + w - firstX), h] },
         face: run.charpr_face?.hangul ?? baselineFace,
+        sizePt: runSizePt,
         caret: runCaret,
       });
       setState({
         selection: { kind: "paragraph", atPara },
         inlineEdit: { kind: "run", atPara, run: run.index, before: queued?.before ?? run.text,
           opId: queued?.opId ?? null, caret: runCaret, spanIndex: Number(match[2]),
+          sizePt: runSizePt ?? undefined,
           runId, documentSha256: geometry.rev, rangeText: located.runText, rangeStart: located.rangeStart,
           rangeEnd: located.rangeEnd, offsetUnit: located.offsetUnit },
       });
@@ -225,7 +251,7 @@ export function useEngineEditOverlay({
     pending: pending.filter((item) => !settled && item.page === geometry?.page && item.id !== activeId)
       .map((item) => (
         <span className="rl-seat-input rl-engine-edit rl-engine-edit-pending" data-testid="engine-edit-pending"
-          key={item.id} style={{ ...lineStyle(item), fontFamily: item.face ? `"${item.face.replace(/"/g, "")}", inherit` : undefined }}>
+          key={item.id} style={{ ...lineStyle(item), fontFamily: pendingFontFamily(item.face) }}>
           {item.value}
         </span>
       )),

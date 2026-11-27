@@ -533,6 +533,15 @@ def charpr_faces(defs, fontref_map):
     return out
 
 
+def charpr_heights(defs):
+    """charPr id -> height_pt, for every id the header declares a height for."""
+    return {
+        cid: spec["height_pt"]
+        for cid, spec in defs.items()
+        if spec.get("height_pt") is not None
+    }
+
+
 def font_face(defs, fontref_map, cid, lang="hangul"):
     fr = defs.get(cid, {}).get("fontRef", {})
     fid = fr.get(lang)
@@ -1714,6 +1723,7 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
         # possibly empty: an empty map means the header declared no resolvable
         # face, which is different from a consumer that cannot look one up.
         "charpr_faces": charpr_faces(defs, fontref_map),
+        "charpr_heights": charpr_heights(defs),
         "table_map": table_map,
         "script_anomaly_targets": [
             {"table": t["index"], "addr": c["addr"], "charpr": c["charpr"],

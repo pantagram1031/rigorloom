@@ -90,6 +90,7 @@ export interface EditableRegion {
   charPr?: string;
   /** §14. The face this seat's charPr declares, or null when it declares none. */
   charPrFace?: TypefaceByLang | null;
+  charPrHeightPt?: number;
   charPrSuggested?: string;
   charPrSuggestedFace?: TypefaceByLang | null;
   colorAnomaly?: boolean;
@@ -837,6 +838,7 @@ export interface TextRun {
    * for a paragraph; before this it could print the integer and nothing else.
    */
   charpr_face?: TypefaceByLang | null;
+  charpr_height_pt?: number;
 }
 
 /** A region's full text. Cells carry `table` + `addr`; paragraphs `at_para`. */

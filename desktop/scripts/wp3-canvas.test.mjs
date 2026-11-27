@@ -1037,6 +1037,19 @@ test("EngineEditOverlay keeps the inline editor open on idle commit settle and c
         },
       ],
     };
+    const regionHeightPt = 9;
+    assert.notEqual(regionHeightPt, corpus.inspect.summary.baselineCharPr.height_pt);
+    const inspectWithRegionHeight = {
+      ...corpus.inspect,
+      regions: {
+        ...corpus.inspect.regions,
+        regions: corpus.inspect.regions.regions.map((region) =>
+          region.table === 0 && region.row === 5 && region.col === 1
+            ? { ...region, charPrHeightPt: regionHeightPt }
+            : region,
+        ),
+      },
+    };
     const renderOverlay = (settled) => {
       const res = hookReact.renderWith("engine-overlay", () =>
         useEngineEditOverlay({
@@ -1046,7 +1059,7 @@ test("EngineEditOverlay keeps the inline editor open on idle commit settle and c
           isNarrow: false,
           settled,
           displayedEdits: [],
-          inspect: corpus.inspect,
+          inspect: inspectWithRegionHeight,
           hit: null,
           onCycleCell: () => {},
         }),
@@ -1073,6 +1086,10 @@ test("EngineEditOverlay keeps the inline editor open on idle commit settle and c
     stack.actions.beginCellEditV2(0, 5, 1);
     let overlay = renderOverlay(true);
     assert.ok(overlay.editor);
+    assert.equal(
+      overlay.editor.props.style.fontSize,
+      regionHeightPt * (96 / 72),
+    );
     let input = renderInput(overlay);
     input.props.onChange({ target: { value: "기록정책담당관" } });
     input = renderInput(overlay);
@@ -1084,12 +1101,17 @@ test("EngineEditOverlay keeps the inline editor open on idle commit settle and c
     assert.ok(stack.store.getState().inlineEdit);
     assert.ok(overlay.editor);
 
-    // 2. explicit commit (Enter) + settle -> editor closes.
+    // 2. explicit commit (Enter) + settle -> editor closes; while unsettled, pending span matches editor fontSize.
     input = renderInput(overlay);
     input.props.onChange({ target: { value: "기록정책담당관 수정" } });
     input = renderInput(overlay);
     input.props.onKeyDown(enterEvent());
     overlay = renderOverlay(false);
+    assert.equal(overlay.pending.length, 1);
+    assert.equal(
+      overlay.pending[0].props.style.fontSize,
+      regionHeightPt * (96 / 72),
+    );
     overlay = renderOverlay(true);
     assert.equal(stack.store.getState().inlineEdit, null);
     assert.equal(overlay.editor, null);
