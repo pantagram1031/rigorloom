@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { draftValidationPending } from "../src/store.ts";
 export { agentPlanCellAddresses, projectAgentPlan } from "../src/agent/planProjection.ts";
 export { opKindLabel, t } from "../src/i18n/vocabulary.ts";
 const source = readFileSync(new URL("../src/workspace/reviewSummary.ts", import.meta.url), "utf8");
@@ -26,4 +27,5 @@ export const trustStoreSelectors = {
   activeDisplayText: (s) => s.texts?.[s.activeSessionId] ?? [],
   activeHeadTexts: () => null,
   showToast: () => {},
+  draftValidationPending,
 };

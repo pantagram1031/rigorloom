@@ -17,6 +17,7 @@ import { t, type VocabularyKey } from "../i18n/vocabulary";
 import * as rt from "../runtime";
 import {
   activeSession,
+  draftValidationPending,
   getState,
   hasUnsavedWorkForReload,
   headCandidate,
@@ -62,7 +63,9 @@ export function CommandPalette() {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   const hasPlan = Boolean(session && draft.plan && draft.sessionId === session.sessionId);
-  const canApprove = Boolean(hasPlan && draft.validation?.verdict === "pass");
+  const canApprove = Boolean(
+    hasPlan && (draft.validation?.verdict === "pass" || draftValidationPending(draft)),
+  );
   const canExport = Boolean(session && (applied?.runId ?? head?.runId));
 
   const commands = useMemo<PaletteItem[]>(() => {

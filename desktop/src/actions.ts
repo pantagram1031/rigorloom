@@ -26,6 +26,7 @@ import {
   canRequestApproval,
   composerBlocker,
   draftStaleness,
+  draftValidationPending,
   getState,
   headCandidate,
   locateSelection,
@@ -293,6 +294,9 @@ export async function selectSession(sessionId: string) {
           EMPTY_DRAFT,
         )
       : null;
+  if (swapped) {
+    cancelDraftValidateTimer();
+  }
   setState({
     activeSessionId: sessionId,
     screen: "review" as const,
@@ -488,8 +492,7 @@ async function restoreSavedDraft(sessionId: string): Promise<void> {
   if (state.draft.ops.length > 0) {
     if (
       state.draft.sessionId === sessionId &&
-      (!state.draft.plan || !state.draft.validation) &&
-      state.draft.phase === "starting"
+      ((!state.draft.plan && state.draft.phase === "starting") || draftValidationPending(state.draft))
     ) {
       await setQueue(state.draft.ops);
     }
@@ -1439,7 +1442,7 @@ async function setQueue(
 
   // Only this exact draft object owns the results below. Agent adoption uses
   // the same ownership rule, so neither path can overwrite newer user intent.
-  const owner = captureDraftOwner();
+  let owner = captureDraftOwner();
 
   try {
     const plan = await rt.proposePlan(
@@ -1512,13 +1515,9 @@ async function setQueue(
       reapprovalPrompt: null,
       draft: proposedDraft,
     });
+    owner = captureDraftOwner();
     if (typeof persistDraft === "function") persistDraft(sessionId, getState().draft);
-    if (owner && typeof owner === "object" && "draft" in owner) {
-      owner.draft = proposedDraft;
-    }
-    const validateOwner = captureDraftOwner();
     const runValidate = async (): Promise<void> => {
-      const owner = validateOwner;
       if (currentPlanGeneration() !== gen) return;
       if (!ownsDraft(owner)) return;
       try {
@@ -2074,11 +2073,7 @@ export async function setHead(runId: string | null): Promise<void> {
 let approvalRequestGeneration = 0;
 
 export async function requestApprovalForDraft(): Promise<void> {
-  if (
-    typeof flushDraftValidation === "function" &&
-    getState().draft.plan !== null &&
-    getState().draft.validation === null
-  ) {
+  if (draftValidationPending(getState().draft)) {
     await flushDraftValidation();
   }
   const state = getState();
@@ -2389,9 +2384,7 @@ export const REAPPROVAL_PROMPT = t("reapproval_prompt", "ko");
  * Clears any stale approval immediately if the bound SHA-256 or candidate drifted.
  */
 export async function revalidateActiveDraft(): Promise<{ ok: boolean; stale: boolean }> {
-  if (typeof cancelDraftValidateTimer === "function") {
-    cancelDraftValidateTimer();
-  }
+  cancelDraftValidateTimer();
   const state = getState();
   const draft = state.draft;
   const plan = draft.plan;
@@ -2577,6 +2570,8 @@ export async function approveAndApplyFromDialog(
 
 export function openApprovalDialog(): void {
   setState({ approvalDialogOpen: true });
+  // Also finishes a validation still waiting for the queue to settle: the
+  // sheet's confirm stays disabled until the result is in state.
   void revalidateActiveDraft();
 }
 

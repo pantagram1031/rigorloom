@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
 import { t } from "../src/i18n/vocabulary.ts";
+import { draftValidationPending } from "../src/store.ts";
 
 const actionsSource = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 const resolveStart = actionsSource.indexOf("export async function resolveApprovalDecision(");
@@ -220,6 +221,8 @@ function requestFixture() {
       state = { ...state, ...patch };
     },
     canRequestApproval: () => true,
+    draftValidationPending,
+    flushDraftValidation: async () => {},
     rt: {
       requestApproval(planId) {
         const pending = deferred();

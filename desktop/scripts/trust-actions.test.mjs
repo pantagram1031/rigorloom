@@ -56,6 +56,7 @@ test("switching documents parks the queue; the other document starts clean and t
     ...s, EMPTY_DRAFT, swapSessionDrafts,
     uiVariant: () => "v2",
     stopDocumentEvents: () => {},
+    cancelDraftValidateTimer: () => {},
     applyPresentation: () => ({}),
     rt: { savePrefs: async () => {} },
     loadCorpusFiles: async () => {}, loadInspect: async () => {}, loadText: async () => {},

@@ -12,7 +12,7 @@ import vm from "node:vm";
 
 import { errorCodeMessage, opKindLabel, t } from "../src/i18n/vocabulary.ts";
 import * as trust from "../src/workspace/trust.ts";
-import { opSignature } from "../src/store.ts";
+import { draftValidationPending, opSignature } from "../src/store.ts";
 
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 
@@ -317,6 +317,7 @@ test("#7 a mismatched saved entry produces no proposal on restore", async () => 
   const ctx = vm.createContext({
     ...s,
     restorableOps: trust.restorableOps,
+    draftValidationPending,
     sessionSourceDigest: () => "digest-0",
     headCandidate: () => null,
     setQueue: async (ops) => { queued.push(ops); },

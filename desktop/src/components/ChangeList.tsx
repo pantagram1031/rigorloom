@@ -18,6 +18,7 @@ import {
 import { errorCodeMessage, t } from "../i18n/vocabulary";
 import {
   draftStaleness,
+  draftValidationPending,
   headCandidate,
   returnedDraftOps,
   useWorkspace,
@@ -113,8 +114,10 @@ export function ChangeList({
       (draft.plan && draft.boundSha256 && draft.plan.boundSha256 !== draft.boundSha256),
   );
 
+  const validationPending = draftValidationPending(draft);
+
   const busy =
-    draft.phase === "starting" ||
+    (draft.phase === "starting" && !validationPending) ||
     approvalPhase === "requesting" ||
     approvalPhase === "resolving" ||
     applyPhase === "starting" ||
@@ -125,7 +128,7 @@ export function ChangeList({
   const canApprove =
     changes.length > 0 &&
     Boolean(draft.plan) &&
-    draft.validation?.ok === true &&
+    (draft.validation?.ok === true || validationPending) &&
     approval?.state !== "rejected" &&
     returnedOps.length === 0 &&
     !isStale &&

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
+import { draftValidationPending } from "../src/store.ts";
 
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 const ownerStart = source.indexOf("interface DraftOwner {");
@@ -410,6 +411,8 @@ function approvalFixture() {
       current.head ? { runId: current.head } : null,
     currentPlanGeneration: () => 1,
     canRequestApproval: () => true,
+    draftValidationPending,
+    flushDraftValidation: async () => {},
     applyApproved: async () => {
       applies += 1;
     },
