@@ -41,6 +41,10 @@ function loadModules() {
   }
   const vocabulary = load("../src/i18n/vocabulary.ts");
   const formTokens = load("../src/i18n/formTokens.ts");
+  const wp3 = load("../src/i18n/v2/wp3.ts", {
+    "../vocabulary": vocabulary,
+    "../vocabulary.ts": vocabulary,
+  });
   const planProjection = load("../src/agent/planProjection.ts", {
     "../i18n/vocabulary.ts": vocabulary,
   });
@@ -48,6 +52,8 @@ function loadModules() {
     "../uiVariant.ts": { uiVariant: () => "v1" },
     "../i18n/vocabulary.ts": vocabulary,
     "../i18n/formTokens.ts": formTokens,
+    "../i18n/v2/wp3.ts": wp3,
+    "../i18n/v2/wp3": wp3,
   });
   const guardHelper = load("../src/workspace/guardHelper.ts", {
     react: { useSyncExternalStore: (_s, get) => get() },

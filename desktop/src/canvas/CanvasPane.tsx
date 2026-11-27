@@ -14,7 +14,7 @@ import {
   createProjectionPageSource,
   detectDocumentSeats,
   formatCharShape,
-  graphCellAt,
+  formatSeatLocation,
   parseDocAddress,
   type CanvasChangeRef,
   type PageSource,
@@ -28,7 +28,7 @@ import {
   useWorkspace,
 } from "../store";
 import { buildRegionTextMap } from "../workspace/externalPlan";
-import { deriveCellFieldLabel } from "../workspace/fieldLabels";
+import { deriveBlankCellLabel } from "../workspace/fieldLabels";
 import { useCanvasChanges } from "./changes";
 import {
   beginCellEditV2,
@@ -217,7 +217,7 @@ export function CanvasPane() {
     : "";
   const activeSeatLabel =
     inlineEdit?.kind === "cell"
-      ? deriveCellFieldLabel(
+      ? deriveBlankCellLabel(
           inspect,
           textMap,
           inlineEdit.table,
@@ -326,14 +326,21 @@ export function CanvasPane() {
       {isNarrow && inlineEdit?.kind === "cell" ? (
         <div className="rl-narrow-seat-bar" data-testid="narrow-seat-bar">
           <span className="rl-narrow-seat-label">
-            {deriveCellFieldLabel(
+            {deriveBlankCellLabel(
               inspect,
               textMap,
               inlineEdit.table,
               inlineEdit.row,
               inlineEdit.col,
               language,
-            )}
+            ) ??
+              formatSeatLocation(
+                null,
+                inlineEdit.table,
+                inlineEdit.row,
+                inlineEdit.col,
+                language,
+              )}
           </span>
           <div className="rl-narrow-seat-controls">
             <SeatEditor
@@ -433,14 +440,9 @@ export function CanvasStatusLeft() {
   // A blank's name, never one made up for printed text: a static cell (a row
   // title) or a guide cell (the form's own header line) is not a blank, so it
   // gets no "빈칸 N" fallback name.
-  const statusClass = address?.kind === "cell"
-    ? graphCellAt(inspect, address.table, address.row, address.col)?.classification
-    : undefined;
   const seatText = inspect && statusKey && address?.kind === "cell"
     ? seatLabelByKey.get(statusKey) ??
-      (statusClass === "static" || statusClass === "guide"
-        ? null
-        : deriveCellFieldLabel(inspect, textMap, address.table, address.row, address.col, language))
+      deriveBlankCellLabel(inspect, textMap, address.table, address.row, address.col, language)
     : null;
 
   const charShape = formatCharShape(address?.kind === "cell"

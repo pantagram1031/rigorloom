@@ -230,6 +230,11 @@ def test_find_replace_upserts_the_cell_and_keeps_its_original_baseline(browser, 
         seat.press("Enter")
         expect(page.locator(COOP_CELL)).to_contain_text("Final")
 
+        query.fill("시행규칙")
+        header_match = page.get_by_test_id("find-match-0")
+        expect(header_match.locator(".rl-find-hit-label")).to_have_text("표 1 1행 1열")
+        expect(header_match).not_to_contain_text("빈칸")
+
         query.fill("없는문구xyz")
         expect(page.get_by_test_id("find-empty")).to_contain_text("검색 결과가 없습니다")
         assert len(proposals) == 4

@@ -124,6 +124,8 @@ function loadWp3Stack() {
     "../uiVariant.ts": { uiVariant: () => "v2" },
     "../i18n/formTokens.ts": formTokens,
     "../i18n/formTokens": formTokens,
+    "../i18n/v2/wp3.ts": wp3,
+    "../i18n/v2/wp3": wp3,
     "../i18n/vocabulary.ts": vocabulary,
     "../i18n/vocabulary": vocabulary,
   });
@@ -1674,4 +1676,92 @@ test("status bar character shape: cell region face and size, else graph cell tex
   assert.equal(pageModel.formatCharShape({ face: null, sizePt: null }), null);
   assert.equal(wp3.wp3t("status_char_shape", "ko", ["바탕 10.0pt"]), "글자 모양: 바탕 10.0pt");
   assert.equal(wp3.wp3t("status_char_shape", "en", ["바탕 10.0pt"]), "Character shape: 바탕 10.0pt");
+});
+
+test("deriveBlankCellLabel names blanks, returns null for printed static/guide cells, falls back on spacers, and deriveOpFieldLabel uses location text for printed cells", () => {
+  const { fieldLabels } = loadWp3Stack();
+  const textMap = {};
+  for (const r of corpus.regions) {
+    if (r.addr) textMap[`c:${r.table ?? 0}:${r.addr.row}:${r.addr.col}`] = r;
+  }
+
+  // 1. fill_target cell -> blank name
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 5, 1, "ko"),
+    "협조자",
+  );
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 2, 0, "ko"),
+    "본문",
+  );
+
+  // 2. placeholder-seat static cell -> blank name
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 8, 0, "ko"),
+    "전화번호",
+  );
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 4, 0, "ko"),
+    "기안자 직위(직급) 서명",
+  );
+
+  // 3. printed static cell and guide cell -> null (never "빈칸 N")
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 1, 0, "ko"),
+    null,
+  );
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 5, 0, "ko"),
+    null,
+  );
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 9, 0, "ko"),
+    null,
+  );
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 0, 0, "ko"),
+    null,
+  );
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 1, 0, 0, "ko"),
+    null,
+  );
+
+  // 4. spacer cell -> fallback from deriveCellFieldLabel
+  assert.equal(
+    fieldLabels.deriveBlankCellLabel(corpus.inspect, textMap, 0, 3, 0, "ko", 4),
+    "빈칸 4",
+  );
+
+  // 5. deriveOpFieldLabel for replace_at_cell on a static cell gives location text, not "빈칸 N"
+  assert.equal(
+    fieldLabels.deriveOpFieldLabel(
+      { kind: "replace_at_cell", table: 0, row: 1, col: 0, text: "가온공공기록원" },
+      corpus.inspect,
+      textMap,
+      "ko",
+      1,
+    ),
+    "표 1 2행 1열",
+  );
+  assert.equal(
+    fieldLabels.deriveOpFieldLabel(
+      { kind: "replace_at_cell", table: 0, row: 0, col: 0, text: "서식 머리말" },
+      corpus.inspect,
+      textMap,
+      "ko",
+      1,
+    ),
+    "표 1 1행 1열",
+  );
+  assert.equal(
+    fieldLabels.deriveOpFieldLabel(
+      { kind: "replace_at_cell", table: 0, row: 9, col: 0, text: "A4" },
+      corpus.inspect,
+      textMap,
+      "en",
+      1,
+    ),
+    "Table 1, row 10, col 1",
+  );
 });

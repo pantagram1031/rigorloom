@@ -46,6 +46,10 @@ function loadModules() {
 
   const vocabulary = loadCjs("../../i18n/vocabulary.ts");
   const formTokens = loadCjs("../../i18n/formTokens.ts");
+  const wp3 = loadCjs("../../i18n/v2/wp3.ts", {
+    "../vocabulary": vocabulary,
+    "../vocabulary.ts": vocabulary,
+  });
   const planProjection = loadCjs("../../agent/planProjection.ts", {
     "../i18n/vocabulary.ts": vocabulary,
     "../i18n/vocabulary": vocabulary,
@@ -55,6 +59,8 @@ function loadModules() {
     "../i18n/vocabulary": vocabulary,
     "../i18n/formTokens.ts": formTokens,
     "../i18n/formTokens": formTokens,
+    "../i18n/v2/wp3.ts": wp3,
+    "../i18n/v2/wp3": wp3,
     // These cases check the v1 labels, so the window is the v1 screens.
     "../uiVariant.ts": { uiVariant: () => "v1" },
   });

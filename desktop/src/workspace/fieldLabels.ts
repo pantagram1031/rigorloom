@@ -1,5 +1,6 @@
 import { uiVariant } from "../uiVariant.ts";
 import { INSTRUCTION_PHRASES, SLOT_PLACEHOLDER_MARKERS } from "../i18n/formTokens.ts";
+import { wp3t } from "../i18n/v2/wp3.ts";
 import { opKindLabel, t } from "../i18n/vocabulary.ts";
 import type {
   GraphCell,
@@ -458,7 +459,10 @@ export function deriveOpFieldLabel(
     col !== null &&
     (op.kind === "fill_cell" || op.kind === "replace_at_cell" || op.kind === "set_cell")
   ) {
-    return deriveCellFieldLabel(inspect, texts, tableIdx, row, col, lang, blankOrdinal);
+    return (
+      deriveBlankCellLabel(inspect, texts, tableIdx, row, col, lang, blankOrdinal) ??
+      wp3t("seat_location_no_page", lang, [tableIdx + 1, row + 1, col + 1])
+    );
   }
 
   const atPara =
@@ -554,4 +558,76 @@ export function isSlotPlaceholderText(
     if (compact === term) return true;
   }
   return false;
+}
+
+/** The document graph's cell at a table address, if the graph has it. */
+export function graphCellAt(
+  inspect: Pick<InspectResult, "graph"> | null | undefined,
+  table: number,
+  row?: number,
+  col?: number,
+): GraphCell | undefined {
+  return inspect?.graph?.tables
+    ?.find((t) => t.index === table)
+    ?.cells?.find((c) => c.addr.row === row && c.addr.col === col);
+}
+
+/**
+ * True when a table cell that the caller has not already taken as a fill
+ * target is treated as a placeholder blank seat in a fill-in form document.
+ * `detectDocumentSeats` decides seats with exactly this test.
+ */
+export function isPlaceholderSlot(
+  cell: GraphCell | undefined,
+  cellKey: string,
+  regionText: string,
+  formCtx: FormInstructionContext,
+): boolean {
+  return (
+    Boolean(cell) &&
+    formCtx.isFormDocument &&
+    cell!.classification !== "guide" &&
+    !formCtx.instructionCellKeys.has(cellKey) &&
+    !isSeparatorText(regionText) &&
+    isSlotPlaceholderText(regionText, formCtx)
+  );
+}
+
+/**
+ * Return the blank's name when the cell at `(tableIdx, row, col)` is a blank
+ * (`fill_target` or a form placeholder seat), `null` when its graph
+ * classification is `static` or `guide`, and `deriveCellFieldLabel`'s fallback
+ * otherwise (`spacer` or unknown).
+ */
+export function deriveBlankCellLabel(
+  inspect: InspectResult | null | undefined,
+  texts: Record<string, RegionText> | undefined,
+  tableIdx: number,
+  row: number,
+  col: number,
+  lang: UiLanguage = "ko",
+  blankOrdinal?: number,
+): string | null {
+  const cell = graphCellAt(inspect, tableIdx, row, col);
+  if (cell?.classification === "fill_target") {
+    return deriveCellFieldLabel(inspect, texts, tableIdx, row, col, lang, blankOrdinal);
+  }
+  if (cell?.classification === "guide") {
+    return null;
+  }
+  if (cell?.classification === "static") {
+    const key = `c:${tableIdx}:${row}:${col}`;
+    const regionText = texts?.[key]?.text ?? cell.textPreview ?? "";
+    const formCtx = extractFormInstructionContext(inspect, texts);
+    if (isPlaceholderSlot(cell, key, regionText, formCtx)) {
+      const ownText = readCellText(tableIdx, cell, texts);
+      const leadToken = labelFromCellText(ownText);
+      if (leadToken.length > 0 && !isSeparatorText(leadToken)) {
+        return truncateLabel(leadToken, 20);
+      }
+      return deriveCellFieldLabel(inspect, texts, tableIdx, row, col, lang, blankOrdinal);
+    }
+    return null;
+  }
+  return deriveCellFieldLabel(inspect, texts, tableIdx, row, col, lang, blankOrdinal);
 }
