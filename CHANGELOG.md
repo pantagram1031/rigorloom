@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T242:** Removes two unused markpen regular expressions from preedit and moves the operation catalog's preedit line references, including the normalize-clones prose pin, to where those functions now sit.
 - **T241:** Approve controls are enabled as soon as a queued edit's plan is proposed, without waiting for the validation settle window. Clicking one opens the approval sheet at once and finishes the pending validation; the sheet's confirm stays disabled until that result is in.
 - **T240:** The engine preview test for a queued run that holds a tab looks for the page that holds the paragraph instead of assuming one page number, because pagination depends on the fonts installed where the engine runs.
 - **T239:** Queued edits still propose a plan right away, while validation waits until the queue settles after typing pauses or is flushed when approval starts, so superseded intermediate proposals are not validated and the draft stays in its starting phase until validation lands.
