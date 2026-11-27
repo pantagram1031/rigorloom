@@ -39,6 +39,23 @@ export function openSettings(section: SettingsSection = "general"): void {
   setShell({ settingsOpen: true, settingsSection: section, paletteOpen: false, appMenuOpen: false, narrowDrawerOpen: false });
 }
 
+/** Switch from editor v2 to the previous v1 screens, refusing when work is unsaved. */
+export async function openV1(): Promise<void> {
+  const lang = getState().language;
+  if (hasUnsavedWorkForReload()) {
+    const note = S.t("shell_status_finish_edit_first", lang);
+    setShell({ statusNotice: note });
+    const sid = activeTabSessionId() ?? getState().activeSessionId;
+    if (sid) patchDocSlice("canvas.page", { statusNotice: note }, sid);
+    return;
+  }
+  setShell({ statusNotice: null });
+  const sid = activeTabSessionId() ?? getState().activeSessionId;
+  if (sid) patchDocSlice("canvas.page", { statusNotice: null }, sid);
+  await rt.savePrefs({ editorVariant: "v1" });
+  reloadWithoutUiVariantQuery();
+}
+
 /** Alt+1…5: show a left pane; the same key again collapses the pane. */
 export function showLeftPane(pane: LeftPaneId, { toggle = true } = {}): void {
   const sid = activeTabSessionId();
@@ -232,20 +249,7 @@ export function installShellBindings(): () => void {
       title: (l) => S.t("shell_cmd_open_v1", l, ["v1"]),
       group: "view",
       keyId: "",
-      run: async () => {
-        if (hasUnsavedWorkForReload()) {
-          const note = S.t("shell_status_finish_edit_first", lang());
-          setShell({ statusNotice: note });
-          const sid = activeTabSessionId() ?? getState().activeSessionId;
-          if (sid) patchDocSlice("canvas.page", { statusNotice: note }, sid);
-          return;
-        }
-        setShell({ statusNotice: null });
-        const sid = activeTabSessionId() ?? getState().activeSessionId;
-        if (sid) patchDocSlice("canvas.page", { statusNotice: null }, sid);
-        await rt.savePrefs({ editorVariant: "v1" });
-        reloadWithoutUiVariantQuery();
-      },
+      run: () => openV1(),
     }),
   );
 

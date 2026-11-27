@@ -1,8 +1,7 @@
 /**
  * The previous v1 screens (열기/검토/채우기/기록/설정). Editor v2 is now the
- * default window; v1 stays reachable with `?ui=v1`, the palette command,
- * `"editorVariant": "v1"` in prefs.json, or legacy `"devEditorV2": false`
- * (uiVariant.ts).
+ * default window; v1 stays reachable with `?ui=v1`, Settings, the palette
+ * command, or `"editorVariant": "v1"` in prefs.json (uiVariant.ts).
  */
 import { useEffect } from "react";
 

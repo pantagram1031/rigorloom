@@ -141,6 +141,13 @@ export const S = defineStrings("shell", {
   shell_settings_theme_dark: { ko: "어둡게", en: "Dark" },
   shell_settings_lang_ko: { ko: "한국어", en: "Korean" },
   shell_settings_lang_en: { ko: "영어", en: "English" },
+  shell_settings_editor: { ko: "편집기", en: "Editor" },
+  shell_settings_editor_v2: { ko: "새 편집기", en: "New editor" },
+  shell_settings_editor_v1: { ko: "이전 화면 ({0})", en: "Previous screens ({0})" },
+  shell_settings_editor_note: {
+    ko: "이전 화면은 다음 버전에서 없어질 수 있습니다.",
+    en: "The previous screens may be removed in a future version.",
+  },
   shell_settings_work_folder: { ko: "작업 폴더", en: "Working folder" },
   shell_settings_work_folder_note: { ko: "작업 사본과 기록을 보관합니다.", en: "Keeps working copies and history." },
   shell_settings_doc_folder: { ko: "문서 폴더", en: "Documents folder" },

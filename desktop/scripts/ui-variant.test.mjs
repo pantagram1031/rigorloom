@@ -1,5 +1,5 @@
-// Editor v2 is the default; v1 is reachable via ?ui=v1, the palette command,
-// editorVariant: "v1", or legacy devEditorV2: false.
+// Editor v2 is the default; v1 is reachable via ?ui=v1, Settings, the palette
+// command, or editorVariant: "v1".
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -84,37 +84,73 @@ test("the address names a variant only with ui=v1 or ui=v2", () => {
   assert.equal(v.uiVariantFromQuery("?ui=v3"), null);
 });
 
-test("precedence: ?ui=v1|v2 > editorVariant > legacy devEditorV2 > default v2", () => {
-  // Rung 4: default is v2 when prefs are null, undefined or empty
+test("precedence: ?ui=v1|v2 > editorVariant > default v2", () => {
+  assert.equal("EDITOR_V2_PREF" in v, false);
+
+  // Rung 3: default is v2 when prefs are null, undefined, empty, or hold retired devEditorV2
   assert.equal(v.resolveUiVariant(null, null), "v2");
   assert.equal(v.resolveUiVariant(null, undefined), "v2");
   assert.equal(v.resolveUiVariant(null, {}), "v2");
-
-  // Rung 3: legacy devEditorV2 (false -> v1, true -> v2; other types fall through to v2)
-  assert.equal(v.resolveUiVariant(null, { devEditorV2: false }), "v1");
+  assert.equal(v.resolveUiVariant(null, { devEditorV2: false }), "v2");
   assert.equal(v.resolveUiVariant(null, { devEditorV2: true }), "v2");
   assert.equal(v.resolveUiVariant(null, { devEditorV2: "false" }), "v2");
   assert.equal(v.resolveUiVariant(null, { devEditorV2: "true" }), "v2");
   assert.equal(v.resolveUiVariant(null, { devEditorV2: 0 }), "v2");
 
-  // Rung 2: editorVariant ("v1" or "v2") wins over devEditorV2
+  // Rung 2: editorVariant ("v1" or "v2")
   assert.equal(v.resolveUiVariant(null, { editorVariant: "v1" }), "v1");
   assert.equal(v.resolveUiVariant(null, { editorVariant: "v2" }), "v2");
   assert.equal(v.resolveUiVariant(null, { editorVariant: "v1", devEditorV2: true }), "v1");
   assert.equal(v.resolveUiVariant(null, { editorVariant: "v2", devEditorV2: false }), "v2");
 
-  // A bad editorVariant value or type is ignored and falls through to devEditorV2 / default v2
-  assert.equal(v.resolveUiVariant(null, { editorVariant: "v3", devEditorV2: false }), "v1");
+  // A bad editorVariant value or type is ignored and falls through to default v2
+  assert.equal(v.resolveUiVariant(null, { editorVariant: "v3", devEditorV2: false }), "v2");
   assert.equal(v.resolveUiVariant(null, { editorVariant: "v3", devEditorV2: true }), "v2");
   assert.equal(v.resolveUiVariant(null, { editorVariant: "v3" }), "v2");
-  assert.equal(v.resolveUiVariant(null, { editorVariant: true, devEditorV2: false }), "v1");
-  assert.equal(v.resolveUiVariant(null, { editorVariant: null, devEditorV2: false }), "v1");
+  assert.equal(v.resolveUiVariant(null, { editorVariant: true, devEditorV2: false }), "v2");
+  assert.equal(v.resolveUiVariant(null, { editorVariant: null, devEditorV2: false }), "v2");
 
   // Rung 1: query wins over everything
   assert.equal(v.resolveUiVariant("v1", { editorVariant: "v2", devEditorV2: true }), "v1");
   assert.equal(v.resolveUiVariant("v2", { editorVariant: "v1", devEditorV2: false }), "v2");
   assert.equal(v.resolveUiVariant("v1", null), "v1");
   assert.equal(v.resolveUiVariant("v2", null), "v2");
+});
+
+test("a legacy devEditorV2 key is migrated once to editorVariant", () => {
+  assert.deepEqual(v.migrateLegacyEditorPref(null), { prefs: null, patch: null });
+  assert.deepEqual(v.migrateLegacyEditorPref({ theme: "dark" }), { prefs: { theme: "dark" }, patch: null });
+  assert.deepEqual(v.migrateLegacyEditorPref({ editorVariant: "v1" }), { prefs: { editorVariant: "v1" }, patch: null });
+
+  // A boolean becomes editorVariant when none is set, and the key is removed.
+  const off = v.migrateLegacyEditorPref({ devEditorV2: false, theme: "dark" });
+  assert.deepEqual(off, {
+    prefs: { theme: "dark", editorVariant: "v1" },
+    patch: { editorVariant: "v1", devEditorV2: null },
+  });
+  assert.equal(v.resolveUiVariant(null, off.prefs), "v1");
+  assert.deepEqual(v.migrateLegacyEditorPref({ devEditorV2: true }), {
+    prefs: { editorVariant: "v2" },
+    patch: { editorVariant: "v2", devEditorV2: null },
+  });
+  // A bad editorVariant does not block the migration.
+  assert.deepEqual(v.migrateLegacyEditorPref({ devEditorV2: false, editorVariant: "v3" }), {
+    prefs: { editorVariant: "v1" },
+    patch: { editorVariant: "v1", devEditorV2: null },
+  });
+
+  // An existing editorVariant wins; the key is only removed.
+  assert.deepEqual(v.migrateLegacyEditorPref({ devEditorV2: false, editorVariant: "v2" }), {
+    prefs: { editorVariant: "v2" },
+    patch: { devEditorV2: null },
+  });
+  // A value that is not a boolean is only removed.
+  for (const bad of ["false", 0, 1, null, ["v1"]]) {
+    assert.deepEqual(v.migrateLegacyEditorPref({ devEditorV2: bad, language: "ko" }), {
+      prefs: { language: "ko" },
+      patch: { devEditorV2: null },
+    });
+  }
 });
 
 test("editor v2 palette command '이전 화면으로 열기 (v1)' saves editorVariant v1 or refuses when work is pending", async () => {

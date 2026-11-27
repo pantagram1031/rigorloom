@@ -35,6 +35,16 @@ interface PaletteItem {
   run: () => void;
 }
 
+/** Switch from the v1 screens back to editor v2, refusing when work is unsaved. */
+export async function openNewEditor(): Promise<void> {
+  if (hasUnsavedWorkForReload()) {
+    showToast(t("toast_finish_edit_before_switch", getState().language), 2600);
+    return;
+  }
+  await rt.savePrefs({ editorVariant: "v2" });
+  reloadWithoutUiVariantQuery();
+}
+
 export function CommandPalette() {
   const open = useWorkspace((s) => s.commandPaletteOpen);
   const language = useWorkspace((s) => s.language);
@@ -197,14 +207,7 @@ export function CommandPalette() {
         id: "open-new-editor",
         labelKey: "cmd_open_new_editor",
         keywordsKey: "cmd_kw_open_new_editor",
-        run: async () => {
-          if (hasUnsavedWorkForReload()) {
-            showToast(t("toast_finish_edit_before_switch", getState().language), 2600);
-            return;
-          }
-          await rt.savePrefs({ editorVariant: "v2" });
-          reloadWithoutUiVariantQuery();
-        },
+        run: () => openNewEditor(),
       },
     );
 

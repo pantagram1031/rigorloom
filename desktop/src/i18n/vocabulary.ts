@@ -2076,6 +2076,22 @@ export const VOCABULARY = {
     ko: "제목·보호 문구",
     en: "heading or protected text",
   },
+  settings_section_editor: {
+    ko: "편집기",
+    en: "Editor",
+  },
+  settings_editor_v2: {
+    ko: "새 편집기",
+    en: "New editor",
+  },
+  settings_editor_v1: {
+    ko: "이전 화면 ({0})",
+    en: "Previous screens ({0})",
+  },
+  settings_editor_note: {
+    ko: "이전 화면은 다음 버전에서 없어질 수 있습니다.",
+    en: "The previous screens may be removed in a future version.",
+  },
 } as const satisfies Record<string, VocabEntry>;
 
 export type VocabularyKey = keyof typeof VOCABULARY;

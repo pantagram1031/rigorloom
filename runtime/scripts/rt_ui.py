@@ -1065,16 +1065,46 @@ class BridgeApplication:
             target = self.current_root()
         return self.sidecar.start(target)
 
+    def _read_prefs_file_locked(self) -> dict[str, Any]:
+        if self._prefs_path.is_file():
+            try:
+                loaded = json.loads(self._prefs_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    return loaded
+            except (OSError, json.JSONDecodeError):
+                pass
+        return {}
+
+    def _write_prefs_locked(self, current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+        for key, value in patch.items():
+            if not isinstance(key, str):
+                raise BridgeError("invalid_params", "prefs keys must be strings")
+            if value is None:
+                current.pop(key, None)
+            else:
+                current[key] = value
+            if key == "root":
+                self._root_pinned_in_session = True
+        self._prefs_path.parent.mkdir(parents=True, exist_ok=True)
+        encoded = (json.dumps(current, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        atomic_write_bytes(self._prefs_path, encoded)
+        return dict(current)
+
     def get_prefs(self) -> dict[str, Any]:
         with self._prefs_lock:
-            data: dict[str, Any] = {}
-            if self._prefs_path.is_file():
+            data = self._read_prefs_file_locked()
+            if "devEditorV2" in data:
+                legacy = data.get("devEditorV2")
+                patch: dict[str, Any] = {"devEditorV2": None}
+                if "editorVariant" not in data and isinstance(legacy, bool):
+                    patch["editorVariant"] = "v2" if legacy else "v1"
                 try:
-                    loaded = json.loads(self._prefs_path.read_text(encoding="utf-8"))
-                    if isinstance(loaded, dict):
-                        data = loaded
-                except (OSError, json.JSONDecodeError):
-                    data = {}
+                    data = self._write_prefs_locked(data, patch)
+                except OSError:
+                    # Reading prefs never fails on a write error: the
+                    # migrated keys are already in `data`, and the next
+                    # read tries the migration again.
+                    pass
             if self.explicit_root and not self._root_pinned_in_session:
                 data["root"] = str(self.default_root)
             return data
@@ -1092,27 +1122,8 @@ class BridgeApplication:
 
     def _write_prefs(self, patch: dict[str, Any]) -> dict[str, Any]:
         with self._prefs_lock:
-            current: dict[str, Any] = {}
-            if self._prefs_path.is_file():
-                try:
-                    loaded = json.loads(self._prefs_path.read_text(encoding="utf-8"))
-                    if isinstance(loaded, dict):
-                        current = loaded
-                except (OSError, json.JSONDecodeError):
-                    current = {}
-            for key, value in patch.items():
-                if not isinstance(key, str):
-                    raise BridgeError("invalid_params", "prefs keys must be strings")
-                if value is None:
-                    current.pop(key, None)
-                else:
-                    current[key] = value
-                if key == "root":
-                    self._root_pinned_in_session = True
-            self._prefs_path.parent.mkdir(parents=True, exist_ok=True)
-            encoded = (json.dumps(current, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-            atomic_write_bytes(self._prefs_path, encoded)
-            return dict(current)
+            current = self._read_prefs_file_locked()
+            return self._write_prefs_locked(current, patch)
 
     def doc_folder_refusal(self, raw: Any) -> tuple[Path | None, str | None]:
         """The 문서 폴더 a value names, or why it cannot be one.

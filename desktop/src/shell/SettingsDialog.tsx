@@ -11,6 +11,7 @@ import { t as vt } from "../i18n/vocabulary";
 import { S } from "../i18n/v2/shell";
 import * as rt from "../runtime";
 import { useWorkspace } from "../store";
+import { openV1 } from "./bindings";
 import { Btn } from "./parts";
 import { setShell, useShell, type SettingsSection } from "./shellState";
 import { Slot, useSlotsVersion } from "./Slot";
@@ -171,6 +172,26 @@ function GeneralSection() {
           ]}
           onChange={(v) => void toggleTheme(v)}
         />
+      </div>
+      <div className="sh-settings-row sh-settings-row--stack">
+        <div className="sh-settings-row-head">
+          <span className="sh-settings-label">{S.t("shell_settings_editor", lang)}</span>
+          <Segmented
+            value="v2"
+            label={S.t("shell_settings_editor", lang)}
+            testId="settings-editor"
+            options={[
+              { value: "v2", label: S.t("shell_settings_editor_v2", lang) },
+              { value: "v1", label: S.t("shell_settings_editor_v1", lang, ["v1"]) },
+            ]}
+            onChange={(v) => {
+              if (v === "v1") void openV1();
+            }}
+          />
+        </div>
+        <span className="sh-settings-note" data-testid="settings-editor-note">
+          {S.t("shell_settings_editor_note", lang)}
+        </span>
       </div>
     </div>
   );
