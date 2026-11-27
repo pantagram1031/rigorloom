@@ -664,6 +664,8 @@ def document_summary(profile: dict, session: Session) -> dict:
 
 def document_graph(profile: dict, session: Session) -> dict:
     """DocumentGraph: the profile's own addressing, never renumbered (§3.4)."""
+    faces = charpr_faces(profile)
+    heights = charpr_heights(profile)
     tables = []
     for table in profile.get("table_map", []):
         cells = []
@@ -674,6 +676,13 @@ def document_graph(profile: dict, session: Session) -> dict:
                 "textPreview": cell.get("text_preview"),
                 "truncated": bool(cell.get("truncated")),
             }
+            if cell.get("text_charpr") is not None:
+                text_cid = str(cell["text_charpr"])
+                row["textCharPr"] = cell["text_charpr"]
+                row["textCharPrFace"] = faces.get(text_cid)
+                height_pt = heights.get(text_cid)
+                if height_pt is not None:
+                    row["textCharPrHeightPt"] = height_pt
             for key, out_key in (("charpr", "charPr"),
                                  ("charpr_suggested", "charPrSuggested"),
                                  ("script_anomaly", "scriptAnomaly"),
