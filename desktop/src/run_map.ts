@@ -301,3 +301,60 @@ export function fieldTextForRunEdit(before: string, rangeStart?: number, rangeEn
   if (rangeStart == null || rangeEnd == null) return before;
   return utf16Slice(before, rangeStart, rangeEnd);
 }
+
+/** One whole-cell edit, named as an edit of one run of that cell. */
+export type CellRunEdit =
+  | { kind: "run"; run: number; runText: string; runStart: number; text: string }
+  | { kind: "cross_run" }
+  | { kind: "none" };
+
+/**
+ * Name a whole-cell edit of a one-paragraph cell with several text runs as an
+ * edit of the one run it changes, so the other runs keep their own character
+ * shape (a blue revision note next to black text, say). The changed region is
+ * the common-prefix/common-suffix difference of the cell's text before and
+ * after. Typing at a boundary between two runs goes to the run on its left,
+ * except at the very start of the cell.
+ *
+ * `none`: the cell has fewer than two runs, or several paragraphs, or its runs
+ * do not spell `before`; the edit stays a whole-cell edit.
+ * `cross_run`: the change spans more than one run.
+ */
+export function resolveCellRunEdit(
+  before: string,
+  after: string,
+  runs: readonly RunRecord[],
+): CellRunEdit {
+  const texts = runs.map((run) => run.text ?? "");
+  if (runs.length < 2 || before.includes("\n") || after.includes("\n") || texts.join("") !== before) {
+    return { kind: "none" };
+  }
+  const max = Math.min(before.length, after.length);
+  let prefix = 0;
+  while (prefix < max && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < max - prefix && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) {
+    suffix += 1;
+  }
+  const start = prefix;
+  const end = before.length - suffix;
+  let offset = 0;
+  const bounds = texts.map((text) => {
+    const bound = { start: offset, end: offset + text.length };
+    offset += text.length;
+    return bound;
+  });
+  let index = start === end
+    ? bounds.findIndex((bound) => bound.start < start && start < bound.end)
+    : bounds.findIndex((bound) => bound.start <= start && end <= bound.end);
+  if (index < 0 && start === end) {
+    index = bounds.findIndex((bound) => bound.end === start && bound.end > bound.start);
+    if (index < 0) index = bounds.findIndex((bound) => bound.start === start);
+  }
+  if (index < 0) return { kind: "cross_run" };
+  const bound = bounds[index];
+  const runText = texts[index];
+  const text = runText.slice(0, start - bound.start) + after.slice(start, after.length - suffix) +
+    runText.slice(end - bound.start);
+  return { kind: "run", run: runs[index].index, runText, runStart: bound.start, text };
+}

@@ -4,6 +4,7 @@ import { cancelEdit, setInlineEditMultiline } from "../actions";
 import {
   ENGINE_PX_PER_PT,
   engineLineFontSizePx,
+  queuedCellText,
   rectPt,
   type EngineBox,
   type EngineGeometry,
@@ -104,10 +105,7 @@ export function useEngineEditOverlay({
     : undefined;
   const cellLine = pickedCellLine ?? cellLines[0] ?? fallbackCellBox;
   const queuedCell = edit?.kind === "cell" ? queuedCellOpAt(getState(), edit.table, edit.row, edit.col) : null;
-  const cellValue = queuedCell?.kind === "replace_at_cell" && queuedCell.run === undefined && queuedCell.mode === "append"
-    ? queuedCell.before + queuedCell.text
-    : queuedCell?.kind === "fill_cell" ? queuedCell.lines?.join("\n") ?? queuedCell.text
-      : queuedCell?.kind === "replace_at_cell" && queuedCell.run === undefined ? queuedCell.text : edit?.before ?? "";
+  const cellValue = (queuedCell ? queuedCellText(queuedCell) : null) ?? edit?.before ?? "";
   const placement: Placement | null = !editable || !geometry || !edit ? null
     : edit.kind === "run" ? (paragraph ? {
         ...paragraph,

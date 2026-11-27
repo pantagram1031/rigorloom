@@ -6,7 +6,7 @@ import type {
   PageSource,
   PageViewMode,
 } from "./page";
-import type { QueuedOp } from "../store";
+import type { QueuedFillOp, QueuedOp, QueuedReplaceAtCellOp } from "../store";
 
 export const MAX_PAGE_SCALE = 3;
 export const ENGINE_PX_PER_PT = 96 / 72;
@@ -80,16 +80,26 @@ export interface EngineBox {
   start?: number;
 }
 
+/** The whole text a queued cell edit gives its cell, or null when it cannot say. */
+export function queuedCellText(op: QueuedFillOp | QueuedReplaceAtCellOp): string | null {
+  if (op.kind === "fill_cell") return op.lines?.join("\n") ?? op.text;
+  if (op.run === undefined) return op.mode === "append" ? op.before + op.text : op.text;
+  if (op.runStart === undefined || op.expect === undefined) return null;
+  return op.before.slice(0, op.runStart) + op.text + op.before.slice(op.runStart + op.expect.length);
+}
+
 export function engineTextEdit(op: QueuedOp): EngineTextEdit[] {
   if (op.kind === "set_run") {
     return [{ at: `p${op.atPara}`, run: op.run, before: op.before, text: op.text }];
   }
-  if (op.kind === "fill_cell" || (op.kind === "replace_at_cell" && op.run === undefined)) {
-    const text = op.kind === "fill_cell" ? op.lines?.join("\n") ?? op.text
-      : op.mode === "append" ? op.before + op.text : op.text;
-    return [{ at: `t${op.table}/r${op.row}/c${op.col}`, text }];
-  }
-  return [];
+  if (op.kind !== "fill_cell" && op.kind !== "replace_at_cell") return [];
+  const text = queuedCellText(op);
+  if (text === null) return [];
+  const at = `t${op.table}/r${op.row}/c${op.col}`;
+  // The cell's text before the edit lets the preview change only what changed,
+  // so the rest of the cell keeps its own character shapes.
+  const before = op.kind === "replace_at_cell" ? op.before : "";
+  return [before ? { at, before, text } : { at, text }];
 }
 
 export function rectPt([x, y, w, h]: RectTuple): PageRectPt {

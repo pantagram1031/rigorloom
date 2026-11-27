@@ -566,6 +566,12 @@ export function projectedAfterText(
   if (op.kind === "replace_at_cell" && op.mode === "append") {
     return `${op.before}${op.text}`;
   }
+  // An edit made in the whole cell and queued as an edit of one run: `before`
+  // is the cell's text, `expect` the run's, `runStart` where the run starts.
+  if (op.kind === "replace_at_cell" && op.run !== undefined && "runStart" in op &&
+      typeof op.runStart === "number" && op.expect !== undefined) {
+    return op.before.slice(0, op.runStart) + op.text + op.before.slice(op.runStart + op.expect.length);
+  }
   if (op.kind === "fill_cell" && op.lines !== undefined) {
     return op.lines.join("\n");
   }

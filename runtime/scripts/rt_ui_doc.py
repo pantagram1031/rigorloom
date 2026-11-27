@@ -197,7 +197,8 @@ def _params(operation, body):
             if not isinstance(op, dict) or not isinstance(op.get("at"), str) or not isinstance(op.get("text"), str):
                 raise PageError("invalid_params", "invalid preview text edit")
             at = op["at"]
-            if (set(op) == {"at", "text"} and CELL_ADDRESS.fullmatch(at)):
+            if (set(op) in ({"at", "text"}, {"at", "before", "text"}) and CELL_ADDRESS.fullmatch(at)
+                    and isinstance(op.get("before", ""), str)):
                 continue
             if (set(op) != {"at", "run", "before", "text"} or not PARA_ADDRESS.fullmatch(at) or
                     type(op["run"]) is not int or op["run"] < 0 or not isinstance(op["before"], str)):
@@ -525,6 +526,17 @@ class PageGateway:
                             targets.append(para_at)
                             edits.append({"op": "set", "at": para_at, "text": ""})
                     continue
+                # A one-paragraph cell whose text is still the queued "before":
+                # change only the changed region, as a run edit does, so the
+                # rest of the cell keeps its runs and their character shapes.
+                before = op.get("before")
+                if isinstance(before, str) and before and "\n" not in before and "\n" not in text:
+                    blocks = _engine_result(rt_doc.read(head.path, core_cell_at), head.rev)["blocks"]
+                    if len(blocks) == 1 and _queue_form(blocks[0]["text"]) == _queue_form(before):
+                        c_start, c_end, changed = _queued_run_edit(blocks[0]["text"], text)
+                        targets.append(at)
+                        edits.append({"op": "set", "at": f"{blocks[0]['at']}:{c_start}-{c_end}", "text": changed})
+                        continue
             targets.append(at)
             edits.append({"op": "set", "at": at, "text": text})
         # rt_doc snapshots the session head and writes the edit to its own private scratch.

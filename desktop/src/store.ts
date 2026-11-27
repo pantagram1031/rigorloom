@@ -149,6 +149,13 @@ export interface QueuedReplaceAtCellOp extends QueuedOpBase {
   run?: number;
   mode?: "replace" | "append";
   expect?: string;
+  /**
+   * For an edit the editor made in the whole cell and queued as an edit of one
+   * `run`: where that run starts in the cell's text (UTF-16). `before` is then
+   * the cell's whole text and `expect` the run's own, so the cell's text after
+   * the edit can be shown. Never sent to the runtime's plan.
+   */
+  runStart?: number;
 }
 
 /**

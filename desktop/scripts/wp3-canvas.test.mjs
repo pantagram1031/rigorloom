@@ -136,9 +136,13 @@ function loadWp3Stack() {
   });
   const changeModel = loadTsModule("src/model/changes.ts");
   const controller = loadTsModule("src/canvas/controller.ts", { "../store": h.store, "../model/changes": changeModel });
+  // Cell runs the stubbed runtime answers for a cell edit; a test sets them.
+  const cellRuns = { regions: [] };
   const actions = loadTsModule("src/canvas/actions.ts", {
     "../actions": h.legacyActionsStub,
     "../i18n/v2/wp3": wp3,
+    "../run_map": loadTsModule("src/run_map.ts"),
+    "../runtime": { readRegion: async () => ({ subject: null, regions: cellRuns.regions }) },
     "../store": h.store,
     "../workspace/fieldLabels": fieldLabels,
     "./controller": controller,
@@ -192,6 +196,7 @@ function loadWp3Stack() {
 
   return {
     ...h,
+    cellRuns,
     wp3,
     wp3FormTokens,
     fieldLabels,
@@ -608,6 +613,43 @@ test("beginCellEditV2 opens static/guide cells without refusal and commits only 
   assert.equal(upsertCalls[0].kind, "fill_cell");
   assert.equal(upsertCalls[0].charPr, "23");
 
+});
+
+test("a cell edit inside one run of a mixed cell queues an edit of that run only", async () => {
+  const stack = loadWp3Stack();
+  const { upsertCalls } = stack;
+  stack.actions.beginCellEditV2(0, 0, 0);
+  const before = stack.store.getState().inlineEdit.before;
+  assert.ok(before.length > 4);
+  // Split the cell's text into three runs; the last one is the "blue note".
+  const cut = [2, before.length - 2];
+  const runs = [before.slice(0, cut[0]), before.slice(cut[0], cut[1]), before.slice(cut[1])]
+    .map((text, index) => ({ index, text }));
+  stack.cellRuns.regions = [{ table: 0, addr: { row: 0, col: 0 }, text: before, runs }];
+
+  const after = before.slice(0, cut[0] + 1) + "X" + before.slice(cut[0] + 1);
+  const res = await stack.actions.commitCellEditV2(after);
+  assert.equal(res.committed, true);
+  const op = upsertCalls[upsertCalls.length - 1];
+  assert.equal(op.kind, "replace_at_cell");
+  assert.equal(op.run, 1);
+  assert.equal(op.mode, "replace");
+  assert.equal(op.expect, runs[1].text);
+  assert.equal(op.before, before);
+  assert.equal(op.text, runs[1].text.slice(0, 1) + "X" + runs[1].text.slice(1));
+  assert.equal(op.runStart, cut[0]);
+  // The editor and the preview see the whole cell.
+  const enginePage = loadTsModule("src/model/enginePage.ts");
+  assert.equal(enginePage.queuedCellText(op), after);
+  assert.deepEqual(enginePage.engineTextEdit(op), [{ at: "t0/r0/c0", before, text: after }]);
+
+  // A change across two runs stays a whole-cell edit.
+  stack.actions.beginCellEditV2(0, 0, 0);
+  const across = before.slice(0, 1) + "Y" + before.slice(cut[1] + 1);
+  await stack.actions.commitCellEditV2(across);
+  const wide = upsertCalls[upsertCalls.length - 1];
+  assert.equal(wide.run, undefined);
+  assert.equal(wide.text, across);
 });
 
 test("find replacement and cell edits upsert the same address", async () => {
