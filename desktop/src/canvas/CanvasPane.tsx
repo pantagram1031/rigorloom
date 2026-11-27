@@ -11,8 +11,10 @@ import { cancelEdit } from "../actions";
 import { wp3t } from "../i18n/v2/wp3";
 import { createEnginePageSource, engineTextEdit } from "../model/enginePage";
 import {
+  cellCharShape,
   createProjectionPageSource,
   detectDocumentSeats,
+  formatCharShape,
   parseDocAddress,
   type CanvasChangeRef,
   type PageSource,
@@ -433,6 +435,10 @@ export function CanvasStatusLeft() {
       deriveCellFieldLabel(inspect, textMap, address.table, address.row, address.col, language)
     : null;
 
+  const charShape = formatCharShape(address?.kind === "cell"
+    ? cellCharShape(inspect, address.table, address.row, address.col)
+    : cellCharShape(inspect, null));
+
   return (
     <div className="rl-status-left" data-testid="status-canvas-left">
       {pageCount > 1 ? (
@@ -457,6 +463,12 @@ export function CanvasStatusLeft() {
       {seatText ? (
         <span className="rl-status-item" data-testid="status-seat">
           {seatText}
+        </span>
+      ) : null}
+      {charShape ? (
+        <span className="rl-status-item rl-num" data-testid="status-char-shape"
+          title={wp3t("status_char_shape", language, [charShape])}>
+          {charShape}
         </span>
       ) : null}
       <span className="rl-status-item rl-num" data-testid="status-char-count">

@@ -31,6 +31,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T253:** In editor v2, the status bar shows the character shape of the hovered, selected or edited cell, face then size as the 서식 도구 bar shows it (`함초롬바탕 10.0pt`), taken from the cell's own charPr and falling back to the body text's; outside a cell it shows the body text's.
 - **T250:** In editor v2, the 빈칸 pane groups its rows under small headings by page and table (`1쪽 · 표 1`, or `표 1` while no rendered page has placed the cell), including inside the 접수 기관이 쓰는 칸 group, and each row shows only its cell (`3행 1열`) in an aligned right-hand column, so longer blank names have room. Blank locations, hover labels and find results take the page from the rendered pages and leave the page out when it is not known, instead of always saying 1쪽.
 - **T248:** On engine-rendered pages in editor v2, the in-place text editor and the edit text shown until the page redraws now use the size of the text being edited instead of the line box height, and drop the black box border for a thin focus outline; read-only cells keep a distinct look. To supply that size, the form profile gains `charpr_heights` (charPr id to point size), editable cell regions carry `charPrHeightPt`, and paragraph runs carry `charpr_height_pt`, each absent when the header declares no height.
 - **T247:** The `edit` tool's description says the same things in fewer words (666 of its 700 characters, from 695), so new ops still fit in the list it names. The text ops, their fields, the guide pointer and "addresses count from 0" stay.

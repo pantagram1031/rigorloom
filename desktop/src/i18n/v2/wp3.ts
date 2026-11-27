@@ -92,6 +92,7 @@ export const WP3_VOCABULARY = {
   page_source_approx: { ko: "대체 글꼴 사용", en: "Fallback fonts used" },
   page_render_failed: { ko: "다시 그리지 못했습니다", en: "Could not redraw the page" },
   status_char_count: { ko: "글자 {0}", en: "{0} chars" },
+  status_char_shape: { ko: "글자 모양: {0}", en: "Character shape: {0}" },
   status_font_sub: { ko: "글꼴 대체 {0}", en: "{0} font substituted" },
   status_font_sub_detail: {
     ko: "글꼴 대체 · {0} → {1}",
