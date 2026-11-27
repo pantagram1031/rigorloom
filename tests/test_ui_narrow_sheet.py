@@ -20,6 +20,20 @@ VIEWPORT_W = 390
 VIEWPORT_H = 844
 
 
+def _drag_handle(page, handle, dy: float, *, check_no_live_move: bool = False) -> None:
+    box = handle.bounding_box()
+    assert box is not None
+    cx = box["x"] + box["width"] / 2
+    cy = box["y"] + box["height"] / 2
+    before_expanded = handle.get_attribute("aria-expanded")
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    page.mouse.move(cx, cy + dy, steps=5)
+    if check_no_live_move:
+        assert handle.get_attribute("aria-expanded") == before_expanded
+    page.mouse.up()
+
+
 def test_narrow_bottom_sheet_compact_expanded_close_and_escape(tmp_path: Path) -> None:
     sync_playwright = _import_playwright()
     if not _bundle_has_shell():
@@ -134,6 +148,36 @@ def test_narrow_bottom_sheet_compact_expanded_close_and_escape(tmp_path: Path) -
             page.get_by_test_id("app-menu").click()
             page.locator('[data-testid="narrow-drawer"] .sh-drawer-row:not([data-selected])').first.click()
             assert sheet.is_visible()
+            assert handle.get_attribute("aria-expanded") == "false"
+
+            # 5) Pointer drag on the handle: >32 px up expands, >32 px down collapses,
+            # downward drag when already compact keeps it compact without closing, and
+            # a short (10 px) drag behaves like a single click toggle.
+            _drag_handle(page, handle, -80, check_no_live_move=True)
+            assert handle.get_attribute("aria-expanded") == "true"
+            assert handle.get_attribute("aria-label") == "변경 창 작게 보기"
+            assert handle.evaluate("el => getComputedStyle(el).touchAction") == "none"
+            drag_expanded_box = sheet.bounding_box()
+            assert drag_expanded_box is not None
+            assert drag_expanded_box["height"] >= 0.6 * VIEWPORT_H, drag_expanded_box
+
+            _drag_handle(page, handle, 80, check_no_live_move=True)
+            assert sheet.is_visible()
+            assert handle.get_attribute("aria-expanded") == "false"
+            assert handle.get_attribute("aria-label") == "변경 창 크게 보기"
+            drag_compact_box = sheet.bounding_box()
+            assert drag_compact_box is not None
+            assert drag_compact_box["height"] <= 0.35 * VIEWPORT_H, drag_compact_box
+
+            # Downward drag when already compact closes nothing and stays compact.
+            _drag_handle(page, handle, 80)
+            assert sheet.is_visible()
+            assert handle.get_attribute("aria-expanded") == "false"
+
+            # Short 10 px drag then release behaves like a click (toggles once).
+            _drag_handle(page, handle, -10)
+            assert handle.get_attribute("aria-expanded") == "true"
+            _drag_handle(page, handle, 10)
             assert handle.get_attribute("aria-expanded") == "false"
 
             assert page_errors == [], page_errors

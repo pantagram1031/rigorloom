@@ -434,7 +434,14 @@ test("draftValidationPending is true only for plan != null, validation null, pha
 
   const changeListSource = readFileSync(new URL("../src/components/ChangeList.tsx", import.meta.url), "utf8");
   const reviewViewSource = readFileSync(new URL("../src/views/ReviewView.tsx", import.meta.url), "utf8");
+  const commandPaletteSource = readFileSync(new URL("../src/components/CommandPalette.tsx", import.meta.url), "utf8");
   assert.match(changeListSource, /draftValidationPending\(/);
   assert.match(reviewViewSource, /draftValidationPending\(/);
+  assert.match(
+    commandPaletteSource,
+    /draft\.validation\?\.ok === true \|\| draftValidationPending\(draft\)/,
+  );
+  assert.doesNotMatch(commandPaletteSource, /validation\?\.verdict === "pass"/);
 });
+
 
