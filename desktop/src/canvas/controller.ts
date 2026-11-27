@@ -373,20 +373,29 @@ export function scrollCanvasToTarget(opts: ScrollTarget): void {
 
   const targetEl = findTarget(container, opts);
   if (!targetEl) {
-    // The target is on another page: turn to it, then scroll once it is drawn.
-    if (!turnToTargetPage(opts)) return;
+    // The target is on a page that is not drawn. Turn to its page once that
+    // page is known (it may still be measuring, or another call may already
+    // have turned it), then scroll once the target is drawn.
+    if (getCanvasSlice().pageCount <= 1) return;
+    if (typeof requestAnimationFrame !== "function") {
+      turnToTargetPage(opts);
+      return;
+    }
     const request = ++pageTurnScrollRequest;
     const deadline = Date.now() + PAGE_TURN_SCROLL_WAIT_MS;
+    let turned = false;
     const retry = () => {
       if (request !== pageTurnScrollRequest) return;
       const live = document.querySelector<HTMLElement>('[data-testid="canvas-scroll"]');
       if (live && findTarget(live, opts)) {
         scrollCanvasToTarget(opts);
-      } else if (Date.now() < deadline && typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(retry);
+        return;
       }
+      // Turn at most once, so a page the user turns to meanwhile is kept.
+      if (!turned) turned = turnToTargetPage(opts) || knownPageOf(opts) !== null;
+      if (Date.now() < deadline) requestAnimationFrame(retry);
     };
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(retry);
+    retry();
     return;
   }
 

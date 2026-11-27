@@ -298,13 +298,16 @@ def test_engine_cell_stays_over_held_raster_until_its_preview_draws(browser, ser
 
 
 def test_going_to_a_find_result_on_another_page_turns_to_that_page(browser, server):
-    """Page 2 is measured in the background, and picking its find result turns to it."""
+    """Page 2 is measured in the background, and picking its find result turns to it,
+    also when it is picked before page 2's measuring has answered."""
     pages = {
         "1": [{"kind": "cell", "at": "t0/r5/c1", "rect": [50, 100, 140, 40]}],
         "2": [{"kind": "cell", "at": "t0/r0/c0", "rect": [50, 60, 300, 30]}],
     }
     with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
         geometry_pages = []
+        held = []
+        released = []
         sequence = [0]
 
         def handle(route):
@@ -318,10 +321,15 @@ def test_going_to_a_find_result_on_another_page_turns_to_that_page(browser, serv
             number = query.get("page", ["1"])[0]
             if operation == "geometry":
                 geometry_pages.append(number)
-                route.fulfill(json={
+                reply = {
                     "rev": rev, "page": int(number), "width_pt": 595, "height_pt": 842,
                     "boxes": pages.get(number, []),
-                })
+                }
+                if number == "2" and not released:
+                    # Page 2's background measuring answers only after the click.
+                    held.append((route, reply))
+                else:
+                    route.fulfill(json=reply)
             elif operation == "render":
                 sequence[0] += 1
                 route.fulfill(body=PNG, headers={
@@ -339,16 +347,21 @@ def test_going_to_a_find_result_on_another_page_turns_to_that_page(browser, serv
         expect(page.get_by_test_id("status-page-pos")).to_have_text("1 / 2쪽")
         # The other page is measured without the user turning to it.
         for _ in range(50):
-            if "2" in geometry_pages:
+            if held:
                 break
             page.wait_for_timeout(100)
-        assert "2" in geometry_pages
+        assert held, geometry_pages
         expect(page.locator('[data-cell-key="c:0:0:0"]')).to_have_count(0)
 
         page.keyboard.press("Control+f")
         query = page.get_by_test_id("find-query-input")
         query.fill("시행규칙")
+        # Picked while page 2 is still being measured: the turn waits for it.
         page.get_by_test_id("find-match-0").click()
+        expect(page.get_by_test_id("status-page-pos")).to_have_text("1 / 2쪽")
+        released.append(True)
+        for route, reply in held:
+            route.fulfill(json=reply)
         expect(page.get_by_test_id("status-page-pos")).to_have_text("2 / 2쪽")
         expect(page.locator('[data-cell-key="c:0:0:0"]')).to_be_visible()
         expect(page.get_by_test_id("status-cell-position")).to_contain_text("2쪽")
