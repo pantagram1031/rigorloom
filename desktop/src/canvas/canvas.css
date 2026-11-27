@@ -303,6 +303,12 @@
   z-index: 1;
 }
 
+/* The in-place editor marks the cell being typed in; a second outline around
+   the whole cell read as an extra empty line below the text. */
+.rl-paper[data-engine-geometry] .rl-cell--editing.rl-cell--seat-selected {
+  outline: none;
+}
+
 .rl-raster-caret {
   position: absolute;
   z-index: 3;
