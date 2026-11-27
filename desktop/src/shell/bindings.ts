@@ -6,7 +6,7 @@ import { S } from "../i18n/v2/shell";
 import * as rt from "../runtime";
 import { getState, hasUnsavedWorkForReload, patchDocSlice, reloadWithoutUiVariantQuery } from "../store";
 import { registerCommand } from "./commands";
-import { defineContext, dispatch, setBrowserMode } from "./keys";
+import { defineContext, dispatch, type KeyEventLike, overlayOpen, setBrowserMode } from "./keys";
 import { bindKey } from "./keymap";
 import { pickAndOpenFile, pickFolder } from "./open";
 import {
@@ -61,8 +61,14 @@ export function showLeftPane(pane: LeftPaneId, { toggle = true } = {}): void {
 export function showRightTab(tab: RightTabId): void {
   const sid = activeTabSessionId();
   if (!sid) return;
+  const s = getShell();
   docLayout.patch(sid, { rightTab: tab });
-  setShell({ rightOpen: true, lastOpened: "right", narrowDrawerOpen: false });
+  setShell({
+    rightOpen: true,
+    lastOpened: "right",
+    narrowDrawerOpen: false,
+    ...(s.rightOpen ? {} : { narrowSheetExpanded: false }),
+  });
 }
 
 function visibleSides() {
@@ -79,12 +85,47 @@ export function toggleLeft(): void {
 /** Show the right panel if it is not showing; hide it if it is. */
 export function toggleRight(): void {
   const shell = getShell();
-  if (shell.breakpoint === "narrow" ? shell.rightOpen : visibleSides().right) setShell({ rightOpen: false });
-  else setShell({ rightOpen: true, lastOpened: "right" });
+  if (shell.breakpoint === "narrow" ? shell.rightOpen : visibleSides().right) {
+    setShell({ rightOpen: false, narrowSheetExpanded: false });
+  } else {
+    setShell({ rightOpen: true, lastOpened: "right", narrowSheetExpanded: false });
+  }
+}
+
+function innerSheetOverlayOpen(): boolean {
+  if (overlayOpen()) return true;
+  if (typeof document === "undefined" || typeof document.querySelector !== "function") return false;
+  return Boolean(
+    document.querySelector(
+      '#sh-narrow-sheet [role="dialog"]:not([hidden]), #sh-narrow-sheet [role="menu"]:not([hidden]), #sh-narrow-sheet [aria-modal="true"]:not([hidden])',
+    ),
+  );
+}
+
+function focusInNarrowSheet(e?: KeyEventLike): boolean {
+  const candidates = [
+    e?.target,
+    typeof document !== "undefined" ? document.activeElement : null,
+  ];
+  for (const el of candidates) {
+    if (!el || typeof (el as { closest?: unknown }).closest !== "function") continue;
+    const closest = (el as { closest: (sel: string) => unknown }).closest.bind(el);
+    if (
+      closest(
+        '[data-testid="approve-sheet"], [data-testid="return-popover"], [role="dialog"]:not([hidden]), [role="menu"]:not([hidden]), [aria-modal="true"]:not([hidden])',
+      )
+    ) {
+      return false;
+    }
+    if (closest('#sh-narrow-sheet, .sh-narrow-sheet, [data-testid="narrow-sheet-handle"]')) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Esc order (D1 §4): overlays first, then the shell's own layers. */
-function escape(): boolean {
+function escape(e?: KeyEventLike): boolean {
   const s = getShell();
   if (s.paletteOpen) {
     closePalette();
@@ -98,7 +139,14 @@ function escape(): boolean {
     setShell({ appMenuOpen: false, tabListOpen: false, narrowDrawerOpen: false });
     return true;
   }
-  return closeTopmostOverlay();
+  if (closeTopmostOverlay()) return true;
+  // An Escape a control inside the sheet already handled (a popover closing) stops here.
+  if (e?.defaultPrevented) return false;
+  if (s.rightOpen && s.narrowSheetExpanded && !innerSheetOverlayOpen() && focusInNarrowSheet(e)) {
+    setShell({ narrowSheetExpanded: false });
+    return true;
+  }
+  return false;
 }
 
 const PANES: Array<[LeftPaneId, string]> = [
@@ -135,7 +183,7 @@ export function installShellBindings(): () => void {
   offs.push(bindKey("shell.fullscreen", () => void toggleFullscreen()));
   // Ctrl+S never creates a 수정본; it pulses 저장됨 (D1 flow b.7).
   offs.push(bindKey("shell.save", () => setShell({ savedPulse: getShell().savedPulse + 1 })));
-  offs.push(bindKey("shell.escape", () => escape()));
+  offs.push(bindKey("shell.escape", (e) => escape(e)));
 
   const cmd = (id: string, key: Parameters<typeof S.t>[0], run: () => void, extra: Partial<Parameters<typeof registerCommand>[0]> = {}) =>
     offs.push(registerCommand({ id, title: (l) => S.t(key, l), run, ...extra }));

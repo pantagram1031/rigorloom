@@ -1240,10 +1240,64 @@
 
 
 .sh-narrow-sheet {
-  height: min(57dvh, 481px);
+  display: flex;
+  flex-direction: column;
+  height: min(34dvh, 300px);
   min-height: 0;
+  overflow: hidden;
   background: var(--panel);
   border-top: 1px solid var(--line);
+}
+
+.sh-narrow-sheet[data-expanded] {
+  height: min(72dvh, 620px);
+}
+
+.sh-narrow-sheet[hidden] {
+  display: none;
+}
+
+.sh-narrow-sheet-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--ctl-lg, 28px);
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  flex: none;
+  cursor: pointer;
+}
+
+.sh-narrow-sheet-handle:hover {
+  background: var(--hover);
+}
+
+.sh-narrow-sheet-handle:focus-visible {
+  outline-offset: -2px;
+}
+
+.sh-narrow-sheet-grip {
+  width: 32px;
+  height: 4px;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--line-strong);
+}
+
+.sh-narrow-sheet-handle:hover .sh-narrow-sheet-grip {
+  background: var(--line-control);
+}
+
+.sh-narrow-sheet > .rp {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sh-drawer {

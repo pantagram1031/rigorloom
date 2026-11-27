@@ -19,6 +19,8 @@ export const S = defineStrings("shell", {
   shell_toggle_left: { ko: "왼쪽 창", en: "Left pane" },
   shell_narrow_changes_open: { ko: "변경 {0}건 · 열기", en: "{0} changes · Open" },
   shell_narrow_changes_close: { ko: "변경 창 닫기", en: "Close review panel" },
+  shell_narrow_sheet_expand: { ko: "변경 창 크게 보기", en: "Expand changes sheet" },
+  shell_narrow_sheet_shrink: { ko: "변경 창 작게 보기", en: "Shrink changes sheet" },
   shell_toggle_right: { ko: "오른쪽 창", en: "Right panel" },
   shell_app_menu: { ko: "메뉴", en: "Menu" },
   shell_win_minimize: { ko: "최소화", en: "Minimize" },

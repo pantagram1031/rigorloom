@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T233:** In the narrow document layout, the bottom changes sheet now opens at a compact height that leaves the page in view, with a top grab handle button to toggle between compact and expanded heights; closing the sheet or switching tabs resets it to compact, and pressing Escape inside the expanded sheet collapses it first.
 - **T232:** In editor v2, action tooltips in change rows, the mark toolbar, the approval sheet and the agent composer pair each control's label with its shortcut from the keymap, the blanks list location uses `--text-xs`, `--text-disabled` has its own light and dark values with lower contrast than `--text-3`, and the unreferenced `MarginMarks` component and its styles are removed.
 - **T230:** The editor v2 shell is now the default window. The previous five screens open with `?ui=v1`, the 이전 화면으로 열기 command, or `"editorVariant": "v1"` in prefs.json.
 - **T225:** A new engine-only browser test types the gongmun example into editor v2 seat by seat, with real pauses, Tab between cells and Enter at the end, and records how many previews, preview files and plan rounds that costs. It checks that no preview fails and that the counts stay within the commits made; the measured numbers go with each run's record, not into the product.

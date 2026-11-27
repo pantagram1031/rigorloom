@@ -28,6 +28,7 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
   const lang = useWorkspace((s) => s.language);
   const drawer = useShell((s) => s.narrowDrawerOpen);
   const panelOpen = useShell((s) => s.rightOpen);
+  const sheetExpanded = useShell((s) => s.narrowSheetExpanded);
   const sessionId = tab?.kind === "doc" ? tab.sessionId : null;
   const title = useWorkspace((s) => {
     if (!tab) return "";
@@ -36,6 +37,10 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
     return tab.name;
   });
   const count = useWorkspace((s) => (sessionId ? pendingCount(s, sessionId) : 0));
+  const sheetHandleLabel = S.t(
+    sheetExpanded ? "shell_narrow_sheet_shrink" : "shell_narrow_sheet_expand",
+    lang,
+  );
 
   return (
     <div className="sh-narrow" data-merged={sessionId ? true : undefined}>
@@ -78,7 +83,24 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
         ) : null}
       </main>
       {sessionId ? (
-        <div className="sh-narrow-sheet" id="sh-narrow-sheet" hidden={!panelOpen}>
+        <div
+          className="sh-narrow-sheet"
+          id="sh-narrow-sheet"
+          data-expanded={sheetExpanded || undefined}
+          hidden={!panelOpen}
+        >
+          <button
+            type="button"
+            className="sh-narrow-sheet-handle"
+            aria-expanded={sheetExpanded}
+            aria-controls="sh-narrow-sheet"
+            aria-label={sheetHandleLabel}
+            title={sheetHandleLabel}
+            data-testid={TID.narrowSheetHandle}
+            onClick={() => setShell({ narrowSheetExpanded: !getShell().narrowSheetExpanded })}
+          >
+            <span className="sh-narrow-sheet-grip" aria-hidden="true" />
+          </button>
           <Slot name="narrowSheet" sessionId={sessionId} quiet />
         </div>
       ) : null}

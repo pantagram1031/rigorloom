@@ -64,6 +64,7 @@ export interface KeyEventLike {
   keyCode?: number;
   repeat?: boolean;
   target?: unknown;
+  defaultPrevented?: boolean;
   preventDefault?: () => void;
   stopPropagation?: () => void;
 }
