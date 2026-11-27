@@ -3452,6 +3452,11 @@ def _shape_elem_end(s, start, tag):
     return len(s)
 
 
+def _shape_scale(v):
+    """A scaMatrix entry as the engine writes it (up to six decimals, no trailing zeros)."""
+    return ("%.6f" % v).rstrip("0").rstrip(".") or "0"
+
+
 def _parse_shape(raw):
     """Parsed attributes of one 사각형 / 타원 / 선 / 글상자 element."""
     tag = re.match(r"<hp:(\w+)", raw).group(1)
@@ -3465,6 +3470,7 @@ def _parse_shape(raw):
     sz, pos = tag_of(r"<hp:sz\b[^<>]*/>"), tag_of(r"<hp:pos\b[^<>]*/>")
     org, cur = tag_of(r"<hp:orgSz\b[^<>]*/>"), tag_of(r"<hp:curSz\b[^<>]*/>")
     ln, brush = tag_of(r"<hp:lineShape\b[^<>]*/>"), tag_of(r"<hc:winBrush\b[^<>]*/>")
+    sca = tag_of(r"<hc:scaMatrix\b[^<>]*/>")
     texts, refs = None, None
     if dt:
         ps = re.findall(r"<hp:p\b[^>]*>.*?</hp:p>", dt.group(0), re.S)
@@ -3477,6 +3483,7 @@ def _parse_shape(raw):
         "width": _int_attr(sz, "width"), "height": _int_attr(sz, "height"),
         "org_width": _int_attr(org, "width"), "org_height": _int_attr(org, "height"),
         "cur_width": _int_attr(cur, "width"), "cur_height": _int_attr(cur, "height"),
+        "scale": ([_attr(sca, k) for k in ("e1", "e2", "e3", "e4", "e5", "e6")] if sca else None),
         "treat_as_char": _attr(pos, "treatAsChar") if pos else None,
         "vert_rel": _attr(pos, "vertRelTo") if pos else None, "horz_rel": _attr(pos, "horzRelTo") if pos else None,
         "vert_offset": _int_attr(pos, "vertOffset"), "horz_offset": _int_attr(pos, "horzOffset"),
@@ -5531,6 +5538,7 @@ def _plan_op(doc, cl, i, name, op, at):
         a.shape = (p, {
             "tag": SHAPE_KINDS[kind][3:], "textbox": kind == "textbox", "width": w, "height": h,
             "org_width": org[0], "org_height": org[1], "cur_width": cur[0], "cur_height": cur[1], "treat_as_char": "0",
+            "scale": [_shape_scale(w / org[0]), "0", "0", "0", _shape_scale(h / org[1]), "0"],
             "wrap": kws["wrap"], "vert_rel": kws["vert_rel"], "horz_rel": kws["horz_rel"],
             "vert_offset": _mm_hu(kws.get("y_mm", 0)), "horz_offset": _mm_hu(kws.get("x_mm", 0)),
             "line_color": kws.get("line", {}).get("color", "#000000"), "line_width": 33, "line_style": "SOLID",

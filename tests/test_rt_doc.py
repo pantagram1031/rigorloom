@@ -3409,6 +3409,8 @@ def test_engine_insert_shape_writes_the_four_shapes(kit, tmp_path, monkeypatch):
     for x in (tb, rc, el):
         assert (x["org_width"], x["org_height"]) == D.SHAPE_DEFAULT_HU
         assert (x["cur_width"], x["cur_height"]) == (x["width"], x["height"])
+        assert x["scale"] == [D._shape_scale(x["width"] / x["org_width"]), "0", "0", "0",
+                              D._shape_scale(x["height"] / x["org_height"]), "0"]
     assert (ln["org_width"], ln["org_height"], ln["cur_width"], ln["cur_height"]) == D.SHAPE_DEFAULT_HU + (0, 0)
     assert el["tag"] == "ellipse" and el["wrap"] == "IN_FRONT_OF_TEXT"
     assert len({x["id"] for x in (tb, rc, ln, el)}) == 4
@@ -3435,6 +3437,11 @@ def test_engine_insert_shape_writes_the_four_shapes(kit, tmp_path, monkeypatch):
         broken = D.Doc(out, got.zip.rewrite({"Contents/section0.xml": raw.replace(old_s, new_s).encode("utf-8")}),
                        "hwpx")
         assert not D._verify(base, broken, acts), label
+    # a resized shape whose scale matrix no longer matches its curSz / orgSz is refused
+    flat = re.sub(r'<hc:scaMatrix e1="(?!1")[^"]*"', '<hc:scaMatrix e1="1"', raw, count=1)
+    assert flat != raw
+    assert not D._verify(base, D.Doc(out, got.zip.rewrite({"Contents/section0.xml": flat.encode("utf-8")}), "hwpx"),
+                         acts)
     # a shape the op did not ask for, or one missing, is refused too
     no_line = re.sub(r"<hp:line\b.*?</hp:line>", "", raw, count=1, flags=re.S)
     assert not D._verify(base, D.Doc(out, got.zip.rewrite({"Contents/section0.xml": no_line.encode("utf-8")}), "hwpx"),
