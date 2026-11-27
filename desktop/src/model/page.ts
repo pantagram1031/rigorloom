@@ -19,13 +19,17 @@ import type {
 } from "../types";
 import {
   collapseFormGuideLabel,
+  deriveBlankCellLabel,
   deriveCellFieldLabel,
+  graphCellAt,
+  isPlaceholderSlot,
   labelFromCellText,
   disambiguateBlankLabels,
   extractFormInstructionContext,
-  isSlotPlaceholderText,
   truncateLabel,
 } from "../workspace/fieldLabels";
+
+export { deriveBlankCellLabel, graphCellAt, isPlaceholderSlot };
 
 export type PageViewMode = "marks" | "clean" | "base";
 
@@ -451,18 +455,6 @@ export function formatSeatGroupHeading(
   return wp3t("seat_group_table", lang, [table + 1]);
 }
 
-/** The document graph's cell at a table address, if the graph has it. */
-export function graphCellAt(
-  inspect: Pick<InspectResult, "graph"> | null | undefined,
-  table: number,
-  row?: number,
-  col?: number,
-): GraphCell | undefined {
-  return inspect?.graph?.tables
-    ?.find((t) => t.index === table)
-    ?.cells?.find((c) => c.addr.row === row && c.addr.col === col);
-}
-
 export interface CharShape {
   face: string | null;
   sizePt: number | null;
@@ -712,15 +704,10 @@ export function detectDocumentSeats(
         tbl.cells.some((c) => c.addr.row === 0 && c.classification === "guide");
       const regionText = textMap[key]?.text ?? cell.textPreview ?? "";
       const isFillTarget = cell.classification === "fill_target" && !isRow0CornerSpacer;
-      const isPlaceholderSlot =
-        formCtx.isFormDocument &&
-        !isFillTarget &&
-        cell.classification !== "guide" &&
-        !formCtx.instructionCellKeys.has(key) &&
-        !/^[\s/|·\-–—]+$/.test(regionText) &&
-        isSlotPlaceholderText(regionText, formCtx);
+      const placeholderSlot =
+        !isFillTarget && isPlaceholderSlot(cell, key, regionText, formCtx);
 
-      if (!isFillTarget && !isPlaceholderSlot) continue;
+      if (!isFillTarget && !placeholderSlot) continue;
       seenKeys.add(key);
 
       const fallbackOrd = rawSeats.length + 1;
@@ -734,7 +721,7 @@ export function detectDocumentSeats(
         fallbackOrd,
       );
       let baseLabel = derivedFallback;
-      if (isPlaceholderSlot && regionText.trim().length > 0) {
+      if (placeholderSlot && regionText.trim().length > 0) {
         // `전화번호(   )` → `전화번호`: the empty slot goes before the field split.
         const leadToken = labelFromCellText(regionText.trim());
         if (leadToken.length > 0) {
