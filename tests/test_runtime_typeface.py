@@ -334,3 +334,34 @@ def test_unknown_charpr_height_is_absent_on_regions_and_runs():
     runs = rt_session.region_runs_with_faces(profile)[0]["runs"]
     assert runs[0]["charpr_height_pt"] == 8.0
     assert "charpr_height_pt" not in runs[1]
+
+
+def test_table_cells_carry_their_own_text_charpr_in_profile_and_graph(
+        root, source, inspected):
+    core = rt_core.RuntimeCore(root)
+    session_id = core.open_path(str(source))["sessionId"]
+    session = core.store.get(session_id)
+    profile = rt_session.load_profile(core.tools, session)
+
+    t0_profile_cells = {
+        (c["addr"]["row"], c["addr"]["col"]): c
+        for c in profile["table_map"][0]["cells"]
+    }
+    assert t0_profile_cells[(0, 0)]["text_charpr"] == "9"
+    for cell in profile["table_map"][0]["cells"]:
+        if cell["classification"] == "fill_target":
+            assert "text_charpr" not in cell, cell
+
+    t0_graph_cells = {
+        (c["addr"]["row"], c["addr"]["col"]): c
+        for c in inspected["graph"]["tables"][0]["cells"]
+    }
+    r0c0 = t0_graph_cells[(0, 0)]
+    assert r0c0["textCharPr"] == "9"
+    assert r0c0["textCharPrHeightPt"] == 8.0
+    assert r0c0["textCharPrFace"]["hangul"] in declared_faces()
+    for cell in inspected["graph"]["tables"][0]["cells"]:
+        if cell["classification"] == "fill_target":
+            assert "textCharPr" not in cell, cell
+            assert "textCharPrFace" not in cell, cell
+            assert "textCharPrHeightPt" not in cell, cell

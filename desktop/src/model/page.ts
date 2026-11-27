@@ -457,10 +457,10 @@ export interface CharShape {
 }
 
 /** The character shape a cell's text is set in: the cell region's own charPr
- * face and size, else the document's body baseline. Outside a cell, the
- * baseline. */
+ * face and size, else the graph cell's text charPr, else the document's body
+ * baseline. Outside a cell, the baseline. */
 export function cellCharShape(
-  inspect: Pick<InspectResult, "regions" | "summary"> | null | undefined,
+  inspect: Pick<InspectResult, "graph" | "regions" | "summary"> | null | undefined,
   table: number | null,
   row?: number,
   col?: number,
@@ -468,9 +468,22 @@ export function cellCharShape(
   const baseline = inspect?.summary?.baselineCharPr;
   const region = table === null || !inspect
     ? undefined
-    : inspect.regions.regions.find((r) => r.table === table && r.row === row && r.col === col);
-  const face = region?.charPrFace?.hangul ?? baseline?.face?.hangul ?? null;
-  const size = region?.charPrHeightPt ?? baseline?.height_pt ?? null;
+    : inspect.regions?.regions?.find((r) => r.table === table && r.row === row && r.col === col);
+  const graphCell = table === null || !inspect
+    ? undefined
+    : inspect.graph?.tables
+        ?.find((t) => t.index === table)
+        ?.cells?.find((c) => c.addr.row === row && c.addr.col === col);
+  const face =
+    region?.charPrFace?.hangul ??
+    graphCell?.textCharPrFace?.hangul ??
+    baseline?.face?.hangul ??
+    null;
+  const size =
+    region?.charPrHeightPt ??
+    graphCell?.textCharPrHeightPt ??
+    baseline?.height_pt ??
+    null;
   return {
     face: face && face.trim() ? face.trim() : null,
     sizePt: typeof size === "number" && Number.isFinite(size) && size > 0 ? size : null,
