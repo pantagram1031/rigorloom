@@ -496,7 +496,7 @@ test("ChangeItemRow, MarkToolbar, ApprovalSheet, and Composer render 'Label · C
   assert.match(composerBusyHtml, /data-testid="composer-cancel"[^>]*title="요청 취소 · Esc"/);
 });
 
-test(".rl-blank-loc uses var(--text-xs) instead of 9px", () => {
+test(".rl-blank-loc uses var(--text-xs) in a fixed-width right-aligned tabular column and .rl-blanks-group-hdr stays quiet", () => {
   const panesCss = fs.readFileSync(path.join(SRC_DIR, "panes/panes.css"), "utf8");
   const blankLocBlocks = [...panesCss.matchAll(/\.rl-blank-loc\s*\{([^}]+)\}/g)].map((m) => m[1]);
   assert.ok(blankLocBlocks.length >= 1, "Expected .rl-blank-loc rule in panes.css");
@@ -506,6 +506,18 @@ test(".rl-blank-loc uses var(--text-xs) instead of 9px", () => {
       assert.doesNotMatch(block, /\b9px\b/);
     }
   }
+  const mergedBlankLoc = blankLocBlocks.join("\n");
+  assert.match(mergedBlankLoc, /text-align:\s*right/);
+  assert.match(mergedBlankLoc, /font-variant-numeric:\s*tabular-nums/);
+  assert.match(mergedBlankLoc, /\bwidth:\s*9ch/);
+
+  const hdrBlock = panesCss.match(/\.rl-blanks-group-hdr\s*\{([^}]+)\}/)?.[1] ?? "";
+  assert.ok(hdrBlock, "Expected .rl-blanks-group-hdr rule in panes.css");
+  assert.match(hdrBlock, /font-size:\s*var\(--text-xs\)/);
+  assert.match(hdrBlock, /color:\s*var\(--text-3\)/);
+  assert.match(hdrBlock, /background:\s*transparent/);
+  const hdrNotFirst = panesCss.match(/\.rl-blanks-group-hdr:not\(:first-child\)\s*\{([^}]+)\}/)?.[1] ?? "";
+  assert.match(hdrNotFirst, /border-top:\s*var\(--border-hair\)/);
 });
 
 test("--text-disabled in v2-tokens.css is not var(--text-3) in light or dark and meets >= 3:1 contrast", () => {

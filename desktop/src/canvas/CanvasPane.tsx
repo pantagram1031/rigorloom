@@ -149,8 +149,9 @@ export function CanvasPane() {
 
   useEffect(() => {
     publishCanvasContext(changes, pageSource);
-    return () => publishCanvasContext([], null);
   }, [changes, pageSource]);
+
+  useEffect(() => () => publishCanvasContext([], null), []);
 
   // Keep selectedChangeId valid
   useEffect(() => {

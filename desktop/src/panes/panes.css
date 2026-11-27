@@ -455,8 +455,30 @@
 :is(.rl-blank-btn, .rl-outline-btn) {
   min-height: var(--row-tree); border-radius: 0; padding-block: 2px;
 }
-.rl-blank-btn { flex-direction: row; align-items: center; padding-inline: 6px; }
+.rl-blanks-group-hdr {
+  margin: 0;
+  padding: var(--s-4) 6px 2px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+.rl-blanks-group-hdr:not(:first-child) {
+  margin-top: var(--s-4);
+  border-top: var(--border-hair);
+}
+.rl-blank-btn { flex-direction: row; align-items: center; gap: 6px; padding-inline: 6px; }
 .rl-blank-line1 { flex: 1; width: auto; }
-.rl-blank-loc { flex: none; padding: 0; font: var(--text-xs) var(--font-mono); }
+.rl-blank-loc {
+  flex: 0 0 9ch;
+  width: 9ch;
+  padding: 0;
+  font: var(--text-xs) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
 .rl-blank-preview { display: none; }
 .rl-blank-dot { border-radius: 0; }

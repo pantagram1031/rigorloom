@@ -392,6 +392,193 @@ test("detectDocumentSeats disambiguates 7 협조자 blanks and collapses 접수 
 
   const agencySeats = seats.filter((s) => s.group === "agency");
   assert.ok(agencySeats.some((s) => s.baseLabel.includes("접수")));
+  for (const seat of seats) {
+    assert.equal(seat.page, null);
+    assert.equal(seat.locationLabel.includes("쪽"), false);
+    assert.match(seat.cellLocationLabel, /^\d+행 \d+열$/);
+  }
+});
+
+test("groupSeatsByLocation, short cell labels, unknown-page fallback, and engine page resolution", () => {
+  const { pageModel, wp3 } = loadWp3Stack();
+  const enginePage = loadTsModule("src/model/enginePage.ts", {
+    "./page": pageModel,
+  });
+  const textMap = {};
+  for (const r of corpus.regions) {
+    if (r.addr) textMap[`c:${r.table ?? 0}:${r.addr.row}:${r.addr.col}`] = r;
+  }
+
+  // 1. Short cell labels and group headings for known vs unknown pages (ko & en).
+  assert.equal(pageModel.formatSeatCellLocation(2, 0, "ko"), "3행 1열");
+  assert.equal(pageModel.formatSeatCellLocation(2, 0, "en"), "row 3, col 1");
+  assert.equal(pageModel.formatSeatGroupHeading(1, 0, "ko"), "1쪽 · 표 1");
+  assert.equal(pageModel.formatSeatGroupHeading(1, 0, "en"), "Page 1 · Table 1");
+  assert.equal(pageModel.formatSeatGroupHeading(null, 0, "ko"), "표 1");
+  assert.equal(pageModel.formatSeatGroupHeading(null, 0, "en"), "Table 1");
+  assert.equal(pageModel.formatSeatLocation(2, 0, 5, 1, "ko"), "2쪽 · 표 1 6행 2열");
+  assert.equal(pageModel.formatSeatLocation(2, 0, 5, 1, "en"), "Page 2 · Table 1, row 6, col 2");
+  assert.equal(pageModel.formatSeatLocation(null, 0, 5, 1, "ko"), "표 1 6행 2열");
+  assert.equal(pageModel.formatSeatLocation(null, 0, 5, 1, "en"), "Table 1, row 6, col 2");
+
+  // 2. Pure grouping helper: single group still emits its heading; unknown page omits page number.
+  const singleGroup = pageModel.groupSeatsByLocation(
+    [
+      { id: "a", page: null, table: 0 },
+      { id: "b", page: null, table: 0 },
+    ],
+    "ko",
+  );
+  assert.equal(singleGroup.length, 1);
+  assert.equal(singleGroup[0].heading, "표 1");
+  assert.equal(singleGroup[0].page, null);
+  assert.equal(singleGroup[0].table, 0);
+  assert.deepEqual(singleGroup[0].seats.map((s) => s.id), ["a", "b"]);
+
+  // 3. Multi-(page, table) grouping in ko and en.
+  const mixedSeats = [
+    { id: "s1", page: 1, table: 0 },
+    { id: "s2", page: 1, table: 0 },
+    { id: "s3", page: 1, table: 2 },
+    { id: "s4", page: 2, table: 0 },
+    { id: "s5", page: null, table: 0 },
+  ];
+  const koGroups = pageModel.groupSeatsByLocation(mixedSeats, "ko");
+  assert.deepEqual(
+    koGroups.map((g) => ({ key: g.key, heading: g.heading, ids: g.seats.map((s) => s.id) })),
+    [
+      { key: "1:t0", heading: "1쪽 · 표 1", ids: ["s1", "s2"] },
+      { key: "1:t2", heading: "1쪽 · 표 3", ids: ["s3"] },
+      { key: "2:t0", heading: "2쪽 · 표 1", ids: ["s4"] },
+      { key: "unknown:t0", heading: "표 1", ids: ["s5"] },
+    ],
+  );
+  const enGroups = pageModel.groupSeatsByLocation(mixedSeats, "en");
+  assert.deepEqual(
+    enGroups.map((g) => g.heading),
+    ["Page 1 · Table 1", "Page 1 · Table 3", "Page 2 · Table 1", "Table 1"],
+  );
+
+  // 4. Engine page source resolution: resolves real page from engine geometry, leaves unmeasured as null.
+  const projection = pageModel.createProjectionPageSource({
+    inspect: corpus.inspect,
+    texts: corpus.regions,
+    textMap,
+    changes: [],
+    rev: "head",
+    language: "ko",
+  });
+  const engineSourcePage2 = enginePage.createEnginePageSource({
+    projection,
+    raster: { page: 2, rev: "head", source: "engine", url: "blob:p2", widthPt: 595, heightPt: 842 },
+    count: 2,
+    geometry: {
+      rev: "head",
+      page: 2,
+      width_pt: 595,
+      height_pt: 842,
+      boxes: [{ kind: "cell", at: "t0/r8/c0", rect: [40, 600, 200, 30] }],
+    },
+    changes: [],
+  });
+  const resolved = pageModel.resolveSeatPages(projection.seats(), engineSourcePage2, "ko");
+  const phoneSeat = resolved.find((s) => s.address === "t0/r8/c0");
+  const coopSeat = resolved.find((s) => s.address === "t0/r5/c1");
+  assert.ok(phoneSeat && coopSeat);
+  assert.equal(phoneSeat.page, 2);
+  assert.equal(phoneSeat.locationLabel, "2쪽 · 표 1 9행 1열");
+  assert.equal(phoneSeat.cellLocationLabel, "9행 1열");
+  assert.equal(coopSeat.page, null);
+  assert.equal(coopSeat.locationLabel, "표 1 6행 2열");
+  assert.equal(coopSeat.cellLocationLabel, "6행 2열");
+  assert.equal(wp3.wp3t("seat_location_cell", "ko", [6, 2]), "6행 2열");
+
+  // 5. BlanksPane component renders non-focusable (page, table) headings and short cell locations.
+  const hookReact = createHookRunner();
+  const storeWithHook = {
+    ...loadWp3Stack().store,
+    useWorkspace: (sel) => sel(loadWp3Stack().store.getState()),
+  };
+  let publishedSource = null;
+  let knownPages = new Map();
+  let lastSlicePatch = null;
+  const { BlanksPane } = loadTsModule("src/panes/BlanksPane.tsx", {
+    react: hookReact,
+    "../i18n/v2/wp3": wp3,
+    "../model/page": pageModel,
+    "../store": storeWithHook,
+    "../workspace/externalPlan": { buildRegionTextMap: () => textMap },
+    "../shell/shellState": { getShell: () => ({ breakpoint: "wide" }), setShell: () => {} },
+    "../canvas/changes": { useCanvasChanges: () => [] },
+    "../canvas/actions": { beginCellEditV2: () => true },
+    "../canvas/controller": {
+      getPublishedKnownPages: () => knownPages,
+      scrollCanvasToTarget: () => {},
+      setCanvasSlice: (patch) => {
+        lastSlicePatch = patch;
+      },
+      useCanvasSlice: () => ({ selectedSeatKey: null, hoveredSeatKey: null }),
+      usePublishedPageSource: () => publishedSource,
+    },
+    "./panes.css": {},
+  });
+
+  const collectTestNodes = (node, acc = []) => {
+    if (!node || typeof node !== "object") return acc;
+    if (Array.isArray(node)) {
+      for (const child of node) collectTestNodes(child, acc);
+      return acc;
+    }
+    if (node.props) {
+      acc.push(node);
+      collectTestNodes(node.props.children, acc);
+    }
+    return acc;
+  };
+
+  // Unknown-page render: single group heading shows "표 1" with role="presentation", rows show short "6행 2열".
+  const unknownTree = hookReact.renderWith("blanks-unknown", () => BlanksPane());
+  const unknownNodes = collectTestNodes(unknownTree);
+  const unknownHeadings = unknownNodes.filter(
+    (n) => n.props["data-testid"] === "blanks-group-heading",
+  );
+  assert.deepEqual(
+    unknownHeadings.map((n) => n.props.children),
+    ["표 1"],
+  );
+  for (const h of unknownHeadings) {
+    assert.equal(h.props.role, "presentation");
+    assert.equal(h.props.tabIndex, undefined);
+  }
+  const coopBtnUnknown = unknownNodes.find(
+    (n) => n.props["data-testid"] === "blank-seat-t0/r5/c1",
+  );
+  assert.ok(coopBtnUnknown);
+  const coopLocUnknown = collectTestNodes(coopBtnUnknown).find(
+    (n) => typeof n.props.className === "string" && n.props.className.includes("rl-blank-loc"),
+  );
+  assert.equal(coopLocUnknown.props.children, "6행 2열");
+  coopBtnUnknown.props.onMouseEnter();
+  assert.equal(lastSlicePatch.hoveredSeatLabel, "협조자 1 · 표 1 6행 2열");
+
+  // Known-page render via engine page source: headings include real page numbers ("1쪽 · 표 1", "2쪽 · 표 1").
+  publishedSource = engineSourcePage2;
+  knownPages = new Map([
+    ["t0/r5/c1", 1],
+    ["t0/r8/c0", 2],
+  ]);
+  const knownTree = hookReact.renderWith("blanks-known", () => BlanksPane());
+  const knownNodes = collectTestNodes(knownTree);
+  const knownHeadings = knownNodes.filter(
+    (n) => n.props["data-testid"] === "blanks-group-heading",
+  );
+  assert.ok(knownHeadings.some((n) => n.props.children === "1쪽 · 표 1"));
+  assert.ok(knownHeadings.some((n) => n.props.children === "2쪽 · 표 1"));
+  const coopBtnKnown = knownNodes.find(
+    (n) => n.props["data-testid"] === "blank-seat-t0/r5/c1",
+  );
+  coopBtnKnown.props.onMouseEnter();
+  assert.equal(lastSlicePatch.hoveredSeatLabel, "협조자 1 · 1쪽 · 표 1 6행 2열");
 });
 
 test("beginCellEditV2 opens static/guide cells without refusal and commits only on explicit commit", async () => {
@@ -431,7 +618,7 @@ test("find replacement and cell edits upsert the same address", async () => {
     row: 1,
     col: 0,
     label: "기관명",
-    locationLabel: "1쪽 · 표 1 2행 1열",
+    locationLabel: "표 1 2행 1열",
     text: "가온공공기록원",
     matchStart: 0,
     matchEnd: 2,
@@ -787,6 +974,9 @@ function createHookRunner({ runEffects = false } = {}) {
         b.refs[idx] = { current: initial };
       }
       return b.refs[idx];
+    },
+    useMemo(fn) {
+      return fn();
     },
     useEffect(fn, deps) {
       if (!runEffects) return;

@@ -1219,7 +1219,7 @@ export function PageSheet({
                             onSelectSeat(
                               key,
                               `${label} · ${formatSeatLocation(
-                                page,
+                                hasEngineGeometry ? page : null,
                                 table.index,
                                 cell.addr.row,
                                 cell.addr.col,

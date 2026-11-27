@@ -7,7 +7,13 @@ import {
 } from "react";
 
 import { wp3t } from "../i18n/v2/wp3";
-import { legacyCellKey, type CanvasChangeRef } from "../model/page";
+import {
+  formatCellAddress,
+  formatParaAddress,
+  formatSeatLocation,
+  legacyCellKey,
+  type CanvasChangeRef,
+} from "../model/page";
 import {
   activeInspect,
   activeSession,
@@ -24,9 +30,11 @@ import {
   type FindMatchItem,
 } from "../canvas/actions";
 import {
+  getPublishedKnownPages,
   scrollCanvasToTarget,
   setCanvasSlice,
   useCanvasSlice,
+  usePublishedPageSource,
 } from "../canvas/controller";
 import "./panes.css";
 
@@ -36,6 +44,7 @@ export function FindPane() {
   const texts = useWorkspace(activeDisplayText);
   const language = useWorkspace((s) => s.language);
   const slice = useCanvasSlice(session?.sessionId);
+  const pageSource = usePublishedPageSource();
 
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
@@ -63,6 +72,9 @@ export function FindPane() {
     const out: FindMatchItem[] = [];
     const coveredStrings = new Set<string>();
 
+    const knownPages =
+      pageSource?.kind === "engine" ? getPublishedKnownPages() : null;
+
     for (const tbl of inspect.graph.tables) {
       const sorted = [...tbl.cells]
         .filter((c) => c.classification !== "spacer")
@@ -86,6 +98,8 @@ export function FindPane() {
           cell.addr.col,
           language,
         );
+        const cellAddr = formatCellAddress(tbl.index, cell.addr.row, cell.addr.col);
+        const cellPage = knownPages?.get(key) ?? knownPages?.get(cellAddr) ?? null;
         out.push({
           id: key,
           targetType: "cell",
@@ -94,12 +108,13 @@ export function FindPane() {
           row: cell.addr.row,
           col: cell.addr.col,
           label,
-          locationLabel: wp3t("seat_location_short", language, [
-            1,
-            tbl.index + 1,
-            cell.addr.row + 1,
-            cell.addr.col + 1,
-          ]),
+          locationLabel: formatSeatLocation(
+            cellPage,
+            tbl.index,
+            cell.addr.row,
+            cell.addr.col,
+            language,
+          ),
           text,
           matchStart: match.index,
           matchEnd: match.index + match[0].length,
@@ -113,13 +128,16 @@ export function FindPane() {
       if (!text.trim() || coveredStrings.has(text.trim())) continue;
       const match = text.matchAll(pattern).next().value;
       if (match?.index === undefined) continue;
+      const paraAddr = formatParaAddress(para.at_para);
+      const paraPage = knownPages?.get(pKey) ?? knownPages?.get(paraAddr) ?? null;
       out.push({
         id: pKey,
         targetType: "para",
         atPara: para.at_para,
         run: 0,
         label: text.slice(0, 24),
-        locationLabel: wp3t("outline_page_header", language, [1]),
+        locationLabel:
+          paraPage !== null ? wp3t("outline_page_header", language, [paraPage]) : "",
         text,
         matchStart: match.index,
         matchEnd: match.index + match[0].length,
@@ -127,7 +145,7 @@ export function FindPane() {
     }
 
     return out;
-  }, [inspect, slice.findQuery, cellEffectiveChanges, textMap, language]);
+  }, [inspect, slice.findQuery, cellEffectiveChanges, textMap, language, pageSource]);
 
   const safeIndex =
     matches.length === 0

@@ -57,6 +57,22 @@ export const WP3_VOCABULARY = {
     ko: "{0}쪽 · 표 {1} {2}행 {3}열",
     en: "Page {0} · Table {1}, row {2}, col {3}",
   },
+  seat_location_no_page: {
+    ko: "표 {0} {1}행 {2}열",
+    en: "Table {0}, row {1}, col {2}",
+  },
+  seat_location_cell: {
+    ko: "{0}행 {1}열",
+    en: "row {0}, col {1}",
+  },
+  seat_group_page_table: {
+    ko: "{0}쪽 · 표 {1}",
+    en: "Page {0} · Table {1}",
+  },
+  seat_group_table: {
+    ko: "표 {0}",
+    en: "Table {0}",
+  },
   para_not_editable_status: {
     ko: "이 문단은 아직 화면에서 고칠 수 없습니다",
     en: "This paragraph cannot be edited on the page yet",
