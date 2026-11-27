@@ -358,7 +358,7 @@ def test_editor_v2_gongmun_walkthrough_typing_load(tmp_path: Path, monkeypatch) 
                     assert scratch_remaining <= live_previews <= len(steps)
                     assert scratch_remaining <= rt_ui_doc.PREVIEW_LIMIT
                     assert 1 <= rpc_all["plan/propose"] <= total_commits
-                    assert 1 <= rpc_all["plan/validate"] <= rpc_all["plan/propose"]
+                    assert 1 <= rpc_all["plan/validate"] <= explicit_commits + 2
             finally:
                 browser.close()
     finally:

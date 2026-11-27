@@ -486,7 +486,11 @@ async function restoreSavedDraft(sessionId: string): Promise<void> {
   const state = getState();
   if (state.activeSessionId !== sessionId) return;
   if (state.draft.ops.length > 0) {
-    if (state.draft.sessionId === sessionId && !state.draft.plan && state.draft.phase === "starting") {
+    if (
+      state.draft.sessionId === sessionId &&
+      (!state.draft.plan || !state.draft.validation) &&
+      state.draft.phase === "starting"
+    ) {
       await setQueue(state.draft.ops);
     }
     return;
@@ -1239,6 +1243,7 @@ export async function removeReviewOps(source: Draft, ids: ReadonlySet<string>): 
     rewritten: source.ops.some((op) => ids.has(op.opId) && op.origin === "agent"),
     baseRunId: source.baseRunId,
   });
+  await flushDraftValidation();
   const current = getState();
   return current.activeSessionId === source.sessionId &&
     (kept.length > 0 ? current.draft.ops === kept && current.draft.plan !== null : current.draft.ops.length === 0);
@@ -1303,6 +1308,7 @@ export async function clearQueue(): Promise<void> {
     markExternalPlanDismissed(prev.sessionId, prev.plan.planId);
   }
   bumpPlanGeneration();
+  cancelDraftValidateTimer();
   setState({
     draft: EMPTY_DRAFT,
     inlineEdit: null,
@@ -1339,6 +1345,7 @@ async function setQueue(
   const refused = typeof queueAdmission === "function" ? queueAdmission(ops, sessionId) : null;
   if (refused) {
     bumpPlanGeneration();
+    cancelDraftValidateTimer();
     setState({
       approval: null,
       approvalPhase: "idle",
@@ -1377,6 +1384,7 @@ async function setQueue(
   // Empty replacements and document-close replacements must invalidate async
   // adopters/apply attempts too, even though they propose no next plan.
   const gen = bumpPlanGeneration();
+  cancelDraftValidateTimer();
   const rewritten = state.draft.rewrittenFromAgent || options.rewritten === true;
   // THE CHAIN. A queue built while a candidate exists chains onto it, so a
   // second edit lands on top of the first rather than beside it — before
@@ -1488,25 +1496,89 @@ async function setQueue(
     }
     if (currentPlanGeneration() !== gen) return;
     if (!ownsDraft(owner)) return;
-    const validation = await rt.validatePlan(plan.planId);
-    if (currentPlanGeneration() !== gen) return;
-    if (!ownsDraft(owner)) return;
+    const proposedDraft: Draft = {
+      ops,
+      plan,
+      validation: null,
+      sessionId,
+      boundSha256: plan.boundSha256,
+      phase: "starting",
+      error: null,
+      rewrittenFromAgent: rewritten,
+      baseRunId,
+      reverses,
+    };
     setState({
       reapprovalPrompt: null,
-      draft: {
-        ops,
-        plan,
-        validation,
-        sessionId,
-        boundSha256: plan.boundSha256,
-        phase: "ready",
-        error: null,
-        rewrittenFromAgent: rewritten,
-        baseRunId,
-        reverses,
-      },
+      draft: proposedDraft,
     });
     if (typeof persistDraft === "function") persistDraft(sessionId, getState().draft);
+    if (owner && typeof owner === "object" && "draft" in owner) {
+      owner.draft = proposedDraft;
+    }
+    const validateOwner = captureDraftOwner();
+    const runValidate = async (): Promise<void> => {
+      const owner = validateOwner;
+      if (currentPlanGeneration() !== gen) return;
+      if (!ownsDraft(owner)) return;
+      try {
+        const validation = await rt.validatePlan(plan.planId);
+        if (currentPlanGeneration() !== gen) return;
+        if (!ownsDraft(owner)) return;
+        setState({
+          reapprovalPrompt: null,
+          draft: {
+            ops,
+            plan,
+            validation,
+            sessionId,
+            boundSha256: plan.boundSha256,
+            phase: "ready",
+            error: null,
+            rewrittenFromAgent: rewritten,
+            baseRunId,
+            reverses,
+          },
+        });
+        if (typeof persistDraft === "function") persistDraft(sessionId, getState().draft);
+      } catch (e) {
+        if (currentPlanGeneration() !== gen) return;
+        if (!ownsDraft(owner)) return;
+        setState({
+          draft: {
+            ops,
+            plan: null,
+            validation: null,
+            sessionId,
+            boundSha256: null,
+            phase: "failed",
+            error: rt.asRuntimeError(e),
+            rewrittenFromAgent: rewritten,
+            baseRunId,
+            reverses,
+          },
+        });
+        if (typeof persistDraft === "function") persistDraft(sessionId, getState().draft);
+      }
+    };
+    if (typeof setTimeout !== "function") {
+      await runValidate();
+      return;
+    }
+    const triggerValidate = (): Promise<void> => {
+      cancelDraftValidateTimer();
+      const running = runValidate().finally(() => {
+        if (draftValidateInFlight === running) {
+          draftValidateInFlight = null;
+        }
+      });
+      draftValidateInFlight = running;
+      return running;
+    };
+    draftValidateFlush = triggerValidate;
+    draftValidateTimer = setTimeout(() => {
+      void triggerValidate();
+    }, DRAFT_VALIDATE_SETTLE_MS);
   } catch (e) {
     if (currentPlanGeneration() !== gen) return;
     if (!ownsDraft(owner)) return;
@@ -1528,6 +1600,31 @@ async function setQueue(
       },
     });
     if (typeof persistDraft === "function") persistDraft(sessionId, getState().draft);
+  }
+}
+
+const DRAFT_VALIDATE_SETTLE_MS = 700;
+
+let draftValidateTimer: ReturnType<typeof setTimeout> | null = null;
+let draftValidateFlush: (() => Promise<void>) | null = null;
+let draftValidateInFlight: Promise<void> | null = null;
+
+function cancelDraftValidateTimer(): void {
+  if (draftValidateTimer !== null) {
+    if (typeof clearTimeout === "function") clearTimeout(draftValidateTimer);
+    draftValidateTimer = null;
+  }
+  draftValidateFlush = null;
+}
+
+async function flushDraftValidation(): Promise<void> {
+  const flush = draftValidateFlush;
+  if (flush) {
+    await flush();
+    return;
+  }
+  if (draftValidateInFlight) {
+    await draftValidateInFlight;
   }
 }
 
@@ -1977,6 +2074,13 @@ export async function setHead(runId: string | null): Promise<void> {
 let approvalRequestGeneration = 0;
 
 export async function requestApprovalForDraft(): Promise<void> {
+  if (
+    typeof flushDraftValidation === "function" &&
+    getState().draft.plan !== null &&
+    getState().draft.validation === null
+  ) {
+    await flushDraftValidation();
+  }
   const state = getState();
   const plan = state.draft.plan;
   if (
@@ -2285,6 +2389,9 @@ export const REAPPROVAL_PROMPT = t("reapproval_prompt", "ko");
  * Clears any stale approval immediately if the bound SHA-256 or candidate drifted.
  */
 export async function revalidateActiveDraft(): Promise<{ ok: boolean; stale: boolean }> {
+  if (typeof cancelDraftValidateTimer === "function") {
+    cancelDraftValidateTimer();
+  }
   const state = getState();
   const draft = state.draft;
   const plan = draft.plan;
@@ -2322,24 +2429,40 @@ export async function revalidateActiveDraft(): Promise<{ ok: boolean; stale: boo
 
     if (drifted) {
       const hadApproval = current.approval !== null || current.approvalPhase !== "idle";
+      const wasStarting = current.draft.phase === "starting";
       setState({
-        draft: { ...current.draft, validation },
+        draft: {
+          ...current.draft,
+          validation,
+          ...(wasStarting ? { phase: "ready" as const } : {}),
+        },
         approval: null,
         approvalPhase: "idle",
         approvalError: { code: "plan_stale", message: REAPPROVAL_PROMPT },
         reapprovalPrompt: REAPPROVAL_PROMPT,
       });
+      if (wasStarting && current.draft.sessionId && typeof persistDraft === "function") {
+        persistDraft(current.draft.sessionId, getState().draft);
+      }
       if (hadApproval || validation.stale) {
         showToast(REAPPROVAL_PROMPT, 3600);
       }
       return { ok: false, stale: true };
     }
 
+    const wasStarting = current.draft.phase === "starting";
     setState({
-      draft: { ...current.draft, validation },
+      draft: {
+        ...current.draft,
+        validation,
+        ...(wasStarting ? { phase: "ready" as const } : {}),
+      },
       reapprovalPrompt: null,
     });
-    return { ok: true, stale: false };
+    if (wasStarting && current.draft.sessionId && typeof persistDraft === "function") {
+      persistDraft(current.draft.sessionId, getState().draft);
+    }
+    return { ok: validation.ok !== false, stale: false };
   } catch (e) {
     const error = rt.asRuntimeError(e);
     if (error.code === "plan_stale" || error.code === "approval_binding_mismatch") {
@@ -4834,6 +4957,7 @@ export async function switchWorkspaceRoot(
     const resolvedRoot = status.root ?? trimmed;
     stopDocumentEvents();
     bumpPlanGeneration();
+    cancelDraftValidateTimer();
     await rt.savePrefs({ root: resolvedRoot, lastSessionId: null }).catch(() => {});
     setState({
       status,
