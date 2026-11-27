@@ -514,7 +514,7 @@ test("groupSeatsByLocation, short cell labels, unknown-page fallback, and engine
     "../canvas/changes": { useCanvasChanges: () => [] },
     "../canvas/actions": { beginCellEditV2: () => true },
     "../canvas/controller": {
-      getPublishedKnownPages: () => knownPages,
+      usePublishedKnownPages: () => knownPages,
       scrollCanvasToTarget: () => {},
       setCanvasSlice: (patch) => {
         lastSlicePatch = patch;
@@ -1764,4 +1764,57 @@ test("deriveBlankCellLabel names blanks, returns null for printed static/guide c
     ),
     "Table 1, row 10, col 1",
   );
+});
+
+test("known pages: measured pages fill in, first page wins, and targets resolve by cell, paragraph or change", () => {
+  const { controller } = loadWp3Stack();
+  const layerless = {
+    kind: "engine",
+    rev: "rev-1",
+    seats: () => [],
+    pageCount: () => 3,
+    layer: () => ({ kind: "projection", boxes: [] }),
+  };
+  controller.publishCanvasContext(
+    [{ id: "op-1", cellKey: "c:0:6:1" }, { id: "op-2", atPara: 4 }, { id: "op-3" }],
+    layerless,
+  );
+  assert.equal(controller.knownPageOf({ cellKey: "c:0:6:1" }), null);
+  assert.equal(controller.isPageMeasured("rev-1", 2), false);
+
+  controller.publishMeasuredPage("rev-1", 2, ["t0/r6/c1", "p4", "t0/r7/c1"]);
+  controller.publishMeasuredPage("rev-1", 3, ["t0/r7/c1"]);
+  // A different revision is ignored.
+  controller.publishMeasuredPage("rev-0", 3, ["t0/r9/c1"]);
+
+  assert.equal(controller.isPageMeasured("rev-1", 2), true);
+  assert.equal(controller.isPageMeasured("rev-0", 3), false);
+  assert.equal(controller.knownPageOf({ cellKey: "c:0:6:1" }), 2);
+  assert.equal(controller.knownPageOf({ cellKey: "c:0:7:1" }), 2, "an address keeps its first page");
+  assert.equal(controller.knownPageOf({ atPara: 4 }), 2);
+  assert.equal(controller.knownPageOf({ itemId: "op-1" }), 2);
+  assert.equal(controller.knownPageOf({ itemId: "op-2" }), 2);
+  assert.equal(controller.knownPageOf({ itemId: "op-3" }), null);
+  assert.equal(controller.knownPageOf({ cellKey: "c:0:9:1" }), null);
+  assert.equal(controller.getPublishedKnownPages().get("t0/r6/c1"), 2);
+
+  // Turning to a known page sets the page; the current or an unknown page does nothing.
+  controller.setCanvasSlice({ page: 1, pageCount: 3 });
+  assert.equal(controller.turnToTargetPage({ cellKey: "c:0:9:1" }), false);
+  assert.equal(controller.turnToTargetPage({ cellKey: "c:0:6:1" }), true);
+  assert.equal(controller.getCanvasSlice().page, 2);
+  assert.equal(controller.turnToTargetPage({ cellKey: "c:0:6:1" }), false);
+
+  // A change picked outside the canvas turns to its page.
+  controller.setCanvasSlice({ page: 1 });
+  controller.canvas.select("op-2");
+  assert.equal(controller.getCanvasSlice().page, 2);
+  controller.setCanvasSlice({ page: 1 });
+  controller.canvas.select("op-2", { fromCanvas: true });
+  assert.equal(controller.getCanvasSlice().page, 1);
+
+  // A new revision forgets the measured pages.
+  controller.publishCanvasContext([], { ...layerless, rev: "rev-2" });
+  assert.equal(controller.knownPageOf({ cellKey: "c:0:6:1" }), null);
+  assert.equal(controller.isPageMeasured("rev-2", 2), false);
 });

@@ -30,7 +30,7 @@ import {
   type FindMatchItem,
 } from "../canvas/actions";
 import {
-  getPublishedKnownPages,
+  usePublishedKnownPages,
   scrollCanvasToTarget,
   setCanvasSlice,
   useCanvasSlice,
@@ -45,6 +45,7 @@ export function FindPane() {
   const language = useWorkspace((s) => s.language);
   const slice = useCanvasSlice(session?.sessionId);
   const pageSource = usePublishedPageSource();
+  const knownPagesMap = usePublishedKnownPages();
 
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
@@ -73,7 +74,7 @@ export function FindPane() {
     const coveredStrings = new Set<string>();
 
     const knownPages =
-      pageSource?.kind === "engine" ? getPublishedKnownPages() : null;
+      pageSource?.kind === "engine" ? knownPagesMap : null;
 
     for (const tbl of inspect.graph.tables) {
       const sorted = [...tbl.cells]
@@ -153,7 +154,7 @@ export function FindPane() {
     }
 
     return out;
-  }, [inspect, slice.findQuery, cellEffectiveChanges, textMap, language, pageSource]);
+  }, [inspect, slice.findQuery, cellEffectiveChanges, textMap, language, pageSource, knownPagesMap]);
 
   const safeIndex =
     matches.length === 0
