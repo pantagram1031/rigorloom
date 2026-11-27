@@ -213,7 +213,7 @@ rt_doc.edit("보고서.hwpx", [
   (`p3:2-5` only for `set`, `replace` and `char_shape`), `expect`
   (`expect_mismatch`; only `set`, `replace`, `delete`, `fill`,
   `table.delete_row`, `table.delete_col`, `char_shape`, `para_shape`,
-  `numbering`, `break`, `header` and `note` take one,
+  `numbering`, `break`, `header`, `note` and `memo` take one,
   others refuse it with `bad_input`; on a table it is the table's text, rows by `\n`
   and cells by `\t`), and ops that interfere (`conflict`): overlapping text,
   or an op on something another op deletes (a paragraph, table or row; one
@@ -601,6 +601,51 @@ rt_doc.edit("보고서.hwpx", [
     `bookmark`, `link` or `toc`, and a `style.create` of a 차례 style that
     `toc` needs auto-added in the same edit. Editing or removing an existing
     bookmark, hyperlink or table of contents has no op yet.
+- 메모 넣기 (`memo`, 입력 > 메모 / 메모 넣기) needs the engine and changes no
+  address.
+  - `at` is a non-empty body or cell paragraph (`pN`, `tN/rR/cC/pK`, `h:"..."`;
+    a table, row, cell or character range is `bad_address`, and paragraphs
+    inside notes, headers/footers and memos have no address). An empty
+    paragraph (or one holding an inline object when `on` is omitted) is refused
+    with `bad_input`.
+  - `text` is the memo body: a non-empty single-line string of at most 1000
+    characters (newlines or control characters are `bad_input`).
+  - `on` is an optional non-empty single-line substring of the paragraph to
+    attach the memo to: if it does not occur in the paragraph, the op is
+    refused with `not_found` and nearby `candidates`; if it occurs more than
+    once, it is refused with `bad_input` and `candidates`. Without `on`, the
+    memo attaches to the whole paragraph text. If `on` (or the whole paragraph
+    when `on` is omitted) overlaps an existing field in that paragraph
+    (click-here, hyperlink, memo, formula or table of contents), the op is
+    refused with `bad_input` because nested fields are not supported.
+  - `author` is an optional string of at most 64 characters without `/`,
+    `\`, `;` or control characters, which Hancom's memo `Command` uses as
+    separators (default `""`; the OS user name is never read). `expect`
+    guards the paragraph's visible text.
+  - The edit runs `goto(p.k, start, p.si)`, `select(end - start)` and
+    `insert_memo(text=text, author=author, when=...)`, with the creation time
+    fixed when the edit is planned, which wraps the anchor text in a
+    `MEMO` field (`fieldid="623209829"`) whose `<hp:subList>` holds one
+    paragraph with `text` in the document's `메모` (`Memo`) style when
+    `header.xml` has one, or style `0` (`바탕글`) when `header.xml` has no
+    `Memo` style. A memo's `<hp:subList>` paragraph is not part of the host
+    paragraph's visible text, so `read`, `expect` and `remap` still see only
+    the host paragraph's visible text. When 한글 shows the memo pane or balloon
+    has not been checked yet.
+  - Conflicts: at most one `memo` per paragraph per edit, and no `memo`
+    together with any text edit (`set`, `replace`, `insert_after`, `delete`,
+    `fill`) or other span/removal op on that paragraph in the same edit.
+  - After the edit, `_verify_memo` checks that the output paragraph's visible
+    text is unchanged, that it holds one more `MEMO` `fieldBegin` than before
+    whose `subList` text equals `text`, whose `Author` parameter (and `Command`
+    author slot) equals `author`, whose creation time (`Command`'s FILETIME
+    and `CreateDateTime`) is the planned one, whose `<hp:p>` uses the `메모` style (or
+    style `0` when the header has no `Memo` style), and whose `fieldBegin` /
+    `fieldEnd` wrap the exact anchor span and text, and that every other field
+    in the document is unchanged; any mismatch fails the edit and nothing is
+    written. `memo` needs hwp-engine 102dc84 (PR #39) or later; an older engine
+    fails the edit and nothing is written. Editing or removing an existing
+    memo and memo shape settings have no op yet.
 - 그림 넣기 and 그림 속성 (입력 > 그림; 개체 속성 > 기본/위치) need the engine and take
   no `expect`.
   - `insert_picture` inserts an image file (`path`) at `at` (a body paragraph,
