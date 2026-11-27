@@ -400,7 +400,7 @@ def test_a_chart_the_engine_does_not_draw_is_labelled_on_its_box(browser, server
         label = page.get_by_test_id("engine-chart-label")
         expect(label).to_have_count(1)
         expect(label).to_be_visible()
-        expect(label).to_have_text("차트: 미리 보기에서는 그리지 않습니다")
+        expect(label).to_have_text("차트: 이 화면에는 그리지 않습니다")
         assert label.evaluate("(el) => getComputedStyle(el).pointerEvents") == "none"
         paper = page.get_by_test_id("paper").bounding_box()
         box = label.bounding_box()

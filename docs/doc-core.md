@@ -750,7 +750,7 @@ rt_doc.edit("보고서.hwpx", [
     (`capability_unavailable`, reason `chart_needs_hwpx`): saving as `.hwp`
     would lose the chart. The preview does not draw charts: the engine's page
     geometry gives the chart's box (`kind: "object"`, `object: "chart"`, no
-    address) and the editor shows a labelled box there (차트: 미리 보기에서는 그리지
+    address) and the editor shows a labelled box there (차트: 이 화면에는 그리지
     않습니다) whenever the engine draws the page; 한글 draws the saved file.
     `read` lists the paragraph's object as `hp:chart`; `read` and `find` do not
     show the chart's data. `insert_chart` and another op that inserts at the

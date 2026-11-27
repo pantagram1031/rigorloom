@@ -318,6 +318,7 @@
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
+  overflow: hidden;
   padding: 4px 8px;
   border: 1px dashed var(--paper-ink);
   color: var(--paper-ink);

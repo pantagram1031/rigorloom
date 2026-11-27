@@ -1472,7 +1472,7 @@ an inline object the engine's renderer does not draw: `{"at": null, "kind":
 "object", "object": "chart", "rect": [x, y, w, h], "text": ""}` (hwp-engine
 a456d5b or later). It has no address: it is not a place for the caret,
 for marks or for hit testing, and the editor keeps it out of its address map.
-The editor draws a non-interactive label on it (차트: 미리 보기에서는 그리지
+The editor draws a non-interactive label on it (차트: 이 화면에는 그리지
 않습니다) so the empty space on the page is explained.
 
 ## 13. Distribution-module checkers on the wire (gap 17)
