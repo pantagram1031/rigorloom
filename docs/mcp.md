@@ -33,7 +33,7 @@ A client configured with JSON takes the same command and arguments:
 | `open` | outline, fill-in places, draft status and addresses |
 | `read` | exact text at an address (`p12`, `t3/r2/c1`, `place:<id>`) |
 | `find` | where a phrase occurs, with addresses |
-| `edit` | stage changes in the draft; the person's file is untouched. Addresses count from 0 (`p0`, `t0/r0/c0`) |
+| `edit` | stage changes in the draft; the person's file is untouched. Addresses count from 0 (`p0`, `t0/r0/c0`). Op names are the enum of `ops[].op`; each op's fields and an example: `guide` topic `ops` |
 | `fill` | fill form places; signature, seal and approval-date places are left for the person |
 | `new` | a new document from markdown (CommonMark by default; `dialect: "report"` for the report dialect, the only one a `form` takes), as `draft:<id>` |
 | `preview` | page images of the draft |
