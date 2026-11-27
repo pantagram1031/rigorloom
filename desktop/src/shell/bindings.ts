@@ -40,20 +40,22 @@ export function openSettings(section: SettingsSection = "general"): void {
 }
 
 /** Switch from editor v2 to the previous v1 screens, refusing when work is unsaved. */
-export async function openV1(): Promise<void> {
+/** Switch to the previous screens. False when unsaved work refuses the switch. */
+export async function openV1(): Promise<boolean> {
   const lang = getState().language;
   if (hasUnsavedWorkForReload()) {
     const note = S.t("shell_status_finish_edit_first", lang);
     setShell({ statusNotice: note });
     const sid = activeTabSessionId() ?? getState().activeSessionId;
     if (sid) patchDocSlice("canvas.page", { statusNotice: note }, sid);
-    return;
+    return false;
   }
   setShell({ statusNotice: null });
   const sid = activeTabSessionId() ?? getState().activeSessionId;
   if (sid) patchDocSlice("canvas.page", { statusNotice: null }, sid);
   await rt.savePrefs({ editorVariant: "v1" });
   reloadWithoutUiVariantQuery();
+  return true;
 }
 
 /** Alt+1…5: show a left pane; the same key again collapses the pane. */
@@ -249,7 +251,9 @@ export function installShellBindings(): () => void {
       title: (l) => S.t("shell_cmd_open_v1", l, ["v1"]),
       group: "view",
       keyId: "",
-      run: () => openV1(),
+      run: () => {
+        void openV1();
+      },
     }),
   );
 

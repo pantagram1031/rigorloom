@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T243:** In editor v2 settings, when unsaved work stops the switch to 이전 화면, the 편집기 row now says so under the control, since the dialog covers the status line that also says it.
 - **T242:** Removes two unused markpen regular expressions from preedit and moves the operation catalog's preedit line references, including the normalize-clones prose pin, to where those functions now sit.
 - **T241:** Approve controls are enabled as soon as a queued edit's plan is proposed, without waiting for the validation settle window. Clicking one opens the approval sheet at once and finishes the pending validation; the sheet's confirm stays disabled until that result is in.
 - **T240:** The engine preview test for a queued run that holds a tab looks for the page that holds the paragraph instead of assuming one page number, because pagination depends on the fonts installed where the engine runs.

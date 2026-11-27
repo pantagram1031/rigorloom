@@ -1134,6 +1134,10 @@
   font-size: 12px;
 }
 
+.sh-settings-note--refused {
+  color: var(--attn);
+}
+
 .sh-settings-inline {
   display: flex;
   align-items: center;
