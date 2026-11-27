@@ -30,6 +30,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T247:** The `edit` tool's description says the same things in fewer words (666 of its 700 characters, from 695), so new ops still fit in the list it names. The text ops, their fields, the guide pointer and "addresses count from 0" stay.
 - **T245:** In editor v2 settings, the 편집기 row's note that unsaved work stopped the switch to 이전 화면 now goes away once that work is finished.
 - **T244:** In the narrow document layout, dragging the bottom sheet's grab handle up or down now expands or collapses the sheet on release, while a short drag or click still toggles it once. The command palette's 변경 승인 command now checks `validation.ok` alongside pending validation, matching the change lists.
 - **T243:** In editor v2 settings, when unsaved work stops the switch to 이전 화면, the 편집기 row now says so under the control, since the dialog covers the status line that also says it.
