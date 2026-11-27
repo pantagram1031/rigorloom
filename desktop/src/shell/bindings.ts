@@ -139,9 +139,9 @@ function escape(e?: KeyEventLike): boolean {
     setShell({ appMenuOpen: false, tabListOpen: false, narrowDrawerOpen: false });
     return true;
   }
-  if (typeof closeTopmostOverlay === "function" && closeTopmostOverlay()) {
-    return true;
-  }
+  if (closeTopmostOverlay()) return true;
+  // An Escape a control inside the sheet already handled (a popover closing) stops here.
+  if (e?.defaultPrevented) return false;
   if (s.rightOpen && s.narrowSheetExpanded && !innerSheetOverlayOpen() && focusInNarrowSheet(e)) {
     setShell({ narrowSheetExpanded: false });
     return true;
@@ -252,7 +252,6 @@ export function installShellBindings(): () => void {
   setBrowserMode(!rt.isTauri());
 
   const onKey = (e: KeyboardEvent) => {
-    if (e.defaultPrevented) return;
     dispatch(e);
   };
   window.addEventListener("keydown", onKey);
