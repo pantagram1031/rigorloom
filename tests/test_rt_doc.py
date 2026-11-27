@@ -2285,7 +2285,7 @@ def test_bookmark_link_and_toc_are_checked_before_anything_runs(no_engine, tmp_p
     assert err([{"op": "bookmark", "at": "p1", "name": "가"},
                 {"op": "bookmark", "at": "p1", "after": "2026년", "name": "나"}])["code"] == "conflict"
     assert err([{"op": "link", "at": "p1", "phrase": "사업", "target": "https://www.hancom.com"},
-                {"op": "link", "at": "p1", "phrase": "2026년", "target": "mailto:a@b.kr"}])["code"] == "conflict"
+                {"op": "link", "at": "p1", "phrase": "2026년", "target": "https://www.example.org"}])["code"] == "conflict"
     assert err([{"op": "bookmark", "at": "p1", "name": "가"},
                 {"op": "link", "at": "p1", "phrase": "2026년", "target": "#가"}])["code"] == "conflict"
     assert err([{"op": "bookmark", "at": "p1", "name": "가"},
