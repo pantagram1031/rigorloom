@@ -3542,3 +3542,251 @@ def test_engine_table_formula(kit, tmp_path, monkeypatch):
         res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
         assert not res_bad["ok"] and res_bad["error"]["code"] == "internal", (label, res_bad)
         assert res_bad["error"]["written"] is False and not out_bad.exists(), label
+
+
+# ============================================================================ R12: 다단 설정 나누기 and 단 너비 따로 (columns split, widths_mm, gaps_mm)
+def test_columns_split_and_widths_are_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(BASIC, tmp_path, "cols_no_eng.hwpx")
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops, f=src, base=None):
+        return D.edit(f, ops if isinstance(ops, list) else [ops], base=base or rev, out=out)["error"]
+
+    # 1. top-level keys and bad split values
+    e = err({"op": "columns", "at": "p2", "splitt": True, "set": {"count": 2}})
+    assert e["code"] == "bad_input" and "split" in e["candidates"]
+    assert err({"op": "columns", "at": "p2", "expect": "x", "set": {"count": 2}})["code"] == "bad_input"
+    for bad_split in (1, 0, "true", "false", "yes", None, [True], {}):
+        assert err({"op": "columns", "at": "p2", "split": bad_split, "set": {"count": 2}})["code"] == "bad_input", bad_split
+
+    # 2. widths_mm length mismatch and non-list values
+    for bad_ws in ([], [100], [60, 60, 60], 100, "100,40", None, True, {"w": 100}):
+        assert err({"op": "columns", "at": "p2", "set": {"count": 2, "widths_mm": bad_ws}})["code"] == "bad_input", bad_ws
+    assert err({"op": "columns", "at": "p2", "set": {"count": 1, "widths_mm": [50, 50]}})["code"] == "bad_input"
+    assert err({"op": "columns", "at": "p2", "set": {"count": 3, "widths_mm": [50, 50]}})["code"] == "bad_input"
+
+    # 3. out-of-range widths and gaps
+    for bad_w in (0, 4.9, -10, 1000.1, 1001, True, False, "50", None):
+        e = err({"op": "columns", "at": "p2", "set": {"count": 2, "widths_mm": [bad_w, 50]}})
+        assert e["code"] == "bad_input", bad_w
+    for bad_g in (-0.1, -5, 100.1, 101, True, False, "8", None):
+        e = err({"op": "columns", "at": "p2", "set": {"count": 2, "widths_mm": [80, 60], "gaps_mm": [bad_g]}})
+        assert e["code"] == "bad_input", bad_g
+    for bad_gs in ([], [8, 8], 8, "8", None, True):
+        assert err({"op": "columns", "at": "p2", "set": {"count": 2, "widths_mm": [80, 60], "gaps_mm": bad_gs}})["code"] == "bad_input", bad_gs
+    assert err({"op": "columns", "at": "p2", "set": {"count": 3, "widths_mm": [50, 40, 30], "gaps_mm": [8]}})["code"] == "bad_input"
+    assert err({"op": "columns", "at": "p2", "set": {"count": 1, "widths_mm": [100], "gaps_mm": [5]}})["code"] == "bad_input"
+
+    # 4. gap_mm with gaps_mm, and gaps_mm without widths_mm
+    e = err({"op": "columns", "at": "p2", "set": {"count": 2, "widths_mm": [100, 40], "gap_mm": 10, "gaps_mm": [10]}})
+    assert e["code"] == "bad_input" and "not both" in e["message"]
+    e = err({"op": "columns", "at": "p2", "set": {"count": 2, "gaps_mm": [10]}})
+    assert e["code"] == "bad_input" and "widths_mm" in e["message"]
+
+    # 5. split on section's first paragraph (single-section and multi-section documents)
+    e = err({"op": "columns", "at": "p0", "split": True, "set": {"count": 2}})
+    assert e["code"] == "bad_address" and "starts its section" in e["message"]
+    many = _copy(SECTIONS3, tmp_path, "cols_sec3.hwpx")
+    many_rev = D.rev_of(many)
+    for sec_start in ("p0", "p100", "p102"):
+        e = err({"op": "columns", "at": sec_start, "split": True, "set": {"count": 2}}, f=many, base=many_rev)
+        assert e["code"] == "bad_address" and "starts its section" in e["message"], sec_start
+
+    # split on a middle paragraph that already starts a column definition -> bad_input
+    d = D._load(src, meta=False)
+    p2 = d.top[2]
+    sec_with_col = (
+        d.secs[0][:p2.start]
+        + d.secs[0][p2.start:p2.end].replace(
+            '<hp:run charPrIDRef="0">',
+            '<hp:run charPrIDRef="0"><hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" '
+            'colCount="2" sameSz="1" sameGap="2267"/></hp:ctrl></hp:run><hp:run charPrIDRef="0">',
+            1,
+        )
+        + d.secs[0][p2.end:]
+    )
+    already = tmp_path / "already_split.hwpx"
+    already.write_bytes(d.zip.rewrite({"Contents/section0.xml": sec_with_col.encode("utf-8")}))
+    e = err({"op": "columns", "at": "p2", "split": True, "set": {"count": 3}}, f=already, base=D.rev_of(already))
+    assert e["code"] == "bad_input" and "already starts a column definition" in e["message"]
+    # plain change (without split) on that paragraph is valid (capability_unavailable without engine)
+    assert err({"op": "columns", "at": "p2", "set": {"count": 3}}, f=already, base=D.rev_of(already))["code"] == "capability_unavailable"
+
+    # 6. two splits at one paragraph, two columns ops in one section, or split on a deleted paragraph -> conflict
+    assert err([
+        {"op": "columns", "at": "p2", "split": True, "set": {"count": 2}},
+        {"op": "columns", "at": "p2", "split": True, "set": {"count": 3}},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "columns", "at": "p2", "split": True, "set": {"count": 2}},
+        {"op": "columns", "at": "p4", "split": True, "set": {"count": 3}},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "columns", "at": "p0", "set": {"count": 2}},
+        {"op": "columns", "at": "p2", "split": True, "set": {"count": 3}},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "columns", "at": "p2", "split": True, "set": {"count": 2}},
+        {"op": "delete", "at": "p2"},
+    ])["code"] == "conflict"
+
+    # 7. valid split and widths_mm/gaps_mm ops without engine -> capability_unavailable and nothing written
+    e = err({"op": "columns", "at": "p2", "split": True,
+             "set": {"count": 3, "widths_mm": [50, 40, 30], "gaps_mm": [8, 6], "line": True}})
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+@engine
+def test_engine_columns_split_and_unequal_widths(kit, tmp_path, monkeypatch):
+    # 1. On BASIC (tests/fixtures/rt_doc_contract/basic.hwpx): split at middle paragraph p2 with 2 columns and a line
+    f = _copy(BASIC, tmp_path, "basic_cols.hwpx")
+    base0 = D._load(f, meta=False)
+    out1 = tmp_path / "cols_split1.hwpx"
+    ops1 = [{"op": "columns", "at": "p2", "split": True, "set": {"count": 2, "gap_mm": 8, "line": True}}]
+    r1 = D.edit(f, ops1, base=D.rev_of(f), out=out1)
+    assert r1["ok"], r1
+    assert r1["remap"] == [] and not r1.get("remap_approx")
+    got1 = D._load(out1, meta=False)
+    acts1 = D._plan(base0, ops1)
+    assert D._verify(base0, got1, acts1)
+    assert [q.text for q in got1.top] == [q.text for q in base0.top]
+    assert D._col_prs_in(got1, got1.top[0]) == []
+    assert D._col_prs_in(got1, got1.top[1]) == []
+    c_p2 = D._col_prs_in(got1, got1.top[2])
+    assert len(c_p2) == 1 and c_p2[0][1] == {
+        "type": "NEWSPAPER", "layout": "LEFT", "count": 2,
+        "same_sz": "1", "same_gap": D._mm_hu(8),
+        "line": ("SOLID", "0.12 mm", "#000000"), "sizes": [],
+    }
+    assert D._governing_col_pr(got1, got1.top[1]) == (None, None)
+    assert D._governing_col_pr(got1, got1.top[2]) == (got1.top[2], c_p2[0][1])
+    assert D._governing_col_pr(got1, got1.top[3]) == (got1.top[2], c_p2[0][1])
+
+    # 2. Second split later in a later edit on BASIC (at p4) with unequal widths 100/40 and gap 10
+    out2 = tmp_path / "cols_split2.hwpx"
+    ops2 = [{"op": "columns", "at": "p4", "split": True,
+             "set": {"count": 2, "widths_mm": [100, 40], "gap_mm": 10}}]
+    r2 = D.edit(out1, ops2, base=D.rev_of(out1), out=out2)
+    assert r2["ok"], r2
+    assert r2["remap"] == [] and not r2.get("remap_approx")
+    got2 = D._load(out2, meta=False)
+    acts2 = D._plan(got1, ops2)
+    assert D._verify(got1, got2, acts2)
+    assert [q.text for q in got2.top] == [q.text for q in base0.top]
+    # p2..p3 keep the first split's 2-column definition; p4.. get the unequal 100/40 definition
+    assert D._governing_col_pr(got2, got2.top[3])[1] == c_p2[0][1]
+    c_p4 = D._col_prs_in(got2, got2.top[4])
+    want_unequal = {
+        "type": "NEWSPAPER", "layout": "LEFT", "count": 2,
+        "same_sz": "0", "same_gap": 2834,
+        "line": None, "sizes": [(28346, 2834), (11338, 0)],
+    }
+    assert len(c_p4) == 1 and c_p4[0][1] == want_unequal
+    assert D._governing_col_pr(got2, got2.top[4]) == (got2.top[4], want_unequal)
+    assert D._governing_col_pr(got2, got2.top[6]) == (got2.top[4], want_unequal)
+    sec2 = got2.zip.read("Contents/section0.xml").decode("utf-8")
+    assert '<hp:colSz width="28346" gap="2834"/><hp:colSz width="11338" gap="0"/>' in sec2
+
+    # 3. Plain columns change (without split) on BASIC at p3 updates the definition governing p3 (at p2)
+    # and leaves p4's later split untouched; also tests gaps_mm with 3 unequal columns
+    out3 = tmp_path / "cols_plain_on_basic.hwpx"
+    ops3 = [{"op": "columns", "at": "p3",
+             "set": {"count": 3, "widths_mm": [50, 40, 30], "gaps_mm": [8, 4],
+                     "kind": "balanced_newspaper", "layout": "right"}}]
+    r3 = D.edit(out2, ops3, base=D.rev_of(out2), out=out3)
+    assert r3["ok"], r3
+    assert r3["remap"] == [] and not r3.get("remap_approx")
+    got3 = D._load(out3, meta=False)
+    acts3 = D._plan(got2, ops3)
+    assert D._verify(got2, got3, acts3)
+    want_3col = {
+        "type": "BALANCED_NEWSPAPER", "layout": "RIGHT", "count": 3,
+        "same_sz": "0", "same_gap": 2267,
+        "line": None, "sizes": [(14173, 2267), (11338, 1133), (8503, 0)],
+    }
+    assert D._governing_col_pr(got3, got3.top[2]) == (got3.top[2], want_3col)
+    assert D._governing_col_pr(got3, got3.top[3]) == (got3.top[2], want_3col)
+    assert D._governing_col_pr(got3, got3.top[4]) == (got3.top[4], want_unequal)
+
+    # 4. On FX_DOC (tests/fixtures/doc_core/addressing.hwpx, whose p0 carries the section's initial 1-column colPr):
+    # plain columns change on p0 works, and split at p2 keeps p0's colPr governing p0..p1 unchanged
+    f_fx = _copy(FX_DOC, tmp_path, "fx_cols.hwpx")
+    base_fx = D._load(f_fx, meta=False)
+    p0_orig_col = D._governing_col_pr(base_fx, base_fx.top[0])[1]
+    assert p0_orig_col is not None and p0_orig_col["count"] == 1
+    out_fx_split = tmp_path / "fx_split.hwpx"
+    ops_fx_split = [{"op": "columns", "at": "p2", "split": True,
+                     "set": {"count": 2, "widths_mm": [100, 40], "gap_mm": 10, "line": True}}]
+    r_fx = D.edit(f_fx, ops_fx_split, base=D.rev_of(f_fx), out=out_fx_split)
+    assert r_fx["ok"], r_fx
+    got_fx = D._load(out_fx_split, meta=False)
+    assert D._verify(base_fx, got_fx, D._plan(base_fx, ops_fx_split))
+    assert D._governing_col_pr(got_fx, got_fx.top[0])[1] == p0_orig_col
+    assert D._governing_col_pr(got_fx, got_fx.top[1])[1] == p0_orig_col
+    assert D._governing_col_pr(got_fx, got_fx.top[2])[1] == {
+        "type": "NEWSPAPER", "layout": "LEFT", "count": 2,
+        "same_sz": "0", "same_gap": 2834,
+        "line": ("SOLID", "0.12 mm", "#000000"),
+        "sizes": [(28346, 2834), (11338, 0)],
+    }
+    out_fx_plain = tmp_path / "fx_plain.hwpx"
+    ops_fx_plain = [{"op": "columns", "at": "p1", "set": {"count": 2, "gap_mm": 6}}]
+    r_fx_plain = D.edit(out_fx_split, ops_fx_plain, base=D.rev_of(out_fx_split), out=out_fx_plain)
+    assert r_fx_plain["ok"], r_fx_plain
+    got_fx_plain = D._load(out_fx_plain, meta=False)
+    assert D._governing_col_pr(got_fx_plain, got_fx_plain.top[0])[1]["count"] == 2
+    assert D._governing_col_pr(got_fx_plain, got_fx_plain.top[0])[1]["same_gap"] == D._mm_hu(6)
+    assert D._governing_col_pr(got_fx_plain, got_fx_plain.top[2])[1]["sizes"] == [(28346, 2834), (11338, 0)]
+
+    # 5. Hand-broken outputs refused: wrong colCount, wrong colSz, missing colLine, colPr moved after text or to
+    # another paragraph, and mutated colPr before the split
+    p4_xml = sec2[got2.top[4].start:got2.top[4].end]
+    ctrl_xml = re.search(r"<hp:run\b[^>]*><hp:ctrl><hp:colPr\b.*?</hp:colPr></hp:ctrl></hp:run>", p4_xml).group(0)
+    p4_moved_end = p4_xml.replace(ctrl_xml, "", 1)[:-len("</hp:p>")] + ctrl_xml + "</hp:p>"
+    p3_xml = sec2[got2.top[3].start:got2.top[3].end]
+    p3_with_ctrl = re.sub(r"(<hp:p\b[^>]*>)", r"\1" + ctrl_xml, p3_xml, count=1)
+    p4_without_ctrl = p4_xml.replace(ctrl_xml, "", 1)
+
+    for label, broken_sec in (
+        ("wrong_colCount", sec2.replace('colCount="2" sameSz="0"', 'colCount="3" sameSz="0"', 1)),
+        ("wrong_sameSz", sec2.replace('sameSz="0" sameGap="2834"', 'sameSz="1" sameGap="2834"', 1)),
+        ("wrong_sameGap", sec2.replace('sameSz="0" sameGap="2834"', 'sameSz="0" sameGap="1134"', 1)),
+        ("wrong_colSz_width", sec2.replace('<hp:colSz width="28346" gap="2834"/>', '<hp:colSz width="20000" gap="2834"/>', 1)),
+        ("wrong_colSz_gap", sec2.replace('<hp:colSz width="28346" gap="2834"/>', '<hp:colSz width="28346" gap="1000"/>', 1)),
+        ("colPr_moved_after_text", sec2[:got2.top[4].start] + p4_moved_end + sec2[got2.top[4].end:]),
+        ("colPr_moved_to_p3", (sec2[:got2.top[3].start] + p3_with_ctrl
+                               + sec2[got2.top[3].end:got2.top[4].start] + p4_without_ctrl
+                               + sec2[got2.top[4].end:])),
+        ("prev_colPr_changed", sec2.replace('sameSz="1" sameGap="2267"', 'sameSz="1" sameGap="1134"', 1)),
+    ):
+        assert broken_sec != sec2, label
+        broken_bytes = got2.zip.rewrite({"Contents/section0.xml": broken_sec.encode("utf-8")})
+        broken_doc = D.Doc(out2, broken_bytes, "hwpx")
+        assert not D._verify(got1, broken_doc, acts2), label
+        monkeypatch.setattr(D, "_engine_apply", lambda *a, _b=broken_bytes, **k: (_b, {}, None))
+        out_bad = tmp_path / ("bad_col_%s.hwpx" % label)
+        res_bad = D.edit(out1, ops2, base=D.rev_of(out1), out=out_bad)
+        assert not res_bad["ok"] and res_bad["error"]["code"] == "internal", (label, res_bad)
+        assert res_bad["error"]["written"] is False and not out_bad.exists(), label
+
+
+@engine
+def test_engine_columns_on_a_section_without_a_column_definition(kit, tmp_path):
+    # BASIC's section holds no <hp:colPr>; a plain columns change adds Hancom's default to the first paragraph
+    # and changes it (needs the engine fix in hwp-engine PR #37)
+    f = _copy(BASIC, tmp_path, "basic_plain.hwpx")
+    base = D._load(f, meta=False)
+    assert D._governing_col_pr(base, base.top[2]) == (None, None)
+    out = tmp_path / "basic_plain_out.hwpx"
+    ops = [{"op": "columns", "at": "p2", "set": {"count": 2, "gap_mm": 8, "line": True}}]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    got = D._load(out, meta=False)
+    assert D._verify(base, got, D._plan(base, ops))
+    gov, col = D._governing_col_pr(got, got.top[2])
+    assert gov is got.top[0]
+    assert col == {"type": "NEWSPAPER", "layout": "LEFT", "count": 2, "same_sz": "1",
+                   "same_gap": D._mm_hu(8), "line": ("SOLID", "0.12 mm", "#000000"), "sizes": []}
+    assert [p.text for p in got.top] == [p.text for p in base.top]
