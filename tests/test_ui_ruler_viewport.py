@@ -6,8 +6,7 @@ from test_ui_wp3_canvas import (
     _open_sample,
     _wait_for_cell_geometry,
     browser,
-    canvas_bundle,
-    expect,
+    canvas_bundle,  # noqa: F401  (the server fixture depends on it)
     server,
 )
 
