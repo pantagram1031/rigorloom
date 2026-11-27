@@ -28,6 +28,10 @@ function loadTsModule(relPath, stubs = {}) {
 
 const vocabulary = loadTsModule("../src/i18n/vocabulary.ts");
 const formTokens = loadTsModule("../src/i18n/formTokens.ts");
+const wp3 = loadTsModule("../src/i18n/v2/wp3.ts", {
+  "../vocabulary": vocabulary,
+  "../vocabulary.ts": vocabulary,
+});
 const planProjection = loadTsModule("../src/agent/planProjection.ts", {
   "../i18n/vocabulary.ts": vocabulary,
   "../i18n/vocabulary": vocabulary,
@@ -38,6 +42,8 @@ const fieldLabels = loadTsModule("../src/workspace/fieldLabels.ts", {
   "../i18n/vocabulary": vocabulary,
   "../i18n/formTokens.ts": formTokens,
   "../i18n/formTokens": formTokens,
+  "../i18n/v2/wp3.ts": wp3,
+  "../i18n/v2/wp3": wp3,
 });
 const guardHelper = loadTsModule("../src/workspace/guardHelper.ts", {
   react: { useSyncExternalStore: (_sub, snap) => snap() },
