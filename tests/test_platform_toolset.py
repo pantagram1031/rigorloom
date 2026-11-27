@@ -278,7 +278,7 @@ def test_bad_ops_are_named(env):
     rev0 = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
     e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0,
                                      "ops": [{"op": "sett", "at": "p1"}]}), "invalid_params")
-    assert e["at"] == "ops[0]" and "set" in e["candidates"]
+    assert e["at"] == "ops[0].op" and "set" in e["candidates"]     # the schema's `op` enum
     e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev0,
                                      "ops": [{"op": "set", "at": "p1"}]}), "invalid_params")
     assert e["at"] == "ops[0].text"
@@ -1654,24 +1654,30 @@ def test_guide_names_only_the_topics_it_has(monkeypatch, tmp_path):
 
 
 def test_every_edit_op_is_named_and_its_fields_are_in_the_ops_topic(env, monkeypatch, tmp_path):
-    # The edit description holds at most 700 characters and every new op
-    # would add its fields there; it spells out only the text ops and names
-    # the rest, a family once. The guide topic `ops`, built from
-    # the same tables, has every op's fields and a working example, in every
-    # install, with or without the knowledge pack.
-    description = rt_tools.REGISTRY["edit"].description
+    # The edit description holds at most 700 characters, so it spells out
+    # only the text ops; every op's name is the `op` enum of the input
+    # schema, and a new op adds nothing to the description. The guide topic
+    # `ops`, built from the same tables, has every op's fields and a working
+    # example, in every install, with or without the knowledge pack.
+    tool = rt_tools.REGISTRY["edit"]
+    description = tool.description
     assert len(description) < 700
-    named = set()                                   # table.{set_cells,add_row} -> both names
-    for family, rest in re.findall(r"(\w+)\.\{([^}]*)\}", description):
-        named |= {f"{family}.{r}" for r in rest.split(",")}
-    named |= set(re.findall(r"(?<![\w.{,])[a-z_]+(?:\.[a-z_]+)?(?![\w{])",
-                            re.sub(r"\w+\.\{[^}]*\}", "", description)))
+    op = tool.input_schema["properties"]["ops"]["items"]["properties"]["op"]
+    assert op == {"type": "string", "enum": list(rt_toolset.OP_FIELDS)}
     for name in rt_toolset.OPS_SPELLED:
         assert rt_toolset._op_signature(name) in description
-    assert set(rt_toolset.OP_FIELDS) - {"fill"} - set(rt_toolset.OPS_SPELLED) <= named
-    assert "count from 0" in description
-    assert rt_toolset._op_names(["table.a", "style", "table.b", "x.y"]) == "table.{a,b}, style, x.y"
-    assert rt_toolset._op_names(["style", "table.a", "style.create"]) == "style, table.a, style.create"
+    assert "count from 0" in description and "guide `ops`" in description
+    assert "`op` enum (families: " + rt_toolset._op_families(rt_toolset.OP_FIELDS) + ")" in description
+    assert rt_toolset._op_families(["table.a", "style", "table.b", "style.create", "x"]) == "table.*, style.*"
+    # an op name outside the enum is refused before anything runs, with every name offered
+    path = env.doc()
+    rev = ok(call(env.ctx(), "open", {"path": str(path)}))["rev"]
+    e = err(call(env.ctx(), "edit", {"path": str(path), "base": rev, "ops": [
+        {"op": "table.delete_rows", "at": "t0/r1"}]}), "invalid_params")
+    assert e["at"] == "ops[0].op" and e["candidates"] == list(rt_toolset.OP_FIELDS)
+    assert e["message"] == "ops[0].op: 허용하지 않는 값입니다('table.delete_rows')."   # the list stays out
+    e = err(call(env.ctx(), "check", {"path": str(path), "pack": "nope"}), "invalid_params")
+    assert e["message"].startswith("pack: 허용한 값(")                  # a short enum is still listed
 
     empty = tmp_path / "none"
     empty.mkdir()

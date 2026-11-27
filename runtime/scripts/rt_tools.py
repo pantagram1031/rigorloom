@@ -119,6 +119,11 @@ def _type_ok(value: Any, kind: str | list) -> bool:
     return False
 
 
+#: Enums up to this long are listed in the error message; longer ones only in
+#: its candidates.
+ENUM_IN_MESSAGE = 8
+
+
 def validate(schema: dict, value: Any, where: str = "") -> None:
     """Raise ``ToolError('invalid_params')`` naming the first bad field."""
     label = where or "요청"
@@ -127,10 +132,12 @@ def validate(schema: dict, value: Any, where: str = "") -> None:
         raise ToolError("invalid_params",
                         f"{label}: 값이 {expected} 형식이어야 합니다.", at=where or None)
     if "enum" in schema and value not in schema["enum"]:
-        raise ToolError("invalid_params",
-                        f"{label}: 허용한 값(" + ", ".join(map(str, schema["enum"])) + ")과 일치하지 않습니다.",
-                        hint="목록에서 값 하나를 골라 입력하세요.",
-                        at=where or None, candidates=[str(v) for v in schema["enum"]])
+        allowed = [str(v) for v in schema["enum"]]
+        # a long list (edit's op names) stays in candidates, out of the message
+        message = (f"{label}: 허용한 값(" + ", ".join(allowed) + ")과 일치하지 않습니다."
+                   if len(allowed) <= ENUM_IN_MESSAGE else f"{label}: 허용하지 않는 값입니다({value!r}).")
+        raise ToolError("invalid_params", message, hint="목록에서 값 하나를 골라 입력하세요.",
+                        at=where or None, candidates=allowed)
     if isinstance(value, str):
         if "minLength" in schema and len(value) < schema["minLength"]:
             raise ToolError("invalid_params", f"{label}: 비어 있습니다.", hint="이 항목에 내용을 더 입력하세요.",

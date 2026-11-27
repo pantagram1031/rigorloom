@@ -1176,29 +1176,28 @@ def _ops_guide() -> str:
     return "\n".join(lines) + "\n"
 
 
-def _op_names(names: list[str]) -> str:
-    """Op names with a shared family written once: table.{set_cells,add_row}.
-    Every op the engine work adds is one more name, so the description has
-    to stay short as the list grows."""
-    # a bare op (style) and a family of the same word (style.create) stay apart
-    families: dict[tuple[str, bool], list[str]] = {}
-    for name in names:
-        family, dot, rest = name.partition(".")
-        families.setdefault((family, bool(dot)), []).append(rest)
-    return ", ".join(f if not dot else (f"{f}.{{{','.join(r)}}}" if len(r) > 1 else f"{f}.{r[0]}")
-                     for (f, dot), r in families.items())
+def _op_families(names) -> str:
+    """The op families, each once: "table.*, style.*" (bare ops are not one)."""
+    families = dict.fromkeys(name.partition(".")[0] for name in names if "." in name)
+    return ", ".join(f + ".*" for f in families)
 
 
 def _edit_description() -> str:
+    # Under 700 characters. Op names are the `op` enum of the input schema
+    # (EDIT_OP_SCHEMA), so a new op adds nothing here.
     spelled = ", ".join(_op_signature(n) + (" (one plain paragraph per line, no tables)"
                                             if n == "insert_after" else "") for n in OPS_SPELLED)
-    named = _op_names([n for n in OP_FIELDS if n not in OPS_SPELLED and n != "fill"])
-    # Under 700 characters, and every new op adds its name to `named`: keep
-    # the fixed prose short so the list has room.
-    return ("Declarative ops, staged in a draft; the file changes only on `save`. Ops: "
-            + spelled + "; also " + named + ". Fields and examples: guide `ops`. Addresses "
-            "count from 0 (t0/r0/c0 is the first cell). Pass the `rev` you read as `base`; "
-            "`expect` guards text. Preview changed pages.")
+    return ("Declarative ops, staged in a draft; the file changes only on `save`. Text ops: "
+            + spelled + ". Every op name is in the `op` enum (families: " + _op_families(OP_FIELDS)
+            + "); fields and examples: guide `ops`. Addresses count from 0 (t0/r0/c0 is the "
+            "first cell). Pass the `rev` you read as `base`; `expect` guards text. Preview "
+            "changed pages.")
+
+
+#: One edit op in the input schema: `op` names it, its other fields are
+#: checked by _check_ops (so the key form {"insert_after": {...}} still gets
+#: its hint there).
+EDIT_OP_SCHEMA = {"type": "object", "properties": {"op": {"type": "string", "enum": list(OP_FIELDS)}}}
 
 
 #: A GFM table's delimiter row: | --- | :---: |
@@ -1334,7 +1333,7 @@ register(Tool(
     input_schema=_obj({
         "path": S_PATH, "base": S_REV,
         "ops": {"type": "array", "minItems": 1, "maxItems": EDIT_MAX_OPS,
-                "items": {"type": "object"}},
+                "items": EDIT_OP_SCHEMA},
     }, ["path", "base", "ops"]),
     output_schema=_out({**O_DOCREF, "changeset": {"type": "string"},
                         "changedPages": {"type": "array"}, "remap": {"type": "array"},
