@@ -19,7 +19,7 @@ import { getShell, setShell } from "../shell/shellState";
 import { useCanvasChanges } from "../canvas/changes";
 import { beginCellEditV2 } from "../canvas/actions";
 import {
-  getPublishedKnownPages,
+  usePublishedKnownPages,
   scrollCanvasToTarget,
   setCanvasSlice,
   useCanvasSlice,
@@ -34,6 +34,7 @@ export function BlanksPane() {
   const language = useWorkspace((s) => s.language);
   const slice = useCanvasSlice(session?.sessionId);
   const pageSource = usePublishedPageSource();
+  const knownPagesMap = usePublishedKnownPages();
 
   // `J1 §3` & `BlanksPane`: receiving-agency blanks start collapsed by default.
   const [agencyOpen, setAgencyOpen] = useState(false);
@@ -49,9 +50,9 @@ export function BlanksPane() {
       detected,
       pageSource,
       language,
-      pageSource?.kind === "engine" ? getPublishedKnownPages() : undefined,
+      pageSource?.kind === "engine" ? knownPagesMap : undefined,
     );
-  }, [inspect, textMap, changes, language, pageSource]);
+  }, [inspect, textMap, changes, language, pageSource, knownPagesMap]);
 
   const primarySeats = useMemo(
     () => seats.filter((s) => s.group === "primary"),

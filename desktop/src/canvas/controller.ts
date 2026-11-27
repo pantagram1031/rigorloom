@@ -218,6 +218,87 @@ export function getPublishedKnownPages(): ReadonlyMap<string, number> {
   return activeKnownPages;
 }
 
+const CELL_KEY = /^c:(\d+):(\d+):(\d+)$/;
+let measuredPagesKey: string | null = null;
+let measuredPageNumbers = new Set<number>();
+
+/** True when `page` of this revision has already been measured in the background. */
+export function isPageMeasured(rev: string, page: number): boolean {
+  return measuredPagesKey === rev && measuredPageNumbers.has(page);
+}
+
+/**
+ * Record the addresses one page's engine geometry holds, measured in the
+ * background so that pages the user has not opened are known too. An address
+ * keeps the first page it was found on; a revision other than the published
+ * one is ignored.
+ */
+export function publishMeasuredPage(rev: string, page: number, addresses: readonly string[]): void {
+  if (rev !== activeKnownPagesRev || !Number.isSafeInteger(page) || page < 1) return;
+  if (measuredPagesKey !== rev) {
+    measuredPagesKey = rev;
+    measuredPageNumbers = new Set();
+  }
+  measuredPageNumbers.add(page);
+  let next: Map<string, number> | null = null;
+  for (const address of addresses) {
+    if (!address || activeKnownPages.has(address) || next?.has(address)) continue;
+    next ??= new Map(activeKnownPages);
+    next.set(address, page);
+  }
+  if (!next) return;
+  activeKnownPages = next;
+  for (const cb of contextListeners) cb();
+}
+
+/**
+ * The page a target is known to be on: a cell (`c:t:r:c`), a paragraph, or a
+ * change (by its cell or paragraph). Null when no drawn or measured page holds it.
+ */
+export function knownPageOf(target: {
+  cellKey?: string | null;
+  atPara?: number | null;
+  itemId?: string | null;
+}): number | null {
+  let cellKey = target.cellKey ?? null;
+  let atPara = target.atPara ?? null;
+  if (target.itemId) {
+    const change = activeChangesSnapshot.find((item) => item.id === target.itemId);
+    cellKey ??= change?.cellKey ?? null;
+    atPara ??= change?.atPara ?? null;
+  }
+  const keys: string[] = [];
+  if (cellKey) {
+    keys.push(cellKey);
+    const cell = CELL_KEY.exec(cellKey);
+    if (cell) keys.push(`t${cell[1]}/r${cell[2]}/c${cell[3]}`);
+  }
+  if (atPara !== null && Number.isFinite(atPara)) keys.push(`p${atPara}`);
+  for (const key of keys) {
+    const page = activeKnownPages.get(key);
+    if (typeof page === "number" && Number.isSafeInteger(page) && page >= 1) return page;
+  }
+  return null;
+}
+
+/** Turn the canvas to a target's known page; true when the page changed. */
+export function turnToTargetPage(target: Parameters<typeof knownPageOf>[0]): boolean {
+  const page = knownPageOf(target);
+  const slice = getCanvasSlice();
+  if (page === null || page === slice.page || page > Math.max(1, slice.pageCount)) return false;
+  setCanvasSlice({ page });
+  return true;
+}
+
+/** The known-pages map; a new map whenever a page is drawn or measured. */
+export function usePublishedKnownPages(): ReadonlyMap<string, number> {
+  return useSyncExternalStore(
+    subscribeCanvasContext,
+    getPublishedKnownPages,
+    getPublishedKnownPages,
+  );
+}
+
 export function usePublishedPageSource(): PageSource | null {
   return useSyncExternalStore(
     subscribeCanvasContext,
@@ -244,6 +325,8 @@ export const canvas: CanvasController = {
       scrollRequestNonce += 1;
     }
     setCanvasSlice({ selectedChangeId: itemId });
+    // A change picked outside the canvas may be on a page not drawn yet.
+    if (itemId && !options?.fromCanvas) turnToTargetPage({ itemId });
     for (const cb of selectListeners) {
       cb(itemId);
     }
@@ -262,15 +345,11 @@ export const canvas: CanvasController = {
   },
 };
 
-export function scrollCanvasToTarget(opts: {
-  cellKey?: string | null;
-  atPara?: number | null;
-  itemId?: string | null;
-}): void {
-  if (typeof document === "undefined") return;
-  const container = document.querySelector<HTMLElement>('[data-testid="canvas-scroll"]');
-  if (!container) return;
+type ScrollTarget = { cellKey?: string | null; atPara?: number | null; itemId?: string | null };
+const PAGE_TURN_SCROLL_WAIT_MS = 3000;
+let pageTurnScrollRequest = 0;
 
+function findTarget(container: HTMLElement, opts: ScrollTarget): HTMLElement | null {
   const esc = (v: string) =>
     typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(v) : v;
 
@@ -284,7 +363,41 @@ export function scrollCanvasToTarget(opts: {
   if (!targetEl && opts.atPara !== undefined && opts.atPara !== null) {
     targetEl = container.querySelector<HTMLElement>(`[data-para-key="${opts.atPara}"]`);
   }
-  if (!targetEl) return;
+  return targetEl;
+}
+
+export function scrollCanvasToTarget(opts: ScrollTarget): void {
+  if (typeof document === "undefined") return;
+  const container = document.querySelector<HTMLElement>('[data-testid="canvas-scroll"]');
+  if (!container) return;
+
+  const targetEl = findTarget(container, opts);
+  if (!targetEl) {
+    // The target is on a page that is not drawn. Turn to its page once that
+    // page is known (it may still be measuring, or another call may already
+    // have turned it), then scroll once the target is drawn.
+    if (getCanvasSlice().pageCount <= 1) return;
+    if (typeof requestAnimationFrame !== "function") {
+      turnToTargetPage(opts);
+      return;
+    }
+    const request = ++pageTurnScrollRequest;
+    const deadline = Date.now() + PAGE_TURN_SCROLL_WAIT_MS;
+    let turned = false;
+    const retry = () => {
+      if (request !== pageTurnScrollRequest) return;
+      const live = document.querySelector<HTMLElement>('[data-testid="canvas-scroll"]');
+      if (live && findTarget(live, opts)) {
+        scrollCanvasToTarget(opts);
+        return;
+      }
+      // Turn at most once, so a page the user turns to meanwhile is kept.
+      if (!turned) turned = turnToTargetPage(opts) || knownPageOf(opts) !== null;
+      if (Date.now() < deadline) requestAnimationFrame(retry);
+    };
+    retry();
+    return;
+  }
 
   const cRect = container.getBoundingClientRect();
   const tRect = targetEl.getBoundingClientRect();

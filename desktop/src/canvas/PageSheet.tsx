@@ -686,10 +686,15 @@ export function PageSheet({
     onMeasurementsChange,
   ]);
 
-  // 180 ms smooth scroll putting the selected mark at one-third viewport height (`D1 §3(c) 6`)
+  // 180 ms smooth scroll putting the selected mark at one-third viewport height (`D1 §3(c) 6`).
+  // A change on another page turns the page first, so the request is served
+  // once that page is drawn; turning pages by hand does not scroll back to it.
+  const servedScrollRequest = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedChangeId) return;
     if (scrollRequestOrigin === "canvas") return;
+    const requestKey = `${scrollRequestNonce}:${selectedChangeId}:${isNarrow}`;
+    if (servedScrollRequest.current === requestKey) return;
     const container = scrollContainerRef.current;
     if (!container || container.clientHeight === 0) return;
 
@@ -698,6 +703,7 @@ export function PageSheet({
       container.querySelector<HTMLElement>(`[data-mark-item="${esc}"]`) ??
       container.querySelector<HTMLElement>('[data-selected-anchor="true"]');
     if (!targetEl) return;
+    servedScrollRequest.current = requestKey;
 
     const cRect = container.getBoundingClientRect();
     const tRect = targetEl.getBoundingClientRect();
@@ -713,7 +719,7 @@ export function PageSheet({
       left: isNarrow ? Math.max(0, container.scrollLeft + (tRect.left - cRect.left) - 24) : container.scrollLeft,
       behavior: reduced ? "auto" : "smooth",
     });
-  }, [selectedChangeId, scrollRequestNonce, scrollRequestOrigin, scrollContainerRef, isNarrow]);
+  }, [selectedChangeId, scrollRequestNonce, scrollRequestOrigin, scrollContainerRef, isNarrow, page]);
 
   const changesByCell = useMemo(() => {
     const map = new Map<string, CanvasChangeRef[]>();
