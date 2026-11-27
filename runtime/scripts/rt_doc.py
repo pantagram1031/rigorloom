@@ -105,7 +105,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
        "table.cell_style", "table.style", "style.create", "note", "caption", "bookmark", "link", "toc",
-       "hide", "new_number", "picture", "table.formula", "memo", "insert_shape")
+       "hide", "new_number", "picture", "table.formula", "memo", "insert_shape", "insert_chart")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -1199,7 +1199,8 @@ def _scan_section(s, si, canon=None):
                 p.chars.append(OBJ)
                 p.posmap.append(None)
                 p.xpos.append(m.start())
-                p.objs.append(name)
+                # a chart is an hp:switch whose ooxmlchart case holds the hp:chart: read names it hp:chart
+                p.objs.append("hp:chart" if name == "hp:switch" and _CHART_CASE.match(s, m.end()) else name)
             # fall through: the element itself is scanned for nested structure
         if name in ("hp:fieldBegin", "hp:fieldEnd"):
             fr_p = innermost("hp:p")
@@ -2527,6 +2528,7 @@ class _Act:
         self.formula = None     # table.formula: (base Para, "func" | "formula", spec)
         self.memo = None        # memo: (base Para, text, author, (pos_a, pos_b), anchor_text, stamp)
         self.shape = None       # insert_shape: (base Para, expected parsed shape)
+        self.chart = None       # insert_chart: (base Para, expected chart element and data)
 
 
 class _Claims:
@@ -2575,6 +2577,9 @@ class _Claims:
                     "memo", "insert_after", "insert_table", "insert_picture", "insert_equation"})
                 or ("insert_shape" in (op, op2) and {op, op2} <= {
                     "insert_shape", "memo", "insert_after", "insert_table", "insert_picture", "insert_equation"})
+                or ("insert_chart" in (op, op2) and {op, op2} <= {
+                    "insert_chart", "insert_shape", "memo", "insert_after", "insert_table", "insert_picture",
+                    "insert_equation"})
             ):
                 self._conflict(i, op, j, op2, at)
         self.touched.append((si, pos, i, op, at))
@@ -3277,6 +3282,17 @@ INSERT_SHAPE_KEYS = ("shape", "width_mm", "height_mm", "wrap", "vert_rel", "horz
 SHAPE_TEXT_MAX = 1000
 #: Hancom's default drawing size and outline (feat2_float_objects: orgSz 18750 x 8250, lineShape width 33)
 SHAPE_DEFAULT_HU = (18750, 8250)
+#: insert_chart (차트): the four kinds whose kit charts 한글 2024 kept and drew after re-saving (hwp-engine
+#: tests/nogt: chart_bar (column), chart_line, chart_pie, chart_scatter); a horizontal bar has no such file yet
+CHART_TYPES = ("column", "line", "pie", "scatter")
+INSERT_CHART_KEYS = ("type", "title", "categories", "series", "width_mm", "height_mm")
+CHART_SERIES_KEYS = ("name", "values", "x")
+CHART_MAX_POINTS = 50
+CHART_MAX_SERIES = 8
+CHART_TEXT_MAX = 100
+CHART_NUM_MAX = 1e15
+#: the kit's chart size when none is asked (hwpx_kit chart_xml)
+CHART_DEFAULT_HU = (32250, 18750)
 FORMULA_FUNCS = ("SUM", "AVG", "PRODUCT")
 FORMULA_ENGINE_FUNC = {"SUM": "Sum", "AVG": "Avg", "PRODUCT": "Pro"}
 FORMULA_MAX = 200
@@ -5551,6 +5567,14 @@ def _plan_op(doc, cl, i, name, op, at):
                           if kind == "textbox" else None),
         })
         acts.append(a)
+    elif name == "insert_chart":
+        p, kws, exp = _plan_chart(doc, op, i, at)
+        cl.touch(p.si, p.start, i, name, at)
+        steps = [["goto", p.k, 0, p.si], ["goto_end"], ["enter"], {"op": "insert_chart", "kwargs": kws}]
+        a = _Act(i, name, at, p, p.end, side=0, rank=0, steps=steps)
+        _adds_for(doc, a, p, 1)
+        a.chart = (p, exp)
+        acts.append(a)
     elif name == "picture":
         known = ("index", "set")
         extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
@@ -6097,6 +6121,8 @@ def _verify(doc, newdoc, acts):
     if not _verify_memo(doc, newdoc, acts, st):
         return False
     if not _verify_shape(doc, newdoc, acts, st):
+        return False
+    if not _verify_chart(doc, newdoc, acts, st):
         return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
@@ -7164,6 +7190,217 @@ def _verify_shape(doc, newdoc, acts, st):
     return True
 
 
+def _chart_text(v, what, i, at, cap=CHART_TEXT_MAX):
+    if not isinstance(v, str) or not v.strip() or len(v) > cap:
+        raise DocError("bad_input", "insert_chart: %s is text of 1 to %d characters" % (what, cap), i=i, at=at)
+    if _CTRL.search(v) or any(c in v for c in "\r\n\t"):
+        raise DocError("bad_input", "insert_chart: %s holds a control character or a line break" % what, i=i, at=at)
+    return v
+
+
+def _chart_num(v, what, i, at):
+    """A chart value as it is written: a whole number as an int, any other finite number as a float."""
+    if not _num(v) or v != v or abs(v) > CHART_NUM_MAX:
+        raise DocError("bad_input", "insert_chart: %s are finite numbers (at most %g in size; not true/false)"
+                       % (what, CHART_NUM_MAX), i=i, at=at)
+    return int(v) if float(v).is_integer() else float(v)
+
+
+def _chart_str(v):
+    """How hwp-engine's chart part writes a value (\"%s\" of the number the plan sends)."""
+    return "%s" % v
+
+
+def _plan_chart(doc, op, i, at):
+    """(base Para, engine kwargs, expected chart) of an insert_chart op, refused as a whole when anything is off."""
+    extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(INSERT_CHART_KEYS))
+    if extra:
+        raise DocError("bad_input", "insert_chart takes %s, not %s" % (", ".join(("at",) + INSERT_CHART_KEYS),
+                       extra[0]), i=i, at=at,
+                       candidates=_cands_near(list(INSERT_CHART_KEYS), extra[0]) or list(INSERT_CHART_KEYS))
+    typ = op.get("type")
+    if typ == "bar":
+        raise DocError("bad_input", "insert_chart: a horizontal bar chart has not been checked against 한글 yet; "
+                       "use column", i=i, at=at, candidates=["column"])
+    if not isinstance(typ, str) or typ not in CHART_TYPES:
+        raise DocError("bad_input", "insert_chart: type is one of %s" % ", ".join(CHART_TYPES), i=i, at=at,
+                       candidates=_cands_near(list(CHART_TYPES), str(typ)) or list(CHART_TYPES))
+    if doc.format != "hwpx":
+        raise _unavailable("insert_chart: a chart made here is lost when the document is saved as .hwp (한글's "
+                           "own chart storage in .hwp cannot be written); open or convert it as .hwpx",
+                           "chart_needs_hwpx", i=i, at=at)
+    kws = {"type": typ}
+    exp = {"type": typ, "title": None}
+    if "title" in op:
+        kws["title"] = exp["title"] = _chart_text(op["title"], "title", i, at)
+    scatter = typ == "scatter"
+    cats = None
+    if scatter:
+        if "categories" in op:
+            raise DocError("bad_input", "insert_chart: a scatter chart takes x in each series, not categories",
+                           i=i, at=at)
+    else:
+        cats = op.get("categories")
+        if not isinstance(cats, list) or not 1 <= len(cats) <= CHART_MAX_POINTS:
+            raise DocError("bad_input", "insert_chart: categories is a list of 1 to %d labels" % CHART_MAX_POINTS,
+                           i=i, at=at)
+        cats = [_chart_text(c, "each category", i, at) for c in cats]
+        kws["categories"] = cats
+    series = op.get("series")
+    most = 1 if typ == "pie" else CHART_MAX_SERIES
+    if not isinstance(series, list) or not 1 <= len(series) <= most:
+        raise DocError("bad_input", "insert_chart: series is a list of 1 to %d series%s" % (
+            most, " (a pie chart has one)" if typ == "pie" else ""), i=i, at=at)
+    kser, eser = [], []
+    for s_ in series:
+        if not isinstance(s_, dict):
+            raise DocError("bad_input", "insert_chart: each series is {name, values%s}" % (", x" if scatter else ""),
+                           i=i, at=at)
+        bad = sorted(str(k) for k in set(s_) - set(CHART_SERIES_KEYS))
+        if bad or ("x" in s_) != scatter:
+            k = bad[0] if bad else "x"
+            raise DocError("bad_input", "insert_chart: a series takes name, values%s, not %s"
+                           % (" and x" if scatter else "", k), i=i, at=at,
+                           candidates=["name", "values"] + (["x"] if scatter else []))
+        name = _chart_text(s_.get("name"), "a series name", i, at)
+        vals = s_.get("values")
+        n = len(cats) if cats is not None else None
+        if not isinstance(vals, list) or not 1 <= len(vals) <= CHART_MAX_POINTS or (n is not None and len(vals) != n):
+            raise DocError("bad_input", "insert_chart: values of %r is a list of %s numbers" % (
+                name, n if n is not None else "1 to %d" % CHART_MAX_POINTS), i=i, at=at)
+        vals = [_chart_num(v, "values", i, at) for v in vals]
+        if typ == "pie" and any(v < 0 for v in vals):
+            raise DocError("bad_input", "insert_chart: a pie chart takes no negative values", i=i, at=at)
+        ks = {"name": name, "values": vals}
+        es = {"name": name, "values": [_chart_str(v) for v in vals], "categories": cats, "x": None}
+        if scatter:
+            xs = s_.get("x")
+            if not isinstance(xs, list) or len(xs) != len(vals):
+                raise DocError("bad_input", "insert_chart: x of %r is a list of %d numbers (one per value)"
+                               % (name, len(vals)), i=i, at=at)
+            xs = [_chart_num(v, "x", i, at) for v in xs]
+            ks["x"] = xs
+            es["x"] = [_chart_str(v) for v in xs]
+        kser.append(ks)
+        eser.append(es)
+    kws["series"] = kser
+    exp["series"] = eser
+    w, h = CHART_DEFAULT_HU
+    for k in ("width_mm", "height_mm"):
+        if k in op:
+            if not _in(op[k], *SIZE_MM):
+                raise DocError("bad_input", "insert_chart: %s is %d to %d mm" % ((k,) + SIZE_MM), i=i, at=at,
+                               range=list(SIZE_MM))
+            kws[k] = float(op[k])
+    if "width_mm" in kws:               # hwpx_kit truncates mm to HWPUNIT as Hancom does (_mm_hu)
+        w = _mm_hu(kws["width_mm"])
+    if "height_mm" in kws:
+        h = _mm_hu(kws["height_mm"])
+    exp["width"], exp["height"] = w, h
+    r = resolve(doc, at, allow=("para", "heading"))
+    if r.get("range"):
+        raise DocError("bad_address", "insert_chart takes a whole paragraph, not a character range", i=i, at=at)
+    p = r["para"]
+    if not p.top or p.cell is not None:
+        raise DocError("bad_address", "insert_chart goes after a body paragraph (a chart in a table cell is not "
+                       "supported yet)", i=i, at=at)
+    if _in_field_body(doc, p):
+        raise DocError("bad_address", "insert_chart: %s is inside a field" % at, i=i, at=at)
+    return p, kws, exp
+
+
+_CHART_CASE = re.compile(r'<hp:case hp:required-namespace="[^"]*/ooxmlchart"><hp:chart\b')
+_CHART_SWITCH = re.compile(r'<hp:switch><hp:case hp:required-namespace="[^"]*/ooxmlchart">(<hp:chart\b.*?</hp:chart>)'
+                           r'</hp:case>(?:<hp:default>.*?</hp:default>)?</hp:switch>', re.S)
+
+
+def _charts_xml(d):
+    """[(chart element, chartIDRef)] of every chart in the document's sections, in order."""
+    out = []
+    for s in d.secs:
+        for m in _CHART_SWITCH.finditer(s):
+            out.append((m.group(0), _attr(m.group(1)[:m.group(1).find(">") + 1], "chartIDRef")))
+    return out
+
+
+def _chart_parts(d):
+    return {n: d.zip.read(n) for n in d.zip.names() if n.startswith("Chart/")}
+
+
+def _parse_chart_part(raw):
+    """{type, title, series: [{name, values, categories, x}]} read back from a c:chartSpace part's caches."""
+    x = raw.decode("utf-8")
+    plot = re.search(r"<c:(barChart|lineChart|pieChart|scatterChart)>", x)
+    kind = {"lineChart": "line", "pieChart": "pie", "scatterChart": "scatter"}.get(plot.group(1)) if plot else None
+    if plot and plot.group(1) == "barChart":
+        bd = re.search(r'<c:barDir val="(\w+)"/>', x)
+        kind = "column" if bd and bd.group(1) == "col" else "bar"
+    t = re.search(r"<c:title>.*?</c:title>", x, re.S)
+    title = "".join(_xml_unescape(v) for v in re.findall(r"<a:t>([^<]*)</a:t>", t.group(0))) if t else None
+
+    def pts(block, tag):
+        m = re.search(r"<c:%s>(.*?)</c:%s>" % (tag, tag), block, re.S)
+        return [_xml_unescape(v) for v in re.findall(r"<c:v>([^<]*)</c:v>", m.group(1))] if m else None
+    series = []
+    for ser in re.findall(r"<c:ser>.*?</c:ser>", x, re.S):
+        nm = pts(ser, "tx")
+        series.append({"name": nm[0] if nm and len(nm) == 1 else None,
+                       "values": pts(ser, "yVal") if kind == "scatter" else pts(ser, "val"),
+                       "categories": None if kind == "scatter" else pts(ser, "cat"),
+                       "x": pts(ser, "xVal") if kind == "scatter" else None})
+    return {"type": kind, "title": title, "series": series}
+
+
+def _verify_chart(doc, newdoc, acts, st):
+    """Each insert_chart op added one paragraph right after its body paragraph holding only the chart (inline,
+    the asked size, a new Chart/chartN.xml part whose cached title, series names, categories and values are
+    the ones asked), and left every other chart and chart part in the document unchanged."""
+    chart_acts = [a for a in acts if a.chart]
+    if not chart_acts:
+        return True
+    old, new = _charts_xml(doc), _charts_xml(newdoc)
+    oparts, nparts = _chart_parts(doc), _chart_parts(newdoc)
+    if len(new) != len(old) + len(chart_acts) or any(nparts.get(n) != b for n, b in oparts.items()):
+        return False
+    rest = list(new)
+    for el in old:                          # every old chart element is still there, unchanged
+        if el not in rest:
+            return False
+        rest.remove(el)
+    seen = set()
+    for a in chart_acts:
+        p, exp = a.chart
+        np = _new_para(doc, newdoc, p, st)
+        if np is None or not np.top or np.gp + 1 >= len(newdoc.top):
+            return False
+        tnp = newdoc.top[np.gp + 1]
+        raw = newdoc.secs[tnp.si][tnp.start:tnp.end]
+        ms = list(_CHART_SWITCH.finditer(raw))
+        if len(ms) != 1 or tnp.text.strip("\ufffc"):
+            return False
+        rest_xml = raw[:ms[0].start()] + raw[ms[0].end():]
+        if re.search(r"<hp:(?!p\b|run\b|t\b|linesegarray\b|lineseg\b)\w+[ >/]", rest_xml) or \
+                re.search(r"<hp:t>[^<]+</hp:t>", rest_xml):
+            return False                    # nothing else in the new paragraph: no text, no other object
+        el = ms[0].group(1)
+        open_ = el[:el.find(">") + 1]
+        ref = _attr(open_, "chartIDRef")
+        sz = re.search(r"<hp:sz\b[^<>]*/>", el)
+        pos = re.search(r"<hp:pos\b[^<>]*/>", el)
+        if (ms[0].group(0), ref) not in rest or ref in oparts or ref in seen or ref not in nparts:
+            return False
+        seen.add(ref)
+        if not sz or _int_attr(sz.group(0), "width") != exp["width"] or \
+                _int_attr(sz.group(0), "height") != exp["height"]:
+            return False
+        if not pos or _attr(pos.group(0), "treatAsChar") != "1" or _attr(open_, "textWrap") != "TOP_AND_BOTTOM":
+            return False
+        got = _parse_chart_part(nparts[ref])
+        if got != {"type": exp["type"], "title": exp["title"], "series": exp["series"]}:
+            return False
+    return True
+
+
 def _verify_memo(doc, newdoc, acts, st):
     """Each memo op kept the paragraph's visible text unchanged, added one MEMO fieldBegin wrapping the
     anchor span with the requested subList text, Author parameter and 메모 style (or style 0 when header.xml
@@ -7318,7 +7555,7 @@ def _remap_result(doc, newdoc, acts):
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
             or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc
             or a.char_shape or a.para_shape or a.page_setup or a.columns or a.hide or a.new_num or a.picture
-            or a.formula or a.memo or a.shape]
+            or a.formula or a.memo or a.shape or a.chart]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
@@ -7431,6 +7668,11 @@ def edit(path, ops, *, base, out=None, in_place=False, preview=False):
         target = _check_out(out if out is not None else _default_out(src), [src], suffixes=(".hwpx", ".hwp"))
     if target.suffix.lower() not in (".hwpx", ".hwp"):
         raise DocError("bad_input", "out must end in .hwpx or .hwp")
+    chart = next((a for a in acts if a.chart), None)
+    if chart is not None and target.suffix.lower() != ".hwpx":
+        raise _unavailable("insert_chart: a chart made here is lost when the document is saved as .hwp (한글's own "
+                           "chart storage in .hwp cannot be written); write the edit to a .hwpx", "chart_needs_hwpx",
+                           i=chart.i, at=chart.at, written=False)
     try:
         res, data, newdoc = _edit_build(doc, acts, target, preview)
     except DocError as exc:
@@ -8007,7 +8249,10 @@ _SHAPES = {
     "geometry": lambda r: _is_int(r.get("page")) and _num(r.get("width_pt")) and _num(r.get("height_pt"))
     and isinstance(r.get("boxes"), list) and all(
         isinstance(b, dict) and isinstance(b.get("at"), (str, type(None))) and _rect(b.get("rect"))
-        and b.get("kind") in ("para", "line", "table", "cell", "place") for b in r["boxes"]),
+        and (b.get("kind") in ("para", "line", "table", "cell", "place")
+             # an object the engine's renderer does not draw (a chart): its box, no address (hwp-engine #41)
+             or (b.get("kind") == "object" and b.get("at") is None and isinstance(b.get("object"), str)))
+        for b in r["boxes"]),
     "hit_test": lambda r: isinstance(r.get("at"), str) and _is_int(r.get("offset")),
     "caret_rect": lambda r: _is_int(r.get("page")) and _rect(r.get("rect")),
 }

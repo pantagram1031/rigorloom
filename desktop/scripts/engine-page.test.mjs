@@ -106,3 +106,22 @@ test("engineLineFontSizePx converts known pt character size to px and falls back
     assert.equal(engineLineFontSizePx(tinyLine, unknown), 10);
   }
 });
+
+test("a chart box the engine does not draw keeps no address and catches no hit", () => {
+  const source = createEnginePageSource({
+    projection,
+    raster: { page: 1, rev: "head", source: "engine", url: "blob:page", widthPt: 600, heightPt: 800 },
+    count: 1,
+    changes: [],
+    geometry: { boxes: [
+      { at: "p0", kind: "para", rect: [10, 10, 300, 200] },
+      { at: "p0#L0", kind: "line", rect: [10, 10, 300, 200], text: "￼", xs: [10, 310] },
+      { at: null, kind: "object", object: "chart", rect: [10, 10, 300, 200], text: "" },
+    ] },
+  });
+  const boxes = source.boxes(1);
+  const chart = boxes.filter((box) => box.kind === "object");
+  assert.deepEqual(chart.map(({ address, object }) => ({ address, object })), [{ address: undefined, object: "chart" }]);
+  // a click on the chart lands on its paragraph, never on the object box
+  assert.equal(source.hitTest(1, 50, 50).address, "p0");
+});
