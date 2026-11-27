@@ -1117,7 +1117,8 @@ OP_NOTES = {
                "THROUGH, TOP_AND_BOTTOM, BEHIND_TEXT, IN_FRONT_OF_TEXT; floats the picture), "
                "`vert_rel` (PARA, PAGE, PAPER), `horz_rel` (COLUMN, PARA, PAGE, PAPER), `x_mm`, "
                "`y_mm` (-1000 to 1000; vert_rel, horz_rel, x_mm and y_mm require the picture to be "
-               "floating after the op); one `picture` op per picture per edit; no address changes",
+               "floating after the op), `effect` (그림 효과: original, gray, black_white), `bright`, "
+               "`contrast` (밝기·대비, whole numbers -100 to 100); one `picture` op per picture per edit; no address changes",
     "table.formula": "`at` is an empty target cell (no text or controls); give either `func` "
                      "(SUM, AVG or PRODUCT) with `from` (the first cell of an unmerged block in "
                      "the same row left of `at` or the same column above `at`, which writes the "

@@ -681,16 +681,21 @@ rt_doc.edit("보고서.hwpx", [
     `PAPER`), `horz_rel` (`COLUMN`, `PARA`, `PAGE`, `PAPER`), and `x_mm` /
     `y_mm` (`-1000` to `1000` mm). `vert_rel`, `horz_rel`, `x_mm` and `y_mm`
     require the picture to be floating after the op (`bad_input` otherwise).
-    Unverified engine picture properties (crop, border, effect, brightness,
-    contrast, alpha, rotation and flip) are not exposed and are refused as
-    unknown keys (`bad_input`). Switching a picture between inline and floating
+    `effect` (그림 효과: `original`, `gray` or `black_white`, written as
+    `<hc:img effect="REAL_PIC">`, `GRAY_SCALE` or `BLACK_WHITE` as in Hancom's own
+    file), `bright` and `contrast` (밝기 and 대비, whole numbers from `-100` to
+    `100`, written as `<hc:img bright>` and `contrast` as Hancom does) change the
+    picture's image settings and keep its size and placement. Engine picture
+    properties not yet compared with a Hancom file (crop, border, alpha, rotation
+    and flip) are not exposed and are refused as unknown keys (`bad_input`). Switching a picture between inline and floating
     (`inline`, or `wrap` on an inline picture) is checked in the saved XML only;
     its 한글 rendering has not been compared yet. At most one `picture` op per picture per edit
     (`conflict` otherwise), and no address changes. After the edit,
     `_verify_picture` checks that the output `<hp:pic>` (matched by `id`) has the
     requested `hp:sz` / `hp:curSz` width and height, `textWrap`, `hp:pos`
-    `treatAsChar`, `vertRelTo`, `horzRelTo`, `vertOffset` and `horzOffset`, and
-    the same `hc:img/@binaryItemIDRef` before anything is written.
+    `treatAsChar`, `vertRelTo`, `horzRelTo`, `vertOffset` and `horzOffset`,
+    the requested `hc:img` `effect`, `bright` and `contrast` (the old values when
+    not given), and the same `hc:img/@binaryItemIDRef` before anything is written.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is
