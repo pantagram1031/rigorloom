@@ -447,7 +447,7 @@ export function CanvasStatusLeft() {
   const fromSelection = inlineEdit?.kind !== "cell" && !slice.hoveredSeatKey;
   const statusPage = (fromSelection && statusKey ? knownPageOf({ cellKey: statusKey }) : null) ?? page;
   const position = address?.kind === "cell"
-    ? wp3t("status_cell_position", language, [statusPage, address.row + 1, address.col + 1])
+    ? wp3t("status_cell_position", language, [statusPage, address.table + 1, address.row + 1, address.col + 1])
     : wp3t("status_page_position", language, [page]);
 
   // A blank's name, never one made up for printed text: a static cell (a row
