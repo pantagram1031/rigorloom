@@ -1860,7 +1860,16 @@ def _discover(doc):
             continue
         if doc.engine_places is not None and at in have and not any(
                 r.get("field_id") == f["id"] for r in out if r["at"] == at):
-            continue                            # the engine already lists a seat there
+            # the engine already lists a seat there; a "field" seat it lists names no field of this module's
+            # own reading, so it takes this one (by label first, else the first field left in the paragraph)
+            label = f["direction"] or f["name"]
+            free = [r for r in out if r["at"] == at and r.get("kind") == "field" and r.get("field") is None]
+            seat = next((r for r in free if r.get("label") == label), free[0] if free else None)
+            if seat is not None:
+                seat.update(field=f, field_id=f["id"])
+                if p.cell is not None:
+                    seat.update(cell_of=p.cell)
+            continue
         rec = {"id": None, "at": at, "label": f["direction"] or f["name"], "kind": "field", "para": p, "field": f,
                "field_id": f["id"]}
         if p.cell is not None:
@@ -4574,6 +4583,9 @@ def _plan_op(doc, cl, i, name, op, at):
         if pl.get("cell") is not None and kind == "cell":
             set_cell(pl["cell"], text, at)
         elif kind == "field":
+            if pl.get("field") is None:
+                raise DocError("bad_address", "%s names a field this document's reading does not find" % at,
+                               at=at, i=i)
             f, p = pl["field"], pl["para"]
             b, e = f["b"], f["e"]
             if any(ch == OBJ for ch in p.chars[b:e]):

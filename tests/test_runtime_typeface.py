@@ -35,6 +35,22 @@ import rt_session  # noqa: E402
 
 #: Every language a HWPX fontRef can name. Read from the document, not pinned.
 _FACE_RE = re.compile(r'face="([^"]+)"')
+_CHARPR_TAG_RE = re.compile(r"<[A-Za-z0-9]+:charPr\b([^>]*?)/?>")
+_ATTR_RE = re.compile(r'(\w+)\s*=\s*(["\'])(.*?)\2')
+
+
+def declared_heights() -> dict[str, float]:
+    """charPr id -> height_pt read directly from the corpus form's header.xml."""
+    with zipfile.ZipFile(CORPUS_FORM) as archive:
+        header = archive.read("Contents/header.xml").decode("utf-8")
+    heights: dict[str, float] = {}
+    for match in _CHARPR_TAG_RE.finditer(header):
+        attrs = {k: v for k, _, v in _ATTR_RE.findall(match.group(1))}
+        cid = attrs.get("id")
+        height = attrs.get("height")
+        if cid is not None and height is not None:
+            heights[cid] = int(height) / 100.0
+    return heights
 
 
 @pytest.fixture()
@@ -254,3 +270,67 @@ def test_a_profile_with_no_face_mapping_gives_runs_a_null_rather_than_nothing():
                               "runs": [{"index": 0, "charpr": "11"}]}]}
     runs = rt_session.region_runs_with_faces(profile)[0]["runs"]
     assert runs[0]["charpr_face"] is None
+    assert "charpr_height_pt" not in runs[0]
+
+
+def test_the_profile_charpr_heights_matches_the_header(root, source):
+    core = rt_core.RuntimeCore(root)
+    session_id = core.open_path(str(source))["sessionId"]
+    session = core.store.get(session_id)
+    profile = rt_session.load_profile(core.tools, session)
+    expected = declared_heights()
+    assert expected
+    assert profile["charpr_heights"] == expected
+
+
+def test_every_editable_region_and_run_carries_its_own_height_pt(
+        root, source, inspected):
+    expected = declared_heights()
+    baseline_pt = inspected["summary"]["baselineCharPr"]["height_pt"]
+    regions = inspected["regions"]["regions"]
+    assert regions
+    region_heights = set()
+    for region in regions:
+        assert region["charPrHeightPt"] == expected[region["charPr"]]
+        region_heights.add(region["charPrHeightPt"])
+    assert region_heights - {baseline_pt}, (
+        "at least one editable region on the corpus form has a character height "
+        "different from the document baseline")
+
+    para_regions = _paragraph_runs(root, source)
+    runs = [run for reg in para_regions for run in (reg.get("runs") or [])]
+    assert runs
+    run_heights = set()
+    for run in runs:
+        assert run["charpr_height_pt"] == expected[str(run["charpr"])]
+        run_heights.add(run["charpr_height_pt"])
+    assert run_heights - {baseline_pt}, (
+        "at least one paragraph run on the corpus form has a character height "
+        "different from the document baseline")
+
+
+def test_unknown_charpr_height_is_absent_on_regions_and_runs():
+    profile = {
+        "charpr_faces": {"11": {"hangul": "돋움체"}},
+        "charpr_heights": {"11": 8.0},
+        "table_map": [{"index": 0, "cells": [
+            {"addr": {"row": 0, "col": 14}, "classification": "fill_target",
+             "charpr": "11", "charpr_suggested": "23"},
+            {"addr": {"row": 5, "col": 1}, "classification": "fill_target",
+             "charpr": "999", "charpr_suggested": "23"},
+        ]}],
+        "full_text": [{"at_para": 3, "runs": [
+            {"index": 0, "charpr": "11"},
+            {"index": 1, "charpr": "999"},
+        ]}],
+    }
+
+    class _Session:
+        id = "s"
+
+    regions = rt_session.editable_regions(profile, _Session())["regions"]
+    assert regions[0]["charPrHeightPt"] == 8.0
+    assert "charPrHeightPt" not in regions[1]
+    runs = rt_session.region_runs_with_faces(profile)[0]["runs"]
+    assert runs[0]["charpr_height_pt"] == 8.0
+    assert "charpr_height_pt" not in runs[1]

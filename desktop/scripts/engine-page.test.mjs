@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createEnginePageSource, pageRasterScale } from "../src/model/enginePage.ts";
+import {
+  createEnginePageSource,
+  ENGINE_PX_PER_PT,
+  engineLineFontSizePx,
+  pageRasterScale,
+} from "../src/model/enginePage.ts";
 
 const size = { widthPt: 600, heightPt: 800, marginPt: { top: 0, right: 0, bottom: 0, left: 0 } };
 const seat = { key: "c:0:2:1", address: "t0/r2/c1", page: 1 };
@@ -59,4 +64,20 @@ test("local hit testing uses code point offsets across lines and vertical cells"
 test("page scale follows zoom and device pixel ratio up to the cap", () => {
   assert.equal(pageRasterScale(0.75, 2), 1.5);
   assert.equal(pageRasterScale(2, 3), 3);
+});
+
+test("engineLineFontSizePx converts known pt character size to px and falls back to clamped line box size when unknown", () => {
+  const headerLine = { at: "t0/r0/c0/p0#L0", kind: "line", rect: [60, 60, 390, 15] };
+  const verticalLine = { at: "t0/r5/c1/p0#L0", kind: "line", rect: [60, 110, 20, 35], vertical: true };
+  const tinyLine = { at: "t0/r3/c0/p0#L0", kind: "line", rect: [60, 536, 440, 4] };
+
+  assert.equal(engineLineFontSizePx(headerLine, 9), 9 * ENGINE_PX_PER_PT);
+  assert.equal(engineLineFontSizePx(headerLine, 10), 10 * ENGINE_PX_PER_PT);
+  assert.equal(engineLineFontSizePx(verticalLine, 10), 10 * ENGINE_PX_PER_PT);
+
+  for (const unknown of [undefined, null, 0, -5, Number.NaN]) {
+    assert.equal(engineLineFontSizePx(headerLine, unknown), 18);
+    assert.equal(engineLineFontSizePx(verticalLine, unknown), 18);
+    assert.equal(engineLineFontSizePx(tinyLine, unknown), 10);
+  }
 });
