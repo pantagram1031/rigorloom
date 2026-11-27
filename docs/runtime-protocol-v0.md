@@ -1647,7 +1647,7 @@ The header's declared size travels beside three of them, from the profile's
 `regions[].runs[].charpr_height_pt` and `graph.tables[].cells[].textCharPrHeightPt`.
 Each is absent when the header declares no height for that charPr.
 
-The last one arrived with the caret (§12.7). Every shape the wire could name
+The `readRegion` run field arrived with the caret (§12.7). Every shape the wire could name
 was one a cell inherits, because a cell was the only thing the editor could
 open; a caret standing in a paragraph run had no name to print but the integer.
 The join is the same one — spelled `charpr_face` because every other key on a

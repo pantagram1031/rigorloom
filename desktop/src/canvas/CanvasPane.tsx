@@ -1,4 +1,3 @@
-import { SOURCE_COPY } from "./sourceCopy";
 import {
   useCallback,
   useEffect,
@@ -388,7 +387,7 @@ export function CanvasStatusLeft() {
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const language = useWorkspace((s) => s.language);
   const slice = useCanvasSlice(session?.sessionId);
-  const { page, pageCount, rasterSource, rasterApprox } = slice;
+  const { page, pageCount } = slice;
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
@@ -454,11 +453,6 @@ export function CanvasStatusLeft() {
             onClick={() => setCanvasSlice({ page: page + 1 })}>›</button>
         </span>
       ) : null}
-      <span className="rl-status-item" data-testid="status-page-source"
-        data-page-source={rasterSource ?? "projection"}>
-        {wp3t(rasterSource ? SOURCE_COPY[rasterSource] : "page_source_projection", language)}
-        {rasterApprox ? ` · ${wp3t("page_source_approx", language)}` : null}
-      </span>
       <span className="rl-status-item rl-num" data-testid="status-cell-position">{position}</span>
       {seatText ? (
         <span className="rl-status-item" data-testid="status-seat">

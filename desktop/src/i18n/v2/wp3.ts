@@ -89,7 +89,6 @@ export const WP3_VOCABULARY = {
   page_source_pdf: { ko: "준비된 PDF", en: "Prepared PDF" },
   page_source_own: { ko: "내장 기능으로 그린 쪽", en: "Page drawn by Rigorloom" },
   page_source_projection: { ko: "간이로 그린 쪽", en: "Simplified page" },
-  page_source_approx: { ko: "대체 글꼴 사용", en: "Fallback fonts used" },
   page_render_failed: { ko: "다시 그리지 못했습니다", en: "Could not redraw the page" },
   status_char_count: { ko: "글자 {0}", en: "{0} chars" },
   status_char_shape: { ko: "글자 모양: {0}", en: "Character shape: {0}" },
