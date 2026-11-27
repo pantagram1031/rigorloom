@@ -36,6 +36,9 @@ def test_rendered_page_shows_source_keeps_image_and_uses_local_caret(browser, se
                 route.fulfill(json={
                     "rev": rev, "page": 1, "width_pt": 595, "height_pt": 842,
                     "boxes": [
+                        # The paragraph anchoring the table: one control glyph spanning it.
+                        {"kind": "line", "at": "p0#L0", "rect": [45, 60, 500, 600],
+                         "text": "\u25a3", "xs": [45, 545]},
                         {"kind": "cell", "at": "t0/r5/c1", "rect": [50, 100, 140, 40]},
                         {"kind": "line", "at": "t0/r5/c1/p0#L0", "rect": [60, 110, 20, 15],
                          "text": "한글", "xs": [60, 70, 80]},
@@ -67,11 +70,21 @@ def test_rendered_page_shows_source_keeps_image_and_uses_local_caret(browser, se
         paper = page.get_by_test_id("paper").bounding_box()
         cell_rect = cell.bounding_box()
         assert abs((cell_rect["x"] - paper["x"]) / paper["width"] - 50 / 595) < 0.002
+        # Below the cell's text only the table's control glyph is hit: no caret
+        # is drawn at the table's left edge.
+        page.mouse.click(cell_rect["x"] + cell_rect["width"] * 0.5,
+                         cell_rect["y"] + cell_rect["height"] * 0.85)
+        seat = page.get_by_test_id("seat-input")
+        expect(seat).to_be_visible()
+        expect(page.locator(".rl-raster-caret")).to_have_count(0)
+        # The editor marks the cell; the cell gets no second outline below it.
+        assert cell.evaluate("(el) => getComputedStyle(el).outlineStyle") == "none"
+        page.keyboard.press("Escape")
+        expect(seat).to_have_count(0)
         # The click is inside the measured first line, in fractions of the cell.
         page.mouse.click(cell_rect["x"] + cell_rect["width"] * 0.13,
                          cell_rect["y"] + cell_rect["height"] * 0.35)
         expect(page.locator(".rl-raster-caret")).to_be_visible()
-        seat = page.get_by_test_id("seat-input")
         expect(seat).to_be_visible()
         seat_style = seat.evaluate(
             """(el) => {

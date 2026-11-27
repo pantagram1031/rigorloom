@@ -61,6 +61,31 @@ test("local hit testing uses code point offsets across lines and vertical cells"
   assert.deepEqual(source.caretRect(1, vertical.address, vertical.caretOffset), { x: 60, y: 20, w: 10, h: 1 });
 });
 
+test("a table's control-glyph line is not a caret target", () => {
+  const source = createEnginePageSource({
+    projection,
+    raster: { page: 1, rev: "head", source: "engine", url: "blob:page", widthPt: 600, heightPt: 800 },
+    count: 1,
+    changes: [],
+    geometry: { boxes: [
+      // The paragraph that anchors the table: one glyph whose box spans the table.
+      { at: "p0#L0", kind: "line", rect: [50, 0, 400, 700], text: "\u25a3", xs: [50, 450] },
+      { at: "t0/r0/c0", kind: "cell", rect: [50, 0, 400, 30] },
+      { at: "t0/r0/c0/p0#L0", kind: "line", rect: [52, 2, 100, 10], text: "머리", xs: [52, 60, 68] },
+    ] },
+  });
+  // Inside the cell, below its text: no line, so no caret at the table's left edge.
+  const below = source.hitTest(1, 100, 20);
+  assert.equal(below.lineAddress, undefined);
+  assert.equal(below.caretOffset, undefined);
+  // On the cell's text the cell line still wins.
+  const onText = source.hitTest(1, 61, 6);
+  assert.equal(onText.lineAddress, "t0/r0/c0/p0#L0");
+  assert.equal(onText.caretOffset, 1);
+  // Offsets of the anchoring paragraph still count the glyph.
+  assert.deepEqual(source.caretRect(1, "p0#L0", 0), { x: 50, y: 0, w: 1, h: 700 });
+});
+
 test("page scale follows zoom and device pixel ratio up to the cap", () => {
   assert.equal(pageRasterScale(0.75, 2), 1.5);
   assert.equal(pageRasterScale(2, 3), 3);
