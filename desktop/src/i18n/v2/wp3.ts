@@ -8,6 +8,10 @@ export interface Wp3VocabEntry {
 export const WP3_VOCABULARY = {
   // Document strip, view switch, grade label, stepper
   canvas_view_marks: { ko: "교정부호", en: "Markup" },
+  canvas_chart_not_drawn: {
+    ko: "차트: 미리 보기에서는 그리지 않습니다",
+    en: "Chart: not drawn in the preview",
+  },
   canvas_view_clean: { ko: "완성본", en: "Clean copy" },
   canvas_view_base_source: { ko: "원본", en: "Original" },
   canvas_view_base_revision: { ko: "수정본 {0}", en: "Revision {0}" },

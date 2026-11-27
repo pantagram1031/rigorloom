@@ -295,3 +295,44 @@ def test_engine_cell_stays_over_held_raster_until_its_preview_draws(browser, ser
         expect(page.get_by_test_id("engine-edit-pending")).to_have_count(0)
         expect(page.get_by_test_id("engine-changed-rect")).to_have_count(0)
         expect(page.get_by_test_id("page-render-failed")).to_have_count(0)
+
+
+def test_a_chart_the_engine_does_not_draw_is_labelled_on_its_box(browser, server):
+    with browser.new_page(viewport={"width": 1440, "height": 900}) as page:
+        def handle(route):
+            url = urlsplit(route.request.url)
+            operation = url.path.rsplit("/", 1)[-1]
+            if operation == "fonts":
+                route.fallback()
+                return
+            rev = parse_qs(url.query)["rev"][0]
+            if operation == "geometry":
+                route.fulfill(json={
+                    "rev": rev, "page": 1, "width_pt": 595, "height_pt": 842,
+                    "boxes": [
+                        {"kind": "para", "at": "p1", "rect": [85, 200, 425, 184]},
+                        {"kind": "object", "at": None, "object": "chart", "rect": [85, 200, 312, 184], "text": ""},
+                    ],
+                })
+            elif operation == "render":
+                route.fulfill(body=PNG, headers={
+                    "Content-Type": "image/png", "X-Rigorloom-Rev": rev, "X-Rigorloom-Seq": "2",
+                    "X-Rigorloom-Page": "1", "X-Rigorloom-Source": "engine",
+                    "X-Rigorloom-Width-Pt": "595", "X-Rigorloom-Height-Pt": "842",
+                    "X-Rigorloom-Page-Count": "1",
+                })
+            else:
+                route.abort()
+
+        page.route("**/api/doc/**", handle)
+        _open_sample(page, server)
+        expect(page.get_by_test_id("page-raster")).to_be_visible()
+        label = page.get_by_test_id("engine-chart-label")
+        expect(label).to_have_count(1)
+        expect(label).to_be_visible()
+        expect(label).to_have_text("차트: 미리 보기에서는 그리지 않습니다")
+        assert label.evaluate("(el) => getComputedStyle(el).pointerEvents") == "none"
+        paper = page.get_by_test_id("paper").bounding_box()
+        box = label.bounding_box()
+        assert abs((box["x"] - paper["x"]) / paper["width"] - 85 / 595) < 0.003
+        assert abs(box["width"] / paper["width"] - 312 / 595) < 0.003

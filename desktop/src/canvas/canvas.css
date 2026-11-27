@@ -310,6 +310,25 @@
   pointer-events: none;
 }
 
+/* a chart the engine does not draw: a labelled box over the blank space, never interactive */
+.rl-engine-object-label {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px dashed var(--paper-ink);
+  color: var(--paper-ink);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+  opacity: 0.6;
+  pointer-events: none;
+  user-select: none;
+}
+
 .rl-engine-edit,
 .rl-engine-changed-rect {
   position: absolute;

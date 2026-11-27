@@ -3463,6 +3463,168 @@ def test_engine_insert_shape_writes_the_four_shapes(kit, tmp_path, monkeypatch):
     assert not res["ok"] and res["error"]["code"] == "internal" and not out_bad.exists(), res
 
 
+# ============================================================================ 차트 (insert_chart)
+def _chart_op(**kw):
+    op = {"op": "insert_chart", "at": "p2", "type": "column", "categories": ["1회", "2회"],
+          "series": [{"name": "A", "values": [3, 5]}]}
+    op.update(kw)
+    return op
+
+
+def test_insert_chart_is_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(FX_DOC, tmp_path, "chart_no_eng.hwpx")
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops):
+        return D.edit(src, ops if isinstance(ops, list) else [ops], base=rev, out=out)["error"]
+
+    e = err(_chart_op(legend="r"))
+    assert e["code"] == "bad_input" and set(e["candidates"]) <= set(D.INSERT_CHART_KEYS)
+    e = err(_chart_op(type="bar"))
+    assert e["code"] == "bad_input" and e["candidates"] == ["column"]
+    for bad_t in (None, "area", "COLUMN", 1):
+        e = err(_chart_op(type=bad_t))
+        assert e["code"] == "bad_input" and set(e["candidates"]) <= set(D.CHART_TYPES), bad_t
+    for bad_title in ("", "  ", 3, "x" * (D.CHART_TEXT_MAX + 1), "a\nb", "a\x07b"):
+        assert err(_chart_op(title=bad_title))["code"] == "bad_input", bad_title
+    for bad_cats in (None, [], "ab", ["1회", ""], ["1회", 2], ["x"] * (D.CHART_MAX_POINTS + 1)):
+        assert err(_chart_op(categories=bad_cats))["code"] == "bad_input", bad_cats
+    for bad_vals in ([3], [3, 5, 7], [True, 5], [3, float("nan")], [3, float("inf")], [3, "5"], [3, 1e16], None):
+        e = err(_chart_op(series=[{"name": "A", "values": bad_vals}]))
+        assert e["code"] == "bad_input", bad_vals
+    for bad_ser in (None, [], [{"values": [1, 2]}], [{"name": "A", "values": [1, 2], "color": "#000000"}],
+                    [{"name": "A", "values": [1, 2], "x": [1, 2]}], ["A"],
+                    [{"name": "S%d" % k, "values": [1, 2]} for k in range(D.CHART_MAX_SERIES + 1)]):
+        assert err(_chart_op(series=bad_ser))["code"] == "bad_input", bad_ser
+    # a pie has one series and no negative values
+    two = [{"name": "A", "values": [1, 2]}, {"name": "B", "values": [3, 4]}]
+    assert err(_chart_op(type="pie", series=two))["code"] == "bad_input"
+    assert err(_chart_op(type="pie", series=[{"name": "A", "values": [1, -2]}]))["code"] == "bad_input"
+    # a scatter takes x per series and no categories
+    sc = {"type": "scatter", "series": [{"name": "A", "x": [1, 2], "values": [3, 4]}]}
+    assert err(dict(_chart_op(**sc), categories=["a", "b"]))["code"] == "bad_input"
+    no_cats = {k: v for k, v in _chart_op(**sc).items() if k != "categories"}
+    assert err(dict(no_cats, series=[{"name": "A", "values": [3, 4]}]))["code"] == "bad_input"
+    assert err(dict(no_cats, series=[{"name": "A", "x": [1], "values": [3, 4]}]))["code"] == "bad_input"
+    for k in ("width_mm", "height_mm"):
+        for bad_sz in (0, 1001, True, "30"):
+            assert err(_chart_op(**{k: bad_sz}))["code"] == "bad_input"
+    # anchors: a body paragraph, not a cell, a table or a range
+    assert err(_chart_op(at="t0/r0/c0/p0"))["code"] == "bad_address"
+    assert err(_chart_op(at="t0"))["code"] == "bad_address"
+    assert err(_chart_op(at="p0:0-2"))["code"] == "bad_address"
+    # one insert at a paragraph per edit
+    for other in (_chart_op(), {"op": "insert_after", "at": "p2", "markdown": "x"},
+                  {"op": "insert_shape", "at": "p2", "shape": "rect"}):
+        assert err([_chart_op(), other])["code"] == "conflict", other
+    # without the engine a chart is not made
+    e = err(_chart_op())
+    assert e["code"] == "capability_unavailable" and e["reason"] == "structural_edit_unsupported"
+    # the plan writes whole numbers as integers and others as decimals, the form the verifier reads back
+    acts = D._plan(D._load(src, meta=False), [_chart_op(series=[{"name": "A", "values": [3.0, 2.5]}])])
+    assert acts[0].chart[1]["series"][0]["values"] == ["3", "2.5"]
+    assert acts[0].steps[-1]["kwargs"]["series"][0]["values"] == [3, 2.5]
+
+
+def test_engine_insert_chart_writes_the_four_kinds(kit, tmp_path, monkeypatch):
+    f = _copy(FX_DOC, tmp_path, "charts.hwpx")
+    base = D._load(f, meta=False)
+    out = tmp_path / "charts_out.hwpx"
+    ops = [
+        {"op": "insert_chart", "at": "p0", "type": "column", "title": "측정 결과 & <비교>",
+         "categories": ["1회", "2회", "3회"], "series": [{"name": "A", "values": [3, 5, 4.5]},
+                                                      {"name": "B", "values": [2, 4, 6]}],
+         "width_mm": 110, "height_mm": 65},
+        {"op": "insert_chart", "at": "p1", "type": "line", "title": "온도 변화", "categories": ["0", "10", "20"],
+         "series": [{"name": "온도", "values": [20, 24.25, -3]}]},
+        {"op": "insert_chart", "at": "p2", "type": "pie", "categories": ["가", "나", "다"],
+         "series": [{"name": "비율", "values": [50, 30, 20]}]},
+        {"op": "insert_chart", "at": "p3", "type": "scatter", "title": "x-y",
+         "series": [{"name": "측정", "x": [1, 2, 3.5], "values": [1.1, 3.9, 9.2]}]},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert not r.get("remap_approx")
+    got = D._load(out, meta=False)
+    assert D._verify(base, got, D._plan(base, ops))
+    # each chart has its own paragraph right after its anchor, which keeps its text
+    assert len(got.top) == len(base.top) + 4
+    for k in range(4):
+        assert got.top[2 * k].text == base.top[k].text
+        assert got.top[2 * k + 1].objs == ["hp:chart"] and got.top[2 * k + 1].text.strip("￼") == ""
+    charts = D._charts_xml(got)
+    # each takes its own new part (the engine applies the ops last first, so the last chart is chart1)
+    assert sorted(ref for _el, ref in charts) == ["Chart/chart%d.xml" % n for n in (1, 2, 3, 4)]
+    data = [D._parse_chart_part(got.zip.read(ref)) for _el, ref in charts]
+    assert [d_["type"] for d_ in data] == ["column", "line", "pie", "scatter"]
+    assert data[0]["title"] == "측정 결과 & <비교>" and data[2]["title"] is None
+    assert data[0]["series"][0] == {"name": "A", "values": ["3", "5", "4.5"], "categories": ["1회", "2회", "3회"],
+                                    "x": None}
+    assert data[1]["series"][0]["values"] == ["20", "24.25", "-3"]
+    assert data[3]["series"][0] == {"name": "측정", "values": ["1.1", "3.9", "9.2"], "categories": None,
+                                    "x": ["1", "2", "3.5"]}
+    sz = re.search(r"<hp:sz\b[^<>]*/>", charts[0][0]).group(0)
+    assert (D._int_attr(sz, "width"), D._int_attr(sz, "height")) == (D._mm_hu(110), D._mm_hu(65))
+    # read names the object and shows no chart data; find does not find it
+    assert D.read(out, at="p1")["blocks"][0]["objects"] == ["hp:chart"]
+    assert "측정 결과" not in str(D.read(out)) and D.find(out, "1회")["hits"] == []
+    # the engine's geometry gives each chart a box without an address
+    g = D.geometry(out, 1)
+    assert g["ok"], g
+    obj = [b for b in g["boxes"] if b["kind"] == "object"]
+    assert obj and all(b["at"] is None and b["object"] == "chart" for b in obj)
+    # determinism: the same edit gives the same bytes
+    out2 = tmp_path / "charts_out2.hwpx"
+    assert D.edit(f, ops, base=D.rev_of(f), out=out2)["ok"]
+    a2 = D._load(out2, meta=False)
+    assert a2.secs == got.secs and D._chart_parts(a2) == D._chart_parts(got)
+
+    # a document that already has charts keeps them; the new chart takes the next free part
+    out3 = tmp_path / "charts_more.hwpx"
+    r3 = D.edit(out, [dict(ops[2], at="p1")], base=D.rev_of(out), out=out3)
+    assert r3["ok"], r3
+    more = D._load(out3, meta=False)
+    assert all(more.zip.read(n) == b for n, b in D._chart_parts(got).items())
+    assert "Chart/chart5.xml" in D._chart_parts(more)
+
+    # .hwp output is refused in words before anything is built
+    e = D.edit(f, ops[:1], base=D.rev_of(f), out=tmp_path / "chart.hwp")["error"]
+    assert e["code"] == "capability_unavailable" and e["reason"] == "chart_needs_hwpx" and ".hwp" in e["message"]
+    assert not (tmp_path / "chart.hwp").exists()
+
+    # the verifier refuses hand-broken outputs
+    raw = got.zip.read("Contents/section0.xml").decode("utf-8")
+    ref0 = charts[0][1]                 # the column chart's part
+    part1 = got.zip.read(ref0).decode("utf-8")
+    acts = D._plan(base, ops)
+
+    def broken(sec=None, part=None):
+        repl = {}
+        if sec is not None:
+            repl["Contents/section0.xml"] = sec.encode("utf-8")
+        if part is not None:
+            repl[ref0] = part.encode("utf-8")
+        return D.Doc(out, got.zip.rewrite(repl), "hwpx")
+    assert not D._verify(base, broken(part=part1.replace("<c:v>4.5</c:v>", "<c:v>4.6</c:v>")), acts)
+    assert not D._verify(base, broken(part=part1.replace("<c:v>2회</c:v>", "<c:v>2차</c:v>", 1)), acts)
+    assert not D._verify(base, broken(part=part1.replace("측정 결과 &amp; &lt;비교&gt;", "측정 결과")), acts)
+    w = 'width="%d"' % D._mm_hu(110)
+    assert raw.count(w) == 1
+    assert not D._verify(base, broken(sec=raw.replace(w, 'width="%d"' % (D._mm_hu(110) + 500))), acts)
+    other = charts[1][1]
+    assert not D._verify(base, broken(sec=raw.replace(other, ref0)), acts)
+    first = re.search(r"<hp:switch><hp:case[^>]*ooxmlchart\">.*?</hp:switch>", raw, re.S).group(0)
+    assert not D._verify(base, broken(sec=raw.replace(first, "", 1)), acts)
+    assert not D._verify(base, broken(sec=raw.replace(first, first + "<hp:t>덧</hp:t>", 1)), acts)
+    bad_bytes = got.zip.rewrite({ref0: part1.replace("<c:v>4.5</c:v>", "<c:v>4.6</c:v>")
+                                 .encode("utf-8")})
+    monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_bytes, {}, None))
+    out_bad = tmp_path / "bad_chart.hwpx"
+    f2 = _copy(FX_DOC, tmp_path, "charts_again.hwpx")
+    res = D.edit(f2, ops, base=D.rev_of(f2), out=out_bad)
+    assert not res["ok"] and res["error"]["code"] == "internal" and not out_bad.exists(), res
+
+
 # ============================================================================ 표 계산식 (table.formula)
 def _doc_with_formula_tables(tmp_path):
     """Copy BASIC and give it a 4x4 table t0 (with empty target cells and one control-only cell) plus a 2x2 table t1."""

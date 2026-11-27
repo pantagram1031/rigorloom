@@ -1464,6 +1464,17 @@ changed region `[p, len(old) - s)` -> `[p, len(new) - s)`):
 
 ---
 
+### 12.8 Object boxes in the engine's page geometry
+
+The engine's page geometry (`rt_doc.geometry`, the editor's engine pages) gives
+boxes of kind `para`, `line`, `table`, `cell` and `place`, and one more kind for
+an inline object the engine's renderer does not draw: `{"at": null, "kind":
+"object", "object": "chart", "rect": [x, y, w, h], "text": ""}` (hwp-engine
+a456d5b or later). It has no address: it is not a place for the caret,
+for marks or for hit testing, and the editor keeps it out of its address map.
+The editor draws a non-interactive label on it (차트: 미리 보기에서는 그리지
+않습니다) so the empty space on the page is explained.
+
 ## 13. Distribution-module checkers on the wire (gap 17)
 
 Six distribution modules declare eighteen checkers on disk. The Runtime knew
