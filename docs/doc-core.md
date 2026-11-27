@@ -643,7 +643,7 @@ rt_doc.edit("보고서.hwpx", [
     style `0` when the header has no `Memo` style), and whose `fieldBegin` /
     `fieldEnd` wrap the exact anchor span and text, and that every other field
     in the document is unchanged; any mismatch fails the edit and nothing is
-    written. `memo` needs hwp-engine ENGINE_FLOOR or later; an older engine
+    written. `memo` needs hwp-engine 102dc84 (PR #39) or later; an older engine
     fails the edit and nothing is written. Editing or removing an existing
     memo and memo shape settings have no op yet.
 - 그림 넣기 and 그림 속성 (입력 > 그림; 개체 속성 > 기본/위치) need the engine and take
