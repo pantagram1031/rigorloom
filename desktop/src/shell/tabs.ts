@@ -50,7 +50,7 @@ export function activateTab(id: string): void {
   const tab = s.tabs.find((t) => t.id === id);
   if (!tab) return;
   markSwitch();
-  setShell({ activeTab: id, tabListOpen: false });
+  setShell({ activeTab: id, tabListOpen: false, narrowSheetExpanded: false });
   if (tab.kind === "doc") {
     ensureDoc(tab.sessionId);
     if (getState().activeSessionId !== tab.sessionId) void selectSession(tab.sessionId).then(() => land(tab.sessionId));
@@ -141,7 +141,7 @@ function beginOpening(name: string, path?: string): string {
     startAt >= 0 && s.activeTab === "start"
       ? [...s.tabs.slice(0, startAt), tab, ...s.tabs.slice(startAt + 1)]
       : [...s.tabs, tab];
-  setShell({ tabs, activeTab: id });
+  setShell({ tabs, activeTab: id, narrowSheetExpanded: false });
   if (getState().activeSessionId !== null) setState({ activeSessionId: null });
   pendingOpening = id;
   return id;

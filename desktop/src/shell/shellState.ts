@@ -44,6 +44,7 @@ export interface ShellState {
   appMenuOpen: boolean;
   tabListOpen: boolean;
   narrowDrawerOpen: boolean;
+  narrowSheetExpanded: boolean;
   /** Bumped by Ctrl+S; the status bar pulses `저장됨`. */
   savedPulse: number;
   /** The 문서 폴더 shown in 파일, when one was chosen. */
@@ -82,6 +83,7 @@ let state: ShellState = {
   appMenuOpen: false,
   tabListOpen: false,
   narrowDrawerOpen: false,
+  narrowSheetExpanded: false,
   savedPulse: 0,
   docFolder: null,
   breakpoint: "wide",
@@ -95,7 +97,14 @@ export function getShell(): ShellState {
 }
 
 export function setShell(patch: Partial<ShellState>): void {
-  state = { ...state, ...patch };
+  const next: ShellState = { ...state, ...patch };
+  if (patch.rightOpen === false && patch.narrowSheetExpanded === undefined) {
+    next.narrowSheetExpanded = false;
+  }
+  if (patch.activeTab !== undefined && patch.activeTab !== state.activeTab && patch.narrowSheetExpanded === undefined) {
+    next.narrowSheetExpanded = false;
+  }
+  state = next;
   for (const l of listeners) l();
 }
 
@@ -133,6 +142,7 @@ export function docTabId(sessionId: string): string {
 
 export function withDocTab(s: ShellState, sessionId: string, opts: { replaceId?: string; preview?: boolean } = {}): ShellState {
   const id = docTabId(sessionId);
+  const narrowSheetExpanded = s.activeTab === id ? s.narrowSheetExpanded : false;
   const existing = s.tabs.find((t) => t.id === id);
   let tabs = s.tabs;
   if (existing) {
@@ -140,14 +150,14 @@ export function withDocTab(s: ShellState, sessionId: string, opts: { replaceId?:
     if (existing.kind === "doc" && existing.preview && opts.preview === false) {
       tabs = tabs.map((t) => (t.id === id ? { ...existing, preview: false } : t));
     }
-    return { ...s, tabs, activeTab: id };
+    return { ...s, tabs, activeTab: id, narrowSheetExpanded };
   }
   const tab: Tab = { kind: "doc", id, sessionId, preview: opts.preview || undefined };
   if (opts.replaceId) {
     const at = tabs.findIndex((t) => t.id === opts.replaceId);
     if (at >= 0) {
       tabs = [...tabs.slice(0, at), tab, ...tabs.slice(at + 1)];
-      return { ...s, tabs, activeTab: id };
+      return { ...s, tabs, activeTab: id, narrowSheetExpanded };
     }
   }
   if (opts.preview) {
@@ -155,7 +165,7 @@ export function withDocTab(s: ShellState, sessionId: string, opts: { replaceId?:
     const at = tabs.findIndex((t) => t.kind === "doc" && t.preview);
     if (at >= 0) {
       tabs = [...tabs.slice(0, at), tab, ...tabs.slice(at + 1)];
-      return { ...s, tabs, activeTab: id };
+      return { ...s, tabs, activeTab: id, narrowSheetExpanded };
     }
   }
   // The Start tab gives way to the first document opened from it.
@@ -165,29 +175,34 @@ export function withDocTab(s: ShellState, sessionId: string, opts: { replaceId?:
   } else {
     tabs = [...tabs, tab];
   }
-  return { ...s, tabs, activeTab: id };
+  return { ...s, tabs, activeTab: id, narrowSheetExpanded };
 }
 
 export function withTabClosed(s: ShellState, id: string): ShellState {
   const at = s.tabs.findIndex((t) => t.id === id);
   if (at < 0) return s;
   const tabs = s.tabs.filter((t) => t.id !== id);
-  if (tabs.length === 0) return { ...s, tabs: [START_TAB], activeTab: "start" };
+  if (tabs.length === 0) return { ...s, tabs: [START_TAB], activeTab: "start", narrowSheetExpanded: false };
   if (s.activeTab !== id) return { ...s, tabs };
   const next = tabs[Math.min(at, tabs.length - 1)];
-  return { ...s, tabs, activeTab: next.id };
+  return { ...s, tabs, activeTab: next.id, narrowSheetExpanded: false };
 }
 
 export function withStartTab(s: ShellState): ShellState {
-  if (s.tabs.some((t) => t.kind === "start")) return { ...s, activeTab: "start" };
-  return { ...s, tabs: [...s.tabs, START_TAB], activeTab: "start" };
+  const narrowSheetExpanded = s.activeTab === "start" ? s.narrowSheetExpanded : false;
+  if (s.tabs.some((t) => t.kind === "start")) return { ...s, activeTab: "start", narrowSheetExpanded };
+  return { ...s, tabs: [...s.tabs, START_TAB], activeTab: "start", narrowSheetExpanded };
 }
 
 export function withTabStep(s: ShellState, delta: number): ShellState {
   if (s.tabs.length < 2) return s;
   const at = Math.max(0, s.tabs.findIndex((t) => t.id === s.activeTab));
   const next = s.tabs[(at + delta + s.tabs.length) % s.tabs.length];
-  return { ...s, activeTab: next.id };
+  return {
+    ...s,
+    activeTab: next.id,
+    narrowSheetExpanded: next.id === s.activeTab ? s.narrowSheetExpanded : false,
+  };
 }
 
 export function withTabPinned(s: ShellState, id: string): ShellState {
@@ -243,6 +258,10 @@ export function _resetShellForTest(): void {
     lastOpened: "right",
     paletteOpen: false,
     settingsOpen: false,
+    appMenuOpen: false,
+    tabListOpen: false,
+    narrowDrawerOpen: false,
+    narrowSheetExpanded: false,
     statusNotice: null,
   };
 }

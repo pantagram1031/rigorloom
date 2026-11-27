@@ -4,7 +4,7 @@ Names are J1 §5's. Import paths:
 
 | Need | Import | Notes |
 |---|---|---|
-| Mount UI | `registerSlot(name, Component, {order, title, when, owner})` from `shell/slots` | Ship `desktop/src/<dir>/register.ts`; the shell loads it with `import.meta.glob`. Slots: `canvas`, `rightPanel`, `pane:files/outline/blanks/find/history`, `stripStart`, `stripEnd`, `statusLeft`, `statusRight`, `narrowSheet`, `settings:<id>`. Components get `{sessionId}`. |
+| Mount UI | `registerSlot(name, Component, {order, title, when, owner})` from `shell/slots` | Ship `desktop/src/<dir>/register.ts`; the shell loads it with `import.meta.glob`. Slots: `canvas`, `rightPanel`, `pane:files/outline/blanks/find/history`, `stripStart`, `stripEnd`, `statusLeft`, `statusRight`, `narrowSheet`, `settings:<id>`. Components get `{sessionId}`. The narrow bottom sheet (`narrowSheet`) opens at a compact height with a top handle button that toggles between compact and expanded heights, resets to compact when closed or when switching tabs, and collapses to compact on `Escape`. |
 | Per-document state | `defineDocSlice(key, initial)` from `store` | `slice.get/set/patch/reset(sessionId)`, hooks `slice.use(sessionId, select?)`, `slice.useActive(select?)`. Keys are package-prefixed (`canvas.zoom`). |
 | Read a document record | `useDoc(sessionId)`, `useActiveDoc()` from `store` | |
 | Keys | `bindKey(id, run)` from `shell/keymap` for product keys; `keys.register({id, chords, when, run})` from `shell/keys` otherwise; `useKeyHint(id)` for keycaps | Contexts via `keys.defineContext(name, () => bool)`. Physical keys; nothing fires while composing; single keys never fire in inputs. |

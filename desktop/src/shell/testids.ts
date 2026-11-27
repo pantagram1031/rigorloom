@@ -18,6 +18,7 @@ export const TID = {
   paletteField: "palette-field",
   toggleLeft: "toggle-left",
   toggleRight: "toggle-right",
+  narrowSheetHandle: "narrow-sheet-handle",
   leftPane: "left-pane",
   /** The shell's host for the `rightPanel` slot; `right-panel` is the panel's own root (WP4). */
   rightPanelHost: "right-panel-host",

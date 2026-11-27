@@ -1229,6 +1229,7 @@
 }
 
 @media (max-width: 599px) {
+  .rp-scroll { min-height: 56px; }
   .rp-footer { padding: 6px 10px; }
   .rp-footer .rl-approval-head { height: 17px; }
   .rp-footer .rl-approval-body { min-height: 27px; }
