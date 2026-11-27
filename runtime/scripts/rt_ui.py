@@ -67,6 +67,13 @@ MAX_JSON_BODY_BYTES = max(64 * 1024 * 1024, MAX_SOURCE_BYTES * 2)
 # get their own cap instead of the upload-sized one.
 SMALL_JSON_BODY_BYTES = 16 * 1024
 _SMALL_BODY_CORE_POST_PATHS = frozenset({"/api/approval/confirmation", "/api/doc-folder"})
+# A refused request's body is read and dropped (never parsed) up to this size
+# and for at most this long, so the close after the 403 is not a reset that
+# reaches the client before the 403 does (Windows aborts the connection when
+# its peer closes with unread bytes). A larger or slower body is left unread.
+REFUSED_BODY_DRAIN_BYTES = SMALL_JSON_BODY_BYTES
+REFUSED_BODY_DRAIN_SECONDS = 2.0
+_CONTENT_LENGTH_RE = re.compile(r"[0-9]{1,9}")
 # Where the 문서 폴더 lives in prefs (`documentsRoot` is the earlier name).
 DOC_FOLDER_PREF_KEYS = ("docFolder", "documentsRoot")
 SSE_KEEPALIVE_SECONDS = 15.0
@@ -2443,9 +2450,40 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         self._send_bytes(status, encoded, "application/json; charset=utf-8", extra_headers=headers)
 
     def _reject_forbidden(self, code: str, message: str) -> None:
-        # A refused request's body is never read; do not parse it as the next request.
+        # A refused request's body is never parsed, and never read as the next request.
         self.close_connection = True
+        self._drain_refused_body()
         self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": {"code": code, "message": message}})
+
+    def _drain_refused_body(self) -> None:
+        """Read and drop a small declared body before a refusal closes the connection."""
+        if self.headers.get("Transfer-Encoding"):
+            return
+        raw_len = (self.headers.get("Content-Length") or "").strip()
+        if not _CONTENT_LENGTH_RE.fullmatch(raw_len):
+            return
+        remaining = int(raw_len)
+        if not 0 < remaining <= REFUSED_BODY_DRAIN_BYTES:
+            return
+        deadline = time.monotonic() + REFUSED_BODY_DRAIN_SECONDS
+        previous = self.connection.gettimeout()
+        try:
+            while remaining > 0:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                self.connection.settimeout(left)
+                chunk = self.rfile.read1(remaining)
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            pass
+        finally:
+            try:
+                self.connection.settimeout(previous)
+            except OSError:
+                pass
 
     def _check_origin_guards(self) -> bool:
         if not _valid_host_header(self.headers.get("Host")):
