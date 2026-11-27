@@ -324,6 +324,8 @@ def test_ui_settings_editor_variant_roundtrip_and_unsaved_refusal(tmp_path: Path
             # Release the in-flight draft save and wait for the queued change to settle.
             page.evaluate("() => { if (window.__releaseDraftSave) window.__releaseDraftSave(); }")
             page.wait_for_selector('[data-testid="change-row-1"]', timeout=20000)
+            # Nothing blocks the switch any more, so the row's refusal note clears.
+            dialog.get_by_test_id("settings-editor-refused").wait_for(state="detached", timeout=10000)
             page.wait_for_timeout(200)
 
             # 3) Choose 이전 화면 in v2 설정 and check the v1 shell loads and prefs hold editorVariant: "v1".

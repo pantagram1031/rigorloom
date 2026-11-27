@@ -10,7 +10,7 @@ import { setLanguage, switchWorkspaceRoot, toggleTheme } from "../actions";
 import { t as vt } from "../i18n/vocabulary";
 import { S } from "../i18n/v2/shell";
 import * as rt from "../runtime";
-import { useWorkspace } from "../store";
+import { hasUnsavedWorkForReload, useWorkspace } from "../store";
 import { openV1 } from "./bindings";
 import { Btn } from "./parts";
 import { setShell, useShell, type SettingsSection } from "./shellState";
@@ -147,6 +147,11 @@ function GeneralSection() {
   // The canvas status line is behind this dialog, so a refused switch is also
   // said here, next to the control that was pressed.
   const [editorRefused, setEditorRefused] = useState(false);
+  // Once the work that blocked the switch is finished, the note goes away.
+  const unsavedWork = useWorkspace((s) => hasUnsavedWorkForReload(s));
+  useEffect(() => {
+    if (!unsavedWork) setEditorRefused(false);
+  }, [unsavedWork]);
   return (
     <div className="sh-settings-rows">
       <div className="sh-settings-row">
@@ -191,7 +196,7 @@ function GeneralSection() {
               if (v !== "v1") return;
               setEditorRefused(false);
               void openV1().then((switched) => {
-                if (!switched) setEditorRefused(true);
+                if (!switched && hasUnsavedWorkForReload()) setEditorRefused(true);
               });
             }}
           />

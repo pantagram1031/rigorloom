@@ -1975,12 +1975,16 @@ export function _resetDocsForTest(): void {
 
 let pendingDraftSaves = 0;
 
+// hasUnsavedWorkForReload reads this counter, so both ends notify subscribers:
+// a selector built on it then sees the save start and finish.
 export function beginDraftSave(): void {
   pendingDraftSaves += 1;
+  emit();
 }
 
 export function endDraftSave(): void {
   pendingDraftSaves = Math.max(0, pendingDraftSaves - 1);
+  emit();
 }
 
 function sameSavedOp(a: QueuedOp, b: QueuedOp): boolean {

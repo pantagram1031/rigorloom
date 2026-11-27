@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T245:** In editor v2 settings, the 편집기 row's note that unsaved work stopped the switch to 이전 화면 now goes away once that work is finished.
 - **T244:** In the narrow document layout, dragging the bottom sheet's grab handle up or down now expands or collapses the sheet on release, while a short drag or click still toggles it once. The command palette's 변경 승인 command now checks `validation.ok` alongside pending validation, matching the change lists.
 - **T243:** In editor v2 settings, when unsaved work stops the switch to 이전 화면, the 편집기 row now says so under the control, since the dialog covers the status line that also says it.
 - **T242:** Removes two unused markpen regular expressions from preedit and moves the operation catalog's preedit line references, including the normalize-clones prose pin, to where those functions now sit.
