@@ -29,6 +29,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T237:** Settings has an 편집기 row in both editor v2 and the previous screens to switch between 새 편집기 and 이전 화면 with the existing unsaved-work check, and the legacy `devEditorV2` preference is migrated once to `editorVariant` when the runtime reads `prefs.json` and removed from `resolveUiVariant`.
 - **T236:** Without the document engine, the strip names the page source 간이로 그린 쪽 (Simplified page), so it no longer reads 간이 미리보기 미리보기 next to the preview label.
 - **T234:** In editor v2, the canvas rulers sit in fixed top and left viewport bands with the unit corner where they meet, while their tick markings and margin highlights follow the page as it scrolls, zooms or resizes and the crop marks stay on the page.
 - **T233:** In the narrow document layout, the bottom changes sheet now opens at a compact height that leaves the page in view, with a top grab handle button to toggle between compact and expanded heights; closing the sheet or switching tabs resets it to compact, and pressing Escape inside the expanded sheet collapses it first.

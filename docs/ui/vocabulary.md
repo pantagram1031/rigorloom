@@ -784,3 +784,7 @@
 | `cmd_open_new_editor` | 새 편집기로 열기 | Open the new editor |
 | `cmd_kw_open_new_editor` | 새 편집기 화면 전환 열기 | open new editor switch |
 | `toast_finish_edit_before_switch` | 입력 중이거나 아직 저장되지 않은 작업을 먼저 마치세요 | Finish the open edit or unsaved work first. |
+| `settings_section_editor` | 편집기 | Editor |
+| `settings_editor_v2` | 새 편집기 | New editor |
+| `settings_editor_v1` | 이전 화면 ({0}) | Previous screens ({0}) |
+| `settings_editor_note` | 이전 화면은 다음 버전에서 없어질 수 있습니다. | The previous screens may be removed in a future version. |

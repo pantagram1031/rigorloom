@@ -26,7 +26,7 @@ async function start() {
     const { installDevMock } = await import("./devMock");
     installDevMock();
   }
-  // Editor v2 by default; `?ui=v1|v2`, `editorVariant`, or legacy `devEditorV2` can override.
+  // Editor v2 by default; `?ui=v1|v2` or `editorVariant` can override.
   const query = uiVariantFromQuery(window.location.search);
   const prefs = query ? null : await loadPrefs().catch(() => null);
   setUiVariant(resolveUiVariant(query, prefs));

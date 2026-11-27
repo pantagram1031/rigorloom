@@ -10,6 +10,7 @@ import {
   toggleTheme,
 } from "../actions";
 import { DetailDisclosure } from "../components/DetailDisclosure";
+import { openNewEditor } from "../components/CommandPalette";
 import { errorCodeMessage, t } from "../i18n/vocabulary";
 import * as rt from "../runtime";
 import { composerBlocker, useWorkspace } from "../store";
@@ -181,6 +182,46 @@ export function SettingsView() {
           </div>
           <p className="settings-note" data-testid="settings-theme-note">
             {t("settings_theme_note", language)}
+          </p>
+        </section>
+
+        {/* Section: Editor variant */}
+        <section
+          className="settings-card"
+          data-testid="settings-section-editor"
+          aria-label={t("settings_section_editor", language)}
+        >
+          <div className="settings-row-head">
+            <h2 className="settings-section-title">
+              {t("settings_section_editor", language)}
+            </h2>
+            <div
+              className="settings-segmented"
+              role="group"
+              aria-label={t("settings_section_editor", language)}
+              data-testid="settings-editor"
+            >
+              <button
+                type="button"
+                className="settings-seg-btn"
+                data-testid="settings-editor-v2"
+                aria-pressed={false}
+                onClick={() => void openNewEditor()}
+              >
+                {t("settings_editor_v2", language)}
+              </button>
+              <button
+                type="button"
+                className="settings-seg-btn settings-seg-btn--active"
+                data-testid="settings-editor-v1"
+                aria-pressed={true}
+              >
+                {t("settings_editor_v1", language, ["v1"])}
+              </button>
+            </div>
+          </div>
+          <p className="settings-note" data-testid="settings-editor-note">
+            {t("settings_editor_note", language)}
           </p>
         </section>
 
