@@ -36,6 +36,34 @@ export function resolveUiVariant(query: UiVariant | null, prefs: Record<string, 
   return "v2";
 }
 
+/** The key that chose the editor before `editorVariant` (false -> v1, true -> v2). */
+const LEGACY_EDITOR_PREF = "devEditorV2";
+
+/**
+ * One-time migration of a legacy `devEditorV2` key, for a prefs file that the
+ * runtime bridge did not read first (the desktop app loads prefs.json itself).
+ *
+ * Returns the prefs to use for this launch and the patch to save, or a null
+ * patch when there is nothing to migrate. A boolean value becomes
+ * `editorVariant` unless that is already "v1" or "v2"; any other value is
+ * only removed.
+ */
+export function migrateLegacyEditorPref(
+  prefs: Record<string, unknown> | null | undefined,
+): { prefs: Record<string, unknown> | null; patch: Record<string, unknown> | null } {
+  if (!prefs || !(LEGACY_EDITOR_PREF in prefs)) return { prefs: prefs ?? null, patch: null };
+  const { [LEGACY_EDITOR_PREF]: legacy, ...rest } = prefs;
+  const saved = rest[EDITOR_VARIANT_PREF];
+  if (typeof legacy === "boolean" && saved !== "v1" && saved !== "v2") {
+    const variant: UiVariant = legacy ? "v2" : "v1";
+    return {
+      prefs: { ...rest, [EDITOR_VARIANT_PREF]: variant },
+      patch: { [EDITOR_VARIANT_PREF]: variant, [LEGACY_EDITOR_PREF]: null },
+    };
+  }
+  return { prefs: rest, patch: { [LEGACY_EDITOR_PREF]: null } };
+}
+
 let current: UiVariant = "v2";
 
 /** The variant chosen at start (or by the smoke driver since). */

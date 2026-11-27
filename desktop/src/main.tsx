@@ -3,9 +3,9 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { loadPrefs } from "./runtime";
+import { loadPrefs, savePrefs } from "./runtime";
 import "./styles.css";
-import { resolveUiVariant, setUiVariant, uiVariantFromQuery } from "./uiVariant";
+import { migrateLegacyEditorPref, resolveUiVariant, setUiVariant, uiVariantFromQuery } from "./uiVariant";
 
 // Editor v2 is the default; v1-tokens.css applies only when data-ui is "v1".
 setUiVariant("v2");
@@ -28,7 +28,11 @@ async function start() {
   }
   // Editor v2 by default; `?ui=v1|v2` or `editorVariant` can override.
   const query = uiVariantFromQuery(window.location.search);
-  const prefs = query ? null : await loadPrefs().catch(() => null);
+  const loaded = query ? null : await loadPrefs().catch(() => null);
+  // The desktop app reads prefs.json without the runtime bridge, so an old
+  // `devEditorV2` key is migrated here too (once; a failed save retries next launch).
+  const { prefs, patch } = migrateLegacyEditorPref(loaded);
+  if (patch) void savePrefs(patch).catch(() => null);
   setUiVariant(resolveUiVariant(query, prefs));
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>

@@ -46,10 +46,11 @@ window. The five screens above are the previous interface and open with
 palette command, or `"editorVariant": "v1"` in `prefs.json` (read through the
 same prefs route as `devMockAgent`). From the previous interface, the **편집기**
 row in **설정** or the **새 편집기로 열기** palette command (or
-`"editorVariant": "v2"` / `?ui=v2`) returns to editor v2. When `prefs.json` is
-read by the runtime, a legacy boolean `devEditorV2` preference (`false` →
-`"v1"`, `true` → `"v2"`) is migrated once to `editorVariant` and removed from
-the file.
+`"editorVariant": "v2"` / `?ui=v2`) returns to editor v2. A legacy boolean
+`devEditorV2` preference (`false` → `"v1"`, `true` → `"v2"`) is migrated once
+to `editorVariant` and removed from `prefs.json`, both when the runtime reads
+the file and when the window starts (the desktop app reads `prefs.json`
+without the runtime).
 
 ## Security model
 
