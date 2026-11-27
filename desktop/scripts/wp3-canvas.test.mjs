@@ -1220,6 +1220,12 @@ test("EngineEditOverlay keeps the inline editor open on idle commit settle and c
       heightPt: 842,
       boxes: [
         {
+          at: "t0/r0/c0/p0#L0",
+          kind: "line",
+          rect: [10, 4, 240, 12],
+          text: "■ 행정업무의 운영 및 혁신에 관한 규정 시행규칙",
+        },
+        {
           at: "t0/r5/c1/p0#L0",
           kind: "line",
           rect: [10, 10, 80, 16],
@@ -1228,9 +1234,30 @@ test("EngineEditOverlay keeps the inline editor open on idle commit settle and c
       ],
     };
     const regionHeightPt = 9;
+    const guideHeightPt = 8;
     assert.notEqual(regionHeightPt, corpus.inspect.summary.baselineCharPr.height_pt);
     const inspectWithRegionHeight = {
       ...corpus.inspect,
+      graph: {
+        ...corpus.inspect.graph,
+        tables: corpus.inspect.graph.tables.map((t) =>
+          t.index === 0
+            ? {
+                ...t,
+                cells: t.cells.map((c) =>
+                  c.addr.row === 0 && c.addr.col === 0
+                    ? {
+                        ...c,
+                        textCharPr: "9",
+                        textCharPrFace: { hangul: "돋움" },
+                        textCharPrHeightPt: guideHeightPt,
+                      }
+                    : c,
+                ),
+              }
+            : t,
+        ),
+      },
       regions: {
         ...corpus.inspect.regions,
         regions: corpus.inspect.regions.regions.map((region) =>
@@ -1344,6 +1371,28 @@ test("EngineEditOverlay keeps the inline editor open on idle commit settle and c
     assert.equal(cancelCalls, 1);
     assert.equal(stack.store.getState().inlineEdit, null);
     assert.equal(overlay.editor, null);
+
+    // 5. Non-fill cell (t0/r0/c0, not in inspect.regions) uses graph cell textCharPrFace and textCharPrHeightPt (8pt) for editor and pending span.
+    stack.actions.beginCellEditV2(0, 0, 0, { inspect: inspectWithRegionHeight });
+    overlay = renderOverlay(true);
+    assert.ok(overlay.editor);
+    assert.equal(overlay.editor.props.fontFace, "돋움");
+    assert.equal(
+      overlay.editor.props.style.fontSize,
+      guideHeightPt * (96 / 72),
+    );
+    input = renderInput(overlay);
+    input.props.onChange({ target: { value: "■ 수정된 서식 머리말" } });
+    input = renderInput(overlay);
+    input.props.onKeyDown(enterEvent());
+    overlay = renderOverlay(false);
+    assert.equal(overlay.pending.length, 1);
+    assert.equal(
+      overlay.pending[0].props.style.fontSize,
+      guideHeightPt * (96 / 72),
+    );
+    assert.ok(overlay.pending[0].props.style.fontFamily.includes('"돋움"'));
+    overlay = renderOverlay(true);
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
@@ -1552,10 +1601,43 @@ test("strip: the page source label never repeats the word the preview grade labe
   }
 });
 
-test("status bar character shape: cell region face and size, else the body baseline", () => {
+test("status bar character shape: cell region face and size, else graph cell text, else the body baseline", () => {
   const { pageModel, wp3 } = loadWp3Stack();
   const inspect = {
     summary: { baselineCharPr: { id: "0", height_pt: 10, signature: null, face: { hangul: "함초롬바탕" } } },
+    graph: {
+      documentHash: "h",
+      sessionId: "s",
+      paragraphs: [],
+      tables: [
+        {
+          index: 0,
+          cells: [
+            {
+              addr: { row: 0, col: 0 },
+              classification: "fill_target",
+              textCharPr: "9",
+              textCharPrFace: { hangul: "돋움체" },
+              textCharPrHeightPt: 8,
+            },
+            {
+              addr: { row: 0, col: 2 },
+              classification: "guide",
+              textCharPr: "9",
+              textCharPrFace: { hangul: "돋움체" },
+              textCharPrHeightPt: 8,
+            },
+            {
+              addr: { row: 0, col: 3 },
+              classification: "static",
+              textCharPr: "10",
+              textCharPrFace: null,
+              textCharPrHeightPt: 9,
+            },
+          ],
+        },
+      ],
+    },
     regions: {
       documentHash: "h",
       sessionId: "s",
@@ -1565,10 +1647,15 @@ test("status bar character shape: cell region face and size, else the body basel
       ],
     },
   };
+  // Region wins over graph cell on the same coordinates.
   assert.deepEqual(pageModel.cellCharShape(inspect, 0, 0, 0), { face: "HY헤드라인M", sizePt: 15 });
+  // No region, graph cell with textCharPrHeightPt 8 and face -> graph cell is used.
+  assert.deepEqual(pageModel.cellCharShape(inspect, 0, 0, 2), { face: "돋움체", sizePt: 8 });
+  // Field-by-field fallback: graph cell has height 9 and null face -> face from baseline, size from graph cell.
+  assert.deepEqual(pageModel.cellCharShape(inspect, 0, 0, 3), { face: "함초롬바탕", sizePt: 9 });
   // A region that declares no face or size falls back to the body baseline.
   assert.deepEqual(pageModel.cellCharShape(inspect, 0, 1, 0), { face: "함초롬바탕", sizePt: 10 });
-  // Outside a cell, or in a cell with no region, the baseline.
+  // Outside a cell, or in a cell with no region or graph cell, the baseline.
   assert.deepEqual(pageModel.cellCharShape(inspect, null), { face: "함초롬바탕", sizePt: 10 });
   assert.deepEqual(pageModel.cellCharShape(inspect, 3, 0, 0), { face: "함초롬바탕", sizePt: 10 });
   assert.deepEqual(pageModel.cellCharShape(null, null), { face: null, sizePt: null });

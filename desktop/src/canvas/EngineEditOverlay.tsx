@@ -9,7 +9,12 @@ import {
   type EngineGeometry,
   type EngineTextEdit,
 } from "../model/enginePage";
-import { formatCellAddress, resolvePageFontCategory, type PageHitResult } from "../model/page";
+import {
+  cellCharShape,
+  formatCellAddress,
+  resolvePageFontCategory,
+  type PageHitResult,
+} from "../model/page";
 import { locateSpanInRuns } from "../run_map";
 import { runTextAfterEdit } from "../revision";
 import { readRegion } from "../runtime";
@@ -74,10 +79,9 @@ export function useEngineEditOverlay({
   const baselineSizePt = inspect.summary?.baselineCharPr?.height_pt ?? null;
 
   const cellAt = edit?.kind === "cell" ? formatCellAddress(edit.table, edit.row, edit.col) : null;
-  const cellRegion = edit?.kind === "cell"
-    ? inspect.regions.regions.find((region) =>
-        region.table === edit.table && region.row === edit.row && region.col === edit.col)
-    : undefined;
+  const cellShape = edit?.kind === "cell"
+    ? cellCharShape(inspect, edit.table, edit.row, edit.col)
+    : null;
   const leadSlotSet = edit?.kind === "cell" && edit.leadParas && edit.leadParas.length > 0
     ? new Set(edit.leadParas)
     : edit?.kind === "cell" && typeof edit.leadPara === "number"
@@ -109,10 +113,10 @@ export function useEngineEditOverlay({
         ...paragraph,
         sizePt: paragraph.sizePt ?? edit.sizePt ?? baselineSizePt,
       } : null)
-      : !isNarrow && cellLine && cellAt ? {
+      : !isNarrow && cellLine && cellAt && cellShape ? {
           id: cellAt, line: cellLine, page: geometry.page,
-          face: cellRegion?.charPrFace?.hangul ?? baselineFace,
-          sizePt: cellRegion?.charPrHeightPt ?? baselineSizePt,
+          face: cellShape.face,
+          sizePt: cellShape.sizePt,
           caret: cellCaret(cellValue, pickedCellLine, hit, cellLines),
         } : null;
   const initial = edit?.kind === "run"
