@@ -1098,7 +1098,13 @@ class BridgeApplication:
                 patch: dict[str, Any] = {"devEditorV2": None}
                 if "editorVariant" not in data and isinstance(legacy, bool):
                     patch["editorVariant"] = "v2" if legacy else "v1"
-                data = self._write_prefs_locked(data, patch)
+                try:
+                    data = self._write_prefs_locked(data, patch)
+                except OSError:
+                    # Reading prefs never fails on a write error: the
+                    # migrated keys are already in `data`, and the next
+                    # read tries the migration again.
+                    pass
             if self.explicit_root and not self._root_pinned_in_session:
                 data["root"] = str(self.default_root)
             return data

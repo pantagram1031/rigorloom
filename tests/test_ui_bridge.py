@@ -451,6 +451,22 @@ def test_get_prefs_migrates_legacy_dev_editor_v2_once(started_bridge):
         assert prefs_file.read_bytes() == raw_bad_after
 
 
+def test_get_prefs_migration_survives_a_failed_write(started_bridge, monkeypatch):
+    srv, client, _ = started_bridge
+    prefs_file: Path = srv.bridge._prefs_path
+    raw = json.dumps({"devEditorV2": False}) + "\n"
+    prefs_file.write_text(raw, encoding="utf-8")
+
+    def refuse_write(*_args, **_kwargs):
+        raise OSError("read-only profile")
+
+    monkeypatch.setattr(sys.modules[type(srv.bridge).__module__], "atomic_write_bytes", refuse_write)
+    status, prefs = client.get_json("/api/prefs")
+    assert status == 200
+    assert prefs.get("editorVariant") == "v1"
+    assert "devEditorV2" not in prefs
+    assert prefs_file.read_text(encoding="utf-8") == raw
+
 def test_prefs_corpus_credentials_agenthost_mock_and_taskpacks(started_bridge):
     _, client, rt_root = started_bridge
 
