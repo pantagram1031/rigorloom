@@ -436,11 +436,39 @@ rt_doc.edit("보고서.hwpx", [
     with `bad_input`. It takes no `expect` and changes no addresses. After the
     edit, the target paragraph must hold the new `hp:newNum` with `numType` and
     `num`.
-  - `columns` changes the column definition (다단) that governs the paragraph,
-    the last one before it in its section: `set` takes `count` (1 to 255),
-    `gap_mm` (0 to 100), `line` (구분선, true/false), `kind` (`NEWSPAPER`,
-    `BALANCED_NEWSPAPER`, `PARALLEL`) and `layout` (`LEFT`, `RIGHT`,
-    `MIRROR`). Every paragraph under that definition changes with it.
+  - `columns` changes the column definition (다단) that governs the paragraph
+    at `at` (the last `<hp:colPr>` at or before `at` in its section, which covers
+    every paragraph under that definition), or with `split: true` (다단 설정
+    나누기) starts a new column definition at `at` while leaving the definition
+    governing earlier paragraphs unchanged (`goto` `at` at offset 0,
+    `break_coldef`, then `set_columns`; nothing is split and no address
+    changes). `split` is a boolean (`false` by default) and is refused on a
+    section's first paragraph (`bad_address`, because the engine inserts a new
+    paragraph after a section's first paragraph and would shift addresses; omit
+    `split` to change the section's own column definition) and on a paragraph
+    that already starts a column definition (`bad_input`; omit `split` to change
+    that definition). `set` takes `count` (1 to 255), `gap_mm` (0 to 100),
+    `widths_mm` (단 너비 따로: a list of `count` column widths in millimetres, 5
+    to 1000 each), `gaps_mm` (an optional list of `count - 1` inter-column gaps
+    in millimetres, 0 to 100 each; requires `widths_mm` and cannot be given with
+    `gap_mm`; when omitted with `widths_mm`, each of the `count - 1` gaps
+    defaults to `gap_mm`, or 0 mm when `gap_mm` is omitted), `line` (구분선,
+    true/false), `kind` (`NEWSPAPER`, `BALANCED_NEWSPAPER`, `PARALLEL`) and
+    `layout` (`LEFT`, `RIGHT`, `MIRROR`). With `widths_mm`, widths and gaps are
+    converted to HWPUNIT the way `hwpx_kit.mm_hu` does and passed as
+    `sizes_hu = [(w_hu, gap_hu), ..., (w_hu, 0)]`, writing `sameSz="0"`,
+    `sameGap` equal to the first gap in HWPUNIT, and `<hp:colSz width="..." gap="..."/>`
+    for each column. On a section with no column definition before `at` (such
+    as rigorloom's minimal `basic.hwpx` fixture), the engine first adds 한글's
+    one-column definition to the section's first paragraph and changes that;
+    this needs hwp-engine 0cc9e17 (PR #37) or later, and an older engine fails the
+    edit with nothing written. After the edit, `_verify_columns`
+    checks the `<hp:colPr>` governing `at` (`colCount`, `sameSz`, `sameGap`,
+    `type`, `layout`, `<hp:colLine>` and `<hp:colSz>` list), checks with
+    `split: true` that the `<hp:colPr>` governing the paragraph right before
+    `at` is unchanged and the new `<hp:colPr>` sits at the start of `at`, and
+    checks that paragraph texts and all other `<hp:colPr>` controls in the
+    document are unchanged; any mismatch fails the edit and nothing is written.
   - `break` with `kind` `page` (쪽 나누기) or `column` (단 나누기) makes the
     paragraph start a page or a column; nothing is split and no address
     changes. `kind: "section"` (구역 나누기) moves the paragraph and every
@@ -455,7 +483,8 @@ rt_doc.edit("보고서.hwpx", [
     paragraph before it, so every step still finds its paragraph by its
     position in the original document. A `set` or other text op and a
     `page` or `column` break on one paragraph in one edit both apply.
-  - Conflicts: two `page_setup` or two `columns` ops on one section are a
+  - Conflicts: two `page_setup` or two `columns` ops on one section (including
+    two `split: true` `columns` ops at the same paragraph) are a
     `conflict`; so is either of them on the section of a section break, a
     second section break in the same edit, a second `break`, `hide` or
     `new_number` on one paragraph,

@@ -919,7 +919,7 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "table.delete_col": (("at",), ("col", "expect")),
     "table.size": (("at",), ("width_mm", "height_mm", "col_widths_mm", "row_heights_mm")),
     "page_setup": (("at", "set"), ()),
-    "columns": (("at", "set"), ()),
+    "columns": (("at", "set"), ("split",)),
     "break": (("at", "kind"), ("expect",)),
     "header": (("at", "text"), ("kind", "apply", "expect")),
     "page_number": (("at",), ("pos", "format", "side_char")),
@@ -1036,11 +1036,15 @@ OP_NOTES = {
                   "header_inside?: bool, footer_inside?: bool}); margins must leave room on the "
                   "page; one page_setup per section per edit, and none on the section of a "
                   "section break",
-    "columns": "`at` is a body paragraph; the 다단 definition that governs it changes, and with "
-               "it every paragraph under it. `set` keys: count (1 to 255), gap_mm (0 to 100), "
-               "line (구분선), kind (NEWSPAPER, BALANCED_NEWSPAPER, PARALLEL), layout (LEFT, "
-               "RIGHT, MIRROR); one columns per section per edit, and none on the section of a "
-               "section break",
+    "columns": "`at` is a body paragraph; without `split` the 다단 definition that governs it "
+               "changes (and with it every paragraph under it), and with `split: true` (다단 "
+               "설정 나누기) a new definition starts at `at` (not on a section's first paragraph "
+               "or one that already starts a column definition; no address changes). `set` keys: "
+               "count (1 to 255), gap_mm (0 to 100), widths_mm (단 너비 따로: `count` widths, "
+               "5 to 1000 mm each), gaps_mm (`count - 1` gaps, 0 to 100 mm each; requires "
+               "widths_mm, not with gap_mm, defaults to gap_mm or 0), line (구분선, bool), "
+               "kind (NEWSPAPER, BALANCED_NEWSPAPER, PARALLEL), layout (LEFT, RIGHT, MIRROR); "
+               "one columns per section per edit, and none on the section of a section break",
     "break": "`at` is a body paragraph that starts a page, a column or a section (`kind` page, "
              "column or section); `expect` is that paragraph's text. A section break goes in "
              "the last section, not on its first paragraph, one per edit; any other op on a "
