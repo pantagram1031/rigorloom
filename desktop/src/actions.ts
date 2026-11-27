@@ -1442,7 +1442,7 @@ async function setQueue(
 
   // Only this exact draft object owns the results below. Agent adoption uses
   // the same ownership rule, so neither path can overwrite newer user intent.
-  let owner = captureDraftOwner();
+  const owner = captureDraftOwner();
 
   try {
     const plan = await rt.proposePlan(
@@ -1515,9 +1515,12 @@ async function setQueue(
       reapprovalPrompt: null,
       draft: proposedDraft,
     });
-    owner = captureDraftOwner();
+    // The proposed draft is a new object, so the deferred validate needs an
+    // owner captured from it; `owner` still fences the outer catch.
+    const validateOwner = captureDraftOwner();
     if (typeof persistDraft === "function") persistDraft(sessionId, getState().draft);
     const runValidate = async (): Promise<void> => {
+      const owner = validateOwner;
       if (currentPlanGeneration() !== gen) return;
       if (!ownsDraft(owner)) return;
       try {

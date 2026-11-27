@@ -521,6 +521,7 @@ async function main() {
             }).outputText,
         };
       }
+      if (spec === "../src/store.ts") return store;
       if (spec === "./action-test-support.mjs") {
         return {
           approvalHelpers,
