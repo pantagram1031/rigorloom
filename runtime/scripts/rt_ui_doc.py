@@ -509,6 +509,9 @@ class PageGateway:
                         # Apply writes the lines past the last reserved slot as
                         # new paragraphs right after it; typing them as line
                         # breaks in that slot puts them in the same place.
+                        # The paragraph shape can differ: here the extra lines
+                        # inherit the last slot's shape, while apply clones
+                        # the target paragraph with the cell's charPr.
                         lines = [*lines[:len(slots) - 1], "\n".join(lines[len(slots) - 1:])]
                     used = set(slots[:len(lines)])
                     for idx_line, line in enumerate(lines):
