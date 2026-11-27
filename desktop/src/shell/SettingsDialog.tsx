@@ -144,6 +144,9 @@ function Segmented<T extends string>({
 function GeneralSection() {
   const lang = useWorkspace((s) => s.language);
   const theme = useWorkspace((s) => s.theme);
+  // The canvas status line is behind this dialog, so a refused switch is also
+  // said here, next to the control that was pressed.
+  const [editorRefused, setEditorRefused] = useState(false);
   return (
     <div className="sh-settings-rows">
       <div className="sh-settings-row">
@@ -185,13 +188,26 @@ function GeneralSection() {
               { value: "v1", label: S.t("shell_settings_editor_v1", lang, ["v1"]) },
             ]}
             onChange={(v) => {
-              if (v === "v1") void openV1();
+              if (v !== "v1") return;
+              setEditorRefused(false);
+              void openV1().then((switched) => {
+                if (!switched) setEditorRefused(true);
+              });
             }}
           />
         </div>
         <span className="sh-settings-note" data-testid="settings-editor-note">
           {S.t("shell_settings_editor_note", lang)}
         </span>
+        {editorRefused ? (
+          <span
+            className="sh-settings-note sh-settings-note--refused"
+            role="status"
+            data-testid="settings-editor-refused"
+          >
+            {S.t("shell_status_finish_edit_first", lang)}
+          </span>
+        ) : null}
       </div>
     </div>
   );

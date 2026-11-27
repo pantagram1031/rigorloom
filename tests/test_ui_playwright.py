@@ -316,6 +316,10 @@ def test_ui_settings_editor_variant_roundtrip_and_unsaved_refusal(tmp_path: Path
             assert json.loads(prefs_path.read_text(encoding="utf-8")).get("editorVariant") is None
             refusal_notice = page.locator('[data-testid="status-canvas-notice"]').inner_text().strip()
             assert refusal_notice == "입력 중이거나 아직 저장되지 않은 작업을 먼저 마치세요", refusal_notice
+            # The dialog covers the canvas status line, so the row says it too.
+            refused_el = dialog.get_by_test_id("settings-editor-refused")
+            refused_el.wait_for(timeout=5000)
+            assert refused_el.inner_text().strip() == "입력 중이거나 아직 저장되지 않은 작업을 먼저 마치세요"
 
             # Release the in-flight draft save and wait for the queued change to settle.
             page.evaluate("() => { if (window.__releaseDraftSave) window.__releaseDraftSave(); }")
