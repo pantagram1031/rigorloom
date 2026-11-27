@@ -936,6 +936,8 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "picture": (("at", "set"), ("index",)),
     "table.formula": (("at",), ("func", "from", "formula")),
     "memo": (("at", "text"), ("on", "author", "expect")),
+    "insert_shape": (("at", "shape"), ("width_mm", "height_mm", "wrap", "vert_rel", "horz_rel", "x_mm", "y_mm",
+                                       "line_color", "fill_color", "text")),
 }
 
 
@@ -978,6 +980,7 @@ OP_EXAMPLES = {
     "picture": '{"op":"picture","at":"p2","set":{"width_mm":60,"wrap":"SQUARE","x_mm":10}}',
     "table.formula": '{"op":"table.formula","at":"t0/r0/c3","func":"SUM","from":"t0/r0/c0"}',
     "memo": '{"op":"memo","at":"p1","on":"2026년","text":"일정 확인","author":"홍길동"}',
+    "insert_shape": '{"op":"insert_shape","at":"p2","shape":"textbox","width_mm":60,"height_mm":20,"text":"참고"}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1133,6 +1136,13 @@ OP_NOTES = {
             "refusing when the anchor overlaps an existing field in that paragraph; `expect` is the "
             "paragraph's visible text; one per paragraph per edit; paragraph text and addresses do "
             "not change",
+    "insert_shape": "`at` is a body paragraph (not a table cell); anchors a floating `shape` (rect, ellipse, "
+                    "line or textbox) at its start; `width_mm`, `height_mm` (1 to 1000), `wrap`, `vert_rel`, "
+                    "`horz_rel`, `x_mm`, `y_mm` as in `picture` (default SQUARE, PARA, COLUMN, 0); "
+                    "`line_color`, `fill_color` (#RRGGBB; no fill on a line); `text` (textbox only, 1 to 1000 "
+                    "characters, \\n starts a paragraph) can only be written at insert: the box's text has "
+                    "no address and read and find do not show it; one per paragraph per edit; no address "
+                    "changes",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}

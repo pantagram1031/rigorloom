@@ -3317,6 +3317,137 @@ def test_engine_insert_picture_placement_and_picture_op(kit, tmp_path, monkeypat
     assert res_bad_pic["error"]["written"] is False and not out_bad_pic.exists()
 
 
+# ============================================================================ 도형·글상자 (insert_shape)
+def test_insert_shape_is_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(FX_DOC, tmp_path, "shape_no_eng.hwpx")
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops):
+        return D.edit(src, ops if isinstance(ops, list) else [ops], base=rev, out=out)["error"]
+
+    e = err({"op": "insert_shape", "at": "p2", "shape": "rect", "colour": "#000000"})
+    assert e["code"] == "bad_input" and set(e["candidates"]) <= set(D.INSERT_SHAPE_KEYS)
+    for bad_kind in (None, "square", "arc", "polygon", 1, "RECT"):
+        e = err({"op": "insert_shape", "at": "p2", "shape": bad_kind})
+        assert e["code"] == "bad_input" and set(e["candidates"]) <= set(D.SHAPE_KINDS), bad_kind
+    assert "rect" in err({"op": "insert_shape", "at": "p2", "shape": "rec"})["candidates"]
+    # no Hancom file for these yet: refused as unknown keys
+    for unverified in ("rotate", "shadow", "gradient", "ratio", "inline", "line_width", "line_style", "valign"):
+        e = err({"op": "insert_shape", "at": "p2", "shape": "rect", unverified: 1})
+        assert e["code"] == "bad_input", unverified
+    for k in ("width_mm", "height_mm"):
+        for bad_sz in (0, -5, 1001, True, "30", None):
+            assert err({"op": "insert_shape", "at": "p2", "shape": "rect", k: bad_sz})["code"] == "bad_input"
+    for k in ("x_mm", "y_mm"):
+        for bad_off in (-1001, 1001, True, "3"):
+            assert err({"op": "insert_shape", "at": "p2", "shape": "rect", k: bad_off})["code"] == "bad_input"
+    e = err({"op": "insert_shape", "at": "p2", "shape": "rect", "wrap": "FLOAT"})
+    assert e["code"] == "bad_input" and "SQUARE" in e["candidates"]
+    assert err({"op": "insert_shape", "at": "p2", "shape": "rect", "vert_rel": "COLUMN"})["code"] == "bad_input"
+    for k in ("line_color", "fill_color"):
+        for bad_c in ("red", "#12345", "#GGGGGG", 0xFF0000, None):
+            assert err({"op": "insert_shape", "at": "p2", "shape": "rect", k: bad_c})["code"] == "bad_input"
+    assert err({"op": "insert_shape", "at": "p2", "shape": "line", "fill_color": "#FFFFFF"})["code"] == "bad_input"
+    # text: textbox only, one to SHAPE_TEXT_MAX characters, \n only among control characters
+    assert err({"op": "insert_shape", "at": "p2", "shape": "rect", "text": "글"})["code"] == "bad_input"
+    for bad_t in ("", "  ", None, 3, "x" * (D.SHAPE_TEXT_MAX + 1), "a\tb", "a\rb", "a\x07b"):
+        assert err({"op": "insert_shape", "at": "p2", "shape": "textbox", "text": bad_t})["code"] == "bad_input"
+    # anchors: body paragraphs only (no Hancom file with a shape anchored in a table cell yet)
+    assert err({"op": "insert_shape", "at": "t0/r0/c0/p0", "shape": "rect"})["code"] == "bad_address"
+    assert err({"op": "insert_shape", "at": "t0", "shape": "rect"})["code"] == "bad_address"
+    assert err({"op": "insert_shape", "at": "p0:0-2", "shape": "rect"})["code"] == "bad_address"
+    # one shape per paragraph per edit, and no text edit or memo on the same paragraph in that edit
+    two = [{"op": "insert_shape", "at": "p0", "shape": "rect"}, {"op": "insert_shape", "at": "p0", "shape": "line"}]
+    assert err(two)["code"] == "conflict"
+    assert err([{"op": "insert_shape", "at": "p0", "shape": "rect"},
+                {"op": "set", "at": "p0", "text": "새 제목"}])["code"] == "conflict"
+    assert err([{"op": "memo", "at": "p0", "text": "메모"},
+                {"op": "insert_shape", "at": "p0", "shape": "rect"}])["code"] == "conflict"
+    # a valid op gets past the plan and stops only at the missing engine
+    ok = {"op": "insert_shape", "at": "p0", "shape": "textbox", "text": "한 줄\n두 줄", "wrap": "square",
+          "vert_rel": "page", "horz_rel": "paper", "x_mm": -3.5, "y_mm": 12, "line_color": "#1f4e79",
+          "fill_color": "#FFFFFF", "width_mm": 60, "height_mm": 20}
+    assert err(ok)["code"] == "capability_unavailable"
+
+
+def test_engine_insert_shape_writes_the_four_shapes(kit, tmp_path, monkeypatch):
+    f = _copy(FX_DOC, tmp_path, "shapes.hwpx")
+    base = D._load(f, meta=False)
+    out = tmp_path / "shapes_out.hwpx"
+    ops = [
+        {"op": "insert_shape", "at": "p0", "shape": "textbox", "width_mm": 60, "height_mm": 20, "x_mm": 30,
+         "y_mm": 2, "text": "첫 줄\n\n셋째 줄 & <기호>"},
+        {"op": "insert_shape", "at": "p1", "shape": "rect", "width_mm": 80, "height_mm": 40, "wrap": "BEHIND_TEXT",
+         "vert_rel": "PAPER", "horz_rel": "PAPER", "x_mm": 60, "y_mm": 150, "fill_color": "#ddeeff"},
+        {"op": "insert_shape", "at": "p2", "shape": "line", "wrap": "IN_FRONT_OF_TEXT", "x_mm": 10, "y_mm": 5,
+         "line_color": "#FF0000"},
+        {"op": "insert_shape", "at": "p3", "shape": "ellipse", "width_mm": 40, "height_mm": 25,
+         "wrap": "IN_FRONT_OF_TEXT", "x_mm": 100, "y_mm": 10},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    got = D._load(out, meta=False)
+    assert D._verify(base, got, D._plan(base, ops))
+    assert [q.text for q in got.top] == [q.text for q in base.top]
+    tb, rc, ln, el = (D._shapes_in(got, got.top[k]) for k in range(4))
+    assert len(tb) == len(rc) == len(ln) == len(el) == 1
+    tb, rc, ln, el = tb[0], rc[0], ln[0], el[0]
+    assert tb["tag"] == "rect" and tb["textbox"] and tb["text"] == ["첫 줄", "", "셋째 줄 & <기호>"]
+    st0 = got.styles["0"]
+    assert tb["text_refs"] == {"para": [(st0["paraPr"], "0")], "char": [st0["charPr"]]}
+    assert (tb["width"], tb["height"]) == (D._mm_hu(60), D._mm_hu(20)) and tb["wrap"] == "SQUARE"
+    assert (tb["vert_rel"], tb["horz_rel"], tb["horz_offset"], tb["vert_offset"]) == (
+        "PARA", "COLUMN", D._mm_hu(30), D._mm_hu(2))
+    assert tb["treat_as_char"] == "0" and tb["line_color"] == "#000000" and tb["fill_color"] == "#FFFFFF"
+    assert rc["tag"] == "rect" and not rc["textbox"] and rc["fill_color"] == "#DDEEFF"
+    assert (rc["wrap"], rc["vert_rel"], rc["horz_rel"]) == ("BEHIND_TEXT", "PAPER", "PAPER")
+    assert ln["tag"] == "line" and ln["line_color"] == "#FF0000" and ln["fill_color"] is None
+    assert (ln["width"], ln["height"]) == D.SHAPE_DEFAULT_HU
+    # Hancom's form (feat2_float_objects): rect, ellipse and text box drawn at the default size and resized, a line
+    # drawn at its size
+    for x in (tb, rc, el):
+        assert (x["org_width"], x["org_height"]) == D.SHAPE_DEFAULT_HU
+        assert (x["cur_width"], x["cur_height"]) == (x["width"], x["height"])
+    assert (ln["org_width"], ln["org_height"], ln["cur_width"], ln["cur_height"]) == D.SHAPE_DEFAULT_HU + (0, 0)
+    assert el["tag"] == "ellipse" and el["wrap"] == "IN_FRONT_OF_TEXT"
+    assert len({x["id"] for x in (tb, rc, ln, el)}) == 4
+    # the text box's text has no address: read and find do not show it, read names the object
+    rd = D.read(out, at="p0")
+    assert "hp:rect" in rd["blocks"][0]["objects"] and "첫 줄" not in str(rd)
+    assert D.find(out, "셋째 줄")["hits"] == []
+    # determinism: the same edit on the same file writes the same section XML
+    out2 = tmp_path / "shapes_out2.hwpx"
+    assert D.edit(f, ops, base=D.rev_of(f), out=out2)["ok"]
+    assert D._load(out2, meta=False).secs == got.secs
+
+    # the verifier refuses hand-broken outputs
+    raw = got.zip.read("Contents/section0.xml").decode("utf-8")
+    acts = D._plan(base, ops)
+    for label, old_s, new_s in (
+        ("fill", 'faceColor="#DDEEFF"', 'faceColor="#FFFFFF"'),
+        ("line colour", 'color="#FF0000"', 'color="#000000"'),
+        ("wrap", 'textWrap="BEHIND_TEXT"', 'textWrap="SQUARE"'),
+        ("text", "셋째 줄", "셋째 칸"),
+        ("offset", 'horzOffset="%d"' % D._mm_hu(100), 'horzOffset="0"'),
+    ):
+        assert raw.count(old_s) == 1, label
+        broken = D.Doc(out, got.zip.rewrite({"Contents/section0.xml": raw.replace(old_s, new_s).encode("utf-8")}),
+                       "hwpx")
+        assert not D._verify(base, broken, acts), label
+    # a shape the op did not ask for, or one missing, is refused too
+    no_line = re.sub(r"<hp:line\b.*?</hp:line>", "", raw, count=1, flags=re.S)
+    assert not D._verify(base, D.Doc(out, got.zip.rewrite({"Contents/section0.xml": no_line.encode("utf-8")}), "hwpx"),
+                         acts)
+    bad_bytes = got.zip.rewrite({"Contents/section0.xml": raw.replace('textWrap="BEHIND_TEXT"', 'textWrap="SQUARE"')
+                                 .encode("utf-8")})
+    monkeypatch.setattr(D, "_engine_apply", lambda *a, **k: (bad_bytes, {}, None))
+    out_bad = tmp_path / "bad_shape.hwpx"
+    f2 = _copy(FX_DOC, tmp_path, "shapes_again.hwpx")
+    res = D.edit(f2, ops, base=D.rev_of(f2), out=out_bad)
+    assert not res["ok"] and res["error"]["code"] == "internal" and not out_bad.exists(), res
+
+
 # ============================================================================ 표 계산식 (table.formula)
 def _doc_with_formula_tables(tmp_path):
     """Copy BASIC and give it a 4x4 table t0 (with empty target cells and one control-only cell) plus a 2x2 table t1."""

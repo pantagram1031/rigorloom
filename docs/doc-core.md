@@ -696,6 +696,34 @@ rt_doc.edit("보고서.hwpx", [
     `treatAsChar`, `vertRelTo`, `horzRelTo`, `vertOffset` and `horzOffset`,
     the requested `hc:img` `effect`, `bright` and `contrast` (the old values when
     not given), and the same `hc:img/@binaryItemIDRef` before anything is written.
+  - `insert_shape` anchors one floating 사각형 (`rect`), 타원 (`ellipse`), 선
+    (`line`) or 글상자 (`textbox`, an `hp:rect` with `hp:drawText`) at the start of
+    the body paragraph at `at`. A table cell paragraph, a table, a character range
+    or a paragraph inside a field is `bad_address`: no Hancom file with a shape
+    anchored in a cell has been compared yet. `width_mm` and `height_mm` (`1` to
+    `1000`; default Hancom's drawing size, 18750 x 8250 HWPUNIT; a rect,
+    ellipse or text box is written as Hancom's file has it, drawn at that size
+    and resized with `hp:curSz` and the scale matrix, a line at its own size), `wrap`,
+    `vert_rel`, `horz_rel`, `x_mm` and `y_mm` take the `picture` op's values
+    (default `SQUARE`, `PARA`, `COLUMN`, `0`). `line_color` and `fill_color` are
+    `#RRGGBB` (default black outline of Hancom's default width and a white fill;
+    a line has no fill). `text` (textbox only, `1` to `1000` characters, `\n`
+    starts a new paragraph in the box, other control characters refused) is
+    written in 바탕글's paragraph and character shapes. 글상자 본문은 삽입할 때만 쓸
+    수 있고, 나중에 고치려면 지금은 지원하지 않습니다: the box's paragraphs have no
+    address (as in hwp-engine's hnc_addr), and `read` and `find` do not show the
+    box's text (`read` lists the object as `hp:rect` under `objects`). Rotation,
+    shadows, gradients, rounded corners, outline width or style, arcs, polygons,
+    groups and linked text boxes are refused as unknown keys. One `insert_shape`
+    per paragraph per edit, no text op or memo on that paragraph in the same edit
+    (`conflict`), and no address changes. The engine's XML for these four shapes
+    is checked against Hancom's own file (hwp-engine 3916a3d or later,
+    tests/edit/check.py `u_shapes_feat2`); the preview's line breaks beside a
+    floating shape may differ from Hancom's. After the edit, `_verify_shape`
+    checks that the paragraph gained exactly one shape of the asked kind with the
+    asked size (`hp:sz`, `hp:orgSz`), `textWrap`, `hp:pos`, `lineShape` colour,
+    `winBrush` colour and box text and shapes, that its text is unchanged, and
+    that every other shape in the body is unchanged, before anything is written.
 - `insert_equation` takes `latex` (converted by `engine/scripts/eqn.py`, whose
   warnings come back under `applied[].warnings` and whose refusals stop the
   edit) or `hwpeqn`. `base_pt` is not supported by the engine yet and is

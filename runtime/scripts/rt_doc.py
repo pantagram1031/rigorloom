@@ -105,7 +105,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
        "table.cell_style", "table.style", "style.create", "note", "caption", "bookmark", "link", "toc",
-       "hide", "new_number", "picture", "table.formula", "memo")
+       "hide", "new_number", "picture", "table.formula", "memo", "insert_shape")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2526,6 +2526,7 @@ class _Act:
         self.picture = None     # insert_picture / picture: verification spec
         self.formula = None     # table.formula: (base Para, "func" | "formula", spec)
         self.memo = None        # memo: (base Para, text, author, (pos_a, pos_b), anchor_text, stamp)
+        self.shape = None       # insert_shape: (base Para, expected parsed shape)
 
 
 class _Claims:
@@ -2572,6 +2573,8 @@ class _Claims:
                 "toc" in (op, op2)
                 or ("memo" in (op, op2) and {op, op2} <= {
                     "memo", "insert_after", "insert_table", "insert_picture", "insert_equation"})
+                or ("insert_shape" in (op, op2) and {op, op2} <= {
+                    "insert_shape", "memo", "insert_after", "insert_table", "insert_picture", "insert_equation"})
             ):
                 self._conflict(i, op, j, op2, at)
         self.touched.append((si, pos, i, op, at))
@@ -3265,6 +3268,15 @@ PICTURE_SET_KEYS = ("width_mm", "height_mm", "keep_ratio", "wrap", "inline", "ve
 PICTURE_EFFECTS = {"original": "REAL_PIC", "gray": "GRAY_SCALE", "black_white": "BLACK_WHITE"}
 #: 밝기 / 대비 range of Hancom's 그림 dialog; Hancom writes the number as hc:img bright / contrast (pc3 picture_props)
 PICTURE_ADJUST_RANGE = (-100, 100)
+#: insert_shape (도형·글상자): the four kinds whose XML hwp-engine's insert_shape gives as Hancom's own file has them
+#: (feat2_float_objects edit replay); a 글상자 is an hp:rect with an hp:drawText
+SHAPE_KINDS = {"rect": "hp:rect", "ellipse": "hp:ellipse", "line": "hp:line", "textbox": "hp:rect"}
+INSERT_SHAPE_KEYS = ("shape", "width_mm", "height_mm", "wrap", "vert_rel", "horz_rel", "x_mm", "y_mm",
+                     "line_color", "fill_color", "text")
+#: a 글상자's text, set at insert time only (its paragraphs have no address)
+SHAPE_TEXT_MAX = 1000
+#: Hancom's default drawing size and outline (feat2_float_objects: orgSz 18750 x 8250, lineShape width 33)
+SHAPE_DEFAULT_HU = (18750, 8250)
 FORMULA_FUNCS = ("SUM", "AVG", "PRODUCT")
 FORMULA_ENGINE_FUNC = {"SUM": "Sum", "AVG": "Avg", "PRODUCT": "Pro"}
 FORMULA_MAX = 200
@@ -3421,6 +3433,77 @@ def _pics_in(d, p):
         end_pos = (pos + len(m.group(0))) if m.group(0).endswith("/>") else _pic_elem_end(s, pos)
         out.append(_parse_pic(s[pos:end_pos]))
     return out
+
+
+_SHAPE_OPEN = re.compile(r"<hp:(rect|ellipse|line)\b[^>]*>")
+
+
+def _shape_elem_end(s, start, tag):
+    pat = re.compile(r"<(/?)hp:%s\b(?:[^>\"']|\"[^\"]*\"|'[^']*')*?(/?)>" % tag, re.S)
+    depth = 0
+    for m in pat.finditer(s, start):
+        if m.group(2) == "/":
+            if depth == 0:
+                return m.end()
+            continue
+        depth += -1 if m.group(1) else 1
+        if depth == 0:
+            return m.end()
+    return len(s)
+
+
+def _parse_shape(raw):
+    """Parsed attributes of one 사각형 / 타원 / 선 / 글상자 element."""
+    tag = re.match(r"<hp:(\w+)", raw).group(1)
+    open_tag = raw[:raw.find(">") + 1]
+    dt = re.search(r"<hp:drawText\b.*?</hp:drawText>", raw, re.S)
+    body = raw[:dt.start()] + raw[dt.end():] if dt else raw
+
+    def tag_of(pat):
+        m = re.search(pat, body)
+        return m.group(0) if m else None
+    sz, pos = tag_of(r"<hp:sz\b[^<>]*/>"), tag_of(r"<hp:pos\b[^<>]*/>")
+    org, cur = tag_of(r"<hp:orgSz\b[^<>]*/>"), tag_of(r"<hp:curSz\b[^<>]*/>")
+    ln, brush = tag_of(r"<hp:lineShape\b[^<>]*/>"), tag_of(r"<hc:winBrush\b[^<>]*/>")
+    texts, refs = None, None
+    if dt:
+        ps = re.findall(r"<hp:p\b[^>]*>.*?</hp:p>", dt.group(0), re.S)
+        texts = ["".join(_xml_unescape(t) for t in re.findall(r"<hp:t>([^<]*)</hp:t>", q)) for q in ps]
+        heads = [q[:q.find(">") + 1] for q in ps]
+        refs = {"para": sorted({(_attr(h, "paraPrIDRef"), _attr(h, "styleIDRef")) for h in heads}),
+                "char": sorted(set(re.findall(r'<hp:run charPrIDRef="(\d+)"', dt.group(0))))}
+    return {
+        "tag": tag, "id": _attr(open_tag, "id"), "wrap": _attr(open_tag, "textWrap"),
+        "width": _int_attr(sz, "width"), "height": _int_attr(sz, "height"),
+        "org_width": _int_attr(org, "width"), "org_height": _int_attr(org, "height"),
+        "cur_width": _int_attr(cur, "width"), "cur_height": _int_attr(cur, "height"),
+        "treat_as_char": _attr(pos, "treatAsChar") if pos else None,
+        "vert_rel": _attr(pos, "vertRelTo") if pos else None, "horz_rel": _attr(pos, "horzRelTo") if pos else None,
+        "vert_offset": _int_attr(pos, "vertOffset"), "horz_offset": _int_attr(pos, "horzOffset"),
+        "line_color": _attr(ln, "color") if ln else None, "line_width": _int_attr(ln, "width"),
+        "line_style": _attr(ln, "style") if ln else None,
+        "fill_color": _attr(brush, "faceColor") if brush else None,
+        "textbox": dt is not None, "text": texts, "text_refs": refs,
+    }
+
+
+def _shapes_in(d, p):
+    """[parsed_shape, ...] of the direct 사각형 / 타원 / 선 / 글상자 elements in paragraph `p` in XML order
+    (not those inside a nested table, text box or other object)."""
+    s = d.secs[p.si]
+    out = []
+    for m in _SHAPE_OPEN.finditer(s, p.start, p.end):
+        pos = m.start()
+        host = next((q for q in reversed(d.sec_paras[p.si]) if q.start < pos < q.end), None)
+        if host is not p:
+            continue
+        if any(p.start < t.start < pos < t.end for t in d.sec_tables[p.si]):
+            continue
+        if any(o_a < pos < o_b for o_a, o_b, _x in out):
+            continue
+        end = _shape_elem_end(s, pos, m.group(1))
+        out.append((pos, end, _parse_shape(s[pos:end])))
+    return [x[2] for x in out]
 
 
 def _in(v, lo, hi):
@@ -5370,6 +5453,93 @@ def _plan_op(doc, cl, i, name, op, at):
             a = _Act(i, name, at, p, kw.pop("anchor"), steps=head + [step], info=info, **kw)
             _adds_for(doc, a, p, 1 if inline is None else 0)
             acts.append(a)
+    elif name == "insert_shape":
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(INSERT_SHAPE_KEYS))
+        if extra:
+            raise DocError("bad_input", "insert_shape takes %s, not %s"
+                           % (", ".join(("at",) + INSERT_SHAPE_KEYS), extra[0]), i=i, at=at,
+                           candidates=_cands_near(list(INSERT_SHAPE_KEYS), extra[0]) or list(INSERT_SHAPE_KEYS))
+        kind = op.get("shape")
+        if not isinstance(kind, str) or kind not in SHAPE_KINDS:
+            raise DocError("bad_input", "insert_shape: shape is one of %s" % ", ".join(SHAPE_KINDS), i=i, at=at,
+                           candidates=_cands_near(list(SHAPE_KINDS), str(kind)) or list(SHAPE_KINDS))
+        kws = {}
+        for k in ("width_mm", "height_mm"):
+            if k in op:
+                if not _in(op[k], *SIZE_MM):
+                    raise DocError("bad_input", "insert_shape: %s is %d to %d mm" % ((k,) + SIZE_MM),
+                                   i=i, at=at, range=list(SIZE_MM))
+                kws[k] = float(op[k])
+        kws["wrap"] = _enum(op["wrap"], PICTURE_WRAPS, "insert_shape: wrap", i, at) if "wrap" in op else "SQUARE"
+        kws["vert_rel"] = (_enum(op["vert_rel"], PICTURE_VERT_RELS, "insert_shape: vert_rel", i, at)
+                           if "vert_rel" in op else "PARA")
+        kws["horz_rel"] = (_enum(op["horz_rel"], PICTURE_HORZ_RELS, "insert_shape: horz_rel", i, at)
+                           if "horz_rel" in op else "COLUMN")
+        for k in ("x_mm", "y_mm"):
+            if k in op:
+                if not _in(op[k], *PICTURE_OFFSET_MM):
+                    raise DocError("bad_input", "insert_shape: %s is %d to %d mm" % ((k,) + PICTURE_OFFSET_MM),
+                                   i=i, at=at, range=list(PICTURE_OFFSET_MM))
+                kws[k] = float(op[k])
+        for k in ("line_color", "fill_color"):
+            if k in op and (not isinstance(op[k], str) or not _COLOR.match(op[k])):
+                raise DocError("bad_input", "insert_shape: %s is a colour like #1F4E79" % k, i=i, at=at)
+        if kind == "line" and "fill_color" in op:
+            raise DocError("bad_input", "insert_shape: a line has no fill_color", i=i, at=at)
+        if "line_color" in op:
+            kws["line"] = {"color": op["line_color"].upper()}
+        if "fill_color" in op:
+            kws["fill"] = op["fill_color"].upper()
+        lines = None
+        if "text" in op:
+            if kind != "textbox":
+                raise DocError("bad_input", "insert_shape: text goes with shape textbox only", i=i, at=at)
+            text = op["text"]
+            if not isinstance(text, str) or not text.strip() or len(text) > SHAPE_TEXT_MAX:
+                raise DocError("bad_input", "insert_shape: text is 1 to %d characters" % SHAPE_TEXT_MAX,
+                               i=i, at=at)
+            if _CTRL.search(text) or "\r" in text or "\t" in text:
+                raise DocError("bad_input", "insert_shape: text holds a control character (only \\n, which "
+                               "starts a new paragraph in the text box)", i=i, at=at)
+            lines = text.split("\n")
+            kws["blocks"] = [{"p": ln} if ln else {"blank": True} for ln in lines]
+        r = resolve(doc, at, allow=("para", "heading"))
+        if r.get("range"):
+            raise DocError("bad_address", "insert_shape takes a whole paragraph, not a character range", i=i, at=at)
+        p = r["para"]
+        if not p.top or p.cell is not None:
+            raise DocError("bad_address", "insert_shape anchors at a body paragraph (a shape in a table cell is "
+                           "not supported yet)", i=i, at=at)
+        if _in_field_body(doc, p):
+            raise DocError("bad_address", "insert_shape: %s is inside a field" % at, i=i, at=at)
+        sid0 = doc.styles.get("0") if hasattr(doc, "styles") else None
+        if kind == "textbox" and (not sid0 or sid0.get("paraPr") is None or sid0.get("charPr") is None):
+            raise DocError("bad_input", "insert_shape: the document has no 바탕글 style (style 0) for the text "
+                           "box's text", i=i, at=at)
+        cl.span(p, 0, len(p.chars), i, name, whole=True)
+        # a 글상자 leaves the engine's caret in its text; the next act starts with its own goto
+        steps = [["goto", p.k, 0, p.si], {"op": "insert_shape", "args": [kind], "kwargs": kws}]
+        a = _Act(i, name, at, p, p.start, side=1, intra=0, rank=1, steps=steps)
+        w = _mm_hu(kws["width_mm"]) if "width_mm" in kws else SHAPE_DEFAULT_HU[0]
+        h = _mm_hu(kws["height_mm"]) if "height_mm" in kws else SHAPE_DEFAULT_HU[1]
+        # the form Hancom's file has (feat2_float_objects replay): a 사각형, 타원 or 글상자 is drawn at Hancom's
+        # default size and resized (orgSz default, curSz and the scale matrix the asked size); a 선 has orgSz = sz
+        org = SHAPE_DEFAULT_HU if kind != "line" else (w, h)
+        if kind != "line":
+            kws["org_hu"] = list(SHAPE_DEFAULT_HU)
+        cur = (0, 0) if (w, h) == tuple(org) else (w, h)
+        a.shape = (p, {
+            "tag": SHAPE_KINDS[kind][3:], "textbox": kind == "textbox", "width": w, "height": h,
+            "org_width": org[0], "org_height": org[1], "cur_width": cur[0], "cur_height": cur[1], "treat_as_char": "0",
+            "wrap": kws["wrap"], "vert_rel": kws["vert_rel"], "horz_rel": kws["horz_rel"],
+            "vert_offset": _mm_hu(kws.get("y_mm", 0)), "horz_offset": _mm_hu(kws.get("x_mm", 0)),
+            "line_color": kws.get("line", {}).get("color", "#000000"), "line_width": 33, "line_style": "SOLID",
+            "fill_color": None if kind == "line" else kws.get("fill", "#FFFFFF"),
+            "text": (lines if lines is not None else [""]) if kind == "textbox" else None,
+            "text_refs": ({"para": [(sid0.get("paraPr"), "0")], "char": [sid0.get("charPr")]}
+                          if kind == "textbox" else None),
+        })
+        acts.append(a)
     elif name == "picture":
         known = ("index", "set")
         extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
@@ -5914,6 +6084,8 @@ def _verify(doc, newdoc, acts):
     if not _verify_table_formula(doc, newdoc, acts, st):
         return False
     if not _verify_memo(doc, newdoc, acts, st):
+        return False
+    if not _verify_shape(doc, newdoc, acts, st):
         return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
@@ -6941,6 +7113,46 @@ def _verify_table_formula(doc, newdoc, acts, st):
     return True
 
 
+def _verify_shape(doc, newdoc, acts, st):
+    """Each insert_shape op added exactly one 사각형 / 타원 / 선 / 글상자 to its body paragraph with the requested
+    kind, size, wrap, position, outline and fill colours and (글상자) text in 바탕글's paragraph and character
+    shapes, kept the paragraph's text, and left every other shape in the document unchanged."""
+    shape_acts = [a for a in acts if a.shape]
+    if not shape_acts:
+        return True
+    targets = {}
+    for a in shape_acts:
+        if id(a.shape[0]) in targets:
+            return False
+        targets[id(a.shape[0])] = a.shape[1]
+    if sum(len(_shapes_in(newdoc, nq)) for nq in newdoc.paras if nq.top) != (
+            sum(len(_shapes_in(doc, q)) for q in doc.paras if q.top) + len(shape_acts)):
+        return False
+    for p in doc.paras:
+        if not p.top:
+            continue
+        np = _new_para(doc, newdoc, p, st)
+        if np is None:
+            if id(p) in targets:
+                return False
+            continue
+        before, after = _shapes_in(doc, p), _shapes_in(newdoc, np)
+        if id(p) not in targets:
+            if after != before:
+                return False
+            continue
+        if np.text != p.text:
+            return False
+        old_ids = [x["id"] for x in before]
+        new = [x for x in after if x["id"] not in old_ids]
+        if len(new) != 1 or [x for x in after if x["id"] in old_ids] != before:
+            return False
+        got, exp = new[0], targets[id(p)]
+        if not got["id"] or any(got.get(k) != v for k, v in exp.items()):
+            return False
+    return True
+
+
 def _verify_memo(doc, newdoc, acts, st):
     """Each memo op kept the paragraph's visible text unchanged, added one MEMO fieldBegin wrapping the
     anchor span with the requested subList text, Author parameter and 메모 style (or style 0 when header.xml
@@ -7095,7 +7307,7 @@ def _remap_result(doc, newdoc, acts):
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
             or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc
             or a.char_shape or a.para_shape or a.page_setup or a.columns or a.hide or a.new_num or a.picture
-            or a.formula or a.memo]
+            or a.formula or a.memo or a.shape]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
