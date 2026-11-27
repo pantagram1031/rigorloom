@@ -3870,13 +3870,14 @@ def test_memo_is_checked_before_anything_runs(no_engine, tmp_path):
         d.zip.rewrite({"Contents/section0.xml": (sec0[:d.top[0].start] + p0_with_containers + sec0[d.top[0].end:]).encode("utf-8")})
     )
     cd = D._load(container_doc_path, meta=False)
-    # None of the inner paragraphs (header, memo, footnote) got a top-level address, and the table inside the memo has no addr
+    # None of the inner paragraphs (header, memo, footnote) got a top-level address. The table inside the memo
+    # keeps a table address, as in the engine's hnc_addr (fieldBegin is not in SKIP_LOCAL): it comes first, as t0.
     assert len(cd.top) == len(d.top)
-    assert len(cd.top_tables) == 1
+    assert len(cd.top_tables) == 2
     for q in cd.paras:
         if q.text in ("머리말 문단", "기존 메모", "각주 문단"):
             assert D.para_address(cd, q) is None
-    assert err({"op": "memo", "at": "t1/r0/c0/p0", "text": "메모"},
+    assert err({"op": "memo", "at": "t0/r0/c0/p0", "text": "메모"},
                f=container_doc_path, base=D.rev_of(container_doc_path))["code"] == "bad_address"
 
     # 5. expect check

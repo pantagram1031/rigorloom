@@ -965,7 +965,7 @@ ZERO_CTRL = {"hp:colPr", "hp:fieldBegin", "hp:fieldEnd", "hp:bookmark", "hp:page
 OBJ = "￼"
 #: containers whose tables are not numbered (the engine's hnc_addr.SKIP_LOCAL)
 SKIP_TBL = frozenset("hp:" + k for k in ("header", "footer", "footNote", "endNote", "caption", "drawText",
-                                         "masterPage", "fieldBegin"))
+                                         "masterPage"))
 SECTION_RE = re.compile(r"^Contents/section(\d+)\.xml$")
 
 
@@ -3948,6 +3948,19 @@ def _para_field_overlaps(doc, p, pos_a, pos_b, whole_para=False):
     return False
 
 
+def _in_field_body(doc, p):
+    """True when paragraph `p` sits inside a field's own body (a fieldBegin subList, such as a memo's
+    text or a table held in it). Such tables keep addresses, as in hnc_addr, but a memo cannot go there."""
+    s = doc.secs[p.si]
+    for m in re.finditer(r"<hp:fieldBegin\b[^>]*?(/?)>", s[:p.start]):
+        if m.group(1):
+            continue
+        close = s.find("</hp:fieldBegin>", m.end())
+        if close == -1 or close > p.start:
+            return True
+    return False
+
+
 def _memo_now():
     """The creation time a planned memo gets: now, in UTC, whole seconds."""
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
@@ -5611,6 +5624,9 @@ def _plan_op(doc, cl, i, name, op, at):
         p = r["para"]
         if not p.top and (p.cell is None or para_address(doc, p) is None):
             raise DocError("bad_address", "memo needs a body or cell paragraph", i=i, at=at)
+        if p.cell is not None and _in_field_body(doc, p):
+            raise DocError("bad_address", "memo: %s is inside a field (a memo's own table); "
+                           "a memo cannot go there" % at, i=i, at=at)
         _check_expect(op, i, at, p.text)
         if "on" in op:
             on = op.get("on")
