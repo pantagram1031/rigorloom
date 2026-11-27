@@ -2510,6 +2510,7 @@ class _Act:
         self.char_shape = None  # char_shape: (base Para, (a0, b0), fmt)
         self.para_shape = None  # para_shape: (base Para, fmt)
         self.page_setup = None  # page_setup: (si, {start_page?, border?})
+        self.columns = None     # columns: (base Para, split bool, expected colPr dict)
         self.hide = None        # hide: (base Para, {header, footer, page_num, border, fill, master_page})
         self.new_num = None     # new_number: (base Para, kind, num)
         self.picture = None     # insert_picture / picture: verification spec
@@ -3226,6 +3227,8 @@ COLUMN_KINDS = ("NEWSPAPER", "BALANCED_NEWSPAPER", "PARALLEL")
 COLUMN_LAYOUTS = ("LEFT", "RIGHT", "MIRROR")
 COLUMN_COUNT = (1, 255)
 COLUMN_GAP_MM = (0, 100)
+COLUMN_WIDTH_MM = (5, 1000)
+COLUMN_SET_KEYS = ("count", "gap_mm", "line", "kind", "layout", "widths_mm", "gaps_mm")
 BREAK_KINDS = ("page", "column", "section")
 PAGE_NUM_RANGE = (1, 65535)
 PAGE_BORDER_KEYS = ("type", "width", "color", "fill", "offset_mm", "apply", "text_border",
@@ -3557,20 +3560,50 @@ def _page_fit(doc, si, kw, i, at):
 def _columns_kwargs(op, i, at):
     """The checked ``set`` of a columns op as hnc_edit.set_columns keyword arguments."""
     v = op.get("set")
-    keys = ("count", "gap_mm", "line", "kind", "layout")
+    keys = COLUMN_SET_KEYS
     if not isinstance(v, dict) or "count" not in v:
-        raise DocError("bad_input", "columns needs set: {count, gap_mm?, line?, kind?, layout?}", i=i, at=at)
+        raise DocError("bad_input",
+                       "columns needs set: {count, gap_mm?, line?, kind?, layout?, widths_mm?, gaps_mm?}",
+                       i=i, at=at)
     bad = sorted(str(k) for k in v if k not in keys)
     if bad:
         raise DocError("bad_input", "columns: unknown key(s) %s (keys: %s)" % (", ".join(bad), ", ".join(keys)),
-                       i=i, at=at, candidates=_cands_near(list(keys), bad[0]))
-    if not (_is_int(v["count"]) and COLUMN_COUNT[0] <= v["count"] <= COLUMN_COUNT[1]):
-        raise DocError("bad_input", "columns: count is %d to %d" % COLUMN_COUNT, i=i, at=at)
-    kw = {"count": v["count"]}
+                       i=i, at=at, candidates=_cands_near(list(keys), bad[0]) or list(keys))
+    count = v["count"]
+    if not (_is_int(count) and COLUMN_COUNT[0] <= count <= COLUMN_COUNT[1]):
+        raise DocError("bad_input", "columns: count is %d to %d" % COLUMN_COUNT,
+                       i=i, at=at, range=list(COLUMN_COUNT))
+    kw = {"count": count}
+    if "gap_mm" in v and "gaps_mm" in v:
+        raise DocError("bad_input", "columns: give gap_mm or gaps_mm, not both", i=i, at=at)
+    if "gaps_mm" in v and "widths_mm" not in v:
+        raise DocError("bad_input", "columns: gaps_mm requires widths_mm", i=i, at=at)
     if "gap_mm" in v:
         if not _in(v["gap_mm"], *COLUMN_GAP_MM):
-            raise DocError("bad_input", "columns: gap_mm is %d to %d" % COLUMN_GAP_MM, i=i, at=at)
+            raise DocError("bad_input", "columns: gap_mm is %d to %d" % COLUMN_GAP_MM,
+                           i=i, at=at, range=list(COLUMN_GAP_MM))
         kw["gap_mm"] = float(v["gap_mm"])
+    if "widths_mm" in v:
+        ws = v["widths_mm"]
+        if not isinstance(ws, (list, tuple)) or len(ws) != count:
+            raise DocError("bad_input", "columns: widths_mm is a list of %d widths (count=%d)" % (count, count),
+                           i=i, at=at)
+        if not all(_in(w, *COLUMN_WIDTH_MM) for w in ws):
+            raise DocError("bad_input", "columns: each width in widths_mm is %d to %d mm" % COLUMN_WIDTH_MM,
+                           i=i, at=at, range=list(COLUMN_WIDTH_MM))
+        if "gaps_mm" in v:
+            gs = v["gaps_mm"]
+            if not isinstance(gs, (list, tuple)) or len(gs) != count - 1:
+                raise DocError("bad_input", "columns: gaps_mm is a list of %d gaps (count - 1)" % (count - 1),
+                               i=i, at=at)
+            if not all(_in(g, *COLUMN_GAP_MM) for g in gs):
+                raise DocError("bad_input", "columns: each gap in gaps_mm is %d to %d mm" % COLUMN_GAP_MM,
+                               i=i, at=at, range=list(COLUMN_GAP_MM))
+            gaps_hu = [_mm_hu(g) for g in gs]
+        else:
+            g_hu = _mm_hu(v["gap_mm"]) if "gap_mm" in v else 0
+            gaps_hu = [g_hu] * (count - 1)
+        kw["sizes_hu"] = [(_mm_hu(w), gaps_hu[idx] if idx < count - 1 else 0) for idx, w in enumerate(ws)]
     if "line" in v:
         if not isinstance(v["line"], bool):
             raise DocError("bad_input", "columns: line (구분선) is true or false", i=i, at=at)
@@ -3583,6 +3616,111 @@ def _columns_kwargs(op, i, at):
                                candidates=list(allowed))
             kw[k] = x
     return kw
+
+
+def _expected_col_pr(kw):
+    count = kw["count"]
+    sizes = [(int(w), int(g)) for w, g in kw.get("sizes_hu", ())]
+    if sizes:
+        same_sz = "0"
+        same_gap = sizes[0][1]
+    else:
+        same_sz = "1"
+        same_gap = _mm_hu(kw["gap_mm"]) if "gap_mm" in kw else (0 if count == 1 else 1134)
+    line = ("SOLID", "0.12 mm", "#000000") if kw.get("line") else None
+    return {
+        "type": kw.get("kind", "NEWSPAPER"),
+        "layout": kw.get("layout", "LEFT"),
+        "count": count,
+        "same_sz": same_sz,
+        "same_gap": same_gap,
+        "line": line,
+        "sizes": sizes,
+    }
+
+
+def _col_pr_end(s, start):
+    """End offset in `s` of the <hp:colPr ...> element starting at `start`."""
+    m = re.match(r"<[\w:.-]*colPr\b[^<>]*>", s[start:])
+    if not m:
+        return start
+    if m.group(0).endswith("/>"):
+        return start + m.end()
+    close = re.search(r"</[\w:.-]*colPr\s*>", s[start + m.end():])
+    return (start + m.end() + close.end()) if close else len(s)
+
+
+def _parse_col_pr(raw):
+    """Parsed attributes and children of one <hp:colPr> element, or None if malformed."""
+    end_open = raw.find(">")
+    if end_open < 0:
+        return None
+    open_tag = raw[:end_open + 1]
+    body = "" if open_tag.endswith("/>") else raw[end_open + 1:raw.rfind("<")]
+    col_type = _attr(open_tag, "type")
+    layout = _attr(open_tag, "layout")
+    col_count = _int_attr(open_tag, "colCount")
+    same_sz = _attr(open_tag, "sameSz")
+    same_gap = _int_attr(open_tag, "sameGap")
+    if (col_type not in COLUMN_KINDS or layout not in COLUMN_LAYOUTS
+            or col_count is None or not (COLUMN_COUNT[0] <= col_count <= COLUMN_COUNT[1])
+            or same_sz not in ("0", "1") or same_gap is None or same_gap < 0):
+        return None
+    lines = re.findall(r"<[\w:.-]*colLine\b[^<>]*/?>", body)
+    if len(lines) > 1:
+        return None
+    if lines:
+        ltag = lines[0]
+        line = (_attr(ltag, "type"), _attr(ltag, "width"), (_attr(ltag, "color") or "").upper())
+        if not all(line):
+            return None
+    else:
+        line = None
+    sizes = []
+    for sm in re.finditer(r"<[\w:.-]*colSz\b[^<>]*/?>", body):
+        w = _int_attr(sm.group(0), "width")
+        g = _int_attr(sm.group(0), "gap")
+        if w is None or g is None:
+            return None
+        sizes.append((w, g))
+    if same_sz == "1" and sizes:
+        return None
+    if same_sz == "0" and len(sizes) != col_count:
+        return None
+    return {
+        "type": col_type,
+        "layout": layout,
+        "count": col_count,
+        "same_sz": same_sz,
+        "same_gap": same_gap,
+        "line": line,
+        "sizes": sizes,
+    }
+
+
+def _col_prs_in(d, p):
+    """[(offset_in_p, parsed_col_pr)] of direct <hp:colPr> controls in paragraph `p`."""
+    s = d.secs[p.si]
+    out = []
+    for m in re.finditer(r"<[\w:.-]*colPr\b[^>]*>", s[p.start:p.end]):
+        pos = p.start + m.start()
+        host = next((q for q in reversed(d.sec_paras[p.si]) if q.start < pos < q.end), None)
+        if host is not p:
+            continue
+        end_pos = _col_pr_end(s, pos)
+        out.append((m.start(), _parse_col_pr(s[pos:end_pos])))
+    return out
+
+
+def _governing_col_pr(d, p):
+    """(host_para, parsed_col_pr) of the <hp:colPr> governing body paragraph `p` in its section, or (None, None)."""
+    last = (None, None)
+    for q in d.top:
+        if q.si != p.si or q.start > p.start:
+            continue
+        for _off, c in _col_prs_in(d, q):
+            last = (q, c)
+    return last
 
 
 #: 머리말/꼬리말 (Ctrl+N,H) and 쪽 번호 매기기 (Ctrl+N,P): the values hnc_edit takes.
@@ -4695,14 +4833,17 @@ def _plan_op(doc, cl, i, name, op, at):
             if not any(a.i == i for a in acts):
                 raise DocError("bad_input", "%s has no characters to shape" % at, i=i, at=at)
     elif name in ("page_setup", "columns", "break"):
-        known = {"page_setup": ("set",), "columns": ("set",), "break": ("kind", "expect")}[name]
+        known = {"page_setup": ("set",), "columns": ("set", "split"), "break": ("kind", "expect")}[name]
         extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
         if extra:
             raise DocError("bad_input", "%s takes %s, not %s" % (name, ", ".join(("at",) + known), extra[0]),
-                           i=i, at=at, candidates=list(known))
+                           i=i, at=at, candidates=_cands_near(list(known), extra[0]) or list(known))
         if name == "page_setup":
             kw = _page_setup_kwargs(op, i, at)
         elif name == "columns":
+            if "split" in op and not isinstance(op["split"], bool):
+                raise DocError("bad_input", "columns: split is true or false", i=i, at=at)
+            split = bool(op.get("split", False))
             kw = _columns_kwargs(op, i, at)
         else:
             kind = op.get("kind")
@@ -4725,8 +4866,26 @@ def _plan_op(doc, cl, i, name, op, at):
                 a.page_setup = (p.si, {k: kw[k] for k in ("start_page", "border") if k in kw})
             acts.append(a)
         elif name == "columns":
+            for s2, pos, j, op2, _at2 in cl.touched:
+                if j != i and s2 == p.si and pos == p.start and op2 == "columns":
+                    cl._conflict(i, name, j, op2, at)
+            sec_top = [q for q in doc.top if q.si == p.si]
+            if split:
+                if p is sec_top[0]:
+                    raise DocError("bad_address",
+                                   "columns: %s starts its section already; omit split to change the section's "
+                                   "column definition" % at, i=i, at=at)
+                if _col_prs_in(doc, p):
+                    raise DocError("bad_input",
+                                   "columns: %s already starts a column definition; omit split to change it" % at,
+                                   i=i, at=at)
             _section_claim(cl, p.si, i, name, at)
-            acts.append(_Act(i, name, at, p, p.start, side=2, steps=[go, {"op": "set_columns", "kwargs": kw}]))
+            cl.touch(p.si, p.start, i, name, at)
+            steps = [go, ["break_coldef"], {"op": "set_columns", "kwargs": kw}] if split else [
+                go, {"op": "set_columns", "kwargs": kw}]
+            a = _Act(i, name, at, p, p.start, side=2, steps=steps)
+            a.columns = (p, split, _expected_col_pr(kw))
+            acts.append(a)
         else:
             _check_expect(op, i, at, p.text)
             for s2, pos, j, op2, at2 in cl.touched:
@@ -5464,6 +5623,8 @@ def _verify(doc, newdoc, acts):
         return False
     if not _verify_page_setup(doc, newdoc, acts):
         return False
+    if not _verify_columns(doc, newdoc, acts, st):
+        return False
     if not _verify_hide(doc, newdoc, acts, st):
         return False
     if not _verify_new_numbers(doc, newdoc, acts, st):
@@ -6157,6 +6318,97 @@ def _verify_page_setup(doc, newdoc, acts):
     return True
 
 
+_COL_PR_AT_START = re.compile(
+    r"^\s*<[\w:.-]*p\b[^<>]*>\s*<[\w:.-]*run\b[^<>]*>\s*<[\w:.-]*ctrl\b[^<>]*>\s*$"
+)
+
+
+def _verify_columns(doc, newdoc, acts, st):
+    """Each columns op wrote the requested <hp:colPr> governing `at` (and with `split`, placed a new <hp:colPr>
+    at the start of `at` while leaving the <hp:colPr> governing the paragraph just before `at` unchanged),
+    kept paragraph texts unchanged, and left all other <hp:colPr> controls untouched."""
+    col_acts = [a for a in acts if a.columns]
+    if not col_acts:
+        return True
+    added = sum(1 for a in col_acts if a.columns[1] or _governing_col_pr(doc, a.columns[0])[0] is None)
+    if sum(len(_col_prs_in(newdoc, nq)) for nq in newdoc.paras) != (
+        sum(len(_col_prs_in(doc, q)) for q in doc.paras) + added
+    ):
+        return False
+    changed_text = {id(a.text_of) for a in acts if a.text_of is not None}
+    mod_by_p = {}
+    for a in col_acts:
+        p, split, want_col = a.columns
+        np = _new_para(doc, newdoc, p, st)
+        if np is None or not np.top:
+            return False
+        if id(p) not in changed_text and np.text != p.text:
+            return False
+        gov_np, got_col = _governing_col_pr(newdoc, np)
+        if got_col is None or got_col != want_col:
+            return False
+        if split:
+            if gov_np is not np:
+                return False
+            c_in = _col_prs_in(newdoc, np)
+            if len(c_in) != 1 or c_in[0][1] != want_col:
+                return False
+            off = c_in[0][0]
+            if not _COL_PR_AT_START.match(newdoc.secs[np.si][np.start:np.start + off]):
+                return False
+            if any(np.start + off >= xp for xp in np.xpos):
+                return False
+            sec_top = [q for q in doc.top if q.si == p.si]
+            idx = sec_top.index(p)
+            if idx < 1:
+                return False
+            prev_p = sec_top[idx - 1]
+            prev_np = _new_para(doc, newdoc, prev_p, st)
+            if prev_np is None:
+                return False
+            if _governing_col_pr(newdoc, prev_np)[1] != _governing_col_pr(doc, prev_p)[1]:
+                return False
+            if id(p) in mod_by_p:
+                return False
+            mod_by_p[id(p)] = [want_col]
+        else:
+            gov_p, _old_col = _governing_col_pr(doc, p)
+            if gov_p is None:
+                # no column definition before `at` (a hand-made section): the engine adds Hancom's default to
+                # the section's first paragraph and changes it, so that paragraph must now hold just this one
+                first = next(q for q in doc.top if q.si == p.si)
+                if gov_np is not _new_para(doc, newdoc, first, st) or id(first) in mod_by_p:
+                    return False
+                c_in = _col_prs_in(newdoc, gov_np)
+                if len(c_in) != 1 or any(gov_np.start + c_in[0][0] >= xp for xp in gov_np.xpos):
+                    return False
+                mod_by_p[id(first)] = [want_col]
+                continue
+            if gov_np is not _new_para(doc, newdoc, gov_p, st):
+                return False
+            c_in = _col_prs_in(newdoc, gov_np)
+            if not c_in or any(gov_np.start + c_in[-1][0] >= xp for xp in gov_np.xpos):
+                return False
+            old_list = [c for _off, c in _col_prs_in(doc, gov_p)]
+            if not old_list or id(gov_p) in mod_by_p:
+                return False
+            mod_by_p[id(gov_p)] = old_list[:-1] + [want_col]
+    for q in doc.paras:
+        nq = _new_para(doc, newdoc, q, st)
+        if nq is None:
+            if id(q) in mod_by_p:
+                return False
+            continue
+        before_c = [c for _off, c in _col_prs_in(doc, q)]
+        after_c = [c for _off, c in _col_prs_in(newdoc, nq)]
+        if None in after_c:
+            return False
+        want_list = mod_by_p.get(id(q), before_c)
+        if after_c != want_list:
+            return False
+    return True
+
+
 def _verify_hide(doc, newdoc, acts, st):
     """Each hide op added one <hp:pageHiding> with the requested flags in the addressed body paragraph, and left
     every other paragraph's pageHiding controls unchanged."""
@@ -6455,7 +6707,8 @@ def _remap_result(doc, newdoc, acts):
         return remap, False
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
             or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc
-            or a.char_shape or a.para_shape or a.page_setup or a.hide or a.new_num or a.picture or a.formula]
+            or a.char_shape or a.para_shape or a.page_setup or a.columns or a.hide or a.new_num or a.picture
+            or a.formula]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)
