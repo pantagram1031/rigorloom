@@ -142,7 +142,8 @@ def test_blanks_editing_and_keyboard_decisions(browser, server):
         _wait_for_cell_geometry(page)
         expect(page.get_by_test_id("status-font-sub")).to_contain_text("글꼴 대체")
         expect(page.get_by_test_id("blanks-counter")).to_contain_text("빈칸")
-        expected_heading = "1쪽 · 표 1" if os.environ.get("RIGORLOOM_HWP_ENGINE") else "표 1"
+        # Page 1 is measured once it renders, with or without the engine.
+        expected_heading = "1쪽 · 표 1"
         expect(page.get_by_test_id("blanks-group-heading").first).to_have_text(expected_heading)
         agency = page.get_by_test_id("blanks-agency-toggle")
         expect(agency).to_have_attribute("aria-expanded", "false")
