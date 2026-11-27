@@ -563,6 +563,12 @@ def charpr_faces(profile: dict) -> dict:
     return faces if isinstance(faces, dict) else {}
 
 
+def charpr_heights(profile: dict) -> dict:
+    """charPr id -> height_pt, as the HWPX header declares it."""
+    heights = profile.get("charpr_heights")
+    return heights if isinstance(heights, dict) else {}
+
+
 def region_runs_with_faces(profile: dict) -> list:
     """``full_text`` regions, each run carrying the face its charPr resolves to.
 
@@ -582,6 +588,7 @@ def region_runs_with_faces(profile: dict) -> list:
     which means nothing looked, and the two stay apart here as everywhere else.
     """
     faces = charpr_faces(profile)
+    heights = charpr_heights(profile)
     out = []
     for entry in profile.get("full_text", []) or []:
         if not isinstance(entry, dict):
@@ -590,11 +597,18 @@ def region_runs_with_faces(profile: dict) -> list:
         row = dict(entry)
         runs = row.get("runs")
         if isinstance(runs, list):
-            row["runs"] = [
-                dict(run, charpr_face=faces.get(str(run.get("charpr"))))
-                if isinstance(run, dict) else run
-                for run in runs
-            ]
+            enriched = []
+            for run in runs:
+                if isinstance(run, dict):
+                    cid = str(run.get("charpr"))
+                    item = dict(run, charpr_face=faces.get(cid))
+                    height_pt = heights.get(cid)
+                    if height_pt is not None:
+                        item["charpr_height_pt"] = height_pt
+                    enriched.append(item)
+                else:
+                    enriched.append(run)
+            row["runs"] = enriched
         out.append(row)
     return out
 
@@ -684,23 +698,28 @@ def document_graph(profile: dict, session: Session) -> dict:
 def editable_regions(profile: dict, session: Session) -> dict:
     """EditableRegion list (§3.5): fill_target cells with their preflight."""
     faces = charpr_faces(profile)
+    heights = charpr_heights(profile)
     regions = []
     for table in profile.get("table_map", []):
         for cell in table.get("cells", []):
             if cell.get("classification") != "fill_target":
                 continue
             addr = cell.get("addr") or {}
+            cid = str(cell.get("charpr"))
             region = {
                 "kind": "cell",
                 "table": table.get("index"),
                 "row": addr.get("row"),
                 "col": addr.get("col"),
                 "charPr": cell.get("charpr"),
-                "charPrFace": faces.get(str(cell.get("charpr"))),
+                "charPrFace": faces.get(cid),
                 "charPrSuggested": cell.get("charpr_suggested"),
                 "charPrSuggestedFace": faces.get(str(cell.get("charpr_suggested"))),
                 "scriptAnomaly": cell.get("script_anomaly"),
             }
+            height_pt = heights.get(cid)
+            if height_pt is not None:
+                region["charPrHeightPt"] = height_pt
             if "color_anomaly" in cell:
                 region["colorAnomaly"] = cell["color_anomaly"]
             if "color_value" in cell:

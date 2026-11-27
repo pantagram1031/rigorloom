@@ -68,7 +68,20 @@ def test_rendered_page_shows_source_keeps_image_and_uses_local_caret(browser, se
         page.mouse.click(cell_rect["x"] + cell_rect["width"] * 0.13,
                          cell_rect["y"] + cell_rect["height"] * 0.35)
         expect(page.locator(".rl-raster-caret")).to_be_visible()
-        expect(page.get_by_test_id("seat-input")).to_be_visible()
+        seat = page.get_by_test_id("seat-input")
+        expect(seat).to_be_visible()
+        seat_style = seat.evaluate(
+            """(el) => {
+                const cs = getComputedStyle(el);
+                return {
+                    fontSize: parseFloat(cs.fontSize),
+                    borderTopStyle: cs.borderTopStyle,
+                    borderTopWidth: parseFloat(cs.borderTopWidth),
+                };
+            }"""
+        )
+        assert abs(seat_style["fontSize"] - (9.0 * 96 / 72)) <= 1.0, seat_style
+        assert seat_style["borderTopStyle"] == "none" and seat_style["borderTopWidth"] == 0, seat_style
         page.keyboard.press("Escape")
         held_url = raster.get_attribute("src")
         assert not any(operation in {"hit", "caret"} for operation, _ in requests)
@@ -133,6 +146,18 @@ def test_engine_body_line_edit_queues_the_document_run(browser, server):
         page.mouse.click(bounds["x"] + 85.7 * scale, bounds["y"] + 127 * scale)
         entry = page.get_by_test_id("seat-input")
         expect(entry).to_have_value("[F01] 정렬 — 왼쪽 (align LEFT)")
+        entry_style = entry.evaluate(
+            """(el) => {
+                const cs = getComputedStyle(el);
+                return {
+                    fontSize: parseFloat(cs.fontSize),
+                    borderTopStyle: cs.borderTopStyle,
+                    borderTopWidth: parseFloat(cs.borderTopWidth),
+                };
+            }"""
+        )
+        assert abs(entry_style["fontSize"] - (11.0 * 96 / 72)) <= 1.0, entry_style
+        assert entry_style["borderTopStyle"] == "none" and entry_style["borderTopWidth"] == 0, entry_style
         assert entry.evaluate("(input) => input.selectionStart") == 0
         with page.expect_request(lambda req: req.url.endswith("/api/doc/preview")) as request:
             entry.fill("검토 제목")
@@ -215,6 +240,8 @@ def test_engine_cell_stays_over_held_raster_until_its_preview_draws(browser, ser
         cell.click()
         entry = page.get_by_test_id("seat-input")
         expect(entry).to_have_css("writing-mode", "vertical-rl")
+        entry_font_px = entry.evaluate("(el) => parseFloat(getComputedStyle(el).fontSize)")
+        assert abs(entry_font_px - (9.0 * 96 / 72)) <= 1.0, entry_font_px
         paper = page.get_by_test_id("paper").bounding_box()
         edit_rect = entry.bounding_box()
         assert abs((edit_rect["x"] - paper["x"]) / paper["width"] - 60 / 595) < 0.002
@@ -245,7 +272,20 @@ def test_engine_cell_stays_over_held_raster_until_its_preview_draws(browser, ser
 
         # Releasing focus keeps the queued text on paper until a redraw succeeds.
         entry.press("Enter")
-        expect(page.get_by_test_id("engine-edit-pending")).to_have_text("검토팀")
+        pending = page.get_by_test_id("engine-edit-pending")
+        expect(pending).to_have_text("검토팀")
+        pending_style = pending.evaluate(
+            """(el) => {
+                const cs = getComputedStyle(el);
+                return {
+                    fontSize: parseFloat(cs.fontSize),
+                    borderTopStyle: cs.borderTopStyle,
+                    borderTopWidth: parseFloat(cs.borderTopWidth),
+                };
+            }"""
+        )
+        assert abs(pending_style["fontSize"] - entry_font_px) <= 1.0, pending_style
+        assert pending_style["borderTopStyle"] == "none" and pending_style["borderTopWidth"] == 0, pending_style
         with page.expect_request(lambda req: "/api/doc/render?" in req.url and "previewId=" in req.url):
             page.get_by_test_id("zoom-in").click()
         expect(raster).not_to_have_attribute("src", first_preview_url)

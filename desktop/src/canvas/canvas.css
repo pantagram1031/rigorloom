@@ -317,8 +317,18 @@
 }
 
 .rl-engine-edit.rl-seat-input {
+  min-height: 0;
   padding: 0 2px;
+  border: 0;
+  background: var(--paper);
+  color: var(--paper-ink);
   line-height: 1.1;
+}
+
+.rl-engine-edit.rl-seat-input.rl-seat-input--readonly {
+  background: var(--seat);
+  color: var(--paper-ink);
+  border: 1px dashed var(--line-control);
 }
 
 .rl-engine-edit-pending,
@@ -329,6 +339,7 @@
 .rl-engine-edit-pending {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  outline: none;
 }
 
 .rl-engine-changed-rect {
@@ -573,12 +584,30 @@
   min-height: 22px;
   box-sizing: border-box;
   padding: 2px 4px;
-  border: 1.5px solid var(--paper-ink);
+  border: 0;
   border-radius: var(--radius-0);
   background: var(--paper);
   color: var(--paper-ink);
   font-size: inherit;
   line-height: inherit;
+  outline: none;
+}
+
+.rl-seat-input:not(.rl-seat-input--readonly):focus,
+.rl-seat-input:not(.rl-seat-input--readonly):focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.rl-seat-input--readonly {
+  background: var(--seat);
+  color: var(--paper-ink);
+  border: 1px dashed var(--line-control);
+  cursor: default;
+}
+
+.rl-seat-input--readonly:focus,
+.rl-seat-input--readonly:focus-visible {
   outline: none;
 }
 
