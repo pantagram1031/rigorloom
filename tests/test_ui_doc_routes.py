@@ -668,18 +668,19 @@ def test_preview_addresses_lead_paragraphs_of_object_holding_cell(serving, fake_
         {"op": "set", "at": "t0/r2/c0/p19", "text": ""},
     ]]
 
-    # Too many lines (more than the 20 reserved slots) is refused by preview.
+    # More lines than the 20 reserved slots: like apply, the lines past the
+    # last slot become new paragraphs right after it (typed as line breaks).
     recorded_ops.clear()
-    too_many_lines = "\n".join(f"줄 {i}" for i in range(len(slots) + 1))
-    refuse(
-        request(serving, "preview", {
-            **base,
-            "ops": [{"at": "t0/r2/c0", "text": too_many_lines}],
-        }),
-        400,
-        "bad_input",
-    )
-    assert recorded_ops == []
+    lines = [f"줄 {i}" for i in range(len(slots) + 2)]
+    status, _, preview = request(serving, "preview", {
+        **base,
+        "ops": [{"at": "t0/r2/c0", "text": "\n".join(lines)}],
+    })
+    assert status == 200, preview
+    assert recorded_ops == [[
+        *({"op": "set", "at": f"t0/r2/c0/p{slot}", "text": lines[k]} for k, slot in enumerate(slots[:-1])),
+        {"op": "set", "at": f"t0/r2/c0/p{slots[-1]}", "text": "\n".join(lines[len(slots) - 1:])},
+    ]]
 
     # Leaf cell without objects keeps addressing the cell itself.
     recorded_ops.clear()
@@ -692,7 +693,7 @@ def test_preview_addresses_lead_paragraphs_of_object_holding_cell(serving, fake_
 
 
 @pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
-def test_installed_engine_previews_object_holding_body_cell_at_lead_paragraph(serving):
+def test_installed_engine_previews_object_holding_body_cell_at_lead_paragraph(serving, tmp_path):
     root = serving.bridge.current_root()
     session = Session.open_path(root, str(GONGMUN))
     base = binding(session)
@@ -712,6 +713,32 @@ def test_installed_engine_previews_object_holding_body_cell_at_lead_paragraph(se
     assert next(box for box in geometry["boxes"] if box["at"] == "t0/r2/c0/p19")["text"] == ""
     assert any(box["at"] == "t0/r2/c0/t0" and box.get("text") == "직인" for box in geometry["boxes"])
     assert any(box["at"] == "t0/r2/c0/t1" and box.get("text") == "발신명의" for box in geometry["boxes"])
+
+    lines = [f"줄 {i}" for i in range(22)]
+    status, _, more = request(serving, "preview", {
+        **base,
+        "ops": [{"at": "t0/r2/c0", "text": "\n".join(lines)}],
+    })
+    assert status == 200, more
+    boxes = {}
+    for page in sorted(more["changedPages"]):
+        status, _, geo = request(serving, "geometry", {**base, "previewId": more["previewId"], "page": page})
+        assert status == 200
+        for box in geo["boxes"]:
+            boxes.setdefault(box["at"], box.get("text"))
+    assert [boxes.get(f"t0/r2/c0/p{k}") for k in range(22)] == lines
+    # Apply (preedit fill_cells) puts the same lines in the same paragraphs.
+    import sys
+
+    engine_scripts = REPO / "engine" / "scripts"
+    if str(engine_scripts) not in sys.path:
+        sys.path.insert(0, str(engine_scripts))
+    import preedit
+
+    filled = tmp_path / "filled.hwpx"
+    preedit.fill_cells(session.source, filled, [(2, 0, lines)], table=0, overwrite=True,
+                       charpr_per_cell={(2, 0): "23"})
+    assert [rt_ui_doc.rt_doc.read(filled, f"t0/r2/c0/p{k}")["blocks"][0]["text"] for k in range(22)] == lines
 
     core = RuntimeCore(root, engine_root=REPO)
     plan = core.plan_propose(
