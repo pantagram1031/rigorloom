@@ -3259,7 +3259,12 @@ PICTURE_VERT_RELS = ("PARA", "PAGE", "PAPER")
 PICTURE_HORZ_RELS = ("COLUMN", "PARA", "PAGE", "PAPER")
 PICTURE_OFFSET_MM = (-1000, 1000)
 INSERT_PICTURE_KEYS = ("path", "width_mm", "height_mm", "offset", "wrap", "vert_rel", "horz_rel", "x_mm", "y_mm")
-PICTURE_SET_KEYS = ("width_mm", "height_mm", "keep_ratio", "wrap", "inline", "vert_rel", "horz_rel", "x_mm", "y_mm")
+PICTURE_SET_KEYS = ("width_mm", "height_mm", "keep_ratio", "wrap", "inline", "vert_rel", "horz_rel", "x_mm", "y_mm",
+                    "effect", "bright", "contrast")
+#: 그림 효과 (색 모드) names and the hc:img effect value Hancom writes for each (pc3 objects/pictures)
+PICTURE_EFFECTS = {"original": "REAL_PIC", "gray": "GRAY_SCALE", "black_white": "BLACK_WHITE"}
+#: 밝기 / 대비 range of Hancom's 그림 dialog; Hancom writes the number as hc:img bright / contrast (pc3 picture_props)
+PICTURE_ADJUST_RANGE = (-100, 100)
 FORMULA_FUNCS = ("SUM", "AVG", "PRODUCT")
 FORMULA_ENGINE_FUNC = {"SUM": "Sum", "AVG": "Avg", "PRODUCT": "Pro"}
 FORMULA_MAX = 200
@@ -3390,6 +3395,9 @@ def _parse_pic(raw):
         "vert_offset": _int_attr(pos_tag, "vertOffset"),
         "horz_offset": _int_attr(pos_tag, "horzOffset"),
         "bin_ref": _attr(img_tag, "binaryItemIDRef") if img_tag else None,
+        "effect": _attr(img_tag, "effect") if img_tag else None,
+        "bright": _int_attr(img_tag, "bright"),
+        "contrast": _int_attr(img_tag, "contrast"),
     }
 
 
@@ -5400,6 +5408,13 @@ def _plan_op(doc, cl, i, name, op, at):
             if k in want and not _in(want[k], *PICTURE_OFFSET_MM):
                 raise DocError("bad_input", "picture: %s is %d to %d mm" % ((k,) + PICTURE_OFFSET_MM),
                                i=i, at=at, range=list(PICTURE_OFFSET_MM))
+        if "effect" in want and (not isinstance(want["effect"], str) or want["effect"] not in PICTURE_EFFECTS):
+            raise DocError("bad_input", "picture: effect is one of %s" % ", ".join(PICTURE_EFFECTS), i=i, at=at,
+                           candidates=_cands_near(list(PICTURE_EFFECTS), str(want["effect"])) or list(PICTURE_EFFECTS))
+        for k in ("bright", "contrast"):
+            if k in want and (not _is_int(want[k]) or not PICTURE_ADJUST_RANGE[0] <= want[k] <= PICTURE_ADJUST_RANGE[1]):
+                raise DocError("bad_input", "picture: %s is a whole number from %d to %d" % ((k,) + PICTURE_ADJUST_RANGE),
+                               i=i, at=at, range=list(PICTURE_ADJUST_RANGE))
         if want.get("inline") is True and any(k in want for k in ("wrap", "vert_rel", "horz_rel", "x_mm", "y_mm")):
             raise DocError("bad_input",
                            "picture: inline: true (글자처럼 취급) cannot be combined with wrap, vert_rel, horz_rel, x_mm or y_mm",
@@ -5472,6 +5487,11 @@ def _plan_op(doc, cl, i, name, op, at):
             pic_kw["wrap"] = wrap
         if treat_as_char is not None:
             pic_kw["treat_as_char"] = treat_as_char
+        if "effect" in want:
+            pic_kw["effect"] = PICTURE_EFFECTS[want["effect"]]
+        for k in ("bright", "contrast"):
+            if k in want:
+                pic_kw[k] = int(want[k])
         pos_kw = {}
         if vrel is not None:
             pos_kw["vertRelTo"] = vrel
@@ -5504,6 +5524,9 @@ def _plan_op(doc, cl, i, name, op, at):
             "horz_rel": hrel if hrel is not None else base_pic["horz_rel"],
             "vert_offset": _mm_hu(want["y_mm"]) if "y_mm" in want else base_pic["vert_offset"],
             "horz_offset": _mm_hu(want["x_mm"]) if "x_mm" in want else base_pic["horz_offset"],
+            "effect": PICTURE_EFFECTS[want["effect"]] if "effect" in want else base_pic["effect"],
+            "bright": int(want["bright"]) if "bright" in want else base_pic["bright"],
+            "contrast": int(want["contrast"]) if "contrast" in want else base_pic["contrast"],
         }
         a = _Act(i, name, at, p, p.start, side=2, steps=steps)
         a.picture = ("modify", p, expected_pic)
@@ -6745,6 +6768,8 @@ def _check_modified_pic(pic, exp):
     if pic.get("vert_rel") != exp["vert_rel"] or pic.get("horz_rel") != exp["horz_rel"]:
         return False
     if pic.get("vert_offset") != exp["vert_offset"] or pic.get("horz_offset") != exp["horz_offset"]:
+        return False
+    if any(pic.get(k) != exp[k] for k in ("effect", "bright", "contrast")):
         return False
     return True
 
