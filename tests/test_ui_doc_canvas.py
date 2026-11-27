@@ -58,7 +58,10 @@ def test_rendered_page_shows_source_keeps_image_and_uses_local_caret(browser, se
         _open_sample(page, server)
         raster = page.get_by_test_id("page-raster")
         expect(raster).to_be_visible()
-        expect(page.get_by_test_id("status-page-source")).to_contain_text("대체 글꼴 사용")
+        # The source is named once, in the document strip; fallback fonts are the
+        # font status button's to report, not a second note beside the source.
+        expect(page.get_by_test_id("page-source")).to_have_text("문서 엔진으로 그린 쪽")
+        expect(page.get_by_test_id("status-canvas-left")).not_to_contain_text("문서 엔진으로 그린 쪽")
         expect(page.get_by_test_id("paper")).to_have_attribute("data-engine-geometry", "true")
         cell = page.locator('[data-cell-key="c:0:5:1"]')
         paper = page.get_by_test_id("paper").bounding_box()
