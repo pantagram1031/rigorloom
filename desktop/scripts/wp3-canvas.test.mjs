@@ -1659,6 +1659,13 @@ test("status bar character shape: cell region face and size, else graph cell tex
   assert.deepEqual(pageModel.cellCharShape(inspect, null), { face: "함초롬바탕", sizePt: 10 });
   assert.deepEqual(pageModel.cellCharShape(inspect, 3, 0, 0), { face: "함초롬바탕", sizePt: 10 });
   assert.deepEqual(pageModel.cellCharShape(null, null), { face: null, sizePt: null });
+  const graphed = {
+    graph: { tables: [{ index: 1, cells: [{ addr: { row: 2, col: 3 }, classification: "static" }] }] },
+  };
+  assert.equal(pageModel.graphCellAt(graphed, 1, 2, 3)?.classification, "static");
+  assert.equal(pageModel.graphCellAt(graphed, 1, 2, 4), undefined);
+  assert.equal(pageModel.graphCellAt(graphed, 0, 2, 3), undefined);
+  assert.equal(pageModel.graphCellAt(null, 1, 2, 3), undefined);
 
   assert.equal(pageModel.formatCharShape({ face: "HY헤드라인M", sizePt: 15 }), "HY헤드라인M 15.0pt");
   assert.equal(pageModel.formatCharShape({ face: "함초롬바탕", sizePt: 10.5 }), "함초롬바탕 10.5pt");

@@ -31,6 +31,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T258:** In editor v2, the status bar no longer gives a made-up `빈칸 N` name to a cell that is not a blank. A blank still shows its name; a cell with the form's printed text (a row title, or a guide line such as the form's header) shows only its position and character shape.
 - **T257:** In editor v2, how the page was drawn is named once, in the document strip above the page, instead of again at the left of the status bar, and the extra note that fallback fonts are in use is gone from both: the 글꼴 대체 button in the status bar already reports and explains substituted fonts. The status bar's left side now holds only the position, the blank's name, the character shape and the character count.
 - **T254:** In editor v2, table cells that are not blanks to fill now edit and report in the status bar at their own text's character face and size before falling back to the body baseline: the form profile records per-cell `text_charpr` from the first non-whitespace run in the cell's own paragraphs, and `document_graph` cells carry `textCharPr`, `textCharPrFace` and `textCharPrHeightPt`.
 - **T253:** In editor v2, the status bar shows the character shape of the hovered, selected or edited cell, face then size as the 서식 도구 bar shows it (`함초롬바탕 10.0pt`), taken from the cell's own charPr where the cell is a blank to fill and otherwise from the body text's; outside a cell it shows the body text's.
