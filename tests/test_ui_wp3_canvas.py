@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from contextlib import contextmanager
 from hashlib import sha256
@@ -159,6 +160,7 @@ def test_blanks_editing_and_keyboard_decisions(browser, server):
         expect(coop.locator(".rl-blank-loc")).to_have_text("6행 2열")
         coop.hover()
         expect(page.get_by_test_id("status-seat")).to_contain_text("협조자 1")
+        expect(page.get_by_test_id("status-char-shape")).to_have_text(re.compile(r"\d+\.\dpt$"))
         assert "rl-cell--hovered" in page.locator(COOP_CELL).get_attribute("class")
         coop.click()
 

@@ -1551,3 +1551,33 @@ test("strip: the page source label never repeats the word the preview grade labe
     }
   }
 });
+
+test("status bar character shape: cell region face and size, else the body baseline", () => {
+  const { pageModel, wp3 } = loadWp3Stack();
+  const inspect = {
+    summary: { baselineCharPr: { id: "0", height_pt: 10, signature: null, face: { hangul: "함초롬바탕" } } },
+    regions: {
+      documentHash: "h",
+      sessionId: "s",
+      regions: [
+        { kind: "cell", table: 0, row: 0, col: 0, charPrFace: { hangul: "HY헤드라인M" }, charPrHeightPt: 15 },
+        { kind: "cell", table: 0, row: 1, col: 0, charPrFace: null },
+      ],
+    },
+  };
+  assert.deepEqual(pageModel.cellCharShape(inspect, 0, 0, 0), { face: "HY헤드라인M", sizePt: 15 });
+  // A region that declares no face or size falls back to the body baseline.
+  assert.deepEqual(pageModel.cellCharShape(inspect, 0, 1, 0), { face: "함초롬바탕", sizePt: 10 });
+  // Outside a cell, or in a cell with no region, the baseline.
+  assert.deepEqual(pageModel.cellCharShape(inspect, null), { face: "함초롬바탕", sizePt: 10 });
+  assert.deepEqual(pageModel.cellCharShape(inspect, 3, 0, 0), { face: "함초롬바탕", sizePt: 10 });
+  assert.deepEqual(pageModel.cellCharShape(null, null), { face: null, sizePt: null });
+
+  assert.equal(pageModel.formatCharShape({ face: "HY헤드라인M", sizePt: 15 }), "HY헤드라인M 15.0pt");
+  assert.equal(pageModel.formatCharShape({ face: "함초롬바탕", sizePt: 10.5 }), "함초롬바탕 10.5pt");
+  assert.equal(pageModel.formatCharShape({ face: null, sizePt: 12 }), "12.0pt");
+  assert.equal(pageModel.formatCharShape({ face: "바탕", sizePt: null }), "바탕");
+  assert.equal(pageModel.formatCharShape({ face: null, sizePt: null }), null);
+  assert.equal(wp3.wp3t("status_char_shape", "ko", ["바탕 10.0pt"]), "글자 모양: 바탕 10.0pt");
+  assert.equal(wp3.wp3t("status_char_shape", "en", ["바탕 10.0pt"]), "Character shape: 바탕 10.0pt");
+});

@@ -451,6 +451,40 @@ export function formatSeatGroupHeading(
   return wp3t("seat_group_table", lang, [table + 1]);
 }
 
+export interface CharShape {
+  face: string | null;
+  sizePt: number | null;
+}
+
+/** The character shape a cell's text is set in: the cell region's own charPr
+ * face and size, else the document's body baseline. Outside a cell, the
+ * baseline. */
+export function cellCharShape(
+  inspect: Pick<InspectResult, "regions" | "summary"> | null | undefined,
+  table: number | null,
+  row?: number,
+  col?: number,
+): CharShape {
+  const baseline = inspect?.summary?.baselineCharPr;
+  const region = table === null || !inspect
+    ? undefined
+    : inspect.regions.regions.find((r) => r.table === table && r.row === row && r.col === col);
+  const face = region?.charPrFace?.hangul ?? baseline?.face?.hangul ?? null;
+  const size = region?.charPrHeightPt ?? baseline?.height_pt ?? null;
+  return {
+    face: face && face.trim() ? face.trim() : null,
+    sizePt: typeof size === "number" && Number.isFinite(size) && size > 0 ? size : null,
+  };
+}
+
+/** Status-bar text for a character shape, as the 서식 도구 bar shows it:
+ * face then size with one decimal (`함초롬바탕 10.0pt`). Null when neither is known. */
+export function formatCharShape(shape: CharShape): string | null {
+  const size = shape.sizePt === null ? null : `${shape.sizePt.toFixed(1)}pt`;
+  const parts = [shape.face, size].filter((part): part is string => !!part);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 export function formatSeatLocation(
   page: number | null | undefined,
   table: number,
