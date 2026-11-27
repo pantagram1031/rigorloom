@@ -9,9 +9,12 @@ import json
 from pathlib import Path
 import queue
 import re
+import select
+import socket
 import subprocess
 import sys
 import threading
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -255,6 +258,96 @@ def test_http_security_bootstrap_and_static_fallback(tmp_path: Path):
         srv.shutdown_bridge()
         t.join(timeout=5)
 
+
+def _start_bare_bridge(tmp_path: Path) -> tuple[rt_ui.BridgeHTTPServer, threading.Thread]:
+    srv = rt_ui.create_bridge_server(
+        root=tmp_path / "rt",
+        engine_root=REPO_ROOT,
+        port=0,
+        explicit_root=True,
+        prefs_path=tmp_path / "prefs.json",
+        auto_start=False,
+    )
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    return srv, t
+
+
+def _post_head(port: int, headers: dict[str, str]) -> socket.socket:
+    """Send only the head of an untokened POST /rpc; the caller sends any body."""
+    lines = ["POST /rpc HTTP/1.1", f"Host: 127.0.0.1:{port}", "Content-Type: application/json"]
+    lines += [f"{k}: {v}" for k, v in headers.items()]
+    sock = socket.create_connection(("127.0.0.1", port), timeout=30)
+    sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("ascii"))
+    return sock
+
+
+def _read_to_eof(sock: socket.socket) -> bytes:
+    data = b""
+    while chunk := sock.recv(65536):
+        data += chunk
+    return data
+
+
+def test_a_refused_post_reads_its_small_body_before_answering(tmp_path: Path):
+    """The 403 waits for the declared body, so the close after it is not a reset
+    that can reach the client first (Windows aborts the read with WinError 10053)."""
+    srv, t = _start_bare_bridge(tmp_path)
+    try:
+        sock = _post_head(srv.port, {"Content-Length": "2"})
+        try:
+            readable, _, _ = select.select([sock], [], [], 0.3)
+            assert not readable, "the bridge answered before the body it was sent"
+            sock.sendall(b"{}")
+            data = _read_to_eof(sock)
+        finally:
+            sock.close()
+        assert data.startswith(b"HTTP/1.1 403")
+        assert b'"unauthorized"' in data
+    finally:
+        srv.shutdown_bridge()
+        t.join(timeout=5)
+
+
+def test_a_refused_body_that_never_comes_is_waited_on_briefly(tmp_path: Path):
+    srv, t = _start_bare_bridge(tmp_path)
+    try:
+        sock = _post_head(srv.port, {"Content-Length": "10"})
+        try:
+            started = time.monotonic()
+            data = _read_to_eof(sock)
+            elapsed = time.monotonic() - started
+        finally:
+            sock.close()
+        assert data.startswith(b"HTTP/1.1 403")
+        assert elapsed < rt_ui.REFUSED_BODY_DRAIN_SECONDS + 3
+    finally:
+        srv.shutdown_bridge()
+        t.join(timeout=5)
+
+
+@pytest.mark.parametrize("headers", [
+    {"Content-Length": str(rt_ui.REFUSED_BODY_DRAIN_BYTES + 1)},
+    {"Content-Length": "1_0"},
+    {"Content-Length": "-5"},
+    {"Transfer-Encoding": "chunked"},
+], ids=["over-the-cap", "not-digits", "negative", "chunked"])
+def test_a_refused_body_too_large_or_unframed_is_not_read(tmp_path: Path, headers):
+    """Only a small body with a plain Content-Length is drained; the 403 for the
+    rest goes out at once, without reading anything."""
+    srv, t = _start_bare_bridge(tmp_path)
+    try:
+        sock = _post_head(srv.port, headers)
+        try:
+            readable, _, _ = select.select([sock], [], [], rt_ui.REFUSED_BODY_DRAIN_SECONDS / 2)
+            assert readable, "the bridge waited for a body it should not read"
+            data = _read_to_eof(sock)
+        finally:
+            sock.close()
+        assert data.startswith(b"HTTP/1.1 403")
+    finally:
+        srv.shutdown_bridge()
+        t.join(timeout=5)
 
 def test_wheel_fallback_html_and_missing_font_clean_404(tmp_path: Path):
     """When ui_dist/ and desktop/ are absent (wheel without bundle), serve minimal HTML & 404 font cleanly."""
