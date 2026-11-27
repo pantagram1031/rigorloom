@@ -3239,3 +3239,270 @@ def test_engine_insert_picture_placement_and_picture_op(kit, tmp_path, monkeypat
     res_bad_pic = D.edit(out1, ops_mod, base=D.rev_of(out1), out=out_bad_pic)
     assert not res_bad_pic["ok"] and res_bad_pic["error"]["code"] == "internal"
     assert res_bad_pic["error"]["written"] is False and not out_bad_pic.exists()
+
+
+# ============================================================================ 표 계산식 (table.formula)
+def _doc_with_formula_tables(tmp_path):
+    """Copy BASIC and give it a 4x4 table t0 (with empty target cells and one control-only cell) plus a 2x2 table t1."""
+    src = _copy(BASIC, tmp_path, "formula_no_eng.hwpx")
+    d = D._load(src, meta=False)
+    sec = d.secs[0]
+    t0 = d.tables[0]
+
+    def tc(r, c, inner, rs=1, cs=1, hdr=0):
+        return (
+            '<hp:tc name="" header="%d" hasMargin="0" protect="0" editable="0" dirty="0" borderFillIDRef="1">'
+            '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER">'
+            '<hp:p id="%d" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+            '<hp:run charPrIDRef="0">%s</hp:run></hp:p></hp:subList>'
+            '<hp:cellAddr colAddr="%d" rowAddr="%d"/>'
+            '<hp:cellSpan colSpan="%d" rowSpan="%d"/>'
+            '<hp:cellSz width="10630" height="1800"/>'
+            '<hp:cellMargin left="510" right="510" top="141" bottom="141"/></hp:tc>'
+        ) % (hdr, 100 + r * 10 + c, inner, c, r, cs, rs)
+
+    ctrl_only = (
+        '<hp:ctrl><hp:fieldBegin id="999" type="FORMULA" name="" editable="0" dirty="0" zorder="-1" fieldid="627469685">'
+        '<hp:parameters cnt="3" name=""><hp:integerParam name="Prop">8</hp:integerParam>'
+        '<hp:stringParam name="Command">=SUM(A2:B2);48</hp:stringParam>'
+        '<hp:stringParam name="Formula">=SUM(A2:B2);48</hp:stringParam>'
+        '</hp:parameters></hp:fieldBegin></hp:ctrl>'
+        '<hp:ctrl><hp:fieldEnd beginIDRef="999" fieldid="627469685"/></hp:ctrl><hp:t/>'
+    )
+    rows0 = [
+        "<hp:tr>" + tc(0, 0, "<hp:t>항목</hp:t>", hdr=1) + tc(0, 1, "<hp:t>1분기</hp:t>", hdr=1)
+        + tc(0, 2, "<hp:t>2분기</hp:t>", hdr=1) + tc(0, 3, ctrl_only, hdr=1) + "</hp:tr>",
+        "<hp:tr>" + tc(1, 0, "<hp:t>인건비</hp:t>") + tc(1, 1, "<hp:t>7,000</hp:t>")
+        + tc(1, 2, "<hp:t>3,000</hp:t>") + tc(1, 3, "<hp:t/>") + "</hp:tr>",
+        "<hp:tr>" + tc(2, 0, "<hp:t>재료비</hp:t>") + tc(2, 1, "<hp:t>5,000</hp:t>")
+        + tc(2, 2, "<hp:t>1,500</hp:t>") + tc(2, 3, "<hp:t/>") + "</hp:tr>",
+        "<hp:tr>" + tc(3, 0, "<hp:t>계</hp:t>") + tc(3, 1, "<hp:t/>")
+        + tc(3, 2, "<hp:t/>") + tc(3, 3, "<hp:t/>") + "</hp:tr>",
+    ]
+    tbl0_xml = (
+        '<hp:tbl id="12" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" '
+        'lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="4" colCnt="4" '
+        'cellSpacing="0" borderFillIDRef="1" noAdjust="0">'
+        '<hp:sz width="42520" widthRelTo="ABSOLUTE" height="7200" heightRelTo="ABSOLUTE" protect="0"/>'
+        '<hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
+        'vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+        '<hp:outMargin left="283" right="283" top="283" bottom="283"/>'
+        '<hp:inMargin left="510" right="510" top="141" bottom="141"/>'
+        + "".join(rows0) + "</hp:tbl>"
+    )
+    tbl1_xml = tbl0_xml.replace('id="12"', 'id="99"', 1).replace('rowCnt="4" colCnt="4"', 'rowCnt="1" colCnt="2"', 1)
+    tbl1_xml = tbl1_xml[:tbl1_xml.index("<hp:tr>")] + (
+        "<hp:tr>" + tc(0, 0, "<hp:t>10</hp:t>") + tc(0, 1, "<hp:t/>") + "</hp:tr></hp:tbl>"
+    )
+    new_sec = sec[:t0.start] + tbl0_xml + tbl1_xml + sec[t0.end:]
+    src.write_bytes(d.zip.rewrite({"Contents/section0.xml": new_sec.encode("utf-8")}))
+    return src
+
+
+def test_table_formula_is_checked_before_anything_runs(no_engine, tmp_path):
+    src = _doc_with_formula_tables(tmp_path)
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops, f=src, base=None):
+        return D.edit(f, ops if isinstance(ops, list) else [ops], base=base or rev, out=out)["error"]
+
+    # 1. unknown keys and expect
+    e = err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1", "to": "t0/r1/c2"})
+    assert e["code"] == "bad_input" and e["candidates"]
+    e = err({"op": "table.formula", "at": "t0/r1/c3", "fn": "SUM", "from": "t0/r1/c1"})
+    assert e["code"] == "bad_input" and "func" in e["candidates"]
+    assert err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1", "expect": ""})["code"] == "bad_input"
+
+    # 2. both or neither func and formula; from with formula; func without from
+    assert err({"op": "table.formula", "at": "t0/r1/c3"})["code"] == "bad_input"
+    assert err({"op": "table.formula", "at": "t0/r1/c3", "from": "t0/r1/c1"})["code"] == "bad_input"
+    assert err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1",
+                "formula": "=SUM(B2:C2)"})["code"] == "bad_input"
+    assert err({"op": "table.formula", "at": "t0/r1/c3", "formula": "=SUM(B2:C2)",
+                "from": "t0/r1/c1"})["code"] == "bad_input"
+    assert err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM"})["code"] == "bad_input"
+    for bad_from in (None, 123, True, ["t0/r1/c1"]):
+        assert err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": bad_from})["code"] == "bad_input", bad_from
+
+    # 3. func enum values
+    for bad_func in ("MAX", "MIN", "COUNT", "PRO", "AVERAGE", "", None, 123, True):
+        e = err({"op": "table.formula", "at": "t0/r1/c3", "func": bad_func, "from": "t0/r1/c1"})
+        assert e["code"] == "bad_input" and e.get("candidates") and set(e["candidates"]) <= {"SUM", "AVG", "PRODUCT"}, bad_func
+
+    # 4. bad addresses for at and from
+    for bad_at in ("p0", "t0", "t0/r1", "t0/r1/c3/p0", "t0/r1/c3:0-1", "t0/r9/c0", "t9/r0/c0"):
+        assert err({"op": "table.formula", "at": bad_at, "formula": "=SUM(A1:B1)"})["code"] == "bad_address", bad_at
+    for bad_from_addr in ("p0", "t0", "t0/r1", "t0/r1/c1/p0", "t0/r9/c0", "t9/r0/c0", ""):
+        assert err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": bad_from_addr})["code"] == "bad_address", bad_from_addr
+
+    # 5. from in another table, diagonal, same cell, or after at (right of / below at)
+    e = err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t1/r0/c0"})
+    assert e["code"] == "bad_address" and "t0" in e["message"]
+    # diagonal
+    e = err({"op": "table.formula", "at": "t0/r2/c3", "func": "SUM", "from": "t0/r1/c1"})
+    assert e["code"] == "bad_input" and ("same row" in e["message"] or "same column" in e["message"])
+    # same cell
+    assert err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c3"})["code"] == "bad_input"
+    # right of at (in row 3: at is c1, from is c2 or c3)
+    assert err({"op": "table.formula", "at": "t0/r3/c1", "func": "SUM", "from": "t0/r3/c2"})["code"] == "bad_input"
+    assert err({"op": "table.formula", "at": "t0/r3/c1", "func": "SUM", "from": "t0/r3/c3"})["code"] == "bad_input"
+    # below at (in col 3: at is r1, from is r2 or r3)
+    assert err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r2/c3"})["code"] == "bad_input"
+    assert err({"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r3/c3"})["code"] == "bad_input"
+
+    # merged cells in GUARD t5 (t5/r0/c0 spans c0..c4; t5/r7/c0 spans c0..c5; t5/r13/c2 spans c2..c5)
+    gsrc = _copy(GUARD, tmp_path, "guard_formula.hwpx")
+    grev = D.rev_of(gsrc)
+    # covered coordinate inside merged cell -> bad_address with anchor candidate
+    e = err({"op": "table.formula", "at": "t5/r7/c3", "formula": "=SUM(A1:B1)"}, f=gsrc, base=grev)
+    assert e["code"] == "bad_address" and e["candidates"] == ["t5/r7/c0"]
+    # block touching a merged cell -> bad_input
+    e = err({"op": "table.formula", "at": "t5/r13/c2", "func": "SUM", "from": "t5/r13/c0"}, f=gsrc, base=grev)
+    assert e["code"] == "bad_input" and "merged" in e["message"]
+
+    # 6. non-empty target cell: text cell (t0/r1/c1 = "7,000") and control-only cell (t0/r0/c3 has a FORMULA field)
+    for non_empty in ("t0/r1/c1", "t0/r0/c3"):
+        e1 = err({"op": "table.formula", "at": non_empty, "func": "SUM", "from": "t0/r1/c0" if non_empty == "t0/r1/c1" else "t0/r0/c0"})
+        assert e1["code"] == "bad_input" and "empty" in e1["message"], non_empty
+        e2 = err({"op": "table.formula", "at": non_empty, "formula": "=SUM(A1:B1)"})
+        assert e2["code"] == "bad_input" and "empty" in e2["message"], non_empty
+
+    # 7. bad typed formula: without "=", empty after "=", control chars / newlines / tabs, leading/trailing spaces, too long
+    for bad_f in ("", "SUM(A1:C1)", "A1+B1", "=", "=   ", " =SUM(A1:C1)", "=SUM(A1:C1) ",
+                  "=SUM(A1:C1)\n", "=SUM(A1:C1)\t", "=SUM(A1:C1)\x01", "=" + "A1+" * 67, 123, None, True):
+        assert err({"op": "table.formula", "at": "t0/r1/c3", "formula": bad_f})["code"] == "bad_input", bad_f
+
+    # 8. conflicts: two table.formula on same cell, or with set / table.set_cells / delete / table.cell_style / row / shape ops
+    assert err([
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "table.formula", "at": "t0/r1/c3", "formula": "=SUM(B2:C2)"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "set", "at": "t0/r1/c3", "text": "10,000"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "table.set_cells", "at": "t0/r1/c3", "grid": [["10,000"]]},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "delete", "at": "t0/r1/c3"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "table.cell_style", "at": "t0/r1", "set": {"fill": "#EEEEEE"}},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "table.add_row", "at": "t0", "after": 2},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "table.size", "at": "t0", "col_widths_mm": [20, 20, 20, 20]},
+    ])["code"] == "conflict"
+
+    # 9. valid ops without engine -> capability_unavailable and nothing written
+    e = err([
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "sum", "from": "t0/r1/c0"},
+        {"op": "table.formula", "at": "t0/r2/c3", "func": "product", "from": "t0/r2/c1"},
+        {"op": "table.formula", "at": "t0/r3/c1", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "table.formula", "at": "t0/r3/c2", "func": "avg", "from": "t0/r1/c2"},
+        {"op": "table.formula", "at": "t0/r3/c3", "formula": "=SUM(B2:C3)*2"},
+    ])
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+@engine
+def test_engine_table_formula(kit, tmp_path, monkeypatch):
+    # 1. Build a 4x4 numeric table on BASIC using existing table ops
+    f0 = _copy(BASIC, tmp_path, "basic_t.hwpx")
+    f1 = tmp_path / "t_add_row.hwpx"
+    f2 = tmp_path / "t_add_col1.hwpx"
+    f3 = tmp_path / "t_add_col2.hwpx"
+    f = tmp_path / "t_ready.hwpx"
+    assert D.edit(f0, [{"op": "table.add_row", "at": "t0", "after": 2}], base=D.rev_of(f0), out=f1)["ok"]
+    assert D.edit(f1, [{"op": "table.add_col", "at": "t0", "after": 1}], base=D.rev_of(f1), out=f2)["ok"]
+    assert D.edit(f2, [{"op": "table.add_col", "at": "t0", "after": 2}], base=D.rev_of(f2), out=f3)["ok"]
+    assert D.edit(f3, [{"op": "table.set_cells", "at": "t0/r0/c0", "grid": [
+        ["항목", "1분기", "2분기", "합계"],
+        ["인건비", "7,000", "3,000", None],
+        ["재료비", "5,000", "1,500 [예상]", None],
+        ["계/평균", None, None, None],
+    ]}], base=D.rev_of(f3), out=f)["ok"]
+
+    # 2. Apply SUM along a row (including non-numeric cell "인건비" -> 0), PRODUCT along a row (with trailing text "1,500 [예상]" -> 1500),
+    # SUM down a column, AVG down a column, and a typed formula in one edit
+    base = D._load(f, meta=False)
+    out = tmp_path / "t_formula.hwpx"
+    ops = [
+        {"op": "table.formula", "at": "t0/r1/c3", "func": "sum", "from": "t0/r1/c0"},
+        {"op": "table.formula", "at": "t0/r2/c3", "func": "PRODUCT", "from": "t0/r2/c1"},
+        {"op": "table.formula", "at": "t0/r3/c1", "func": "SUM", "from": "t0/r1/c1"},
+        {"op": "table.formula", "at": "t0/r3/c2", "func": "avg", "from": "t0/r1/c2"},
+        {"op": "table.formula", "at": "t0/r3/c3", "formula": "=SUM(B2:C3)*2"},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    got = D._load(out, meta=False)
+    acts = D._plan(base, ops)
+    assert D._verify(base, got, acts)
+
+    cells = D.read(out, "t0")["blocks"][0]["cells"]
+    assert cells == [
+        ["항목", "1분기", "2분기", "합계"],
+        ["인건비", "7,000", "3,000", "10,000"],
+        ["재료비", "5,000", "1,500 [예상]", "7,500,000"],
+        ["계/평균", "12,000", "2,250.00", ""],
+    ]
+
+    def field_at(doc, addr):
+        p = D.resolve(doc, addr)["cell"].paras[0]
+        return D._formula_fields_in(doc, p)
+
+    assert field_at(got, "t0/r1/c3") == [("=SUM(A?:C?)", "=SUM(A?:C?)??%g,;;10,000", "%g,", "10,000", "10,000")]
+    assert field_at(got, "t0/r2/c3") == [("=PRODUCT(B?:C?)", "=PRODUCT(B?:C?)??%g,;;7,500,000", "%g,", "7,500,000", "7,500,000")]
+    assert field_at(got, "t0/r3/c1") == [("=SUM(?2:?3)", "=SUM(?2:?3)??%g,;;12,000", "%g,", "12,000", "12,000")]
+    assert field_at(got, "t0/r3/c2") == [("=AVG(?2:?3)", "=AVG(?2:?3)??%.2f,;;2,250.00", "%.2f,", "2,250.00", "2,250.00")]
+    assert field_at(got, "t0/r3/c3") == [("=SUM(B2:C3)*2;48", "=SUM(B2:C3)*2;48", None, None, "")]
+
+    # target cells now hold a formula (even t0/r3/c3 whose visible text is ""), so a second table.formula is refused
+    for filled_target in ("t0/r1/c3", "t0/r3/c3"):
+        e_dup = D.edit(out, [{"op": "table.formula", "at": filled_target, "formula": "=A1+B1"}],
+                       base=D.rev_of(out), out=tmp_path / "dup.hwpx")["error"]
+        assert e_dup["code"] == "bad_input" and "empty" in e_dup["message"], filled_target
+
+    # 3. Hand-broken outputs refused: wrong Formula, wrong result text (even with LastResult matching),
+    # unexpected result text on typed formula, missing fieldEnd, and extra change in another cell
+    raw_sec = got.zip.read("Contents/section0.xml").decode("utf-8")
+    for label, old_s, new_s in (
+        ("wrong_func_formula", "<hp:stringParam name=\"Formula\">=SUM(A?:C?)</hp:stringParam>",
+         "<hp:stringParam name=\"Formula\">=SUM(B?:C?)</hp:stringParam>"),
+        ("wrong_typed_formula", "<hp:stringParam name=\"Formula\">=SUM(B2:C3)*2;48</hp:stringParam>",
+         "<hp:stringParam name=\"Formula\">=SUM(B2:C3)*2</hp:stringParam>"),
+        ("wrong_result_text", "<hp:t>10,000</hp:t>", "<hp:t>99,000</hp:t>"),
+        ("wrong_result_and_last",
+         "=SUM(A?:C?)??%g,;;10,000</hp:stringParam><hp:stringParam name=\"Formula\">=SUM(A?:C?)</hp:stringParam>"
+         "<hp:stringParam name=\"ResultFormat\">%g,</hp:stringParam><hp:stringParam name=\"LastResult\">10,000</hp:stringParam>"
+         "</hp:parameters></hp:fieldBegin></hp:ctrl><hp:t>10,000</hp:t>",
+         "=SUM(A?:C?)??%g,;;99,000</hp:stringParam><hp:stringParam name=\"Formula\">=SUM(A?:C?)</hp:stringParam>"
+         "<hp:stringParam name=\"ResultFormat\">%g,</hp:stringParam><hp:stringParam name=\"LastResult\">99,000</hp:stringParam>"
+         "</hp:parameters></hp:fieldBegin></hp:ctrl><hp:t>99,000</hp:t>"),
+        ("typed_formula_with_result_text",
+         "<hp:stringParam name=\"Formula\">=SUM(B2:C3)*2;48</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl><hp:ctrl><hp:fieldEnd",
+         "<hp:stringParam name=\"Formula\">=SUM(B2:C3)*2;48</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl><hp:t>43,000</hp:t><hp:ctrl><hp:fieldEnd"),
+        ("extra_change_in_other_cell", "<hp:t>7,000</hp:t>", "<hp:t>8,000</hp:t>"),
+        ("extra_change_in_header_cell", "<hp:t>항목</hp:t>", "<hp:t>구분</hp:t>"),
+    ):
+        assert old_s in raw_sec, (label, old_s)
+        broken_sec = raw_sec.replace(old_s, new_s, 1)
+        broken_bytes = got.zip.rewrite({"Contents/section0.xml": broken_sec.encode("utf-8")})
+        broken_doc = D.Doc(out, broken_bytes, "hwpx")
+        assert not D._verify(base, broken_doc, acts), label
+        monkeypatch.setattr(D, "_engine_apply", lambda *a, _b=broken_bytes, **k: (_b, {}, None))
+        out_bad = tmp_path / ("bad_%s.hwpx" % label)
+        res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
+        assert not res_bad["ok"] and res_bad["error"]["code"] == "internal", (label, res_bad)
+        assert res_bad["error"]["written"] is False and not out_bad.exists(), label
