@@ -1980,7 +1980,7 @@ function draftHasUnsavedWork(
   savedDrafts: Record<string, SavedDraft>,
 ): boolean {
   if (!d) return false;
-  if (d.phase === "starting") return true;
+  if (d.phase === "starting" && !d.plan) return true;
   if (d.ops.length === 0) return false;
   if (d.reverses !== null) return true;
   if (d.rewrittenFromAgent) return true;
