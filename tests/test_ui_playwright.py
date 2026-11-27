@@ -235,6 +235,126 @@ def test_ui_default_url_with_empty_prefs_opens_editor_v2_shell(tmp_path: Path) -
         thread.join(timeout=5)
 
 
+def test_ui_settings_editor_variant_roundtrip_and_unsaved_refusal(tmp_path: Path) -> None:
+    sync_playwright = _import_playwright()
+    if not _bundle_has_shell():
+        no_browser("runtime/scripts/ui_dist predates the v2 shell; rebuild with `npm run build:web`")
+
+    prefs_path = tmp_path / "prefs.json"
+    prefs_path.write_text("{}\n", encoding="utf-8")
+    server, thread = start_bridge(tmp_path)
+    try:
+        with sync_playwright() as pw:
+            browser = _launch_chromium(pw)
+            context = browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
+            page = context.new_page()
+            page_errors: list[str] = []
+            page.on("pageerror", lambda e: page_errors.append(str(e)))
+
+            page.goto(server.url, wait_until="domcontentloaded")
+            page.wait_for_selector('[data-testid="shell"]', timeout=30000)
+            assert page.evaluate("document.documentElement.dataset.ui") == "v2"
+
+            # 1) Open 설정 in v2 and check the 편집기 row shows 새 편집기 selected.
+            page.keyboard.press("Control+Comma")
+            dialog = page.get_by_test_id("settings-dialog")
+            dialog.wait_for(timeout=10000)
+            editor_seg = dialog.get_by_test_id("settings-editor")
+            editor_seg.wait_for(timeout=10000)
+            v2_btn = dialog.get_by_test_id("settings-editor-v2")
+            v1_btn = dialog.get_by_test_id("settings-editor-v1")
+            assert v2_btn.inner_text().strip() == "새 편집기"
+            assert v2_btn.get_attribute("aria-checked") == "true"
+            assert v1_btn.inner_text().strip() == "이전 화면 (v1)"
+            assert v1_btn.get_attribute("aria-checked") == "false"
+            note_el = dialog.get_by_test_id("settings-editor-note")
+            assert note_el.is_visible()
+            assert "이전 화면" in note_el.inner_text()
+            page.keyboard.press("Escape")
+            page.wait_for_selector('[data-testid="settings-dialog"]', state="detached")
+
+            # 2) With a draft save in flight, the switch is refused with the existing note.
+            _open_sample(page, 0)
+            page.wait_for_selector('[data-cell-key="c:0:5:1"]', timeout=20000)
+            page.evaluate(
+                """() => {
+                    const origFetch = window.fetch.bind(window);
+                    window.__draftSaveInFlight = false;
+                    window.__releaseDraftSave = null;
+                    window.fetch = (...args) => {
+                        const [url, init] = args;
+                        if (
+                            String(url).includes("/api/prefs") &&
+                            init &&
+                            init.method === "POST" &&
+                            String(init.body || "").includes('"drafts"')
+                        ) {
+                            window.__draftSaveInFlight = true;
+                            return new Promise((resolve) => {
+                                window.__releaseDraftSave = () => {
+                                    window.fetch = origFetch;
+                                    resolve(origFetch(...args));
+                                };
+                            });
+                        }
+                        return origFetch(...args);
+                    };
+                }"""
+            )
+            page.click('[data-cell-key="c:0:5:1"]')
+            page.wait_for_selector('[data-testid="seat-input"]', timeout=10000)
+            page.locator('[data-testid="seat-input"]').fill("한글")
+            page.locator('[data-testid="seat-input"]').press("Enter")
+            page.wait_for_function("() => window.__draftSaveInFlight === true", timeout=10000)
+
+            page.keyboard.press("Control+Comma")
+            dialog.wait_for(timeout=10000)
+            dialog.get_by_test_id("settings-editor-v1").click()
+            page.wait_for_timeout(200)
+            assert page.locator('[data-testid="shell"]').count() == 1
+            assert page.evaluate("document.documentElement.dataset.ui") == "v2"
+            assert json.loads(prefs_path.read_text(encoding="utf-8")).get("editorVariant") is None
+            refusal_notice = page.locator('[data-testid="status-canvas-notice"]').inner_text().strip()
+            assert refusal_notice == "입력 중이거나 아직 저장되지 않은 작업을 먼저 마치세요", refusal_notice
+
+            # Release the in-flight draft save and wait for the queued change to settle.
+            page.evaluate("() => { if (window.__releaseDraftSave) window.__releaseDraftSave(); }")
+            page.wait_for_selector('[data-testid="change-row-1"]', timeout=20000)
+            page.wait_for_timeout(200)
+
+            # 3) Choose 이전 화면 in v2 설정 and check the v1 shell loads and prefs hold editorVariant: "v1".
+            dialog.get_by_test_id("settings-editor-v1").click()
+            page.wait_for_selector('[data-testid="open-view"], [data-testid="review-view"], [data-testid="splash"]', timeout=30000)
+            splash = page.locator('[data-testid="splash"]')
+            if splash.count() > 0:
+                try:
+                    splash.first.click(force=True, timeout=3000)
+                except Exception:
+                    pass
+            page.wait_for_selector('[data-testid="open-view"], [data-testid="review-view"]', timeout=30000)
+            assert page.evaluate("document.documentElement.dataset.ui") == "v1"
+            assert json.loads(prefs_path.read_text(encoding="utf-8")).get("editorVariant") == "v1"
+
+            # 4) In v1 설정 choose 새 편집기 and check v2 loads again.
+            page.click('[data-testid="open-settings"]')
+            page.wait_for_selector('[data-testid="settings-view"]', timeout=15000)
+            v1_settings_editor = page.get_by_test_id("settings-editor")
+            v1_settings_editor.wait_for(timeout=10000)
+            assert page.get_by_test_id("settings-editor-v1").get_attribute("aria-pressed") == "true"
+            assert page.get_by_test_id("settings-editor-v2").get_attribute("aria-pressed") == "false"
+            page.get_by_test_id("settings-editor-v2").click()
+            page.wait_for_selector('[data-testid="shell"]', timeout=30000)
+            assert page.evaluate("document.documentElement.dataset.ui") == "v2"
+            assert json.loads(prefs_path.read_text(encoding="utf-8")).get("editorVariant") == "v2"
+
+            assert page_errors == [], page_errors
+            context.close()
+            browser.close()
+    finally:
+        server.shutdown_bridge()
+        thread.join(timeout=5)
+
+
 def test_ui_shell_e2e_keys_isolation_tabs_and_budgets(tmp_path: Path) -> None:
     sync_playwright = _import_playwright()
     if not _bundle_has_shell():

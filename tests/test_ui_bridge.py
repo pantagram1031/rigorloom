@@ -394,6 +394,63 @@ def test_sidecar_lifecycle_rpc_cancel_and_sse(started_bridge):
         resp.close()
 
 
+def test_get_prefs_migrates_legacy_dev_editor_v2_once(started_bridge):
+    srv, client, _ = started_bridge
+    prefs_file: Path = srv.bridge._prefs_path
+
+    # 1. false -> editorVariant: "v1" and devEditorV2 removed from the file; second read is a no-op byte for byte
+    prefs_file.write_text(json.dumps({"devEditorV2": False, "theme": "dark"}) + "\n", encoding="utf-8")
+    s1, p1 = client.get_json("/api/prefs")
+    assert s1 == 200
+    assert p1.get("editorVariant") == "v1"
+    assert "devEditorV2" not in p1
+    assert p1.get("theme") == "dark"
+    raw_after_first = prefs_file.read_bytes()
+    on_disk_1 = json.loads(raw_after_first.decode("utf-8"))
+    assert on_disk_1 == {"theme": "dark", "editorVariant": "v1"}
+    assert "devEditorV2" not in on_disk_1
+
+    s2, p2 = client.get_json("/api/prefs")
+    assert s2 == 200 and p2 == p1
+    assert prefs_file.read_bytes() == raw_after_first
+
+    # 2. true -> editorVariant: "v2" and devEditorV2 removed from the file
+    prefs_file.write_text(json.dumps({"devEditorV2": True}) + "\n", encoding="utf-8")
+    s_true, p_true = client.get_json("/api/prefs")
+    assert s_true == 200
+    assert p_true.get("editorVariant") == "v2"
+    assert "devEditorV2" not in p_true
+    assert json.loads(prefs_file.read_text(encoding="utf-8")) == {"editorVariant": "v2"}
+
+    # 3. both present -> keeps editorVariant and drops devEditorV2
+    for kept, legacy in (("v1", True), ("v2", False)):
+        prefs_file.write_text(
+            json.dumps({"editorVariant": kept, "devEditorV2": legacy}) + "\n",
+            encoding="utf-8",
+        )
+        s_both, p_both = client.get_json("/api/prefs")
+        assert s_both == 200
+        assert p_both.get("editorVariant") == kept
+        assert "devEditorV2" not in p_both
+        assert json.loads(prefs_file.read_text(encoding="utf-8")) == {"editorVariant": kept}
+
+    # 4. non-boolean devEditorV2 -> dropped without setting editorVariant; second read is a no-op
+    for bad in ("false", "true", 0, 1, None, ["v1"], {"v": 1}):
+        prefs_file.write_text(
+            json.dumps({"devEditorV2": bad, "language": "ko"}) + "\n",
+            encoding="utf-8",
+        )
+        s_bad, p_bad = client.get_json("/api/prefs")
+        assert s_bad == 200
+        assert "devEditorV2" not in p_bad
+        assert "editorVariant" not in p_bad
+        raw_bad_after = prefs_file.read_bytes()
+        assert json.loads(raw_bad_after.decode("utf-8")) == {"language": "ko"}
+        s_again, p_again = client.get_json("/api/prefs")
+        assert s_again == 200 and p_again == p_bad
+        assert prefs_file.read_bytes() == raw_bad_after
+
+
 def test_prefs_corpus_credentials_agenthost_mock_and_taskpacks(started_bridge):
     _, client, rt_root = started_bridge
 
