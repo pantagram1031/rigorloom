@@ -64,7 +64,7 @@ export function CommandPalette() {
 
   const hasPlan = Boolean(session && draft.plan && draft.sessionId === session.sessionId);
   const canApprove = Boolean(
-    hasPlan && (draft.validation?.verdict === "pass" || draftValidationPending(draft)),
+    hasPlan && (draft.validation?.ok === true || draftValidationPending(draft)),
   );
   const canExport = Boolean(session && (applied?.runId ?? head?.runId));
 
