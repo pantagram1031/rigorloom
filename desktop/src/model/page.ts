@@ -451,6 +451,18 @@ export function formatSeatGroupHeading(
   return wp3t("seat_group_table", lang, [table + 1]);
 }
 
+/** The document graph's cell at a table address, if the graph has it. */
+export function graphCellAt(
+  inspect: Pick<InspectResult, "graph"> | null | undefined,
+  table: number,
+  row?: number,
+  col?: number,
+): GraphCell | undefined {
+  return inspect?.graph?.tables
+    ?.find((t) => t.index === table)
+    ?.cells?.find((c) => c.addr.row === row && c.addr.col === col);
+}
+
 export interface CharShape {
   face: string | null;
   sizePt: number | null;
@@ -469,11 +481,7 @@ export function cellCharShape(
   const region = table === null || !inspect
     ? undefined
     : inspect.regions?.regions?.find((r) => r.table === table && r.row === row && r.col === col);
-  const graphCell = table === null || !inspect
-    ? undefined
-    : inspect.graph?.tables
-        ?.find((t) => t.index === table)
-        ?.cells?.find((c) => c.addr.row === row && c.addr.col === col);
+  const graphCell = table === null ? undefined : graphCellAt(inspect, table, row, col);
   const face =
     region?.charPrFace?.hangul ??
     graphCell?.textCharPrFace?.hangul ??

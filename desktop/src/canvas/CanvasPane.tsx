@@ -14,6 +14,7 @@ import {
   createProjectionPageSource,
   detectDocumentSeats,
   formatCharShape,
+  graphCellAt,
   parseDocAddress,
   type CanvasChangeRef,
   type PageSource,
@@ -429,9 +430,17 @@ export function CanvasStatusLeft() {
     ? wp3t("status_cell_position", language, [page, address.row + 1, address.col + 1])
     : wp3t("status_page_position", language, [page]);
 
+  // A blank's name, never one made up for printed text: a static cell (a row
+  // title) or a guide cell (the form's own header line) is not a blank, so it
+  // gets no "빈칸 N" fallback name.
+  const statusClass = address?.kind === "cell"
+    ? graphCellAt(inspect, address.table, address.row, address.col)?.classification
+    : undefined;
   const seatText = inspect && statusKey && address?.kind === "cell"
     ? seatLabelByKey.get(statusKey) ??
-      deriveCellFieldLabel(inspect, textMap, address.table, address.row, address.col, language)
+      (statusClass === "static" || statusClass === "guide"
+        ? null
+        : deriveCellFieldLabel(inspect, textMap, address.table, address.row, address.col, language))
     : null;
 
   const charShape = formatCharShape(address?.kind === "cell"
