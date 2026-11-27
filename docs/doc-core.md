@@ -461,7 +461,7 @@ rt_doc.edit("보고서.hwpx", [
     for each column. On a section with no column definition before `at` (such
     as rigorloom's minimal `basic.hwpx` fixture), the engine first adds 한글's
     one-column definition to the section's first paragraph and changes that;
-    this needs hwp-engine ENGINE_FLOOR or later, and an older engine fails the
+    this needs hwp-engine 0cc9e17 (PR #37) or later, and an older engine fails the
     edit with nothing written. After the edit, `_verify_columns`
     checks the `<hp:colPr>` governing `at` (`colCount`, `sameSz`, `sameGap`,
     `type`, `layout`, `<hp:colLine>` and `<hp:colSz>` list), checks with
