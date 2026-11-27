@@ -1327,3 +1327,15 @@ test("object-holding cells address lead paragraphs in preview and queue, and ope
     else globalThis.window = previousWindow;
   }
 });
+
+test("strip: the page source label never repeats the word the preview grade label starts with", () => {
+  const stack = loadWp3Stack();
+  for (const lang of ["ko", "en"]) {
+    const grade = stack.wp3.wp3t("canvas_grade_preview", lang);
+    const lead = grade.split(" · ")[0].trim().toLowerCase();
+    for (const key of ["page_source_projection", "page_source_engine", "page_source_own", "page_source_hancom", "page_source_pdf"]) {
+      const label = stack.wp3.wp3t(key, lang).toLowerCase();
+      assert.ok(!label.includes(lead), `${key} (${lang}) "${label}" repeats "${lead}"`);
+    }
+  }
+});
