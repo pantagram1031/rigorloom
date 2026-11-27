@@ -21,7 +21,7 @@ import {
   useWorkspace,
 } from "../store";
 import { buildRegionTextMap } from "../workspace/externalPlan";
-import { deriveCellFieldLabel } from "../workspace/fieldLabels";
+import { deriveBlankCellLabel } from "../workspace/fieldLabels";
 import { useCanvasChanges } from "../canvas/changes";
 import {
   findTextPattern,
@@ -90,14 +90,22 @@ export function FindPane() {
         if (text.trim()) coveredStrings.add(text.trim());
         const match = text.matchAll(pattern).next().value;
         if (match?.index === undefined) continue;
-        const label = deriveCellFieldLabel(
-          inspect,
-          textMap,
-          tbl.index,
-          cell.addr.row,
-          cell.addr.col,
-          language,
-        );
+        const label =
+          deriveBlankCellLabel(
+            inspect,
+            textMap,
+            tbl.index,
+            cell.addr.row,
+            cell.addr.col,
+            language,
+          ) ??
+          formatSeatLocation(
+            null,
+            tbl.index,
+            cell.addr.row,
+            cell.addr.col,
+            language,
+          );
         const cellAddr = formatCellAddress(tbl.index, cell.addr.row, cell.addr.col);
         const cellPage = knownPages?.get(key) ?? knownPages?.get(cellAddr) ?? null;
         out.push({

@@ -36,7 +36,7 @@ export function DocumentStripStart() {
   const draft = useWorkspace((s) => s.draft);
   const baseName = useCanvasBaseName();
   const count = draft.ops.length;
-  const { rasterSource, rasterApprox } = useCanvasSlice();
+  const { rasterSource } = useCanvasSlice();
   const stale = draft.validation?.stale ||
     (draft.plan && draft.boundSha256 && draft.plan.boundSha256 !== draft.boundSha256);
   const subjectText = count
@@ -46,9 +46,9 @@ export function DocumentStripStart() {
   return (
     <div className="rl-strip-left" data-testid="doc-strip">
       <span className="rl-strip-version" data-testid="strip-version">{subjectText}</span>
-      <span className="rl-strip-source" data-page-source={rasterSource ?? "projection"}>
+      <span className="rl-strip-source" data-testid="page-source"
+        data-page-source={rasterSource ?? "projection"}>
         {wp3t(rasterSource ? SOURCE_COPY[rasterSource] : "page_source_projection", language)}
-        {rasterApprox ? ` · ${wp3t("page_source_approx", language)}` : null}
       </span>
       {rasterSource !== "engine" ? (
         <span className="rl-strip-grade" data-testid="strip-grade">{wp3t("canvas_grade_preview", language)}</span>

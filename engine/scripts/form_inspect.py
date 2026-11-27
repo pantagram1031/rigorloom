@@ -559,7 +559,7 @@ def _paragraphs(xml, defs):
         if para_pr is None:
             continue
         body = pm.group(2)
-        cids, text_parts = [], []
+        cids, text_parts, run_texts = [], [], []
         for rm in RUN_TAG_RE.finditer(body):
             cid = _attr(rm.group(1), "charPrIDRef")
             if cid is None:
@@ -569,15 +569,19 @@ def _paragraphs(xml, defs):
             # 사전 점검을 위해 그대로 charPrs에 넣되, 본문에는 아무것도
             # 보태지 않는다(T37).
             cids.append(cid)
+            run_text = (re.sub(
+                r"<[^>]+>", "", "".join(T_RE.findall(run_body)))
+                if run_body else "")
+            run_texts.append(run_text)
             if run_body:
-                text_parts.append(re.sub(
-                    r"<[^>]+>", "", "".join(T_RE.findall(run_body))))
+                text_parts.append(run_text)
         text = "".join(text_parts)
         # ``para_idx`` is a historical profile index.  Retain the regex
         # match's XML span privately so new address records can bind the same
         # paragraph to preedit's depth-first ``at_para`` without changing the
         # legacy index or its consumers.
         out.append({"text": text, "paraPr": para_pr, "charPrs": cids,
+                    "runTexts": run_texts,
                     "_start": pm.start(), "_end": pm.end()})
     return out
 
@@ -1126,6 +1130,12 @@ def _table_map(section_names, z, defs, borderfill_shaded,
 
                 paras = _paragraphs(tc_body, defs)
                 text = "".join(p["text"] for p in paras)
+                text_charpr = next(
+                    (cid for p in paras
+                     for cid, rtext in zip(p["charPrs"], p["runTexts"])
+                     if rtext.strip()),
+                    None,
+                )
                 cids = [c for p in paras for c in p["charPrs"]]
                 colors = [defs.get(cid, {}).get("color") for cid in cids]
                 colored = any(not _is_black_or_auto(c) for c in colors)
@@ -1157,6 +1167,8 @@ def _table_map(section_names, z, defs, borderfill_shaded,
                     "truncated": len(text) > 30,
                     "classification": classification,
                 }
+                if text_charpr is not None:
+                    entry["text_charpr"] = text_charpr
                 # 원본 몸통(중첩 표 제거 전) — preedit의 문단 색인과 같아야
                 # 하므로 _own_cell_body 결과를 쓰면 안 된다. spacer 판정이
                 # 끝난 뒤에야 T30 사전 점검을 붙이므로 잠시 들고만 있는다.

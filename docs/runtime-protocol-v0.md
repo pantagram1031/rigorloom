@@ -1632,7 +1632,7 @@ except `form_inspect --baseline`, whose answer is a document-wide **set** of
 font names and therefore can never say what *this* run is set in.
 
 `form_inspect` now publishes the join as `charpr_faces` — `charPr id -> {lang:
-face}` — and four fields carry it:
+face}` — and five fields carry it:
 
 | field | on |
 | --- | --- |
@@ -1640,8 +1640,14 @@ face}` — and four fields carry it:
 | `regions[].charPrFace` | the shape a fill seat inherits |
 | `regions[].charPrSuggestedFace` | the shape the T30 preflight suggests instead |
 | `document/readRegion` → `regions[].runs[].charpr_face` | the shape a paragraph RUN carries |
+| `graph.tables[].cells[].textCharPrFace` | the shape a cell's own text is set in, for any cell with text, fill seat or not (`textCharPr` names the charPr: the first run in the cell's own paragraphs whose text is not whitespace) |
 
-The last one arrived with the caret (§12.7). Every shape the wire could name
+The header's declared size travels beside three of them, from the profile's
+`charpr_heights` (`charPr id -> height_pt`): `regions[].charPrHeightPt`,
+`regions[].runs[].charpr_height_pt` and `graph.tables[].cells[].textCharPrHeightPt`.
+Each is absent when the header declares no height for that charPr.
+
+The `readRegion` run field arrived with the caret (§12.7). Every shape the wire could name
 was one a cell inherits, because a cell was the only thing the editor could
 open; a caret standing in a paragraph run had no name to print but the integer.
 The join is the same one — spelled `charpr_face` because every other key on a

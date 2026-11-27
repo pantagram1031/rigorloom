@@ -27,7 +27,7 @@ import {
   type PageViewMode,
 } from "../model/page";
 import { cellKey, useWorkspace } from "../store";
-import { deriveCellFieldLabel } from "../workspace/fieldLabels";
+import { deriveBlankCellLabel } from "../workspace/fieldLabels";
 import type {
   GraphCell,
   GraphParagraph,
@@ -1208,7 +1208,7 @@ export function PageSheet({
                         data-testid={`page-cell-${table.index}-${cell.addr.row}-${cell.addr.col}`}
                         onMouseEnter={() => {
                           if (!isSpacerCell) {
-                            const label = deriveCellFieldLabel(
+                            const label = deriveBlankCellLabel(
                               inspect,
                               textMap,
                               table.index,
@@ -1216,15 +1216,16 @@ export function PageSheet({
                               cell.addr.col,
                               language,
                             );
+                            const location = formatSeatLocation(
+                              hasEngineGeometry ? page : null,
+                              table.index,
+                              cell.addr.row,
+                              cell.addr.col,
+                              language,
+                            );
                             onSelectSeat(
                               key,
-                              `${label} · ${formatSeatLocation(
-                                hasEngineGeometry ? page : null,
-                                table.index,
-                                cell.addr.row,
-                                cell.addr.col,
-                                language,
-                              )}`,
+                              label ? `${label} · ${location}` : location,
                             );
                           }
                         }}

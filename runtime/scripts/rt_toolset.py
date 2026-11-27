@@ -935,6 +935,7 @@ OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "new_number": (("at", "kind", "num"), ()),
     "picture": (("at", "set"), ("index",)),
     "table.formula": (("at",), ("func", "from", "formula")),
+    "memo": (("at", "text"), ("on", "author", "expect")),
 }
 
 
@@ -976,6 +977,7 @@ OP_EXAMPLES = {
     "new_number": '{"op":"new_number","at":"p4","kind":"PAGE","num":1}',
     "picture": '{"op":"picture","at":"p2","set":{"width_mm":60,"wrap":"SQUARE","x_mm":10}}',
     "table.formula": '{"op":"table.formula","at":"t0/r0/c3","func":"SUM","from":"t0/r0/c0"}',
+    "memo": '{"op":"memo","at":"p1","on":"2026년","text":"일정 확인","author":"홍길동"}',
 }
 #: Field names people and agents reach for first, and the one each op uses.
 OP_ALIASES = {"old": "find", "from": "find", "search": "find", "new": "with",
@@ -1124,6 +1126,12 @@ OP_NOTES = {
                      "characters, which writes the FORMULA field without result text, as "
                      "Hancom's own file has none); one per target cell per edit; no "
                      "address changes",
+    "memo": "`at` is a non-empty body or cell paragraph; attaches a 메모 (`MEMO` field) with `text` "
+            "(1 to 1000 characters on one line) and optional `author` (up to 64 characters, no / \\ ; or control "
+            "characters, default \"\") to `on` (text occurring once in the paragraph; default the whole paragraph text), "
+            "refusing when the anchor overlaps an existing field in that paragraph; `expect` is the "
+            "paragraph's visible text; one per paragraph per edit; paragraph text and addresses do "
+            "not change",
 }
 #: Ops whose `set` keys the document layer defines: op -> the rt_doc table of them.
 OP_SET_KEYS = {"char_shape": "CHAR_SHAPE", "para_shape": "PARA_SHAPE"}

@@ -19,13 +19,17 @@ import type {
 } from "../types";
 import {
   collapseFormGuideLabel,
+  deriveBlankCellLabel,
   deriveCellFieldLabel,
+  graphCellAt,
+  isPlaceholderSlot,
   labelFromCellText,
   disambiguateBlankLabels,
   extractFormInstructionContext,
-  isSlotPlaceholderText,
   truncateLabel,
 } from "../workspace/fieldLabels";
+
+export { deriveBlankCellLabel, graphCellAt, isPlaceholderSlot };
 
 export type PageViewMode = "marks" | "clean" | "base";
 
@@ -457,10 +461,10 @@ export interface CharShape {
 }
 
 /** The character shape a cell's text is set in: the cell region's own charPr
- * face and size, else the document's body baseline. Outside a cell, the
- * baseline. */
+ * face and size, else the graph cell's text charPr, else the document's body
+ * baseline. Outside a cell, the baseline. */
 export function cellCharShape(
-  inspect: Pick<InspectResult, "regions" | "summary"> | null | undefined,
+  inspect: Pick<InspectResult, "graph" | "regions" | "summary"> | null | undefined,
   table: number | null,
   row?: number,
   col?: number,
@@ -468,9 +472,18 @@ export function cellCharShape(
   const baseline = inspect?.summary?.baselineCharPr;
   const region = table === null || !inspect
     ? undefined
-    : inspect.regions.regions.find((r) => r.table === table && r.row === row && r.col === col);
-  const face = region?.charPrFace?.hangul ?? baseline?.face?.hangul ?? null;
-  const size = region?.charPrHeightPt ?? baseline?.height_pt ?? null;
+    : inspect.regions?.regions?.find((r) => r.table === table && r.row === row && r.col === col);
+  const graphCell = table === null ? undefined : graphCellAt(inspect, table, row, col);
+  const face =
+    region?.charPrFace?.hangul ??
+    graphCell?.textCharPrFace?.hangul ??
+    baseline?.face?.hangul ??
+    null;
+  const size =
+    region?.charPrHeightPt ??
+    graphCell?.textCharPrHeightPt ??
+    baseline?.height_pt ??
+    null;
   return {
     face: face && face.trim() ? face.trim() : null,
     sizePt: typeof size === "number" && Number.isFinite(size) && size > 0 ? size : null,
@@ -691,15 +704,10 @@ export function detectDocumentSeats(
         tbl.cells.some((c) => c.addr.row === 0 && c.classification === "guide");
       const regionText = textMap[key]?.text ?? cell.textPreview ?? "";
       const isFillTarget = cell.classification === "fill_target" && !isRow0CornerSpacer;
-      const isPlaceholderSlot =
-        formCtx.isFormDocument &&
-        !isFillTarget &&
-        cell.classification !== "guide" &&
-        !formCtx.instructionCellKeys.has(key) &&
-        !/^[\s/|·\-–—]+$/.test(regionText) &&
-        isSlotPlaceholderText(regionText, formCtx);
+      const placeholderSlot =
+        !isFillTarget && isPlaceholderSlot(cell, key, regionText, formCtx);
 
-      if (!isFillTarget && !isPlaceholderSlot) continue;
+      if (!isFillTarget && !placeholderSlot) continue;
       seenKeys.add(key);
 
       const fallbackOrd = rawSeats.length + 1;
@@ -713,7 +721,7 @@ export function detectDocumentSeats(
         fallbackOrd,
       );
       let baseLabel = derivedFallback;
-      if (isPlaceholderSlot && regionText.trim().length > 0) {
+      if (placeholderSlot && regionText.trim().length > 0) {
         // `전화번호(   )` → `전화번호`: the empty slot goes before the field split.
         const leadToken = labelFromCellText(regionText.trim());
         if (leadToken.length > 0) {

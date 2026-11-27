@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import datetime
 import re
 import os
 import shutil
@@ -3790,3 +3791,423 @@ def test_engine_columns_on_a_section_without_a_column_definition(kit, tmp_path):
     assert col == {"type": "NEWSPAPER", "layout": "LEFT", "count": 2, "same_sz": "1",
                    "same_gap": D._mm_hu(8), "line": ("SOLID", "0.12 mm", "#000000"), "sizes": []}
     assert [p.text for p in got.top] == [p.text for p in base.top]
+
+
+# ============================================================================ R14: 메모 넣기 (memo)
+def _memo_field_xml(fid, num, memo_text, author, anchor_xml, sid="0", ppid="0", cpid="0"):
+    cmd = "MEMO/65535/%d/100/200/%s/\\;;" % (num, author)
+    return (
+        '<hp:ctrl><hp:fieldBegin id="%s" type="MEMO" name="" editable="1" dirty="1" zorder="%d" fieldid="623209829">'
+        '<hp:parameters cnt="7" name=""><hp:integerParam name="Prop">0</hp:integerParam>'
+        '<hp:stringParam name="Command">%s</hp:stringParam>'
+        '<hp:stringParam name="ID">memo%d</hp:stringParam>'
+        '<hp:integerParam name="Number">%d</hp:integerParam>'
+        '<hp:stringParam name="Author">%s</hp:stringParam>'
+        '<hp:stringParam name="MemoShapeIDRef">65535</hp:stringParam>'
+        '<hp:stringParam name="CreateDateTime">2026-11-27T00:00:00Z</hp:stringParam></hp:parameters>'
+        '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" '
+        'linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+        '<hp:p id="0" paraPrIDRef="%s" styleIDRef="%s" pageBreak="0" columnBreak="0" merged="0">'
+        '<hp:run charPrIDRef="%s"><hp:t>%s</hp:t></hp:run></hp:p></hp:subList>'
+        '</hp:fieldBegin></hp:ctrl>'
+        '%s'
+        '<hp:ctrl><hp:fieldEnd beginIDRef="%s" fieldid="623209829"/></hp:ctrl>'
+    ) % (fid, num, cmd, num, num, author, ppid, sid, cpid, memo_text, anchor_xml, fid)
+
+
+def test_memo_is_checked_before_anything_runs(no_engine, tmp_path):
+    src = _copy(BASIC, tmp_path, "memo_no_eng.hwpx")
+    rev, out = D.rev_of(src), tmp_path / "o.hwpx"
+
+    def err(ops, f=src, base=None):
+        return D.edit(f, ops if isinstance(ops, list) else [ops], base=base or rev, out=out)["error"]
+
+    # 1. unknown keys and missing required fields
+    e = err({"op": "memo", "at": "p1", "txt": "메모"})
+    assert e["code"] == "bad_input" and "text" in e["candidates"]
+    e = err({"op": "memo", "at": "p1", "text": "메모", "after": "2026년"})
+    assert e["code"] == "bad_input" and set(e["candidates"]) <= {"at", "text", "on", "author", "expect"}
+    assert err({"op": "memo", "at": "p1"})["code"] == "bad_input"
+
+    # 2. text validation: non-empty string, <= 1000 chars, single paragraph (no newlines or control chars)
+    for bad_text in (None, 123, True, ["메모"], "", "   ", "첫줄\n둘째줄", "첫줄\r둘째줄", "첫줄\r\n둘째줄",
+                     "a\x01b", "a\ufffcb", "가" * 1001):
+        assert err({"op": "memo", "at": "p1", "text": bad_text})["code"] == "bad_input", bad_text
+
+    # 3. author validation: string, <= 64 chars, default ""
+    for bad_author in (None, 123, True, ["홍길동"], "홍\n길동", "홍\r길동", "홍\t길동", "홍\x01길동", "가" * 65,
+                       "홍/길동", "홍\\길동", "홍;길동"):
+        assert err({"op": "memo", "at": "p1", "text": "메모", "author": bad_author})["code"] == "bad_input", bad_author
+
+    # 4. addresses: body or cell paragraph only (no range, table, row, cell, or out-of-bounds)
+    for bad_at in ("", "p1:0-3", "t0", "t0/r0", "t0/r0/c0", "t0/r0/c0/p0:0-2", "p99", "t0/r0/c0/p9", "page:1"):
+        assert err({"op": "memo", "at": bad_at, "text": "메모"})["code"] == "bad_address", bad_at
+
+    # paragraphs inside a note, a header/footer or a memo have no address (and tables inside them have no address)
+    d = D._load(src, meta=False)
+    sec0 = d.secs[0]
+    p0_xml = sec0[d.top[0].start:d.top[0].end]
+    inner_tbl = sec0[d.tables[0].start:d.tables[0].end].replace('id="12"', 'id="777"', 1)
+    memo_with_tbl = _memo_field_xml("801", 1, "기존 메모", "작성자", "<hp:t>사업</hp:t>")
+    memo_with_tbl = memo_with_tbl.replace(
+        "<hp:t>기존 메모</hp:t>", "<hp:t>기존 메모</hp:t>" + inner_tbl, 1
+    )
+    p0_with_containers = p0_xml.replace(
+        "<hp:t>사업 개요</hp:t>",
+        '<hp:ctrl><hp:header id="802" applyPageType="BOTH"><hp:subList id="" textDirection="HORIZONTAL" '
+        'lineWrap="BREAK" vertAlign="TOP"><hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" '
+        'columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>머리말 문단</hp:t></hp:run></hp:p>'
+        '</hp:subList></hp:header></hp:ctrl>'
+        + memo_with_tbl
+        + "<hp:t> 개요</hp:t>"
+        + '<hp:footNote id="803"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP">'
+        '<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+        '<hp:run charPrIDRef="0"><hp:t>각주 문단</hp:t></hp:run></hp:p></hp:subList></hp:footNote>',
+        1,
+    )
+    container_doc_path = tmp_path / "containers.hwpx"
+    container_doc_path.write_bytes(
+        d.zip.rewrite({"Contents/section0.xml": (sec0[:d.top[0].start] + p0_with_containers + sec0[d.top[0].end:]).encode("utf-8")})
+    )
+    cd = D._load(container_doc_path, meta=False)
+    # None of the inner paragraphs (header, memo, footnote) got a top-level address. The table inside the memo
+    # keeps a table address, as in the engine's hnc_addr (fieldBegin is not in SKIP_LOCAL): it comes first, as t0.
+    assert len(cd.top) == len(d.top)
+    assert len(cd.top_tables) == 2
+    for q in cd.paras:
+        if q.text in ("머리말 문단", "기존 메모", "각주 문단"):
+            assert D.para_address(cd, q) is None
+    assert err({"op": "memo", "at": "t0/r0/c0/p0", "text": "메모"},
+               f=container_doc_path, base=D.rev_of(container_doc_path))["code"] == "bad_address"
+
+    # 5. expect check
+    assert err({"op": "memo", "at": "p1", "text": "메모", "expect": 123})["code"] == "bad_input"
+    assert err({"op": "memo", "at": "p1", "text": "메모", "expect": "다른 문장"})["code"] == "expect_mismatch"
+
+    # 6. on checks: malformed -> bad_input; not found -> not_found with candidates; found >1 -> bad_input with candidates
+    for bad_on in (None, 123, True, ["2026년"], "", "   ", "2026년\n3월", "2026년\r3월", "2026\x01년"):
+        assert err({"op": "memo", "at": "p1", "text": "메모", "on": bad_on})["code"] == "bad_input", bad_on
+    e_nf = err({"op": "memo", "at": "p1", "text": "메모", "on": "2027년"})
+    assert e_nf["code"] == "not_found" and e_nf.get("candidates")
+    # p4: "1차 점검은 11월 3일, 2차 점검은 11월 18일에 한다." -> "11월" occurs twice
+    e_dup = err({"op": "memo", "at": "p4", "text": "메모", "on": "11월"})
+    assert e_dup["code"] == "bad_input" and "2 times" in e_dup["message"] and len(e_dup.get("candidates") or []) >= 2
+    assert err({"op": "memo", "at": "p4", "text": "메모", "on": e_dup["candidates"][0]})["code"] == "capability_unavailable"
+
+    # 7. empty paragraph (body paragraph with no text, or empty table cell paragraph): refused with bad_input
+    # p5 in BASIC is the table host paragraph (p5.text == ""); p0 in GUARD also has p0.text == ""
+    assert err({"op": "memo", "at": "p5", "text": "메모"})["code"] == "bad_input"
+    assert err({"op": "memo", "at": "p5", "text": "메모", "on": "단어"})["code"] == "bad_input"
+    # a pure empty body paragraph (no text and no objects) is also refused with bad_input
+    empty_p_doc = tmp_path / "empty_p.hwpx"
+    empty_p_doc.write_bytes(
+        d.zip.rewrite({"Contents/section0.xml": sec0.replace("<hp:t>사업 개요</hp:t>", "<hp:t/>", 1).encode("utf-8")})
+    )
+    assert err({"op": "memo", "at": "p0", "text": "메모"},
+               f=empty_p_doc, base=D.rev_of(empty_p_doc))["code"] == "bad_input"
+    assert err({"op": "memo", "at": "p0", "text": "메모", "on": "사업"},
+               f=empty_p_doc, base=D.rev_of(empty_p_doc))["code"] == "bad_input"
+    f_tbl = _doc_with_formula_tables(tmp_path)
+    # t0/r1/c3/p0 in f_tbl is an empty cell paragraph
+    assert err({"op": "memo", "at": "t0/r1/c3/p0", "text": "메모"}, f=f_tbl, base=D.rev_of(f_tbl))["code"] == "bad_input"
+    assert err({"op": "memo", "at": "t0/r1/c3/p0", "text": "메모", "on": "값"},
+               f=f_tbl, base=D.rev_of(f_tbl))["code"] == "bad_input"
+
+    # 8. overlapping an existing field (click-here, hyperlink, memo, formula) -> bad_input
+    p1_xml = sec0[d.top[1].start:d.top[1].end]
+    p2_xml = sec0[d.top[2].start:d.top[2].end]
+    p4_xml = sec0[d.top[4].start:d.top[4].end]
+    p7_xml = sec0[d.top[7].start:d.top[7].end]
+    # p1: HYPERLINK on "2026년 3월"
+    p1_link = p1_xml.replace(
+        "<hp:t>본 사업은 2026년 3월에 시작한다.</hp:t>",
+        "<hp:t>본 사업은 </hp:t>"
+        '<hp:ctrl><hp:fieldBegin id="901" type="HYPERLINK" name="" editable="0" dirty="0" zorder="-1" fieldid="627600491">'
+        '<hp:parameters cnt="2" name=""><hp:integerParam name="Prop">0</hp:integerParam>'
+        '<hp:stringParam name="Command">https://www.hancom.com;1;0;0;</hp:stringParam></hp:parameters>'
+        '</hp:fieldBegin></hp:ctrl><hp:t>2026년 3월</hp:t>'
+        '<hp:ctrl><hp:fieldEnd beginIDRef="901" fieldid="627600491"/></hp:ctrl><hp:t>에 시작한다.</hp:t>',
+        1,
+    )
+    # p2: MEMO on "보존 포맷"
+    p2_memo = p2_xml.replace(
+        "<hp:t>점검 대상은 보존 포맷 메타데이터이다.</hp:t>",
+        "<hp:t>점검 대상은 </hp:t>"
+        + _memo_field_xml("902", 1, "기존 메모", "홍길동", "<hp:t>보존 포맷</hp:t>")
+        + "<hp:t> 메타데이터이다.</hp:t>",
+        1,
+    )
+    # p4: CLICK_HERE on "11월 18일"
+    p4_click = p4_xml.replace(
+        "<hp:t>점검 기간은 11월 18일부터 11월 27일까지이다.</hp:t>",
+        "<hp:t>점검 기간은 </hp:t>"
+        '<hp:ctrl><hp:fieldBegin id="903" type="CLICK_HERE" name="일정" editable="1" dirty="0" zorder="-1" fieldid="627272811">'
+        '<hp:parameters cnt="2" name=""><hp:integerParam name="Prop">9</hp:integerParam>'
+        '<hp:stringParam name="Direction">날짜</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl>'
+        '<hp:t>11월 18일</hp:t>'
+        '<hp:ctrl><hp:fieldEnd beginIDRef="903" fieldid="627272811"/></hp:ctrl>'
+        "<hp:t>부터 11월 27일까지이다.</hp:t>",
+        1,
+    )
+    # p7: FORMULA on "전자문서"
+    p7_formula = p7_xml.replace(
+        "<hp:t>결과는 전자문서 시스템으로 회신한다.</hp:t>",
+        "<hp:t>결과는 </hp:t>"
+        '<hp:ctrl><hp:fieldBegin id="904" type="FORMULA" name="" editable="0" dirty="0" zorder="-1" fieldid="627469685">'
+        '<hp:parameters cnt="3" name=""><hp:integerParam name="Prop">8</hp:integerParam>'
+        '<hp:stringParam name="Command">=SUM(A1:B1);48</hp:stringParam>'
+        '<hp:stringParam name="Formula">=SUM(A1:B1);48</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl>'
+        "<hp:t>전자문서</hp:t>"
+        '<hp:ctrl><hp:fieldEnd beginIDRef="904" fieldid="627469685"/></hp:ctrl>'
+        "<hp:t> 시스템으로 회신한다.</hp:t>",
+        1,
+    )
+    sec_fields = (
+        sec0[:d.top[1].start] + p1_link + sec0[d.top[1].end:d.top[2].start] + p2_memo
+        + sec0[d.top[2].end:d.top[4].start] + p4_click + sec0[d.top[4].end:d.top[7].start] + p7_formula
+        + sec0[d.top[7].end:]
+    )
+    f_fields = tmp_path / "with_fields.hwpx"
+    f_fields.write_bytes(d.zip.rewrite({"Contents/section0.xml": sec_fields.encode("utf-8")}))
+    f_fields_rev = D.rev_of(f_fields)
+
+    # whole-paragraph memo (no `on`) on a paragraph holding any field -> bad_input
+    for f_at in ("p1", "p2", "p4", "p7"):
+        e_ov = err({"op": "memo", "at": f_at, "text": "메모"}, f=f_fields, base=f_fields_rev)
+        assert e_ov["code"] == "bad_input" and "field" in e_ov["message"], f_at
+    # `on` overlapping HYPERLINK ("2026년 3월" in p1), MEMO ("보존 포맷" in p2), CLICK_HERE ("11월 18일" in p4), FORMULA ("전자문서" in p7)
+    for f_at, ov_on in (
+        ("p1", "2026년 3월"), ("p1", "2026년"), ("p1", "사업은 2026년"), ("p1", "3월에"),
+        ("p2", "보존 포맷"), ("p2", "보존"), ("p2", "대상은 보존"), ("p2", "포맷 메타데이터"),
+        ("p4", "11월 18일"), ("p4", "18일부터"),
+        ("p7", "전자문서"), ("p7", "결과는 전자"), ("p7", "문서 시스템"),
+    ):
+        e_ov = err({"op": "memo", "at": f_at, "on": ov_on, "text": "메모"}, f=f_fields, base=f_fields_rev)
+        assert e_ov["code"] == "bad_input" and "field" in e_ov["message"], (f_at, ov_on)
+    # `on` on a non-overlapping substring in the same paragraph is allowed (capability_unavailable without engine)
+    for f_at, ok_on in (("p1", "본 사업"), ("p2", "메타데이터"), ("p4", "11월 27일"), ("p7", "회신한다")):
+        assert err({"op": "memo", "at": f_at, "on": ok_on, "text": "메모"},
+                   f=f_fields, base=f_fields_rev)["code"] == "capability_unavailable", (f_at, ok_on)
+
+    # 9. conflicts: two memos on one paragraph, or memo with set / replace / insert_after / delete
+    assert err([
+        {"op": "memo", "at": "p1", "on": "사업", "text": "첫 메모"},
+        {"op": "memo", "at": "p1", "on": "2026년", "text": "둘째 메모"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "memo", "at": "p1", "on": "사업", "text": "메모"},
+        {"op": "set", "at": "p1", "text": "새 문장"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "memo", "at": "p1", "on": "사업", "text": "메모"},
+        {"op": "set", "at": "p1:10-12", "text": "4월"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "memo", "at": "p1", "on": "사업", "text": "메모"},
+        {"op": "replace", "at": "p1", "find": "3월", "with": "4월"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "memo", "at": "p1", "on": "사업", "text": "메모"},
+        {"op": "insert_after", "at": "p1", "markdown": "추가 문단"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "memo", "at": "p1", "on": "사업", "text": "메모"},
+        {"op": "delete", "at": "p1"},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "memo", "at": "t0/r0/c0/p0", "text": "셀 메모"},
+        {"op": "table.set_cells", "at": "t0/r0/c0", "grid": [["변경"]]},
+    ])["code"] == "conflict"
+    assert err([
+        {"op": "memo", "at": "t0/r0/c0/p0", "text": "셀 메모"},
+        {"op": "delete", "at": "t0"},
+    ])["code"] == "conflict"
+
+    # 10. valid ops without engine -> capability_unavailable and nothing written
+    e = err([
+        {"op": "memo", "at": "p1", "text": "전체 문단 메모", "expect": "본 사업은 2026년 3월에 시작한다."},
+        {"op": "memo", "at": "p2", "on": "메타데이터", "text": "부분 메모", "author": "홍길동"},
+        {"op": "memo", "at": "t0/r0/c0/p0", "text": "표 셀 메모", "author": "가" * 64},
+    ])
+    assert e["code"] == "capability_unavailable"
+    assert not out.exists()
+
+
+def test_read_excludes_memo_body(no_engine, tmp_path):
+    """A memo's subList paragraph must never leak into read, find, expect or remap visible text."""
+    src = _copy(BASIC, tmp_path, "memo_read.hwpx")
+    d = D._load(src, meta=False)
+    sec0 = d.secs[0]
+    p2 = d.top[2]
+    p2_with_memo = sec0[p2.start:p2.end].replace(
+        "<hp:t>점검 대상은 보존 포맷 메타데이터이다.</hp:t>",
+        "<hp:t>점검 대상은 보존 포맷 </hp:t>"
+        + _memo_field_xml("950", 1, "절대 본문에 보이면 안 되는 메모 본문", "검토자", "<hp:t>메타데이터</hp:t>")
+        + "<hp:t>이다.</hp:t>",
+        1,
+    )
+    src.write_bytes(
+        d.zip.rewrite({"Contents/section0.xml": (sec0[:p2.start] + p2_with_memo + sec0[p2.end:]).encode("utf-8")})
+    )
+    b = D.read(src, "p2")["blocks"][0]
+    assert b["text"] == "점검 대상은 보존 포맷 메타데이터이다."
+    assert "절대 본문에 보이면 안 되는 메모 본문" not in b["text"]
+    b_runs = D.read(src, "p2", with_runs=True)["blocks"][0]
+    assert "".join(r["text"] for r in b_runs["runs"]) == "점검 대상은 보존 포맷 메타데이터이다."
+    assert all("메모 본문" not in r["text"] for r in b_runs["runs"])
+    assert D.find(src, "메모 본문")["hits"] == []
+    assert D.find(src, "메타데이터")["hits"] == [
+        {"at": "p2", "start": 13, "end": 18, "text": "메타데이터"}
+    ]
+    # expect on p2 compares against the visible text only
+    e_bad_exp = D.edit(src, [{"op": "replace", "at": "p2", "find": "이다.", "with": "입니다.",
+                              "expect": "점검 대상은 보존 포맷 절대 본문에 보이면 안 되는 메모 본문메타데이터이다."}],
+                       base=D.rev_of(src), out=tmp_path / "exp_fail.hwpx")["error"]
+    assert e_bad_exp["code"] == "expect_mismatch"
+    assert e_bad_exp["actual"] == "점검 대상은 보존 포맷 메타데이터이다."
+
+
+@engine
+def test_engine_memo(tmp_path, monkeypatch):
+    # the plan fixes the memo's creation time; pin it so re-planned acts verify the saved file
+    fixed = datetime.datetime(2026, 11, 27, 7, 30, 5, tzinfo=datetime.timezone.utc)
+    monkeypatch.setattr(D, "_memo_now", lambda: fixed)
+    # 1. FX_DOC (whose header.xml has the 메모 / Memo style id "17", paraPr "11"):
+    # whole body paragraph memo (p0), substring `on` memo (p3), and table cell paragraph memo (t0/r0/c0/p0) in one edit
+    f = _copy(FX_DOC, tmp_path, "fx_memo.hwpx")
+    base = D._load(f, meta=False)
+    assert D._memo_style_id(base) == "17"
+    p0_text = base.top[0].text
+    p3_text = base.top[3].text
+    cell_p = D.resolve(base, "t0/r0/c0/p0")["para"]
+    cell_text = cell_p.text
+    sub_word = "번째"
+    assert p3_text.count(sub_word) == 1
+    out = tmp_path / "fx_memo_out.hwpx"
+    ops = [
+        {"op": "memo", "at": "p0", "text": "본문 전체 메모", "expect": p0_text},
+        {"op": "memo", "at": "p3", "on": sub_word, "text": "부분 단어 메모", "author": "홍길동", "expect": p3_text},
+        {"op": "memo", "at": "t0/r0/c0/p0", "text": "표 셀 메모", "author": "검토자", "expect": cell_text},
+    ]
+    r = D.edit(f, ops, base=D.rev_of(f), out=out)
+    assert r["ok"], r
+    assert r["remap"] == [] and not r.get("remap_approx")
+    got = D._load(out, meta=False)
+    acts = D._plan(base, ops)
+    assert D._verify(base, got, acts)
+
+    # Read side: visible text excludes memo body on all three edited paragraphs
+    assert D.read(out, "p0")["blocks"][0]["text"] == p0_text
+    assert D.read(out, "p3")["blocks"][0]["text"] == p3_text
+    assert D.read(out, "t0/r0/c0/p0")["blocks"][0]["text"] == cell_text
+    assert D.find(out, "본문 전체 메모")["hits"] == []
+    assert D.find(out, "부분 단어 메모")["hits"] == []
+    assert D.find(out, "표 셀 메모")["hits"] == []
+
+    m_p0 = D._memos_in(got, got.top[0])
+    assert len(m_p0) == 1
+    assert m_p0[0]["text"] == "본문 전체 메모" and m_p0[0]["author"] == ""
+    assert m_p0[0]["span"] == (0, len(p0_text)) and m_p0[0]["anchor"] == p0_text
+    assert m_p0[0]["styles"] == [("17", "11")]
+
+    m_p3 = D._memos_in(got, got.top[3])
+    assert len(m_p3) == 1
+    assert m_p3[0]["text"] == "부분 단어 메모" and m_p3[0]["author"] == "홍길동"
+    pos_sub = p3_text.index(sub_word)
+    assert m_p3[0]["span"] == (pos_sub, pos_sub + len(sub_word)) and m_p3[0]["anchor"] == sub_word
+    assert m_p3[0]["styles"] == [("17", "11")]
+
+    got_cell_p = D.resolve(got, "t0/r0/c0/p0")["para"]
+    m_cell = D._memos_in(got, got_cell_p)
+    assert len(m_cell) == 1
+    assert m_cell[0]["text"] == "표 셀 메모" and m_cell[0]["author"] == "검토자"
+    assert m_cell[0]["span"] == (0, len(cell_text)) and m_cell[0]["anchor"] == cell_text
+    assert m_cell[0]["styles"] == [("17", "11")]
+
+    # Overlapping memo on p3 in a second edit is refused with bad_input
+    e_ov = D.edit(out, [{"op": "memo", "at": "p3", "on": sub_word, "text": "중복"}],
+                  base=D.rev_of(out), out=tmp_path / "ov.hwpx")["error"]
+    assert e_ov["code"] == "bad_input" and "field" in e_ov["message"]
+
+    # 2. BASIC (whose header.xml has no Memo style -> engine falls back to style "0", paraPr "0")
+    f_b = _copy(BASIC, tmp_path, "basic_memo.hwpx")
+    base_b = D._load(f_b, meta=False)
+    assert D._memo_style_id(base_b) == "0"
+    out_b = tmp_path / "basic_memo_out.hwpx"
+    ops_b = [
+        {"op": "memo", "at": "p1", "text": "첫 문단 전체 메모"},
+        {"op": "memo", "at": "p2", "on": "메타데이터", "text": "메타데이터 확인", "author": "이몽룡"},
+        {"op": "memo", "at": "t0/r0/c0/p0", "on": "항목", "text": "셀 제목 메모", "author": "성춘향"},
+    ]
+    r_b = D.edit(f_b, ops_b, base=D.rev_of(f_b), out=out_b)
+    assert r_b["ok"], r_b
+    got_b = D._load(out_b, meta=False)
+    acts_b = D._plan(base_b, ops_b)
+    assert D._verify(base_b, got_b, acts_b)
+    assert D._memos_in(got_b, got_b.top[1])[0]["styles"] == [("0", "0")]
+    assert D._memos_in(got_b, got_b.top[2])[0]["styles"] == [("0", "0")]
+    assert D._memos_in(got_b, D.resolve(got_b, "t0/r0/c0/p0")["para"])[0]["styles"] == [("0", "0")]
+    # Changing another field in the document (e.g. a CLICK_HERE field in BASIC) fails _verify_memo
+    raw_sec_b = got_b.zip.read("Contents/section0.xml").decode("utf-8")
+    assert 'type="CLICK_HERE"' in raw_sec_b
+    broken_other_field = D.Doc(out_b, got_b.zip.rewrite({
+        "Contents/section0.xml": raw_sec_b.replace('type="CLICK_HERE"', 'type="HYPERLINK"', 1).encode("utf-8")
+    }), "hwpx")
+    assert not D._verify(base_b, broken_other_field, acts_b)
+
+    # Second memo on a non-overlapping substring in p2 in a subsequent edit succeeds and keeps both memos
+    out_b2 = tmp_path / "basic_memo_out2.hwpx"
+    ops_b2 = [{"op": "memo", "at": "p2", "on": "점검 대상", "text": "앞쪽 메모", "author": "변학도"}]
+    r_b2 = D.edit(out_b, ops_b2, base=D.rev_of(out_b), out=out_b2)
+    assert r_b2["ok"], r_b2
+    got_b2 = D._load(out_b2, meta=False)
+    assert D._verify(got_b, got_b2, D._plan(got_b, ops_b2))
+    assert [(m["anchor"], m["text"], m["author"]) for m in D._memos_in(got_b2, got_b2.top[2])] == [
+        ("점검 대상", "앞쪽 메모", "변학도"),
+        ("메타데이터", "메타데이터 확인", "이몽룡"),
+    ]
+    assert D.read(out_b2, "p2")["blocks"][0]["text"] == "점검 대상은 보존 포맷 메타데이터이다."
+
+    # 3. Hand-broken outputs are refused: wrong memo text, wrong anchor span, changed visible text,
+    # missing fieldEnd, a second memo, a changed author, and wrong memo paragraph style
+    raw_sec = got.zip.read("Contents/section0.xml").decode("utf-8")
+    fid_p3 = m_p3[0]["id"]
+    assert m_p3[0]["stamp"] == D._memo_stamp(fixed)
+    lo, hi, created = D._memo_stamp(fixed)
+    assert "/%d/%d/홍길동/" % (lo, hi) in raw_sec and ">%s<" % created in raw_sec
+    end_tag_p3 = '<hp:ctrl><hp:fieldEnd beginIDRef="%s" fieldid="623209829"/></hp:ctrl>' % fid_p3
+    assert ("<hp:t>%s</hp:t>%s" % (sub_word, end_tag_p3)) in raw_sec
+    extra_memo = _memo_field_xml("999999", 99, "몰래 추가된 메모", "침입자", "<hp:t>추가</hp:t>",
+                                 sid="17", ppid="11", cpid="4").replace("<hp:t>추가</hp:t>", "", 1)
+
+    for label, broken_sec in (
+        ("wrong_memo_text", raw_sec.replace("<hp:t>부분 단어 메모</hp:t>", "<hp:t>바뀐 메모 내용</hp:t>", 1)),
+        ("wrong_anchor_span", raw_sec.replace(
+            "<hp:t>%s</hp:t>%s" % (sub_word, end_tag_p3),
+            "<hp:t>%s</hp:t>%s<hp:t>%s</hp:t>" % (sub_word[:1], end_tag_p3, sub_word[1:]),
+            1,
+        )),
+        ("changed_visible_text", raw_sec.replace("<hp:t>%s</hp:t>" % sub_word, "<hp:t>변조된본문</hp:t>", 1)),
+        ("missing_fieldEnd", raw_sec.replace(end_tag_p3, "", 1)),
+        ("second_memo", raw_sec.replace(end_tag_p3, end_tag_p3 + extra_memo, 1)),
+        ("changed_author_param", raw_sec.replace(
+            '<hp:stringParam name="Author">홍길동</hp:stringParam>',
+            '<hp:stringParam name="Author">다른작성자</hp:stringParam>',
+            1,
+        )),
+        ("changed_author_both", raw_sec.replace("홍길동", "다른작성자")),
+        ("wrong_memo_style", raw_sec.replace('paraPrIDRef="11" styleIDRef="17"', 'paraPrIDRef="0" styleIDRef="0"', 1)),
+        ("wrong_create_time", re.sub(r'(<hp:stringParam name="CreateDateTime">)[^<]*', r"\g<1>2020-01-01T00:00:00Z",
+                                     raw_sec, count=1)),
+        ("wrong_filetime", re.sub(r"(MEMO/65535/\d+/)\d+/", r"\g<1>1/", raw_sec, count=1)),
+    ):
+        assert broken_sec != raw_sec, label
+        broken_bytes = got.zip.rewrite({"Contents/section0.xml": broken_sec.encode("utf-8")})
+        broken_doc = D.Doc(out, broken_bytes, "hwpx")
+        assert not D._verify(base, broken_doc, acts), label
+        monkeypatch.setattr(D, "_engine_apply", lambda *a, _b=broken_bytes, **k: (_b, {}, None))
+        out_bad = tmp_path / ("bad_memo_%s.hwpx" % label)
+        res_bad = D.edit(f, ops, base=D.rev_of(f), out=out_bad)
+        assert not res_bad["ok"] and res_bad["error"]["code"] == "internal", (label, res_bad)
+        assert res_bad["error"]["written"] is False and not out_bad.exists(), label
+

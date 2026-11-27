@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import atexit
 import builtins
+import datetime
 import bisect
 import difflib
 import hashlib
@@ -104,7 +105,7 @@ OPS = ("set", "replace", "insert_after", "delete", "table.set_cells", "table.add
        "char_shape", "para_shape", "numbering", "table.merge", "table.split", "table.add_col",
        "table.delete_col", "table.size", "page_setup", "columns", "break", "header", "page_number",
        "table.cell_style", "table.style", "style.create", "note", "caption", "bookmark", "link", "toc",
-       "hide", "new_number", "picture", "table.formula")
+       "hide", "new_number", "picture", "table.formula", "memo")
 #: ops the built-in XML path can do without the engine
 FALLBACK_OPS = ("set", "replace", "table.set_cells", "fill", "delete")
 
@@ -2524,6 +2525,7 @@ class _Act:
         self.new_num = None     # new_number: (base Para, kind, num)
         self.picture = None     # insert_picture / picture: verification spec
         self.formula = None     # table.formula: (base Para, "func" | "formula", spec)
+        self.memo = None        # memo: (base Para, text, author, (pos_a, pos_b), anchor_text, stamp)
 
 
 class _Claims:
@@ -2566,7 +2568,11 @@ class _Claims:
             if j != i and s2 == si and x <= pos < y:
                 self._conflict(i, op, j, op2, at2)
         for s2, pos2, j, op2, _at2 in self.touched:
-            if j != i and s2 == si and pos2 == pos and "toc" in (op, op2):
+            if j != i and s2 == si and pos2 == pos and (
+                "toc" in (op, op2)
+                or ("memo" in (op, op2) and {op, op2} <= {
+                    "memo", "insert_after", "insert_table", "insert_picture", "insert_equation"})
+            ):
                 self._conflict(i, op, j, op2, at)
         self.touched.append((si, pos, i, op, at))
 
@@ -2589,7 +2595,7 @@ def _no_list_twice(cl, q, i, name, at):
 
 
 EXPECT_OPS = ("set", "replace", "delete", "fill", "table.delete_row", "char_shape", "para_shape", "numbering",
-              "table.delete_col", "break", "header", "note")
+              "table.delete_col", "break", "header", "note", "memo")
 RANGE_OPS = ("set", "replace", "char_shape")
 
 
@@ -3869,9 +3875,13 @@ NOTE_KINDS = ("FOOT", "END")
 NOTE_TEXT_MAX = 2000
 CAPTION_SIDES = ("BOTTOM", "TOP", "LEFT", "RIGHT")
 CAPTION_TEXT_MAX = 500
+MEMO_TEXT_MAX = 1000
+MEMO_AUTHOR_MAX = 64
 TOC_LEADERS = ("DASH", "DOT", "SOLID", "NONE")
 _LINK_URL = re.compile(r"^(?:https?://[^/\s?#][^\s]*|mailto:[^@\s]+@[^@\s]+)$", re.I)
 _AUTO_STYLE_NAMES = {"footNote": ("Footnote", "각주"), "endNote": ("Endnote", "미주"), "caption": ("Caption", "캡션")}
+_MEMO_CMD_RE = re.compile(r"^MEMO/65535/\d+/(\d+)/(\d+)/(.*)/\\;;$", re.S)
+_ANY_PARAM = re.compile(r'<[\w:.-]*(string|integer|boolean)Param\b[^>]*\bname="([^"]*)"[^>]*>(.*?)</', re.S)
 
 
 def _after_candidates(txt, after, hits):
@@ -3897,8 +3907,8 @@ def _after_candidates(txt, after, hits):
     return out or [txt[:40]]
 
 
-def _once_in_para(p, sub, op_name, field_name, i, at):
-    """ptext offset of `sub` in paragraph `p`; bad_input (with candidates when missing or ambiguous) otherwise."""
+def _once_in_para(p, sub, op_name, field_name, i, at, *, not_found_code="bad_input"):
+    """ptext offset of `sub` in paragraph `p`; not_found_code when missing, bad_input otherwise (with candidates)."""
     if not isinstance(sub, str) or not sub or _CTRL.search(sub) or "\n" in sub or "\r" in sub:
         raise DocError("bad_input", "%s: %s is non-empty text in the paragraph" % (op_name, field_name), i=i, at=at)
     hits = []
@@ -3907,11 +3917,186 @@ def _once_in_para(p, sub, op_name, field_name, i, at):
         hits.append(j)
         j = p.ptext.find(sub, j + len(sub))
     if len(hits) != 1:
+        code = not_found_code if not hits else "bad_input"
         why = ("%r does not occur in %s" % (sub, at) if not hits else
                "%r occurs %d times in %s; give a longer %s" % (sub, len(hits), at, field_name))
-        raise DocError("bad_input", "%s: %s" % (op_name, why), i=i, at=at,
+        raise DocError(code, "%s: %s" % (op_name, why), i=i, at=at,
                        candidates=_after_candidates(p.text, sub, [_pub(p, x) for x in hits]))
     return hits[0]
+
+
+def _para_field_overlaps(doc, p, pos_a, pos_b, whole_para=False):
+    """True when [pos_a, pos_b) in paragraph `p` overlaps an existing field in `p` (or a cross-paragraph field
+    covering `p`)."""
+    for q in doc.sec_paras[p.si]:
+        for f in q.fields:
+            if f.get("e") == "elsewhere":
+                end_p = f.get("end_para")
+                end_start = end_p.start if end_p is not None else len(doc.secs[p.si])
+                if q.start <= p.start <= end_start:
+                    return True
+    for f in p.fields:
+        if whole_para:
+            return True
+        b = f.get("b", 0)
+        e = f["e"] if isinstance(f.get("e"), int) else len(p.chars)
+        if b == e:
+            if pos_a <= b <= pos_b:
+                return True
+        elif pos_a < e and b < pos_b:
+            return True
+    return False
+
+
+def _in_field_body(doc, p):
+    """True when paragraph `p` sits inside a field's own body (a fieldBegin subList, such as a memo's
+    text or a table held in it). Such tables keep addresses, as in hnc_addr, but a memo cannot go there."""
+    s = doc.secs[p.si]
+    for m in re.finditer(r"<hp:fieldBegin\b[^>]*?(/?)>", s[:p.start]):
+        if m.group(1):
+            continue
+        close = s.find("</hp:fieldBegin>", m.end())
+        if close == -1 or close > p.start:
+            return True
+    return False
+
+
+def _memo_now():
+    """The creation time a planned memo gets: now, in UTC, whole seconds."""
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+
+
+def _memo_stamp(when):
+    """(FILETIME low, FILETIME high, CreateDateTime) hwp-engine's insert_memo writes for the aware time `when`:
+    Command carries the UTC FILETIME, CreateDateTime the local time with a "Z" (as Hancom's saved memo has it)."""
+    ft = int(round((when.timestamp() + 11644473600) * 10 ** 7))
+    return ft & 0xFFFFFFFF, ft >> 32, when.astimezone().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _memo_style_id(doc):
+    """The style id hnc_edit.insert_memo picks for a memo subList paragraph: the Memo (메모) style when
+    header.xml has one, else style "0" (바탕글)."""
+    for sid, st in doc.styles.items():
+        if "Memo" in (sid, st.get("name"), st.get("engName")) or st.get("name") == "메모":
+            return sid
+    return "0" if "0" in doc.styles else None
+
+
+def _memos_in(d, p):
+    """[memo_dict, ...] of direct MEMO fields in paragraph `p` (or None entries when malformed)."""
+    s = d.secs[p.si]
+    out = []
+    closed_memo_ids = set()
+    for f in p.fields:
+        if (f.get("type") or "").upper() != "MEMO":
+            continue
+        fid = f.get("id")
+        if (not fid or fid in closed_memo_ids or not isinstance(f.get("e"), int)
+                or f.get("startx") is None or f.get("endx") is None or f["startx"] >= f["endx"]):
+            out.append(None)
+            continue
+        close_m = re.search(r"</[\w:.-]*fieldBegin\s*>", s[f["startx"]:f["endx"]])
+        if not close_m:
+            out.append(None)
+            continue
+        close = f["startx"] + close_m.end()
+        if f.get("after") is None or f["after"] < close or f["endx"] < f["after"]:
+            out.append(None)
+            continue
+        end_hits = [
+            m for m in re.finditer(r'<[\w:.-]*fieldEnd\b[^>]*\bbeginIDRef="%s"[^>]*/?>' % re.escape(fid),
+                                   s[p.start:p.end])
+            if next((q for q in reversed(d.sec_paras[p.si])
+                     if q.start < p.start + m.start() < q.end), None) is p
+        ]
+        if len(end_hits) != 1:
+            out.append(None)
+            continue
+        sub_m = re.search(r"<[\w:.-]*subList\b", s[f["startx"]:close])
+        params_end = (f["startx"] + sub_m.start()) if sub_m else close
+        params = {}
+        for pm in _STRING_PARAM.finditer(s, f["startx"], params_end):
+            pname = _xml_unescape(pm.group(1))
+            pval = "".join(_xml_char(x) for x in _XCHAR.finditer(pm.group(2)))
+            params[pname] = pval
+        author = params.get("Author")
+        cmd = params.get("Command")
+        cmd_m = _MEMO_CMD_RE.match(cmd) if isinstance(cmd, str) else None
+        if author is None or cmd_m is None or cmd_m.group(3) != author:
+            out.append(None)
+            continue
+        sub_ps = [q for q in d.sec_paras[p.si] if f["startx"] < q.start < close and q.parent is p]
+        if not sub_ps or any(q.objs or q.fields for q in sub_ps):
+            out.append(None)
+            continue
+        b, e = f["b"], f["e"]
+        if not (0 <= b < e <= len(p.chars)) or any(ch == OBJ for ch in p.chars[b:e]):
+            out.append(None)
+            continue
+        anchor = "".join(p.chars[b:e])
+        closed_memo_ids.add(fid)
+        out.append({
+            "id": fid,
+            "text": "\n".join(q.text for q in sub_ps),
+            "author": author,
+            "stamp": (int(cmd_m.group(1)), int(cmd_m.group(2)), params.get("CreateDateTime")),
+            "span": (b, e),
+            "anchor": anchor,
+            "styles": [(q.style, q.pr) for q in sub_ps],
+            "n_paras": len(sub_ps),
+        })
+    for m in re.finditer(r"<[\w:.-]*fieldEnd\b[^>]*/?>", s[p.start:p.end]):
+        pos = p.start + m.start()
+        host = next((q for q in reversed(d.sec_paras[p.si]) if q.start < pos < q.end), None)
+        if host is not p:
+            continue
+        tag = m.group(0)
+        ref = _attr(tag, "beginIDRef")
+        if _attr(tag, "fieldid") == "623209829" and ref not in closed_memo_ids:
+            out.append(None)
+    return out
+
+
+def _other_fields_in(d, p, skip_types=()):
+    """Canonical list of non-MEMO fields in paragraph `p` (or None entries when malformed)."""
+    s = d.secs[p.si]
+    out = []
+    for f in p.fields:
+        ftype = (f.get("type") or "").upper()
+        if ftype == "MEMO" or ftype in skip_types:
+            continue
+        fid = f.get("id")
+        if f.get("e") == "elsewhere":
+            out.append((ftype, f.get("name"), f.get("direction"), f.get("command"), f.get("b"), "elsewhere"))
+            continue
+        if (not fid or not isinstance(f.get("e"), int)
+                or f.get("startx") is None or f.get("endx") is None or f["startx"] >= f["endx"]):
+            out.append(None)
+            continue
+        close_m = re.search(r"</[\w:.-]*fieldBegin\s*>", s[f["startx"]:f["endx"]])
+        if not close_m:
+            out.append(None)
+            continue
+        close = f["startx"] + close_m.end()
+        end_hits = [
+            m for m in re.finditer(r'<[\w:.-]*fieldEnd\b[^>]*\bbeginIDRef="%s"[^>]*/?>' % re.escape(fid),
+                                   s[p.start:p.end])
+            if next((q for q in reversed(d.sec_paras[p.si])
+                     if q.start < p.start + m.start() < q.end), None) is p
+        ]
+        if len(end_hits) != 1:
+            out.append(None)
+            continue
+        params = []
+        for pm in _ANY_PARAM.finditer(s, f["startx"], close):
+            pkind = pm.group(1)
+            pname = _xml_unescape(pm.group(2))
+            pval = "".join(_xml_char(x) for x in _XCHAR.finditer(pm.group(3)))
+            params.append((pkind, pname, pval))
+        b, e = f["b"], f["e"]
+        rtext = "".join(c for c in p.chars[b:e] if c != OBJ)
+        out.append((ftype, fid, f.get("name"), tuple(params), (b, e), rtext))
+    return out
 
 
 def _bookmarks_in(d, si=None, para=None, with_before=False):
@@ -5416,6 +5601,66 @@ def _plan_op(doc, cl, i, name, op, at):
         a.text_of = tp
         a.formula = f_spec
         acts.append(a)
+    elif name == "memo":
+        known = ("text", "on", "author", "expect")
+        extra = sorted(str(k) for k in set(op) - {"op", "at"} - set(known))
+        if extra:
+            raise DocError("bad_input", "memo takes %s, not %s" % (", ".join(("at",) + known), extra[0]),
+                           i=i, at=at,
+                           candidates=_cands_near(list(("at",) + known), extra[0]) or list(("at",) + known))
+        text = _clean(op.get("text"), "memo: text", i, at)
+        if not text.strip() or len(text) > MEMO_TEXT_MAX or "\n" in text:
+            raise DocError("bad_input", "memo: text is 1 to %d characters on one line" % MEMO_TEXT_MAX,
+                           i=i, at=at)
+        author = op.get("author", "")
+        if (not isinstance(author, str) or len(author) > MEMO_AUTHOR_MAX
+                or _CTRL.search(author) or re.search(r"[\t\n\r/\\;]", author)):
+            raise DocError("bad_input", "memo: author is text of at most %d characters without / \\ ; or "
+                           "control characters (Hancom's memo Command uses them as separators)" % MEMO_AUTHOR_MAX,
+                           i=i, at=at)
+        r = resolve(doc, at, allow=("para", "cellpara", "heading"))
+        if r.get("range"):
+            raise DocError("bad_address", "memo takes a whole paragraph, not a character range", i=i, at=at)
+        p = r["para"]
+        if not p.top and (p.cell is None or para_address(doc, p) is None):
+            raise DocError("bad_address", "memo needs a body or cell paragraph", i=i, at=at)
+        if p.cell is not None and _in_field_body(doc, p):
+            raise DocError("bad_address", "memo: %s is inside a field (a memo's own table); "
+                           "a memo cannot go there" % at, i=i, at=at)
+        _check_expect(op, i, at, p.text)
+        if "on" in op:
+            on = op.get("on")
+            if not isinstance(on, str) or not on.strip() or _CTRL.search(on) or "\n" in on or "\r" in on:
+                raise DocError("bad_input", "memo: on is non-empty text in the paragraph", i=i, at=at)
+            if not p.text.strip():
+                raise DocError("bad_input", "memo: %s is empty; Hancom needs text to attach a memo to" % at,
+                               i=i, at=at)
+            pos_a = _once_in_para(p, on, "memo", "on", i, at, not_found_code="not_found")
+            pos_b = pos_a + len(on)
+            anchor_text = on
+        else:
+            if not p.text.strip():
+                raise DocError("bad_input", "memo: %s is empty; Hancom needs text to attach a memo to" % at,
+                               i=i, at=at)
+            _need_text_para(p, at, i)
+            pos_a, pos_b = 0, len(p.chars)
+            anchor_text = p.text
+        if _para_field_overlaps(doc, p, pos_a, pos_b, whole_para=("on" not in op)):
+            raise DocError("bad_input",
+                           "memo: %s overlaps an existing field in %s; nested fields are not supported"
+                           % (repr(anchor_text) if "on" in op else "the paragraph text", at),
+                           i=i, at=at)
+        cl.span(p, 0, len(p.chars), i, name, whole=True)
+        when = _memo_now()      # fixed at plan time; the verifier checks the saved memo carries it
+        steps = [
+            ["goto", p.k, pos_a, p.si],
+            ["select", pos_b - pos_a],
+            {"op": "insert_memo", "kwargs": {"text": text, "author": author,
+                                             "when": when.strftime("%Y-%m-%dT%H:%M:%SZ")}},
+        ]
+        a = _Act(i, name, at, p, p.start, side=1, intra=pos_a, rank=1, steps=steps)
+        a.memo = (p, text, author, (pos_a, pos_b), anchor_text, _memo_stamp(when))
+        acts.append(a)
     return acts
 
 
@@ -5644,6 +5889,8 @@ def _verify(doc, newdoc, acts):
     if not _verify_picture(doc, newdoc, acts, st):
         return False
     if not _verify_table_formula(doc, newdoc, acts, st):
+        return False
+    if not _verify_memo(doc, newdoc, acts, st):
         return False
     for t in doc.tables:                # every surviving table is where the remap says, by its public address
         na = st["newaddr"](t)
@@ -6669,6 +6916,109 @@ def _verify_table_formula(doc, newdoc, acts, st):
     return True
 
 
+def _verify_memo(doc, newdoc, acts, st):
+    """Each memo op kept the paragraph's visible text unchanged, added one MEMO fieldBegin wrapping the
+    anchor span with the requested subList text, Author parameter and 메모 style (or style 0 when header.xml
+    has no Memo style), and left every other field in the document unchanged."""
+    memo_acts = [a for a in acts if a.memo]
+    if not memo_acts:
+        return True
+    if sum(len(_memos_in(newdoc, nq)) for nq in newdoc.paras) != (
+        sum(len(_memos_in(doc, q)) for q in doc.paras) + len(memo_acts)
+    ):
+        return False
+    want_sid = _memo_style_id(newdoc)
+    if want_sid is None or want_sid not in newdoc.styles:
+        return False
+    want_ppid = newdoc.styles[want_sid].get("paraPr")
+    changed = {id(a.text_of) for a in acts if a.text_of is not None}
+    link_ps = {id(a.link[0]) for a in acts if a.link}
+    formula_ps = {id(a.formula[0]) for a in acts if a.formula}
+    field_fill_ps = {id(a.fb[1]) for a in acts if a.fb and a.fb[0] == "field"}
+    has_toc_act = any(a.toc for a in acts)
+    targets = {}
+    for a in memo_acts:
+        p = a.memo[0]
+        if id(p) in targets:
+            return False
+        targets[id(p)] = a.memo
+    mapped_new = set()
+    for p in doc.paras:
+        np = _new_para(doc, newdoc, p, st)
+        if np is None:
+            if id(p) in targets:
+                return False
+            continue
+        mapped_new.add(id(np))
+        before_m = _memos_in(doc, p)
+        after_m = list(_memos_in(newdoc, np))
+        if None in before_m or None in after_m:
+            return False
+        skip = set()
+        if id(p) in link_ps:
+            skip.add("HYPERLINK")
+        if id(p) in formula_ps:
+            skip.add("FORMULA")
+        if id(p) in field_fill_ps:
+            skip.add("CLICK_HERE")
+        if has_toc_act:
+            skip.add("TABLEOFCONTENTS")
+        before_o = _other_fields_in(doc, p, skip)
+        after_o = _other_fields_in(newdoc, np, skip)
+        if None in after_o:
+            return False
+        if id(p) not in changed:
+            if np.text != p.text or after_o != before_o:
+                return False
+            if p.cell is not None:
+                if np.cell is None:
+                    return False
+                if not any(id(q) in changed for q in p.cell.paras) and len(np.cell.paras) != len(p.cell.paras):
+                    return False
+        else:
+            if [(x[0], x[1], x[2], x[3]) for x in after_o] != [(x[0], x[1], x[2], x[3]) for x in before_o]:
+                return False
+        if id(p) not in targets:
+            if id(p) not in changed:
+                if after_m != before_m:
+                    return False
+            else:
+                if [(m["id"], m["text"], m["author"], m["styles"], m["n_paras"]) for m in after_m] != [
+                    (m["id"], m["text"], m["author"], m["styles"], m["n_paras"]) for m in before_m
+                ]:
+                    return False
+            continue
+        _p, want_text, want_author, want_span, want_anchor, want_stamp = targets[id(p)]
+        if np.text != p.text or len(after_m) != len(before_m) + 1:
+            return False
+        before_ids = {m["id"] for m in before_m}
+        for old in before_m:
+            if old not in after_m:
+                return False
+            after_m.remove(old)
+        if len(after_m) != 1:
+            return False
+        got = after_m[0]
+        if (not got["id"] or got["id"] in before_ids or got["n_paras"] != 1
+                or got["text"] != want_text or got["author"] != want_author or got["stamp"] != want_stamp
+                or got["span"] != want_span or got["anchor"] != want_anchor
+                or got["styles"] != [(want_sid, want_ppid)]):
+            return False
+    for nq in newdoc.paras:
+        if id(nq) in mapped_new:
+            continue
+        if _memos_in(newdoc, nq):
+            return False
+    unmapped_skip = ("TABLEOFCONTENTS",) if has_toc_act else ()
+    unmapped_before_o = [f for q in doc.paras if _new_para(doc, newdoc, q, st) is None
+                         for f in _other_fields_in(doc, q, unmapped_skip)]
+    unmapped_after_o = [f for nq in newdoc.paras if id(nq) not in mapped_new
+                        for f in _other_fields_in(newdoc, nq, unmapped_skip)]
+    if None in unmapped_after_o or unmapped_after_o != unmapped_before_o:
+        return False
+    return True
+
+
 def _verify_shapes(doc, newdoc, acts, st):
     """The tables the table.* shape ops changed have the grid, cell count and merged cells they planned."""
     want = {}               # g -> expected change in the number of cells
@@ -6720,7 +7070,7 @@ def _remap_result(doc, newdoc, acts):
     dels = [a for a in acts if a.top_dels or a.tbl_dels or a.row_dels or a.cell_dels or a.col_dels or a.merges
             or a.hf or a.new_style or a.note or a.caption or a.bookmark or a.link or a.toc
             or a.char_shape or a.para_shape or a.page_setup or a.columns or a.hide or a.new_num or a.picture
-            or a.formula]
+            or a.formula or a.memo]
     if dels:        # a removal (or a new style) the output does not show was not done: never report it applied
         raise DocError("internal", "the output does not show what op %d (%s) does; nothing was written"
                        % (dels[0].i, dels[0].op), at=dels[0].at, i=dels[0].i, written=False)

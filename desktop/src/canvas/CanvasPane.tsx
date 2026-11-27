@@ -1,4 +1,3 @@
-import { SOURCE_COPY } from "./sourceCopy";
 import {
   useCallback,
   useEffect,
@@ -15,6 +14,7 @@ import {
   createProjectionPageSource,
   detectDocumentSeats,
   formatCharShape,
+  formatSeatLocation,
   parseDocAddress,
   type CanvasChangeRef,
   type PageSource,
@@ -28,7 +28,7 @@ import {
   useWorkspace,
 } from "../store";
 import { buildRegionTextMap } from "../workspace/externalPlan";
-import { deriveCellFieldLabel } from "../workspace/fieldLabels";
+import { deriveBlankCellLabel } from "../workspace/fieldLabels";
 import { useCanvasChanges } from "./changes";
 import {
   beginCellEditV2,
@@ -217,7 +217,7 @@ export function CanvasPane() {
     : "";
   const activeSeatLabel =
     inlineEdit?.kind === "cell"
-      ? deriveCellFieldLabel(
+      ? deriveBlankCellLabel(
           inspect,
           textMap,
           inlineEdit.table,
@@ -326,14 +326,21 @@ export function CanvasPane() {
       {isNarrow && inlineEdit?.kind === "cell" ? (
         <div className="rl-narrow-seat-bar" data-testid="narrow-seat-bar">
           <span className="rl-narrow-seat-label">
-            {deriveCellFieldLabel(
+            {deriveBlankCellLabel(
               inspect,
               textMap,
               inlineEdit.table,
               inlineEdit.row,
               inlineEdit.col,
               language,
-            )}
+            ) ??
+              formatSeatLocation(
+                null,
+                inlineEdit.table,
+                inlineEdit.row,
+                inlineEdit.col,
+                language,
+              )}
           </span>
           <div className="rl-narrow-seat-controls">
             <SeatEditor
@@ -388,7 +395,7 @@ export function CanvasStatusLeft() {
   const inlineEdit = useWorkspace((s) => s.inlineEdit);
   const language = useWorkspace((s) => s.language);
   const slice = useCanvasSlice(session?.sessionId);
-  const { page, pageCount, rasterSource, rasterApprox } = slice;
+  const { page, pageCount } = slice;
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
@@ -430,9 +437,12 @@ export function CanvasStatusLeft() {
     ? wp3t("status_cell_position", language, [page, address.row + 1, address.col + 1])
     : wp3t("status_page_position", language, [page]);
 
+  // A blank's name, never one made up for printed text: a static cell (a row
+  // title) or a guide cell (the form's own header line) is not a blank, so it
+  // gets no "빈칸 N" fallback name.
   const seatText = inspect && statusKey && address?.kind === "cell"
     ? seatLabelByKey.get(statusKey) ??
-      deriveCellFieldLabel(inspect, textMap, address.table, address.row, address.col, language)
+      deriveBlankCellLabel(inspect, textMap, address.table, address.row, address.col, language)
     : null;
 
   const charShape = formatCharShape(address?.kind === "cell"
@@ -454,11 +464,6 @@ export function CanvasStatusLeft() {
             onClick={() => setCanvasSlice({ page: page + 1 })}>›</button>
         </span>
       ) : null}
-      <span className="rl-status-item" data-testid="status-page-source"
-        data-page-source={rasterSource ?? "projection"}>
-        {wp3t(rasterSource ? SOURCE_COPY[rasterSource] : "page_source_projection", language)}
-        {rasterApprox ? ` · ${wp3t("page_source_approx", language)}` : null}
-      </span>
       <span className="rl-status-item rl-num" data-testid="status-cell-position">{position}</span>
       {seatText ? (
         <span className="rl-status-item" data-testid="status-seat">

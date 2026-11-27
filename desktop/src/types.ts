@@ -35,6 +35,9 @@ export interface GraphCell {
   classification: CellClassification;
   textPreview?: string;
   truncated?: boolean;
+  textCharPr?: string;
+  textCharPrFace?: TypefaceByLang | null;
+  textCharPrHeightPt?: number;
   charPr?: string;
   charPrSuggested?: string;
   colorAnomaly?: boolean;

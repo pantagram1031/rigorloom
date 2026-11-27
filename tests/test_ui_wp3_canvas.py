@@ -155,6 +155,11 @@ def test_blanks_editing_and_keyboard_decisions(browser, server):
         ).to_have_text(expected_heading)
         agency.click()
 
+        # The form's printed header line is not a blank: no made-up "빈칸 N" name.
+        page.locator('[data-cell-key="c:0:0:0"]').first.hover()
+        expect(page.get_by_test_id("status-cell-position")).to_contain_text("1줄 1칸")
+        expect(page.get_by_test_id("status-seat")).to_have_count(0)
+
         coop = page.get_by_test_id("blank-seat-t0/r5/c1")
         expect(coop).to_contain_text("협조자 1")
         expect(coop.locator(".rl-blank-loc")).to_have_text("6행 2열")
@@ -224,6 +229,11 @@ def test_find_replace_upserts_the_cell_and_keeps_its_original_baseline(browser, 
         seat.fill("Final")
         seat.press("Enter")
         expect(page.locator(COOP_CELL)).to_contain_text("Final")
+
+        query.fill("시행규칙")
+        header_match = page.get_by_test_id("find-match-0")
+        expect(header_match.locator(".rl-find-hit-label")).to_have_text("표 1 1행 1열")
+        expect(header_match).not_to_contain_text("빈칸")
 
         query.fill("없는문구xyz")
         expect(page.get_by_test_id("find-empty")).to_contain_text("검색 결과가 없습니다")
