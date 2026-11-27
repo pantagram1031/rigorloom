@@ -3,6 +3,7 @@
  * sheet (`narrowSheet`); the shell owns the 48 px top bar, the drawer and the
  * page area, which shrinks so the sheet never covers the page.
  */
+import { useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { Mark } from "../brand";
 import { S } from "../i18n/v2/shell";
 import { useWorkspace } from "../store";
@@ -24,6 +25,8 @@ const LABEL: Record<LeftPaneId, Parameters<typeof S.t>[0]> = {
   history: "shell_pane_history",
 };
 
+const HANDLE_SWIPE_THRESHOLD_PX = 32;
+
 export function NarrowShell({ tab }: { tab: Tab | null }) {
   const lang = useWorkspace((s) => s.language);
   const drawer = useShell((s) => s.narrowDrawerOpen);
@@ -41,6 +44,43 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
     sheetExpanded ? "shell_narrow_sheet_shrink" : "shell_narrow_sheet_expand",
     lang,
   );
+  const dragRef = useRef<{ pointerId: number; startY: number; lastY: number } | null>(null);
+  const suppressClickRef = useRef(false);
+
+  const onHandlePointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return;
+    suppressClickRef.current = false;
+    dragRef.current = { pointerId: e.pointerId, startY: e.clientY, lastY: e.clientY };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Synthetic pointer events without an active browser pointer id.
+    }
+  };
+
+  const onHandlePointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    drag.lastY = e.clientY;
+  };
+
+  const onHandlePointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    const endY = Number.isFinite(e.clientY) ? e.clientY : drag.lastY;
+    const dy = endY - drag.startY;
+    if (Math.abs(dy) > HANDLE_SWIPE_THRESHOLD_PX) {
+      suppressClickRef.current = true;
+      setShell({ narrowSheetExpanded: dy < 0 });
+    }
+  };
+
+  const onHandlePointerCancel = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+  };
 
   return (
     <div className="sh-narrow" data-merged={sessionId ? true : undefined}>
@@ -97,7 +137,20 @@ export function NarrowShell({ tab }: { tab: Tab | null }) {
             aria-label={sheetHandleLabel}
             title={sheetHandleLabel}
             data-testid={TID.narrowSheetHandle}
-            onClick={() => setShell({ narrowSheetExpanded: !getShell().narrowSheetExpanded })}
+            onPointerDown={onHandlePointerDown}
+            onPointerMove={onHandlePointerMove}
+            onPointerUp={onHandlePointerUp}
+            onPointerCancel={onHandlePointerCancel}
+            onKeyDown={() => {
+              suppressClickRef.current = false;
+            }}
+            onClick={() => {
+              if (suppressClickRef.current) {
+                suppressClickRef.current = false;
+                return;
+              }
+              setShell({ narrowSheetExpanded: !getShell().narrowSheetExpanded });
+            }}
           >
             <span className="sh-narrow-sheet-grip" aria-hidden="true" />
           </button>

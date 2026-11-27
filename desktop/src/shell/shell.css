@@ -1283,6 +1283,7 @@
   color: var(--text-3);
   flex: none;
   cursor: pointer;
+  touch-action: none;
 }
 
 .sh-narrow-sheet-handle:hover {
