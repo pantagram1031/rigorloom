@@ -30,6 +30,11 @@ Rules for `tests/fixtures/v1_main_ui_dist/` (set by the advisor):
 3. A copy change the captures never show gets no refresh; its CHANGELOG line
    names the change instead.
 4. Each refresh adds about 730 KB to the history.
+5. A section added to v1 on purpose, as a whole new subtree, may instead be
+   listed in `INTENDED_V1_ADDITIONS` by its `data-testid`, with its T number
+   in the comment. The captures leave that subtree out and count sibling
+   positions without it; its CHANGELOG line says so. A change to any element
+   that already existed still needs a refresh under rule 2.
 
 The folder currently holds main after PR #403 (T189); before it, the folder
 held main dbc1b18's bundle.
@@ -69,9 +74,17 @@ _GEOMETRY_PROPS = [
     "transform-origin", "perspective-origin",
 ]
 
+# Sections the v1 screens gained on purpose after PR #403. Each subtree is
+# left out of both captures, and sibling positions are counted without it, so
+# everything else on the screen must still match main exactly.
+INTENDED_V1_ADDITIONS = (
+    "settings-section-editor",  # T237: 설정 > 편집기, the way back to the new editor
+)
+
 _CAPTURE_JS = r"""
-({ rootSelector, skip }) => {
+({ rootSelector, skip, exclude }) => {
   const SKIP = new Set(skip);
+  const EXCLUDE = new Set(exclude);
   const hash = (str) => {
     let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
     for (let i = 0; i < str.length; i++) {
@@ -120,7 +133,7 @@ _CAPTURE_JS = r"""
       style: hash(styleText(cs) + "|" + pseudo(before) + "|" + pseudo(after)),
       key: keyProps(cs),
     });
-    const kids = Array.from(el.children);
+    const kids = Array.from(el.children).filter((c) => !EXCLUDE.has(c.getAttribute("data-testid")));
     kids.forEach((child, i) => walk(child, path + "/" + child.tagName.toLowerCase() + "[" + i + "]"));
   };
   walk(root, root.tagName.toLowerCase());
@@ -175,7 +188,10 @@ def _set_theme(page, theme: str) -> None:
 
 
 def _capture(page, selector: str, replacements: dict[str, str]) -> list[dict[str, Any]]:
-    entries = page.evaluate(_CAPTURE_JS, {"rootSelector": selector, "skip": _GEOMETRY_PROPS})
+    entries = page.evaluate(
+        _CAPTURE_JS,
+        {"rootSelector": selector, "skip": _GEOMETRY_PROPS, "exclude": list(INTENDED_V1_ADDITIONS)},
+    )
     assert entries is not None, f"nothing matches {selector}"
     return _normalize(entries, replacements)
 
