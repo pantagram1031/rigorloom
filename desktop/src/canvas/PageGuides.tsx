@@ -123,8 +123,8 @@ export function PageGuides({
     const vRect = vSvg.getBoundingClientRect();
     const offsetX = paperRect.left - hRect.left;
     const offsetY = paperRect.top - vRect.top;
-    hTrack.style.transform = `translate3d(${offsetX}px, 0, 0)`;
-    vTrack.style.transform = `translate3d(0, ${offsetY}px, 0)`;
+    hTrack.style.transform = `translate(${offsetX}px, 0)`;
+    vTrack.style.transform = `translate(0, ${offsetY}px)`;
   };
 
   useLayoutEffect(() => {
