@@ -40,9 +40,11 @@ import {
 import {
   canvas,
   getScrollRequestState,
+  knownPageOf,
   publishCanvasContext,
   setCanvasSlice,
   useCanvasSlice,
+  usePublishedKnownPages,
 } from "./controller";
 import { FontStatus } from "./FontStatus";
 import { MarkToolbar, type MarkToolbarAnchor } from "./MarkToolbar";
@@ -50,7 +52,7 @@ import { PageGuides } from "./PageGuides";
 import { PageSheet } from "./PageSheet";
 import { ScrollMap, type ScrollMapTick } from "./ScrollMap";
 import { SeatEditor } from "./SeatEditor";
-import { usePageRaster } from "./usePageRaster";
+import { useMeasureOtherPages, usePageRaster } from "./usePageRaster";
 import "./canvas.css";
 
 export function CanvasPane() {
@@ -152,6 +154,11 @@ export function CanvasPane() {
   useEffect(() => {
     publishCanvasContext(changes, pageSource);
   }, [changes, pageSource]);
+  useMeasureOtherPages(
+    session?.sessionId, rev, pageRaster.count,
+    pageRaster.settled && pageRaster.raster?.source === "engine" && pageRaster.raster.rev === rev
+      ? pageRaster.raster.page : null,
+  );
 
   useEffect(() => () => publishCanvasContext([], null), []);
 
@@ -396,6 +403,8 @@ export function CanvasStatusLeft() {
   const language = useWorkspace((s) => s.language);
   const slice = useCanvasSlice(session?.sessionId);
   const { page, pageCount } = slice;
+  // Re-render when a page is drawn or measured, for the status cell's page.
+  usePublishedKnownPages();
 
   const textMap = useMemo(() => buildRegionTextMap(texts), [texts]);
 
@@ -433,8 +442,12 @@ export function CanvasStatusLeft() {
     ? cellKey(inlineEdit.table, inlineEdit.row, inlineEdit.col)
     : slice.hoveredSeatKey ?? selectedCellKey ?? slice.selectedSeatKey;
   const address = statusKey ? parseDocAddress(statusKey) : null;
+  // A hovered or edited cell is on screen, so it is on the viewed page; a
+  // selected change or blank may be on another page that is already known.
+  const fromSelection = inlineEdit?.kind !== "cell" && !slice.hoveredSeatKey;
+  const statusPage = (fromSelection && statusKey ? knownPageOf({ cellKey: statusKey }) : null) ?? page;
   const position = address?.kind === "cell"
-    ? wp3t("status_cell_position", language, [page, address.row + 1, address.col + 1])
+    ? wp3t("status_cell_position", language, [statusPage, address.row + 1, address.col + 1])
     : wp3t("status_page_position", language, [page]);
 
   // A blank's name, never one made up for printed text: a static cell (a row

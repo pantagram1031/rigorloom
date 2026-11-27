@@ -6,6 +6,7 @@ import {
 } from "../model/enginePage";
 import { browserToken, call, isTauri, tokenHeaders } from "../runtime";
 import type { FontCheckRow } from "../model/fontInstall";
+import { isPageMeasured, publishMeasuredPage } from "./controller";
 
 type RenderInfo = Omit<RenderedPage, "url">;
 type PageReply =
@@ -271,4 +272,51 @@ export function usePageRaster(
     displayedEdits: current?.edits ?? [],
     changed: !isSettled && changed?.key === requestKey ? changed.rects : [],
   };
+}
+
+const MEASURED_PAGE_LIMIT = 60;
+
+/** The addresses an engine geometry reply places on its page (lines excluded). */
+export function geometryAddresses(geometry: Pick<EngineGeometry, "boxes">): string[] {
+  const out: string[] = [];
+  for (const box of geometry.boxes ?? []) {
+    if (box.kind === "line") continue;
+    const address = box.queueAddress ?? box.at;
+    if (address) out.push(address);
+  }
+  return out;
+}
+
+/**
+ * Once the drawn page has settled as an engine raster, measure the other pages
+ * of this revision one at a time so that finding, the blanks list and the
+ * change list know which page holds what, before the user opens those pages.
+ * Failed pages stay unknown.
+ */
+export function useMeasureOtherPages(
+  sessionId: string | undefined, rev: string | undefined, count: number,
+  drawnPage: number | null,
+) {
+  const enabled = Boolean(browserToken() || isTauri());
+  useEffect(() => {
+    if (!enabled || drawnPage === null || !sessionId || !rev || count < 2) return;
+    // The drawn page's own boxes reach the known pages through its layer.
+    publishMeasuredPage(rev, drawnPage, []);
+    const pending = new AbortController();
+    const { signal } = pending;
+    const last = Math.min(count, MEASURED_PAGE_LIMIT);
+    void (async () => {
+      for (let page = 1; page <= last; page += 1) {
+        if (signal.aborted) return;
+        if (isPageMeasured(rev, page)) continue;
+        const geometry: EngineGeometry | null = await requestPage<EngineGeometry>("geometry", { sessionId, rev, page }, signal)
+          .catch(() => null);
+        if (signal.aborted) return;
+        if (geometry?.rev === rev && geometry.page === page && !geometry.previewId) {
+          publishMeasuredPage(rev, page, geometryAddresses(geometry));
+        }
+      }
+    })();
+    return () => pending.abort();
+  }, [enabled, drawnPage, sessionId, rev, count]);
 }
