@@ -9,9 +9,21 @@ import type {
 import type { QueuedOp } from "../store";
 
 export const MAX_PAGE_SCALE = 3;
+export const ENGINE_PX_PER_PT = 96 / 72;
 
 export function pageRasterScale(zoom: number, pixelRatio: number): number {
   return Math.min(MAX_PAGE_SCALE, zoom * pixelRatio);
+}
+
+export function engineLineFontSizePx(
+  line: Pick<EngineBox, "rect" | "vertical">,
+  sizePt?: number | null,
+): number {
+  if (typeof sizePt === "number" && Number.isFinite(sizePt) && sizePt > 0) {
+    return sizePt * ENGINE_PX_PER_PT;
+  }
+  const { w, h } = rectPt(line.rect);
+  return Math.min(18, Math.max(10, (line.vertical ? w : h) * ENGINE_PX_PER_PT));
 }
 
 export type RasterSource = "engine" | "hancom" | "pdf" | "own-uncertified";
