@@ -438,10 +438,11 @@
 .sh-pane-tab--touch {
   position: relative;
   height: var(--ctl-touch);
-  padding-inline: 7px;
+  padding-inline: 8px;
 }
 
-/* The underline stays as wide as the label, not the padded hit area. */
+/* The underline stays as wide as before (label plus 1 px a side), not the
+   padded hit area. */
 .sh-pane-tab--touch[aria-selected="true"] {
   border-bottom-color: transparent;
 }
@@ -460,8 +461,9 @@
    row height their labels were cut off along the bottom. */
 .sh-pane-tabs:has(.sh-pane-tab--touch) {
   height: var(--ctl-touch);
-  /* The 14 px gap moves into each tab's padding (7 px a side) so the hit
-     area widens and the labels stay where they were. */
+  /* The 14 px gap and the tabs' own 1 px move into each tab's padding
+     (8 px a side) so the hit area widens and the labels stay where they
+     were: first label 13 px in, 16 px between labels. */
   gap: 0;
   padding-inline: 5px;
 }

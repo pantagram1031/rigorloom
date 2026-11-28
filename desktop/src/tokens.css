@@ -1,5 +1,8 @@
 /*
  * Rigorloom editor v2 design tokens (J1 §4) with WCAG 2.1 AA (>= 4.5:1) contrast.
+ *
+ * The narrow drawer (.sh-drawer in shell.css) sets --row-tree, --row and
+ * --ctl to --ctl-touch, so any control inside it is touch-sized.
  */
 
 @font-face {
@@ -33,8 +36,7 @@
   /* spacing (pixel-named, cannot drift) */
   --s-4: 4px; --s-8: 8px; --s-12: 12px; --s-16: 16px; --s-24: 24px; --s-32: 32px; --s-48: 48px; --s-64: 64px;
 
-  /* sizes. The narrow drawer (.sh-drawer) sets --row-tree, --row and --ctl
-     to --ctl-touch, so any control inside it is touch-sized. */
+  /* sizes */
   --h-titlebar: 36px; --h-strip: 32px; --h-tabrow: 32px; --h-status: 24px;
   --row-tree: 28px; --row: 32px; --row-change: 52px;
   --ctl: 28px; --ctl-lg: 32px; --ctl-touch: 44px;
