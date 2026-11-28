@@ -1315,11 +1315,11 @@
   .review-btn,
   .changed-facts-jumper,
   .review-prompt-input {
-    min-height: 44px;
+    min-height: var(--ctl-touch);
   }
 
   .page-ctrl-btn {
-    min-width: 44px;
+    min-width: var(--ctl-touch);
   }
 
   .return-popover {
