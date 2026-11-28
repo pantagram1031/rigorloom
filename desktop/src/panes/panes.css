@@ -271,6 +271,8 @@
   align-items: center;
   gap: 6px;
   width: 100%;
+  /* Padding makes it 28 px on desktop; in the drawer it takes the touch height. */
+  min-height: var(--row);
   padding: 6px var(--s-12);
   border: 0;
   background: transparent;
