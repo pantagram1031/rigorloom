@@ -241,9 +241,11 @@ Producer: the same profile, at two addressing levels.
   reserved blank paragraph or a cell height (less its top and bottom margins)
   that leaves at least one more line under the label's lines, wrap at the
   cell's inner width included. A line's height follows the paragraph's line
-  spacing as the page renderer reads it: PERCENT of the character height,
-  FIXED as given, BETWEEN_LINES added to the character height, AT_LEAST the
-  larger of the two, and 160 percent when none is set. Cells holding an object are not
+  spacing: PERCENT of the character height, FIXED as given, BETWEEN_LINES
+  added to the character height, AT_LEAST the larger of the character height
+  and the value, and 160 percent (한글's default) when none is set. The page
+  renderer currently spaces AT_LEAST as leading added to the character
+  height, like BETWEEN_LINES. Cells holding an object are not
   marked. The editor lists these cells as blanks named by their label and
   fills them with `fill_cell.belowLabel` (§12.6a).
 

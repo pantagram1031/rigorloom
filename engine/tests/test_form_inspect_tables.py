@@ -475,4 +475,5 @@ def test_label_room_uses_the_paragraphs_line_spacing_type():
     assert form_inspect._line_height(10, {"type": "BETWEEN_LINES", "value": 500}) == 1500
     assert form_inspect._line_height(10, {"type": "AT_LEAST", "value": 800}) == 1000
     assert form_inspect._line_height(10, {"type": "AT_LEAST", "value": 2000}) == 2000
+    assert form_inspect._line_height(10, {"type": "ATLEAST", "value": 2000}) == 2000
     assert form_inspect._line_height(10, {}) == 1600

@@ -1094,11 +1094,13 @@ def _line_height(pt, ls):
     """One line's advance in HWPUNIT for a ``pt`` character height.
 
     PERCENT scales the character height; FIXED is the value itself;
-    BETWEEN_LINES adds the value to the character height, and AT_LEAST keeps
-    the larger of the two, the way the page renderer spaces lines. A missing
-    or unknown spacing is 한글's default of 160 percent.
+    BETWEEN_LINES adds the value to the character height, and AT_LEAST (최소)
+    keeps the larger of the two. A missing or unknown spacing is 한글's
+    default of 160 percent.
     """
     kind, value = ls.get("type"), ls.get("value")
+    if kind == "ATLEAST":
+        kind = "AT_LEAST"
     text_h = pt * 100
     if value is None or kind not in (None, "PERCENT", "FIXED", "BETWEEN_LINES", "AT_LEAST"):
         return text_h * 160 / 100.0
