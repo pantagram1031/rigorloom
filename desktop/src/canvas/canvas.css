@@ -682,6 +682,12 @@
   color: transparent;
 }
 
+/* The control's own text is transparent; its placeholder is not part of
+   the mirror, so it keeps a visible colour of its own. */
+.rl-seat-input--mirrored::placeholder {
+  color: color-mix(in srgb, var(--paper-ink) 45%, transparent);
+}
+
 /* ── Floating Mark Toolbar (outside changed text) ────────────────────────── */
 
 .rl-mark-toolbar {

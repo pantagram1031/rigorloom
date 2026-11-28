@@ -136,6 +136,7 @@ test("a run without a declared colour uses inherit alongside a coloured run", ()
   assert.equal(normalizeRunColor(null), "inherit");
   assert.equal(normalizeRunColor("  "), "inherit");
   assert.equal(normalizeRunColor("#0000FF"), "#0000FF");
+  assert.equal(normalizeRunColor("0000ff"), "#0000ff");
 
   const runs = [
     { text: "기본색 " },
