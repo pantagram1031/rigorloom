@@ -1366,6 +1366,19 @@
   overflow-x: hidden;
 }
 
+/* A pane may not shrink below its filters, the list's minimum and its
+   footer. Shrinking further left the approval footer spilling under the
+   composer in the compact sheet, with 돌려보내기 and 승인 hidden; now the
+   sheet scrolls to them instead. The list does not count its rows toward
+   that minimum, so it still fills, and scrolls, in the expanded sheet. */
+.sh-narrow-sheet .rp-body,
+.sh-narrow-sheet .rp-pane {
+  min-height: min-content;
+}
+.sh-narrow-sheet .rp-scroll {
+  contain: size;
+}
+
 .sh-drawer {
   position: absolute;
   top: 0;
