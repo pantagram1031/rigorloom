@@ -325,6 +325,23 @@ def test_preview_changes_only_the_changed_part_of_a_one_paragraph_cell(
     assert [op["at"].rpartition("/")[2] for op in sent[0]] == ["c0"]
     assert sent[0][0]["text"] == after
 
+    # A cell that cannot be read is previewed as a whole-cell set, too.
+    sent.clear()
+    read = rt_ui_doc.rt_doc.read
+
+    def failing_read(path, at, **kwargs):
+        if at.endswith("/r0/c0"):
+            return {"ok": False, "error": {"code": "render_failed"}}
+        return read(path, at, **kwargs)
+
+    monkeypatch.setattr(rt_ui_doc.rt_doc, "read", failing_read)
+    status, _, _ = request(serving, "preview", {**binding(session), "ops": [
+        {"at": "t0/r0/c0", "before": before, "text": after},
+    ]})
+    assert status == 200
+    assert [op["at"].rpartition("/")[2] for op in sent[0]] == ["c0"]
+    assert sent[0][0]["text"] == after
+
 
 def test_native_page_image_can_exceed_inline_limit(serving, document, fake_engine, monkeypatch, tmp_path):
     from PIL import Image

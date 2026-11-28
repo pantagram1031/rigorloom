@@ -529,9 +529,16 @@ class PageGateway:
                 # A one-paragraph cell whose text is still the queued "before":
                 # change only the changed region, as a run edit does, so the
                 # rest of the cell keeps its runs and their character shapes.
+                # If the cell cannot be read, preview the whole-cell set; a
+                # stale head still fails the preview.
                 before = op.get("before")
                 if isinstance(before, str) and before and "\n" not in before and "\n" not in text:
-                    blocks = _engine_result(rt_doc.read(head.path, core_cell_at), head.rev)["blocks"]
+                    try:
+                        blocks = _engine_result(rt_doc.read(head.path, core_cell_at), head.rev)["blocks"]
+                    except PageError as error:
+                        if error.code == "stale_rev":
+                            raise
+                        blocks = []
                     if len(blocks) == 1 and _queue_form(blocks[0]["text"]) == _queue_form(before):
                         c_start, c_end, changed = _queued_run_edit(blocks[0]["text"], text)
                         targets.append(at)

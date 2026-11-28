@@ -1445,6 +1445,12 @@ changed region `[p, len(old) - s)` -> `[p, len(new) - s)`):
   `PageGateway._preview` narrows the doc-core replacement range to the same
   changed region so `U+3000`, `"\n"` and `"\t"` outside the changed region
   survive in the preview.
+- A preview cell op is `{at: "tN/rR/cC", text}` (a whole-cell set) or
+  `{at, before, text}`. With `before`, when neither text has a line break and
+  the cell is one paragraph whose text still equals `before`, the preview
+  sets only the changed region of that paragraph, so the cell's other runs
+  keep their character shapes. Otherwise, including when the cell cannot be
+  read, it is the whole-cell set; a stale head still fails the preview.
 - Tags strictly inside `[p, len(old) - s)` are dropped and logged to `stderr`
   (or recorded under `dropped_inline` on the scan record entry when Tier A
   scans occurrences with a log); if an edit in one run changes two separate
