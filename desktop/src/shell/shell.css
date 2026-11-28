@@ -1225,6 +1225,24 @@
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
+/* Under 600 px the settings dialog is the touch layout too: its nav rows,
+   option groups and buttons take the touch height, like the drawer. The
+   legacy aliases (--ctl-h, --row-compact-h, --row-h) are rebound as well,
+   because :root resolves them once from the tokens it sees there. */
+@media (max-width: 599px) {
+  .sh-dialog {
+    --row-tree: var(--ctl-touch);
+    --row: var(--ctl-touch);
+    --ctl: var(--ctl-touch);
+    --row-compact-h: var(--ctl-touch);
+    --row-h: var(--ctl-touch);
+    --ctl-h: var(--ctl-touch);
+  }
+  .sh-seg-item {
+    height: var(--ctl-touch);
+  }
+}
+
 /* --- narrow (< 600 px) --------------------------------------------------------------- */
 
 .sh-narrow {
@@ -1509,6 +1527,11 @@
   .sh-settings-row {
     flex-wrap: wrap;
     padding: 8px 0;
+  }
+  /* A wrapping column sizes its line to the widest child, so the work
+     folder path pushed 폴더 바꾸기 off the dialog instead of shortening. */
+  .sh-settings-row--stack {
+    flex-wrap: nowrap;
   }
   .sh-start-col { padding: 8px; }
   .sh-start-exts { display: none; }
