@@ -439,6 +439,12 @@
   height: 44px;
 }
 
+/* The row holds 44 px touch tabs in the narrow drawer; at the desktop
+   row height their labels were cut off along the bottom. */
+.sh-pane-tabs:has(.sh-pane-tab--touch) {
+  height: 44px;
+}
+
 .sh-pane-body {
   flex: 1;
   min-height: 0;

@@ -217,6 +217,13 @@ def test_narrow_drawer_opens_a_document_and_closes_tabs(tmp_path: Path) -> None:
             # The drawer offers 문서 열기, which brings back the start page.
             page.get_by_test_id("app-menu").click()
             assert rows.count() == 1
+
+            # The document's pane tabs under the tab list show their whole labels.
+            tab_box = drawer.locator(".sh-pane-tab").first.bounding_box()
+            row_box = drawer.locator(".sh-pane-tabs").bounding_box()
+            assert tab_box is not None and row_box is not None
+            assert tab_box["y"] + tab_box["height"] <= row_box["y"] + row_box["height"] + 0.5, (tab_box, row_box)
+
             add = page.get_by_test_id("narrow-tab-add")
             assert add.inner_text().endswith("문서 열기")
             add.click()
@@ -230,6 +237,14 @@ def test_narrow_drawer_opens_a_document_and_closes_tabs(tmp_path: Path) -> None:
             assert close.get_attribute("aria-label").startswith("탭 닫기 · ")
             close.click()
             assert rows.count() == 1
+
+            # Closing the last tab leaves the start page, listed in the drawer.
+            rows.nth(0).locator(".sh-drawer-tab-close").click()
+            page.wait_for_selector('[data-testid="start-sample-0"]', timeout=30000)
+            if drawer.count() == 0:
+                page.get_by_test_id("app-menu").click()
+            assert rows.count() == 1
+            assert rows.nth(0).locator(".sh-drawer-row").inner_text() == "시작"
             assert page_errors == [], page_errors
             context.close()
             browser.close()
