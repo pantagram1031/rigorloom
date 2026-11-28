@@ -35,6 +35,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T288:** In the compact 변경 sheet on a narrow window, 돌려보내기 and 승인 sat under the agent bar and could not be pressed once the review had changes; the sheet now scrolls to them. The expanded sheet is unchanged.
 - **T286:** The agent settings' 모의 대본 select now looks like the fields and buttons beside it (it was a bare 19 px native box in another font), and in a window narrower than 600 px that section's fields are 44 px touch targets like the rest of the dialog.
 - **T285:** In the narrow drawer the 빈칸 pane's group headers (접수 기관이 쓰는 칸 and the like) are 44 px touch targets like the rows under them; they were 28 px. The drawer also rebinds the legacy row and control sizes, as the narrow settings dialog does.
 - **T284:** In a window narrower than 600 px the settings dialog's section tabs, option groups and buttons are 44 px touch targets (they were 24 to 27 px), and in 폴더 a long work folder path now shortens with an ellipsis; before, it pushed 폴더 바꾸기 out past the dialog's right edge.

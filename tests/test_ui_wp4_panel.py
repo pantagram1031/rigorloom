@@ -223,6 +223,15 @@ def test_panel_layout_with_sample(browser, server, width, height):
             paper = page.get_by_test_id("canvas-scroll").bounding_box()
             sheet = panel.bounding_box()
             assert paper["y"] + paper["height"] <= sheet["y"]
+            # In the compact sheet 돌려보내기 and 승인 stay reachable: the sheet
+            # scrolls to them instead of leaving them under the composer (T288).
+            uncovered = """el => { const r = el.getBoundingClientRect();
+                const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                return el.contains(hit); }"""
+            for test_id in ("return", "approve"):
+                button = panel.get_by_test_id(test_id)
+                button.scroll_into_view_if_needed()
+                assert button.evaluate(uncovered), test_id
             page.get_by_test_id("toggle-right").click()
             expect(panel).to_be_hidden()
             page.get_by_test_id("toggle-right").click()
