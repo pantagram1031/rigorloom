@@ -83,8 +83,8 @@
 }
 
 .sh-iconbtn--touch {
-  width: 44px;
-  height: 44px;
+  width: var(--ctl-touch);
+  height: var(--ctl-touch);
 }
 
 .sh-btn {
@@ -436,13 +436,13 @@
 }
 
 .sh-pane-tab--touch {
-  height: 44px;
+  height: var(--ctl-touch);
 }
 
-/* The row holds 44 px touch tabs in the narrow drawer; at the desktop
+/* The row holds touch-height tabs in the narrow drawer; at the desktop
    row height their labels were cut off along the bottom. */
 .sh-pane-tabs:has(.sh-pane-tab--touch) {
-  height: 44px;
+  height: var(--ctl-touch);
 }
 
 .sh-pane-body {
@@ -1347,7 +1347,7 @@
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: var(--ctl-touch, 44px);
+  min-height: var(--ctl-touch);
   padding: 0 16px;
   text-align: left;
   color: var(--ink);

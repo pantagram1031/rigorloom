@@ -35,6 +35,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T280:** Touch-size controls in narrow windows (drawer tabs and buttons, the narrow top bar, review and panel tabs, start-screen buttons) now take their height from one `--ctl-touch` token instead of separate 44 px values. Sizes are unchanged.
 - **T279:** In the narrow drawer the pane tabs (파일, 개요, 빈칸, 찾기, 기록) now show their whole labels. At 44 px they were taller than the row that holds them and were cut off along the bottom.
 - **T278:** In a window narrower than 600 px, where the tab strip gives way to a menu drawer, the drawer now has 문서 열기 to open another document, and each listed tab has its own close button. Before this, a narrow window could switch between open tabs but could neither open another document nor close one.
 - **T277:** Two follow-ups to T276. A run colour the document header writes as bare hex digits now shows in the inline editor instead of falling back to the default text colour. The placeholder of a mixed-colour field cleared to empty stays visible.

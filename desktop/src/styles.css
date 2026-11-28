@@ -4186,8 +4186,8 @@ body,
 
 @media (max-width: 640px) {
   .topbar {
-    height: 44px;
-    min-height: 44px;
+    height: var(--ctl-touch);
+    min-height: var(--ctl-touch);
     padding: 0 8px;
     gap: 6px;
     flex-wrap: nowrap;

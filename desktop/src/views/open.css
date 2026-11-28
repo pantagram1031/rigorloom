@@ -484,7 +484,7 @@
   .open-btn-primary,
   .open-btn-secondary {
     width: 100%;
-    min-height: 44px;
+    min-height: var(--ctl-touch);
   }
 
   .open-recent-row,

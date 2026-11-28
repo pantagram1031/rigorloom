@@ -1201,10 +1201,10 @@
   }
   .rp-tab,
   .rp-filter {
-    min-height: 44px;
+    min-height: var(--ctl-touch);
   }
   .rp-tabs {
-    height: 44px;
+    height: var(--ctl-touch);
   }
 }
 
