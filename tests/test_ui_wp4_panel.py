@@ -232,6 +232,18 @@ def test_panel_layout_with_sample(browser, server, width, height):
                 button = panel.get_by_test_id(test_id)
                 button.scroll_into_view_if_needed()
                 assert button.evaluate(uncovered), test_id
+            # A change's head, its actions and the agent thread row are touch
+            # targets, and no filter is narrower than 24 px (T289).
+            page.get_by_test_id("change-summary-1").click()
+            for sel in (".rp-thread-row", ".rp-row-head", ".rp-row[aria-selected='true'] .rp-row-actions .rp-btn"):
+                targets = panel.locator(sel)
+                assert targets.count() > 0, sel
+                for el in targets.all():
+                    box = el.bounding_box()
+                    assert box is not None and box["height"] >= 43.5, (sel, box)
+            for el in panel.locator(".rp-filter").all():
+                box = el.bounding_box()
+                assert box is not None and box["width"] >= 24, box
             page.get_by_test_id("toggle-right").click()
             expect(panel).to_be_hidden()
             page.get_by_test_id("toggle-right").click()
