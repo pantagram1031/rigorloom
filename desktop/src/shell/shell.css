@@ -1351,6 +1351,43 @@
   background: var(--selected);
 }
 
+/* A tab in the drawer: the row switches to it, the button beside it
+   closes it, as the close button on a wide window's tab does. */
+.sh-drawer-tab {
+  display: flex;
+  align-items: center;
+}
+
+.sh-drawer-tab .sh-drawer-row {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sh-drawer-tab:has(.sh-drawer-row[data-selected]) {
+  background: var(--selected);
+}
+
+.sh-drawer-tab .sh-drawer-row[data-selected] {
+  background: transparent;
+}
+
+.sh-drawer-tab-close {
+  flex: none;
+  color: var(--text-3);
+}
+
+.sh-drawer-add {
+  gap: var(--s-8);
+  color: var(--text-2);
+}
+
+.sh-drawer-add-mark {
+  font-size: 15px;
+}
+
 .sh-drawer .sh-pane-body {
   flex: 1;
 }

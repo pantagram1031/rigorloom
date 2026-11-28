@@ -186,3 +186,52 @@ def test_narrow_bottom_sheet_compact_expanded_close_and_escape(tmp_path: Path) -
             browser.close()
     finally:
         _stop_ui_server(proc)
+
+
+def test_narrow_drawer_opens_a_document_and_closes_tabs(tmp_path: Path) -> None:
+    """Under 600 px the tab strip is gone; the drawer opens and closes tabs instead (T278)."""
+    sync_playwright = _import_playwright()
+    if not _bundle_has_shell():
+        no_browser("runtime/scripts/ui_dist predates the v2 shell; rebuild with `npm run build:web`")
+
+    proc, base_url = _start_ui_server(tmp_path)
+    try:
+        with sync_playwright() as pw:
+            browser = _launch_chromium(pw)
+            context = browser.new_context(viewport={"width": 1440, "height": 900})
+            page = context.new_page()
+            page_errors: list[str] = []
+            page.on("pageerror", lambda e: page_errors.append(str(e)))
+            page.goto(editor_v2_url(base_url), wait_until="domcontentloaded")
+            page.wait_for_selector('[data-testid="shell"]', timeout=60000)
+            page.wait_for_selector('[data-testid="start-sample-0"]', timeout=30000)
+            _open_sample(page, 0)
+
+            page.set_viewport_size({"width": VIEWPORT_W, "height": VIEWPORT_H})
+            page.wait_for_function(
+                "document.querySelector('[data-testid=shell]').dataset.breakpoint === 'narrow'"
+            )
+            drawer = page.get_by_test_id("narrow-drawer")
+            rows = drawer.locator(".sh-drawer-tab")
+
+            # The drawer offers 문서 열기, which brings back the start page.
+            page.get_by_test_id("app-menu").click()
+            assert rows.count() == 1
+            add = page.get_by_test_id("narrow-tab-add")
+            assert add.inner_text().endswith("문서 열기")
+            add.click()
+            assert drawer.count() == 0
+            page.wait_for_selector('[data-testid="start-sample-0"]', timeout=30000)
+
+            # Both tabs are listed, each with its own close button.
+            page.get_by_test_id("app-menu").click()
+            assert rows.count() == 2
+            close = rows.nth(0).locator(".sh-drawer-tab-close")
+            assert close.get_attribute("aria-label").startswith("탭 닫기 · ")
+            close.click()
+            assert rows.count() == 1
+            assert page_errors == [], page_errors
+            context.close()
+            browser.close()
+    finally:
+        _stop_ui_server(proc)
