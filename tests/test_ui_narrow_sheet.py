@@ -278,3 +278,52 @@ def test_narrow_drawer_opens_a_document_and_closes_tabs(tmp_path: Path) -> None:
             browser.close()
     finally:
         _stop_ui_server(proc)
+
+
+def test_narrow_settings_dialog_is_touch_sized_and_keeps_its_buttons(tmp_path: Path) -> None:
+    """Under 600 px the settings dialog's controls are touch-sized and fit (T284)."""
+    sync_playwright = _import_playwright()
+    if not _bundle_has_shell():
+        no_browser("runtime/scripts/ui_dist predates the v2 shell; rebuild with `npm run build:web`")
+
+    proc, base_url = _start_ui_server(tmp_path)
+    try:
+        with sync_playwright() as pw:
+            browser = _launch_chromium(pw)
+            context = browser.new_context(viewport={"width": 1440, "height": 900})
+            page = context.new_page()
+            page_errors: list[str] = []
+            page.on("pageerror", lambda e: page_errors.append(str(e)))
+            page.goto(editor_v2_url(base_url), wait_until="domcontentloaded")
+            page.wait_for_selector('[data-testid="start-sample-0"]', timeout=60000)
+            _open_sample(page, 0)
+            page.set_viewport_size({"width": VIEWPORT_W, "height": VIEWPORT_H})
+            page.wait_for_function(
+                "document.querySelector('[data-testid=shell]').dataset.breakpoint === 'narrow'"
+            )
+            page.get_by_test_id("app-menu").click()
+            page.locator(".sh-drawer-foot button").first.click()
+            dialog = page.locator('[role="dialog"]')
+            dialog.wait_for(state="visible")
+            dialog_box = dialog.bounding_box()
+            assert dialog_box is not None
+
+            # Nav rows and option groups are touch-sized.
+            for sel in (".sh-settings-navrow", ".sh-seg-item"):
+                for el in dialog.locator(sel).all():
+                    box = el.bounding_box()
+                    assert box is not None and box["height"] >= 43.5, (sel, box)
+
+            # A long work folder path shortens; 폴더 바꾸기 stays inside the dialog.
+            page.get_by_test_id("settings-nav-folders").click()
+            change = page.get_by_test_id("settings-folder-change")
+            change_box = change.bounding_box()
+            assert change_box is not None and change_box["height"] >= 43.5, change_box
+            assert change_box["x"] + change_box["width"] <= dialog_box["x"] + dialog_box["width"], (change_box, dialog_box)
+            content = dialog.locator(".sh-settings-content")
+            assert content.evaluate("el => el.scrollWidth <= el.clientWidth"), "settings content scrolls sideways"
+            assert page_errors == [], page_errors
+            context.close()
+            browser.close()
+    finally:
+        _stop_ui_server(proc)
