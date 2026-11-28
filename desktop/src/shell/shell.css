@@ -1374,10 +1374,15 @@
   background: var(--panel);
   box-shadow: var(--shadow-float);
   /* The drawer is the touch layout: list rows, fields and buttons inside
-     its panes take the touch height, as its own tab rows already do. */
+     its panes take the touch height, as its own tab rows already do. The
+     legacy aliases resolve once at :root, so they are rebound here too,
+     as the narrow settings dialog does. */
   --row-tree: var(--ctl-touch);
   --row: var(--ctl-touch);
   --ctl: var(--ctl-touch);
+  --row-compact-h: var(--ctl-touch);
+  --row-h: var(--ctl-touch);
+  --ctl-h: var(--ctl-touch);
 }
 
 .sh-drawer-head {
