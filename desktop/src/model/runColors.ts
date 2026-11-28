@@ -22,6 +22,8 @@ export interface RunColorSegment {
 
 export function normalizeRunColor(color?: string | null): string {
   const trimmed = typeof color === "string" ? color.trim() : "";
+  // The header may declare a colour as bare hex digits; CSS needs the "#".
+  if (/^[0-9a-f]{6}$/i.test(trimmed)) return `#${trimmed}`;
   return trimmed.length > 0 ? trimmed : "inherit";
 }
 
