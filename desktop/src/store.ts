@@ -51,6 +51,7 @@ import type {
   Session,
   SidecarStatus,
   TaskPackList,
+  TextRun,
   Turn,
   UiLanguage,
 } from "./types";
@@ -349,6 +350,8 @@ export interface InlineCellEdit extends InlineEditBase {
   replaceExisting?: boolean;
   /** True when the inline editor is opened or promoted to multi-line (`<textarea>`). */
   multiline?: boolean;
+  /** Runs of the cell when read at editor open time. */
+  runs?: TextRun[];
 }
 
 /**

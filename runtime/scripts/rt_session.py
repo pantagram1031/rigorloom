@@ -569,6 +569,12 @@ def charpr_heights(profile: dict) -> dict:
     return heights if isinstance(heights, dict) else {}
 
 
+def charpr_colors(profile: dict) -> dict:
+    """charPr id -> color, as the HWPX header declares it."""
+    colors = profile.get("charpr_colors")
+    return colors if isinstance(colors, dict) else {}
+
+
 def region_runs_with_faces(profile: dict) -> list:
     """``full_text`` regions, each run carrying the face its charPr resolves to.
 
@@ -589,6 +595,7 @@ def region_runs_with_faces(profile: dict) -> list:
     """
     faces = charpr_faces(profile)
     heights = charpr_heights(profile)
+    colors = charpr_colors(profile)
     out = []
     for entry in profile.get("full_text", []) or []:
         if not isinstance(entry, dict):
@@ -605,6 +612,9 @@ def region_runs_with_faces(profile: dict) -> list:
                     height_pt = heights.get(cid)
                     if height_pt is not None:
                         item["charpr_height_pt"] = height_pt
+                    color = colors.get(cid)
+                    if color is not None:
+                        item["charpr_color"] = color
                     enriched.append(item)
                 else:
                     enriched.append(run)

@@ -9,10 +9,16 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { wp3t } from "../i18n/v2/wp3";
+import {
+  editorRunsForInitial,
+  runColorSegments,
+  type ColoredRun,
+} from "../model/runColors.ts";
 import { setState, useWorkspace } from "../store";
 
 export interface SeatEditorProps {
   value: string;
+  runs?: readonly ColoredRun[];
   onCommit: (next: string, reason?: "enter" | "blur") => void;
   onIdleCommit?: (next: string) => void;
   onValueChange?: (next: string) => void;
@@ -44,6 +50,7 @@ export interface SeatEditorProps {
 
 export function SeatEditor({
   value,
+  runs,
   onCommit,
   onIdleCommit,
   onValueChange,
@@ -73,16 +80,33 @@ export function SeatEditor({
   );
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const initialValueRef = useRef(resolvedValue);
   const composing = useRef(false);
   const skipBlurRef = useRef(false);
   const switchingRef = useRef(false);
   const nextCaretRef = useRef<number | null>(null);
+  const restoreSelectionRef = useRef<[number, number] | null>(null);
+  // The coloured mirror is chosen once: on mount when the runs are known, or
+  // when they arrive before the person has typed. Switching later would swap
+  // the text control under a composition in progress.
+  const [mirrored, setMirrored] = useState(() =>
+    !readOnly && runColorSegments(editorRunsForInitial(runs, resolvedValue), resolvedValue) !== null);
   const editTimer = useRef<number | undefined>(undefined);
   const idleCommit = useRef(onIdleCommit);
   idleCommit.current = onIdleCommit;
 
   const clearEditTimer = () => window.clearTimeout(editTimer.current);
   useEffect(() => () => window.clearTimeout(editTimer.current), []);
+
+  const syncMirrorScroll = (
+    el: HTMLInputElement | HTMLTextAreaElement | null | undefined,
+  ) => {
+    const mirror = mirrorRef.current;
+    if (!mirror || !el) return;
+    if (typeof el.scrollTop === "number") mirror.scrollTop = el.scrollTop;
+    if (typeof el.scrollLeft === "number") mirror.scrollLeft = el.scrollLeft;
+  };
 
   const changeText = (next: string) => {
     if (readOnly) return;
@@ -101,16 +125,45 @@ export function SeatEditor({
   // A new value from outside (a proposal landing) refreshes the field only
   // while the person has not typed in it; their text is never replaced.
   const dirtyRef = useRef(false);
+  if (!dirtyRef.current) {
+    initialValueRef.current = resolvedValue;
+  }
   useEffect(() => {
     if (dirtyRef.current) return;
+    initialValueRef.current = resolvedValue;
     setText(resolvedValue);
     setIsMultiline(Boolean(initialMultiline || resolvedValue.includes("\n")));
   }, [initialMultiline, resolvedValue]);
 
   useEffect(() => {
+    syncMirrorScroll(currentField());
+  });
+
+  const runsArrived = !readOnly &&
+    runColorSegments(editorRunsForInitial(runs, initialValueRef.current), initialValueRef.current) !== null;
+  useEffect(() => {
+    if (mirrored || !runsArrived || dirtyRef.current || composing.current) return;
+    const el = currentField();
+    if (el && document.activeElement === el) {
+      restoreSelectionRef.current = [el.selectionStart ?? el.value.length, el.selectionEnd ?? el.value.length];
+      switchingRef.current = true;
+    }
+    setMirrored(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runsArrived, mirrored]);
+
+  useEffect(() => {
     const el = currentField();
     if (!el) return;
     el.focus();
+    if (switchingRef.current && restoreSelectionRef.current) {
+      switchingRef.current = false;
+      const [start, end] = restoreSelectionRef.current;
+      restoreSelectionRef.current = null;
+      const len = el.value.length;
+      el.setSelectionRange(Math.min(start, len), Math.min(end, len));
+      return;
+    }
     if (switchingRef.current) {
       switchingRef.current = false;
       const pos = Math.max(
@@ -134,12 +187,23 @@ export function SeatEditor({
     el.setSelectionRange(at, at);
     // Focus/selection placement only runs on mount or single->multi switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMultiline]);
+  }, [isMultiline, mirrored]);
 
   const handleCompositionStart = () => {
     composing.current = true;
     clearEditTimer();
     onCompositionStart?.();
+  };
+
+  const handleCompositionUpdate = (
+    e: React.CompositionEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    composing.current = true;
+    const el = e.currentTarget;
+    if (el && typeof el.value === "string") {
+      changeText(el.value);
+    }
+    syncMirrorScroll(el);
   };
 
   const handleCompositionEnd = (
@@ -148,6 +212,17 @@ export function SeatEditor({
     composing.current = false;
     setState({ sawComposition: true });
     changeText(e.currentTarget.value);
+    syncMirrorScroll(e.currentTarget);
+  };
+
+  const handleInput = (
+    e: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    const el = e.currentTarget;
+    if (el && typeof el.value === "string" && el.value !== text) {
+      changeText(el.value);
+    }
+    syncMirrorScroll(el);
   };
 
   const handleKeyDown = (
@@ -234,12 +309,40 @@ export function SeatEditor({
   };
   const effectiveClassName = readOnly ? `${className} rl-seat-input--readonly` : className;
   const effectivePlaceholder = readOnly ? (readOnlyMessage ?? placeholder) : placeholder;
+  const validRuns = !readOnly ? editorRunsForInitial(runs, initialValueRef.current) : undefined;
+  const runSegments = validRuns ? runColorSegments(validRuns, text) : null;
+  const segments = mirrored ? (runSegments ?? [{ text, color: "inherit" }]) : null;
 
-  if (isMultiline) {
+  if (!segments) {
+    if (isMultiline) {
+      return (
+        <textarea
+          ref={textareaRef}
+          className={`${effectiveClassName} rl-seat-input--multiline`}
+          data-testid="seat-input"
+          data-readonly={readOnly ? "true" : undefined}
+          readOnly={readOnly}
+          aria-readonly={readOnly ? "true" : undefined}
+          title={readOnlyMessage}
+          value={text}
+          style={mergedStyle}
+          rows={Math.max(2, Math.min(10, text.split(/\r?\n/).length + 1))}
+          placeholder={effectivePlaceholder}
+          aria-label={resolvedAriaLabel}
+          onChange={(e) => changeText(e.target.value)}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          onClick={(e) => e.stopPropagation()}
+        />
+      );
+    }
+
     return (
-      <textarea
-        ref={textareaRef}
-        className={`${effectiveClassName} rl-seat-input--multiline`}
+      <input
+        ref={inputRef}
+        className={effectiveClassName}
         data-testid="seat-input"
         data-readonly={readOnly ? "true" : undefined}
         readOnly={readOnly}
@@ -247,7 +350,6 @@ export function SeatEditor({
         title={readOnlyMessage}
         value={text}
         style={mergedStyle}
-        rows={Math.max(2, Math.min(10, text.split(/\r?\n/).length + 1))}
         placeholder={effectivePlaceholder}
         aria-label={resolvedAriaLabel}
         onChange={(e) => changeText(e.target.value)}
@@ -260,25 +362,111 @@ export function SeatEditor({
     );
   }
 
+  const isEngineOverlay = className.includes("rl-engine-edit");
+  const wrapClassName = isEngineOverlay
+    ? "rl-seat-mirror-wrap rl-engine-edit"
+    : "rl-seat-mirror-wrap";
+  const wrapStyle: React.CSSProperties | undefined = isEngineOverlay
+    ? {
+        left: style?.left,
+        top: style?.top,
+        width: style?.width,
+        minHeight: style?.minHeight,
+      }
+    : undefined;
+  const controlStyle: React.CSSProperties = {
+    ...mergedStyle,
+    ...(isEngineOverlay ? { left: undefined, top: undefined, width: "100%" } : {}),
+    position: "relative",
+    background: "transparent",
+    color: "transparent",
+    caretColor: "var(--paper-ink)",
+  };
+  const mirrorStyle: React.CSSProperties = {
+    ...mergedStyle,
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: "100%",
+    height: "100%",
+    whiteSpace: isMultiline ? "pre-wrap" : "pre",
+  };
+  const mirroredClassName = `${effectiveClassName} rl-seat-input--mirrored`;
+  const mirror = (
+    <div
+      ref={mirrorRef}
+      aria-hidden="true"
+      data-testid="seat-mirror"
+      className={`${effectiveClassName} rl-seat-mirror${isMultiline ? " rl-seat-input--multiline" : ""}`}
+      style={mirrorStyle}
+    >
+      {segments.map((segment, index) => (
+        <span key={index} style={{ color: segment.color }}>
+          {segment.text}
+        </span>
+      ))}
+      {isMultiline && text.endsWith("\n") ? "\n" : null}
+    </div>
+  );
+
   return (
-    <input
-      ref={inputRef}
-      className={effectiveClassName}
-      data-testid="seat-input"
-      data-readonly={readOnly ? "true" : undefined}
-      readOnly={readOnly}
-      aria-readonly={readOnly ? "true" : undefined}
-      title={readOnlyMessage}
-      value={text}
-      style={mergedStyle}
-      placeholder={effectivePlaceholder}
-      aria-label={resolvedAriaLabel}
-      onChange={(e) => changeText(e.target.value)}
-      onCompositionStart={handleCompositionStart}
-      onCompositionEnd={handleCompositionEnd}
-      onKeyDown={handleKeyDown}
-      onBlur={handleBlur}
-      onClick={(e) => e.stopPropagation()}
-    />
+    <div className={wrapClassName} style={wrapStyle}>
+      {mirror}
+      {isMultiline ? (
+        <textarea
+          ref={textareaRef}
+          className={`${mirroredClassName} rl-seat-input--multiline`}
+          data-testid="seat-input"
+          data-readonly={readOnly ? "true" : undefined}
+          readOnly={readOnly}
+          aria-readonly={readOnly ? "true" : undefined}
+          title={readOnlyMessage}
+          value={text}
+          style={controlStyle}
+          rows={Math.max(2, Math.min(10, text.split(/\r?\n/).length + 1))}
+          placeholder={effectivePlaceholder}
+          aria-label={resolvedAriaLabel}
+          onChange={(e) => {
+            changeText((e.currentTarget ?? e.target).value);
+            syncMirrorScroll(e.currentTarget);
+          }}
+          onInput={handleInput}
+          onScroll={(e) => syncMirrorScroll(e.currentTarget)}
+          onCompositionStart={handleCompositionStart}
+          onCompositionUpdate={handleCompositionUpdate}
+          onCompositionEnd={handleCompositionEnd}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <input
+          ref={inputRef}
+          className={mirroredClassName}
+          data-testid="seat-input"
+          data-readonly={readOnly ? "true" : undefined}
+          readOnly={readOnly}
+          aria-readonly={readOnly ? "true" : undefined}
+          title={readOnlyMessage}
+          value={text}
+          style={controlStyle}
+          placeholder={effectivePlaceholder}
+          aria-label={resolvedAriaLabel}
+          onChange={(e) => {
+            changeText((e.currentTarget ?? e.target).value);
+            syncMirrorScroll(e.currentTarget);
+          }}
+          onInput={handleInput}
+          onScroll={(e) => syncMirrorScroll(e.currentTarget)}
+          onCompositionStart={handleCompositionStart}
+          onCompositionUpdate={handleCompositionUpdate}
+          onCompositionEnd={handleCompositionEnd}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
+    </div>
   );
 }

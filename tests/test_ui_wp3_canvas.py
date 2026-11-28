@@ -164,8 +164,17 @@ def test_editing_one_part_of_a_mixed_cell_keeps_the_other_parts(browser, server)
         header.click()
         seat = page.get_by_test_id("seat-input")
         expect(seat).to_have_value(re.compile(r"<개정 2016\. 7\. 11\.>$"))
+        mirror = page.get_by_test_id("seat-mirror")
+        expect(mirror).to_be_visible()
+        expect(mirror).to_have_attribute("aria-hidden", "true")
+        expect(seat).to_have_css("color", "rgba(0, 0, 0, 0)")
+        blue_span = mirror.locator("span", has_text="<개정 2016. 7. 11.>")
+        expect(blue_span).to_have_css("color", "rgb(0, 0, 255)")
         seat.press("End")
         seat.type("X")
+        expect(mirror.locator("span", has_text="<개정 2016. 7. 11.>X")).to_have_css(
+            "color", "rgb(0, 0, 255)"
+        )
         seat.press("Enter")
         expect(page.get_by_test_id("change-list")).to_contain_text("<개정 2016. 7. 11.>X")
         page.wait_for_timeout(500)
@@ -180,6 +189,13 @@ def test_editing_one_part_of_a_mixed_cell_keeps_the_other_parts(browser, server)
         # Reopening the cell shows its whole edited text.
         header.click()
         expect(seat).to_have_value(re.compile(r"^■ 행정업무.*<개정 2016\. 7\. 11\.>X$"))
+        seat.press("Escape")
+
+        # A single-colour cell opens without a mirror layer.
+        page.locator(COOP_CELL).first.click()
+        expect(seat).to_be_visible()
+        expect(page.get_by_test_id("seat-mirror")).to_have_count(0)
+        seat.press("Escape")
 
 
 def test_blanks_editing_and_keyboard_decisions(browser, server):

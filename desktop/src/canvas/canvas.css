@@ -642,6 +642,46 @@
   min-height: 44px;
 }
 
+.rl-seat-mirror-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.rl-seat-mirror {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  letter-spacing: inherit;
+  white-space: pre;
+}
+
+.rl-seat-mirror:not(.rl-seat-input--multiline) {
+  align-content: center;
+}
+
+.rl-seat-mirror.rl-seat-input--multiline {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.rl-seat-input.rl-seat-input--mirrored,
+.rl-engine-edit.rl-seat-input.rl-seat-input--mirrored {
+  position: relative;
+  display: block;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--paper-ink);
+}
+
+.rl-seat-input--mirrored::selection {
+  color: transparent;
+}
+
 /* ── Floating Mark Toolbar (outside changed text) ────────────────────────── */
 
 .rl-mark-toolbar {

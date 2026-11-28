@@ -26,8 +26,9 @@ function loadTsModule(relPath, stubs = {}) {
   const module = { exports: {} };
   const req = (id) => {
     if (id in stubs) return stubs[id];
-    // The below-label helpers import nothing, so every module gets the real ones.
-    if (/(^|\/)belowLabel\.ts$/.test(id)) return loadTsModule("src/model/belowLabel.ts");
+    // The below-label and run-color helpers import nothing, so every module gets the real ones.
+    if (/(^|\/)belowLabel(?:\.ts)?$/.test(id)) return loadTsModule("src/model/belowLabel.ts");
+    if (/(^|\/)runColors(?:\.ts)?$/.test(id)) return loadTsModule("src/model/runColors.ts");
     return require(id);
   };
   vm.runInThisContext(`(function(exports, require, module) {\n${outputText}\n})`)(
@@ -2006,4 +2007,215 @@ test("known pages: measured pages fill in, first page wins, and targets resolve 
   controller.publishCanvasContext([], { ...layerless, rev: "rev-2" });
   assert.equal(controller.knownPageOf({ cellKey: "c:0:6:1" }), null);
   assert.equal(controller.isPageMeasured("rev-2", 2), false);
+});
+
+test("SeatEditor renders a coloured mirror layer for mixed-colour runs and EngineEditOverlay wires cell runs", () => {
+  const stack = loadWp3Stack();
+  const previousWindow = globalThis.window;
+  let pendingTimer = null;
+  globalThis.window = {
+    clearTimeout: (id) => {
+      if (pendingTimer && pendingTimer.id === id) pendingTimer = null;
+    },
+    setTimeout: (fn) => {
+      const id = (pendingTimer?.id ?? 0) + 1;
+      pendingTimer = { id, fn };
+      return id;
+    },
+  };
+  try {
+    const hookReact = createHookRunner({ runEffects: true });
+    const storeWithHook = {
+      ...stack.store,
+      useWorkspace: (sel) => sel(stack.store.getState()),
+    };
+    const canvasSeatMod = loadTsModule("src/canvas/SeatEditor.tsx", {
+      react: hookReact,
+      "../i18n/v2/wp3": stack.wp3,
+      "../store": storeWithHook,
+    });
+    const enginePage = loadTsModule("src/model/enginePage.ts", {
+      "./page": stack.pageModel,
+    });
+    const { useEngineEditOverlay } = loadTsModule("src/canvas/EngineEditOverlay.tsx", {
+      react: hookReact,
+      "../actions": {
+        cancelEdit: () => stack.store.setState({ inlineEdit: null }),
+        setInlineEditMultiline: () => {},
+      },
+      "../model/enginePage": enginePage,
+      "../model/page": stack.pageModel,
+      "../run_map": { locateSpanInRuns: () => ({ kind: "refused" }) },
+      "../revision": { runTextAfterEdit: (_edit, val) => val },
+      "../runtime": { readRegion: async () => ({ subject: null, regions: [] }) },
+      "../store": storeWithHook,
+      "./actions": stack.actions,
+      "./SeatEditor": canvasSeatMod,
+    });
+
+    // 1. Single-colour runs render the control directly with no mirror.
+    const singleEl = hookReact.renderWith("seat-single", () =>
+      canvasSeatMod.SeatEditor({
+        value: "제목 문구",
+        runs: [
+          { text: "제목 ", color: "#000000" },
+          { text: "문구", color: "#000000" },
+        ],
+        onCommit: () => {},
+        onCancel: () => {},
+      }),
+    );
+    assert.equal(singleEl.type, "input");
+
+    // 2. Mixed-colour runs render the mirror under a transparent control and update during typing/IME.
+    const mixedRuns = [
+      { text: "■ 규정 ", color: "#000000" },
+      { text: "<개정>", color: "#0000FF" },
+    ];
+    let mixedEl = hookReact.renderWith("seat-mixed", () =>
+      canvasSeatMod.SeatEditor({
+        value: "■ 규정 <개정>",
+        runs: mixedRuns,
+        onCommit: () => {},
+        onCancel: () => {},
+      }),
+    );
+    assert.equal(mixedEl.type, "div");
+    let [mirror, control] = mixedEl.props.children;
+    assert.equal(mirror.props["aria-hidden"], "true");
+    assert.equal(mirror.props["data-testid"], "seat-mirror");
+    assert.equal(mirror.props.style.whiteSpace, "pre");
+    assert.equal(control.props["data-testid"], "seat-input");
+    assert.equal(control.props.style.color, "transparent");
+    assert.equal(control.props.style.caretColor, "var(--paper-ink)");
+    let spans = mirror.props.children.flat().filter(Boolean);
+    assert.deepEqual(
+      spans.map((s) => ({ text: s.props.children, color: s.props.style.color })),
+      [
+        { text: "■ 규정 ", color: "#000000" },
+        { text: "<개정>", color: "#0000FF" },
+      ],
+    );
+
+    control.props.onCompositionStart();
+    control.props.onCompositionUpdate({ currentTarget: { value: "■ 규정 <개정 2026>" } });
+    mixedEl = hookReact.renderWith("seat-mixed", () =>
+      canvasSeatMod.SeatEditor({
+        value: "■ 규정 <개정>",
+        runs: mixedRuns,
+        onCommit: () => {},
+        onCancel: () => {},
+      }),
+    );
+    [mirror, control] = mixedEl.props.children;
+    spans = mirror.props.children.flat().filter(Boolean);
+    assert.deepEqual(
+      spans.map((s) => ({ text: s.props.children, color: s.props.style.color })),
+      [
+        { text: "■ 규정 ", color: "#000000" },
+        { text: "<개정 2026>", color: "#0000FF" },
+      ],
+    );
+
+    // 3. EngineEditOverlay passes runs to SeatEditor when joined text matches initial value, and keeps them across idleCommit.
+    const state = stack.store.getState();
+    const sid = state.activeSessionId;
+    const headerRegion = state.texts[sid].find(
+      (r) => (r.table ?? 0) === 0 && r.addr?.row === 0 && r.addr?.col === 0,
+    );
+    const coloredHeaderRuns = headerRegion.runs.map((r, i) => ({
+      ...r,
+      charpr_color: i === 3 ? "#0000FF" : "#000000",
+    }));
+    stack.store.setState({
+      texts: {
+        ...state.texts,
+        [sid]: state.texts[sid].map((r) =>
+          r === headerRegion ? { ...r, runs: coloredHeaderRuns } : r,
+        ),
+      },
+    });
+    const headGeometry = {
+      page: 1,
+      rev: corpus.source.sha256,
+      widthPt: 595,
+      heightPt: 842,
+      boxes: [
+        {
+          at: "t0/r0/c0/p0#L0",
+          kind: "line",
+          rect: [10, 4, 240, 12],
+          text: headerRegion.text,
+        },
+      ],
+    };
+    stack.actions.beginCellEditV2(0, 0, 0);
+    let overlay = hookReact.renderWith("engine-mixed", () =>
+      useEngineEditOverlay({
+        sessionId: sid,
+        geometry: headGeometry,
+        editable: true,
+        isNarrow: false,
+        settled: true,
+        displayedEdits: [],
+        inspect: corpus.inspect,
+        hit: null,
+        onCycleCell: () => {},
+      }),
+    );
+    assert.ok(overlay.editor);
+    assert.equal(overlay.editor.props.runs?.length, 4);
+    assert.equal(overlay.editor.props.runs[3].color, "#0000FF");
+
+    // Idle commit updates the queued cell value while editor stays open: runs prop stays attached.
+    overlay.editor.props.onIdleCommit(`${headerRegion.text}X`);
+    overlay = hookReact.renderWith("engine-mixed", () =>
+      useEngineEditOverlay({
+        sessionId: sid,
+        geometry: headGeometry,
+        editable: true,
+        isNarrow: false,
+        settled: false,
+        displayedEdits: [],
+        inspect: corpus.inspect,
+        hit: null,
+        onCycleCell: () => {},
+      }),
+    );
+    assert.equal(overlay.editor.props.runs?.length, 4);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test("SeatEditor takes the coloured mirror when runs arrive before typing, never after", () => {
+  const stack = loadWp3Stack();
+  const previousWindow = globalThis.window;
+  globalThis.window = { clearTimeout: () => {}, setTimeout: () => 1 };
+  try {
+    const hookReact = createHookRunner({ runEffects: true });
+    const storeWithHook = { ...stack.store, useWorkspace: (sel) => sel(stack.store.getState()) };
+    const { SeatEditor } = loadTsModule("src/canvas/SeatEditor.tsx", {
+      react: hookReact,
+      "../i18n/v2/wp3": stack.wp3,
+      "../store": storeWithHook,
+    });
+    const value = "■ 규정 <개정>";
+    const runs = [{ text: "■ 규정 ", color: "#000000" }, { text: "<개정>", color: "#0000FF" }];
+    const props = (extra) => ({ value, onCommit: () => {}, onCancel: () => {}, ...extra });
+
+    // Runs read after the editor opened, before any typing: the mirror comes in.
+    assert.equal(hookReact.renderWith("late", () => SeatEditor(props({}))).type, "input");
+    hookReact.renderWith("late", () => SeatEditor(props({ runs })));
+    assert.equal(hookReact.renderWith("late", () => SeatEditor(props({ runs }))).type, "div");
+
+    // Runs read after the person typed: the plain control stays.
+    const typed = hookReact.renderWith("typed", () => SeatEditor(props({})));
+    typed.props.onChange({ target: { value: `${value} 2026` }, currentTarget: { value: `${value} 2026` } });
+    hookReact.renderWith("typed", () => SeatEditor(props({ runs })));
+    assert.equal(hookReact.renderWith("typed", () => SeatEditor(props({ runs }))).type, "input");
+  } finally {
+    globalThis.window = previousWindow;
+  }
 });

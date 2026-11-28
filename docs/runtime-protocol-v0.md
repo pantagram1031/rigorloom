@@ -1726,7 +1726,10 @@ face}` — and five fields carry it:
 The header's declared size travels beside three of them, from the profile's
 `charpr_heights` (`charPr id -> height_pt`): `regions[].charPrHeightPt`,
 `regions[].runs[].charpr_height_pt` and `graph.tables[].cells[].textCharPrHeightPt`.
-Each is absent when the header declares no height for that charPr.
+Each is absent when the header declares no height for that charPr. The header's
+declared text colour travels on each `readRegion` run from the profile's
+`charpr_colors` (`charPr id -> color`): `regions[].runs[].charpr_color`, absent
+when the header declares no colour for that charPr.
 
 The `readRegion` run field arrived with the caret (§12.7). Every shape the wire could name
 was one a cell inherits, because a cell was the only thing the editor could
