@@ -1241,6 +1241,12 @@
   .sh-seg-item {
     height: var(--ctl-touch);
   }
+  /* The agent section's fields (styles.css .field) are sized by padding,
+     not by a token, so they take the touch height here directly. */
+  .sh-dialog .field input,
+  .sh-dialog .field select {
+    min-height: var(--ctl-touch);
+  }
 }
 
 /* --- narrow (< 600 px) --------------------------------------------------------------- */

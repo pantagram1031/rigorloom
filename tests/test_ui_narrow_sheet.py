@@ -314,6 +314,17 @@ def test_narrow_settings_dialog_is_touch_sized_and_keeps_its_buttons(tmp_path: P
                     box = el.bounding_box()
                     assert box is not None and box["height"] >= 43.5, (sel, box)
 
+            # The agent section's select is touch-sized and styled like the
+            # fields, not a bare native box in another font (T286).
+            page.get_by_test_id("settings-nav-settings-agent").click()
+            scenario = page.get_by_test_id("mock-scenario")
+            scenario_box = scenario.bounding_box()
+            assert scenario_box is not None and scenario_box["height"] >= 43.5, scenario_box
+            fonts = scenario.evaluate(
+                "el => [getComputedStyle(el).fontFamily, getComputedStyle(el.closest('.field')).fontFamily]"
+            )
+            assert fonts[0] == fonts[1], fonts
+
             # A long work folder path shortens; 폴더 바꾸기 stays inside the dialog.
             page.get_by_test_id("settings-nav-folders").click()
             change = page.get_by_test_id("settings-folder-change")
