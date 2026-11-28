@@ -652,6 +652,40 @@ test("a cell edit inside one run of a mixed cell queues an edit of that run only
   assert.equal(wide.text, across);
 });
 
+test("a cell whose text is only a cut-short preview opens for editing once its whole text is read", async () => {
+  const stack = loadWp3Stack();
+  const state = stack.store.getState();
+  const sid = state.activeSessionId;
+  const full = "가온공공기록원 기록관리과 전자기록 담당 주무관 연락처 044-000-0000";
+  // The graph holds only the first part of the cell, and no region was read.
+  const inspect = structuredClone(state.inspects[sid]);
+  const cell = inspect.graph.tables[0].cells.find((c) => c.addr.row === 1 && c.addr.col === 0);
+  Object.assign(cell, { textPreview: full.slice(0, 12), truncated: true });
+  stack.store.setState({
+    inspects: { ...state.inspects, [sid]: inspect },
+    texts: { ...state.texts, [sid]: state.texts[sid].filter((r) => !(r.table === 0 && r.addr?.row === 1 && r.addr?.col === 0)) },
+  });
+  stack.cellRuns.regions = [{ table: 0, addr: { row: 1, col: 0 }, text: full, runs: [{ index: 0, text: full }] }];
+
+  assert.equal(stack.actions.beginCellEditV2(0, 1, 0), true);
+  // No editor on the preview: it would write the preview over the rest.
+  assert.equal(stack.store.getState().inlineEdit, null);
+  assert.equal(stack.controller.getCanvasSlice().statusNotice, stack.wp3.wp3t("cell_text_loading", "ko"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const edit = stack.store.getState().inlineEdit;
+  assert.equal(edit?.kind, "cell");
+  assert.equal(edit.before, full);
+  assert.equal(stack.controller.getCanvasSlice().statusNotice, null);
+
+  // A cell that cannot be read does not open, and says why.
+  stack.store.setState({ inlineEdit: null });
+  stack.cellRuns.regions = [];
+  stack.actions.beginCellEditV2(0, 1, 0);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(stack.store.getState().inlineEdit, null);
+  assert.equal(stack.controller.getCanvasSlice().statusNotice, stack.wp3.wp3t("cell_text_unread", "ko"));
+});
+
 test("find replacement and cell edits upsert the same address", async () => {
   const stack = loadWp3Stack();
   const match = {

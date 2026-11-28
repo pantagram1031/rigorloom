@@ -81,6 +81,14 @@ export const WP3_VOCABULARY = {
     ko: "이 문단은 아직 화면에서 고칠 수 없습니다",
     en: "This paragraph cannot be edited on the page yet",
   },
+  cell_text_loading: {
+    ko: "칸의 글을 다 불러오는 중입니다",
+    en: "Loading this cell's full text",
+  },
+  cell_text_unread: {
+    ko: "칸의 글을 다 읽지 못해 지금은 고칠 수 없습니다",
+    en: "This cell's full text could not be read, so it cannot be edited now",
+  },
   cell_object_only_readonly: {
     ko: "표나 그림만 담긴 칸이라 글자를 입력할 문단이 없습니다",
     en: "This cell holds only tables or objects and has no text paragraph to edit",
