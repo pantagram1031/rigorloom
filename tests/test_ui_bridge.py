@@ -273,9 +273,10 @@ def _start_bare_bridge(tmp_path: Path) -> tuple[rt_ui.BridgeHTTPServer, threadin
     return srv, t
 
 
-def _post_head(port: int, headers: dict[str, str], path: str = "/rpc", timeout: float = 30) -> socket.socket:
+def _post_head(port: int, headers: dict[str, str], path: str = "/rpc", timeout: float = 30,
+               method: str = "POST") -> socket.socket:
     """Send only the head of a POST (untokened unless `headers` has the token); the caller sends any body."""
-    lines = [f"POST {path} HTTP/1.1", f"Host: 127.0.0.1:{port}", "Content-Type: application/json"]
+    lines = [f"{method} {path} HTTP/1.1", f"Host: 127.0.0.1:{port}", "Content-Type: application/json"]
     lines += [f"{k}: {v}" for k, v in headers.items()]
     sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
     sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("ascii"))
@@ -392,6 +393,83 @@ def test_a_post_body_the_bridge_will_not_read_closes_the_connection(tmp_path: Pa
     finally:
         srv.shutdown_bridge()
         t.join(timeout=5)
+
+
+def _peer_reset(sock: socket.socket, tries: int) -> bool:
+    """Send a little at a time; True once the peer's reset shows on this socket."""
+    for _ in range(tries):
+        try:
+            sock.sendall(b"x" * 1024)
+        except OSError:
+            return True
+        time.sleep(0.05)
+        if sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR):
+            return True
+    return False
+
+
+@pytest.mark.parametrize("method, path, token, headers, status", [
+    ("POST", "/rpc", True, {"Content-Length": str(rt_ui.MAX_JSON_BODY_BYTES + 1)}, b"413"),
+    ("POST", "/rpc", True, {"Content-Length": "abc"}, b"400"),
+    ("POST", "/rpc", True, {"Transfer-Encoding": "chunked"}, b"400"),
+    ("POST", "/rpc", False, {"Content-Length": str(rt_ui.REFUSED_BODY_DRAIN_BYTES + 1)}, b"403"),
+    ("POST", "/nope", True, {"Content-Length": str(rt_ui.REFUSED_BODY_DRAIN_BYTES + 1)}, b"404"),
+    ("GET", "/api/doc/pages", True, {"Content-Length": "2"}, b"400"),
+], ids=["too-large", "bad-length", "chunked", "refused-large", "not-found-large", "get-with-body"])
+def test_a_body_left_unread_is_read_off_before_the_bridge_closes(tmp_path: Path, method, path, token,
+                                                                    headers, status):
+    """When the bridge answers without reading the body, it shuts its side and
+    reads off what the client still sends before it closes. Closing with those
+    bytes arriving is a reset, and on Windows the reset can abort the client's
+    read of the answer (WinError 10053). Linux shows it as a reset on the
+    client's next send, so the test sends the body after reading the answer."""
+    srv, t = _start_bare_bridge(tmp_path)
+    try:
+        if token:
+            headers = {"X-Rigorloom-Token": srv.token, **headers}
+        sock = _post_head(srv.port, headers, path=path, timeout=5, method=method)
+        try:
+            data = _read_to_eof(sock)
+            sock.sendall(b"{}")
+            reset = _peer_reset(sock, tries=4)
+        finally:
+            sock.close()
+        head = data.split(b"\r\n\r\n", 1)[0] + b"\r\n"
+        assert data.startswith(b"HTTP/1.1 " + status), data[:80]
+        assert not reset, "the bridge closed with the body unread"
+        assert b"\r\nConnection: close\r\n" in head
+    finally:
+        srv.shutdown_bridge()
+        t.join(timeout=5)
+
+
+@pytest.mark.parametrize("bound", ["seconds", "bytes"])
+def test_the_read_off_after_an_unread_body_is_bounded(tmp_path: Path, monkeypatch, bound):
+    """A client that keeps the connection open, or keeps sending, holds the
+    bridge for at most UNREAD_BODY_LINGER_SECONDS and UNREAD_BODY_LINGER_BYTES."""
+    if bound == "seconds":
+        monkeypatch.setattr(rt_ui, "UNREAD_BODY_LINGER_SECONDS", 0.3)
+    else:
+        monkeypatch.setattr(rt_ui, "UNREAD_BODY_LINGER_BYTES", 4096)
+    srv, t = _start_bare_bridge(tmp_path)
+    try:
+        sock = _post_head(srv.port, {"X-Rigorloom-Token": srv.token,
+                                     "Content-Length": str(rt_ui.MAX_JSON_BODY_BYTES + 1)}, timeout=5)
+        try:
+            data = _read_to_eof(sock)
+            if bound == "seconds":
+                time.sleep(1.0)
+            # Both ways finish well inside the 2 s default, so a reset here
+            # comes from the bound under test.
+            reset = _peer_reset(sock, tries=4 if bound == "seconds" else 20)
+        finally:
+            sock.close()
+        assert data.startswith(b"HTTP/1.1 413")
+        assert reset, "the bridge kept reading past its bound"
+    finally:
+        srv.shutdown_bridge()
+        t.join(timeout=5)
+
 
 def test_wheel_fallback_html_and_missing_font_clean_404(tmp_path: Path):
     """When ui_dist/ and desktop/ are absent (wheel without bundle), serve minimal HTML & 404 font cleanly."""
