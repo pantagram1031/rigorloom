@@ -94,7 +94,8 @@ DEFERRED_REFUSALS = (
 _OP_FIELDS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # kind: (required, optional)
     "fill_cell": (("row", "col"),
-                  ("table", "text", "lines", "charPr", "paraPr", "overwrite")),
+                  ("table", "text", "lines", "charPr", "paraPr", "overwrite",
+                   "belowLabel")),
     "replace_at_cell": (("row", "col", "text"),
                         ("table", "run", "mode", "expect", "charPr")),
     "set_run": (("atPara", "run", "text"), ()),
@@ -635,13 +636,24 @@ def validate_plan(plan: OperationPlan, *, profile: dict,
                     at, table=table, row=row, col=col))
                 continue
             classification = cell.get("classification")
-            if classification != "fill_target":
+            # A below-label fill writes under the printed label, so the cell is
+            # not a fill target and its first run is the label's: the engine
+            # checks the runs the value will actually take (T30) itself.
+            below_label = kind == "fill_cell" and "belowLabel" in params
+            if below_label:
+                if not str(cell.get("text_preview") or "").strip():
+                    hard.append(_finding(
+                        "op_field_invalid",
+                        "fill_cell with belowLabel needs a cell whose first "
+                        "paragraph holds the label; this cell is blank, so it is "
+                        "an ordinary fill", at))
+            elif classification != "fill_target":
                 warn.append(_finding(
                     "cell_not_fill_target",
                     f"cell ({row},{col}) is classified {classification!r}, not a "
                     "fill target; the form scan does not expect a value here",
                     at, classification=classification))
-            if cell.get("script_anomaly") and not params.get("charPr"):
+            if not below_label and cell.get("script_anomaly") and not params.get("charPr"):
                 suggested = cell.get("charpr_suggested")
                 hard.append(_finding(
                     "fill_charpr_script_anomaly",
@@ -649,7 +661,7 @@ def validate_plan(plan: OperationPlan, *, profile: dict,
                     "narrower than the body baseline (T30); declare charPr",
                     at, charPr=cell.get("charpr"), charPrSuggested=suggested,
                     preeditFlag=["--charpr-per-cell", f"{row},{col}={suggested}"]))
-            if cell.get("color_anomaly") and not params.get("charPr"):
+            if not below_label and cell.get("color_anomaly") and not params.get("charPr"):
                 warn.append(_finding(
                     "fill_charpr_color_anomaly",
                     "this run's charPr is not black/auto, so the fill would take "
@@ -666,6 +678,35 @@ def validate_plan(plan: OperationPlan, *, profile: dict,
                     "op_field_invalid",
                     "fill_cell needs exactly one of text (a string) or lines (an "
                     "array of strings)", at))
+            if "belowLabel" in params:
+                below = params.get("belowLabel")
+                if not isinstance(below, dict) or (
+                        set(below) - {"label", "previous"}):
+                    hard.append(_finding(
+                        "op_field_invalid",
+                        "belowLabel must be an object with label and optional "
+                        "previous", at))
+                else:
+                    label = below.get("label")
+                    prev = below.get("previous")
+                    if not isinstance(label, str) or not label.strip():
+                        hard.append(_finding(
+                            "op_field_invalid",
+                            "belowLabel.label must be a non-empty string", at))
+                    if prev is not None and not isinstance(prev, str):
+                        hard.append(_finding(
+                            "op_field_invalid",
+                            "belowLabel.previous must be a string when present",
+                            at))
+                if not has_lines or has_text or not lines:
+                    hard.append(_finding(
+                        "op_field_invalid",
+                        "fill_cell with belowLabel requires lines (not text)",
+                        at))
+                if params.get("overwrite"):
+                    hard.append(_finding(
+                        "op_field_invalid",
+                        "fill_cell with belowLabel cannot set overwrite", at))
 
         elif kind == "replace_at_cell":
             mode = params.get("mode", "replace")

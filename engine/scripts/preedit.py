@@ -1522,8 +1522,161 @@ def split_fill_lines(value):
     return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
 
+FIELD_TAG_RE = re.compile(r'<' + NS + r':(fieldBegin|fieldEnd)\b')
+
+
+def _norm_cell_addr(key):
+    if isinstance(key, (tuple, list)) and len(key) == 2:
+        return (int(key[0]), int(key[1]))
+    if isinstance(key, str) and "," in key:
+        r, _, c = key.partition(",")
+        return (int(r.strip()), int(c.strip()))
+    raise PreeditError(f"셀 주소 형식 오류: {key!r}")
+
+
+def _inspect_below_label_cell(body, addr, label, previous, n_lines, *,
+                              explicit_charpr, baseline_id):
+    """라벨-상단 셀(`--below-label`)의 구조·라벨·기존값·런 charPr 사전 점검."""
+    row, col = addr
+    if isinstance(label, (list, tuple)):
+        label = "\n".join("" if x is None else str(x) for x in label)
+    if not isinstance(label, str) or not label.strip():
+        raise PreeditError(f"셀 ({row},{col})의 라벨 텍스트가 비어 있음")
+    label_parts = split_fill_lines(label)
+    n_label = len(label_parts)
+    paras = _find_paragraphs(body)
+    if len(paras) < n_label:
+        raise PreeditError(
+            f"셀 ({row},{col})의 문단 수({len(paras)}개)가 라벨 줄 수"
+            f"({n_label}줄)보다 적음")
+    for idx, expected_part in enumerate(label_parts):
+        p_xml = paras[idx][2]
+        if OBJECT_TAG_RE.search(p_xml):
+            raise PreeditError(
+                f"셀 ({row},{col})의 라벨 문단 #{idx}에 표·그림 같은 개체가"
+                " 들어 있어 라벨로 쓸 수 없음")
+        actual_part = unescape(_fragment_text(p_xml))
+        if actual_part != expected_part:
+            raise PreeditError(
+                f"셀 ({row},{col})의 라벨 문단 #{idx} 텍스트 불일치: "
+                f"기대 {expected_part!r} != 실제 {actual_part!r}")
+
+    value_paras = paras[n_label:]
+    for offset, (_s, _e, p_xml) in enumerate(value_paras):
+        if OBJECT_TAG_RE.search(p_xml):
+            raise PreeditError(
+                f"셀 ({row},{col})의 값 문단 #{n_label + offset}에 표·그림"
+                " 같은 개체가 들어 있어 채울 수 없음")
+        if FIELD_TAG_RE.search(p_xml):
+            raise PreeditError(
+                f"셀 ({row},{col})의 값 문단 #{n_label + offset}에"
+                " 필드(fieldBegin/fieldEnd) 컨트롤이 들어 있어 채울 수 없음")
+
+    val_texts = [unescape(_fragment_text(p_xml)) for _s, _e, p_xml in value_paras]
+    while val_texts and not val_texts[-1].strip():
+        val_texts.pop()
+    current_value = "\n".join(val_texts)
+    if previous is None:
+        expected_prev = ""
+    elif isinstance(previous, (list, tuple)):
+        expected_prev = "\n".join(split_fill_lines(previous))
+    else:
+        expected_prev = str(previous)
+    if _no_ws(current_value) != _no_ws(expected_prev):
+        raise PreeditError(
+            f"셀 ({row},{col})의 라벨 아래 기존 값 불일치(충돌): "
+            f"기대 {expected_prev!r} != 현재 {current_value!r}")
+
+    run_charprs = []
+    for k in range(n_lines):
+        if explicit_charpr is not None:
+            run_charprs.append(str(explicit_charpr))
+        elif k < len(value_paras):
+            cpr = _para_first_run_charpr(value_paras[k][2])
+            if cpr is None:
+                raise PreeditError(
+                    f"셀 ({row},{col})의 값 문단 #{n_label + k}에 런 charPr이"
+                    " 없어 서식을 결정할 수 없음 — --charpr 또는"
+                    " --charpr-per-cell로 지정할 것")
+            run_charprs.append(cpr)
+        elif value_paras:
+            cpr = _para_first_run_charpr(value_paras[0][2])
+            if cpr is None:
+                raise PreeditError(
+                    f"셀 ({row},{col})의 첫 값 문단에 런 charPr이 없어 클론"
+                    " 문단 서식을 결정할 수 없음 — --charpr 또는"
+                    " --charpr-per-cell로 지정할 것")
+            run_charprs.append(cpr)
+        else:
+            if baseline_id is None:
+                raise PreeditError(
+                    f"셀 ({row},{col})에 기존 값 문단이 없고 문서의 본문"
+                    " baseline charPr을 결정할 수 없어 클론 문단 서식을 정할"
+                    " 수 없음 — --charpr 또는 --charpr-per-cell로 지정할 것")
+            run_charprs.append(str(baseline_id))
+
+    return paras, n_label, current_value, run_charprs
+
+
+def _fill_cell_below_label(body, lines, *, addr, label, previous=None,
+                           charpr=None, parapr=None, baseline_id=None):
+    """라벨 문단(선행 N개)을 바이트 그대로 보존하고 그 아래 문단에 `lines`를 쓴다."""
+    paras, n_label, current_value, _run_charprs = _inspect_below_label_cell(
+        body, addr, label, previous, len(lines),
+        explicit_charpr=charpr, baseline_id=baseline_id)
+    value_paras = paras[n_label:]
+    reused_count = min(len(lines), len(value_paras))
+    extra_lines = lines[reused_count:]
+    if value_paras:
+        template = value_paras[0][2]
+        clone_charpr = charpr
+    else:
+        template = paras[n_label - 1][2]
+        clone_charpr = charpr if charpr is not None else str(baseline_id)
+
+    append_after = n_label + reused_count - 1
+    out, last = [], 0
+    for i, (start, end, p_xml) in enumerate(paras):
+        out.append(body[last:start])
+        if i < n_label:
+            out.append(p_xml)
+        elif i - n_label < len(lines):
+            line = lines[i - n_label]
+            blank_p, _ = _blank_paragraph_text(p_xml)
+            new_p = _set_para_pr(
+                _write_text_into_paragraph(blank_p, escape(line), charpr),
+                parapr)
+            new_p = LINESEG_RE.sub("", new_p)
+            out.append(new_p)
+        else:
+            new_p, changed = _blank_paragraph_text(p_xml)
+            if changed:
+                new_p = LINESEG_RE.sub("", new_p)
+            out.append(new_p)
+        if i == append_after and extra_lines:
+            for line in extra_lines:
+                out.append(_set_para_pr(_clone_target_paragraph(
+                    template, escape(line), clone_charpr), parapr))
+        last = end
+    out.append(body[last:])
+    new_body = "".join(out)
+
+    new_paras = _find_paragraphs(new_body)
+    assert len(new_paras) >= n_label and [
+        p for _s, _e, p in new_paras[:n_label]
+    ] == [
+        p for _s, _e, p in paras[:n_label]
+    ], f"셀 ({addr[0]},{addr[1]})의 라벨 문단이 변경됨(바이트 불변식 위반)"
+
+    stats = {"paragraphs": len(lines),
+             "paragraphs_reused": reused_count,
+             "paragraphs_created": len(extra_lines)}
+    return new_body, current_value, stats
+
+
 def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
-               charpr=None, charpr_per_cell=None, parapr_per_cell=None):
+               charpr=None, charpr_per_cell=None, parapr_per_cell=None,
+               below_label=None, below_label_previous=None):
     """표 셀을 cellAddr(row, col)로 직접 채운다 — 텍스트 키 없이(오프라인).
 
     fills: [(row, col, value), ...] — row/col은 `<hp:cellAddr rowAddr colAddr>`
@@ -1578,25 +1731,60 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
              "previous": "…", "charpr": "9"|None, "paragraphs": n,
              "paragraphs_reused": n, "paragraphs_created": n}, ...]}
     """
-    fills = [(int(r), int(c), split_fill_lines(t)) for r, c, t in fills]
-    if not fills:
+    raw_fills = list(fills)
+    if not raw_fills:
         raise ValueError("채울 셀이 하나도 없음")
+    below_map = {}
+    below_prev_map = {}
+    for k, v in (below_label or {}).items():
+        addr = _norm_cell_addr(k)
+        if isinstance(v, dict):
+            if "label" not in v:
+                raise PreeditError(f"--below-label[{addr}]에 'label'이 없음")
+            below_map[addr] = v["label"]
+            if v.get("previous") is not None:
+                below_prev_map[addr] = v["previous"]
+        else:
+            below_map[addr] = v
+    for k, v in (below_label_previous or {}).items():
+        addr = _norm_cell_addr(k)
+        if v is not None:
+            below_prev_map[addr] = v
+
+    fills = [(int(r), int(c), split_fill_lines(t)) for r, c, t in raw_fills]
     seen = set()
     for row, col, _t in fills:
         if (row, col) in seen:
             raise PreeditError(f"같은 셀 주소가 중복 지정됨: {row},{col}")
         seen.add((row, col))
-    per_cell = {(int(r), int(c)): str(v)
-                for (r, c), v in (charpr_per_cell or {}).items()}
-    para_per_cell = {(int(r), int(c)): str(v)
-                     for (r, c), v in (parapr_per_cell or {}).items()}
+    per_cell = {_norm_cell_addr(k): str(v)
+                for k, v in (charpr_per_cell or {}).items()}
+    para_per_cell = {_norm_cell_addr(k): str(v)
+                     for k, v in (parapr_per_cell or {}).items()}
     for flag, mapping in (("--charpr-per-cell", per_cell),
-                          ("--parapr-per-cell", para_per_cell)):
+                          ("--parapr-per-cell", para_per_cell),
+                          ("--below-label", below_map),
+                          ("--below-label-previous", below_prev_map)):
         unknown = sorted(addr for addr in mapping if addr not in seen)
         if unknown:
             raise PreeditError(
                 f"{flag} 주소가 채울 셀 목록에 없음: {unknown}"
                 " — 오타이거나 --cell/--cell-line/--map을 빠뜨렸다")
+    orphan_prev = sorted(addr for addr in below_prev_map
+                         if addr not in below_map)
+    if orphan_prev:
+        err = PreeditError(
+            f"--below-label-previous 주소에 대응하는 --below-label이 없음: "
+            f"{orphan_prev}")
+        err.exit_code = 2
+        raise err
+    if overwrite and below_map:
+        err = PreeditError(
+            "--below-label과 --overwrite는 같은 셀에 함께 쓸 수 없음"
+            " — 라벨 아래 채우기는 라벨을 보존하며 기존 값은"
+            " --below-label-previous로 검증한다")
+        err.exit_code = 2
+        raise err
 
     infos, contents = _read_zip(hwpx_in)
     section_names = _section_names(contents)
@@ -1620,12 +1808,19 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
                 f" 좌표이거나 오타. 실제 주소 {len(known)}개: {known[:20]}")
         explicit = per_cell.get((row, col), charpr)
         resolved[(row, col)] = explicit
+        body = xml[cell["body_start"]:cell["body_end"]]
+        if (row, col) in below_map:
+            _p, _nl, _cv, target_charprs = _inspect_below_label_cell(
+                body, (row, col), below_map[(row, col)],
+                below_prev_map.get((row, col)), len(lines),
+                explicit_charpr=explicit, baseline_id=baseline_id)
+        else:
+            target_charprs = fill_target_run_charprs(body, len(lines))
         if explicit is not None or baseline_profile is None:
             continue
         # 쓰게 될 문단 **전부**를 본다 — 재사용 자리는 target과 다른 charPr을
         # 지고 있을 수 있고, 그러면 두 번째 줄부터 T30 사고가 그대로 난다.
-        for run_charpr in fill_target_run_charprs(
-                xml[cell["body_start"]:cell["body_end"]], len(lines)):
+        for run_charpr in target_charprs:
             if run_charpr is None or (row, col, run_charpr) in seen_anomaly:
                 continue
             found = _script_anomaly(script_profiles.get(run_charpr),
@@ -1643,14 +1838,22 @@ def fill_cells(hwpx_in, hwpx_out, fills, *, table=0, overwrite=False,
         cell_charpr = resolved[(row, col)]
         body = xml[cell["body_start"]:cell["body_end"]]
         cell_parapr = para_per_cell.get((row, col))
-        new_body, previous, stats = _fill_cell_body(
-            body, lines, overwrite=overwrite, charpr=cell_charpr,
-            parapr=cell_parapr)
+        if (row, col) in below_map:
+            new_body, previous, stats = _fill_cell_below_label(
+                body, lines, addr=(row, col), label=below_map[(row, col)],
+                previous=below_prev_map.get((row, col)), charpr=cell_charpr,
+                parapr=cell_parapr, baseline_id=baseline_id)
+            action = "filled_below_label"
+        else:
+            new_body, previous, stats = _fill_cell_body(
+                body, lines, overwrite=overwrite, charpr=cell_charpr,
+                parapr=cell_parapr)
+            action = "overwritten" if previous.strip() else "filled"
         edits.append((cell["body_start"], cell["body_end"], new_body))
         report.append({
             "addr": [row, col],
             "hits": 0 if new_body == body else 1,
-            "action": "overwritten" if previous.strip() else "filled",
+            "action": action,
             "previous": previous.strip()[:30],
             "charpr": cell_charpr,
             "parapr": cell_parapr,
@@ -2750,6 +2953,15 @@ def main(argv=None):
                            " 별지 본문 셀의 빈 문단은 발신명의와 같은 가운데"
                            " 정렬이라, 그대로 채우면 1./가./1) 들여쓰기가"
                            " 사라진다(T39). 배치 전체 형태는 없다(T32)")
+    p_fc.add_argument("--below-label", action="append", default=[],
+                      dest="below_label", metavar="ROW,COL=LABEL",
+                      help="셀 상단 라벨 문단을 바이트 그대로 보존하고 그 아래"
+                           " 문단에 값을 채움(반복 가능). LABEL은 선행 라벨"
+                           " 문단들의 텍스트(\\n 구분)")
+    p_fc.add_argument("--below-label-previous", action="append", default=[],
+                      dest="below_label_previous", metavar="ROW,COL=TEXT",
+                      help="--below-label 셀에서 라벨 아래의 현재 값 기대치"
+                           "(반복 가능, 기본 빈 문자열). 실제 값과 다르면 거부")
 
     p_del = sub.add_parser("delete-guides", help="가이드 charPr 문단 삭제(T18 가드)")
     p_del.add_argument("file")
@@ -2885,10 +3097,44 @@ def main(argv=None):
                         _die(f"{flag} 주소가 중복 지정됨: "
                              f"{key[0]},{key[1]}", code=2)
                     sink[key] = cpr.strip()
+            below_cell, below_prev = {}, {}
+            for spec in args.below_label:
+                addr, sep, lbl = spec.partition("=")
+                row, comma, col = addr.partition(",")
+                if not sep or not comma or not lbl.strip():
+                    _die(f"--below-label 형식은 ROW,COL=LABEL: {spec!r}", code=2)
+                try:
+                    key = (int(row.strip()), int(col.strip()))
+                except ValueError:
+                    _die(f"--below-label의 ROW/COL은 정수: {spec!r}", code=2)
+                if key in below_cell:
+                    _die(f"--below-label 주소가 중복 지정됨: "
+                         f"{key[0]},{key[1]}", code=2)
+                below_cell[key] = lbl
+            for spec in args.below_label_previous:
+                addr, sep, prev = spec.partition("=")
+                row, comma, col = addr.partition(",")
+                if not sep or not comma:
+                    _die("--below-label-previous 형식은 ROW,COL=TEXT: "
+                         f"{spec!r}", code=2)
+                try:
+                    key = (int(row.strip()), int(col.strip()))
+                except ValueError:
+                    _die("--below-label-previous의 ROW/COL은 정수: "
+                         f"{spec!r}", code=2)
+                if key in below_prev:
+                    _die("--below-label-previous 주소가 중복 지정됨: "
+                         f"{key[0]},{key[1]}", code=2)
+                below_prev[key] = prev
+            if args.overwrite and below_cell:
+                _die("--below-label과 --overwrite는 같은 셀에 함께 쓸 수 없음",
+                     code=2)
             result = fill_cells(args.file, args.out, fills, table=args.table,
                                 overwrite=args.overwrite, charpr=args.charpr,
                                 charpr_per_cell=per_cell,
-                                parapr_per_cell=para_cell)
+                                parapr_per_cell=para_cell,
+                                below_label=below_cell,
+                                below_label_previous=below_prev)
         elif args.cmd == "delete-guides":
             ids = ([i.strip() for i in args.charpr_ids.split(",") if i.strip()]
                    if args.charpr_ids else None)
@@ -2950,7 +3196,7 @@ def main(argv=None):
              anomalies=exc.anomalies,
              suggested_flags=exc.suggested_flags)
     except (PreeditError, ValueError, AssertionError) as exc:
-        _die(str(exc))
+        _die(str(exc), code=getattr(exc, "exit_code", 1))
     except json.JSONDecodeError as exc:
         _die(f"JSON 파싱 실패: {exc}", code=2)
 

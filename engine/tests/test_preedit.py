@@ -2134,3 +2134,235 @@ class TestInlineElementPreservation:
             _, _, p_xml = paras_out[at_para]
             assert p_xml.count(tab_tag) == 5
             assert (tab_tag * 5 + new_date) in p_xml
+
+
+# ---------------------------------------------------------------------------
+# 11) T271 — fill-cells --below-label (label-top table cells)
+# ---------------------------------------------------------------------------
+
+JEONGBO_FORM = CORPUS_FORMS / "jeongbo-gonggae-cheongguseo.hwpx"
+LABEL_6_1 = "성명(법인ㆍ단체명 및 대표자 성명)"
+LABEL_8_1 = "주소(소재지)"
+
+
+class TestFillCellsBelowLabel:
+    def test_corpus_6_1_two_label_runs_and_empty_para_uses_para1_charpr_and_keeps_label_byte_identical(
+            self, tmp_path):
+        out = tmp_path / "out.hwpx"
+        before_paras = _cell_paragraphs(JEONGBO_FORM, (6, 1))
+        assert len(before_paras) == 2
+        expected_p1_charpr = preedit._para_first_run_charpr(before_paras[1][2])
+        assert expected_p1_charpr == "18"
+
+        result = fill_cells(
+            JEONGBO_FORM, out, [(6, 1, "홍길동")],
+            below_label={(6, 1): LABEL_6_1})
+        cell = result["cells"][0]
+        assert cell["addr"] == [6, 1]
+        assert cell["action"] == "filled_below_label"
+        assert cell["paragraphs"] == 1
+        assert cell["paragraphs_reused"] == 1
+        assert cell["paragraphs_created"] == 0
+        assert cell["previous"] == ""
+
+        after_paras = _cell_paragraphs(out, (6, 1))
+        assert len(after_paras) == 2
+        # Label paragraph 0 is BYTE-IDENTICAL (including both runs and its linesegarray)
+        assert after_paras[0][2] == before_paras[0][2]
+        assert _cell_texts(out, (6, 1)) == [LABEL_6_1, "홍길동"]
+        assert preedit._para_first_run_charpr(after_paras[1][2]) == expected_p1_charpr
+        assert "linesegarray" not in after_paras[1][2]
+        ET.fromstring(section_xml(out))
+
+    def test_corpus_8_1_label_only_clones_after_label_with_baseline_charpr_and_keeps_label_byte_identical(
+            self, tmp_path):
+        out = tmp_path / "out.hwpx"
+        before_paras = _cell_paragraphs(JEONGBO_FORM, (8, 1))
+        assert len(before_paras) == 1
+
+        result = fill_cells(
+            JEONGBO_FORM, out, [(8, 1, "서울특별시 중구 세종대로 110")],
+            below_label={(8, 1): LABEL_8_1})
+        cell = result["cells"][0]
+        assert cell["addr"] == [8, 1]
+        assert cell["action"] == "filled_below_label"
+        assert cell["paragraphs"] == 1
+        assert cell["paragraphs_reused"] == 0
+        assert cell["paragraphs_created"] == 1
+        baseline_id = result["body_baseline_charpr_id"]
+        assert baseline_id == "18"
+
+        after_paras = _cell_paragraphs(out, (8, 1))
+        assert len(after_paras) == 2
+        assert after_paras[0][2] == before_paras[0][2]
+        assert _cell_texts(out, (8, 1)) == [LABEL_8_1, "서울특별시 중구 세종대로 110"]
+        assert preedit._para_first_run_charpr(after_paras[1][2]) == baseline_id
+        assert 'paraPrIDRef="40"' in after_paras[1][2]
+        assert "linesegarray" not in after_paras[1][2]
+
+    def test_clone_from_label_uses_body_baseline_never_the_label_run_charpr(
+            self, tmp_path):
+        """When the label paragraph's run charPr (6) differs from the document's
+        body baseline charPr (0), the cloned value paragraph gets baseline (0),
+        never the label run's charPr (6)."""
+        tbl = TBL([
+            TC(0, 0, P(R(6, "주소(소재지)"))),
+            TC(0, 1, P(R(0, "본문 기준 서식을 결정하기 위한 충분히 긴 본문 텍스트입니다."))),
+        ], rows=1, cols=2)
+        src = make_hwpx(tmp_path, make_header([CP_BLACK, CP_NAVY]),
+                        SEC(TBL_WRAP(tbl)))
+        out = tmp_path / "out.hwpx"
+        result = fill_cells(
+            src, out, [(0, 0, "서울시 종로구")],
+            below_label={(0, 0): "주소(소재지)"})
+        assert result["body_baseline_charpr_id"] == "0"
+        paras = _cell_paragraphs(out, (0, 0))
+        assert len(paras) == 2
+        assert preedit._para_first_run_charpr(paras[0][2]) == "6"
+        assert preedit._para_first_run_charpr(paras[1][2]) == "0"
+
+    def test_corpus_8_1_multiline_value_creates_two_paragraphs_below_label(
+            self, tmp_path):
+        out = tmp_path / "out.hwpx"
+        before_paras = _cell_paragraphs(JEONGBO_FORM, (8, 1))
+        result = fill_cells(
+            JEONGBO_FORM, out,
+            [(8, 1, ["서울특별시 중구 세종대로 110", "101동 202호"])],
+            below_label={(8, 1): LABEL_8_1})
+        cell = result["cells"][0]
+        assert (cell["paragraphs"], cell["paragraphs_reused"],
+                cell["paragraphs_created"]) == (2, 0, 2)
+        after_paras = _cell_paragraphs(out, (8, 1))
+        assert len(after_paras) == 3
+        assert after_paras[0][2] == before_paras[0][2]
+        assert _cell_texts(out, (8, 1)) == [
+            LABEL_8_1, "서울특별시 중구 세종대로 110", "101동 202호"]
+        for p in (after_paras[1][2], after_paras[2][2]):
+            assert preedit._para_first_run_charpr(p) == result["body_baseline_charpr_id"]
+            assert "linesegarray" not in p
+
+    def test_idempotent_rerun_and_reedit_replaces_value_without_extra_paragraphs(
+            self, tmp_path):
+        first = tmp_path / "first.hwpx"
+        second = tmp_path / "second.hwpx"
+        third = tmp_path / "third.hwpx"
+        fourth = tmp_path / "fourth.hwpx"
+
+        fill_cells(
+            JEONGBO_FORM, first,
+            [(6, 1, "홍길동"),
+             (8, 1, ["서울시 중구", "세종대로 110"])],
+            below_label={(6, 1): LABEL_6_1, (8, 1): LABEL_8_1})
+
+        # Re-running with the same label/value and previous=<that value> is idempotent
+        again = fill_cells(
+            first, second,
+            [(6, 1, "홍길동"),
+             (8, 1, ["서울시 중구", "세종대로 110"])],
+            below_label={(6, 1): LABEL_6_1, (8, 1): LABEL_8_1},
+            below_label_previous={
+                (6, 1): "홍길동",
+                (8, 1): "서울시 중구\n세종대로 110",
+            })
+        assert again["filled"] == 0
+        assert content_fingerprint(first) == content_fingerprint(second)
+
+        # Re-edit with previous=<old value> and new lines replaces the value (no appending)
+        edited = fill_cells(
+            first, third,
+            [(6, 1, "김철수"),
+             (8, 1, ["부산시 해운대구", "센텀중앙로 55"])],
+            below_label={(6, 1): LABEL_6_1, (8, 1): LABEL_8_1},
+            below_label_previous={
+                (6, 1): "홍길동",
+                (8, 1): "서울시 중구\n세종대로 110",
+            })
+        assert edited["filled"] == 2
+        assert _cell_texts(third, (6, 1)) == [LABEL_6_1, "김철수"]
+        assert len(_cell_paragraphs(third, (6, 1))) == 2
+        assert _cell_texts(third, (8, 1)) == [
+            LABEL_8_1, "부산시 해운대구", "센텀중앙로 55"]
+        assert len(_cell_paragraphs(third, (8, 1))) == 3
+
+        # Re-edit shrinking 2 lines to 1 line empties surplus paragraph without deleting it
+        shrunk = fill_cells(
+            third, fourth,
+            [(8, 1, ["대전시 서구 청사로 189"])],
+            below_label={(8, 1): LABEL_8_1},
+            below_label_previous={(8, 1): "부산시 해운대구\n센텀중앙로 55"})
+        assert shrunk["cells"][0]["paragraphs_reused"] == 1
+        assert shrunk["cells"][0]["paragraphs_created"] == 0
+        assert len(_cell_paragraphs(fourth, (8, 1))) == 3
+        assert _cell_texts(fourth, (8, 1)) == [
+            LABEL_8_1, "대전시 서구 청사로 189", ""]
+
+    def test_previous_mismatch_is_refused(self, tmp_path):
+        filled = tmp_path / "filled.hwpx"
+        fill_cells(
+            JEONGBO_FORM, filled, [(6, 1, "홍길동")],
+            below_label={(6, 1): LABEL_6_1})
+
+        # Omitting previous (defaults to "") when cell now has "홍길동" -> conflict
+        with pytest.raises(PreeditError, match="기존 값 불일치"):
+            fill_cells(
+                filled, tmp_path / "no1.hwpx", [(6, 1, "김철수")],
+                below_label={(6, 1): LABEL_6_1})
+        assert not (tmp_path / "no1.hwpx").exists()
+
+        # Wrong previous value -> conflict
+        with pytest.raises(PreeditError, match="기존 값 불일치"):
+            fill_cells(
+                filled, tmp_path / "no2.hwpx", [(6, 1, "김철수")],
+                below_label={(6, 1): LABEL_6_1},
+                below_label_previous={(6, 1): "이영희"})
+        assert not (tmp_path / "no2.hwpx").exists()
+
+    def test_label_mismatch_is_refused(self, tmp_path):
+        out = tmp_path / "out.hwpx"
+        with pytest.raises(PreeditError, match="라벨 문단"):
+            fill_cells(
+                JEONGBO_FORM, out, [(6, 1, "홍길동")],
+                below_label={(6, 1): "잘못된 라벨"})
+        assert not out.exists()
+
+    def test_refuses_value_paragraph_with_object_or_field(self, tmp_path):
+        inner = TBL([TC(0, 0, P(R(0, "안쪽")))], tid="20", rows=1, cols=1)
+        field_p = (
+            '<hp:p paraPrIDRef="34"><hp:run charPrIDRef="0">'
+            '<hp:ctrl><hp:fieldBegin id="1" type="CLICK_HERE" name="n"/></hp:ctrl>'
+            '<hp:t>안내</hp:t>'
+            '<hp:ctrl><hp:fieldEnd beginIDRef="1" fieldid="1"/></hp:ctrl>'
+            '</hp:run></hp:p>'
+        )
+        tbl = TBL([
+            TC(0, 0, P(R(0, "라벨A")) + TBL_WRAP(inner)),
+            TC(0, 1, P(R(0, "라벨B")) + field_p),
+        ], rows=1, cols=2)
+        src = make_hwpx(tmp_path, make_header([CP_BLACK]), SEC(TBL_WRAP(tbl)))
+        with pytest.raises(PreeditError, match="개체"):
+            fill_cells(src, tmp_path / "o1.hwpx", [(0, 0, "값")],
+                       below_label={(0, 0): "라벨A"})
+        with pytest.raises(PreeditError, match="fieldBegin"):
+            fill_cells(src, tmp_path / "o2.hwpx", [(0, 1, "값")],
+                       below_label={(0, 1): "라벨B"})
+
+    def test_cli_below_label_and_overwrite_conflict(self, tmp_path):
+        out = tmp_path / "out.hwpx"
+        proc = _cli(
+            "fill-cells", JEONGBO_FORM, "--out", out,
+            "--cell-line", "6,1=홍길동",
+            "--below-label", f"6,1={LABEL_6_1}",
+            "--overwrite")
+        assert proc.returncode == 2
+        assert not out.exists()
+
+        proc_ok = _cli(
+            "fill-cells", JEONGBO_FORM, "--out", out,
+            "--cell-line", "8,1=서울시 중구",
+            "--cell-line", "8,1=세종대로 110",
+            "--below-label", f"8,1={LABEL_8_1}")
+        assert proc_ok.returncode == 0, proc_ok.stdout
+        payload = json.loads(proc_ok.stdout)
+        assert payload["cells"][0]["action"] == "filled_below_label"
+        assert _cell_texts(out, (8, 1)) == [
+            LABEL_8_1, "서울시 중구", "세종대로 110"]

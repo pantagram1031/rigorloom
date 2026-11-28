@@ -90,6 +90,12 @@ def _argv_for(kind: str, params: dict, source: Path, target: Path) -> list[str]:
             argv += ["--parapr-per-cell", f"{row},{col}={params['paraPr']}"]
         if params.get("overwrite"):
             argv.append("--overwrite")
+        below = params.get("belowLabel")
+        if isinstance(below, dict):
+            argv += ["--below-label", f"{row},{col}={below['label']}"]
+            if below.get("previous") is not None:
+                argv += ["--below-label-previous",
+                         f"{row},{col}={below['previous']}"]
         return argv
 
     if kind == "replace_at_cell":

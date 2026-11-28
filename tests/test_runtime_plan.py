@@ -174,6 +174,54 @@ def test_fill_cell_needs_exactly_one_of_text_or_lines(client, session):
     assert "op_field_invalid" in [row["code"] for row in report["hard"]]
 
 
+def test_fill_cell_below_label_without_lines_is_refused(client, session):
+    plan = _propose(client, session, [{
+        "kind": "fill_cell", "table": 0, "row": 5, "col": 1,
+        "text": "홍길동",
+        "belowLabel": {"label": "성명"},
+    }])
+    report = client.ok("plan/validate", {"planId": plan["planId"]})["validation"]
+    assert report["ok"] is False
+    assert "op_field_invalid" in [row["code"] for row in report["hard"]]
+
+
+def test_fill_cell_below_label_with_empty_label_is_refused(client, session):
+    plan = _propose(client, session, [{
+        "kind": "fill_cell", "table": 0, "row": 5, "col": 1,
+        "lines": ["홍길동"],
+        "belowLabel": {"label": ""},
+    }])
+    report = client.ok("plan/validate", {"planId": plan["planId"]})["validation"]
+    assert report["ok"] is False
+    assert "op_field_invalid" in [row["code"] for row in report["hard"]]
+
+
+def test_fill_cell_below_label_with_lines_and_non_empty_label_validates(
+        client, session):
+    # (5,0) prints 협조자; the value goes under it. The cell is not a fill
+    # target, and that is not even a warning for a below-label fill.
+    plan = _propose(client, session, [{
+        "kind": "fill_cell", "table": 0, "row": 5, "col": 0,
+        "lines": ["홍길동"],
+        "belowLabel": {"label": "협조자", "previous": ""},
+    }])
+    report = client.ok("plan/validate", {"planId": plan["planId"]})["validation"]
+    assert report["ok"] is True
+    assert "cell_not_fill_target" not in [row["code"] for row in report["warn"]]
+
+
+def test_fill_cell_below_label_on_a_blank_cell_is_refused(client, session):
+    # (5,1) is an empty fill target: an ordinary fill, not a below-label one.
+    plan = _propose(client, session, [{
+        "kind": "fill_cell", "table": 0, "row": 5, "col": 1,
+        "lines": ["홍길동"],
+        "belowLabel": {"label": "성명"},
+    }])
+    report = client.ok("plan/validate", {"planId": plan["planId"]})["validation"]
+    assert report["ok"] is False
+    assert "op_field_invalid" in [row["code"] for row in report["hard"]]
+
+
 def test_an_unknown_plan_id_is_refused(client, session):
     assert client.err("plan/validate", {"planId": "nope"})["code"] == "unknown_plan"
 
