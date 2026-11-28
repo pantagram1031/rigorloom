@@ -36,6 +36,7 @@ MOEL_2025 = REPO / "tests" / "corpus" / "forms" / "converted" / "moel-pyojun-geu
 KSTARTUP = REPO / "tests" / "corpus" / "forms" / "converted" / "kstartup-jiwon-sincheongseo-saeopgyehoekseo.hwpx"
 RENDER_CHECK = REPO / "tests" / "corpus" / "render-check" / "render-check-01.hwpx"
 MIXED_RUN_FORM = REPO / "tests" / "corpus" / "forms" / "converted" / "gianmun-byeolji-1ho.hwpx"
+JEONGBO = REPO / "tests" / "corpus" / "forms" / "converted" / "jeongbo-gonggae-cheongguseo.hwpx"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -341,6 +342,133 @@ def test_preview_changes_only_the_changed_part_of_a_one_paragraph_cell(
     assert status == 200
     assert [op["at"].rpartition("/")[2] for op in sent[0]] == ["c0"]
     assert sent[0][0]["text"] == after
+
+
+def _typed(paragraphs, edits):
+    """The cell's paragraph texts after doc-core `set` edits on its paragraphs.
+
+    A whole-paragraph set replaces the text, a range set types into it, and a
+    line break in the typed text starts a new paragraph, as Enter does.
+    """
+    out = []
+    for at, text in paragraphs:
+        typed = text
+        for edit in edits:
+            target, _, span = edit["at"].partition(":")
+            if target != at:
+                continue
+            if span:
+                start, end = (int(x) for x in span.split("-"))
+                typed = typed[:start] + edit["text"] + typed[end:]
+            else:
+                typed = edit["text"]
+        out.extend(typed.split("\n"))
+    return out
+
+
+@pytest.mark.parametrize("row, col, lines", [
+    (6, 1, ["홍길동"]),
+    (6, 1, ["홍길동", "(주)예시"]),
+    (8, 1, ["서울특별시 종로구"]),
+    (8, 1, ["서울특별시 종로구", "세종대로 1"]),
+])
+def test_preview_of_a_fill_under_the_label_changes_what_apply_writes(
+        serving, tmp_path, fake_engine, monkeypatch, row, col, lines):
+    # 정보공개 청구서 prints 성명 and 주소 at the top of tall cells. The
+    # preview of a below-label fill must touch the paragraphs apply writes:
+    # the label paragraph as it is, the value lines in the paragraphs under it.
+    original = tmp_path / "jeongbo.hwpx"
+    shutil.copyfile(JEONGBO, original)
+    session = Session.open_path(serving.bridge.current_root(), str(original))
+    sent = []
+    fake_edit = rt_ui_doc.rt_doc.edit
+
+    def edit(path, ops, **kwargs):
+        sent.append(ops)
+        return fake_edit(path, ops, **kwargs)
+
+    monkeypatch.setattr(rt_ui_doc.rt_doc, "edit", edit)
+    cell = f"t0/r{row}/c{col}"
+    blocks = rt_ui_doc.rt_doc.read(session.source, cell)["blocks"]
+    label = blocks[0]["text"]
+    status, _, preview = request(serving, "preview", {**binding(session), "ops": [
+        {"at": cell, "text": "\n".join([label, *lines]), "belowLabel": {"label": label}, "lines": lines},
+    ]})
+    assert status == 200, preview
+    [ops] = sent
+    assert ops[0]["at"].partition(":")[0] != cell
+    assert all(op["op"] == "set" and op["at"].startswith(f"{cell}/p") for op in ops)
+    previewed = _typed([(block["at"], block["text"]) for block in blocks], ops)
+
+    preedit = _import_preedit()
+    filled = tmp_path / "filled.hwpx"
+    preedit.fill_cells(session.source, filled, [(row, col, lines)], table=0,
+                       below_label={(row, col): label})
+    applied = [block["text"] for block in rt_ui_doc.rt_doc.read(filled, cell)["blocks"]]
+    assert previewed == applied
+    assert applied[0] == label
+
+
+@pytest.mark.skipif(not os.environ.get("RIGORLOOM_HWP_ENGINE"), reason="RIGORLOOM_HWP_ENGINE is unset")
+@pytest.mark.parametrize("row, col, lines", [
+    (6, 1, ["홍길동", "(주)예시"]),
+    (8, 1, ["서울특별시 종로구", "세종대로 1"]),
+])
+def test_installed_engine_previews_a_fill_under_the_label_as_apply_writes_it(
+        serving, tmp_path, row, col, lines):
+    session = Session.open_path(serving.bridge.current_root(), str(JEONGBO))
+    base = binding(session)
+    cell = f"t0/r{row}/c{col}"
+    label = rt_ui_doc.rt_doc.read(session.source, cell)["blocks"][0]["text"]
+    status, _, preview = request(serving, "preview", {**base, "ops": [
+        {"at": cell, "text": "\n".join([label, *lines]), "belowLabel": {"label": label}, "lines": lines},
+    ]})
+    assert status == 200, preview
+    boxes = {}
+    for page in sorted(preview["changedPages"]):
+        status, _, geo = request(serving, "geometry", {**base, "previewId": preview["previewId"], "page": page})
+        assert status == 200
+        for box in geo["boxes"]:
+            if box["at"].startswith(f"{cell}/p") and "#" not in box["at"]:
+                boxes.setdefault(box["at"], box.get("text"))
+
+    preedit = _import_preedit()
+    filled = tmp_path / "filled.hwpx"
+    preedit.fill_cells(session.source, filled, [(row, col, lines)], table=0,
+                       below_label={(row, col): label})
+    applied = rt_ui_doc.rt_doc.read(filled, cell)["blocks"]
+    assert {block["at"]: block["text"] for block in applied} == boxes
+
+
+def test_preview_of_a_fill_under_the_label_falls_back_when_the_label_moved(
+        serving, tmp_path, fake_engine, monkeypatch):
+    original = tmp_path / "jeongbo.hwpx"
+    shutil.copyfile(JEONGBO, original)
+    session = Session.open_path(serving.bridge.current_root(), str(original))
+    sent = []
+    fake_edit = rt_ui_doc.rt_doc.edit
+
+    def edit(path, ops, **kwargs):
+        sent.append(ops)
+        return fake_edit(path, ops, **kwargs)
+
+    monkeypatch.setattr(rt_ui_doc.rt_doc, "edit", edit)
+    status, _, _ = request(serving, "preview", {**binding(session), "ops": [
+        {"at": "t0/r8/c1", "text": "다른 라벨\n서울", "belowLabel": {"label": "다른 라벨"}, "lines": ["서울"]},
+    ]})
+    assert status == 200
+    assert sent == [[{"op": "set", "at": "t0/r8/c1", "text": "다른 라벨\n서울"}]]
+
+
+@pytest.mark.parametrize("op", [
+    {"at": "t0/r8/c1", "text": "주소\n서울", "belowLabel": {"label": "주소", "previous": ""}, "lines": ["서울"]},
+    {"at": "t0/r8/c1", "text": "주소\n서울", "belowLabel": {"label": " "}, "lines": ["서울"]},
+    {"at": "t0/r8/c1", "text": "주소\n서울", "belowLabel": {"label": "주소"}, "lines": []},
+    {"at": "t0/r8/c1", "text": "주소\n서울", "belowLabel": {"label": "주소"}, "lines": [1]},
+    {"at": "p3", "text": "주소\n서울", "belowLabel": {"label": "주소"}, "lines": ["서울"]},
+])
+def test_preview_refuses_a_malformed_fill_under_the_label(serving, document, fake_engine, op):
+    refuse(request(serving, "preview", {**binding(document[0]), "ops": [op]}), 400, "invalid_params")
 
 
 def test_native_page_image_can_exceed_inline_limit(serving, document, fake_engine, monkeypatch, tmp_path):

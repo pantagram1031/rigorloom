@@ -24,7 +24,12 @@ function loadTsModule(relPath, stubs = {}) {
     fileName: fullPath,
   });
   const module = { exports: {} };
-  const req = (id) => (id in stubs ? stubs[id] : require(id));
+  const req = (id) => {
+    if (id in stubs) return stubs[id];
+    // The below-label helpers import nothing, so every module gets the real ones.
+    if (/(^|\/)belowLabel\.ts$/.test(id)) return loadTsModule("src/model/belowLabel.ts");
+    return require(id);
+  };
   vm.runInThisContext(`(function(exports, require, module) {\n${outputText}\n})`)(
     module.exports,
     req,
@@ -650,6 +655,30 @@ test("a cell edit inside one run of a mixed cell queues an edit of that run only
   const wide = upsertCalls[upsertCalls.length - 1];
   assert.equal(wide.run, undefined);
   assert.equal(wide.text, across);
+});
+
+test("lines typed under a printed cell's text queue a fill under that label", async () => {
+  const stack = loadWp3Stack();
+  const { upsertCalls } = stack;
+  stack.actions.beginCellEditV2(0, 0, 0);
+  const before = stack.store.getState().inlineEdit.before;
+  assert.ok(before.trim() && !before.includes("\n"));
+  const res = await stack.actions.commitCellEditV2(`${before}\n홍길동`);
+  assert.equal(res.committed, true);
+  assert.equal(res.modeLabelKey, "fill_cell");
+  const op = upsertCalls[upsertCalls.length - 1];
+  assert.equal(op.kind, "fill_cell");
+  assert.deepEqual(op.belowLabel, { label: before, previous: "" });
+  assert.equal(op.text, `${before}\n홍길동`);
+  assert.equal(op.before, before);
+  assert.equal(op.overwrite, undefined);
+
+  // Typing on the label's own line stays an edit of the cell's text.
+  stack.actions.beginCellEditV2(0, 0, 0);
+  await stack.actions.commitCellEditV2(`${before} 홍길동`);
+  const same = upsertCalls[upsertCalls.length - 1];
+  assert.equal(same.kind, "replace_at_cell");
+  assert.equal(same.belowLabel, undefined);
 });
 
 test("a cell whose text is only a cut-short preview opens for editing once its whole text is read", async () => {

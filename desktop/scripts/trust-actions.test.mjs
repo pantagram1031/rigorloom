@@ -17,6 +17,7 @@ import {
   withoutSignatures,
 } from "../src/workspace/trust.ts";
 import { opSignature } from "../src/store.ts";
+import { belowLabelValue } from "../src/model/belowLabel.ts";
 
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 
@@ -279,6 +280,52 @@ test("a 되돌리기 제안 whose dry run fails validation never reaches the que
   assert.equal(s.read().undoError.code, "undo_unfixable");
   assert.match(s.read().undoError.message, /위첨자나 아래첨자/);
   assert.deepEqual(dismissed, ["dry-1"], "the dry-run plan is never adopted");
+});
+
+test("a fill under a printed label is undone under the label, not over the whole cell", async () => {
+  const queued = [];
+  const proposed = [];
+  const s = store({
+    activeSessionId: "S", language: "ko", receipts: {},
+    draft: { ops: [] }, undoPhase: "idle", undoError: null,
+  });
+  const label = "주소(소재지)";
+  const cell = (text) => ({ subject: { kind: "candidate" }, regions: [{ table: 0, addr: { row: 8, col: 1 }, text }] });
+  const ctx = vm.createContext({
+    ...s, t, opKindLabel, planOpsPayload, undoBlockReason, belowLabelValue, Number, String, Array,
+    captureDraftFence: () => ({}),
+    ownsDraftFence: () => true,
+    headCandidate: () => ({ runId: "run-1" }),
+    markExternalPlanDismissed: () => {},
+    showToast: () => {},
+    setQueue: async (ops) => { queued.push(ops); },
+    rt: {
+      readReceipt: async () => ({ planId: "p1", base: null }),
+      getPlan: async () => ({
+        ops: [{ opId: "f1", kind: "fill_cell", params: {
+          table: 0, row: 8, col: 1, lines: ["서울", "세종대로 1"], belowLabel: { label, previous: "" },
+        } }],
+      }),
+      // The source holds the label only; the reversed 수정본 (the head) the value under it.
+      readRegion: async (_sid, _addresses, runId) => cell(runId === null ? label : `${label}\n서울\n세종대로 1`),
+      proposePlan: async (_sid, ops) => { proposed.push(ops); return { planId: "dry-1" }; },
+      validatePlan: async () => ({ ok: true, hard: [] }),
+      asRuntimeError: (e) => e,
+    },
+  });
+  vm.runInContext(
+    `${section("const INVERTIBLE_KINDS", "/**\n * Ask the runtime whether")}\nglobalThis.undo = proposeUndoOf;`,
+    ctx,
+  );
+  await ctx.undo("run-1");
+  assert.equal(s.read().undoError, null);
+  const [inverse] = queued[0];
+  assert.equal(inverse.kind, "fill_cell");
+  assert.equal(inverse.text, `${label}\n`);
+  assert.deepEqual({ ...inverse.belowLabel }, { label, previous: "서울\n세종대로 1" });
+  assert.equal(inverse.overwrite, undefined);
+  assert.deepEqual([...proposed[0][0].lines], [""]);
+  assert.deepEqual({ ...proposed[0][0].belowLabel }, { label, previous: "서울\n세종대로 1" });
 });
 
 // --- fix 4 / fix 7: after apply the head is read and the saved entries are cleared ---------

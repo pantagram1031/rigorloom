@@ -200,6 +200,14 @@ def _params(operation, body):
             if (set(op) in ({"at", "text"}, {"at", "before", "text"}) and CELL_ADDRESS.fullmatch(at)
                     and isinstance(op.get("before", ""), str)):
                 continue
+            if set(op) == {"at", "text", "belowLabel", "lines"} and CELL_ADDRESS.fullmatch(at):
+                below, lines = op["belowLabel"], op["lines"]
+                if (isinstance(below, dict) and set(below) == {"label"}
+                        and isinstance(below["label"], str) and below["label"].strip()
+                        and isinstance(lines, list) and lines
+                        and all(isinstance(line, str) for line in lines)):
+                    continue
+                raise PageError("invalid_params", "invalid preview text edit")
             if (set(op) != {"at", "run", "before", "text"} or not PARA_ADDRESS.fullmatch(at) or
                     type(op["run"]) is not int or op["run"] < 0 or not isinstance(op["before"], str)):
                 raise PageError("invalid_params", "invalid preview text edit")
@@ -290,6 +298,44 @@ def _queued_run_edit(core_run, new_text):
     else:
         c_start = c_end = pos[p]
     return c_start, c_end, new_text[p:new_end]
+
+
+def _below_label_edits(head, cell_at, label, lines, split_lines):
+    """Paragraph edits that preview a fill under the cell's printed label.
+
+    They change the paragraphs apply (`fill-cells --below-label`) writes: the
+    label paragraphs stay, the value paragraphs under them take the lines in
+    order, the ones left over are blanked, and lines past the last value
+    paragraph become new paragraphs after it. Typed as line breaks, those new
+    paragraphs take the shape of the paragraph before them, where apply clones
+    the first value paragraph (or uses the body's character shape when the
+    cell has no value paragraph yet). None when the cell cannot be read or its
+    first paragraphs are not the label; the caller then previews the whole
+    cell, and apply refuses the same mismatch.
+    """
+    try:
+        blocks = _engine_result(rt_doc.read(head.path, cell_at), head.rev)["blocks"]
+    except PageError as error:
+        if error.code == "stale_rev":
+            raise
+        return None
+    parts = split_lines(label)
+    if (len(blocks) < len(parts)
+            or any(block.get("kind") != "para" for block in blocks)
+            or any(_queue_form(block["text"]) != _queue_form(part)
+                   for block, part in zip(blocks, parts))):
+        return None
+    values = blocks[len(parts):]
+    if not values:
+        last = blocks[len(parts) - 1]
+        end = len(last["text"])
+        return [{"op": "set", "at": f"{last['at']}:{end}-{end}", "text": "\n" + "\n".join(lines)}]
+    shown = list(lines[:len(values)])
+    if len(lines) > len(values):
+        shown[-1] = "\n".join(lines[len(values) - 1:])
+    edits = [{"op": "set", "at": block["at"], "text": line} for block, line in zip(values, shown)]
+    edits += [{"op": "set", "at": block["at"], "text": ""} for block in values[len(shown):]]
+    return edits
 
 
 def _preview_scratch_dir() -> Path:
@@ -500,8 +546,15 @@ class PageGateway:
                             f"preview: could not read the paragraph slots of t{q_table}/r{row}/c{col}; "
                             f"previewing the whole cell ({type(exc).__name__}: {exc})\n")
                         lead_cache[cache_key] = (False, [], [])
-                has_obj, slots, blank_indices = lead_cache[cache_key]
                 core_cell_at = f"{core_addresses[base_at]}/r{row}/c{col}"
+                if "belowLabel" in op:
+                    below_edits = _below_label_edits(head, core_cell_at, op["belowLabel"]["label"],
+                                                     op["lines"], preedit_mod.split_fill_lines)
+                    if below_edits is not None:
+                        targets.extend(edit["at"].partition(":")[0] for edit in below_edits)
+                        edits.extend(below_edits)
+                        continue
+                has_obj, slots, blank_indices = lead_cache[cache_key]
                 if has_obj:
                     lines = preedit_mod.split_fill_lines(text)
                     if not slots:

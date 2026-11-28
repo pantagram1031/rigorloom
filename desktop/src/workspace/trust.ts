@@ -20,6 +20,7 @@ import {
   type VocabularyKey,
 } from "../i18n/vocabulary.ts";
 import { opSignature } from "../store.ts";
+import { belowLabelLines } from "../model/belowLabel.ts";
 import type {
   ApprovalPhase,
   Draft,
@@ -693,6 +694,13 @@ function isIndex(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+function isBelowLabel(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.label === "string" && v.label.length > 0 &&
+    (v.previous === undefined || typeof v.previous === "string");
+}
+
 /** The shape `planOpsPayload` relies on, per kind. Nothing else is proposed. */
 export function isWellFormedOp(op: unknown): op is QueuedOp {
   if (!op || typeof op !== "object") return false;
@@ -705,7 +713,8 @@ export function isWellFormedOp(op: unknown): op is QueuedOp {
     case "fill_cell":
       return (
         isIndex(o.table) && isIndex(o.row) && isIndex(o.col) &&
-        (o.lines === undefined || (Array.isArray(o.lines) && o.lines.every((l) => typeof l === "string")))
+        (o.lines === undefined || (Array.isArray(o.lines) && o.lines.every((l) => typeof l === "string"))) &&
+        (o.belowLabel === undefined || isBelowLabel(o.belowLabel))
       );
     case "replace_at_cell":
       return (
@@ -854,7 +863,9 @@ export function planOpsPayload(ops: readonly QueuedOp[]): Array<Record<string, u
           table: op.table,
           row: op.row,
           col: op.col,
-          ...(op.lines !== undefined ? { lines: op.lines } : { text: op.text }),
+          ...(op.belowLabel
+            ? { lines: belowLabelLines(op) ?? [], belowLabel: op.belowLabel }
+            : op.lines !== undefined ? { lines: op.lines } : { text: op.text }),
           ...(op.charPr ? { charPr: op.charPr } : {}),
           ...(op.paraPr ? { paraPr: op.paraPr } : {}),
           ...(op.overwrite ? { overwrite: true } : {}),

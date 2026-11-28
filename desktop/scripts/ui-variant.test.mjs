@@ -352,6 +352,7 @@ test("v1 palette command '새 편집기로 열기' saves editorVariant v2 or ref
     };
     const trust = loadTsModule("src/workspace/trust.ts", {
       "../i18n/vocabulary": vocabulary,
+      "../model/belowLabel": loadTsModule("src/model/belowLabel.ts"),
       "../store": store,
     });
     const actionsStub = {
