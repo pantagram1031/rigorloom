@@ -35,6 +35,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T283:** In a narrow window the 변경, 에이전트 and 점검 tabs of the bottom sheet are 44 px tall (they were 36 px) and each tab's hit area takes in the gap beside it, so 점검 is no longer 22 px wide; the drawer's pane tabs widen the same way. Labels and their underlines stay where they were. The 연결 설정 link under an unconnected agent, the change filters and the approval buttons in the sheet's footer are 44 px tall as well; an earlier compact pass had brought them down to 17 to 36 px.
 - **T282:** In the narrow drawer the list rows, search fields and buttons inside the panes are now 44 px touch targets, like the drawer's own tab rows; on a phone the blank and outline rows were 22 px tall. 이전 and 다음 in 찾기 are at least 44 px wide.
 - **T281:** In the narrow drawer the 개요, 빈칸 and 찾기 panes no longer sit as grey blocks on a white drawer; the drawer now takes the sidebar colour. The outline and blanks lists also start at the same 12 px inset as the file and history lists, where blank rows had sat 6 px from the edge.
 - **T280:** Touch-size controls in narrow windows (drawer tabs and buttons, the narrow top bar, review and panel tabs, start-screen buttons) now take their height from one `--ctl-touch` token instead of separate 44 px values. Sizes are unchanged.
