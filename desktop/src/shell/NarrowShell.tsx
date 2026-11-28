@@ -14,7 +14,7 @@ import { docLayout, LEFT_PANES, type LeftPaneId, setShell, type Tab, useShell, g
 import { FailedCanvas, OpeningCanvas, Strip } from "./Shell";
 import { Slot } from "./Slot";
 import { StartTab } from "./StartTab";
-import { activateTab } from "./tabs";
+import { activateTab, closeTab, openStartTab } from "./tabs";
 import { paneTabTid, TID } from "./testids";
 
 const LABEL: Record<LeftPaneId, Parameters<typeof S.t>[0]> = {
@@ -177,20 +177,45 @@ function Drawer({ sessionId }: { sessionId: string | null }) {
           </button>
         </div>
         <div className="sh-drawer-section">
-          {tabs.map((t) => (
-            <button
-              type="button"
-              key={t.id}
-              className="sh-drawer-row"
-              data-selected={t.id === active || undefined}
-              onClick={() => {
-                activateTab(t.id);
-                setShell({ narrowDrawerOpen: false });
-              }}
-            >
-              {t.kind === "start" ? S.t("shell_tab_start", lang) : t.kind === "doc" ? docTitle(workspace, t.sessionId) : t.name}
-            </button>
-          ))}
+          {tabs.map((t) => {
+            const name = t.kind === "start" ? S.t("shell_tab_start", lang) : t.kind === "doc" ? docTitle(workspace, t.sessionId) : t.name;
+            return (
+              <div key={t.id} className="sh-drawer-tab">
+                <button
+                  type="button"
+                  className="sh-drawer-row"
+                  data-selected={t.id === active || undefined}
+                  onClick={() => {
+                    activateTab(t.id);
+                    setShell({ narrowDrawerOpen: false });
+                  }}
+                >
+                  {name}
+                </button>
+                <button
+                  type="button"
+                  className="sh-iconbtn sh-iconbtn--touch sh-drawer-tab-close"
+                  aria-label={S.t("shell_tab_close", lang, [name])}
+                  data-testid={`narrow-tab-close-${t.id.replace(":", "-")}`}
+                  onClick={() => closeTab(t.id)}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+            );
+          })}
+          <button
+            type="button"
+            className="sh-drawer-row sh-drawer-add"
+            data-testid="narrow-tab-add"
+            onClick={() => {
+              openStartTab();
+              setShell({ narrowDrawerOpen: false });
+            }}
+          >
+            <span aria-hidden="true" className="sh-drawer-add-mark">+</span>
+            {S.t("shell_tab_add", lang)}
+          </button>
         </div>
         {sessionId ? (
           <>
