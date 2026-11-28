@@ -1203,8 +1203,23 @@
   .rp-filter {
     min-height: var(--ctl-touch);
   }
+  /* A two-letter tab such as 점검 was 22 px wide. Each tab takes the
+     gap as its own padding, so the hit area widens while the labels stay
+     where they were and the first one still lines up with the text below. */
+  .rp-tab {
+    padding-inline: var(--s-8);
+  }
+  .rp-tab[aria-selected="true"]::after {
+    left: var(--s-8);
+    right: var(--s-8);
+  }
   .rp-tabs {
     height: var(--ctl-touch);
+    gap: 0;
+    padding-inline: var(--s-8);
+  }
+  .rp-composer--off .rp-link {
+    min-height: var(--ctl-touch);
   }
 }
 
@@ -1235,12 +1250,7 @@
   .rp-footer .rl-approval-body { min-height: 27px; }
   .rp-footer-reason { margin-top: 4px; }
   .rp-row-actions .rp-btn { min-height: 30px; }
-  .rp-tabs { height: 36px; }
-  .rp-tab { min-height: 36px; }
-  .rp-filter { min-height: 33px; }
   .rp-filters { padding-block: 0; }
-  .rp-composer--off { height: 31px; padding-block: 3px; }
-  .rp-footer-row .rp-btn { min-height: 36px; }
   .rp-thread-row { height: 20px; }
   .rp-row-head { scroll-margin-block: 2px; }
 }

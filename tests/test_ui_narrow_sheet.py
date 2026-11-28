@@ -84,6 +84,14 @@ def test_narrow_bottom_sheet_compact_expanded_close_and_escape(tmp_path: Path) -
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
             _assert_principles(page, "narrow-compact")
 
+            # The sheet's tabs and the 연결 설정 link are touch-sized; 점검 was
+            # 22 px wide and the tabs 36 px tall (T283).
+            for tab_box in [t.bounding_box() for t in sheet.locator(".rp-tab").all()]:
+                assert tab_box is not None and tab_box["height"] >= 43.5 and tab_box["width"] >= 36, tab_box
+            for link in sheet.locator(".rp-composer--off .rp-link").all():
+                link_box = link.bounding_box()
+                assert link_box is not None and link_box["height"] >= 43.5, link_box
+
             # 2) Handle toggles compact <-> expanded.
             handle.wait_for(state="visible")
             assert handle.get_attribute("aria-expanded") == "false"
