@@ -1087,6 +1087,30 @@ def _em_width(text):
     return sum(1.0 if _WIDE_RE.match(ch) else 0.55 for ch in text)
 
 
+_LABEL_NOTE_RE = re.compile(r"^\s*[(（\[［〔][^)）\]］〕]*[^\s)）\]］〕][^)）\]］〕]*[)）\]］〕]\s*$")
+
+
+def _line_height(pt, ls):
+    """One line's advance in HWPUNIT for a ``pt`` character height.
+
+    PERCENT scales the character height; FIXED is the value itself;
+    BETWEEN_LINES adds the value to the character height, and AT_LEAST keeps
+    the larger of the two, the way the page renderer spaces lines. A missing
+    or unknown spacing is 한글's default of 160 percent.
+    """
+    kind, value = ls.get("type"), ls.get("value")
+    text_h = pt * 100
+    if value is None or kind not in (None, "PERCENT", "FIXED", "BETWEEN_LINES", "AT_LEAST"):
+        return text_h * 160 / 100.0
+    if kind in (None, "PERCENT"):
+        return text_h * (value or 160) / 100.0
+    if kind == "FIXED":
+        return float(value) if value > 0 else text_h
+    if kind == "BETWEEN_LINES":
+        return text_h + max(0, value)
+    return float(max(text_h, value))
+
+
 def _label_top(raw_body, entry, defs, parapr_ls):
     """A printed cell whose label sits at the top with room for a value below it.
 
@@ -1117,6 +1141,11 @@ def _label_top(raw_body, entry, defs, parapr_ls):
         # value written there is not told apart from more label lines, so the
         # first line alone is the label.
         n_label = 1
+        # A second line that is only a bracketed phrase (주소 / (소재지)) is
+        # the rest of the label, not a value; an empty bracket, the "(    )"
+        # a form leaves for a value, is not.
+        while n_label < len(paras) and _LABEL_NOTE_RE.match(paras[n_label]["text"]):
+            n_label += 1
     reserved = n_label < len(paras) and not paras[n_label]["text"].strip()
 
     width, height = entry.get("width"), entry.get("height")
@@ -1131,9 +1160,7 @@ def _label_top(raw_body, entry, defs, parapr_ls):
         pt = (defs.get(cid) or {}).get("height_pt")
         if pt is None:
             return None
-        ls = parapr_ls.get(p["paraPr"]) or {}
-        pct = ls.get("value") if ls.get("type") in (None, "PERCENT") and ls.get("value") else 160
-        h = pt * 100 * pct / 100.0
+        h = _line_height(pt, parapr_ls.get(p["paraPr"]) or {})
         inner = (width or 0) - margin["left"] - margin["right"]
         wraps = 1
         if inner > 0:

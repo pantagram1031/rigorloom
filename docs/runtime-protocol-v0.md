@@ -235,11 +235,15 @@ Producer: the same profile, at two addressing levels.
   it carries `label_top: {paras, lines, reserved}` in `table_map` and
   `labelTop` in the graph (T273). It is read from the cell itself: `subList
   vertAlign="TOP"`, the label paragraphs (up to the first blank paragraph the
-  form reserved; the first one alone when there is none or when a value is
-  already under it), and either that reserved blank paragraph or a cell height
-  (less its top and bottom margins) that leaves at least one more line of the
-  label's character height times its line spacing under the label's lines,
-  wrap at the cell's inner width included. Cells holding an object are not
+  form reserved; when there is none or when a value is already under it, the
+  first one plus any following paragraphs that are only a bracketed phrase,
+  such as `(소재지)`, but not an empty bracket like `(    )`), and either that
+  reserved blank paragraph or a cell height (less its top and bottom margins)
+  that leaves at least one more line under the label's lines, wrap at the
+  cell's inner width included. A line's height follows the paragraph's line
+  spacing as the page renderer reads it: PERCENT of the character height,
+  FIXED as given, BETWEEN_LINES added to the character height, AT_LEAST the
+  larger of the two, and 160 percent when none is set. Cells holding an object are not
   marked. The editor lists these cells as blanks named by their label and
   fills them with `fill_cell.belowLabel` (§12.6a).
 

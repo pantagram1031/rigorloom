@@ -433,3 +433,46 @@ def test_a_label_top_cell_stays_marked_once_a_value_is_under_it(tmp_path):
     marked = _label_top_cells(str(filled))
     assert marked[(8, 1)]["paras"] == 1
     assert marked[(6, 1)]["paras"] == 1
+
+
+def _cell_body(*texts):
+    paras = "".join(
+        f'<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"><hp:t>{t}</hp:t></hp:run></hp:p>'
+        if t else '<hp:p paraPrIDRef="0"><hp:run charPrIDRef="0"/></hp:p>'
+        for t in texts)
+    return ('<hp:subList vertAlign="TOP">' + paras + '</hp:subList>'
+            '<hp:cellMargin left="0" right="0" top="0" bottom="0"/>')
+
+
+_DEFS = {"0": {"height_pt": 10}}
+
+
+def test_a_bracketed_second_line_is_part_of_the_label():
+    entry = {"width": 20000, "height": 8000}
+    spacing = {"0": {"type": "PERCENT", "value": 160}}
+    # 주소 / (소재지) back to back, no blank line reserved: both lines are the label.
+    assert form_inspect._label_top(_cell_body("주소", "(소재지)"), entry, _DEFS, spacing) == {
+        "paras": 2, "lines": 2, "reserved": False}
+    # It stays the label once a value is written under it.
+    assert form_inspect._label_top(_cell_body("주소", "(소재지)", "서울"), entry, _DEFS, spacing)[
+        "paras"] == 2
+    # An empty bracket is the place for a value, and a line that only starts
+    # with a bracket is a value.
+    assert form_inspect._label_top(_cell_body("생년월일", "(    )"), entry, _DEFS, spacing)[
+        "paras"] == 1
+    assert form_inspect._label_top(_cell_body("상호", "(주)한빛"), entry, _DEFS, spacing)[
+        "paras"] == 1
+
+
+def test_label_room_uses_the_paragraphs_line_spacing_type():
+    entry = {"width": 20000, "height": 5000}
+    body = _cell_body("성명")
+    # 10pt at 160%: one 1600 line leaves room for more under it.
+    assert form_inspect._label_top(body, entry, _DEFS, {"0": {"type": "PERCENT", "value": 160}})
+    # FIXED 3000: the label's line takes 3000 of 5000 and no second line fits.
+    assert form_inspect._label_top(body, entry, _DEFS, {"0": {"type": "FIXED", "value": 3000}}) is None
+    # BETWEEN_LINES adds to the character height; AT_LEAST keeps the larger.
+    assert form_inspect._line_height(10, {"type": "BETWEEN_LINES", "value": 500}) == 1500
+    assert form_inspect._line_height(10, {"type": "AT_LEAST", "value": 800}) == 1000
+    assert form_inspect._line_height(10, {"type": "AT_LEAST", "value": 2000}) == 2000
+    assert form_inspect._line_height(10, {}) == 1600
