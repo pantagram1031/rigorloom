@@ -1328,7 +1328,9 @@
   flex-direction: column;
   width: 86%;
   max-width: 360px;
-  background: var(--raised);
+  /* The sidebar's colour: the outline, blanks and find panes paint
+     var(--panel) themselves and showed as grey blocks on a white drawer. */
+  background: var(--panel);
   box-shadow: var(--shadow-float);
 }
 

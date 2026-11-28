@@ -224,6 +224,18 @@ def test_narrow_drawer_opens_a_document_and_closes_tabs(tmp_path: Path) -> None:
             assert tab_box is not None and row_box is not None
             assert tab_box["y"] + tab_box["height"] <= row_box["y"] + row_box["height"] + 0.5, (tab_box, row_box)
 
+            # Every pane shares the drawer's colour; the outline, blanks and find
+            # panes used to show as grey blocks on a white drawer (T281).
+            drawer_bg = drawer.evaluate("el => getComputedStyle(el).backgroundColor")
+            pane_tabs = drawer.locator(".sh-pane-tab")
+            for i in range(pane_tabs.count()):
+                pane_tabs.nth(i).click()
+                pane = drawer.locator(".rl-pane")
+                if pane.count():
+                    pane_bg = pane.first.evaluate("el => getComputedStyle(el).backgroundColor")
+                    assert pane_bg == drawer_bg, (i, pane_bg, drawer_bg)
+            pane_tabs.first.click()
+
             add = page.get_by_test_id("narrow-tab-add")
             assert add.inner_text().endswith("문서 열기")
             add.click()

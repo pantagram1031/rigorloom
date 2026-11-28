@@ -35,6 +35,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T281:** In the narrow drawer the 개요, 빈칸 and 찾기 panes no longer sit as grey blocks on a white drawer; the drawer now takes the sidebar colour. The outline and blanks lists also start at the same 12 px inset as the file and history lists, where blank rows had sat 6 px from the edge.
 - **T280:** Touch-size controls in narrow windows (drawer tabs and buttons, the narrow top bar, review and panel tabs, start-screen buttons) now take their height from one `--ctl-touch` token instead of separate 44 px values. Sizes are unchanged.
 - **T279:** In the narrow drawer the pane tabs (파일, 개요, 빈칸, 찾기, 기록) now show their whole labels. At 44 px they were taller than the row that holds them and were cut off along the bottom.
 - **T278:** In a window narrower than 600 px, where the tab strip gives way to a menu drawer, the drawer now has 문서 열기 to open another document, and each listed tab has its own close button. Before this, a narrow window could switch between open tabs but could neither open another document nor close one.
