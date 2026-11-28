@@ -1426,6 +1426,13 @@ to be written below it (정보공개 청구서: `성명(…)`, `주소(소재지
   `overwrite`. The label run's T30/T127 findings do not apply; the engine runs
   the T30 check on the runs the value takes. It maps onto `fill-cells
   --below-label ROW,COL=LABEL [--below-label-previous ROW,COL=TEXT]`.
+- The editor queues one when a printed cell's first line is kept exactly and
+  only the lines under it change (`label` = that first line, `previous` = the
+  lines that were under it). Text typed on the label's own line, or a change
+  to the label, stays an edit of the cell's text. Undoing it is a
+  below-label fill too: same `label`, `previous` = the value now under it,
+  `lines` = the value before (`[""]` when there was none). When the original
+  cell had no value paragraph, the paragraphs the fill added stay, emptied.
 
 ### 12.7 Typing into a paragraph line, with the operations that exist
 
@@ -1476,6 +1483,16 @@ changed region `[p, len(old) - s)` -> `[p, len(new) - s)`):
   sets only the changed region of that paragraph, so the cell's other runs
   keep their character shapes. Otherwise, including when the cell cannot be
   read, it is the whole-cell set; a stale head still fails the preview.
+- A preview of a fill under the printed label (§12.6a) is
+  `{at: "tN/rR/cC", text, belowLabel: {label}, lines}`: `text` is the whole
+  cell as the editor shows it, `lines` the value lines the plan op carries.
+  When the cell's first paragraphs read as `label`, the preview sets the
+  paragraphs apply writes: the value paragraphs under the label take `lines`
+  in order, the ones left over are set empty, and lines past the last value
+  paragraph are typed as line breaks after it (after the label when the cell
+  has no value paragraph). The label paragraphs are not touched. When the
+  cell cannot be read or does not start with the label, it is the whole-cell
+  set of `text`, and apply refuses the same mismatch.
 - Tags strictly inside `[p, len(old) - s)` are dropped and logged to `stderr`
   (or recorded under `dropped_inline` on the scan record entry when Tier A
   scans occurrences with a log); if an edit in one run changes two separate

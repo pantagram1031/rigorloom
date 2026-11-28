@@ -56,6 +56,7 @@ import type {
 } from "./types";
 import type { GuardWarningSummary, ParkedDraft, SavedDraft } from "./workspace/trust";
 import type { ComposerDraft } from "./workspace/composerDraft";
+import type { BelowLabel } from "./model/belowLabel";
 
 export type View = "document" | "agent";
 
@@ -138,6 +139,12 @@ export interface QueuedFillOp extends QueuedOpBase {
    * reversed — the one case where overwriting is precisely the intent.
    */
   overwrite?: boolean;
+  /**
+   * A fill under the cell's printed label (T271). `text` is then the whole
+   * cell (label, a line break, the value) so every view shows the cell as it
+   * will read; the plan op carries only the value lines (`belowLabelLines`).
+   */
+  belowLabel?: BelowLabel;
 }
 
 /** Cell-scoped replace or append operation (`replace`, via `plan/propose`). */

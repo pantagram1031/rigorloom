@@ -13,6 +13,7 @@ import {
 } from "../store";
 import type { GraphCell, InspectResult, RegionText, UiLanguage } from "../types";
 import { resolveCellRunEdit, type CellRunEdit } from "../run_map";
+import { resolveBelowLabelEdit } from "../model/belowLabel.ts";
 import { readRegion } from "../runtime";
 import { classifyCellEditMode } from "../workspace/fieldLabels";
 import {
@@ -262,8 +263,24 @@ export async function commitCellEditV2(
   let nextOp: QueuedOp;
   let modeLabelKey: CommitCellEditResult["modeLabelKey"];
   let runEdit: CellRunEdit = { kind: "none" };
+  // A printed cell whose label stays as it is and gets a value on the lines
+  // under it: the fill keeps the label and writes only below it (T271).
+  const underLabel = seat ? null : resolveBelowLabelEdit(before, nextValue);
 
-  if (classification.kind === "fill_cell") {
+  if (underLabel) {
+    modeLabelKey = "fill_cell";
+    nextOp = {
+      opId,
+      kind: "fill_cell",
+      table: edit.table,
+      row: edit.row,
+      col: edit.col,
+      text: underLabel.text,
+      belowLabel: underLabel.belowLabel,
+      before,
+      origin: "user",
+    };
+  } else if (classification.kind === "fill_cell") {
     modeLabelKey = "fill_cell";
     nextOp = {
       opId,

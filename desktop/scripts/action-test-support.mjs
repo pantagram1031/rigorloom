@@ -15,8 +15,10 @@ export function loadTrustModule(load) {
   const store = load("../src/store.ts", {
     react: { useSyncExternalStore: (_subscribe, snapshot) => snapshot() },
   });
+  const belowLabel = load("../src/model/belowLabel.ts", {});
   return load("../src/workspace/trust.ts", {
     "../i18n/vocabulary.ts": vocabulary,
+    "../model/belowLabel.ts": belowLabel,
     "../store.ts": store,
   });
 }

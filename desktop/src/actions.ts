@@ -9,6 +9,7 @@ import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plug
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import * as rt from "./runtime";
+import { belowLabelLines, belowLabelValue } from "./model/belowLabel.ts";
 import {
   forgetDocumentEvents,
   startDocumentEvents,
@@ -1459,7 +1460,9 @@ async function setQueue(
               table: op.table,
               row: op.row,
               col: op.col,
-              ...(op.lines !== undefined ? { lines: op.lines } : { text: op.text }),
+              ...(op.belowLabel
+                ? { lines: belowLabelLines(op) ?? [], belowLabel: op.belowLabel }
+                : op.lines !== undefined ? { lines: op.lines } : { text: op.text }),
               ...(op.charPr ? { charPr: op.charPr } : {}),
               ...(op.paraPr ? { paraPr: op.paraPr } : {}),
               ...(op.overwrite ? { overwrite: true } : {}),
@@ -1827,7 +1830,37 @@ export async function proposeUndoOf(runId: string): Promise<number> {
         });
         return 0;
       }
-      if (op.kind === "fill_cell") {
+      const below = op.kind === "fill_cell" ? op.params.belowLabel : undefined;
+      if (below && typeof below === "object" && typeof (below as { label?: unknown }).label === "string") {
+        // A fill under a printed label is undone as one too (T272): the label
+        // stays as it is and only the value under it goes back. A whole-cell
+        // overwrite would write the label and the old value into one run.
+        const label = (below as { label: string }).label;
+        const previousValue = belowLabelValue(previous, label);
+        const currentValue = belowLabelValue(current, label);
+        if (previousValue === null || currentValue === null) {
+          setState({
+            undoPhase: "failed",
+            undoError: {
+              code: "previous_value_unreadable",
+              message: t("err_undo_previous_unreadable", getState().language),
+              data: { address, label },
+            },
+          });
+          return 0;
+        }
+        ops.push({
+          opId: `undo-${runId.slice(0, 8)}-${op.opId}`,
+          kind: "fill_cell",
+          table: Number(op.params.table ?? 0),
+          row: Number(op.params.row),
+          col: Number(op.params.col),
+          text: `${label}\n${previousValue}`,
+          belowLabel: { label, previous: currentValue },
+          before: current,
+          origin: "user",
+        });
+      } else if (op.kind === "fill_cell") {
         const afterVal = Array.isArray(op.params.lines)
           ? op.params.lines.map(String).join("\n")
           : String(op.params.text ?? "");

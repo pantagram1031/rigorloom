@@ -7,6 +7,7 @@ import type {
   PageViewMode,
 } from "./page";
 import type { QueuedFillOp, QueuedOp, QueuedReplaceAtCellOp } from "../store";
+import { belowLabelLines } from "./belowLabel.ts";
 
 export const MAX_PAGE_SCALE = 3;
 export const ENGINE_PX_PER_PT = 96 / 72;
@@ -43,7 +44,15 @@ export interface RenderedPage {
   previewRev?: string;
 }
 
-export type EngineTextEdit = { at: string; text: string; run?: number; before?: string };
+export type EngineTextEdit = {
+  at: string;
+  text: string;
+  run?: number;
+  before?: string;
+  /** A fill under the cell's printed label: the label and the value lines. */
+  belowLabel?: { label: string };
+  lines?: string[];
+};
 
 export interface PagePreview {
   rev: string;
@@ -96,6 +105,11 @@ export function engineTextEdit(op: QueuedOp): EngineTextEdit[] {
   const text = queuedCellText(op);
   if (text === null) return [];
   const at = `t${op.table}/r${op.row}/c${op.col}`;
+  // A fill under the label previews the same paragraphs it applies to.
+  const lines = op.kind === "fill_cell" ? belowLabelLines(op) : null;
+  if (op.kind === "fill_cell" && op.belowLabel && lines) {
+    return [{ at, text, belowLabel: { label: op.belowLabel.label }, lines }];
+  }
   // The cell's text before the edit lets the preview change only what changed,
   // so the rest of the cell keeps its own character shapes.
   const before = op.kind === "replace_at_cell" ? op.before : "";
