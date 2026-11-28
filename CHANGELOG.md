@@ -35,6 +35,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T270:** In editor v2, a long table cell whose text has not been read yet (only its cut-short preview is known) no longer opens for editing on that preview. Committing such an edit would have written the preview back over the rest of the cell. The editor now reads the cell's whole text and opens on it, and says so in the status bar while it reads; if the text cannot be read, the cell stays closed and the status bar says why.
 - **T269:** If the page service cannot read a table cell while previewing an edit of one part of it, the preview now falls back to setting the whole cell instead of failing. A preview against a document that changed meanwhile still fails as before. The runtime protocol now documents the preview cell op and its `before` field.
 - **T268:** In editor v2, editing a table cell whose text mixes character shapes (the black form title and the blue revision note in one header line, say) now works. The edit is applied to the part that changed, so the other parts keep their colour and size, and the page preview keeps them too. Before, such an edit could not be applied, and the change list said the same text appeared more than once in the cell. A change that spans two differently shaped parts is still refused, now with a message that says so.
 - **T267:** In editor v2, the status bar names a table cell the way the blanks list and find results do, with its table, row and column (1쪽 · 표 1 3행 1열). It no longer says 줄 and 칸, which in 한글 mean a line and a character position.
