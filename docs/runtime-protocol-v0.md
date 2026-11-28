@@ -268,7 +268,7 @@ three registries, and they are not the same set:
 | `replace` (string keys) | `engine/scripts/preedit.py:2425` | `--map`; 0-hit is an error unless `--allow-missing` |
 | `replace` (cell address) | `engine/scripts/preedit.py:2439` / `:2446` | `--at-cell` / `--at-cell-append`; `--at-cell-expect` (`:2454`) is the exact-byte precondition |
 | `set-runs` | `engine/scripts/preedit.py:2464` | `(at_para, run)` addressing; preserves the run's charPrIDRef |
-| `fill-cells` | `engine/scripts/preedit.py:2479` | `--cell` / `--cell-line` / `--map`; per-cell charPr and paraPr overrides at `:2507` / `:2511` |
+| `fill-cells` | `engine/scripts/preedit.py:2479` | `--cell` / `--cell-line` / `--map`; per-cell charPr and paraPr overrides at `:2507` / `:2511`; `--below-label` / `--below-label-previous` for label-top cells (`fill_cell.belowLabel: {label, previous?}`, requires `lines` and a non-empty `label`) |
 | `delete-guides` | `engine/scripts/preedit.py:2520` | guarded by `guards.is_protected_para` (`engine/scripts/guards.py:90`) |
 | `normalize-clones` | `engine/scripts/preedit.py:2526` | post-checked by `guards.assert_no_dangling_charpr` (`engine/scripts/guards.py:142`) |
 
@@ -1401,6 +1401,31 @@ aligns — every corpus render is a blank form, and a filled cell changes what
 `cell_agrees` sees. Whether the tolerances hold for renderers other than
 Hancom Office 13.0.0.2986; there is one Hancom install on the measuring
 machine, so renderer-version sensitivity is untested.
+
+### 12.6a Filling under a printed label (`fill_cell.belowLabel`)
+
+Many forms print a field label at the top of a tall cell and leave the value
+to be written below it (정보공개 청구서: `성명(…)`, `주소(소재지)`, 전화번호).
+`fill_cell` with `belowLabel: {label, previous?}` and `lines` writes there:
+
+- `label` is the cell's leading paragraph texts joined with `"\n"`. Those
+  paragraphs must exist, hold no object and equal it exactly; they are kept
+  byte-identical. A cell whose first paragraph is blank is refused at
+  validation (`op_field_invalid`): that is an ordinary fill.
+- The value paragraphs are every paragraph after the label. They are refused
+  when one holds an object or a field, and when their current text (trailing
+  blank paragraphs ignored, whitespace-insensitive) is not `previous`
+  (default `""`), so a value nobody read is never overwritten.
+- Line *k* goes into value paragraph *k*, keeping that paragraph's own run
+  charPr; further lines go into clones right after it (of the first value
+  paragraph, or of the label's last paragraph with the document's body
+  baseline charPr, never the label run's). Surplus value paragraphs are
+  emptied, not deleted. Re-filling with `previous` set to the old value
+  replaces it.
+- `belowLabel` needs `lines`, not `text`, and cannot be combined with
+  `overwrite`. The label run's T30/T127 findings do not apply; the engine runs
+  the T30 check on the runs the value takes. It maps onto `fill-cells
+  --below-label ROW,COL=LABEL [--below-label-previous ROW,COL=TEXT]`.
 
 ### 12.7 Typing into a paragraph line, with the operations that exist
 

@@ -839,3 +839,23 @@ def test_apply_set_run_preserves_tab_attributes_in_kstartup_p751_run_0(tmp_path)
         assert saved_p_xml.count(tab_tag) == 5
         assert (tab_tag * 5 + new_date) in saved_p_xml
 
+
+def test_apply_fill_cell_below_label_maps_to_preedit_flags(tmp_path):
+    from pathlib import Path
+    argv = rt_apply._argv_for(
+        "fill_cell",
+        {
+            "table": 0, "row": 6, "col": 1,
+            "lines": ["홍길동"],
+            "belowLabel": {
+                "label": "성명(법인ㆍ단체명 및 대표자 성명)",
+                "previous": "옛이름",
+            },
+        },
+        Path("in.hwpx"),
+        Path("out.hwpx"),
+    )
+    assert "--below-label" in argv
+    assert "6,1=성명(법인ㆍ단체명 및 대표자 성명)" in argv
+    assert "--below-label-previous" in argv
+    assert "6,1=옛이름" in argv
