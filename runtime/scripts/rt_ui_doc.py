@@ -547,7 +547,8 @@ class PageGateway:
                             f"previewing the whole cell ({type(exc).__name__}: {exc})\n")
                         lead_cache[cache_key] = (False, [], [])
                 core_cell_at = f"{core_addresses[base_at]}/r{row}/c{col}"
-                if "belowLabel" in op:
+                # A cell holding an object previews through its lead paragraphs.
+                if "belowLabel" in op and not lead_cache[cache_key][0]:
                     below_edits = _below_label_edits(head, core_cell_at, op["belowLabel"]["label"],
                                                      op["lines"], preedit_mod.split_fill_lines)
                     if below_edits is not None:

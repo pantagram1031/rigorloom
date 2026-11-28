@@ -1,4 +1,5 @@
 import { wp3t } from "../i18n/v2/wp3";
+import { belowLabelValue } from "./belowLabel.ts";
 import {
   AGENCY_USE_TOKENS,
   BUNDLED_FACE_NAMES,
@@ -708,8 +709,14 @@ export function detectDocumentSeats(
       const isFillTarget = cell.classification === "fill_target" && !isRow0CornerSpacer;
       const placeholderSlot =
         !isFillTarget && isPlaceholderSlot(cell, key, regionText, formCtx);
+      // A printed label at the top of the cell with room for the value under
+      // it (T273): the blank is under the label, and the label names it.
+      const underLabel =
+        !isFillTarget && !placeholderSlot && cell.labelTop
+          ? regionText.split("\n").slice(0, cell.labelTop.paras).join("\n")
+          : null;
 
-      if (!isFillTarget && !placeholderSlot) continue;
+      if (!isFillTarget && !placeholderSlot && !underLabel?.trim()) continue;
       seenKeys.add(key);
 
       const fallbackOrd = rawSeats.length + 1;
@@ -723,7 +730,10 @@ export function detectDocumentSeats(
         fallbackOrd,
       );
       let baseLabel = derivedFallback;
-      if (placeholderSlot && regionText.trim().length > 0) {
+      if (underLabel) {
+        const leadToken = labelFromCellText(underLabel.replace(/\n/g, " ").trim());
+        baseLabel = truncateLabel(leadToken || underLabel.trim(), 20);
+      } else if (placeholderSlot && regionText.trim().length > 0) {
         // `전화번호(   )` → `전화번호`: the empty slot goes before the field split.
         const leadToken = labelFromCellText(regionText.trim());
         if (leadToken.length > 0) {
@@ -735,9 +745,12 @@ export function detectDocumentSeats(
       const beforeText = regionText;
       const currentText = change ? change.after : beforeText;
       const isAgency = isAgencyUseLabelOrText(baseLabel, regionText);
-      const filled = change
-        ? change.after.trim().length > 0 && change.after.trim() !== beforeText.trim()
-        : isFillTarget && beforeText.trim().length > 0;
+      // A bracket the form printed under the label (`(    )`) is not a value.
+      const filled = underLabel
+        ? (belowLabelValue(currentText, underLabel) ?? "").replace(/[\s()（）[\]]/g, "").length > 0
+        : change
+          ? change.after.trim().length > 0 && change.after.trim() !== beforeText.trim()
+          : isFillTarget && beforeText.trim().length > 0;
 
       const faceName =
         reg?.charPrFace?.hangul ??

@@ -401,3 +401,35 @@ def test_the_help_epilog_states_the_output_contract():
     assert proc.returncode == 0
     assert "indent=2" in proc.stdout
     assert "probe.py" in proc.stdout
+
+
+JEONGBO_FORM = os.path.join(CORPUS, "converted", "jeongbo-gonggae-cheongguseo.hwpx")
+
+
+def _label_top_cells(path):
+    profile, _ = form_inspect.analyze(path, want_baseline=False)
+    return {(c["addr"]["row"], c["addr"]["col"]): c["label_top"]
+            for c in profile["table_map"][0]["cells"] if "label_top" in c}
+
+
+@pytest.mark.skipif(not os.path.exists(JEONGBO_FORM), reason="corpus form missing")
+def test_label_top_cells_are_read_from_the_cells_own_geometry():
+    # 정보공개 청구서: the 청구인 block prints each field's label at the top of a
+    # tall cell. Top-aligned, with a blank paragraph reserved under the label or
+    # room for another line of the label's size; the title cell (0,0) is
+    # top-aligned too but too short, and the centred labels are not marked.
+    marked = _label_top_cells(JEONGBO_FORM)
+    assert set(marked) == {(6, 1), (6, 12), (7, 1), (7, 12), (8, 1), (8, 12), (9, 1), (9, 12)}
+    assert marked[(6, 1)] == {"paras": 1, "lines": 1, "reserved": True}
+    assert marked[(8, 1)] == {"paras": 1, "lines": 1, "reserved": False}
+
+
+@pytest.mark.skipif(not os.path.exists(JEONGBO_FORM), reason="corpus form missing")
+def test_a_label_top_cell_stays_marked_once_a_value_is_under_it(tmp_path):
+    filled = tmp_path / "filled.hwpx"
+    preedit.fill_cells(
+        JEONGBO_FORM, filled, [(8, 1, ["서울", "세종대로 1"]), (6, 1, ["홍길동"])], table=0,
+        below_label={(8, 1): "주소(소재지)", (6, 1): "성명(법인ㆍ단체명 및 대표자 성명)"})
+    marked = _label_top_cells(str(filled))
+    assert marked[(8, 1)]["paras"] == 1
+    assert marked[(6, 1)]["paras"] == 1

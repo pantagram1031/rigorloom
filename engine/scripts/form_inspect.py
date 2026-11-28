@@ -1079,8 +1079,78 @@ def _mark_spacers(cells, col_cnt):
     return spacers
 
 
+_WIDE_RE = re.compile(r"[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7a3\uf900-\ufaff\uff00-\uffef\u3000-\u303f\u00b7\u318d]")
+
+
+def _em_width(text):
+    """Rough advance of ``text`` in ems: Hangul, CJK and full-width marks 1, the rest 0.55."""
+    return sum(1.0 if _WIDE_RE.match(ch) else 0.55 for ch in text)
+
+
+def _label_top(raw_body, entry, defs, parapr_ls):
+    """A printed cell whose label sits at the top with room for a value below it.
+
+    The form prints a field label at the top of a tall cell and leaves the value
+    to be written under it (정보공개 청구서: 성명, 주소, 전화번호). Read from the
+    cell itself: the cell aligns its text to the top, the label is its leading
+    non-blank paragraphs (all of them up to the first blank paragraph the form
+    reserved for the value; the first one alone when there is none, or when a
+    value is already written under it), and either
+    a blank paragraph follows the label or the cell's height leaves at least
+    one more line of the label's size under the label's own lines. Line heights
+    are the label paragraphs' character height times their line spacing, line
+    counts include the label's wrap at the cell's inner width.
+
+    Returns ``{"paras": n, "lines": k, "reserved": bool}`` or None.
+    """
+    sub = re.search(r'<' + NS + r':subList\b([^>]*)>', raw_body)
+    if not sub or _attr(sub.group(1), "vertAlign") != "TOP":
+        return None
+    paras = _paragraphs(raw_body, defs)
+    if not paras or not paras[0]["text"].strip():
+        return None
+    n_label = 0
+    while n_label < len(paras) and paras[n_label]["text"].strip():
+        n_label += 1
+    if n_label == len(paras) or any(p["text"].strip() for p in paras[n_label:]):
+        # No blank paragraph after the label, or a value already under it: a
+        # value written there is not told apart from more label lines, so the
+        # first line alone is the label.
+        n_label = 1
+    reserved = n_label < len(paras) and not paras[n_label]["text"].strip()
+
+    width, height = entry.get("width"), entry.get("height")
+    mg = re.search(r'<' + NS + r':cellMargin\b([^>]*)/?>', raw_body)
+    margin = {k: int(_attr(mg.group(1), k) or 0) for k in ("left", "right", "top", "bottom")} if mg else {
+        "left": 0, "right": 0, "top": 0, "bottom": 0}
+    line_h = []
+    lines = 0
+    for p in paras[:n_label]:
+        cid = next((c for c, t in zip(p["charPrs"], p["runTexts"]) if t.strip()),
+                   p["charPrs"][0] if p["charPrs"] else None)
+        pt = (defs.get(cid) or {}).get("height_pt")
+        if pt is None:
+            return None
+        ls = parapr_ls.get(p["paraPr"]) or {}
+        pct = ls.get("value") if ls.get("type") in (None, "PERCENT") and ls.get("value") else 160
+        h = pt * 100 * pct / 100.0
+        inner = (width or 0) - margin["left"] - margin["right"]
+        wraps = 1
+        if inner > 0:
+            wraps = max(1, -(-int(_em_width(p["text"]) * pt * 100) // inner))
+        lines += wraps
+        line_h.append(h)
+    if not reserved:
+        if not height:
+            return None
+        free = height - margin["top"] - margin["bottom"] - lines * max(line_h)
+        if free < max(line_h):
+            return None
+    return {"paras": n_label, "lines": lines, "reserved": reserved}
+
+
 def _table_map(section_names, z, defs, borderfill_shaded,
-               script_profiles=None, baseline_id=None):
+               script_profiles=None, baseline_id=None, parapr_ls=None):
     """모든 section의 모든 hp:tbl -> table_map 엔트리 리스트.
 
     cell 분류(guide/fill_target/static)는 _classify_guide/_looks_like_anchor와
@@ -1186,6 +1256,11 @@ def _table_map(section_names, z, defs, borderfill_shaded,
                         entry["has_object"] = True
                         entry["lead_para"] = fill_slots[0] if fill_slots else None
                         entry["lead_paras"] = fill_slots
+                if (entry["classification"] == "static" and raw_body is not None
+                        and not entry.get("has_object")):
+                    label_top = _label_top(raw_body, entry, defs, parapr_ls or {})
+                    if label_top is not None:
+                        entry["label_top"] = label_top
                 if entry["classification"] == "fill_target" and raw_body is not None:
                     entry.update(_fill_preflight(
                         raw_body, script_profiles or {}, baseline_id, defs))
@@ -1523,7 +1598,8 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
 
     table_map = _table_map(section_names, z, defs, borderfill_shaded,
                            script_profiles=script_profiles,
-                           baseline_id=script_baseline_id)
+                           baseline_id=script_baseline_id,
+                           parapr_ls=parapr_ls)
 
     anchors, anchor_records = [], []
     placeholders, guide_text, para_formats = [], [], []

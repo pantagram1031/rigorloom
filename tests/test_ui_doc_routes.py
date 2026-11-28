@@ -460,6 +460,28 @@ def test_preview_of_a_fill_under_the_label_falls_back_when_the_label_moved(
     assert sent == [[{"op": "set", "at": "t0/r8/c1", "text": "다른 라벨\n서울"}]]
 
 
+def test_preview_of_a_fill_under_the_label_in_an_object_holding_cell_uses_its_lead_paragraphs(
+        serving, fake_engine, monkeypatch):
+    recorded = []
+    orig_edit = rt_ui_doc.rt_doc.edit
+
+    def capture_edit(path, ops, *, base, preview):
+        recorded.append(list(ops))
+        return orig_edit(path, ops, base=base, preview=preview)
+
+    monkeypatch.setattr(rt_ui_doc.rt_doc, "edit", capture_edit)
+    session = Session.open_path(serving.bridge.current_root(), str(GONGMUN))
+    base = binding(session)
+    text = "붙임\n자료를 보내 드립니다."
+    status, _, _ = request(serving, "preview", {**base, "ops": [{"at": "t0/r2/c0", "text": text}]})
+    assert status == 200
+    status, _, _ = request(serving, "preview", {**base, "ops": [
+        {"at": "t0/r2/c0", "text": text, "belowLabel": {"label": "붙임"}, "lines": ["자료를 보내 드립니다."]},
+    ]})
+    assert status == 200
+    assert recorded[1] == recorded[0]
+
+
 @pytest.mark.parametrize("op", [
     {"at": "t0/r8/c1", "text": "주소\n서울", "belowLabel": {"label": "주소", "previous": ""}, "lines": ["서울"]},
     {"at": "t0/r8/c1", "text": "주소\n서울", "belowLabel": {"label": " "}, "lines": ["서울"]},

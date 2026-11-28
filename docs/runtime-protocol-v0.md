@@ -230,6 +230,19 @@ Producer: the same profile, at two addressing levels.
   index is deliberately the **same enumeration** `preedit replace --at-cell
   ROW,COL#RUN` edits (stated at `engine/scripts/form_inspect.py:122-125`).
 
+- Label-top cells: a `static` cell that aligns its text to the top, prints
+  a field label in its leading paragraphs and leaves room for the value under
+  it carries `label_top: {paras, lines, reserved}` in `table_map` and
+  `labelTop` in the graph (T273). It is read from the cell itself: `subList
+  vertAlign="TOP"`, the label paragraphs (up to the first blank paragraph the
+  form reserved; the first one alone when there is none or when a value is
+  already under it), and either that reserved blank paragraph or a cell height
+  (less its top and bottom margins) that leaves at least one more line of the
+  label's character height times its line spacing under the label's lines,
+  wrap at the cell's inner width included. Cells holding an object are not
+  marked. The editor lists these cells as blanks named by their label and
+  fills them with `fill_cell.belowLabel` (§12.6a).
+
 There is no separate graph structure to build: `DocumentGraph` is a
 presentation of these three, and the Runtime must not renumber anything.
 
@@ -1426,9 +1439,10 @@ to be written below it (정보공개 청구서: `성명(…)`, `주소(소재지
   `overwrite`. The label run's T30/T127 findings do not apply; the engine runs
   the T30 check on the runs the value takes. It maps onto `fill-cells
   --below-label ROW,COL=LABEL [--below-label-previous ROW,COL=TEXT]`.
-- The editor queues one when a printed cell's first line is kept exactly and
-  only the lines under it change (`label` = that first line, `previous` = the
-  lines that were under it). Text typed on the label's own line, or a change
+- The editor queues one for a label-top cell (§3.4) when its label lines are
+  kept exactly and only the lines under them change (`label` = the cell's
+  first `labelTop.paras` lines, `previous` = the lines that were under them).
+  Other printed cells keep the edit of their own text. Text typed on the label's own line, or a change
   to the label, stays an edit of the cell's text. Undoing it is a
   below-label fill too: same `label`, `previous` = the value now under it,
   `lines` = the value before (`[""]` when there was none). When the original
