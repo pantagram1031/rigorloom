@@ -234,6 +234,14 @@ def test_narrow_drawer_opens_a_document_and_closes_tabs(tmp_path: Path) -> None:
                 if pane.count():
                     pane_bg = pane.first.evaluate("el => getComputedStyle(el).backgroundColor")
                     assert pane_bg == drawer_bg, (i, pane_bg, drawer_bg)
+                # Rows, fields and buttons in the drawer's panes are touch-sized (T282).
+                for sel in (".sh-tree-row", ".rl-outline-btn", ".rl-blank-btn", ".rl-find-input", ".rl-pane-btn"):
+                    target = drawer.locator(sel)
+                    if target.count():
+                        box = target.first.bounding_box()
+                        assert box is not None and box["height"] >= 43.5, (i, sel, box)
+                        if sel == ".rl-pane-btn":
+                            assert box["width"] >= 43.5, (i, sel, box)
             pane_tabs.first.click()
 
             add = page.get_by_test_id("narrow-tab-add")

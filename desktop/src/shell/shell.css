@@ -1328,10 +1328,15 @@
   flex-direction: column;
   width: 86%;
   max-width: 360px;
-  /* The sidebar's colour: the outline, blanks and find panes paint
+  /* The pane colour: the outline, blanks and find panes paint
      var(--panel) themselves and showed as grey blocks on a white drawer. */
   background: var(--panel);
   box-shadow: var(--shadow-float);
+  /* The drawer is the touch layout: list rows, fields and buttons inside
+     its panes take the touch height, as its own tab rows already do. */
+  --row-tree: var(--ctl-touch);
+  --row: var(--ctl-touch);
+  --ctl: var(--ctl-touch);
 }
 
 .sh-drawer-head {
@@ -1398,6 +1403,11 @@
 
 .sh-drawer .sh-pane-body {
   flex: 1;
+}
+
+/* 이전 and 다음 are one short word each; keep them a square touch target. */
+.sh-drawer .rl-find-nav-btns .rl-pane-btn {
+  min-width: var(--ctl-touch);
 }
 
 .sh-drawer-foot {
