@@ -35,6 +35,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T279:** In the narrow drawer the pane tabs (파일, 개요, 빈칸, 찾기, 기록) now show their whole labels. At 44 px they were taller than the row that holds them and were cut off along the bottom.
 - **T278:** In a window narrower than 600 px, where the tab strip gives way to a menu drawer, the drawer now has 문서 열기 to open another document, and each listed tab has its own close button. Before this, a narrow window could switch between open tabs but could neither open another document nor close one.
 - **T277:** Two follow-ups to T276. A run colour the document header writes as bare hex digits now shows in the inline editor instead of falling back to the default text colour. The placeholder of a mixed-colour field cleared to empty stays visible.
 - **T276:** In editor v2, opening the inline editor on a cell or paragraph whose runs have different text colours (such as the black form title and the blue revision note in the 기안문 header line) now keeps each part's own colour while you type instead of showing the whole field in one colour. Unchanged text at the start and end keeps the colours of its runs, and newly typed text takes the colour of the run at the change (or the run to the left at a run boundary, as 한글 does); cells whose runs all share one colour edit as before. To supply the colours, the form profile adds `charpr_colors` (charPr id to declared text colour) and `readRegion` runs carry `charpr_color`.
