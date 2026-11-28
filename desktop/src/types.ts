@@ -849,6 +849,7 @@ export interface TextRun {
    */
   charpr_face?: TypefaceByLang | null;
   charpr_height_pt?: number;
+  charpr_color?: string | null;
 }
 
 /** A region's full text. Cells carry `table` + `addr`; paragraphs `at_para`. */

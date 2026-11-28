@@ -16,11 +16,22 @@ import {
   resolvePageFontCategory,
   type PageHitResult,
 } from "../model/page";
+import { editorRunsForInitial } from "../model/runColors.ts";
 import { locateSpanInRuns } from "../run_map";
 import { runTextAfterEdit } from "../revision";
 import { readRegion } from "../runtime";
-import { activeSession, getState, headCandidate, queuedCellOpAt, queuedRunOpAt, setState, useWorkspace } from "../store";
-import type { InspectResult } from "../types";
+import {
+  activeHeadTexts,
+  activeSession,
+  getState,
+  headCandidate,
+  queuedCellOpAt,
+  queuedRunOpAt,
+  setState,
+  useWorkspace,
+  type InlineEdit,
+} from "../store";
+import type { InspectResult, TextRun } from "../types";
 import { commitCellEditV2, commitEngineRunEdit, notifyParagraphNotEditable } from "./actions";
 import { SeatEditor } from "./SeatEditor";
 
@@ -34,6 +45,7 @@ type Placement = {
   face: string | null;
   sizePt?: number | null;
   caret?: number | null | "end";
+  runs?: readonly TextRun[];
 };
 
 type Pending = Placement & { value: string; idle: boolean };
@@ -71,9 +83,15 @@ export function useEngineEditOverlay({
 }) {
   const edit = useWorkspace((s) => s.inlineEdit);
   const [paragraph, setParagraph] = useState<Placement | null>(null);
+  const [cellRunsState, setCellRunsState] = useState<{
+    id: string;
+    rev: string;
+    runs: readonly TextRun[];
+  } | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
   const lastSubmitted = useRef<Pending | null>(null);
   const latestValue = useRef<string | null>(null);
+  const openedEditRef = useRef<{ edit: InlineEdit; value: string } | null>(null);
   const geometryRef = useRef(geometry);
   geometryRef.current = geometry;
   const baselineFace = inspect.summary?.baselineCharPr?.face?.hangul ?? null;
@@ -122,7 +140,62 @@ export function useEngineEditOverlay({
     : edit?.kind === "cell" && edit.readOnly && edit.readOnlyMessage
       ? edit.readOnlyMessage
       : cellValue;
+  if (edit && openedEditRef.current?.edit !== edit) {
+    openedEditRef.current = { edit, value: initial };
+  } else if (!edit) {
+    openedEditRef.current = null;
+  }
+  const openedValue = openedEditRef.current?.value ?? initial;
   const activeId = placement?.id;
+
+  const knownCellRuns = (() => {
+    if (edit?.kind !== "cell" || edit.readOnly) return undefined;
+    if (edit.runs && edit.runs.some((r) => r.charpr_color !== undefined)) return edit.runs;
+    const state = getState();
+    const list = activeHeadTexts(state) ?? state.texts?.[sessionId] ?? [];
+    const region = list.find(
+      (r) => (r.table ?? 0) === edit.table && r.addr?.row === edit.row && r.addr?.col === edit.col,
+    );
+    if (region?.runs && region.runs.some((r) => r.charpr_color !== undefined)) {
+      return region.runs;
+    }
+    return undefined;
+  })();
+
+  useEffect(() => {
+    if (!editable || !geometry || !edit || edit.kind !== "cell" || edit.readOnly || !cellAt) return;
+    if (knownCellRuns !== undefined) return;
+    if (cellRunsState?.id === cellAt && cellRunsState.rev === geometry.rev) return;
+    const { table, row, col } = edit;
+    const runId = headCandidate(getState())?.runId ?? null;
+    let cancelled = false;
+    void readRegion(sessionId, [{ table, row, col }], runId)
+      .then(({ regions }) => {
+        if (cancelled) return;
+        const found = regions.find(
+          (r) => (r.table ?? 0) === table && r.addr?.row === row && r.addr?.col === col,
+        );
+        setCellRunsState({ id: cellAt, rev: geometry.rev, runs: found?.runs ?? [] });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCellRunsState({ id: cellAt, rev: geometry.rev, runs: [] });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cellAt, cellRunsState, edit, editable, geometry, knownCellRuns, sessionId]);
+
+  const rawRuns = edit?.kind === "cell"
+    ? knownCellRuns ??
+      (cellRunsState?.id === cellAt && cellRunsState?.rev === geometry?.rev
+        ? cellRunsState.runs
+        : edit.runs)
+    : edit?.kind === "run"
+      ? paragraph?.runs
+      : undefined;
+  const editorRuns = editorRunsForInitial(rawRuns, openedValue);
 
   useEffect(() => {
     latestValue.current = null;
@@ -182,6 +255,7 @@ export function useEngineEditOverlay({
         face: run.charpr_face?.hangul ?? baselineFace,
         sizePt: runSizePt,
         caret: runCaret,
+        runs,
       });
       setState({
         selection: { kind: "paragraph", atPara },
@@ -224,6 +298,7 @@ export function useEngineEditOverlay({
     <SeatEditor
       key={placement.id}
       value={initial}
+      runs={editorRuns}
       caret={placement.caret}
       multiline={edit.kind === "cell" && edit.multiline}
       allowMultiline={edit.kind === "cell" && !edit.readOnly}

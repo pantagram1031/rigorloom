@@ -542,6 +542,15 @@ def charpr_heights(defs):
     }
 
 
+def charpr_colors(defs):
+    """charPr id -> color, for every id the header declares a color for."""
+    return {
+        cid: spec["color"]
+        for cid, spec in defs.items()
+        if spec.get("color") is not None
+    }
+
+
 def font_face(defs, fontref_map, cid, lang="hangul"):
     fr = defs.get(cid, {}).get("fontRef", {})
     fid = fr.get(lang)
@@ -1841,6 +1850,7 @@ def analyze(path, want_baseline=False, base_pt=10, line_spacing_pct=160,
         # face, which is different from a consumer that cannot look one up.
         "charpr_faces": charpr_faces(defs, fontref_map),
         "charpr_heights": charpr_heights(defs),
+        "charpr_colors": charpr_colors(defs),
         "table_map": table_map,
         "script_anomaly_targets": [
             {"table": t["index"], "addr": c["addr"], "charpr": c["charpr"],

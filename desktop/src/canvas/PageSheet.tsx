@@ -14,6 +14,7 @@ import {
 import { cancelEdit, setInlineEditMultiline } from "../actions";
 import { wp3t } from "../i18n/v2/wp3";
 import { rectPt, type EngineGeometry, type EngineTextEdit } from "../model/enginePage";
+import { editorRunsForInitial } from "../model/runColors.ts";
 import {
   formatCellAddress,
   formatSeatLocation,
@@ -950,10 +951,12 @@ export function PageSheet({
           : activeChange
             ? activeChange.after
             : inlineEdit.before;
+      const editorRuns = editorRunsForInitial(region?.runs ?? inlineEdit.runs, editVal);
       return (
         <SeatEditor
           key={`${sessionId}-${key}`}
           value={editVal}
+          runs={editorRuns}
           caret={editVal.trim().length > 0 ? "end" : "select"}
           multiline={inlineEdit.multiline}
           allowMultiline={!inlineEdit.readOnly}

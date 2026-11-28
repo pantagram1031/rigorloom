@@ -53,6 +53,20 @@ def declared_heights() -> dict[str, float]:
     return heights
 
 
+def declared_colors() -> dict[str, str]:
+    """charPr id -> textColor read directly from the corpus form's header.xml."""
+    with zipfile.ZipFile(CORPUS_FORM) as archive:
+        header = archive.read("Contents/header.xml").decode("utf-8")
+    colors: dict[str, str] = {}
+    for match in _CHARPR_TAG_RE.finditer(header):
+        attrs = {k: v for k, _, v in _ATTR_RE.findall(match.group(1))}
+        cid = attrs.get("id")
+        color = attrs.get("textColor")
+        if cid is not None and color and re.match(r"#?[0-9A-Fa-f]{6}$", color):
+            colors[cid] = color.upper()
+    return colors
+
+
 @pytest.fixture()
 def source(tmp_path):
     target = tmp_path / "form.hwpx"
@@ -334,6 +348,37 @@ def test_unknown_charpr_height_is_absent_on_regions_and_runs():
     runs = rt_session.region_runs_with_faces(profile)[0]["runs"]
     assert runs[0]["charpr_height_pt"] == 8.0
     assert "charpr_height_pt" not in runs[1]
+
+
+def test_the_profile_charpr_colors_and_read_region_runs_match_the_header(root, source):
+    core = rt_core.RuntimeCore(root)
+    session_id = core.open_path(str(source))["sessionId"]
+    session = core.store.get(session_id)
+    profile = rt_session.load_profile(core.tools, session)
+    expected = declared_colors()
+    assert expected
+    assert profile["charpr_colors"] == expected
+
+    header_cell = core.document_read_region(
+        session_id, [{"table": 0, "row": 0, "col": 0}])["regions"][0]
+    runs = header_cell["runs"]
+    assert len(runs) == 4
+    for run in runs:
+        assert run["charpr_color"] == expected[str(run["charpr"])]
+    assert [run["charpr_color"] for run in runs] == [
+        "#000000", "#000000", "#000000", "#0000FF"
+    ]
+
+    unknown_profile = {
+        "charpr_colors": {"25": "#0000FF"},
+        "full_text": [{"at_para": 3, "runs": [
+            {"index": 0, "charpr": "25"},
+            {"index": 1, "charpr": "999"},
+        ]}],
+    }
+    enriched = rt_session.region_runs_with_faces(unknown_profile)[0]["runs"]
+    assert enriched[0]["charpr_color"] == "#0000FF"
+    assert "charpr_color" not in enriched[1]
 
 
 def test_table_cells_carry_their_own_text_charpr_in_profile_and_graph(

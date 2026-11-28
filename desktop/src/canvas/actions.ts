@@ -11,7 +11,7 @@ import {
   setState,
   type QueuedOp,
 } from "../store";
-import type { GraphCell, InspectResult, RegionText, UiLanguage } from "../types";
+import type { GraphCell, InspectResult, RegionText, TextRun, UiLanguage } from "../types";
 import { resolveCellRunEdit, type CellRunEdit } from "../run_map";
 import { belowLabelEditAt } from "../model/belowLabel.ts";
 import { readRegion } from "../runtime";
@@ -88,6 +88,7 @@ export function beginCellEditV2(
     texts?: RegionText[];
     /** The cell's whole text, read for this edit (see below). */
     fullText?: string;
+    runs?: TextRun[];
   },
 ): boolean {
   const state = getState();
@@ -99,22 +100,23 @@ export function beginCellEditV2(
   // Until the cell's text is read, only the graph's cut-short preview is
   // known. An editor opened on it would write that preview back over the
   // rest of the cell, so the editor opens once the whole text is read.
-  const hasRegionText = texts.some((r) => (r.table ?? 0) === table &&
-    r.addr?.row === row && r.addr?.col === col && r.text !== undefined);
+  const cellRegion = texts.find((r) => (r.table ?? 0) === table &&
+    r.addr?.row === row && r.addr?.col === col);
+  const hasRegionText = cellRegion?.text !== undefined;
   if (options?.fullText === undefined && !queued && !hasRegionText && sessionId &&
       graphCellAt(inspect, table, row, col)?.truncated) {
     setState({ selection: { kind: "cell", table, row, col } });
     setCanvasSlice({ selectedSeatKey: key, statusNotice: wp3t("cell_text_loading", state.language) });
-    void readCellText(sessionId, table, row, col).then((text) => {
+    void readCellRegion(sessionId, table, row, col).then((region) => {
       const now = getState();
       const sel = now.selection;
       if (now.activeSessionId !== sessionId || now.inlineEdit || sel?.kind !== "cell" ||
           sel.table !== table || sel.row !== row || sel.col !== col) return;
-      if (text === null) {
+      if (region === null) {
         setCanvasSlice({ statusNotice: wp3t("cell_text_unread", now.language) });
         return;
       }
-      beginCellEditV2(table, row, col, { ...options, fullText: text });
+      beginCellEditV2(table, row, col, { ...options, fullText: region.text, runs: region.runs });
     });
     return true;
   }
@@ -135,6 +137,7 @@ export function beginCellEditV2(
     (queued?.kind === "fill_cell" && queued.lines !== undefined) ||
     Boolean(queued?.text.includes("\n")) ||
     baseText.includes("\n");
+  const runs = options?.runs ?? cellRegion?.runs;
 
   setCanvasSlice({
     selectedSeatKey: key,
@@ -150,6 +153,7 @@ export function beginCellEditV2(
       col,
       ...(hasObject ? { leadPara, leadParas } : {}),
       ...(isObjectOnlyReadOnly ? { readOnly: true, readOnlyMessage } : {}),
+      ...(runs ? { runs } : {}),
       before: baseText,
       charPr: autoCharPr(seat, queued?.charPr),
       opId: queued?.opId ?? null,
@@ -172,19 +176,19 @@ export interface CommitCellEditResult {
  * Commit an in-place cell edit. The engine overlay may stay open through
  * its debounced commit while the new raster is still being drawn.
  */
-/** A cell's whole text on the head the editor shows, or null if it cannot be read. */
-async function readCellText(
+/** A cell's whole text and runs on the head the editor shows, or null if it cannot be read. */
+async function readCellRegion(
   sessionId: string,
   table: number,
   row: number,
   col: number,
-): Promise<string | null> {
+): Promise<{ text: string; runs?: TextRun[] } | null> {
   try {
     const runId = headCandidate(getState())?.runId ?? null;
     const { regions } = await readRegion(sessionId, [{ table, row, col }], runId);
     const region = regions.find((item) => (item.table ?? 0) === table &&
       item.addr?.row === row && item.addr?.col === col);
-    return typeof region?.text === "string" ? region.text : null;
+    return typeof region?.text === "string" ? { text: region.text, runs: region.runs } : null;
   } catch {
     return null;
   }
