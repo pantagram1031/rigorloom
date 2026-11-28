@@ -13,7 +13,7 @@ import {
 } from "../store";
 import type { GraphCell, InspectResult, RegionText, UiLanguage } from "../types";
 import { resolveCellRunEdit, type CellRunEdit } from "../run_map";
-import { resolveBelowLabelEdit } from "../model/belowLabel.ts";
+import { belowLabelEditAt } from "../model/belowLabel.ts";
 import { readRegion } from "../runtime";
 import { classifyCellEditMode } from "../workspace/fieldLabels";
 import {
@@ -266,8 +266,9 @@ export async function commitCellEditV2(
   // A printed cell whose label sits at the top (T273) gets a value on the
   // lines under it: the fill keeps the label and writes only below it (T271).
   // Other cells keep the edit of their own text.
-  const labelTop = seat ? undefined : graphCellAt(inspect, edit.table, edit.row, edit.col)?.labelTop;
-  const underLabel = labelTop ? resolveBelowLabelEdit(before, nextValue, labelTop.paras) : null;
+  const underLabel = seat
+    ? null
+    : belowLabelEditAt(inspect, edit.table, edit.row, edit.col, before, nextValue);
 
   if (underLabel) {
     modeLabelKey = "fill_cell";
@@ -514,6 +515,20 @@ async function replaceMatchText(match: FindMatchItem, after: string): Promise<bo
     const charPr = autoCharPr(seat, queued?.charPr);
     if (after === before && queued) {
       await legacyActions.undoQueuedOp(queued.opId);
+      return true;
+    }
+    // A replacement under a printed label keeps the label (T274).
+    const underLabel = seat ? null : belowLabelEditAt(inspect, table, row, col, before, after);
+    if (underLabel) {
+      await queueCanvasEdit({
+        opId: `op-find-t${table}r${row}c${col}`,
+        kind: "fill_cell",
+        table, row, col,
+        text: underLabel.text,
+        belowLabel: underLabel.belowLabel,
+        before,
+        origin: "user",
+      }, sessionId);
       return true;
     }
     await queueCanvasEdit({

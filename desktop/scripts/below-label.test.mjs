@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { belowLabelLines, belowLabelValue, resolveBelowLabelEdit } from "../src/model/belowLabel.ts";
+import { belowLabelEditAt, belowLabelLines, belowLabelValue, resolveBelowLabelEdit } from "../src/model/belowLabel.ts";
 import { engineTextEdit, queuedCellText } from "../src/model/enginePage.ts";
 import { isWellFormedOp, planOpsPayload } from "../src/workspace/trust.ts";
 
@@ -91,4 +91,18 @@ test("every view shows the whole cell; the preview edit names the label and the 
     belowLabel: { label: "주소(소재지)" },
     lines: ["서울", "세종대로 1"],
   }]);
+});
+
+test("only a cell marked with its label at the top takes a fill under the label", () => {
+  const inspect = { graph: { tables: [{ index: 0, cells: [
+    { addr: { row: 8, col: 1 }, labelTop: { paras: 1 } },
+    { addr: { row: 8, col: 2 } },
+  ] }] } };
+  assert.deepEqual(belowLabelEditAt(inspect, 0, 8, 1, "주소", "주소\n서울"), {
+    belowLabel: { label: "주소", previous: "" },
+    text: "주소\n서울",
+  });
+  assert.equal(belowLabelEditAt(inspect, 0, 8, 2, "주소", "주소\n서울"), null);
+  assert.equal(belowLabelEditAt(inspect, 1, 8, 1, "주소", "주소\n서울"), null);
+  assert.equal(belowLabelEditAt(null, 0, 8, 1, "주소", "주소\n서울"), null);
 });

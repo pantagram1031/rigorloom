@@ -762,6 +762,43 @@ test("a cell whose text is only a cut-short preview opens for editing once its w
   assert.equal(stack.controller.getCanvasSlice().statusNotice, stack.wp3.wp3t("cell_text_unread", "ko"));
 });
 
+test("a find replacement under a printed label keeps the label", async () => {
+  const stack = loadWp3Stack();
+  const state = stack.store.getState();
+  const sid = state.activeSessionId;
+  const inspect = structuredClone(state.inspects[sid]);
+  const cell = inspect.graph.tables[0].cells.find((c) => c.addr.row === 0 && c.addr.col === 0);
+  cell.labelTop = { paras: 1, lines: 1, reserved: true };
+  const label = "주소(소재지)";
+  const text = `${label}\n가온시 한길로 1`;
+  stack.store.setState({
+    inspects: { ...state.inspects, [sid]: inspect },
+    texts: {
+      ...state.texts,
+      [sid]: [
+        { table: 0, addr: { row: 0, col: 0 }, text },
+        ...state.texts[sid].filter((r) => !(r.table === 0 && r.addr?.row === 0 && r.addr?.col === 0)),
+      ],
+    },
+  });
+  const start = text.indexOf("가온");
+  const match = {
+    id: "c:0:0:0", targetType: "cell", cellKey: "c:0:0:0", table: 0, row: 0, col: 0,
+    label, locationLabel: "표 1 1행 1열", text, matchStart: start, matchEnd: start + 2,
+  };
+  assert.equal(await stack.actions.replaceFindMatch(match, "가온", "한울"), true);
+  const [op] = stack.queuedOps;
+  assert.equal(op.kind, "fill_cell");
+  assert.deepEqual({ ...op.belowLabel }, { label, previous: "가온시 한길로 1" });
+  assert.equal(op.text, `${label}\n한울시 한길로 1`);
+
+  // Replacing inside the label itself is not a fill under it.
+  const inLabel = { ...match, matchStart: 0, matchEnd: 2 };
+  await stack.actions.replaceFindMatch(inLabel, "주소", "거소");
+  assert.equal(stack.queuedOps[0].kind, "replace_at_cell");
+  assert.equal(stack.queuedOps[0].belowLabel, undefined);
+});
+
 test("find replacement and cell edits upsert the same address", async () => {
   const stack = loadWp3Stack();
   const match = {
