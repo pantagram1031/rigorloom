@@ -35,6 +35,7 @@ the kernel's contract shape.
 
 ### Changed
 
+- **T286:** The agent settings' 모의 대본 select now looks like the fields and buttons beside it (it was a bare 19 px native box in another font), and in a window narrower than 600 px that section's fields are 44 px touch targets like the rest of the dialog.
 - **T285:** In the narrow drawer the 빈칸 pane's group headers (접수 기관이 쓰는 칸 and the like) are 44 px touch targets like the rows under them; they were 28 px. The drawer also rebinds the legacy row and control sizes, as the narrow settings dialog does.
 - **T284:** In a window narrower than 600 px the settings dialog's section tabs, option groups and buttons are 44 px touch targets (they were 24 to 27 px), and in 폴더 a long work folder path now shortens with an ellipsis; before, it pushed 폴더 바꾸기 out past the dialog's right edge.
 - **T283:** In a narrow window the 변경, 에이전트 and 점검 tabs of the bottom sheet are 44 px tall (they were 36 px) and each tab's hit area takes in the gap beside it, so 점검 is no longer 22 px wide; the drawer's pane tabs widen the same way. Labels and their underlines stay where they were. The 연결 설정 link under an unconnected agent, the change filters and the approval buttons in the sheet's footer are 44 px tall as well; an earlier compact pass had brought them down to 17 to 36 px.

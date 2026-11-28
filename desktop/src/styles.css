@@ -2782,7 +2782,10 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   color: var(--fg-muted);
 }
 
-.field input {
+/* The select (모의 대본) takes the field look too; unstyled it was a 19 px
+   native box in a different font from the inputs beside it. */
+.field input,
+.field select {
   flex: 1;
   min-width: 0;
   padding: var(--s1) var(--s2);
@@ -2794,7 +2797,8 @@ button.tool-value:disabled { opacity: 0.55; cursor: default; }
   border-radius: 3px;
 }
 
-.field input:focus-visible {
+.field input:focus-visible,
+.field select:focus-visible {
   outline: none;
   border-color: var(--accent-line);
   box-shadow: 0 0 0 2px var(--accent-soft);
