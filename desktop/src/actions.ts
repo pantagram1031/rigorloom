@@ -9,7 +9,7 @@ import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plug
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 
 import * as rt from "./runtime";
-import { belowLabelLines, belowLabelValue } from "./model/belowLabel.ts";
+import { belowLabelEditAt, belowLabelLines, belowLabelValue } from "./model/belowLabel.ts";
 import {
   forgetDocumentEvents,
   startDocumentEvents,
@@ -1088,6 +1088,13 @@ export async function commitEdit(value: string): Promise<void> {
     edit.before.trim().length > 0 &&
     activeHeadTexts(commitState) !== null &&
     edit.before !== seatText(commitInspect, commitSession ? (commitState.texts[commitSession] ?? []) : [], edit.table, edit.row, edit.col);
+  // A cell with its label printed at the top takes a value under the label,
+  // whichever pane the edit came from (T274); a plain fill or replace would
+  // write over the label.
+  const underLabel =
+    edit.kind === "cell" && !seatAt(commitInspect, edit.table, edit.row, edit.col)
+      ? belowLabelEditAt(commitInspect, edit.table, edit.row, edit.col, edit.before, trimmed)
+      : null;
   // ONE QUEUE, ONE PLAN PATH, TWO OP KINDS. A value typed into a seat and a
   // sentence typed into a paragraph differ by exactly the operation kind the
   // runtime's own registry names for each. Everything past this line —
@@ -1095,7 +1102,20 @@ export async function commitEdit(value: string): Promise<void> {
   // apply, the receipt — is the same code for both, which is what makes the
   // caret a new surface rather than a second mutation route.
   const next: QueuedOp =
-    edit.kind === "cell"
+    edit.kind === "cell" && underLabel
+      ? {
+          opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,
+          kind: "fill_cell",
+          table: edit.table,
+          row: edit.row,
+          col: edit.col,
+          text: underLabel.text,
+          belowLabel: underLabel.belowLabel,
+          before: edit.before,
+          origin: "user",
+          ...(commitSession ? { sessionId: commitSession } : {}),
+        }
+      : edit.kind === "cell"
       ? edit.replaceExisting
         ? {
             opId: edit.opId ?? `op-${cellSlug(edit.table, edit.row, edit.col)}`,

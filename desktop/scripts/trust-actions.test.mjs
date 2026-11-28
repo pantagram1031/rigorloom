@@ -17,7 +17,7 @@ import {
   withoutSignatures,
 } from "../src/workspace/trust.ts";
 import { opSignature } from "../src/store.ts";
-import { belowLabelValue } from "../src/model/belowLabel.ts";
+import { belowLabelEditAt, belowLabelValue } from "../src/model/belowLabel.ts";
 
 const source = readFileSync(new URL("../src/actions.ts", import.meta.url), "utf8");
 
@@ -206,6 +206,44 @@ test("typing into a superscript blank declares the suggested body shape and says
   assert.equal(op.charPr, "12");
   assert.equal(op.autoCharPr, true);
   assert.equal(op.sessionId, "S");
+  assert.equal(op.overwrite, undefined);
+});
+
+test("a value typed under a printed label in the side pane keeps the label", async () => {
+  const queued = [];
+  const label = "주소(소재지)";
+  const inspect = { graph: { tables: [{ index: 0, cells: [
+    { addr: { row: 8, col: 1 }, classification: "static", labelTop: { paras: 1, lines: 1, reserved: false } },
+  ] }] } };
+  const s = store({
+    activeSessionId: "S",
+    inspects: { S: inspect },
+    texts: { S: [] },
+    sawComposition: false,
+    draft: { ops: [] },
+    inlineEdit: { kind: "cell", table: 0, row: 8, col: 1, before: label, opId: null, replaceExisting: true },
+  });
+  const ctx = vm.createContext({
+    ...s, autoCharPrFor, belowLabelEditAt,
+    queuedRunOpAt: () => null,
+    runTextAfterEdit: (_e, v) => v,
+    undoQueuedOp: async () => {},
+    didRewriteAgent: () => false,
+    seatAt: () => null,
+    activeHeadTexts: () => null,
+    seatText: () => label,
+    clearReturned: () => {},
+    setQueue: async (ops) => { queued.push(ops); },
+  });
+  vm.runInContext(
+    `${section("export async function commitEdit(", "/** Change a queued op's value")}\nglobalThis.commit = commitEdit;`,
+    ctx,
+  );
+  await ctx.commit(`${label}\n서울`);
+  const op = queued[0][0];
+  assert.equal(op.kind, "fill_cell");
+  assert.deepEqual({ ...op.belowLabel }, { label, previous: "" });
+  assert.equal(op.text, `${label}\n서울`);
   assert.equal(op.overwrite, undefined);
 });
 

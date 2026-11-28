@@ -61,3 +61,33 @@ export function belowLabelValue(text: string, label: string): string | null {
   if (!text.startsWith(`${label}\n`)) return null;
   return valueLines(text.slice(label.length + 1)).join("\n");
 }
+
+/** The shape of the inspected graph this module reads; no import, so tests load it alone. */
+interface LabelTopGraph {
+  graph: {
+    tables: ReadonlyArray<{
+      index: number;
+      cells: ReadonlyArray<{ addr: { row: number; col: number }; labelTop?: { paras: number } }>;
+    }>;
+  };
+}
+
+/**
+ * The below-label fill an edit of a cell makes, or null: only a cell the
+ * inspection marked as having its label printed at the top (T273), and only
+ * when the edit keeps that label whole. Every edit path asks this one
+ * question, so the label of such a cell is never written over by one of them.
+ */
+export function belowLabelEditAt(
+  inspect: LabelTopGraph | null | undefined,
+  table: number,
+  row: number,
+  col: number,
+  before: string,
+  after: string,
+): { belowLabel: BelowLabel; text: string } | null {
+  const labelTop = inspect?.graph.tables
+    .find((t) => t.index === table)
+    ?.cells.find((c) => c.addr.row === row && c.addr.col === col)?.labelTop;
+  return labelTop ? resolveBelowLabelEdit(before, after, labelTop.paras) : null;
+}

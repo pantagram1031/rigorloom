@@ -1442,7 +1442,9 @@ to be written below it (정보공개 청구서: `성명(…)`, `주소(소재지
 - The editor queues one for a label-top cell (§3.4) when its label lines are
   kept exactly and only the lines under them change (`label` = the cell's
   first `labelTop.paras` lines, `previous` = the lines that were under them).
-  Other printed cells keep the edit of their own text. Text typed on the label's own line, or a change
+  Other printed cells keep the edit of their own text. The side pane of the
+  first editor and find/replace route an edit of a label-top cell the same
+  way, so none of the three writes over the label. Text typed on the label's own line, or a change
   to the label, stays an edit of the cell's text. Undoing it is a
   below-label fill too: same `label`, `previous` = the value now under it,
   `lines` = the value before (`[""]` when there was none). When the original
