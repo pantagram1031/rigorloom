@@ -1221,6 +1221,20 @@
   .rp-composer--off .rp-link {
     min-height: var(--ctl-touch);
   }
+  /* The filters do the same: 뺌 0 was 21 px wide. Half the 12 px gap goes
+     to each side of a filter, the row keeps the first label at 16 px, and
+     the pressed underline stays under the label only. */
+  .rp-filters {
+    column-gap: 0;
+    padding-inline: calc(var(--s-16) - var(--s-12) / 2);
+  }
+  .rp-filter {
+    padding-inline: calc(var(--s-12) / 2);
+  }
+  .rp-filter[aria-pressed="true"] {
+    box-shadow: none;
+    background: linear-gradient(var(--ink), var(--ink)) center bottom / calc(100% - var(--s-12)) 2px no-repeat;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1249,8 +1263,12 @@
   .rp-footer .rl-approval-head { height: 17px; }
   .rp-footer .rl-approval-body { min-height: 27px; }
   .rp-footer-reason { margin-top: 4px; }
-  .rp-row-actions .rp-btn { min-height: 30px; }
   .rp-filters { padding-block: 0; }
-  .rp-thread-row { height: 20px; }
   .rp-row-head { scroll-margin-block: 2px; }
+  /* A change's head (which selects it), its 받아들이기, 빼기 and 고치기, and
+     the agent thread row are touch targets like the tabs and filters above
+     them; the sheet scrolls when they do not fit (T288). */
+  .rp-row-head { min-height: var(--ctl-touch); }
+  .rp-row-actions .rp-btn { min-height: var(--ctl-touch); }
+  .rp-thread-row { height: var(--ctl-touch); }
 }
