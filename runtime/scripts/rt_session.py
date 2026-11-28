@@ -691,7 +691,8 @@ def document_graph(profile: dict, session: Session) -> dict:
                                  ("spacer_pattern", "spacerPattern"),
                                  ("has_object", "hasObject"),
                                  ("lead_para", "leadPara"),
-                                 ("lead_paras", "leadParas")):
+                                 ("lead_paras", "leadParas"),
+                                 ("label_top", "labelTop")):
                 if key in cell:
                     row[out_key] = cell[key]
             cells.append(row)

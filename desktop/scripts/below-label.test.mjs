@@ -26,6 +26,17 @@ test("lines typed under the label become a below-label fill", () => {
   });
 });
 
+test("a label of two paragraphs stays whole", () => {
+  const label = "사업자등록번호\n(주민등록번호)";
+  assert.deepEqual(resolveBelowLabelEdit(`${label}\n`, `${label}\n123-45-67890`, 2), {
+    belowLabel: { label, previous: "" },
+    text: `${label}\n123-45-67890`,
+  });
+  // Changing the label's second line is a change to the label.
+  assert.equal(resolveBelowLabelEdit(`${label}\n`, "사업자등록번호\n123", 2), null);
+  assert.equal(resolveBelowLabelEdit("사업자등록번호", "사업자등록번호\n1", 2), null);
+});
+
 test("a change to the label itself, or on its line, is not a below-label fill", () => {
   assert.equal(resolveBelowLabelEdit("주소(소재지)", "주소(소재지) 서울"), null);
   assert.equal(resolveBelowLabelEdit("주소(소재지)", "주소\n서울"), null);

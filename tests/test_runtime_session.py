@@ -118,6 +118,17 @@ def test_an_oversized_source_is_refused(tmp_path, monkeypatch):
     assert excinfo.value.data["limit"] == 1024
 
 
+def test_inspect_marks_cells_with_their_label_printed_at_the_top(client):
+    jeongbo = CORPUS_FORM.parent / "jeongbo-gonggae-cheongguseo.hwpx"
+    client.initialize()
+    session = client.ok("workspace/openPath", {"path": str(jeongbo)})["sessionId"]
+    cells = client.ok("document/inspect", {"sessionId": session})["graph"]["tables"][0]["cells"]
+    marked = {(c["addr"]["row"], c["addr"]["col"]): c["labelTop"] for c in cells if "labelTop" in c}
+    assert marked[(6, 1)] == {"paras": 1, "lines": 1, "reserved": True}
+    assert marked[(8, 1)] == {"paras": 1, "lines": 1, "reserved": False}
+    assert set(marked) == {(6, 1), (6, 12), (7, 1), (7, 12), (8, 1), (8, 12), (9, 1), (9, 12)}
+
+
 def test_an_opaque_non_zip_source_is_accepted_but_not_addressable(client, tmp_path):
     plain = tmp_path / "notes.txt"
     plain.write_text("hello", encoding="utf-8")

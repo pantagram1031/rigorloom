@@ -263,9 +263,11 @@ export async function commitCellEditV2(
   let nextOp: QueuedOp;
   let modeLabelKey: CommitCellEditResult["modeLabelKey"];
   let runEdit: CellRunEdit = { kind: "none" };
-  // A printed cell whose label stays as it is and gets a value on the lines
-  // under it: the fill keeps the label and writes only below it (T271).
-  const underLabel = seat ? null : resolveBelowLabelEdit(before, nextValue);
+  // A printed cell whose label sits at the top (T273) gets a value on the
+  // lines under it: the fill keeps the label and writes only below it (T271).
+  // Other cells keep the edit of their own text.
+  const labelTop = seat ? undefined : graphCellAt(inspect, edit.table, edit.row, edit.col)?.labelTop;
+  const underLabel = labelTop ? resolveBelowLabelEdit(before, nextValue, labelTop.paras) : null;
 
   if (underLabel) {
     modeLabelKey = "fill_cell";

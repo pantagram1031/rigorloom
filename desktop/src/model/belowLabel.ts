@@ -9,7 +9,7 @@
  */
 
 export interface BelowLabel {
-  /** The cell's first paragraph, exactly as read. */
+  /** The cell's label paragraphs, exactly as read, joined by line breaks. */
   label: string;
   /** The value already under the label when the edit started. */
   previous?: string;
@@ -24,18 +24,21 @@ function valueLines(value: string): string[] {
 /**
  * The below-label fill an edit of a printed cell makes, or null.
  *
- * It is one when the cell's first line is a non-empty label, the edit keeps
- * that line exactly and changes only what follows it on new lines. A change to
- * the label itself, or text added on the label's own line, is not.
+ * It is one when the cell's first `labelParas` lines are a non-empty label,
+ * the edit keeps them exactly and changes only what follows them on new lines.
+ * A change to the label itself, or text added on the label's own line, is
+ * not. The caller decides which cells have a label at the top (T273).
  */
 export function resolveBelowLabelEdit(
   before: string,
   after: string,
+  labelParas = 1,
 ): { belowLabel: BelowLabel; text: string } | null {
-  const cut = before.indexOf("\n");
-  const label = cut < 0 ? before : before.slice(0, cut);
+  const beforeLines = before.split("\n");
+  if (labelParas < 1 || beforeLines.length < labelParas) return null;
+  const label = beforeLines.slice(0, labelParas).join("\n");
   if (label.trim() === "" || !after.startsWith(`${label}\n`)) return null;
-  const previous = cut < 0 ? "" : valueLines(before.slice(cut + 1)).join("\n");
+  const previous = valueLines(beforeLines.slice(labelParas).join("\n")).join("\n");
   const value = valueLines(after.slice(label.length + 1)).join("\n");
   if (value === previous) return null;
   return { belowLabel: { label, previous }, text: `${label}\n${value}` };

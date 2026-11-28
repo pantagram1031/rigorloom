@@ -46,6 +46,13 @@ export interface GraphCell {
   hasObject?: boolean;
   leadPara?: number | null;
   leadParas?: number[];
+  /**
+   * A printed cell whose label sits at the top with room for a value under it
+   * (정보공개 청구서: 성명, 주소). `paras` is how many leading paragraphs are the
+   * label, `lines` how many lines they take, `reserved` whether the form left
+   * a blank paragraph under them.
+   */
+  labelTop?: { paras: number; lines: number; reserved: boolean };
 }
 
 export interface GraphTable {

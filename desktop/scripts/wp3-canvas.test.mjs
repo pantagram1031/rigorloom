@@ -411,6 +411,39 @@ test("detectDocumentSeats disambiguates 7 협조자 blanks and collapses 접수 
   }
 });
 
+test("a cell with its label printed at the top is a blank named by that label", () => {
+  const { pageModel } = loadWp3Stack();
+  const inspect = structuredClone(corpus.inspect);
+  const cells = inspect.graph.tables[0].cells;
+  const cell = cells.find((c) => c.classification === "static");
+  assert.ok(cell, "the corpus has a printed cell");
+  const key = `c:0:${cell.addr.row}:${cell.addr.col}`;
+  const before = pageModel.detectDocumentSeats(inspect, {}, [], "ko").filter((s) => s.key === key);
+  assert.equal(before.length, 0);
+
+  cell.labelTop = { paras: 1, lines: 1, reserved: true };
+  const region = { table: 0, addr: cell.addr, text: "주소(소재지)\n" };
+  let [seat] = pageModel.detectDocumentSeats(inspect, { [key]: region }, [], "ko").filter((s) => s.key === key);
+  assert.equal(seat.baseLabel, "주소(소재지)");
+  assert.equal(seat.isFillTarget, false);
+  assert.equal(seat.filled, false);
+  [seat] = pageModel.detectDocumentSeats(
+    inspect, { [key]: { ...region, text: "주소(소재지)\n          (    )" } }, [], "ko",
+  ).filter((s) => s.key === key);
+  assert.equal(seat.filled, false, "a printed bracket under the label is not a value");
+
+  // Filled once a value is under the label, in the document or in the queue.
+  [seat] = pageModel.detectDocumentSeats(
+    inspect, { [key]: { ...region, text: "주소(소재지)\n서울" } }, [], "ko",
+  ).filter((s) => s.key === key);
+  assert.equal(seat.filled, true);
+  [seat] = pageModel.detectDocumentSeats(
+    inspect, { [key]: region }, [{ id: "x", cellKey: key, after: "주소(소재지)\n서울", decision: "pending" }], "ko",
+  ).filter((s) => s.key === key);
+  assert.equal(seat.filled, true);
+  assert.equal(seat.currentText, "주소(소재지)\n서울");
+});
+
 test("groupSeatsByLocation, short cell labels, unknown-page fallback, and engine page resolution", () => {
   const { pageModel, wp3 } = loadWp3Stack();
   const enginePage = loadTsModule("src/model/enginePage.ts", {
@@ -657,13 +690,27 @@ test("a cell edit inside one run of a mixed cell queues an edit of that run only
   assert.equal(wide.text, across);
 });
 
-test("lines typed under a printed cell's text queue a fill under that label", async () => {
+test("lines typed under a label printed at the top of a cell queue a fill under that label", async () => {
   const stack = loadWp3Stack();
   const { upsertCalls } = stack;
   stack.actions.beginCellEditV2(0, 0, 0);
   const before = stack.store.getState().inlineEdit.before;
   assert.ok(before.trim() && !before.includes("\n"));
-  const res = await stack.actions.commitCellEditV2(`${before}\n홍길동`);
+
+  // Without a label at the top, a new line is an edit of the cell's own text.
+  let res = await stack.actions.commitCellEditV2(`${before}\n홍길동`);
+  assert.equal(res.committed, true);
+  assert.equal(upsertCalls[upsertCalls.length - 1].kind, "replace_at_cell");
+  assert.equal(upsertCalls[upsertCalls.length - 1].belowLabel, undefined);
+
+  const state = stack.store.getState();
+  const sid = state.activeSessionId;
+  const inspect = structuredClone(state.inspects[sid]);
+  const cell = inspect.graph.tables[0].cells.find((c) => c.addr.row === 0 && c.addr.col === 0);
+  cell.labelTop = { paras: 1, lines: 1, reserved: false };
+  stack.store.setState({ inspects: { ...state.inspects, [sid]: inspect } });
+  stack.actions.beginCellEditV2(0, 0, 0);
+  res = await stack.actions.commitCellEditV2(`${before}\n홍길동`);
   assert.equal(res.committed, true);
   assert.equal(res.modeLabelKey, "fill_cell");
   const op = upsertCalls[upsertCalls.length - 1];
