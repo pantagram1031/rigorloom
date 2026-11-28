@@ -30,6 +30,7 @@ import re
 import secrets
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -73,6 +74,12 @@ _SMALL_BODY_CORE_POST_PATHS = frozenset({"/api/approval/confirmation", "/api/doc
 # its peer closes with unread bytes). A larger or slower body is left unread.
 REFUSED_BODY_DRAIN_BYTES = SMALL_JSON_BODY_BYTES
 REFUSED_BODY_DRAIN_SECONDS = 2.0
+# When the bridge closes a connection with a request body still unread, it
+# first shuts its own side, then reads and drops what the client still sends,
+# for at most this long and up to this many bytes. Closing while those bytes
+# arrive is a reset, and the reset can reach the client before the answer.
+UNREAD_BODY_LINGER_SECONDS = 2.0
+UNREAD_BODY_LINGER_BYTES = 1024 * 1024
 _CONTENT_LENGTH_RE = re.compile(r"[0-9]{1,9}")
 # Where the 문서 폴더 lives in prefs (`documentsRoot` is the earlier name).
 DOC_FOLDER_PREF_KEYS = ("docFolder", "documentsRoot")
@@ -2414,6 +2421,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
 
     protocol_version = "HTTP/1.1"
     server: BridgeHTTPServer
+    # Set when this connection closes with a request body (or part of one) unread.
+    _linger_on_close = False
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         return
@@ -2432,6 +2441,8 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         # The page carries the per-run token: no other page may frame it.
         self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         if extra_headers:
             for k, v in extra_headers.items():
                 self.send_header(k, v)
@@ -2451,20 +2462,71 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
 
     def _reject_forbidden(self, code: str, message: str) -> None:
         # A refused request's body is never parsed, and never read as the next request.
-        self.close_connection = True
-        self._drain_refused_body()
+        self._close_after_refusal()
         self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": {"code": code, "message": message}})
 
-    def _drain_refused_body(self) -> None:
-        """Read and drop a small declared body before a refusal closes the connection."""
+    def _close_after_refusal(self) -> None:
+        """Close after this answer: drain a small body now, linger on any other."""
+        self.close_connection = True
+        if not self._drain_refused_body():
+            self._linger_on_close = True
+
+    def _close_with_body_unread(self) -> None:
+        self.close_connection = True
+        self._linger_on_close = True
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            if self._linger_on_close:
+                self._linger_close()
+
+    def _linger_close(self) -> None:
+        """Shut the write side, then read and drop what the client still sends, briefly.
+
+        Called once the answer is flushed, on a connection closing with a body
+        unread. The client sees the end of the answer at once; the bridge closes
+        when the client does, after UNREAD_BODY_LINGER_SECONDS, or after
+        UNREAD_BODY_LINGER_BYTES, whichever comes first.
+        """
+        sock = self.connection
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            return
+        deadline = time.monotonic() + UNREAD_BODY_LINGER_SECONDS
+        left_bytes = UNREAD_BODY_LINGER_BYTES
+        try:
+            while left_bytes > 0:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                sock.settimeout(left)
+                chunk = sock.recv(min(64 * 1024, left_bytes))
+                if not chunk:
+                    break
+                left_bytes -= len(chunk)
+        except OSError:
+            pass
+
+    def _drain_refused_body(self) -> bool:
+        """Read and drop a small declared body before a refusal closes the connection.
+
+        Returns True when no body is left unread.
+        """
         if self.headers.get("Transfer-Encoding"):
-            return
+            return False
         raw_len = (self.headers.get("Content-Length") or "").strip()
+        if not raw_len:
+            return True
         if not _CONTENT_LENGTH_RE.fullmatch(raw_len):
-            return
+            return False
         remaining = int(raw_len)
-        if not 0 < remaining <= REFUSED_BODY_DRAIN_BYTES:
-            return
+        if remaining == 0:
+            return True
+        if remaining > REFUSED_BODY_DRAIN_BYTES:
+            return False
         deadline = time.monotonic() + REFUSED_BODY_DRAIN_SECONDS
         previous = self.connection.gettimeout()
         try:
@@ -2484,6 +2546,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
                 self.connection.settimeout(previous)
             except OSError:
                 pass
+        return remaining == 0
 
     def _check_origin_guards(self) -> bool:
         if not _valid_host_header(self.headers.get("Host")):
@@ -2520,26 +2583,27 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
             length = int(raw_len)
         except ValueError as exc:
             # The body stays unread, so it must not be read as the next request.
-            self.close_connection = True
+            self._close_with_body_unread()
             raise BridgeError("invalid_params", "invalid Content-Length") from exc
         if length < 0 or length > limit:
-            self.close_connection = True
+            self._close_with_body_unread()
             raise BridgeError("body_too_large", "request body exceeds maximum allowed size", status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
         return length
 
     def _check_extension_body(self, *, allow_body: bool) -> None:
         if self.headers.get("Transfer-Encoding"):
-            self.close_connection = True
+            self._close_with_body_unread()
             raise BridgeError("invalid_params", "transfer encoding is not supported")
         length = self._body_length(SMALL_JSON_BODY_BYTES)
         if length and not allow_body:
+            self._close_with_body_unread()
             raise BridgeError("invalid_params", "GET does not accept a request body")
 
     def _read_json_body(self, limit: int = MAX_JSON_BODY_BYTES) -> dict[str, Any]:
         if self.headers.get("Transfer-Encoding"):
             # A chunked body is not read; it used to pass as an empty one and
             # stay on the connection.
-            self.close_connection = True
+            self._close_with_body_unread()
             raise BridgeError("invalid_params", "transfer encoding is not supported")
         length = self._body_length(limit)
         if not length:
@@ -2701,8 +2765,7 @@ class BridgeHTTPHandler(BaseHTTPRequestHandler):
         if path != "/rpc" and not path.startswith("/api/"):
             # This answer never reads the body: drain a small one and close,
             # as a refusal does, so it is not read as the next request.
-            self.close_connection = True
-            self._drain_refused_body()
+            self._close_after_refusal()
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"code": "not_found", "message": path}})
             return
         if not self._require_header_token():
